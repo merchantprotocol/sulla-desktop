@@ -105,7 +105,7 @@ export class SchedulerService {
       }
 
       console.warn(`[SchedulerService] Frontend did not ACK event ${event.id} - using backend`);
-      this.sendToBackend(event, prompt);
+      void this.sendToBackend(event, prompt);
     } catch (err) {
       console.error(`[SchedulerService] Failed to trigger event ${event.id}:`, err);
     }
@@ -153,7 +153,7 @@ export class SchedulerService {
     this.ensureFrontendListener();
     const message = this.buildEventPayload(event, prompt);
 
-    const sent = this.wsService.send(FRONTEND_CHANNEL_ID, message);
+    const sent = await this.wsService.send(FRONTEND_CHANNEL_ID, message);
     if (!sent) {
       console.warn(`[SchedulerService] Failed to send event ${event.id} to frontend`);
       return false;
@@ -169,11 +169,11 @@ export class SchedulerService {
     });
   }
 
-  private sendToBackend(event: any, prompt: string): void {
+  private async sendToBackend(event: any, prompt: string): Promise<void> {
     const message = this.buildEventPayload(event, prompt);
 
     this.wsService.connect(BACKEND_CHANNEL_ID);
-    const sent = this.wsService.send(BACKEND_CHANNEL_ID, message);
+    const sent = await this.wsService.send(BACKEND_CHANNEL_ID, message);
     if (!sent) {
       console.error(`[SchedulerService] Failed to send event ${event.id} to backend`);
     }

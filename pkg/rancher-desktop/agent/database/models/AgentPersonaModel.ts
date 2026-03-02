@@ -438,11 +438,30 @@ export class AgentPersonaService {
 
     this.registry.setLoading(id, true);
 
-    return this.wsService.send(id, {
-      type: 'user_message',
-      data: { role: 'user', content, threadId: this.state.threadId },
-      timestamp: Date.now(),
-    });
+    let delivered: boolean;
+    try {
+      delivered = await this.wsService.send(id, {
+        type: 'user_message',
+        data: { role: 'user', content, threadId: this.state.threadId },
+        timestamp: Date.now(),
+      });
+    } catch {
+      delivered = false;
+    }
+
+    if (!delivered) {
+      console.warn(`[AgentPersonaService] Message delivery failed for ${id}`);
+      this.registry.setLoading(id, false);
+      this.graphRunning.value = false;
+      this.messages.push({
+        id: `sys_${Date.now()}_delivery_fail`,
+        channelId: id,
+        role: 'system',
+        content: 'Message could not be delivered — the connection to the agent appears to be down. Please try again.',
+      });
+    }
+
+    return delivered;
   }
 
 
@@ -467,18 +486,42 @@ export class AgentPersonaService {
     this.graphRunning.value = true;
     this.registry.setLoading(id, true);
 
-    return this.wsService.send(id, {
-      type: 'continue_run',
-      timestamp: Date.now(),
-    });
+    let delivered: boolean;
+    try {
+      delivered = await this.wsService.send(id, {
+        type: 'continue_run',
+        timestamp: Date.now(),
+      });
+    } catch {
+      delivered = false;
+    }
+
+    if (!delivered) {
+      console.warn(`[AgentPersonaService] continue_run delivery failed for ${id}`);
+      this.registry.setLoading(id, false);
+      this.graphRunning.value = false;
+      this.messages.push({
+        id: `sys_${Date.now()}_delivery_fail`,
+        channelId: id,
+        role: 'system',
+        content: 'Could not resume the agent — the connection appears to be down. Please try again.',
+      });
+    }
+
+    return delivered;
   }
 
   async emitStopSignal(agentId: string): Promise<boolean> {
     console.log('[AgentPersonaModel] Emitting stop signal for agent:', agentId);
-    const sent = await this.wsService.send(agentId, {
-      type: 'stop_run',
-      timestamp: Date.now(),
-    });
+    let sent: boolean;
+    try {
+      sent = await this.wsService.send(agentId, {
+        type: 'stop_run',
+        timestamp: Date.now(),
+      });
+    } catch {
+      sent = false;
+    }
     console.log('[AgentPersonaModel] Stop signal sent successfully:', sent);
     if (!sent) {
       console.warn(`[AgentPersonaService] Failed to send stop signal on ${agentId}`);
