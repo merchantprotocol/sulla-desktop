@@ -278,15 +278,16 @@ const validateModel = () => {
 };
 
 const handleNext = async () => {
-  if (!validateModel()) {
-    return;
-  }
+  validateModel();  // Always validate to set error
 
   if ((settings.value as any).virtualMachine.memoryInGB <= 4 || (settings.value as any).virtualMachine.numberCPUs <= 2) {
     resourceError.value = 'Please allocate at least 5GB memory and 3 CPUs for the AI services.';
-    return;
   } else {
     resourceError.value = '';
+  }
+
+  if (modelError.value || resourceError.value) {
+    return;
   }
 
   // Save the VM resources and model choice

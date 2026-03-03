@@ -112,7 +112,10 @@ onMounted(async () => {
 });
 
 const handleNextWelcome = async () => {
-  if (!validateEmail() || !validatePassword()) {
+  const emailValid = validateEmail();
+  const passwordValid = validatePassword();
+
+  if (!emailValid || !passwordValid) {
     return;
   }
 
