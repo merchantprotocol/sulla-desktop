@@ -19,7 +19,7 @@ export class OllamaService extends BaseLanguageModel {
   static async create() {
     // Try IntegrationService first, fall back to SullaSettingsModel
     let base = 'http://127.0.0.1:30114';
-    let model = 'tinyllama:latest';
+    let model = '';
     try {
       const integrationService = getIntegrationService();
       const values = await integrationService.getFormValues('ollama');
@@ -31,7 +31,7 @@ export class OllamaService extends BaseLanguageModel {
       if (valMap.model) model = valMap.model;
     } catch {
       // IntegrationService not ready yet — use legacy settings
-      model = await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
+      model = await SullaSettingsModel.get('sullaModel', '');
     }
     const timeout = await SullaSettingsModel.get('localTimeoutSeconds', 120);
 

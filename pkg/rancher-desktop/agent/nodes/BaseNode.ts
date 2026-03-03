@@ -671,7 +671,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             state.metadata.hadToolCalls = false;
             state.metadata.hadUserMessages = false;
             let reply: NormalizedResponse | null = await this.llm.chat(messages, {
-                model: state.metadata.llmModel,
                 maxTokens: options.maxTokens,
                 format: options.format,
                 temperature: options.temperature,

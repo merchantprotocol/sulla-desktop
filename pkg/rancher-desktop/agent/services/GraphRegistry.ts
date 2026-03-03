@@ -155,7 +155,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
       llmModel = await getCurrentModel();
       llmLocal = (await getCurrentMode()) === 'local';
     } else {
-      llmModel = await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
+      llmModel = await SullaSettingsModel.get('sullaModel', '');
       llmLocal = true;
     }
   } else {
@@ -233,7 +233,9 @@ async function buildAgentState(wsChannel: string, threadId?: string): Promise<Ag
   const id = threadId ?? nextThreadId();
 
   const mode = await SullaSettingsModel.get('modelMode', 'local');
-  const llmModel = mode === 'remote' ? await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning') : await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
+  const llmModel = mode === 'remote'
+    ? await SullaSettingsModel.get('remoteModel', '')
+    : await SullaSettingsModel.get('sullaModel', '');
   const llmLocal = mode === 'local';
 
   return {

@@ -99,7 +99,7 @@ jobs:
     # up `yarn` to get `yarn lint:spelling` to work.
     - name: Drop all dependencies
       run: |
-        yq --inplace '.dependencies = {} | .devDependencies = {}' package.json
+        yq --inplace '.dependencies = {} | .devDependencies = {} | del(.scripts.postinstall)' package.json
         rm -f yarn.lock
     - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
       with:

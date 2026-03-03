@@ -17,7 +17,7 @@ export class GrokService extends OpenAICompatibleService {
 
     return new GrokService({
       id: 'grok',
-      model: valMap.model || 'grok-4-1-fast-reasoning',
+      model: valMap.model || '',
       baseUrl: 'https://api.x.ai/v1',
       apiKey: valMap.api_key || '',
     });

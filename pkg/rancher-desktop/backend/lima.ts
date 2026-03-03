@@ -2488,7 +2488,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     try {
       await this.progressTracker.action('removing existing certificates', 50,
-        this.execCommand({ root: true }, '/bin/sh', '-c', 'rm -f /usr/local/share/ca-certificates/rd-*.crt'));
+        this.execCommand({ root: true }, '/bin/sh', '-c',
+          'rm -f /usr/local/share/ca-certificates/rd-*.crt && rm -f /etc/ssl/certs/ca-cert-rd-*.pem && update-ca-certificates --fresh'));
 
       if (certs && certs.length > 0) {
         await this.progressTracker.action('bundling certificates', 50, async function() {

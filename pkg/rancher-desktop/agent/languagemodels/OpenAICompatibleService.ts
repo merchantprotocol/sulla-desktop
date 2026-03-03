@@ -150,9 +150,16 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     const sanitizedMessages = this.sanitizeMessages(messages);
     const baseMessages: any[] = sanitizedMessages.map(m => ({ role: m.role, content: m.content }));
 
+    // Some servers (e.g. vLLM with DeepSeek chat templates) require system
+    // messages to appear before any other role. Hoist them to the front while
+    // preserving relative order within each group.
+    const systemMsgs = baseMessages.filter(m => m.role === 'system');
+    const otherMsgs  = baseMessages.filter(m => m.role !== 'system');
+    const orderedMessages = [...systemMsgs, ...otherMsgs];
+
     const body: any = {
       model: options.model ?? this.model,
-      messages: baseMessages,
+      messages: orderedMessages,
     };
 
     if (options.maxTokens) {
@@ -179,17 +186,25 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       .filter(m => m.role !== 'tool')
       .map(m => {
         if (Array.isArray(m.content)) {
-          return { ...m };
+          // Flatten Anthropic-style content blocks (tool_result, text, etc.)
+          // into a plain string for OpenAI-compatible endpoints.
+          const flat = m.content
+            .map((block: any) => {
+              if (typeof block === 'string') return block;
+              if (typeof block.content === 'string') return block.content;
+              if (typeof block.text === 'string') return block.text;
+              return '';
+            })
+            .filter(Boolean)
+            .join('\n');
+          return { ...m, content: flat.trim() };
         }
         return {
           ...m,
           content: typeof m.content === 'string' ? m.content.trim() : String(m.content ?? '').trim(),
         };
       })
-      .filter(m => {
-        if (Array.isArray(m.content)) return m.content.length > 0;
-        return typeof m.content === 'string' && m.content.length > 0;
-      });
+      .filter(m => typeof m.content === 'string' && m.content.length > 0);
   }
 
   /**

@@ -13,6 +13,7 @@ import { createN8nService } from './agent/services/N8nService';
 import { VectorBaseModel } from '@pkg/agent/database/VectorBaseModel';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
+import { getLlamaCppService } from '@pkg/agent/services/LlamaCppService';
 import * as path from 'path';
 import { app } from 'electron';
 import { execSync } from 'child_process';
@@ -169,6 +170,15 @@ export async function instantiateSullaStart(): Promise<void> {
         }
 
         SullaIntegrations();
+
+        // Ensure llama.cpp binaries are installed on bare metal (not inside Lima VM)
+        try {
+            const llamaCppService = getLlamaCppService();
+            await llamaCppService.ensure();
+            console.log('[Background] LlamaCppService initialized - llama.cpp ready:', llamaCppService.isReady);
+        } catch (error) {
+            console.error('[Background] Failed to ensure llama.cpp:', error);
+        }
 
     } catch (ex: any) {
         console.error('[Background] Failed to initialize Sulla:', ex);

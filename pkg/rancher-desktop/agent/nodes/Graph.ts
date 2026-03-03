@@ -466,7 +466,9 @@ export async function createInitialThreadState<T extends BaseThreadState>(
   const msgId = nextMessageId();
   
   const mode = await SullaSettingsModel.get('modelMode', 'local');
-  const llmModel = mode === 'remote' ? await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning') : await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
+  const llmModel = mode === 'remote'
+    ? await SullaSettingsModel.get('remoteModel', '')
+    : await SullaSettingsModel.get('sullaModel', '');
   const llmLocal = mode === 'local';
   
   const baseMetadata: BaseThreadState['metadata'] = {
@@ -623,6 +625,7 @@ export function createAgentGraph(): Graph<AgentGraphState> {
   graph.addConditionalEdge('agent', state => {
     const agentMeta = (state.metadata as any).agent || {};
     const agentStatus = String(agentMeta.status || '').trim().toLowerCase();
+    const hadToolCalls = Boolean((state.metadata as any).hadToolCalls);
 
     if (agentStatus === 'done') {
       console.log('[AgentGraph] Agent reported DONE - ending');
@@ -631,6 +634,11 @@ export function createAgentGraph(): Graph<AgentGraphState> {
 
     if (agentStatus === 'blocked') {
       console.log('[AgentGraph] Agent reported BLOCKED - ending');
+      return 'end';
+    }
+
+    if (agentStatus !== 'continue' && !hadToolCalls) {
+      console.log(`[AgentGraph] Agent status '${agentStatus || 'unknown'}' is not CONTINUE - ending`);
       return 'end';
     }
 

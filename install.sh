@@ -19,8 +19,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REPO_URL="https://github.com/sulla-ai/sulla-desktop.git"
 REPO_DIR="sulla-desktop"
-NODE_MAJOR=22
-NODE_VERSION="22.14.0"
+NODE_VERSION="22.22.0"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,15 +94,19 @@ ensure_nvm() {
 
 ensure_node() {
   ensure_nvm
-  local current_major=""
+  local current=""
   if command_exists node; then
-    current_major="$(node -v | sed 's/v\([0-9]*\).*/\1/')"
+    current="$(node -v | sed 's/^v//')"
   fi
-  if [ "$current_major" = "$NODE_MAJOR" ]; then
-    ok "Node.js $(node -v) already installed"
+  if [ "$current" = "$NODE_VERSION" ]; then
+    ok "Node.js v${current} already installed"
     return
   fi
-  info "Installing Node.js v${NODE_VERSION} via nvm..."
+  if [ -n "$current" ]; then
+    info "Node.js v${current} found but v${NODE_VERSION} required — upgrading..."
+  else
+    info "Installing Node.js v${NODE_VERSION} via nvm..."
+  fi
   nvm install "$NODE_VERSION"
   nvm use "$NODE_VERSION"
   ok "Node.js $(node -v) active"
@@ -165,10 +168,18 @@ ensure_repo() {
     return
   fi
 
-  if [ -d "$REPO_DIR" ] && [ -f "$REPO_DIR/package.json" ]; then
+  if [ -d "$REPO_DIR" ] && [ -d "$REPO_DIR/.git" ]; then
+    # Repo dir exists with a valid .git — just update
     info "Updating existing repo..."
     cd "$REPO_DIR"
     git pull --ff-only || warn "git pull failed — continuing with existing code"
+    REPO_DIR="$(pwd)"
+  elif [ -d "$REPO_DIR" ]; then
+    # Dir exists but is not a valid git repo (partial clone) — remove and re-clone
+    warn "Found incomplete $REPO_DIR from a previous run — removing and re-cloning..."
+    rm -rf "$REPO_DIR"
+    git clone "$REPO_URL" "$REPO_DIR"
+    cd "$REPO_DIR"
     REPO_DIR="$(pwd)"
   else
     info "Cloning sulla-desktop..."
@@ -183,11 +194,28 @@ ensure_repo() {
 # Install deps, build, launch
 # ---------------------------------------------------------------------------
 install_deps() {
-  if [ -d "node_modules" ] && [ -d "node_modules/electron" ]; then
+  # Remove stale package-lock.json (we use yarn.lock)
+  [ -f "package-lock.json" ] && rm -f package-lock.json
+
+  # Ensure nvm has the right Node active in this shell
+  # (handles case where nvm was installed earlier in this script but shell lost context)
+  ensure_nvm
+  nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
+
+  if [ -d "node_modules" ] && [ -d "node_modules/electron" ] && [ -d "node_modules/tsx" ]; then
     ok "node_modules already present — skipping install (run 'yarn install' to refresh)"
   else
+    # Clean up partial node_modules from a failed previous run
+    if [ -d "node_modules" ]; then
+      warn "Found incomplete node_modules from a previous run — cleaning up..."
+      rm -rf node_modules
+    fi
     info "Installing dependencies (this may take a few minutes)..."
-    yarn install
+    yarn install --ignore-engines || {
+      warn "yarn install failed — retrying with clean state..."
+      rm -rf node_modules
+      yarn install --ignore-engines
+    }
     ok "Dependencies installed"
   fi
 }
@@ -196,6 +224,11 @@ build_app() {
   if [ -d "dist" ] && [ -f "dist/app/background.js" ]; then
     ok "Build artifacts present — skipping build (run 'yarn build' to rebuild)"
   else
+    # Clean up partial build artifacts from a failed previous run
+    if [ -d "dist" ]; then
+      warn "Found incomplete build from a previous run — cleaning up..."
+      rm -rf dist
+    fi
     info "Building Sulla Desktop (this may take several minutes)..."
     NODE_OPTIONS="--max-old-space-size=12288" yarn build
     ok "Build complete"

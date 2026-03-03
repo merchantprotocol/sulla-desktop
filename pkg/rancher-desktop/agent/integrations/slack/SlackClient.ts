@@ -189,8 +189,8 @@ export class SlackClient {
     const mode = await SullaSettingsModel.get('modelMode', 'local');
     state.metadata.llmLocal = mode === 'local';
     state.metadata.llmModel = mode === 'remote'
-      ? await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning')
-      : await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
+      ? await SullaSettingsModel.get('remoteModel', '')
+      : await SullaSettingsModel.get('sullaModel', '');
 
     state.metadata.wsChannel = SLACK_GRAPH_CHANNEL;
     state.messages.push({

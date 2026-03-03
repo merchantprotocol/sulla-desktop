@@ -25,3 +25,4 @@
 justfile
 .env
 log/*
+llm/

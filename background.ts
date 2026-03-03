@@ -39,6 +39,8 @@ import { Snapshots } from '@pkg/main/snapshots/snapshots';
 import { Snapshot, SnapshotDialog } from '@pkg/main/snapshots/types';
 import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
+import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
+import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { spawnFile } from '@pkg/utils/childProcess';
 import getCommandLineArgs from '@pkg/utils/commandLine';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
@@ -55,8 +57,7 @@ import getWSLVersion from '@pkg/utils/wslVersion';
 import * as window from '@pkg/window';
 import { closeDashboard, openDashboard } from '@pkg/window/dashboard';
 import { openPreferences, preferencesSetDirtyFlag } from '@pkg/window/preferences';
-import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
-import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
+
 import { SullaSettingsModel } from './pkg/rancher-desktop/agent/database/models/SullaSettingsModel';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
@@ -203,18 +204,12 @@ Electron.protocol.registerSchemesAsPrivileged([{ scheme: 'app' }, {
   },
 }]);
 
-
-
-
-////////////////////////////////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////////////////////////////
 // SULLA DESKTOP - START
 // Commands to shut down database connections
-////////////////////////////////////////////////////////////////////////////////
-
+// /////////////////////////////////////////////////////////////////////////////
 
 hookSullaEnd(Electron, mainEvents, window);
-
-
 
 const SULLA_WEB_REQUEST_LOG_DIR = path.join(process.cwd(), 'log');
 const SULLA_WEB_REQUEST_LOG_FILE = path.join(SULLA_WEB_REQUEST_LOG_DIR, 'background-web-requests.log');
@@ -231,12 +226,12 @@ function writeSullaWebRequestEvent(event: SullaWebRequestLogEvent): void {
     fs.mkdirSync(SULLA_WEB_REQUEST_LOG_DIR, { recursive: true });
     fs.appendFileSync(SULLA_WEB_REQUEST_LOG_FILE, [
       '---',
-      `timestamp: ${new Date().toISOString()}`,
-      `direction: ${event.direction}`,
-      `method: ${event.method || 'unknown'}`,
-      `statusCode: ${typeof event.statusCode === 'number' ? event.statusCode : 'n/a'}`,
-      `resourceType: ${event.resourceType || 'unknown'}`,
-      `url: ${event.url || 'unknown'}`,
+      `timestamp: ${ new Date().toISOString() }`,
+      `direction: ${ event.direction }`,
+      `method: ${ event.method || 'unknown' }`,
+      `statusCode: ${ typeof event.statusCode === 'number' ? event.statusCode : 'n/a' }`,
+      `resourceType: ${ event.resourceType || 'unknown' }`,
+      `url: ${ event.url || 'unknown' }`,
       'payload:',
       payloadText,
       '',
