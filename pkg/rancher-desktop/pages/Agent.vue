@@ -618,6 +618,11 @@ onMounted(async () => {
   const n8nVueBridgeService = getN8nVueBridgeService();
   n8nVueBridgeService.markInitialized('Agent.vue:onMounted');
 
+  // Re-subscribe persona service WS handlers (they get unsubscribed on unmount)
+  registry.state.agents.forEach((agent: { agentId: string }) => {
+    registry.getOrCreatePersonaService(agent.agentId).startListening();
+  });
+
   // Start human presence tracker — writes presence to Redis so agents know where the human is
   presenceTracker.setCurrentView('Agent Chat');
   presenceTracker.setCurrentActivity('chatting with agent');

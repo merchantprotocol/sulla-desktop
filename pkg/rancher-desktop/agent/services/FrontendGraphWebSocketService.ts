@@ -50,6 +50,8 @@ export class FrontendGraphWebSocketService {
     const registry = getActiveAgentsRegistry();
     await registry.register({
       agentId: FRONTEND_CHANNEL_ID,
+      name: 'Sulla',
+      role: 'Frontend chat agent',
       channel: FRONTEND_CHANNEL_ID,
       type: 'frontend',
       status: 'running',

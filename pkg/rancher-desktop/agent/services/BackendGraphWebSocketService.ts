@@ -259,6 +259,8 @@ export class BackendGraphWebSocketService {
     const registry = getActiveAgentsRegistry();
     await registry.register({
       agentId: 'heartbeat',
+      name: 'Radius',
+      role: 'Autonomous heartbeat agent',
       channel: BACKEND_CHANNEL_ID,
       type: 'heartbeat',
       status: 'running',

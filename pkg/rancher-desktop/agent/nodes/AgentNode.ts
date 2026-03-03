@@ -17,19 +17,16 @@ You're incredible about finding ways of getting things accomplished;
 You're incredibly resourceful;
 You're constantly thinking outside the box when tasks don't easily come together;`;
 
-const AGENT_PROMPT_CHANNEL_AWARENESS = `## Inter-Agent Communication
-
-You run on the **chat-controller** WebSocket channel. You are part of an agent network:
-- **dreaming-protocol** — the autonomous heartbeat agent (always available, runs background work)
-- **chat-controller** — you (the frontend agent, handles direct human conversations)
-
-To message another agent, use the **send_channel_message** tool with the target channel name, your \`sender_id\` ("chat-controller"), and your \`sender_channel\` ("chat-controller").
-
-**Critical rules:**
-- \`send_channel_message\` is **fire-and-forget**. After sending, continue your work normally.
-- Do NOT poll, search Redis, or look for a reply. If the receiving agent responds, their reply will arrive on your channel as an incoming message automatically.
-- There is no inbox to check. There is no message thread in Redis. Do not go looking for one.
-- If no reply comes, the agent either hasn't responded yet or chose not to. You can try again or move on.`;
+async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
+  try {
+    const { getActiveAgentsRegistry } = await import('../services/ActiveAgentsRegistry');
+    const registry = getActiveAgentsRegistry();
+    const block = await registry.buildContextBlock();
+    return `${block}\n\nYou run on the **${wsChannel}** WebSocket channel. Your \`sender_id\` and \`sender_channel\` are both \`${wsChannel}\`.`;
+  } catch {
+    return `## Inter-Agent Communication\n\nYou run on the **${wsChannel}** WebSocket channel. Agent registry unavailable.`;
+  }
+}
 
 const AGENT_PROMPT_DIRECTIVE = `**PRIMARY DIRECTIVE (highest priority — never violate):**
 Accomplish whatever the user has asked in the conversation thread.
@@ -58,7 +55,7 @@ Always narrate what you learned so your future self can read the conversation hi
 - You MUST end every response with exactly ONE of the three wrapper blocks: DONE, BLOCKED, or CONTINUE.
 - If the task is fully accomplished, output the DONE wrapper.
 - If execution is blocked and you cannot proceed, output the BLOCKED wrapper.
-- If you have made progress but the task is not yet complete, output the CONTINUE wrapper with a status report.`;
+- If you have made progress but the task is not yet complete, output the CONTINUE wrapper with a one-line status message of what you are working on right now.`;
 
 const AGENT_PROMPT_COMPLETION_WRAPPERS = `
 CRITICAL CONTINUITY RULES:
@@ -80,7 +77,9 @@ BLOCKED wrapper (use when goal cannot be completed — missing dependency/creden
 
 CONTINUE wrapper (use when you made progress but the task is NOT yet complete):
 <AGENT_CONTINUE>
-<STATUS_REPORT>[what was accomplished this cycle, what remains]</STATUS_REPORT>
+<STATUS_REPORT>[one-line: what you are actively working on now]</STATUS_REPORT>
+OR
+<STATUS_MESSAGE>[one-line: what you are actively working on now]</STATUS_MESSAGE>
 </AGENT_CONTINUE>
 
 You MUST end every response with exactly ONE of these three wrappers.
@@ -93,6 +92,7 @@ const BLOCKER_REASON_XML_REGEX = /<BLOCKER_REASON>([\s\S]*?)<\/BLOCKER_REASON>/i
 const UNBLOCK_REQUIREMENTS_XML_REGEX = /<UNBLOCK_REQUIREMENTS>([\s\S]*?)<\/UNBLOCK_REQUIREMENTS>/i;
 const AGENT_CONTINUE_XML_REGEX = /<AGENT_CONTINUE>([\s\S]*?)<\/AGENT_CONTINUE>/i;
 const STATUS_REPORT_XML_REGEX = /<STATUS_REPORT>([\s\S]*?)<\/STATUS_REPORT>/i;
+const STATUS_MESSAGE_XML_REGEX = /<STATUS_MESSAGE>([\s\S]*?)<\/STATUS_MESSAGE>/i;
 
 // ============================================================================
 // AGENT NODE
@@ -129,7 +129,9 @@ export class AgentNode extends BaseNode {
     // ----------------------------------------------------------------
     // 1. BUILD SYSTEM PROMPT
     // ----------------------------------------------------------------
-    const systemPrompt = `${AGENT_PROMPT_BASE}\n\n${AGENT_PROMPT_CHANNEL_AWARENESS}\n\n${AGENT_PROMPT_DIRECTIVE}\n\n${AGENT_PROMPT_COMPLETION_WRAPPERS}`;
+    const wsChannel = String(state.metadata.wsChannel || 'chat-controller');
+    const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
+    const systemPrompt = `${AGENT_PROMPT_BASE}\n\n${channelAwareness}\n\n${AGENT_PROMPT_DIRECTIVE}\n\n${AGENT_PROMPT_COMPLETION_WRAPPERS}`;
 
     const enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
       includeSoul: true,
@@ -152,15 +154,27 @@ export class AgentNode extends BaseNode {
     const userVisibleResultText = this.toUserVisibleAgentMessage(agentResultText, agentOutcome);
 
     // Store outcome on metadata
+    const statusNote = this.toOneLineStatusNote(
+      agentOutcome.statusReport
+      || agentOutcome.blockerReason
+      || agentOutcome.summary
+      || '',
+    );
+
     (state.metadata as any).agent = {
       ...((state.metadata as any).agent || {}),
       status: agentOutcome.status,
       status_report: agentOutcome.statusReport,
       blocker_reason: agentOutcome.blockerReason,
       unblock_requirements: agentOutcome.unblockRequirements,
+      status_note: statusNote,
       response: agentOutcome.status === 'done' ? agentResultText : null,
       updatedAt: Date.now(),
     };
+
+    if (statusNote) {
+      await this.updateAgentStatusNote(state, statusNote);
+    }
 
     // Push assistant response to conversation thread
     // appendResponse already stores native content arrays (including text+tool_use),
@@ -367,8 +381,11 @@ export class AgentNode extends BaseNode {
     if (continueMatch) {
       const continueBlock = String(continueMatch[1] || '').trim();
       const statusReportMatch = STATUS_REPORT_XML_REGEX.exec(continueBlock);
+      const statusMessageMatch = STATUS_MESSAGE_XML_REGEX.exec(continueBlock);
       const statusReport = statusReportMatch
         ? String(statusReportMatch[1] || '').trim() || null
+        : statusMessageMatch
+          ? String(statusMessageMatch[1] || '').trim() || null
         : continueBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
 
       return {
@@ -429,5 +446,26 @@ export class AgentNode extends BaseNode {
     }
 
     return proseWithoutWrappers;
+  }
+
+  private toOneLineStatusNote(value: string): string | null {
+    const normalized = String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 240);
+    return normalized || null;
+  }
+
+  private async updateAgentStatusNote(state: BaseThreadState, statusNote: string): Promise<void> {
+    const channel = String(state.metadata.wsChannel || '').trim();
+    if (!channel || !statusNote) return;
+
+    try {
+      const { getActiveAgentsRegistry } = await import('../services/ActiveAgentsRegistry');
+      const registry = getActiveAgentsRegistry();
+      await registry.updateStatusNoteByChannel(channel, statusNote);
+    } catch (error) {
+      console.warn('[AgentNode] Failed to update active-agent status note:', error);
+    }
   }
 }

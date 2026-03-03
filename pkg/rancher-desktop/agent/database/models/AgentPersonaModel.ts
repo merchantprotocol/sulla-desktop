@@ -487,8 +487,14 @@ export class AgentPersonaService {
     return sent;
   }
 
+  /** Idempotent — safe to call on every mount. No-ops if already listening. */
+  startListening(): void {
+    this.connectAndListen();
+  }
+
   stopListening(agentIds?: string[]): void {
-    // Only disconnect WebSockets - no global event handler to unsubscribe
+    // Unsubscribe message handlers but do NOT disconnect the shared WebSocket —
+    // other services (FrontendGraphWebSocketService, etc.) share the same connection.
     const ids = agentIds?.length ? agentIds : [...this.wsUnsub.keys()];
     for (const agentId of ids) {
       const unsub = this.wsUnsub.get(agentId);
@@ -500,7 +506,6 @@ export class AgentPersonaService {
         }
         this.wsUnsub.delete(agentId);
       }
-      this.wsService.disconnect(agentId);
     }
   }
 
