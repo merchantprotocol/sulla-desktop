@@ -1,14 +1,15 @@
 <template>
-  <div class="mx-auto p-6 dark:bg-gray-800">
+  <div class="mx-auto p-6 dark:bg-gray-800/30">
+    <div v-if="resourceError" class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md dark:bg-red-900 dark:border-red-600 dark:text-red-100">{{ resourceError }}</div>
     <form @submit.prevent="handleNext">
-      <h2 class="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">Specify AI Resources</h2>
+      <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">Specify AI Resources</h2>
       <p class="mb-6 text-gray-600 dark:text-gray-400">Choose the resources allocated to your AI Agent and the local language model. Your agent and the model and all resources they manage will not be allowed to use more than the allocated resources.</p>
 
       <div class="mt-10"></div>
       <rd-fieldset
         legend-text="Virtual Machine Resources"
         legend-tooltip="Allocate CPU and memory for the AI services"
-        class="mb-6 mt-6"
+        class="mb-6 mt-6 dark:text-gray-100"
       >
         <system-preferences
           :memory-in-g-b="settings!.virtualMachine.memoryInGB"
@@ -28,9 +29,9 @@
 
       <rd-fieldset legend-text="AI Model"
         legend-tooltip="Select the LLM model to use. Models are filtered based on your allocated resources."
-        class="mb-6 mt-6"
+        class="mb-6 mt-6 dark:text-gray-100"
       >
-        <select class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 mb-2" v-model="sullaModel">
+        <select class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 mb-2" :class="{ 'border-red-500': !!modelError }" v-model="sullaModel">
           <option
             v-for="model in availableModels"
             :key="model.name"
@@ -42,11 +43,12 @@
           </option>
         </select>
         <p class="text-sm text-gray-500 dark:text-gray-400 italic">{{ selectedModelDescription }}</p>
+        <p v-if="modelError" class="text-red-500 text-sm mt-1">{{ modelError }}</p>
       </rd-fieldset>
 
       <div class="mt-10"></div>
 
-      <button type="button" @click="isOptionsOpen = !isOptionsOpen" class="w-full text-left p-2 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium">
+      <button type="button" @click="isOptionsOpen = !isOptionsOpen" class="w-full text-left p-2 hover:bg-gray-200 dark:hover:bg-gray-700 dark:text-gray-400 transition-colors text-sm font-medium">
         Options {{ isOptionsOpen ? '▲' : '▼' }}
       </button>
 
@@ -55,22 +57,22 @@
           <div class="mb-4">
             <label class="flex items-center">
               <input type="checkbox" v-model="enableTelemetry" @change="onTelemetryChange" class="mr-2">
-              <span class="text-sm">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
+              <span class="text-sm dark:text-gray-400">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
             </label>
           </div>
 
           <div class="mb-4">
             <label class="flex items-center">
               <input type="checkbox" v-model="enableKubernetes" @change="onKubernetesChange" class="mr-2">
-              <span class="text-sm">Enable Kubernetes Mode (requires more resources)</span>
+              <span class="text-sm dark:text-gray-400">Enable Kubernetes Mode (requires more resources)</span>
             </label>
           </div>
         </div>
       </Transition>
 
-      <div class="flex justify-end">
-        <button v-if="showBack" type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md hover:bg-gray-200 cursor-pointer">Back</button>
-        <button type="submit" class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90" :style="{ backgroundColor: '#30a5e9' }" :disabled="!sullaModel || settings!.virtualMachine.memoryInGB <= 4 || settings!.virtualMachine.numberCPUs <= 2">Next</button>
+      <div class="flex justify-end mt-5">
+        <button v-if="showBack" type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md transition-colors font-medium hover:opacity-90 bg-gray-100 hover:bg-gray-200 cursor-pointer">Back</button>
+        <button type="submit" class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90" :style="{ backgroundColor: '#30a5e9' }">Next</button>
       </div>
     </form>
   </div>
@@ -111,6 +113,12 @@ const enableKubernetes = ref(false);
 
 // Reactive ref for options accordion
 const isOptionsOpen = ref(false);
+
+// Reactive ref for model error
+const modelError = ref('');
+
+// Reactive ref for resource error
+const resourceError = ref('');
 
 // Set defaults
 settings.value.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
@@ -260,12 +268,33 @@ const onTelemetryChange = async () => {
   });
 };
 
+const validateModel = () => {
+  if (!sullaModel.value || sullaModel.value.trim() === '') {
+    modelError.value = 'Please select an AI model.';
+    return false;
+  }
+  modelError.value = '';
+  return true;
+};
+
 const handleNext = async () => {
+  validateModel();  // Always validate to set error
+
+  if ((settings.value as any).virtualMachine.memoryInGB <= 4 || (settings.value as any).virtualMachine.numberCPUs <= 2) {
+    resourceError.value = 'Please allocate at least 5GB memory and 3 CPUs for the AI services.';
+  } else {
+    resourceError.value = '';
+  }
+
+  if (modelError.value || resourceError.value) {
+    return;
+  }
+
   // Save the VM resources and model choice
   await commitChanges({
     virtualMachine: {
-      memoryInGB: settings.value.virtualMachine.memoryInGB,
-      numberCPUs: settings.value.virtualMachine.numberCPUs,
+      memoryInGB: (settings.value as any).virtualMachine.memoryInGB,
+      numberCPUs: (settings.value as any).virtualMachine.numberCPUs,
     },
   });
 
@@ -383,6 +412,10 @@ button:hover {
 input:hover, select:hover {
   border-color: #374151; /* darker gray border */
   background-color: #f3f4f6; /* slightly darker background */
+}
+
+dark input:hover, .dark select:hover {
+  background-color: #4b5563 !important; /* darker background for dark mode */
 }
 
 /* Slide transition for accordion */

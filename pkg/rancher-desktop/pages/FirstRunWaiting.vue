@@ -1,6 +1,6 @@
 <template>
-  <div class="max-w-lg mx-auto p-6 bg-white dark:bg-gray-800">
-    <h2 class="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">Congratulations!</h2>
+  <div class="max-w-lg mx-0 p-6 bg-white dark:bg-gray-800/30">
+    <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">Congratulations!</h2>
     <p class="mb-6 text-gray-600 dark:text-gray-400">
       Now the hard part is just waiting. This process may take a while depending on your Internet connection speed. If this process is interrupted it may make using the software very difficult. lol.
     </p>

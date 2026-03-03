@@ -174,7 +174,7 @@ export default {
 </script>
 
 <template>
-  <div class="system-preferences">
+  <div class="system-preferences dark:text-gray-400">
     <rd-slider
       id="memoryInGBWrapper"
       ref="memory"

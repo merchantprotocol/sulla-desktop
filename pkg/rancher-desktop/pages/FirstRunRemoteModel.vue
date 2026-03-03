@@ -1,12 +1,12 @@
 <template>
-  <div class="max-w-lg mx-auto p-6 bg-white dark:bg-gray-800">
+  <div class="max-w-lg mx-0 p-6 bg-white dark:bg-gray-800/30">
     <form @submit.prevent="handleNext">
-      <h2 class="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">Remote Model (Optional)</h2>
+      <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">Remote Model (Optional)</h2>
       <p class="mb-6 text-gray-600 dark:text-gray-400">
         Optionally enable a remote model. While your system will be fully configured to run a local model, at times that can be very slow, and many people prefer to run a remote model for better performance. You can toggle between local and remote models at any time.
       </p>
 
-      <rd-fieldset legend-text="Remote Model Configuration" class="mb-6">
+      <rd-fieldset legend-text="Remote Model Configuration" class="mb-6 dark:text-gray-100">
         <!-- Error display -->
         <div v-if="error" class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md">
           {{ error }}
@@ -41,6 +41,7 @@
                 v-model="formData[property.key]"
                 :disabled="selectOptionsLoading[property.key]"
                 class="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+                :class="{ 'border-red-500': !!errors[property.key] }"
               >
                 <option value="" disabled>
                   {{ selectOptionsLoading[property.key] ? 'Loading...' : (property.placeholder || 'Select...') }}
@@ -60,7 +61,9 @@
                 class="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Refresh options"
               >
-                🔄
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
               </button>
             </div>
 
@@ -73,6 +76,7 @@
               :placeholder="property.placeholder"
               :required="property.required"
               class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+              :class="{ 'border-red-500': !!errors[property.key] }"
               @blur="onFieldBlur(property.key)"
             >
 
@@ -90,9 +94,9 @@
         </div>
       </rd-fieldset>
 
-      <div class="flex justify-between">
-        <button type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md hover:bg-gray-200 cursor-pointer">Back</button>
-        <button type="submit" class="px-6 py-2 text-white rounded-md hover:opacity-90" :style="{ backgroundColor: '#30a5e9' }">Next</button>
+      <div class="flex justify-between mt-5">
+        <button type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md transition-colors font-medium hover:opacity-90 bg-gray-100 hover:bg-gray-200 cursor-pointer">Back</button>
+        <button type="submit" class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90" :style="{ backgroundColor: '#30a5e9' }">Next</button>
       </div>
     </form>
   </div>
@@ -352,5 +356,9 @@ button:hover {
 input:hover, select:hover {
   border-color: #374151; /* darker gray border */
   background-color: #f3f4f6; /* slightly darker background */
+}
+
+.dark input:hover, .dark select:hover {
+  background-color: #4b5563 !important; /* darker background for dark mode */
 }
 </style>
