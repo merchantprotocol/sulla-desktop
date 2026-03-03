@@ -1,81 +1,61 @@
 import { BaseTool, ToolResponse } from "../base";
-import { execSync } from 'child_process';
-import path from 'path';
+import { runCommand } from "../util/CommandRunner";
 
 /**
- * Git Pull Tool - Pulls from a remote repository.
+ * Git Pull Tool - Pull commits from a remote repository.
+ * Runs inside the Lima VM for filesystem consistency with exec tool.
  */
 export class GitPullWorker extends BaseTool {
   name: string = '';
   description: string = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { absolutePath } = input;
-    const remote = input.remote || 'origin';
-    const branch = input.branch || '';
+    const { absolutePath, remote = 'origin', branch } = input;
 
     try {
-      // Resolve the repo root from the given path
-      const repoRoot = execSync(`git -C "${absolutePath}" rev-parse --show-toplevel`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get repo root
+      const rootResult = await runCommand(
+        `git -C "${absolutePath}" rev-parse --show-toplevel`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      
+      if (rootResult.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git error: ${rootResult.stderr || rootResult.stdout}` };
+      }
+      
+      const repoRoot = rootResult.stdout.trim();
 
-      // Determine branch — use provided or current branch
-      const targetBranch = branch || execSync(`git -C "${repoRoot}" rev-parse --abbrev-ref HEAD`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
-
-      const pullOutput = execSync(`git -C "${repoRoot}" pull ${remote} ${targetBranch}`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
-
-      // Check for merge conflicts after pull
-      let conflictInfo = '';
-      try {
-        const conflictFiles = execSync(`git -C "${repoRoot}" diff --name-only --diff-filter=U`, {
-          stdio: 'pipe',
-          env: { ...process.env },
-        }).toString().trim();
-
-        if (conflictFiles) {
-          conflictInfo = `\n\nMERGE CONFLICTS detected in:\n${conflictFiles}`;
-        }
-      } catch {
-        // diff command failure is non-fatal
+      // Build pull command
+      let cmd = `git -C "${repoRoot}" pull ${remote}`;
+      if (branch) {
+        cmd += ` ${branch}`;
       }
 
-      return {
-        successBoolean: true,
-        responseString: `Pull successful: ${remote}/${targetBranch} in ${repoRoot}\n${pullOutput}${conflictInfo}`,
-      };
+      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
+      
+      if (result.exitCode !== 0) {
+        // Check for merge conflicts
+        const conflictCheck = await runCommand(
+          `git -C "${repoRoot}" diff --name-only --diff-filter=U`,
+          [],
+          { runInLimaShell: true, timeoutMs: 30_000 }
+        );
+        
+        if (conflictCheck.stdout.trim()) {
+          const conflictFiles = conflictCheck.stdout.trim().split('\n');
+          return { 
+            successBoolean: false, 
+            responseString: `Pull completed with merge conflicts in ${conflictFiles.length} file(s):\n${conflictFiles.join('\n')}\n\nUse git_conflicts to see details.` 
+          };
+        }
+        
+        return { successBoolean: false, responseString: `Git pull failed: ${result.stderr || result.stdout}` };
+      }
+
+      return { successBoolean: true, responseString: result.stdout.trim() || 'Pull completed successfully.' };
     } catch (error: any) {
-      // Pull failure often means merge conflicts — try to report them
-      let conflictInfo = '';
-      try {
-        const repoRoot = execSync(`git -C "${absolutePath}" rev-parse --show-toplevel`, {
-          stdio: 'pipe',
-          env: { ...process.env },
-        }).toString().trim();
-
-        const conflictFiles = execSync(`git -C "${repoRoot}" diff --name-only --diff-filter=U`, {
-          stdio: 'pipe',
-          env: { ...process.env },
-        }).toString().trim();
-
-        if (conflictFiles) {
-          conflictInfo = `\nMERGE CONFLICTS in:\n${conflictFiles}`;
-        }
-      } catch {
-        // ignore
-      }
-
-      return {
-        successBoolean: false,
-        responseString: `Git pull failed: ${error.message}${conflictInfo}`,
-      };
+      return { successBoolean: false, responseString: `Git pull failed: ${error.message}` };
     }
   }
 }

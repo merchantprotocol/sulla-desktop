@@ -1,8 +1,9 @@
 import { BaseTool, ToolResponse } from "../base";
-import { execSync } from 'child_process';
+import { runCommand } from "../util/CommandRunner";
 
 /**
- * GitHub Add Remote Tool - Worker class for execution
+ * GitHub Add Remote Tool - Add a remote repository to an existing git repository.
+ * Runs inside the Lima VM for filesystem consistency with exec tool.
  */
 export class GitHubAddRemoteWorker extends BaseTool {
   name: string = '';
@@ -12,33 +13,44 @@ export class GitHubAddRemoteWorker extends BaseTool {
     const { absolutePath, remoteName, remoteUrl } = input;
 
     try {
-      // Change to the absolute path directory and add the remote
-      execSync(`cd "${absolutePath}" && git remote add ${remoteName} "${remoteUrl}"`, {
-        stdio: 'pipe',
-        env: { ...process.env }
-      });
+      // Verify path is a git repo
+      const rootResult = await runCommand(
+        `git -C "${absolutePath}" rev-parse --show-toplevel`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      
+      if (rootResult.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Not a git repository: ${absolutePath}` };
+      }
+      
+      const repoRoot = rootResult.stdout.trim();
 
-      // Verify the remote was added
-      const remotesOutput = execSync(`cd "${absolutePath}" && git remote -v`, {
-        encoding: 'utf8',
-        stdio: 'pipe',
-        env: { ...process.env }
-      });
+      // Check if remote already exists
+      const checkResult = await runCommand(
+        `git -C "${repoRoot}" remote get-url "${remoteName}"`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      
+      if (checkResult.exitCode === 0) {
+        return { successBoolean: false, responseString: `Remote '${remoteName}' already exists with URL: ${checkResult.stdout.trim()}` };
+      }
 
-      const responseString = `Remote '${remoteName}' added successfully to repository at ${absolutePath}.
-Remote URL: ${remoteUrl}
-Current remotes:
-${remotesOutput.trim()}`;
+      // Add the remote
+      const cmd = `git -C "${repoRoot}" remote add "${remoteName}" "${remoteUrl}"`;
+      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      
+      if (result.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Failed to add remote: ${result.stderr || result.stdout}` };
+      }
 
-      return {
-        successBoolean: true,
-        responseString
+      return { 
+        successBoolean: true, 
+        responseString: `Added remote '${remoteName}' with URL: ${remoteUrl}` 
       };
     } catch (error: any) {
-      return {
-        successBoolean: false,
-        responseString: `Failed to add remote '${remoteName}' to repository at ${absolutePath}: ${error.message}`
-      };
+      return { successBoolean: false, responseString: `Failed to add remote: ${error.message}` };
     }
   }
 }

@@ -1,39 +1,43 @@
 import { BaseTool, ToolResponse } from "../base";
-import { execSync } from 'child_process';
-import path from 'path';
+import { runCommand } from "../util/CommandRunner";
 
 /**
  * Git Log Tool - Show commit history.
+ * Runs inside the Lima VM for filesystem consistency with exec tool.
  */
 export class GitLogWorker extends BaseTool {
   name: string = '';
   description: string = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { absolutePath } = input;
-    const limit = input.limit ? Number(input.limit) : 20;
-    const oneline = input.oneline !== false;
+    const { absolutePath, limit = 20, oneline = true } = input;
 
     try {
-      const repoRoot = execSync(`git -C "${absolutePath}" rev-parse --show-toplevel`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get repo root
+      const rootResult = await runCommand(
+        `git -C "${absolutePath}" rev-parse --show-toplevel`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      
+      if (rootResult.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git error: ${rootResult.stderr || rootResult.stdout}` };
+      }
+      
+      const repoRoot = rootResult.stdout.trim();
 
-      const format = oneline
-        ? '--oneline --decorate'
-        : '--format=%H%n%an <%ae>%n%ai%n%s%n';
+      const format = oneline 
+        ? '--oneline' 
+        : '--pretty=format:"%h %ad | %s [%an]" --date=short';
+      
+      const cmd = `git -C "${repoRoot}" log ${format} -n ${limit}`;
+      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      
+      if (result.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git log failed: ${result.stderr || result.stdout}` };
+      }
 
-      const output = execSync(`git -C "${repoRoot}" log ${format} -n ${limit}`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-        maxBuffer: 1024 * 1024 * 2,
-      }).toString().trim();
-
-      return {
-        successBoolean: true,
-        responseString: `Commit log for ${repoRoot} (last ${limit}):\n${output}`,
-      };
+      return { successBoolean: true, responseString: `Commit history (last ${limit}):\n${result.stdout.trim()}` };
     } catch (error: any) {
       return { successBoolean: false, responseString: `Git log failed: ${error.message}` };
     }

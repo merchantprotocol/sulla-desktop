@@ -1,56 +1,52 @@
 import { BaseTool, ToolResponse } from "../base";
-import { execSync } from 'child_process';
-import path from 'path';
+import { runCommand } from "../util/CommandRunner";
 
 /**
- * Git Add Tool - Stages specified files for commit.
+ * Git Add Tool - Stage files for commit.
+ * Runs inside the Lima VM for filesystem consistency with exec tool.
  */
 export class GitAddWorker extends BaseTool {
   name: string = '';
   description: string = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { absolutePath } = input;
-    const files: string[] = Array.isArray(input.files) ? input.files : [];
+    const { absolutePath, files } = input;
 
     try {
-      // Resolve the repo root from the given path
-      const repoRoot = execSync(`git -C "${absolutePath}" rev-parse --show-toplevel`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get repo root
+      const rootResult = await runCommand(
+        `git -C "${absolutePath}" rev-parse --show-toplevel`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      
+      if (rootResult.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git error: ${rootResult.stderr || rootResult.stdout}` };
+      }
+      
+      const repoRoot = rootResult.stdout.trim();
 
-      // Stage files — if none specified, stage everything
-      if (files.length > 0) {
-        for (const file of files) {
-          execSync(`git -C "${repoRoot}" add "${file}"`, {
-            stdio: 'pipe',
-            env: { ...process.env },
-          });
-        }
+      let cmd: string;
+      if (files && Array.isArray(files) && files.length > 0) {
+        const fileList = files.map((f: string) => `"${f}"`).join(' ');
+        cmd = `git -C "${repoRoot}" add ${fileList}`;
       } else {
-        execSync(`git -C "${repoRoot}" add -A`, {
-          stdio: 'pipe',
-          env: { ...process.env },
-        });
+        cmd = `git -C "${repoRoot}" add -A`;
       }
 
-      // Show what was staged
-      const statusOutput = execSync(`git -C "${repoRoot}" status --short`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      
+      if (result.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git add failed: ${result.stderr || result.stdout}` };
+      }
 
-      const stagedDesc = files.length > 0 ? files.join(', ') : 'all changes';
-      return {
-        successBoolean: true,
-        responseString: `Staged ${stagedDesc} in ${repoRoot}\n${statusOutput}`,
-      };
+      const stagedMsg = files && files.length > 0 
+        ? `Staged ${files.length} file(s): ${files.join(', ')}`
+        : 'Staged all changes';
+      
+      return { successBoolean: true, responseString: stagedMsg };
     } catch (error: any) {
-      return {
-        successBoolean: false,
-        responseString: `Git add failed: ${error.message}`,
-      };
+      return { successBoolean: false, responseString: `Git add failed: ${error.message}` };
     }
   }
 }
