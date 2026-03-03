@@ -45,7 +45,7 @@
         <p v-if="modelError" class="text-red-500 text-sm mt-1">{{ modelError }}</p>
       </rd-fieldset>
 
-      <div class="mt-10"></div>
+      <div v-if="resourceError" class="my-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md dark:bg-red-900 dark:border-red-600 dark:text-red-100">{{ resourceError }}</div>
 
       <button type="button" @click="isOptionsOpen = !isOptionsOpen" class="w-full text-left p-2 hover:bg-gray-200 dark:hover:bg-gray-700 dark:text-gray-400 transition-colors text-sm font-medium">
         Options {{ isOptionsOpen ? '▲' : '▼' }}
@@ -68,8 +68,6 @@
           </div>
         </div>
       </Transition>
-
-      <div v-if="resourceError" class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md dark:bg-red-900 dark:border-red-600 dark:text-red-100">{{ resourceError }}</div>
 
       <div class="flex justify-end mt-5">
         <button v-if="showBack" type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md transition-colors font-medium hover:opacity-90 bg-gray-100 hover:bg-gray-200 cursor-pointer">Back</button>
