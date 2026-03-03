@@ -166,40 +166,13 @@ onMounted(async () => {
 // Keys match the GGUF_MODELS registry in LlamaCppService.ts
 const GGUF_MODELS = [
   {
-    name: 'qwen3.5-9b', displayName: 'Qwen3.5 9B', size: '5.6GB', minMemoryGB: 8, minCPUs: 4, description: 'Qwen3.5 9B \u2014 latest generation, strong reasoning default',
-  },
-  {
     name: 'qwen3.5-0.8b', displayName: 'Qwen3.5 0.8B', size: '600MB', minMemoryGB: 1, minCPUs: 1, description: 'Qwen3.5 0.8B \u2014 fast and lightweight',
   },
   {
-    name: 'qwen2-1.5b', displayName: 'Qwen2 1.5B', size: '1.0GB', minMemoryGB: 2, minCPUs: 2, description: 'Alibaba\'s Qwen2 model, efficient for basic tasks',
+    name: 'qwen3.5-4b', displayName: 'Qwen3.5 4B', size: '2.7GB', minMemoryGB: 4, minCPUs: 2, description: 'Qwen3.5 4B \u2014 balanced performance and speed',
   },
   {
-    name: 'phi3-mini', displayName: 'Phi-3 Mini', size: '2.2GB', minMemoryGB: 4, minCPUs: 2, description: 'Microsoft\'s efficient 3.8B model, great reasoning capabilities',
-  },
-  {
-    name: 'gemma-2b', displayName: 'Gemma 2B', size: '1.7GB', minMemoryGB: 4, minCPUs: 2, description: 'Google\'s lightweight model, good general performance',
-  },
-  {
-    name: 'llama3.2-1b', displayName: 'Llama 3.2 1B', size: '1.3GB', minMemoryGB: 4, minCPUs: 2, description: 'Meta\'s smallest Llama 3.2, efficient and capable',
-  },
-  {
-    name: 'llama3.2-3b', displayName: 'Llama 3.2 3B', size: '2.0GB', minMemoryGB: 4, minCPUs: 2, description: 'Meta\'s compact Llama 3.2, balanced performance',
-  },
-  {
-    name: 'mistral-7b', displayName: 'Mistral 7B', size: '4.1GB', minMemoryGB: 5, minCPUs: 2, description: 'Excellent 7B model, strong coding and reasoning',
-  },
-  {
-    name: 'qwen2-7b', displayName: 'Qwen2 7B', size: '4.4GB', minMemoryGB: 5, minCPUs: 2, description: 'Alibaba\'s Qwen2 7B model, strong performance',
-  },
-  {
-    name: 'llama3.1-8b', displayName: 'Llama 3.1 8B', size: '4.7GB', minMemoryGB: 6, minCPUs: 2, description: 'Meta\'s latest 8B model, excellent all-around performance',
-  },
-  {
-    name: 'gemma-7b', displayName: 'Gemma 7B', size: '5.0GB', minMemoryGB: 6, minCPUs: 2, description: 'Google\'s larger model, improved capabilities',
-  },
-  {
-    name: 'codellama-7b', displayName: 'Code Llama 7B', size: '3.8GB', minMemoryGB: 5, minCPUs: 2, description: 'Specialized for code generation and understanding',
+    name: 'qwen3.5-9b', displayName: 'Qwen3.5 9B', size: '5.6GB', minMemoryGB: 8, minCPUs: 4, description: 'Qwen3.5 9B \u2014 strongest reasoning, recommended',
   },
 ];
 

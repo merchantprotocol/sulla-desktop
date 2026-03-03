@@ -23,9 +23,12 @@ export interface GGUFModelEntry {
     filename: string;
     url: string;
     size: string;
+    sizeBytes: number;
     minMemoryGB: number;
     minCPUs: number;
     description: string;
+    /** Unsloth HuggingFace repo ID for training (e.g. 'unsloth/Qwen3.5-9B'). */
+    trainingRepo?: string;
 }
 
 export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
@@ -34,24 +37,40 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'Qwen3.5-9B-Q4_K_M.gguf',
         url: 'https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf',
         size: '5.6GB',
+        sizeBytes: 5_600_000_000,
         minMemoryGB: 8,
         minCPUs: 4,
         description: "Qwen3.5 9B — latest generation, strong reasoning default",
+        trainingRepo: 'unsloth/Qwen3.5-9B',
+    },
+    'qwen3.5-4b': {
+        displayName: 'Qwen3.5 4B',
+        filename: 'Qwen3.5-4B-Q4_K_M.gguf',
+        url: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
+        size: '2.7GB',
+        sizeBytes: 2_700_000_000,
+        minMemoryGB: 4,
+        minCPUs: 2,
+        description: "Qwen3.5 4B — balanced performance and speed",
+        trainingRepo: 'unsloth/Qwen3.5-4B',
     },
     'qwen3.5-0.8b': {
         displayName: 'Qwen3.5 0.8B',
         filename: 'Qwen3.5-0.8B-Q4_K_M.gguf',
         url: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf',
         size: '600MB',
+        sizeBytes: 600_000_000,
         minMemoryGB: 1,
         minCPUs: 1,
         description: "Qwen3.5 0.8B — fast and lightweight",
+        trainingRepo: 'unsloth/Qwen3.5-0.8B',
     },
     'qwen2-1.5b': {
         displayName: 'Qwen2 1.5B',
         filename: 'qwen2-1_5b-instruct-q4_k_m.gguf',
         url: 'https://huggingface.co/Qwen/Qwen2-1.5B-Instruct-GGUF/resolve/main/qwen2-1_5b-instruct-q4_k_m.gguf',
         size: '1.0GB',
+        sizeBytes: 1_000_000_000,
         minMemoryGB: 2,
         minCPUs: 2,
         description: "Alibaba's Qwen2 model, efficient for basic tasks",
@@ -61,6 +80,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'Phi-3-mini-4k-instruct-q4.gguf',
         url: 'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf',
         size: '2.2GB',
+        sizeBytes: 2_200_000_000,
         minMemoryGB: 4,
         minCPUs: 2,
         description: "Microsoft's efficient 3.8B model, great reasoning capabilities",
@@ -70,6 +90,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'gemma-2b-it-Q4_K_M.gguf',
         url: 'https://huggingface.co/google/gemma-2b-it-GGUF/resolve/main/gemma-2b-it-Q4_K_M.gguf',
         size: '1.7GB',
+        sizeBytes: 1_700_000_000,
         minMemoryGB: 4,
         minCPUs: 2,
         description: "Google's lightweight model, good general performance",
@@ -79,6 +100,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
         url: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
         size: '1.3GB',
+        sizeBytes: 1_300_000_000,
         minMemoryGB: 4,
         minCPUs: 2,
         description: "Meta's smallest Llama 3.2, efficient and capable",
@@ -88,6 +110,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'Llama-3.2-3B-Instruct-Q4_K_M.gguf',
         url: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf',
         size: '2.0GB',
+        sizeBytes: 2_000_000_000,
         minMemoryGB: 4,
         minCPUs: 2,
         description: "Meta's compact Llama 3.2, balanced performance",
@@ -97,6 +120,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'mistral-7b-instruct-v0.3.Q4_K_M.gguf',
         url: 'https://huggingface.co/MistralAI/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/mistral-7b-instruct-v0.3.Q4_K_M.gguf',
         size: '4.1GB',
+        sizeBytes: 4_100_000_000,
         minMemoryGB: 5,
         minCPUs: 2,
         description: 'Excellent 7B model, strong coding and reasoning',
@@ -106,6 +130,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'qwen2-7b-instruct-q4_k_m.gguf',
         url: 'https://huggingface.co/Qwen/Qwen2-7B-Instruct-GGUF/resolve/main/qwen2-7b-instruct-q4_k_m.gguf',
         size: '4.4GB',
+        sizeBytes: 4_400_000_000,
         minMemoryGB: 5,
         minCPUs: 2,
         description: "Alibaba's Qwen2 7B model, strong performance",
@@ -115,6 +140,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
         url: 'https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
         size: '4.7GB',
+        sizeBytes: 4_700_000_000,
         minMemoryGB: 6,
         minCPUs: 2,
         description: "Meta's latest 8B model, excellent all-around performance",
@@ -124,6 +150,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'gemma-7b-it-Q4_K_M.gguf',
         url: 'https://huggingface.co/google/gemma-7b-it-GGUF/resolve/main/gemma-7b-it-Q4_K_M.gguf',
         size: '5.0GB',
+        sizeBytes: 5_000_000_000,
         minMemoryGB: 6,
         minCPUs: 2,
         description: "Google's larger model, improved capabilities",
@@ -133,6 +160,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         filename: 'codellama-7b-instruct.Q4_K_M.gguf',
         url: 'https://huggingface.co/TheBloke/CodeLlama-7B-Instruct-GGUF/resolve/main/codellama-7b-instruct.Q4_K_M.gguf',
         size: '3.8GB',
+        sizeBytes: 3_800_000_000,
         minMemoryGB: 5,
         minCPUs: 2,
         description: 'Specialized for code generation and understanding',
@@ -140,24 +168,24 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
 };
 
 /**
- * Resolves the project root directory.
- * In development: process.cwd() (the sulla-desktop repo root).
- * In production (packaged): app.getPath('userData') — a writable
- * per-user directory on every platform:
- *   macOS:   ~/Library/Application Support/<appName>
- *   Windows: %APPDATA%/<appName>
- *   Linux:   ~/.config/<appName>
+ * Always use app.getPath('userData') for the llm directory so that:
+ *   - It is writable on all platforms (including signed macOS .app bundles)
+ *   - The Lima VM can access it (macOS: ~/Library/Application Support/rancher-desktop/)
+ *   - Training data written inside the VM is visible to the host and vice-versa
+ *
+ * Resolves to:
+ *   macOS:   ~/Library/Application Support/rancher-desktop/
+ *   Windows: %APPDATA%/rancher-desktop/
+ *   Linux:   ~/.config/rancher-desktop/
  */
 function getProjectRoot(): string {
     try {
         const { app } = require('electron');
-        if (app?.isPackaged) {
-            return app.getPath('userData');
-        }
+        return app.getPath('userData');
     } catch {
-        // Not in Electron context
+        // Not in Electron context (e.g. tests) — fall back to cwd
+        return process.cwd();
     }
-    return process.cwd();
 }
 
 /** Top-level llm directory inside the project */
@@ -428,6 +456,18 @@ function findBinary(name: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Training script paths — scripts live in the root-level training/ folder.
+// At runtime they are invoked via the training venv Python pointing at
+// the source files in this project (resolved via getTrainingScriptsDir()).
+// ---------------------------------------------------------------------------
+
+/** Resolve the root-level training/ directory containing our Python training scripts. */
+function getTrainingScriptsDir(): string {
+    // From agent/services/ → project root training/
+    return path.resolve(__dirname, '..', '..', '..', '..', 'training');
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -446,6 +486,7 @@ export class LlamaCppService {
     private _serverProcess: ChildProcess | null = null;
     private _serverRunning = false;
     private _activeModel: string | null = null;
+    private _contextSize: number = 4096;
 
     /** Paths exposed for other services */
     get llmRoot(): string { return getLlmRoot(); }
@@ -459,6 +500,7 @@ export class LlamaCppService {
     get activeModel(): string | null { return this._activeModel; }
     get serverPort(): number { return LLAMA_SERVER_PORT; }
     get serverBaseUrl(): string { return `http://127.0.0.1:${LLAMA_SERVER_PORT}`; }
+    get contextSize(): number { return this._contextSize; }
 
     /**
      * Resolve the absolute path to a llama.cpp binary (e.g. 'llama-server').
@@ -477,6 +519,295 @@ export class LlamaCppService {
         if (!entry) return null;
         const p = path.join(getModelsDir(), entry.filename);
         return fs.existsSync(p) ? p : null;
+    }
+
+    /**
+     * Get the directory path where a training model would be stored.
+     * Each training repo gets its own subdirectory inside llm/training/.
+     * Returns null if the model has no trainingRepo defined.
+     */
+    getTrainingModelPath(modelKey: string): string | null {
+        const entry = GGUF_MODELS[modelKey];
+        if (!entry?.trainingRepo) return null;
+        // e.g. 'unsloth/Qwen3.5-9B' → 'Qwen3.5-9B'
+        const dirName = entry.trainingRepo.split('/').pop()!;
+        const p = path.join(getTrainingDir(), dirName);
+        return fs.existsSync(p) ? p : null;
+    }
+
+    /**
+     * Download an Unsloth training model from HuggingFace into llm/training/.
+     * Uses the HuggingFace snapshot download API (downloads all files in the repo).
+     * No-ops if the training model directory already exists.
+     *
+     * @param modelKey Key from GGUF_MODELS (e.g. 'qwen3.5-9b')
+     * @returns Absolute path to the training model directory
+     */
+    async downloadTrainingModel(modelKey: string): Promise<string> {
+        const entry = GGUF_MODELS[modelKey];
+        if (!entry) {
+            throw new Error(`${LOG_PREFIX} Unknown model key: ${modelKey}`);
+        }
+        if (!entry.trainingRepo) {
+            throw new Error(`${LOG_PREFIX} Model ${modelKey} has no training repo defined`);
+        }
+
+        // e.g. 'unsloth/Qwen3.5-9B' → directory 'Qwen3.5-9B'
+        const dirName = entry.trainingRepo.split('/').pop()!;
+        const destDir = path.join(getTrainingDir(), dirName);
+
+        if (fs.existsSync(destDir) && fs.readdirSync(destDir).length > 0) {
+            console.log(`${LOG_PREFIX} Training model ${entry.trainingRepo} already exists at ${destDir}`);
+            return destDir;
+        }
+
+        fs.mkdirSync(destDir, { recursive: true });
+
+        console.log(`${LOG_PREFIX} Downloading training model ${entry.trainingRepo} ...`);
+
+        // Fetch the file list from HuggingFace API
+        const apiUrl = `https://huggingface.co/api/models/${entry.trainingRepo}/tree/main`;
+        const listBuf = await httpGet(apiUrl, { 'User-Agent': 'sulla-desktop' });
+        const files: Array<{ rfilename: string; type: string }> = JSON.parse(listBuf.toString('utf-8'));
+
+        // Download each file (skip directories)
+        for (const file of files) {
+            if (file.type !== 'file') continue;
+
+            const fileUrl = `https://huggingface.co/${entry.trainingRepo}/resolve/main/${file.rfilename}`;
+            const fileDest = path.join(destDir, file.rfilename);
+
+            // Create subdirectories if needed
+            const fileDir = path.dirname(fileDest);
+            if (!fs.existsSync(fileDir)) {
+                fs.mkdirSync(fileDir, { recursive: true });
+            }
+
+            console.log(`${LOG_PREFIX}   Downloading ${file.rfilename} ...`);
+            await httpGetToFile(fileUrl, fileDest);
+        }
+
+        console.log(`${LOG_PREFIX} Training model ${entry.trainingRepo} downloaded to ${destDir}`);
+        return destDir;
+    }
+
+    /**
+     * Get the path to the Python virtual environment used for training.
+     * Lives at llm/training/.venv/
+     */
+    get trainingVenvDir(): string { return path.join(getTrainingDir(), '.venv'); }
+
+    /** Path to the feedback queue directory where conversations are written for training. */
+    get feedbackQueueDir(): string { return path.join(getLlmRoot(), 'feedback_queue'); }
+
+    /** Whether the training Python venv + deps are installed. */
+    get isTrainingReady(): boolean {
+        const venvPython = this.getTrainingPython();
+        return venvPython !== null;
+    }
+
+    /**
+     * Get the path to the Python binary inside the training venv.
+     * Returns null if the venv doesn't exist.
+     */
+    getTrainingPython(): string | null {
+        const venvDir = this.trainingVenvDir;
+        const bin = os.platform() === 'win32'
+            ? path.join(venvDir, 'Scripts', 'python.exe')
+            : path.join(venvDir, 'bin', 'python');
+        return fs.existsSync(bin) ? bin : null;
+    }
+
+    /**
+     * Install the training system: creates a Python venv, installs unsloth + torch.
+     * Platform-aware: uses MLX backend on macOS, CUDA on Linux/Windows.
+     * No-ops if the venv already exists and has unsloth installed.
+     */
+    async installTrainingDeps(): Promise<void> {
+        const venvDir = this.trainingVenvDir;
+        const feedbackDir = this.feedbackQueueDir;
+
+        // Ensure directories exist
+        fs.mkdirSync(getTrainingDir(), { recursive: true });
+        fs.mkdirSync(feedbackDir, { recursive: true });
+
+        // Check if venv already has unsloth
+        const existingPython = this.getTrainingPython();
+        if (existingPython) {
+            try {
+                execSync(`"${existingPython}" -c "import unsloth"`, { stdio: 'pipe' });
+                console.log(`${LOG_PREFIX} Training deps already installed`);
+                return;
+            } catch {
+                console.log(`${LOG_PREFIX} Venv exists but unsloth not found, reinstalling...`);
+            }
+        }
+
+        // Find system Python 3
+        const python3 = this.findPython3();
+        if (!python3) {
+            throw new Error(`${LOG_PREFIX} Python 3 not found on this system — required for training`);
+        }
+        console.log(`${LOG_PREFIX} Using system Python: ${python3}`);
+
+        // Create venv
+        console.log(`${LOG_PREFIX} Creating training venv at ${venvDir} ...`);
+        execSync(`"${python3}" -m venv "${venvDir}"`, { stdio: 'pipe' });
+
+        const venvPython = this.getTrainingPython()!;
+
+        // Upgrade pip
+        console.log(`${LOG_PREFIX} Upgrading pip...`);
+        execSync(`"${venvPython}" -m pip install --upgrade pip`, { stdio: 'pipe' });
+
+        // Install platform-specific deps
+        const platform = os.platform();
+        let pipCmd: string;
+
+        if (platform === 'darwin') {
+            // macOS: Unsloth-MLX backend + CPU PyTorch + doc processing libs
+            pipCmd = `"${venvPython}" -m pip install "unsloth[mlx]" torch torchvision torchaudio pymupdf python-docx markdown --index-url https://download.pytorch.org/whl/cpu`;
+        } else {
+            // Linux / Windows: CUDA backend + doc processing libs
+            pipCmd = `"${venvPython}" -m pip install "unsloth[colab-new]" torch torchvision torchaudio pymupdf python-docx markdown --index-url https://download.pytorch.org/whl/cu121`;
+        }
+
+        console.log(`${LOG_PREFIX} Installing training deps: ${pipCmd}`);
+        execSync(pipCmd, {
+            stdio: 'pipe',
+            timeout: 600_000, // 10 min timeout for large installs
+            env: { ...process.env, PIP_NO_CACHE_DIR: '1' },
+        });
+
+        console.log(`${LOG_PREFIX} Training system installed successfully`);
+    }
+
+    /**
+     * Find a working Python 3 binary on the system.
+     */
+    private findPython3(): string | null {
+        const candidates = os.platform() === 'win32'
+            ? ['python', 'python3', 'py -3']
+            : ['python3', 'python'];
+
+        for (const cmd of candidates) {
+            try {
+                const version = execSync(`${cmd} --version`, { stdio: 'pipe' }).toString().trim();
+                if (version.includes('Python 3')) {
+                    // Return the resolved path
+                    if (os.platform() === 'win32') {
+                        return execSync(`where ${cmd.split(' ')[0]}`, { stdio: 'pipe' }).toString().trim().split('\n')[0];
+                    }
+                    return execSync(`which ${cmd}`, { stdio: 'pipe' }).toString().trim();
+                }
+            } catch { /* not found */ }
+        }
+        return null;
+    }
+
+    /**
+     * Set up the entire training system: venv, deps, document config, feedback queue.
+     * Scripts live in agent/scripts/ as real project files — nothing is written out.
+     * Safe to call on every startup — no-ops if everything is already in place.
+     */
+    async ensureTrainingSystem(modelKey: string): Promise<void> {
+        console.log(`${LOG_PREFIX} Ensuring training system...`);
+
+        try {
+            // 1. Install Python venv + unsloth + torch + doc libs
+            await this.installTrainingDeps();
+
+            // 2. Write default documents_config.json (only if not already present)
+            this.writeDocumentsConfig();
+
+            // 3. Download the Unsloth training model for the selected size
+            const entry = GGUF_MODELS[modelKey];
+            if (entry?.trainingRepo) {
+                await this.downloadTrainingModel(modelKey);
+            }
+
+            console.log(`${LOG_PREFIX} Training system ready`);
+        } catch (err) {
+            console.error(`${LOG_PREFIX} Failed to set up training system:`, err);
+            // Non-fatal — inference still works without training
+        }
+    }
+
+    /**
+     * Write a default documents_config.json if one doesn't already exist.
+     * Users can edit this to point at their real folders.
+     */
+    private writeDocumentsConfig(): void {
+        const configPath = path.join(getTrainingDir(), 'documents_config.json');
+        if (fs.existsSync(configPath)) {
+            return; // Don't overwrite user customizations
+        }
+
+        const homeDir = os.homedir();
+        const defaultConfig = {
+            folders: [
+                path.join(homeDir, 'Documents'),
+                path.join(homeDir, 'Projects'),
+                path.join(homeDir, 'Notes'),
+            ],
+            file_types: ['.txt', '.md', '.pdf', '.docx'],
+        };
+
+        fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), 'utf-8');
+        console.log(`${LOG_PREFIX} Wrote default documents_config.json to ${configPath}`);
+    }
+
+    /**
+     * Run the documents processor to scan for new/changed documents
+     * and generate QA training pairs.
+     */
+    async processDocuments(): Promise<void> {
+        const python = this.getTrainingPython();
+        if (!python) {
+            throw new Error(`${LOG_PREFIX} Training venv not installed — run ensureTrainingSystem() first`);
+        }
+        const script = path.join(getTrainingScriptsDir(), 'documents_processor.py');
+        console.log(`${LOG_PREFIX} Running documents processor...`);
+        execSync(`"${python}" "${script}" --llm-root "${getLlmRoot()}"`, {
+            stdio: 'pipe',
+            timeout: 300_000, // 5 min
+        });
+        console.log(`${LOG_PREFIX} Documents processing complete`);
+    }
+
+    /**
+     * Run the full nightly training pipeline:
+     *   1. Process documents (incremental scan → QA pairs)
+     *   2. Run train_nightly.py (feedback + docs + replay → LoRA → GGUF)
+     *
+     * Call this from a scheduler (launchd / cron / Task Scheduler).
+     */
+    async runFullNightlyTraining(modelKey: string): Promise<void> {
+        const entry = GGUF_MODELS[modelKey];
+        if (!entry?.trainingRepo) {
+            throw new Error(`${LOG_PREFIX} Model ${modelKey} has no training repo`);
+        }
+
+        const python = this.getTrainingPython();
+        if (!python) {
+            throw new Error(`${LOG_PREFIX} Training venv not installed`);
+        }
+
+        // 1. Process documents
+        try {
+            await this.processDocuments();
+        } catch (err) {
+            console.error(`${LOG_PREFIX} Document processing failed (continuing with training):`, err);
+        }
+
+        // 2. Run training
+        const script = path.join(getTrainingScriptsDir(), 'train_nightly.py');
+        console.log(`${LOG_PREFIX} Running nightly training with model ${entry.trainingRepo}...`);
+        execSync(`"${python}" "${script}" --model "${entry.trainingRepo}" --llm-root "${getLlmRoot()}"`, {
+            stdio: 'pipe',
+            timeout: 3_600_000, // 1 hour
+        });
+        console.log(`${LOG_PREFIX} Nightly training complete`);
     }
 
     /**
@@ -610,13 +941,16 @@ export class LlamaCppService {
             throw new Error(`${LOG_PREFIX} Model file not found: ${modelPath}`);
         }
 
-        console.log(`${LOG_PREFIX} Starting llama-server on port ${port} with model ${modelPath}`);
+        // Calculate context size based on available system RAM and model file size
+        const modelFileSize = fs.statSync(modelPath).size;
+        this._contextSize = this.calculateContextSize(modelFileSize);
+        console.log(`${LOG_PREFIX} Starting llama-server on port ${port} with model ${modelPath} (ctx=${this._contextSize})`);
 
         const args = [
             '--model', modelPath,
             '--port', String(port),
             '--host', '127.0.0.1',
-            '--ctx-size', '32768',
+            '--ctx-size', String(this._contextSize),
         ];
 
         // Only offload to GPU if we have a GPU-accelerated build
@@ -707,6 +1041,40 @@ export class LlamaCppService {
         this._serverRunning = false;
         this._activeModel = null;
         console.log(`${LOG_PREFIX} llama-server stopped`);
+    }
+
+    /**
+     * Calculate the optimal --ctx-size based on available system RAM and model weight.
+     *
+     * Formula:
+     *   availableForContext = totalRAM - modelFileSize - 2GB (OS/app overhead)
+     *   Each token of context costs ~2 bytes of KV cache for Q4 models (rough heuristic).
+     *   Clamp result between 2048 and 131072 tokens, rounded down to nearest 1024.
+     */
+    private calculateContextSize(modelFileSizeBytes: number): number {
+        const totalRamBytes = os.totalmem();
+        const osOverhead = 2 * 1024 * 1024 * 1024; // 2 GB reserved for OS + app
+        const availableBytes = totalRamBytes - modelFileSizeBytes - osOverhead;
+
+        if (availableBytes <= 0) {
+            console.warn(`${LOG_PREFIX} Very low available RAM, using minimum context size`);
+            return 2048;
+        }
+
+        // KV cache cost: ~2 bytes per token for Q4_K_M quants (conservative estimate)
+        const bytesPerToken = 2;
+        let ctxSize = Math.floor(availableBytes / bytesPerToken);
+
+        // Round down to nearest 1024
+        ctxSize = Math.floor(ctxSize / 1024) * 1024;
+
+        // Clamp
+        const MIN_CTX = 2048;
+        const MAX_CTX = 131072;
+        ctxSize = Math.max(MIN_CTX, Math.min(MAX_CTX, ctxSize));
+
+        console.log(`${LOG_PREFIX} RAM: ${(totalRamBytes / 1e9).toFixed(1)}GB, model: ${(modelFileSizeBytes / 1e9).toFixed(1)}GB, calculated ctx-size: ${ctxSize}`);
+        return ctxSize;
     }
 
     /**

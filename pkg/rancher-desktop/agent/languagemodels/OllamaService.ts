@@ -2,6 +2,7 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse } from './BaseLanguageModel';
 import { writeLLMConversationEvent } from './LLMConversationFileLogger';
 import { getIntegrationService } from '../services/IntegrationService';
+import { getLlamaCppService } from '../services/LlamaCppService';
 
 /**
  * Local LLM provider — wraps llama-server's OpenAI-compatible API.
@@ -122,7 +123,26 @@ export class OllamaService extends BaseLanguageModel {
   }
 
   /**
+   * Rough token estimate: ~4 characters per token for English text.
+   */
+  private static estimateTokens(text: string): number {
+    return Math.ceil((text?.length ?? 0) / 4);
+  }
+
+  /**
+   * Get the context size limit from llama-server, with a safe fallback.
+   */
+  private getContextLimit(): number {
+    try {
+      return getLlamaCppService().contextSize;
+    } catch {
+      return 4096;
+    }
+  }
+
+  /**
    * Build the request body in OpenAI /v1/chat/completions format.
+   * Trims oldest non-system messages to stay within the llama-server context limit.
    */
   private buildRequestBody(messages: ChatMessage[], options: any): Record<string, any> {
     // Strip legacy role:tool messages; flatten native content arrays to string.
@@ -143,7 +163,28 @@ export class OllamaService extends BaseLanguageModel {
 
     const systemMsgs = cleaned.filter(m => m.role === 'system');
     const nonSystemMsgs = cleaned.filter(m => m.role !== 'system');
-    const cleanMessages = [...systemMsgs, ...nonSystemMsgs];
+
+    // Trim non-system messages to stay under context limit.
+    // Reserve 20% of context for model response tokens.
+    const ctxLimit = this.getContextLimit();
+    const responseReserve = Math.floor(ctxLimit * 0.20);
+    const inputBudget = ctxLimit - responseReserve;
+
+    const systemTokens = systemMsgs.reduce((sum, m) => sum + OllamaService.estimateTokens(m.content), 0);
+    let conversationTokens = nonSystemMsgs.reduce((sum, m) => sum + OllamaService.estimateTokens(m.content), 0);
+
+    // Drop oldest non-system messages until we fit within budget
+    const trimmed = [...nonSystemMsgs];
+    while (trimmed.length > 1 && (systemTokens + conversationTokens) > inputBudget) {
+      const removed = trimmed.shift()!;
+      conversationTokens -= OllamaService.estimateTokens(removed.content);
+    }
+
+    if (trimmed.length < nonSystemMsgs.length) {
+      console.log(`[OllamaService] Trimmed ${nonSystemMsgs.length - trimmed.length} oldest messages to fit ctx limit (${ctxLimit} tokens, ~${systemTokens + conversationTokens} used)`);
+    }
+
+    const cleanMessages = [...systemMsgs, ...trimmed];
 
     const body: Record<string, any> = {
       model: options.model ?? this.model,
