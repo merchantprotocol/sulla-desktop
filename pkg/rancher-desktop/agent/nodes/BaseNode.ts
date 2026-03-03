@@ -266,11 +266,18 @@ Projects are workspace folders that contain a \`PROJECT.md\` file (the PRD — p
 **Editing a project:**
 - Read and edit \`PROJECT.md\` directly using your filesystem tools. No special project tools needed.
 
+**Active Projects tracking:**
+There is a single file at \`{{active_projects_file}}\` (in the root of the projects directory — NOT inside any individual project folder). This file lists all projects that are currently active and being worked on. Maintain this file:
+- When a new project is created and is active, add it to this file.
+- When the human says a project is no longer relevant, outdated, or completed, remove it from this file.
+- When the human says to prioritize a project or deprioritize others, update this file accordingly.
+- This file is your record of what's in-flight. Keep it current.
+
 **Rules:**
 - Before creating a new project, call search_projects to check for duplicates.
-- Projects live at {{projects_dir}} by default.
+- Projects live at {{projects_dir}} by default. Each project is a subfolder with a \`PROJECT.md\` inside it.
 - Do NOT call search_projects as a pre-check on every task. Only search when you intend to create or load a project.
-- The active projects file is {{active_projects_file}}. When you create or work on a project that is truly active (not archived or completed), ensure it is listed there. If a project is no longer active, remove it from this file by updating the project status to "completed" or "archived". You may directly edit this file.
+- There is NO \`ACTIVE_PROJECTS.md\` inside individual project folders. It only exists once, at the projects root.
 
 Current projects directory: {{projects_dir}}
 ---

@@ -26,33 +26,6 @@ export const metaToolManifests: ToolManifest[] = [
     loader: () => import('./browse_tools'),
   },
   {
-    name: 'create_plan',
-    description: 'Create a structured, trackable plan with milestones. The UI will show it as a live checklist.',
-    category: 'meta',
-    schemaDef: {
-    goal: { type: 'string', description: "Short title of the overall goal" },
-    goaldescription: { type: 'string', description: "1-2 sentence description of what success looks like" },
-    requirestools: { type: 'boolean' },
-    estimatedcomplexity: { type: 'enum', enum: ["simple", "moderate", "complex"] },
-    milestones: { type: 'array', items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        title: { type: 'string' },
-        description: { type: 'string' },
-        successcriteria: { type: 'string' },
-        dependson: { type: 'array', items: { type: 'string' } }
-      }
-    }, description: "List of steps to achieve the goal" },
-    responseguidance: { type: 'object', properties: {
-      tone: { type: 'string' },
-      format: { type: 'string' }
-    }}
-  },
-    operationTypes: ['read', 'create', 'update', 'delete'],
-    loader: () => import('./create_plan'),
-  },
-  {
     name: 'exec',
     description: 'Execute a shell command inside the isolated Lima VM and return output. Commands run in a sandboxed virtual machine — NOT on the host OS — so destructive operations are safe. You have full root-level freedom: install packages (apt, apk, npm, pip, etc.), delete files/directories (rm -rf), manage services (systemctl, supervisord), mount filesystems, configure networking, compile software, run database migrations, and any other system-level operation. No command is blocked. Use cwd to set working directory, timeout for long-running operations, and stdin to pipe input.',
     category: 'meta',
@@ -94,17 +67,5 @@ export const metaToolManifests: ToolManifest[] = [
   },
     operationTypes: ['delete'],
     loader: () => import('./remove_observational_memory'),
-  },
-  {
-    name: 'update_plan',
-    description: 'Mark milestones as complete, add notes, or update progress on the current plan.',
-    category: 'meta',
-    schemaDef: {
-    milestoneId: { type: 'string' },
-    status: { type: 'enum', enum: ["done", "in_progress", "blocked", "pending"], default: "done" },
-    note: { type: 'string', optional: true },
-  },
-    operationTypes: ['read', 'create', 'update', 'delete'],
-    loader: () => import('./update_plan'),
   },
 ];

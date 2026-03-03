@@ -362,6 +362,26 @@ export abstract class BaseLanguageModel {
       }));
     }
 
+    // Build rawProviderContent as Anthropic-style content blocks when tool_calls
+    // are present. This ensures appendResponse stores them in state.messages so
+    // the full tool_use → tool_result round-trip is preserved across turns.
+    let rawProviderContent: any;
+    if (toolCalls.length > 0) {
+      const blocks: any[] = [];
+      if (content.trim()) {
+        blocks.push({ type: 'text', text: content.trim() });
+      }
+      for (const tc of toolCalls) {
+        blocks.push({
+          type: 'tool_use',
+          id: tc.id,
+          name: tc.name,
+          input: tc.args ?? {},
+        });
+      }
+      rawProviderContent = blocks;
+    }
+
     return {
       content: content.trim(),
       metadata: {
@@ -375,6 +395,7 @@ export abstract class BaseLanguageModel {
         finish_reason: this.normalizeFinishReason(finishReason),
         reasoning: reasoning.trim() || undefined,
         parsed_content: parsedContent,
+        rawProviderContent,
       },
     };
   }

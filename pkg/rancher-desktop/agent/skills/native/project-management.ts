@@ -21,11 +21,20 @@ A **project** is any workspace folder that contains a \`PROJECT.md\` file. That 
 1. Call \`create_workspace("my-project-name")\` — this creates the folder and returns its absolute path.
 2. Write a \`PROJECT.md\` file in that folder using your filesystem tools. This is what makes the folder a project.
 3. Optionally create a \`README.md\` for getting-started / structure overview.
+4. Add the project to \`ACTIVE_PROJECTS.md\` in the **root** of the projects directory (see below).
 
 Use the appropriate PRD template tier below based on task complexity.
 
 ## How to Edit a Project
 Read and write the \`PROJECT.md\` file directly with your filesystem tools. No special tools needed — just edit the file.
+
+## ACTIVE_PROJECTS.md
+There is exactly **one** \`ACTIVE_PROJECTS.md\` file and it lives in the **root of the projects directory** — NOT inside any individual project folder. This file is the master list of all projects currently in-flight.
+
+- Add a project here when it is created and active.
+- Remove a project when the human says it is completed, archived, or no longer relevant.
+- When the human reprioritizes — e.g., "focus on X, drop Y" — update this file to reflect the new priorities.
+- This file does NOT exist inside individual project folders. Each project folder only has \`PROJECT.md\` (and optionally \`README.md\`).
 
 ## Project Lifecycle
 
@@ -42,13 +51,13 @@ Before creating a PRD, classify the task:
 - **Large** — Complex multi-system project (multiple integrations, research, architecture decisions, credentials, templates). Use the Full PRD.
 
 ### 3. Creation
-Call \`create_workspace\` then write the PROJECT.md with the appropriately sized template (see below).
+Call \`create_workspace\` then write the PROJECT.md with the appropriately sized template (see below). Add the project to ACTIVE_PROJECTS.md.
 
 ### 4. Iteration
 Edit the PROJECT.md directly — update specific sections as work progresses.
 
 ### 5. Completion
-Update the \`status\` field in the frontmatter to "completed" or "archived".
+Update the \`status\` field in the frontmatter to "completed" or "archived". Remove the project from ACTIVE_PROJECTS.md.
 
 ---
 

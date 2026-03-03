@@ -147,14 +147,13 @@ export class OpenAICompatibleService extends BaseLanguageModel {
    * Subclasses can override for custom body shapes.
    */
   protected buildRequestBody(messages: ChatMessage[], options: any): any {
-    const sanitizedMessages = this.sanitizeMessages(messages);
-    const baseMessages: any[] = sanitizedMessages.map(m => ({ role: m.role, content: m.content }));
+    const openaiMessages = this.convertToOpenAIMessages(messages);
 
     // Some servers (e.g. vLLM with DeepSeek chat templates) require system
     // messages to appear before any other role. Hoist them to the front while
     // preserving relative order within each group.
-    const systemMsgs = baseMessages.filter(m => m.role === 'system');
-    const otherMsgs  = baseMessages.filter(m => m.role !== 'system');
+    const systemMsgs = openaiMessages.filter((m: any) => m.role === 'system');
+    const otherMsgs  = openaiMessages.filter((m: any) => m.role !== 'system');
     const orderedMessages = [...systemMsgs, ...otherMsgs];
 
     const body: any = {
@@ -178,33 +177,94 @@ export class OpenAICompatibleService extends BaseLanguageModel {
   }
 
   /**
-   * Sanitize messages: trim string content, strip role:tool legacy messages,
-   * preserve native content arrays (tool_use/tool_result blocks).
+   * Convert internal state messages (which may contain Anthropic-style
+   * tool_use/tool_result content blocks) into proper OpenAI chat format:
+   *
+   * - Assistant messages with tool_use blocks → { role: "assistant", content, tool_calls }
+   * - User messages with tool_result blocks → one { role: "tool", content, tool_call_id } per result
+   * - Everything else → { role, content } with string content
    */
-  protected sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
-    return messages
-      .filter(m => m.role !== 'tool')
-      .map(m => {
-        if (Array.isArray(m.content)) {
-          // Flatten Anthropic-style content blocks (tool_result, text, etc.)
-          // into a plain string for OpenAI-compatible endpoints.
-          const flat = m.content
-            .map((block: any) => {
-              if (typeof block === 'string') return block;
-              if (typeof block.content === 'string') return block.content;
-              if (typeof block.text === 'string') return block.text;
-              return '';
-            })
-            .filter(Boolean)
-            .join('\n');
-          return { ...m, content: flat.trim() };
+  protected convertToOpenAIMessages(messages: ChatMessage[]): any[] {
+    const result: any[] = [];
+
+    for (const m of messages) {
+      // Skip legacy role:tool messages (we reconstruct them from content blocks)
+      if (m.role === 'tool') continue;
+
+      // --- Assistant message with Anthropic-style tool_use content blocks ---
+      if (m.role === 'assistant' && Array.isArray(m.content)) {
+        const toolUseBlocks = m.content.filter((b: any) => b?.type === 'tool_use');
+        const textBlocks = m.content.filter((b: any) => b?.type === 'text' && b?.text?.trim());
+        const textContent = textBlocks.map((b: any) => b.text).join('\n').trim() || null;
+
+        if (toolUseBlocks.length > 0) {
+          const toolCalls = toolUseBlocks.map((b: any) => ({
+            id: b.id,
+            type: 'function' as const,
+            function: {
+              name: b.name,
+              arguments: typeof b.input === 'string' ? b.input : JSON.stringify(b.input ?? {}),
+            },
+          }));
+          result.push({
+            role: 'assistant',
+            content: textContent,
+            tool_calls: toolCalls,
+          });
+          continue;
         }
-        return {
-          ...m,
-          content: typeof m.content === 'string' ? m.content.trim() : String(m.content ?? '').trim(),
-        };
-      })
-      .filter(m => typeof m.content === 'string' && m.content.length > 0);
+
+        // Array content but no tool_use — flatten to string
+        if (textContent) {
+          result.push({ role: 'assistant', content: textContent });
+        }
+        continue;
+      }
+
+      // --- User message with Anthropic-style tool_result content blocks ---
+      if (m.role === 'user' && Array.isArray(m.content)) {
+        const toolResultBlocks = m.content.filter((b: any) => b?.type === 'tool_result');
+        const textBlocks = m.content.filter((b: any) => b?.type !== 'tool_result');
+
+        // Emit one role:tool message per tool_result block
+        for (const block of toolResultBlocks) {
+          const content = typeof block.content === 'string'
+            ? block.content
+            : JSON.stringify(block.content ?? '');
+          result.push({
+            role: 'tool',
+            tool_call_id: block.tool_use_id,
+            content,
+          });
+        }
+
+        // If there were also non-tool text blocks, emit them as a user message
+        const remainingText = textBlocks
+          .map((b: any) => {
+            if (typeof b === 'string') return b;
+            if (typeof b.content === 'string') return b.content;
+            if (typeof b.text === 'string') return b.text;
+            return '';
+          })
+          .filter(Boolean)
+          .join('\n')
+          .trim();
+        if (remainingText) {
+          result.push({ role: 'user', content: remainingText });
+        }
+        continue;
+      }
+
+      // --- Standard string-content message ---
+      const content = typeof m.content === 'string'
+        ? m.content.trim()
+        : String(m.content ?? '').trim();
+      if (content) {
+        result.push({ role: m.role, content });
+      }
+    }
+
+    return result;
   }
 
   /**
