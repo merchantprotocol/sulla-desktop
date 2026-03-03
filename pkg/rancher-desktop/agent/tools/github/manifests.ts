@@ -104,6 +104,21 @@ export const githubToolManifests: ToolManifest[] = [
     loader: () => import('./github_read_file'),
   },
   {
+    name: 'github_update_file',
+    description: 'Update an existing file in a GitHub repository. Automatically fetches the current file SHA required for updates.',
+    category: 'github',
+    schemaDef: {
+    owner: { type: 'string', description: "Repository owner (username or organization)" },
+    repo: { type: 'string', description: "Repository name" },
+    path: { type: 'string', description: "Path to the file to update" },
+    content: { type: 'string', description: "New content of the file" },
+    message: { type: 'string', description: "Commit message" },
+    branch: { type: 'string', optional: true, description: "Branch to update the file on" },
+  },
+    operationTypes: ['update'],
+    loader: () => import('./github_update_file'),
+  },
+  {
     name: 'git_blame',
     description: 'Show who last modified each line of a file. Optionally limit to a line range.',
     category: 'github',

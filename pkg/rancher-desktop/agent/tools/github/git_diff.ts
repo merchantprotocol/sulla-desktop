@@ -1,59 +1,57 @@
 import { BaseTool, ToolResponse } from "../base";
-import { execSync } from 'child_process';
-import path from 'path';
+import { runCommand } from "../util/CommandRunner";
 
 /**
  * Git Diff Tool - Show changes between working tree, staging area, or commits.
+ * Runs inside the Lima VM for filesystem consistency with exec tool.
  */
 export class GitDiffWorker extends BaseTool {
   name: string = '';
   description: string = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { absolutePath } = input;
-    const staged = input.staged === true;
-    const commitA = input.commitA || '';
-    const commitB = input.commitB || '';
-    const filePath = input.filePath || '';
+    const { absolutePath, staged, commitA, commitB, filePath } = input;
 
     try {
-      const repoRoot = execSync(`git -C "${absolutePath}" rev-parse --show-toplevel`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get repo root
+      const rootResult = await runCommand(
+        `git -C "${absolutePath}" rev-parse --show-toplevel`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      
+      if (rootResult.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git error: ${rootResult.stderr || rootResult.stdout}` };
+      }
+      
+      const repoRoot = rootResult.stdout.trim();
 
       let cmd = `git -C "${repoRoot}" diff`;
-
-      if (commitA && commitB) {
+      
+      if (staged) {
+        cmd += ' --cached';
+      } else if (commitA && commitB) {
         cmd += ` ${commitA} ${commitB}`;
       } else if (commitA) {
         cmd += ` ${commitA}`;
-      } else if (staged) {
-        cmd += ' --cached';
       }
-
+      
       if (filePath) {
         cmd += ` -- "${filePath}"`;
       }
 
-      const output = execSync(cmd, {
-        stdio: 'pipe',
-        env: { ...process.env },
-        maxBuffer: 1024 * 1024 * 5,
-      }).toString().trim();
+      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 60_000 });
+      
+      if (result.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git diff failed: ${result.stderr || result.stdout}` };
+      }
 
+      const output = result.stdout.trim();
       if (!output) {
         return { successBoolean: true, responseString: 'No differences found.' };
       }
 
-      // Cap output
-      const lines = output.split('\n');
-      const maxLines = 500;
-      const truncated = lines.length > maxLines
-        ? lines.slice(0, maxLines).join('\n') + `\n... (${lines.length - maxLines} more lines)`
-        : output;
-
-      return { successBoolean: true, responseString: truncated };
+      return { successBoolean: true, responseString: output };
     } catch (error: any) {
       return { successBoolean: false, responseString: `Git diff failed: ${error.message}` };
     }

@@ -1,9 +1,9 @@
 import { BaseTool, ToolResponse } from "../base";
-import { execSync } from 'child_process';
-import path from 'path';
+import { runCommand } from "../util/CommandRunner";
 
 /**
- * Git Status Tool - Show the working tree status.
+ * Git Status Tool - Show working tree status.
+ * Runs inside the Lima VM for filesystem consistency with exec tool.
  */
 export class GitStatusWorker extends BaseTool {
   name: string = '';
@@ -13,26 +13,59 @@ export class GitStatusWorker extends BaseTool {
     const { absolutePath } = input;
 
     try {
-      const repoRoot = execSync(`git -C "${absolutePath}" rev-parse --show-toplevel`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get repo root
+      const rootResult = await runCommand(
+        `git -C "${absolutePath}" rev-parse --show-toplevel`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      
+      if (rootResult.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git error: ${rootResult.stderr || rootResult.stdout}` };
+      }
+      
+      const repoRoot = rootResult.stdout.trim();
 
-      const currentBranch = execSync(`git -C "${repoRoot}" rev-parse --abbrev-ref HEAD`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get current branch
+      const branchResult = await runCommand(
+        `git -C "${repoRoot}" rev-parse --abbrev-ref HEAD`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      const currentBranch = branchResult.stdout.trim() || '(unknown)';
 
-      const statusOutput = execSync(`git -C "${repoRoot}" status --short`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get status
+      const statusResult = await runCommand(
+        `git -C "${repoRoot}" status --porcelain`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
 
-      const response = statusOutput
-        ? `Branch: ${currentBranch}\nRepo: ${repoRoot}\n\n${statusOutput}`
-        : `Branch: ${currentBranch}\nRepo: ${repoRoot}\n\nWorking tree clean.`;
+      const lines = statusResult.stdout.trim().split('\n').filter(Boolean);
+      const staged: string[] = [];
+      const unstaged: string[] = [];
+      const untracked: string[] = [];
 
-      return { successBoolean: true, responseString: response };
+      for (const line of lines) {
+        const index = line[0];
+        const worktree = line[1];
+        const file = line.slice(3);
+
+        if (index === '?') {
+          untracked.push(file);
+        } else {
+          if (index !== ' ' && index !== '?') staged.push(file);
+          if (worktree !== ' ' && worktree !== '?') unstaged.push(file);
+        }
+      }
+
+      let output = `Repository: ${repoRoot}\nCurrent branch: ${currentBranch}\n`;
+      if (staged.length) output += `\nStaged files (${staged.length}):\n  ${staged.join('\n  ')}`;
+      if (unstaged.length) output += `\nUnstaged changes (${unstaged.length}):\n  ${unstaged.join('\n  ')}`;
+      if (untracked.length) output += `\nUntracked files (${untracked.length}):\n  ${untracked.join('\n  ')}`;
+      if (!staged.length && !unstaged.length && !untracked.length) output += '\nWorking tree clean.';
+
+      return { successBoolean: true, responseString: output };
     } catch (error: any) {
       return { successBoolean: false, responseString: `Git status failed: ${error.message}` };
     }

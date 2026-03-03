@@ -1,55 +1,69 @@
 import { BaseTool, ToolResponse } from "../base";
-import { execSync } from 'child_process';
-import path from 'path';
+import { runCommand } from "../util/CommandRunner";
 
 /**
- * Git Commit Tool - Stages specified files and commits them.
+ * Git Commit Tool - Stage files and create a commit.
+ * Runs inside the Lima VM for filesystem consistency with exec tool.
  */
 export class GitCommitWorker extends BaseTool {
   name: string = '';
   description: string = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { absolutePath, message } = input;
-    const files: string[] = Array.isArray(input.files) ? input.files : [];
+    const { absolutePath, message, files } = input;
 
     try {
-      // Resolve the repo root from the given path
-      const repoRoot = execSync(`git -C "${absolutePath}" rev-parse --show-toplevel`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get repo root
+      const rootResult = await runCommand(
+        `git -C "${absolutePath}" rev-parse --show-toplevel`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      
+      if (rootResult.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git error: ${rootResult.stderr || rootResult.stdout}` };
+      }
+      
+      const repoRoot = rootResult.stdout.trim();
 
-      // Stage files — if none specified, stage everything
-      if (files.length > 0) {
-        for (const file of files) {
-          execSync(`git -C "${repoRoot}" add "${file}"`, {
-            stdio: 'pipe',
-            env: { ...process.env },
-          });
-        }
+      // Stage files
+      let addCmd: string;
+      if (!files || files.length === 0) {
+        addCmd = `git -C "${repoRoot}" add -A`;
       } else {
-        execSync(`git -C "${repoRoot}" add -A`, {
-          stdio: 'pipe',
-          env: { ...process.env },
-        });
+        const fileArgs = files.map((f: string) => `"${f}"`).join(' ');
+        addCmd = `git -C "${repoRoot}" add ${fileArgs}`;
+      }
+
+      const addResult = await runCommand(addCmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      if (addResult.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git add failed: ${addResult.stderr || addResult.stdout}` };
       }
 
       // Commit
-      const commitOutput = execSync(`git -C "${repoRoot}" commit -m "${message.replace(/"/g, '\\"')}"`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      const escapedMessage = message.replace(/"/g, '\\"');
+      const commitCmd = `git -C "${repoRoot}" commit -m "${escapedMessage}"`;
+      const commitResult = await runCommand(commitCmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
 
-      return {
-        successBoolean: true,
-        responseString: `Commit successful in ${repoRoot}:\n${commitOutput}`,
-      };
+      if (commitResult.exitCode !== 0) {
+        const output = commitResult.stderr || commitResult.stdout;
+        if (output.includes('nothing to commit')) {
+          return { successBoolean: true, responseString: 'Nothing to commit, working tree clean.' };
+        }
+        return { successBoolean: false, responseString: `Git commit failed: ${output}` };
+      }
+
+      // Get commit hash
+      const hashResult = await runCommand(
+        `git -C "${repoRoot}" rev-parse --short HEAD`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      const hash = hashResult.stdout.trim();
+
+      return { successBoolean: true, responseString: `Committed ${hash}: ${message}` };
     } catch (error: any) {
-      return {
-        successBoolean: false,
-        responseString: `Git commit failed: ${error.message}`,
-      };
+      return { successBoolean: false, responseString: `Git commit failed: ${error.message}` };
     }
   }
 }

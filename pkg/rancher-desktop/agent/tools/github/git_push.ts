@@ -1,46 +1,55 @@
 import { BaseTool, ToolResponse } from "../base";
-import { execSync } from 'child_process';
-import path from 'path';
+import { runCommand } from "../util/CommandRunner";
 
 /**
- * Git Push Tool - Pushes commits to a remote.
+ * Git Push Tool - Push commits to a remote repository.
+ * Runs inside the Lima VM for filesystem consistency with exec tool.
  */
 export class GitPushWorker extends BaseTool {
   name: string = '';
   description: string = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { absolutePath } = input;
-    const remote = input.remote || 'origin';
-    const branch = input.branch || '';
+    const { absolutePath, remote = 'origin', branch } = input;
 
     try {
-      // Resolve the repo root from the given path
-      const repoRoot = execSync(`git -C "${absolutePath}" rev-parse --show-toplevel`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get repo root
+      const rootResult = await runCommand(
+        `git -C "${absolutePath}" rev-parse --show-toplevel`,
+        [],
+        { runInLimaShell: true, timeoutMs: 30_000 }
+      );
+      
+      if (rootResult.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git error: ${rootResult.stderr || rootResult.stdout}` };
+      }
+      
+      const repoRoot = rootResult.stdout.trim();
 
-      // Determine branch to push — use provided or current branch
-      const targetBranch = branch || execSync(`git -C "${repoRoot}" rev-parse --abbrev-ref HEAD`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      // Get current branch if not specified
+      let targetBranch = branch;
+      if (!targetBranch) {
+        const branchResult = await runCommand(
+          `git -C "${repoRoot}" rev-parse --abbrev-ref HEAD`,
+          [],
+          { runInLimaShell: true, timeoutMs: 30_000 }
+        );
+        targetBranch = branchResult.stdout.trim();
+      }
 
-      const pushOutput = execSync(`git -C "${repoRoot}" push ${remote} ${targetBranch}`, {
-        stdio: 'pipe',
-        env: { ...process.env },
-      }).toString().trim();
+      const cmd = `git -C "${repoRoot}" push ${remote} ${targetBranch}`;
+      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
+      
+      if (result.exitCode !== 0) {
+        return { successBoolean: false, responseString: `Git push failed: ${result.stderr || result.stdout}` };
+      }
 
-      return {
-        successBoolean: true,
-        responseString: `Push successful: ${remote}/${targetBranch} in ${repoRoot}\n${pushOutput}`,
+      return { 
+        successBoolean: true, 
+        responseString: result.stderr.trim() || result.stdout.trim() || `Pushed to ${remote}/${targetBranch}` 
       };
     } catch (error: any) {
-      return {
-        successBoolean: false,
-        responseString: `Git push failed: ${error.message}`,
-      };
+      return { successBoolean: false, responseString: `Git push failed: ${error.message}` };
     }
   }
 }
