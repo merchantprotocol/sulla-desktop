@@ -7,11 +7,6 @@
       </p>
 
       <rd-fieldset legend-text="Remote Model Configuration" class="mb-6 dark:text-gray-100">
-        <!-- Error display -->
-        <div v-if="error" class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md">
-          {{ error }}
-        </div>
-
         <!-- Provider selector -->
         <div class="mb-4">
           <label for="provider" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Provider:</label>
@@ -91,6 +86,11 @@
             {{ testing ? 'Testing...' : 'Test Credentials' }}
           </button>
           <span v-if="testResult" class="text-sm" :class="testResult.success ? 'text-green-600' : 'text-red-600'">{{ testResult.message }}</span>
+        </div>
+
+        <!-- Error display -->
+        <div v-if="error" class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md">
+          {{ error }}
         </div>
       </rd-fieldset>
 

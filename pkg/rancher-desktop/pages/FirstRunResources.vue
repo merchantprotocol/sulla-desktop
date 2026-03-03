@@ -1,6 +1,5 @@
 <template>
   <div class="mx-auto p-6 dark:bg-gray-800/30">
-    <div v-if="resourceError" class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md dark:bg-red-900 dark:border-red-600 dark:text-red-100">{{ resourceError }}</div>
     <form @submit.prevent="handleNext">
       <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">Specify AI Resources</h2>
       <p class="mb-6 text-gray-600 dark:text-gray-400">Choose the resources allocated to your AI Agent and the local language model. Your agent and the model and all resources they manage will not be allowed to use more than the allocated resources.</p>
@@ -46,7 +45,7 @@
         <p v-if="modelError" class="text-red-500 text-sm mt-1">{{ modelError }}</p>
       </rd-fieldset>
 
-      <div class="mt-10"></div>
+      <div v-if="resourceError" class="my-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md dark:bg-red-900 dark:border-red-600 dark:text-red-100">{{ resourceError }}</div>
 
       <button type="button" @click="isOptionsOpen = !isOptionsOpen" class="w-full text-left p-2 hover:bg-gray-200 dark:hover:bg-gray-700 dark:text-gray-400 transition-colors text-sm font-medium">
         Options {{ isOptionsOpen ? '▲' : '▼' }}
