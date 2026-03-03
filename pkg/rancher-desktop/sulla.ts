@@ -181,7 +181,7 @@ export async function instantiateSullaStart(): Promise<void> {
                 // Read the user's selected model from settings
                 const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
                 const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-                let modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-0.8b');
+                let modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
 
                 // Map legacy Ollama-format keys (e.g. 'qwen2:0.5b') to GGUF keys (e.g. 'qwen2-0.5b')
                 if (!(modelKey in GGUF_MODELS)) {
@@ -190,8 +190,8 @@ export async function instantiateSullaStart(): Promise<void> {
                         console.log(`[Background] Mapped legacy model key '${modelKey}' -> '${mapped}'`);
                         modelKey = mapped;
                     } else {
-                        console.warn(`[Background] Unknown model key '${modelKey}', falling back to qwen3.5-0.8b`);
-                        modelKey = 'qwen3.5-0.8b';
+                        console.warn(`[Background] Unknown model key '${modelKey}', falling back to qwen3.5-9b`);
+                        modelKey = 'qwen3.5-9b';
                     }
                 }
                 console.log(`[Background] User selected model: ${modelKey}`);

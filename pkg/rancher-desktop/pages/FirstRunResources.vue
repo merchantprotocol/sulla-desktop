@@ -144,7 +144,7 @@ onMounted(async () => {
   });
 
   // Load sullaModel from SullaSettingsModel
-  const loadedModel = await SullaSettingsModel.get('sullaModel', 'qwen3.5-0.8b');
+  const loadedModel = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
   sullaModel.value = loadedModel;
 
   ipcRenderer.send('k8s-versions');
@@ -166,7 +166,10 @@ onMounted(async () => {
 // Keys match the GGUF_MODELS registry in LlamaCppService.ts
 const GGUF_MODELS = [
   {
-    name: 'qwen3.5-0.8b', displayName: 'Qwen3.5 0.8B', size: '600MB', minMemoryGB: 1, minCPUs: 1, description: 'Qwen3.5 0.8B \u2014 latest generation, fast and lightweight default',
+    name: 'qwen3.5-9b', displayName: 'Qwen3.5 9B', size: '5.6GB', minMemoryGB: 8, minCPUs: 4, description: 'Qwen3.5 9B \u2014 latest generation, strong reasoning default',
+  },
+  {
+    name: 'qwen3.5-0.8b', displayName: 'Qwen3.5 0.8B', size: '600MB', minMemoryGB: 1, minCPUs: 1, description: 'Qwen3.5 0.8B \u2014 fast and lightweight',
   },
   {
     name: 'qwen2-1.5b', displayName: 'Qwen2 1.5B', size: '1.0GB', minMemoryGB: 2, minCPUs: 2, description: 'Alibaba\'s Qwen2 model, efficient for basic tasks',
@@ -243,7 +246,7 @@ const autoSelectBestModel = () => {
       sullaModel.value = available[available.length - 1].name;
     } else {
       // Fallback to smallest model
-      sullaModel.value = 'qwen3.5-0.8b';
+      sullaModel.value = 'qwen3.5-9b';
     }
   }
 };

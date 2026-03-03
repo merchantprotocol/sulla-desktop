@@ -805,14 +805,15 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
       this.progressTracker.numeric('Diagnostics completed', 95, 100);
     });
 
-    await this.progressTracker.action('Pulling & loading Ollama model', 300, async () => {
-      await this.pullOllamaModelWithProgress();
-    });
+    // Ollama model pulls replaced by bare-metal llama.cpp (LlamaCppService)
+    // await this.progressTracker.action('Pulling & loading Ollama model', 300, async () => {
+    //   await this.pullOllamaModelWithProgress();
+    // });
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
 
-    await this.progressTracker.action('Pulling nomic-embed-text model', 300, async () => {
-      await this.pullNomicEmbedTextModel();
-    });
+    // await this.progressTracker.action('Pulling nomic-embed-text model', 300, async () => {
+    //   await this.pullNomicEmbedTextModel();
+    // });
 
     instantiateSullaStart();
 

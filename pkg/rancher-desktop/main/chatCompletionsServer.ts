@@ -469,7 +469,7 @@ export class ChatCompletionsServer {
       }
 
       const inputs = Array.isArray(input) ? input : [input];
-      const ollamaBase = 'http://127.0.0.1:30114'; // Use configured Ollama base
+      const llamaBase = 'http://127.0.0.1:30114'; // llama-server base
 
       const embeddings = [];
       for (let i = 0; i < inputs.length; i++) {
@@ -477,20 +477,22 @@ export class ChatCompletionsServer {
         if (typeof prompt !== 'string') continue;
 
         try {
-          const response = await fetch(`${ollamaBase}/api/embeddings`, {
+          // llama-server uses OpenAI-compatible /v1/embeddings endpoint
+          const response = await fetch(`${llamaBase}/v1/embeddings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: model || 'nomic-embed-text', prompt })
+            body: JSON.stringify({ model: model || 'default', input: prompt })
           });
 
           if (!response.ok) {
-            throw new Error(`Ollama embeddings failed: ${response.status}`);
+            throw new Error(`llama-server embeddings failed: ${response.status}`);
           }
 
           const data = await response.json();
+          const embedding = data.data?.[0]?.embedding || [];
           embeddings.push({
             object: 'embedding',
-            embedding: data.embedding || [],
+            embedding,
             index: i
           });
         } catch (error) {

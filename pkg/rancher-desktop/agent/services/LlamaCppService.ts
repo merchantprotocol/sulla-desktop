@@ -29,6 +29,15 @@ export interface GGUFModelEntry {
 }
 
 export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
+    'qwen3.5-9b': {
+        displayName: 'Qwen3.5 9B',
+        filename: 'Qwen3.5-9B-Q4_K_M.gguf',
+        url: 'https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf',
+        size: '5.6GB',
+        minMemoryGB: 8,
+        minCPUs: 4,
+        description: "Qwen3.5 9B — latest generation, strong reasoning default",
+    },
     'qwen3.5-0.8b': {
         displayName: 'Qwen3.5 0.8B',
         filename: 'Qwen3.5-0.8B-Q4_K_M.gguf',
@@ -36,7 +45,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
         size: '600MB',
         minMemoryGB: 1,
         minCPUs: 1,
-        description: "Qwen3.5 0.8B — latest generation, fast and lightweight default",
+        description: "Qwen3.5 0.8B — fast and lightweight",
     },
     'qwen2-1.5b': {
         displayName: 'Qwen2 1.5B',
@@ -133,14 +142,17 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
 /**
  * Resolves the project root directory.
  * In development: process.cwd() (the sulla-desktop repo root).
- * In production (packaged): the directory containing the .app / .exe.
+ * In production (packaged): app.getPath('userData') — a writable
+ * per-user directory on every platform:
+ *   macOS:   ~/Library/Application Support/<appName>
+ *   Windows: %APPDATA%/<appName>
+ *   Linux:   ~/.config/<appName>
  */
 function getProjectRoot(): string {
     try {
         const { app } = require('electron');
         if (app?.isPackaged) {
-            // Packaged app: place llm/ next to the app bundle
-            return path.dirname(app.getAppPath());
+            return app.getPath('userData');
         }
     } catch {
         // Not in Electron context
@@ -174,24 +186,70 @@ function getVersionFile(): string {
 }
 
 /**
+ * Detect whether an NVIDIA GPU is likely present (best-effort).
+ */
+function hasNvidiaGpu(): boolean {
+    try {
+        execSync('nvidia-smi', { stdio: 'pipe' });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Detect GPU capability for the current platform (used when binaries are
+ * already installed and we skipped getAssetPattern).
+ */
+function detectGpuCapability(): boolean {
+    const platform = os.platform();
+    if (platform === 'darwin') return true; // Metal always available
+    return hasNvidiaGpu();
+}
+
+/** Track whether we downloaded a GPU-accelerated build */
+let _isGpuBuild = false;
+export function isGpuBuild(): boolean { return _isGpuBuild; }
+
+/**
  * Determine the correct GitHub release asset name for this platform + arch.
+ * Prefers CUDA builds on Linux/Windows when an NVIDIA GPU is detected.
  */
 function getAssetPattern(tag: string): { name: string; ext: 'tar.gz' | 'zip' } | null {
     const platform = os.platform();
     const arch = os.arch();
 
     if (platform === 'darwin') {
+        // macOS always ships with Metal support in the standard build
         const suffix = arch === 'arm64' ? 'macos-arm64' : 'macos-x64';
+        _isGpuBuild = true; // Metal is always available
         return { name: `llama-${tag}-bin-${suffix}.tar.gz`, ext: 'tar.gz' };
     }
 
     if (platform === 'linux') {
-        // Default to CPU Ubuntu x64 build
+        const nvidia = hasNvidiaGpu();
+        if (arch === 'arm64') {
+            // ARM64 Linux — CPU only (no official CUDA ARM builds)
+            _isGpuBuild = false;
+            return { name: `llama-${tag}-bin-ubuntu-arm64.tar.gz`, ext: 'tar.gz' };
+        }
+        if (nvidia) {
+            _isGpuBuild = true;
+            return { name: `llama-${tag}-bin-ubuntu-x64-cuda.tar.gz`, ext: 'tar.gz' };
+        }
+        _isGpuBuild = false;
         return { name: `llama-${tag}-bin-ubuntu-x64.tar.gz`, ext: 'tar.gz' };
     }
 
     if (platform === 'win32') {
+        const nvidia = hasNvidiaGpu();
+        if (nvidia) {
+            const suffix = arch === 'arm64' ? 'win-cuda-arm64' : 'win-cuda-x64';
+            _isGpuBuild = true;
+            return { name: `llama-${tag}-bin-${suffix}.zip`, ext: 'zip' };
+        }
         const suffix = arch === 'arm64' ? 'win-cpu-arm64' : 'win-cpu-x64';
+        _isGpuBuild = false;
         return { name: `llama-${tag}-bin-${suffix}.zip`, ext: 'zip' };
     }
 
@@ -444,6 +502,7 @@ export class LlamaCppService {
         const serverBin = findBinary('llama-server');
         if (currentTag && serverBin) {
             console.log(`${LOG_PREFIX} llama.cpp ${currentTag} already installed at ${serverBin}`);
+            _isGpuBuild = detectGpuCapability();
             this._installedTag = currentTag;
             this._ready = true;
             return;
@@ -557,9 +616,13 @@ export class LlamaCppService {
             '--model', modelPath,
             '--port', String(port),
             '--host', '127.0.0.1',
-            '--ctx-size', '4096',
-            '--n-gpu-layers', '999',
+            '--ctx-size', '32768',
         ];
+
+        // Only offload to GPU if we have a GPU-accelerated build
+        if (_isGpuBuild) {
+            args.push('--n-gpu-layers', '999');
+        }
 
         const proc = spawn(serverBin, args, {
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -608,14 +671,23 @@ export class LlamaCppService {
 
         console.log(`${LOG_PREFIX} Stopping llama-server (pid ${this._serverProcess.pid})...`);
 
+        // On Windows, SIGTERM is translated to TerminateProcess by Node.
+        // On Unix, send SIGTERM for graceful shutdown.
         this._serverProcess.kill('SIGTERM');
 
-        // Give it 5 seconds to exit gracefully, then SIGKILL
+        // Give it 5 seconds to exit gracefully, then force-kill
         await new Promise<void>((resolve) => {
             const timeout = setTimeout(() => {
                 if (this._serverProcess) {
                     console.log(`${LOG_PREFIX} Force-killing llama-server`);
-                    this._serverProcess.kill('SIGKILL');
+                    if (os.platform() === 'win32') {
+                        // On Windows, use taskkill for reliable forceful termination
+                        try {
+                            execSync(`taskkill /pid ${this._serverProcess.pid} /T /F`, { stdio: 'pipe' });
+                        } catch { /* process may already be gone */ }
+                    } else {
+                        this._serverProcess.kill('SIGKILL');
+                    }
                 }
                 resolve();
             }, 5000);
