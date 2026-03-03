@@ -235,6 +235,25 @@ build_app() {
   fi
 }
 
+copy_app_to_desktop() {
+  if [ "$OS" != "macos" ]; then
+    return
+  fi
+
+  local source_app="$REPO_DIR/Sulla Desktop.app"
+  local desktop_app="$HOME/Desktop/Sulla Desktop.app"
+
+  if [ ! -d "$source_app" ]; then
+    warn "Sulla Desktop.app not found at $source_app — skipping Desktop copy"
+    return
+  fi
+
+  info "Copying Sulla Desktop.app to Desktop..."
+  rm -rf "$desktop_app"
+  ditto "$source_app" "$desktop_app"
+  ok "Desktop app copied to $desktop_app"
+}
+
 launch_app() {
   info "Launching Sulla Desktop..."
   NODE_NO_WARNINGS=1 npx electron . &
@@ -274,6 +293,7 @@ main() {
   info "Installing & building..."
   install_deps
   build_app
+  copy_app_to_desktop
   echo ""
 
   launch_app
