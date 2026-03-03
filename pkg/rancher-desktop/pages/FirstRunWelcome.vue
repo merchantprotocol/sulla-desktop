@@ -181,7 +181,7 @@ input:hover, select:hover {
   background-color: #f3f4f6; /* slightly darker background */
 }
 
-dark input:hover, .dark select:hover {
+.dark input:hover, .dark select:hover {
   background-color: #4b5563 !important; /* darker background for dark mode */
 }
 </style>
