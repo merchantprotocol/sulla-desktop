@@ -1,5 +1,5 @@
 import { BaseTool, ToolResponse } from "../base";
-import { calendarClient } from "../../services/CalendarClient";
+import { calendarClient, CalendarEventData } from "../../services/CalendarClient";
 
 /**
  * Calendar List Upcoming Tool - Worker class for execution
@@ -24,16 +24,17 @@ export class CalendarListUpcomingWorker extends BaseTool {
       }
 
       // Format detailed list of upcoming events
+      // Fix #51: Access CalendarEventData properties directly (not via .attributes)
       let responseString = `Upcoming Calendar Events (next ${days} days, ${events.length} found):\n\n`;
-      events.forEach((event: any, index: number) => {
-        const startDate = new Date(event.attributes.start).toLocaleString();
-        const endDate = event.attributes.end ? new Date(event.attributes.end).toLocaleString() : 'N/A';
-        responseString += `${index + 1}. Title: ${event.attributes.title || 'N/A'}\n`;
+      events.forEach((event: CalendarEventData, index: number) => {
+        const startDate = new Date(event.start).toLocaleString();
+        const endDate = event.end ? new Date(event.end).toLocaleString() : 'N/A';
+        responseString += `${index + 1}. Title: ${event.title || 'N/A'}\n`;
         responseString += `   Start: ${startDate}\n`;
         responseString += `   End: ${endDate}\n`;
-        responseString += `   Description: ${event.attributes.description || 'N/A'}\n`;
-        responseString += `   People: ${event.attributes.people ? event.attributes.people.join(', ') : 'N/A'}\n`;
-        responseString += `   Status: ${event.attributes.status || 'N/A'}\n\n`;
+        responseString += `   Description: ${event.description || 'N/A'}\n`;
+        responseString += `   People: ${event.people ? event.people.join(', ') : 'N/A'}\n`;
+        responseString += `   Status: ${event.status || 'N/A'}\n\n`;
       });
 
       return {

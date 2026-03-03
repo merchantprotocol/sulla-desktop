@@ -269,7 +269,9 @@ export abstract class BaseModel<T extends ModelAttributes = ModelAttributes> {
     if (this.exists) {
       const changes = Object.entries(this.attributes)
         .filter(([k, v]) => this.original[k] !== v)
-        .filter(([k]) => fillable.includes(k) || !guarded.includes('*'));
+        .filter(([k]) => fillable.includes(k) || !guarded.includes('*'))
+        // Fix #49, #50: Exclude timestamp columns from changes to prevent duplicate assignment
+        .filter(([k]) => k !== 'updated_at' && k !== 'created_at');
 
       if (changes.length === 0) return this;
 
