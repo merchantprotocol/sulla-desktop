@@ -134,7 +134,7 @@
     "proxy-agent": "^6.5.0",
     "rancher-icons": "https://github.com/rancher/icons.git#v2.0.21",
     "relaxed-json": "^1.0.3",
-    "semver": "7.7.3",
+    "semver": "7.7.4",
     "tar-stream": "3.1.7",
     "temporal-polyfill": "^0.3.0",
     "vis-network": "^10.0.2",
