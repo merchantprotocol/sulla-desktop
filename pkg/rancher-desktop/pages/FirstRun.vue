@@ -76,14 +76,13 @@ import { StartupProgressController } from './agent/StartupProgressController';
 
 import SimpleHeader from './agent/SimpleHeader.vue';
 
-const THEME_STORAGE_KEY = 'rd:theme';
+const THEME_STORAGE_KEY = 'agentTheme';
 
 const isDark = ref(false);
 
 const toggleTheme = () => {
   isDark.value = !isDark.value;
   localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-  document.documentElement.classList.toggle('dark');
 };
 
 const currentStep = ref(0);
@@ -117,14 +116,11 @@ const progressPercent = computed(() => {
 });
 
 onMounted(() => {
-  const stored = localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === 'dark') {
-    isDark.value = true;
-    document.documentElement.classList.add('dark');
-  } else if (stored === 'light') {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    isDark.value = saved === 'dark';
+  } catch {
     isDark.value = false;
-  } else {
-    isDark.value = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
   }
 });
 

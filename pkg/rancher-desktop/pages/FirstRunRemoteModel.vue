@@ -6,7 +6,7 @@
         Optionally enable a remote model. While your system will be fully configured to run a local model, at times that can be very slow, and many people prefer to run a remote model for better performance. You can toggle between local and remote models at any time.
       </p>
 
-      <rd-fieldset legend-text="Remote Model Configuration" class="mb-6">
+      <rd-fieldset legend-text="Remote Model Configuration" class="mb-6 dark:text-gray-100">
         <!-- Error display -->
         <div v-if="error" class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md">
           {{ error }}
@@ -92,8 +92,8 @@
         </div>
       </rd-fieldset>
 
-      <div class="flex justify-between">
-        <button type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md hover:bg-gray-200 cursor-pointer">Back</button>
+      <div class="flex justify-between mt-5">
+        <button type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md bg-gray-100 hover:bg-gray-200 cursor-pointer">Back</button>
         <button type="submit" class="px-6 py-2 text-white rounded-md hover:opacity-90" :style="{ backgroundColor: '#30a5e9' }">Next</button>
       </div>
     </form>

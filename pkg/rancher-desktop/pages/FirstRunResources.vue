@@ -8,7 +8,7 @@
       <rd-fieldset
         legend-text="Virtual Machine Resources"
         legend-tooltip="Allocate CPU and memory for the AI services"
-        class="mb-6 mt-6"
+        class="mb-6 mt-6 dark:text-gray-100"
       >
         <system-preferences
           :memory-in-g-b="settings!.virtualMachine.memoryInGB"
@@ -28,7 +28,7 @@
 
       <rd-fieldset legend-text="AI Model"
         legend-tooltip="Select the LLM model to use. Models are filtered based on your allocated resources."
-        class="mb-6 mt-6"
+        class="mb-6 mt-6 dark:text-gray-100"
       >
         <select class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 mb-2" v-model="sullaModel">
           <option
@@ -46,7 +46,7 @@
 
       <div class="mt-10"></div>
 
-      <button type="button" @click="isOptionsOpen = !isOptionsOpen" class="w-full text-left p-2 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium">
+      <button type="button" @click="isOptionsOpen = !isOptionsOpen" class="w-full text-left p-2 hover:bg-gray-200 dark:hover:bg-gray-700 dark:text-gray-400 transition-colors text-sm font-medium">
         Options {{ isOptionsOpen ? '▲' : '▼' }}
       </button>
 
@@ -55,21 +55,21 @@
           <div class="mb-4">
             <label class="flex items-center">
               <input type="checkbox" v-model="enableTelemetry" @change="onTelemetryChange" class="mr-2">
-              <span class="text-sm">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
+              <span class="text-sm dark:text-gray-400">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
             </label>
           </div>
 
           <div class="mb-4">
             <label class="flex items-center">
               <input type="checkbox" v-model="enableKubernetes" @change="onKubernetesChange" class="mr-2">
-              <span class="text-sm">Enable Kubernetes Mode (requires more resources)</span>
+              <span class="text-sm dark:text-gray-400">Enable Kubernetes Mode (requires more resources)</span>
             </label>
           </div>
         </div>
       </Transition>
 
-      <div class="flex justify-end">
-        <button v-if="showBack" type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md hover:bg-gray-200 cursor-pointer">Back</button>
+      <div class="flex justify-end mt-5">
+        <button v-if="showBack" type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md bg-gray-100 hover:bg-gray-200 cursor-pointer">Back</button>
         <button type="submit" class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90" :style="{ backgroundColor: '#30a5e9' }" :disabled="!sullaModel || settings!.virtualMachine.memoryInGB <= 4 || settings!.virtualMachine.numberCPUs <= 2">Next</button>
       </div>
     </form>

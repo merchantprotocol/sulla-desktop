@@ -4,7 +4,7 @@
       <h2 class="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">Create Your Account</h2>
       <p class="mb-6 text-gray-600 dark:text-gray-400">Set up your account details and preferences.</p>
 
-      <rd-fieldset legend-text="User Account" class="mb-6">
+      <rd-fieldset legend-text="User Account" class="mb-6 dark:text-gray-100">
         <div class="mb-4">
           <label for="primaryUserName" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Primary User Name:</label>
           <input id="primaryUserName" type="text" v-model="primaryUserName" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" placeholder="Enter your name (optional)">
@@ -19,15 +19,15 @@
         </div>
       </rd-fieldset>
 
-      <rd-fieldset legend-text="Updates" class="mb-6">
+      <rd-fieldset legend-text="Updates" class="mb-6 dark:text-gray-100">
         <label class="flex items-center">
           <input type="checkbox" checked="true" v-model="sullaSubscribeToUpdates" class="mr-2">
           <span class="text-sm text-gray-700 dark:text-gray-300">Subscribe to updates and newsletters</span>
         </label>
       </rd-fieldset>
 
-      <div class="flex justify-between">
-        <button v-if="showBack" type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md hover:bg-gray-200 cursor-pointer">Back</button>
+      <div class="flex justify-between mt-5">
+        <button v-if="showBack" type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md bg-gray-100 hover:bg-gray-200 cursor-pointer">Back</button>
         <button type="submit" class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90" :style="{ backgroundColor: '#30a5e9' }" :disabled="!isEmailValid || !sullaPassword?.trim()">Next</button>
       </div>
     </form>
