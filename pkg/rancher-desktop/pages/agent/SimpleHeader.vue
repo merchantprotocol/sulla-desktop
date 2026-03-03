@@ -1,35 +1,17 @@
 <template>
   <header class="sticky top-0 z-50 flex flex-none flex-wrap items-center justify-between bg-white px-4 py-5 shadow-md shadow-slate-900/5 transition duration-500 sm:px-6 lg:px-8 dark:shadow-none dark:bg-slate-900/95 dark:backdrop-blur-sm dark:[@supports(backdrop-filter:blur(0))]:bg-slate-900/75">
-    <div class="mr-6 flex lg:hidden">
-      <button type="button" class="relative" aria-label="Open navigation">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" class="h-6 w-6 stroke-slate-500">
-          <path d="M4 7h16M4 12h16M4 17h16"></path>
-        </svg>
-      </button>
-    </div>
     <div class="relative flex grow basis-0 items-center">
-      <a aria-label="Home page" href="#/">
-        <svg aria-hidden="true" viewBox="0 0 32 33" fill="none" class="h-9 w-9 lg:hidden">
-          <g fill="none" stroke="#38BDF8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" transform="translate(0,4)">
-            <rect x="8" y="6" width="16" height="20" rx="8" />
-            <line x1="16" y1="6" x2="16" y2="1" />
-            <circle cx="16" cy="0" r="1.5" fill="#38BDF8" />
-            <rect x="11" y="12" width="10" height="4" rx="2" />
-            <line x1="12" y1="20" x2="20" y2="20" stroke-width="2.5" />
-          </g>
-        </svg>
-        <svg aria-hidden="true" viewBox="0 0 200 33" class="hidden h-9 w-auto text-slate-900 lg:block dark:text-white">
-          <g fill="none" stroke="#38BDF8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" transform="translate(0,4)">
-            <rect x="8" y="6" width="16" height="20" rx="8" />
-            <line x1="16" y1="6" x2="16" y2="1" />
-            <circle cx="16" cy="0" r="1.5" fill="#38BDF8" />
-            <rect x="11" y="12" width="10" height="4" rx="2" />
-            <line x1="12" y1="20" x2="20" y2="20" stroke-width="2.5" />
-          </g>
-
-          <text x="33" y="26" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="currentColor">SULLA</text>
-          <text x="33" y="26" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="currentColor" dx="70">DESKTOP</text>
-        </svg>
+      <a aria-label="Home page" :href="homeUrl || '#/'">
+        <img
+          :src="logoLightUrl"
+          alt="Sulla Desktop"
+          class="h-9 w-auto dark:hidden"
+        >
+        <img
+          :src="logoDarkUrl"
+          alt="Sulla Desktop"
+          class="hidden h-9 w-auto dark:block"
+        >
       </a>
     </div>
     <div class="relative flex basis-0 justify-end gap-6 sm:gap-8">
@@ -75,5 +57,9 @@ defineProps<{
   isDark: boolean;
   toggleTheme: () => void;
   onStop?: () => void;
+  homeUrl?: string;
 }>();
+
+const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();
+const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark-nobg.png', import.meta.url).toString();
 </script>

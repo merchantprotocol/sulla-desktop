@@ -3,7 +3,7 @@
     <PostHogTracker page-name="FirstRun" />
     <div class="flex h-screen flex-col">
 
-      <SimpleHeader :is-dark="isDark" :toggle-theme="toggleTheme" :on-stop="stopApp"/>
+      <SimpleHeader :is-dark="isDark" :toggle-theme="toggleTheme" :on-stop="stopApp" :home-url="'#/FirstRun'"/>
 
       <!-- Main agent interface -->
       <div ref="chatScrollContainer" id="chat-scroll-container" class="flex min-h-0 flex-1 overflow-y-auto">
