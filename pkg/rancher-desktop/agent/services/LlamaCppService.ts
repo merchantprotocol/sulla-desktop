@@ -321,9 +321,16 @@ function httpGet(url: string, headers: Record<string, string> = {}): Promise<Buf
  */
 function httpGetToFile(url: string, destPath: string, onProgress?: (received: number, total: number) => void): Promise<void> {
     return new Promise((resolve, reject) => {
+        let settled = false;
+        const fail = (err: Error) => {
+            if (settled) return;
+            settled = true;
+            try { fs.unlinkSync(destPath); } catch {}
+            reject(err);
+        };
         const makeRequest = (requestUrl: string, remainingRedirects: number) => {
             if (remainingRedirects <= 0) {
-                return reject(new Error('Too many redirects'));
+                return fail(new Error('Too many redirects'));
             }
             const mod = requestUrl.startsWith('https') ? https : http;
             const req = mod.get(requestUrl, { headers: { 'User-Agent': 'sulla-desktop' } }, (res) => {
@@ -332,24 +339,32 @@ function httpGetToFile(url: string, destPath: string, onProgress?: (received: nu
                     return makeRequest(next, remainingRedirects - 1);
                 }
                 if (res.statusCode && res.statusCode >= 400) {
-                    return reject(new Error(`HTTP ${res.statusCode} for ${requestUrl}`));
+                    return fail(new Error(`HTTP ${res.statusCode} for ${requestUrl}`));
                 }
                 const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
                 let receivedBytes = 0;
                 const file = fs.createWriteStream(destPath);
+
+                // Track progress without interfering with the pipe
                 res.on('data', (chunk: Buffer) => {
                     receivedBytes += chunk.length;
-                    file.write(chunk);
                     if (onProgress && totalBytes > 0) {
                         onProgress(receivedBytes, totalBytes);
                     }
                 });
-                res.on('end', () => { file.end(); });
-                file.on('finish', () => { file.close(); resolve(); });
-                file.on('error', (err) => { try { fs.unlinkSync(destPath); } catch {} reject(err); });
-                res.on('error', (err) => { try { fs.unlinkSync(destPath); } catch {} reject(err); });
+
+                // pipe() handles backpressure correctly for large files
+                res.pipe(file);
+
+                file.on('finish', () => {
+                    if (settled) return;
+                    settled = true;
+                    resolve();
+                });
+                file.on('error', fail);
+                res.on('error', fail);
             });
-            req.on('error', reject);
+            req.on('error', fail);
         };
         makeRequest(url, 10);
     });

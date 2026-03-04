@@ -257,23 +257,26 @@ ensure_repo() {
     return
   fi
 
-  if [ -d "$REPO_DIR" ] && [ -d "$REPO_DIR/.git" ]; then
+  # Always clone into the user's home directory
+  local target="$HOME/$REPO_DIR"
+
+  if [ -d "$target" ] && [ -d "$target/.git" ]; then
     # Repo dir exists with a valid .git — just update
-    info "Updating existing repo..."
-    cd "$REPO_DIR"
+    info "Updating existing repo at $target ..."
+    cd "$target"
     git pull --ff-only || warn "git pull failed — continuing with existing code"
     REPO_DIR="$(pwd)"
-  elif [ -d "$REPO_DIR" ]; then
+  elif [ -d "$target" ]; then
     # Dir exists but is not a valid git repo (partial clone) — remove and re-clone
-    warn "Found incomplete $REPO_DIR from a previous run — removing and re-cloning..."
-    rm -rf "$REPO_DIR"
-    git clone "$REPO_URL" "$REPO_DIR"
-    cd "$REPO_DIR"
+    warn "Found incomplete $target from a previous run — removing and re-cloning..."
+    rm -rf "$target"
+    git clone "$REPO_URL" "$target"
+    cd "$target"
     REPO_DIR="$(pwd)"
   else
-    info "Cloning sulla-desktop..."
-    git clone "$REPO_URL" "$REPO_DIR"
-    cd "$REPO_DIR"
+    info "Cloning sulla-desktop into $target ..."
+    git clone "$REPO_URL" "$target"
+    cd "$target"
     REPO_DIR="$(pwd)"
   fi
   ok "Repo ready at $REPO_DIR"
