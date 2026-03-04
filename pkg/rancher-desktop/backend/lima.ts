@@ -696,12 +696,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       }
     }
 
-    // Install docker-compose if using MOBY
+    // Install docker compose v2 plugin if using MOBY
     if (this.cfg?.containerEngine?.name === ContainerEngine.MOBY) {
       config.provision = config.provision || [];
       config.provision.push({
-        mode: 'system',
-        script: '#!/bin/sh\napk update && apk add docker-compose',
+        mode:   'system',
+        script: '#!/bin/sh\nset -o errexit\napk update && apk add --no-cache docker-cli-compose',
       });
     }
 
@@ -2253,7 +2253,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     });
 
     await this.progressTracker.action('Deploying new containers', 63, async () => {
-      await this.execCommand({ root: true }, 'docker-compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla', 'up', '-d');
+      await this.execCommand({ root: true }, 'docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla', 'up', '-d');
     });
   }
 

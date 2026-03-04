@@ -215,19 +215,9 @@ export async function instantiateSullaStart(): Promise<void> {
                 await llamaCppService.startServer(modelPath);
                 console.log(`[Background] llama-server running at ${llamaCppService.serverBaseUrl}`);
 
-                // Install training Python deps in the background (non-blocking)
-                // This ensures unsloth, pymupdf, python-docx etc. are ready before user trains
-                (async () => {
-                    try {
-                        console.log('[Background] Installing training dependencies...');
-                        await llamaCppService.installTrainingDeps(undefined, (description, current, max) => {
-                            window.send('k8s-progress', { current, max, description, transitionTime: new Date() });
-                        });
-                        console.log('[Background] Training dependencies ready');
-                    } catch (err) {
-                        console.error('[Background] Training deps install failed (non-fatal):', err);
-                    }
-                })();
+                // Training deps are NOT installed at startup.
+                // They are installed on-demand when the user opens the Model Training
+                // window and clicks "Install Training Environment".
             }
         } catch (error) {
             console.error('[Background] Failed to start llama.cpp server:', error);

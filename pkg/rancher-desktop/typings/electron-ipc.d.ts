@@ -137,6 +137,8 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Training
+  'training-install-status': () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string };
+  'training-install':        () => { logFilename: string };
   'training-run':          (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
   'training-status':       () => { running: boolean };
   'training-docs-config-exists': () => boolean;

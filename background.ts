@@ -395,19 +395,9 @@ Electron.app.whenReady().then(async() => {
 
     await SullaSettingsModel.set('firstRunSullaNetworking', false, 'boolean');
 
-    // Install training system on bare metal (non-blocking)
-    // This runs in the Electron main process, NOT inside the Lima VM.
-    (async() => {
-      try {
-        const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
-        const llamaCppService = getLlamaCppService();
-        const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
-
-        await llamaCppService.ensureTrainingSystem(modelKey);
-      } catch (err) {
-        console.error('[Background] Training system setup failed (non-fatal):', err);
-      }
-    })();
+    // Training deps are NOT installed at startup.
+    // They are installed on-demand when the user opens the Model Training
+    // window and clicks "Install Training Environment".
 
   } catch (ex: any) {
     console.error(`Error starting up: ${ ex }`, ex.stack);

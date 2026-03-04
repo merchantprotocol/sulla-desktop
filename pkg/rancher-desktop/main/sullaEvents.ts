@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import * as window from '@pkg/window';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -82,12 +83,11 @@ export function initSullaEvents(): void {
     // Fire-and-forget — the UI will poll the log file
     const runAll = async() => {
       try {
-        // Phase 0: Ensure venv + deps + training model (streams to log)
-        await service.ensureTrainingSystem(modelKey, logPath);
-
+        // Training environment must already be installed via the
+        // "Install Training Environment" button in the Model Training window.
         const python = service.getTrainingPython();
         if (!python) {
-          fs.appendFileSync(logPath, `\n[ERROR] Training venv not installed — ensureTrainingSystem() failed\n`, 'utf-8');
+          fs.appendFileSync(logPath, `\n[ERROR] Training environment not installed. Open the Model Training window and click "Install Training Environment" first.\n`, 'utf-8');
           return;
         }
 
@@ -409,6 +409,132 @@ export function initSullaEvents(): void {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
     console.log(`[Sulla] Saved documents_config.json with ${folders.length} folders, ${files.length} files`);
     return { ok: true };
+  });
+
+  // ── Training Environment Installation ────────────────────────────
+
+  /** Track whether the training environment is currently being installed */
+  let isTrainingInstalling = false;
+  let trainingInstallError = '';
+
+  /**
+   * Check if the training environment is fully installed:
+   * - Python venv exists with required packages
+   * - Training model is downloaded
+   * Returns { installed, installing, error, modelKey }
+   */
+  ipcMainProxy.handle('training-install-status', async() => {
+    const { getLlamaCppService, GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const service = getLlamaCppService();
+    const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
+
+    const entry = GGUF_MODELS[modelKey];
+    const hasPython = service.getTrainingPython() !== null;
+    const hasModel = entry?.trainingRepo ? service.getTrainingModelPath(modelKey) !== null : false;
+    const installed = hasPython && hasModel;
+
+    return {
+      installed,
+      installing:  isTrainingInstalling,
+      error:       trainingInstallError,
+      modelKey,
+      displayName: entry?.displayName ?? modelKey,
+      trainingRepo: entry?.trainingRepo ?? '',
+    };
+  });
+
+  /**
+   * Run the full training environment installation:
+   * 1. Create Python venv + install all deps (pip)
+   * 2. Download the training model from HuggingFace
+   *
+   * Sends 'training-install-progress' events to all windows with:
+   *   { phase, description, current, max, fileName?, bytesReceived?, bytesTotal? }
+   */
+  ipcMainProxy.handle('training-install', async() => {
+    if (isTrainingInstalling) {
+      throw new Error('Training environment installation is already in progress');
+    }
+
+    const { getLlamaCppService, GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const service = getLlamaCppService();
+    const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
+
+    const entry = GGUF_MODELS[modelKey];
+    if (!entry?.trainingRepo) {
+      throw new Error(`Model ${modelKey} has no training repo configured`);
+    }
+
+    isTrainingInstalling = true;
+    trainingInstallError = '';
+
+    const sendProgress = (data: {
+      phase: string;
+      description: string;
+      current: number;
+      max: number;
+      fileName?: string;
+      bytesReceived?: number;
+      bytesTotal?: number;
+    }) => {
+      window.send('training-install-progress' as any, data);
+    };
+
+    // Create log file
+    const logsDir = getTrainingLogsDir();
+    fs.mkdirSync(logsDir, { recursive: true });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const logFilename = `install-${timestamp}.log`;
+    const logPath = path.join(logsDir, logFilename);
+    fs.writeFileSync(logPath, `=== Training Environment Install ===\nStarted: ${new Date().toISOString()}\nModel: ${modelKey} (${entry.trainingRepo})\n\n`, 'utf-8');
+
+    // Fire-and-forget: run the install in the background.
+    // Progress is streamed via 'training-install-progress' events.
+    // Return the log filename immediately so the UI can start tailing.
+    const runInstall = async() => {
+      try {
+        // Phase 1: Install Python deps
+        sendProgress({ phase: 'deps', description: 'Installing Python dependencies...', current: 0, max: 100 });
+
+        await service.installTrainingDeps(logPath, (description, current, max) => {
+          sendProgress({ phase: 'deps', description, current, max });
+        });
+
+        // Phase 2: Write default documents config
+        service['writeDocumentsConfig']();
+
+        // Phase 3: Download training model
+        sendProgress({ phase: 'model', description: `Downloading training model ${entry.trainingRepo}...`, current: 0, max: 100 });
+
+        await service.downloadTrainingModel(modelKey, logPath, (fileIndex, fileCount, fileName, bytesReceived, bytesTotal) => {
+          const overallPct = Math.round(((fileIndex + bytesReceived / bytesTotal) / fileCount) * 100);
+          sendProgress({
+            phase:         'model',
+            description:   `Downloading ${fileName} (${fileIndex + 1}/${fileCount})`,
+            current:       overallPct,
+            max:           100,
+            fileName,
+            bytesReceived,
+            bytesTotal,
+          });
+        });
+
+        sendProgress({ phase: 'done', description: 'Training environment installed successfully', current: 100, max: 100 });
+        fs.appendFileSync(logPath, `\n=== Install Complete: ${new Date().toISOString()} ===\n`, 'utf-8');
+      } catch (err: any) {
+        trainingInstallError = err?.message || String(err);
+        fs.appendFileSync(logPath, `\n[ERROR] ${trainingInstallError}\n`, 'utf-8');
+        sendProgress({ phase: 'error', description: trainingInstallError, current: 0, max: 100 });
+      } finally {
+        isTrainingInstalling = false;
+      }
+    };
+
+    runInstall().catch(() => { isTrainingInstalling = false; });
+
+    return { logFilename };
   });
 
   console.log('[Sulla] IPC event handlers initialized');

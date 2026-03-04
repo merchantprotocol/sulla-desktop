@@ -319,7 +319,7 @@ function httpGet(url: string, headers: Record<string, string> = {}): Promise<Buf
  * Stream an HTTPS GET to a file on disk (for large model downloads).
  * Follows redirects just like httpGet.
  */
-function httpGetToFile(url: string, destPath: string): Promise<void> {
+function httpGetToFile(url: string, destPath: string, onProgress?: (received: number, total: number) => void): Promise<void> {
     return new Promise((resolve, reject) => {
         const makeRequest = (requestUrl: string, remainingRedirects: number) => {
             if (remainingRedirects <= 0) {
@@ -334,11 +334,20 @@ function httpGetToFile(url: string, destPath: string): Promise<void> {
                 if (res.statusCode && res.statusCode >= 400) {
                     return reject(new Error(`HTTP ${res.statusCode} for ${requestUrl}`));
                 }
+                const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+                let receivedBytes = 0;
                 const file = fs.createWriteStream(destPath);
-                res.pipe(file);
+                res.on('data', (chunk: Buffer) => {
+                    receivedBytes += chunk.length;
+                    file.write(chunk);
+                    if (onProgress && totalBytes > 0) {
+                        onProgress(receivedBytes, totalBytes);
+                    }
+                });
+                res.on('end', () => { file.end(); });
                 file.on('finish', () => { file.close(); resolve(); });
-                file.on('error', (err) => { fs.unlinkSync(destPath); reject(err); });
-                res.on('error', (err) => { fs.unlinkSync(destPath); reject(err); });
+                file.on('error', (err) => { try { fs.unlinkSync(destPath); } catch {} reject(err); });
+                res.on('error', (err) => { try { fs.unlinkSync(destPath); } catch {} reject(err); });
             });
             req.on('error', reject);
         };
@@ -564,7 +573,9 @@ export class LlamaCppService {
         // e.g. 'unsloth/Qwen3.5-9B' → 'Qwen3.5-9B'
         const dirName = entry.trainingRepo.split('/').pop()!;
         const p = path.join(getTrainingDir(), dirName);
-        return fs.existsSync(p) ? p : null;
+        // Verify download completed successfully via marker file
+        const marker = path.join(p, '.download-complete');
+        return fs.existsSync(marker) ? p : null;
     }
 
     /**
@@ -575,7 +586,11 @@ export class LlamaCppService {
      * @param modelKey Key from GGUF_MODELS (e.g. 'qwen3.5-9b')
      * @returns Absolute path to the training model directory
      */
-    async downloadTrainingModel(modelKey: string, logPath?: string): Promise<string> {
+    async downloadTrainingModel(
+        modelKey: string,
+        logPath?: string,
+        onProgress?: (fileIndex: number, fileCount: number, fileName: string, bytesReceived: number, bytesTotal: number) => void,
+    ): Promise<string> {
         const entry = GGUF_MODELS[modelKey];
         if (!entry) {
             throw new Error(`${LOG_PREFIX} Unknown model key: ${modelKey}`);
@@ -593,9 +608,15 @@ export class LlamaCppService {
         const dirName = entry.trainingRepo.split('/').pop()!;
         const destDir = path.join(getTrainingDir(), dirName);
 
-        if (fs.existsSync(destDir) && fs.readdirSync(destDir).length > 0) {
+        const marker = path.join(destDir, '.download-complete');
+        if (fs.existsSync(marker)) {
             log(`Training model ${entry.trainingRepo} already downloaded`);
             return destDir;
+        }
+
+        // Clean up any partial download
+        if (fs.existsSync(destDir)) {
+            fs.rmSync(destDir, { recursive: true, force: true });
         }
 
         fs.mkdirSync(destDir, { recursive: true });
@@ -624,9 +645,13 @@ export class LlamaCppService {
             }
 
             log(`  [${i + 1}/${fileList.length}] ${file.path}`);
-            await httpGetToFile(fileUrl, fileDest);
+            await httpGetToFile(fileUrl, fileDest, (received, total) => {
+                onProgress?.(i, fileList.length, file.path, received, total);
+            });
         }
 
+        // Mark download as complete
+        fs.writeFileSync(marker, new Date().toISOString(), 'utf-8');
         log(`Training model ${entry.trainingRepo} downloaded to ${destDir}`);
         return destDir;
     }

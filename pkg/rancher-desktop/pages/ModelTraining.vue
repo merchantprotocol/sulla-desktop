@@ -28,6 +28,24 @@ export default defineComponent({
       navItems,
       currentNav:     'run' as string,
 
+      // Install state
+      installChecked:      false,
+      envInstalled:        false,
+      envInstalling:       false,
+      installError:        '' as string,
+      installPhase:        '' as string,
+      installDescription:  '' as string,
+      installCurrent:      0,
+      installMax:          100,
+      installFileName:     '' as string,
+      installBytesReceived: 0,
+      installBytesTotal:   0,
+      installModelName:    '' as string,
+      installModelRepo:    '' as string,
+      installLogContent:   '' as string,
+      installLogFile:      '' as string,
+      installLogTimer:     null as ReturnType<typeof setInterval> | null,
+
       // Run page
       selectedModel:  '' as string,
       trainableModels: [] as Array<{ key: string; displayName: string; trainingRepo: string }>,
@@ -78,17 +96,127 @@ export default defineComponent({
   },
 
   async mounted() {
-    await this.loadTrainableModels();
-    await this.checkDocsConfigExists();
-    await this.loadSchedule();
-    await this.checkRunningStatus();
+    // Check install status first — if not installed, show install screen
+    await this.checkInstallStatus();
+    if (this.envInstalled) {
+      await this.loadTrainableModels();
+      await this.checkDocsConfigExists();
+      await this.loadSchedule();
+      await this.checkRunningStatus();
+    }
+
+    // Listen for install progress events from main process
+    ipcRenderer.on('training-install-progress' as any, this.handleInstallProgress);
   },
 
   beforeUnmount() {
     this.stopLogPolling();
+    this.stopInstallLogPolling();
+    ipcRenderer.removeListener('training-install-progress' as any, this.handleInstallProgress);
   },
 
   methods: {
+    // ── Install ──────────────────────────────────────────────────────
+
+    async checkInstallStatus() {
+      try {
+        const status = await ipcRenderer.invoke('training-install-status');
+        this.envInstalled = status.installed;
+        this.envInstalling = status.installing;
+        this.installError = status.error || '';
+        this.installModelName = status.displayName || '';
+        this.installModelRepo = status.trainingRepo || '';
+      } catch (err) {
+        console.error('Failed to check install status:', err);
+      } finally {
+        this.installChecked = true;
+      }
+    },
+
+    handleInstallProgress(_event: any, data: any) {
+      this.installPhase = data.phase || '';
+      this.installDescription = data.description || '';
+      this.installCurrent = data.current ?? 0;
+      this.installMax = data.max ?? 100;
+      this.installFileName = data.fileName || '';
+      this.installBytesReceived = data.bytesReceived ?? 0;
+      this.installBytesTotal = data.bytesTotal ?? 0;
+
+      if (data.phase === 'done') {
+        this.envInstalled = true;
+        this.envInstalling = false;
+        this.stopInstallLogPolling();
+        // Load the main UI data now
+        this.loadTrainableModels();
+        this.checkDocsConfigExists();
+        this.loadSchedule();
+        this.checkRunningStatus();
+      } else if (data.phase === 'error') {
+        this.envInstalling = false;
+        this.installError = data.description || 'Installation failed';
+        this.stopInstallLogPolling();
+      }
+    },
+
+    async startInstall() {
+      this.envInstalling = true;
+      this.installError = '';
+      this.installPhase = 'deps';
+      this.installDescription = 'Starting installation...';
+      this.installCurrent = 0;
+      this.installLogContent = '';
+
+      try {
+        const result = await ipcRenderer.invoke('training-install');
+        this.installLogFile = result?.logFilename || '';
+        // Start polling the install log for live output
+        if (this.installLogFile) {
+          this.startInstallLogPolling();
+        }
+      } catch (err: any) {
+        // Error handling is done via the progress event (phase=error)
+        // but also catch here for immediate invoke failures
+        if (!this.installError) {
+          this.installError = err?.message || 'Installation failed';
+        }
+        this.envInstalling = false;
+      }
+    },
+
+    startInstallLogPolling() {
+      this.stopInstallLogPolling();
+      this.installLogTimer = setInterval(async() => {
+        if (!this.installLogFile) return;
+        try {
+          this.installLogContent = await ipcRenderer.invoke('training-log-read', this.installLogFile);
+        } catch {
+          // File may not exist yet
+        }
+      }, 2000);
+    },
+
+    stopInstallLogPolling() {
+      if (this.installLogTimer) {
+        clearInterval(this.installLogTimer);
+        this.installLogTimer = null;
+      }
+    },
+
+    installProgressPct(): number {
+      if (this.installMax <= 0) return 0;
+      return Math.min(100, Math.round((this.installCurrent / this.installMax) * 100));
+    },
+
+    installDownloadPct(): string {
+      if (this.installBytesTotal <= 0) return '';
+      const pct = Math.round((this.installBytesReceived / this.installBytesTotal) * 100);
+      const received = (this.installBytesReceived / (1024 * 1024)).toFixed(1);
+      const total = (this.installBytesTotal / (1024 * 1024)).toFixed(1);
+      return `${received} / ${total} MB (${pct}%)`;
+    },
+
+    // ── Navigation ───────────────────────────────────────────────────
+
     navClicked(navId: string) {
       this.currentNav = navId;
       if (navId === 'history') {
@@ -369,8 +497,107 @@ export default defineComponent({
       </h1>
     </div>
 
-    <!-- Main content with sidebar -->
-    <div class="mt-content">
+    <!-- Install Screen — shown when training environment is not yet set up -->
+    <div
+      v-if="installChecked && !envInstalled"
+      class="mt-install-screen"
+    >
+      <!-- Before install starts: centered button -->
+      <div
+        v-if="!envInstalling && !installError"
+        class="mt-install-prompt"
+      >
+        <div class="mt-install-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </div>
+        <h2 class="text-lg font-semibold text-slate-900">
+          Install Training Setup
+        </h2>
+        <p class="mt-install-desc">
+          This will install the Python training dependencies and download the
+          <strong>{{ installModelName }}</strong> model ({{ installModelRepo }}).
+          This may take several minutes depending on your connection speed.
+        </p>
+        <button
+          class="mt-btn-install"
+          @click="startInstall"
+        >
+          Install Training Setup
+        </button>
+      </div>
+
+      <!-- During install: progress + logs -->
+      <div
+        v-if="envInstalling"
+        class="mt-install-progress-container"
+      >
+        <h2 class="text-base font-semibold text-slate-900">
+          Installing Training Environment
+        </h2>
+        <p class="mt-1 text-sm text-slate-500">
+          {{ installDescription || 'Starting...' }}
+        </p>
+
+        <!-- Progress bar -->
+        <div class="mt-progress-bar-track">
+          <div
+            class="mt-progress-bar-fill"
+            :style="{ width: installProgressPct() + '%' }"
+          />
+        </div>
+        <div class="flex justify-between text-xs text-slate-400">
+          <span>{{ installPhase === 'model' ? 'Downloading model' : 'Installing dependencies' }}</span>
+          <span>{{ installProgressPct() }}%</span>
+        </div>
+
+        <!-- File download detail -->
+        <div
+          v-if="installPhase === 'model' && installFileName"
+          class="mt-install-file-detail"
+        >
+          <span class="text-sm text-slate-600">{{ installFileName }}</span>
+          <span
+            v-if="installDownloadPct()"
+            class="text-xs text-slate-400"
+          >{{ installDownloadPct() }}</span>
+        </div>
+
+        <!-- Live log output -->
+        <div class="mt-install-log">
+          <pre class="mt-log-output">{{ installLogContent || 'Waiting for output\u2026' }}</pre>
+        </div>
+      </div>
+
+      <!-- Error state -->
+      <div
+        v-if="!envInstalling && installError"
+        class="mt-install-prompt"
+      >
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 mb-4">
+          <strong>Installation failed:</strong> {{ installError }}
+        </div>
+        <button
+          class="mt-btn-install"
+          @click="startInstall"
+        >
+          Retry Installation
+        </button>
+
+        <!-- Show log from failed install -->
+        <div
+          v-if="installLogContent"
+          class="mt-install-log mt-4"
+        >
+          <pre class="mt-log-output">{{ installLogContent }}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main content with sidebar — only shown when environment is installed -->
+    <div
+      v-if="installChecked && envInstalled"
+      class="mt-content"
+    >
       <!-- Sidebar navigation -->
       <nav class="mt-sidebar">
         <div
@@ -999,6 +1226,93 @@ export default defineComponent({
 </template>
 
 <style scoped>
+/* Install screen */
+.mt-install-screen {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 2rem;
+}
+.mt-install-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 28rem;
+  gap: 0.75rem;
+}
+.mt-install-icon {
+  color: var(--color-sky-500);
+  margin-bottom: 0.5rem;
+}
+.mt-install-desc {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-slate-500);
+}
+.mt-btn-install {
+  margin-top: 0.5rem;
+  padding: 0.75rem 2rem;
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--color-sky-600);
+  color: var(--color-white);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+.mt-btn-install:hover {
+  background: var(--color-sky-700);
+  transform: translateY(-1px);
+}
+.mt-btn-install:active {
+  transform: translateY(0);
+}
+.mt-install-progress-container {
+  width: 100%;
+  max-width: 48rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.mt-progress-bar-track {
+  width: 100%;
+  height: 0.5rem;
+  background: var(--color-slate-200);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+.mt-progress-bar-fill {
+  height: 100%;
+  background: var(--color-sky-500);
+  border-radius: 9999px;
+  transition: width 0.3s ease;
+}
+.mt-install-file-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-slate-50);
+  border: 1px solid var(--color-slate-200);
+  border-radius: var(--radius-md);
+}
+.mt-install-log {
+  flex: 1;
+  min-height: 12rem;
+  max-height: 20rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-slate-200);
+  border-radius: var(--radius-lg);
+  background: var(--color-slate-900);
+}
+.mt-install-log .mt-log-output {
+  color: var(--color-slate-300);
+}
+
 /* Root layout — matches LanguageModelSettings .lm-settings */
 .mt-root {
   display: flex;
