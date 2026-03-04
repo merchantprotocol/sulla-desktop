@@ -2115,13 +2115,22 @@
     ollama "^0.6.3"
     uuid "^10.0.0"
 
-"@langchain/openai@1.2.11", "@langchain/openai@^1.2.5":
+"@langchain/openai@1.2.11":
   version "1.2.11"
   resolved "https://registry.yarnpkg.com/@langchain/openai/-/openai-1.2.11.tgz#5b8309d1ecf98b988184534c3dbe5d8e3868e232"
   integrity sha512-//a3OcvHKuz9QXAn3QJjASdtSyyF1JmsZKVzuUa2uR2YLFAS+XMZYLfel9RaNdt8LWkwhSpCiVvegqUGRBU+uw==
   dependencies:
     js-tiktoken "^1.0.12"
     openai "^6.24.0"
+    zod "^3.25.76 || ^4"
+
+"@langchain/openai@^1.2.10":
+  version "1.2.10"
+  resolved "https://registry.yarnpkg.com/@langchain/openai/-/openai-1.2.10.tgz#98e919fa859d8dff0ad242d99f3e02425f99345d"
+  integrity sha512-1O/kz5eC76BLq24ij3PTHBAo/P5lE5etA6mcKu6goKo5KfeXw8c1ae9TGbjiBahIM7Gh7bAlrh7ITHnedqsJ3g==
+  dependencies:
+    js-tiktoken "^1.0.12"
+    openai "^6.22.0"
     zod "^3.25.76 || ^4"
 
 "@langchain/textsplitters@1.0.1":
@@ -10754,7 +10763,7 @@ open@^8.0.2, open@^8.0.9:
     is-docker "^2.1.1"
     is-wsl "^2.2.0"
 
-openai@^6.24.0:
+openai@^6.22.0, openai@^6.24.0:
   version "6.25.0"
   resolved "https://registry.yarnpkg.com/openai/-/openai-6.25.0.tgz#a874e43c0f514464ea83d62c7b746ff4d39a031a"
   integrity sha512-mEh6VZ2ds2AGGokWARo18aPISI1OhlgdEIC1ewhkZr8pSIT31dec0ecr9Nhxx0JlybyOgoAT1sWeKtwPZzJyww==
