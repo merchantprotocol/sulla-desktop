@@ -1,7 +1,12 @@
 #!/bin/zsh
 
-# Resolve the project directory (3 levels up from Contents/MacOS/launcher)
-PROJECT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+# Resolve the project directory — look in the user's home directory
+PROJECT_DIR="$HOME/sulla-desktop"
+
+if [ ! -d "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/package.json" ]; then
+  osascript -e 'display alert "Sulla Desktop" message "Could not find sulla-desktop in your home directory ('"$PROJECT_DIR"'). Please re-run the installer." as critical'
+  exit 1
+fi
 
 # Source nvm so we get the right node
 export NVM_DIR="$HOME/.nvm"
