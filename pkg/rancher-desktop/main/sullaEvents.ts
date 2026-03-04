@@ -67,10 +67,74 @@ function isTrainingLocked(): boolean {
   }
 }
 
+/** Resolve the absolute sulla home directory */
+function getSullaHomeDir(): string {
+  const os = require('os');
+  const envPath = String(process.env.SULLA_HOME_DIR || '').trim();
+  if (envPath && path.isAbsolute(envPath)) return envPath;
+  if (envPath) return path.resolve(envPath);
+  return path.join(os.homedir(), 'sulla');
+}
+
+/** Ensure a path is within the sulla home directory (sandbox) */
+function assertInsideSullaHome(targetPath: string): string {
+  const root = getSullaHomeDir();
+  const resolved = path.resolve(targetPath);
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+    throw new Error(`Path is outside sulla home: ${resolved}`);
+  }
+  return resolved;
+}
+
 /**
  * Initialize Sulla-specific IPC handlers.
  */
 export function initSullaEvents(): void {
+
+  // ─────────────────────────────────────────────────────────────
+  // Filesystem handlers (read-only)
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('filesystem-get-root', async() => {
+    const root = getSullaHomeDir();
+    fs.mkdirSync(root, { recursive: true });
+    return root;
+  });
+
+  ipcMainProxy.handle('filesystem-read-dir', async(_event: unknown, dirPath: string) => {
+    const resolved = assertInsideSullaHome(dirPath);
+    const entries = fs.readdirSync(resolved, { withFileTypes: true });
+    return entries
+      .filter(e => !e.name.startsWith('.'))
+      .map((e) => {
+        const fullPath = path.join(resolved, e.name);
+        const isDir = e.isDirectory();
+        let size = 0;
+        try {
+          if (!isDir) size = fs.statSync(fullPath).size;
+        } catch { /* ignore */ }
+        return {
+          name:    e.name,
+          path:    fullPath,
+          isDir,
+          size,
+          ext:     isDir ? '' : path.extname(e.name).toLowerCase(),
+        };
+      })
+      .sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+  });
+
+  ipcMainProxy.handle('filesystem-read-file', async(_event: unknown, filePath: string) => {
+    const resolved = assertInsideSullaHome(filePath);
+    const stat = fs.statSync(resolved);
+    if (stat.size > 5 * 1024 * 1024) {
+      throw new Error('File too large to open (>5MB)');
+    }
+    return fs.readFileSync(resolved, 'utf-8');
+  });
 
   /**
    * Run training manually. Spawns the training pipeline as a child process,

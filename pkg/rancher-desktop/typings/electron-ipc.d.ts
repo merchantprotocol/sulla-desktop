@@ -136,6 +136,12 @@ export interface IpcMainInvokeEvents {
   'app-quit':                  () => void;
   // #endregion
 
+  // #region Filesystem
+  'filesystem-get-root':  () => string;
+  'filesystem-read-dir':  (dirPath: string) => Array<{ name: string; path: string; isDir: boolean; size: number; ext: string }>;
+  'filesystem-read-file': (filePath: string) => string;
+  // #endregion
+
   // #region Training
   'training-install-status': () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string };
   'training-install':        () => { logFilename: string };

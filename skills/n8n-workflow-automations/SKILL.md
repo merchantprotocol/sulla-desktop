@@ -1,6 +1,4 @@
-import type { NativeSkillDefinition } from './NativeSkillRegistry';
-
-const SKILL_DOC = `---
+---
 schemaversion: 1
 slug: skill-n8n-workflow-creation
 title: "Create n8n Automation Workflow"
@@ -81,25 +79,14 @@ Why: A webhook is the only trigger type you can fire on-demand via curl. Without
 6. **Only after everything works**: if the final trigger should be something else (cron/schedule, app event, polling, etc.), add that trigger node alongside the webhook or swap it out.
 
 ### Testing via webhook:
-- After activating, use \`diagnose_webhook\` to confirm the webhook URL is reachable.
-- Trigger the workflow with curl: \`curl -X POST <webhook-url> -H "Content-Type: application/json" -d '{"test": true}'\`
-- Check execution results via \`get_executions\` or the n8n dashboard.
+- After activating, use `diagnose_webhook` to confirm the webhook URL is reachable.
+- Trigger the workflow with curl: `curl -X POST <webhook-url> -H "Content-Type: application/json" -d '{"test": true}'`
+- Check execution results via `get_executions` or the n8n dashboard.
 
 ### Swapping to production trigger:
 Once the workflow logic is fully tested and working:
-- Add the desired production trigger (e.g., Schedule Trigger, App Trigger, etc.) using \`patch_workflow\`.
+- Add the desired production trigger (e.g., Schedule Trigger, App Trigger, etc.) using `patch_workflow`.
 - You may keep the webhook node for future manual testing, or remove it.
 - Re-verify the workflow executes correctly with the new trigger.
 
 Each step must be completed and verified before the next begins.
-`;
-
-export const n8nWorkflowAutomationsSkill: NativeSkillDefinition = {
-  name: 'n8n-workflow-automations',
-  description: 'Create, debug, and manage n8n automation workflows. Includes environment context, PRD structure, and execution pattern.',
-  tags: ['n8n', 'automation', 'workflow', 'skill', 'docker', 'prd'],
-  version: '1.0',
-  async func() {
-    return SKILL_DOC;
-  },
-};

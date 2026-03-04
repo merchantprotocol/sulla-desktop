@@ -1,7 +1,6 @@
 import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Article } from '../models/Article';
 import { redisClient } from '../RedisClient';
 import {
   SkillService,
@@ -54,9 +53,6 @@ export class SkillsRegistry {
 
   private async rebuildAndCache(options: SkillRegistryInitOptions = {}): Promise<void> {
     const map = new Map<string, SkillService>();
-
-    const databaseSkills = await this.loadDatabaseSkills();
-    databaseSkills.forEach(skill => this.mergeSkillBySourcePriority(map, skill));
 
     const filesystemSkills = await this.loadFilesystemSkills(options.filesystemSkillDirs || []);
     filesystemSkills.forEach(skill => this.mergeSkillBySourcePriority(map, skill));
@@ -177,40 +173,6 @@ export class SkillsRegistry {
     return lines.length > 0
       ? lines.join('\n')
       : '_No skills found in the knowledge base yet._';
-  }
-
-  private async loadDatabaseSkills(): Promise<SkillService[]> {
-    try {
-      const articles = await Article.findByTag('skill');
-      const skills: SkillService[] = [];
-
-      for (const article of articles) {
-        const manifest = {
-          slug: String(article.attributes.slug || '').trim(),
-          title: String(article.attributes.title || '').trim(),
-          section: article.attributes.section,
-          category: article.attributes.category,
-          tags: Array.isArray(article.attributes.tags) ? article.attributes.tags : [],
-          order: article.attributes.order,
-          locked: article.attributes.locked,
-          author: article.attributes.author,
-          created_at: article.attributes.created_at,
-          updated_at: article.attributes.updated_at,
-          mentions: Array.isArray(article.attributes.mentions) ? article.attributes.mentions : [],
-          related_entities: Array.isArray(article.attributes.related_entities) ? article.attributes.related_entities : [],
-        };
-
-        const service = SkillService.fromParts('database', manifest, String(article.attributes.document || ''));
-        if (!service) continue;
-
-        skills.push(service);
-      }
-
-      return skills;
-    } catch (error) {
-      console.warn('[SkillsRegistry] Failed to load skills from database:', error);
-      return [];
-    }
   }
 
   private async loadFilesystemSkills(extraDirs: string[]): Promise<SkillService[]> {
@@ -414,17 +376,6 @@ export class SkillsRegistry {
     const q = String(query || '').trim();
     if (!q) return 'Please provide a search query.';
 
-    const nativeResults: string[] = [];
-
-    // Search native skills
-    try {
-      const { nativeSkillRegistry } = await import('../../skills/native/index');
-      const nativeMatches = nativeSkillRegistry.search(q);
-      for (const m of nativeMatches) {
-        nativeResults.push(`${m.name} (native): ${m.description}`);
-      }
-    } catch { /* native registry not available */ }
-
     // Grep filesystem for matching skill files
     const dirs = this.getDefaultFilesystemDirs(this.lastInitOptions.filesystemSkillDirs || []);
     const grepResult = await grepSearchFilesDetailed(q, dirs, '*.md');
@@ -459,12 +410,8 @@ export class SkillsRegistry {
       }
     }
 
-    const parts: string[] = [];
-    if (nativeResults.length > 0) parts.push(`Native skills:\n${nativeResults.join('\n')}`);
-    if (dynamicResults.length > 0) parts.push(`Dynamic skills:\n${dynamicResults.join('\n')}`);
-
-    return parts.length > 0
-      ? parts.join('\n\n')
+    return dynamicResults.length > 0
+      ? dynamicResults.join('\n')
       : `No matching skills after searching terms: ${grepResult.attemptedTerms.map(term => `'${term}'`).join(', ') || '(none)'} (0 skills found). You can create one with create_skill.`;
   }
 
@@ -472,15 +419,6 @@ export class SkillsRegistry {
     await this.ensureInitialized();
 
     const name = String(skillName || '').trim();
-
-    // Check native skills first — call func() to return full skill content
-    try {
-      const { nativeSkillRegistry } = await import('../../skills/native/index');
-      const nativeDef = nativeSkillRegistry.get(name);
-      if (nativeDef) {
-        return await nativeDef.func({});
-      }
-    } catch { /* native registry not available */ }
 
     // Try exact slug match
     const bySlug = this.skillsBySlug.get(name);

@@ -1,6 +1,4 @@
-import type { NativeSkillDefinition } from './NativeSkillRegistry';
-
-const SKILL_DOC = `---
+---
 schemaversion: 1
 slug: facebook-ads
 title: "Facebook Ads Management"
@@ -47,13 +45,13 @@ This skill manages paid Facebook (Meta) advertising campaigns. It covers competi
 
 ### Create the Facebook Ads Project
 
-\`\`\`
+```
 create_workspace("facebook-ads-{business-slug}")
-\`\`\`
+```
 
-Write a \`PROJECT.md\` using the Full PRD template from the project-management skill. Then create the following file structure:
+Write a `PROJECT.md` using the Full PRD template from the project-management skill. Then create the following file structure:
 
-\`\`\`
+```
 facebook-ads-{business-slug}/
 +-- PROJECT.md
 +-- README.md
@@ -82,16 +80,16 @@ facebook-ads-{business-slug}/
     +-- kpis.md
     +-- weekly-reports/
     +-- optimization-log.md
-\`\`\`
+```
 
 ### Facebook Ads MCP / API Connection
 
 Check for available Facebook/Meta ads integration or MCP:
 
-\`\`\`
+```
 integration_is_enabled({ integration_slug: "facebook" })
 integration_is_enabled({ integration_slug: "meta-ads" })
-\`\`\`
+```
 
 If an MCP server is available for Meta Ads API:
 - Launch the MCP docker container
@@ -113,7 +111,7 @@ This is the most critical phase. Before spending any money, understand what you 
 
 The Facebook Ad Library (https://www.facebook.com/ads/library/) is a public database of all active ads on Meta platforms. Use it extensively.
 
-Create \`research/ad-library-research.md\` documenting:
+Create `research/ad-library-research.md` documenting:
 
 #### Search Strategy
 - Search for direct competitors by name
@@ -137,7 +135,7 @@ Search broadly and document at least 20-50 competitor ads. The goal is to see th
 
 ### 1.2 Competitive Ad Analysis
 
-Create \`research/competitive-ad-analysis.md\` with a structured analysis:
+Create `research/competitive-ad-analysis.md` with a structured analysis:
 
 #### Ad Ranking (Most Competitive to Least)
 As you scroll through ad results, the top ads get the most engagement/interaction. Document them in order:
@@ -161,9 +159,9 @@ After reviewing 20-50 ads, identify:
 
 ### 1.3 Offer Spectrum Analysis
 
-Create \`research/offer-spectrum.md\` to position the business's offer correctly:
+Create `research/offer-spectrum.md` to position the business's offer correctly:
 
-\`\`\`
+```
 ## The Offer Spectrum
 
 LOW QUALITY <<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>> HIGH QUALITY
@@ -180,7 +178,7 @@ Examples:
 - "Free assessment/audit" (medium volume, good quality)
 - "Request a custom quote" (lower volume, high quality)
 - "Apply to work with us" (very low volume, highest quality)
-\`\`\`
+```
 
 #### Finding the Sweet Spot
 Based on the competitive analysis:
@@ -193,7 +191,7 @@ Document the chosen offer position and rationale.
 
 ### 1.4 Winning Patterns
 
-Create \`research/winning-patterns.md\` synthesizing everything:
+Create `research/winning-patterns.md` synthesizing everything:
 
 - **Top 5 hooks** that work in this niche (first line of copy or first 3 seconds of video)
 - **Top 3 offers** that balance volume and quality
@@ -222,7 +220,7 @@ Start with **native Facebook lead form campaigns** (not landing page traffic). W
 3. Faster data collection to optimize
 4. Once ads are proven, switch to sending traffic to landing pages (from the lead-generation skill)
 
-Create \`campaigns/overview.md\` with the campaign plan:
+Create `campaigns/overview.md` with the campaign plan:
 
 | Campaign | Objective | Offer | Budget/Day | Status |
 |----------|----------|-------|-----------|--------|
@@ -232,7 +230,7 @@ Create \`campaigns/overview.md\` with the campaign plan:
 
 ### 2.2 Offer Creation
 
-For each offer, create a file in \`offers/{offer-name}.md\`:
+For each offer, create a file in `offers/{offer-name}.md`:
 
 - **Offer name** — what the prospect receives
 - **Offer position** on the spectrum (where does it sit?)
@@ -244,9 +242,9 @@ For each offer, create a file in \`offers/{offer-name}.md\`:
 
 ### 2.3 Ad Creative Development
 
-Create ad creatives in \`creatives/\`:
+Create ad creatives in `creatives/`:
 
-#### Copy Templates (\`creatives/copy-templates.md\`)
+#### Copy Templates (`creatives/copy-templates.md`)
 Write 3-5 variations of ad copy for A/B testing:
 
 Each copy variant includes:
@@ -262,7 +260,7 @@ Copy principles from competitive research:
 - **Social proof** — mention results, reviews, or numbers
 - **Clear CTA** — exactly one thing to do next
 
-#### Hooks (\`creatives/hooks.md\`)
+#### Hooks (`creatives/hooks.md`)
 Document 10-20 hook variations (first lines / first 3 seconds):
 - Question hooks: "Still dealing with {pain point}?"
 - Bold claim hooks: "We helped {X} businesses {result} in {timeframe}"
@@ -270,13 +268,13 @@ Document 10-20 hook variations (first lines / first 3 seconds):
 - Social proof: "{X} five-star reviews and counting"
 - Negative hooks: "Stop doing {common mistake}"
 
-#### Image Specs (\`creatives/image-specs.md\`)
+#### Image Specs (`creatives/image-specs.md`)
 - **Dimensions**: 1080x1080 (square) or 1080x1350 (4:5 portrait, more screen real estate)
 - **Text overlay**: keep under 20% of image area (Facebook penalizes heavy text)
 - **Style**: based on winning patterns — UGC, professional, graphic, before/after
 - **Variants**: create 3-5 image concepts for testing
 
-#### Video Specs (\`creatives/video-specs.md\`)
+#### Video Specs (`creatives/video-specs.md`)
 - **Duration**: 15-30 seconds (short-form performs best)
 - **Aspect ratio**: 9:16 (vertical) for Reels/Stories, 1:1 (square) for feed
 - **Hook**: first 3 seconds must stop the scroll
@@ -296,7 +294,7 @@ For native Facebook lead form campaigns:
 
 ### 2.5 Campaign Structure
 
-For each campaign, create \`campaigns/{campaign-name}/campaign-spec.md\`:
+For each campaign, create `campaigns/{campaign-name}/campaign-spec.md`:
 
 #### Campaign Level
 - **Objective**: Lead generation
@@ -349,9 +347,9 @@ Monitor daily:
 
 ### 3.2 Optimization Decisions (After Day 7)
 
-Create \`tracking/optimization-log.md\` to document every change and its result:
+Create `tracking/optimization-log.md` to document every change and its result:
 
-\`\`\`
+```
 ## Optimization Log
 
 ### YYYY-MM-DD — Decision
@@ -359,7 +357,7 @@ Create \`tracking/optimization-log.md\` to document every change and its result:
 - **Why**: {data that drove the decision}
 - **Expected outcome**: {what we hope to see}
 - **Actual outcome**: {fill in after 3-5 days}
-\`\`\`
+```
 
 #### Kill / Scale Framework
 - **Kill** an ad if: CTR < 0.5% after 1000+ impressions, or CPL is 3x+ target after 5+ days
@@ -429,7 +427,7 @@ Once campaigns are profitable:
 
 ## KPIs & Tracking
 
-Create \`tracking/kpis.md\`:
+Create `tracking/kpis.md`:
 
 | Metric | Target | Frequency |
 |--------|--------|-----------|
@@ -443,7 +441,7 @@ Create \`tracking/kpis.md\`:
 | Return on ad spend (ROAS) | > 3x | Monthly |
 | Ad frequency | < 3 (cold), < 6 (retarget) | Weekly |
 
-Create weekly reports in \`tracking/weekly-reports/\`:
+Create weekly reports in `tracking/weekly-reports/`:
 - Spend, leads, CPL, CTR, CPM for each campaign
 - Top performing ad with screenshot/details
 - Worst performing ad and why it was killed
@@ -477,24 +475,13 @@ Create weekly reports in \`tracking/weekly-reports/\`:
 
 ## Integration Tools
 
-\`\`\`
+```
 integration_is_enabled({ integration_slug: "<slug>" })
 integration_get_credentials({ integration_slug: "<slug>", include_secrets: true })
-\`\`\`
+```
 
 ## Project Management
 
 This is a **Large** project. Use the Full PRD template (Tier 3) from the project-management skill. Keep PROJECT.md updated as campaigns launch and optimize. Add to ACTIVE_PROJECTS.md.
 
 If the marketing-plan or lead-generation projects already exist, link to them and import ICP research and funnel specs rather than duplicating.
-`;
-
-export const facebookAdsSkill: NativeSkillDefinition = {
-  name: 'facebook-ads',
-  description: 'Facebook (Meta) ads management — competitive ad library research, offer positioning, creative development, native lead form campaigns, optimization, retargeting, and scaling.',
-  tags: ['facebook-ads', 'meta-ads', 'paid-advertising', 'lead-generation', 'ad-creative', 'retargeting', 'cpL', 'ad-library', 'competitive-analysis', 'scaling'],
-  version: '1.0',
-  async func() {
-    return SKILL_DOC;
-  },
-};

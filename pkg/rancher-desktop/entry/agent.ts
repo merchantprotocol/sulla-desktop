@@ -13,16 +13,12 @@ import './agent-tailwind.css';
 import AgentRouter from '../pages/AgentRouter.vue';
 import Agent from '../pages/Agent.vue';
 import AgentCalendar from '../pages/AgentCalendar.vue';
-import AgentKnowledgeBase from '../pages/AgentKnowledgeBase.vue';
-import AgentKnowledgeBaseCreate from '../pages/AgentKnowledgeBaseCreate.vue';
-import AgentKnowledgeBaseSearch from '../pages/AgentKnowledgeBaseSearch.vue';
 import AgentIntegrations from '../pages/AgentIntegrations.vue';
 import AgentIntegrationDetail from '../pages/AgentIntegrationDetail.vue';
 import AgentExtensions from '../pages/AgentExtensions.vue';
 import AgentAutomations from '../pages/AgentAutomations.vue';
-import AgentKnowledgeBaseSections from '../pages/AgentKnowledgeBaseSections.vue';
-import AgentKnowledgeBaseEdit from '../pages/AgentKnowledgeBaseEdit.vue';
 import FirstRun from '../pages/FirstRun.vue';
+import AgentFilesystem from '../pages/AgentFilesystem.vue';
 import ExtensionView from '../pages/ExtensionView.vue';
 
 const router = createRouter({
@@ -31,11 +27,7 @@ const router = createRouter({
     { path: '/', redirect: '/Chat' },
     { path: '/Chat', component: Agent, name: 'AgentChat' },
     { path: '/Calendar', component: AgentCalendar, name: 'AgentCalendar' },
-    { path: '/KnowledgeBase', component: AgentKnowledgeBase, name: 'AgentKnowledgeBase' },
-    { path: '/KnowledgeBase/Search', component: AgentKnowledgeBaseSearch, name: 'AgentKnowledgeBaseSearch' },
-    { path: '/KnowledgeBase/Create', component: AgentKnowledgeBaseCreate, name: 'AgentKnowledgeBaseCreate' },
-    { path: '/KnowledgeBase/Sections', component: AgentKnowledgeBaseSections, name: 'AgentKnowledgeBaseSections' },
-    { path: '/KnowledgeBase/Edit/:slug', component: AgentKnowledgeBaseEdit, name: 'AgentKnowledgeBaseEdit' },
+    { path: '/Filesystem', component: AgentFilesystem, name: 'AgentFilesystem' },
     { path: '/Integrations', component: AgentIntegrations, name: 'AgentIntegrations' },
     { path: '/Integrations/:id', component: AgentIntegrationDetail, name: 'AgentIntegrationDetail' },
     { path: '/Extensions', component: AgentExtensions, name: 'AgentExtensions' },

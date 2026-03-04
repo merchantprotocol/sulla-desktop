@@ -1,6 +1,4 @@
-import type { NativeSkillDefinition } from './NativeSkillRegistry';
-
-const SKILL_DOC = `---
+---
 schemaversion: 1
 slug: new-software-development-project
 title: "New Software Development Project"
@@ -56,7 +54,7 @@ Open-source project we built and maintain at https://github.com/merchantprotocol
 - check if protocol is available as a command line tool
 - if not, then install it (curl -L "https://raw.githubusercontent.com/merchantprotocol/protocol/master/bin/install" | bash)
 - initialize protocol in the workspace
-- run \`protocol start\` to bootup the container
+- run `protocol start` to bootup the container
 - provide a url to the human to view the project
 
 ### Deployment Platforms
@@ -77,7 +75,7 @@ The plugin system for Sulla Desktop allows you to keep your project in full comp
 
 The Planner must produce a PRD with this structure:
 
-\`\`\`yaml
+```yaml
 ---
 schemaversion: 1
 slug: software-project-name
@@ -90,7 +88,7 @@ order: 5
 locked: false
 author: sulla
 ---
-\`\`\`
+```
 
 Followed by:
 - **Ultimate Project Goal**
@@ -99,14 +97,3 @@ Followed by:
 - **Must Haves** / **Should Haves** / **Nice-to-Haves** (MoSCoW)
 - **What Has Been Tried and Didn't Work**
 - **Execution Checklist** (step-by-step, checkable)
-`;
-
-export const softwareDevelopmentSkill: NativeSkillDefinition = {
-  name: 'new-software-development-project',
-  description: 'Start a new software development project from scratch — workspace, Docker, GitHub, deployment, and PRD generation.',
-  tags: ['skill', 'software-development', 'coding', 'vibe-coding', 'docker', 'github'],
-  version: '1.0',
-  async func() {
-    return SKILL_DOC;
-  },
-};
