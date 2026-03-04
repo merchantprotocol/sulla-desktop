@@ -310,6 +310,41 @@ export abstract class BaseLanguageModel {
     // ── Attempt to parse content as JSON for structured data ──
     const parsedContent = this.parseJson(content);
     if (parsedContent && typeof parsedContent === 'object') {
+      // Anthropic-style tool_use block encoded directly as JSON object
+      if (
+        !Array.isArray(parsedContent)
+        && parsedContent.type === 'tool_use'
+        && typeof parsedContent.name === 'string'
+      ) {
+        toolCalls.push({
+          id: parsedContent.id,
+          name: parsedContent.name,
+          args: parsedContent.input ?? {},
+        });
+        content = '';
+      }
+
+      // Anthropic-style content blocks encoded as JSON array
+      if (Array.isArray(parsedContent)) {
+        const textBlocks = parsedContent
+          .filter((b: any) => b?.type === 'text' && typeof b?.text === 'string')
+          .map((b: any) => b.text.trim())
+          .filter(Boolean);
+
+        const parsedToolUses = parsedContent
+          .filter((b: any) => b?.type === 'tool_use' && typeof b?.name === 'string')
+          .map((b: any) => ({
+            id: b.id,
+            name: b.name,
+            args: b.input ?? {},
+          }));
+
+        if (parsedToolUses.length > 0) {
+          toolCalls.push(...parsedToolUses);
+          content = textBlocks.join('\n\n');
+        }
+      }
+
       if (parsedContent.reasoning && typeof parsedContent.reasoning === 'string' && !reasoning) {
         reasoning = parsedContent.reasoning;
       }
@@ -338,6 +373,8 @@ export abstract class BaseLanguageModel {
         content = answer;
       } else if (response && typeof response === 'string') {
         content = response;
+      } else if (Array.isArray(parsedContent)) {
+        // Already handled above for content blocks; keep whatever was extracted.
       } else if (Object.keys(remaining).length > 0) {
         content = JSON.stringify(remaining);
       } else {

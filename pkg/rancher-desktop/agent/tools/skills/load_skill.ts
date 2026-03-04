@@ -3,6 +3,7 @@ import { skillsRegistry } from '../../database/registry/SkillsRegistry';
 
 /**
  * Load Skill Tool - Load the full detailed instructions for a skill.
+ * Resolves from native (built-in), database, or filesystem sources.
  */
 export class LoadSkillWorker extends BaseTool {
   name: string = '';

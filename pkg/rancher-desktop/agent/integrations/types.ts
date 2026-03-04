@@ -12,6 +12,12 @@ export interface Integration {
   version: string;
   lastUpdated: string;
   developer: string;
+  /** How the user authenticates: 'credentials' (default) shows a form, 'oauth' starts an OAuth flow */
+  authType?: 'credentials' | 'oauth';
+  /** When true, the integration also supports OAuth sign-in (shown alongside standard properties) */
+  oauth?: boolean;
+  /** The registered OAuthProvider id that defines endpoints and scopes (used by authType 'oauth' or oauth: true) */
+  oauthProviderId?: string;
   formGuide?: string;
   installationGuide?: {
     title: string;

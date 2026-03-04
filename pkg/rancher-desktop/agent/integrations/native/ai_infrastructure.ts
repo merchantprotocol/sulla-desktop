@@ -86,10 +86,12 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     category: 'AI Infrastructure',
     icon: 'openai.svg',
     connected: false,
+    oauth: true,
+    oauthProviderId: 'openai',
     version: '1.0.0',
     lastUpdated: '2026-02-28 11:42:00',
     developer: 'OpenAI',
-    formGuide: 'Paste your OpenAI API key to enable model access.',
+    formGuide: 'Paste your OpenAI API key or sign in with OAuth for unlimited access via your ChatGPT Plus/Pro subscription.',
     properties: [
       {
         key: 'api_key',

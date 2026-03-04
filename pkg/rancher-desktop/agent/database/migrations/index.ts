@@ -10,6 +10,7 @@ import { up as up_0012, down as down_0012 } from './0012_add_cast_column_to_sull
 import { up as up_0013, down as down_0013 } from './0013_create_integration_values_table';
 import { up as up_0014, down as down_0014 } from './0014_add_is_default_to_integration_values';
 import { up as up_0015, down as down_0015 } from './0015_add_disabled_to_workflow_history';
+import { up as up_0016, down as down_0016 } from './0016_create_oauth_tokens_table';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -23,4 +24,5 @@ export const migrationsRegistry = [
   { name: '0013_create_integration_values_table', up: up_0013, down: down_0013 },
   { name: '0014_add_is_default_to_integration_values', up: up_0014, down: down_0014 },
   { name: '0015_add_disabled_to_workflow_history', up: up_0015, down: down_0015 },
+  { name: '0016_create_oauth_tokens_table', up: up_0016, down: down_0016 },
 ] as const;

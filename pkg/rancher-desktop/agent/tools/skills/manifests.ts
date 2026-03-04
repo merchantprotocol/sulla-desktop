@@ -13,10 +13,10 @@ export const skillsToolManifests: ToolManifest[] = [
   },
   {
     name: 'load_skill',
-    description: 'Load the FULL detailed instructions for a skill. Call after search_skills confirms relevance.',
-    category: 'skills',
+    description: 'Load the FULL detailed instructions for a skill by name. Resolves from native (built-in), database, or filesystem sources automatically. Do NOT use exec/cat to read skill files — always use this tool. Call after search_skills confirms relevance.',
+    category: 'meta',
     schemaDef: {
-      skill_name: { type: 'string', description: 'The folder name of the skill to load.' },
+      skill_name: { type: 'string', description: 'The name or slug of the skill to load (e.g. "marketing-plan", "software-development").' },
     },
     operationTypes: ['read'],
     loader: () => import('./load_skill'),

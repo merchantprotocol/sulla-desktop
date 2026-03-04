@@ -6,6 +6,10 @@ import { gitOperationsSkill } from './git-operations';
 import { remotionVideoGeneratorSkill } from './remotion-video-generator';
 import { elevenlabsAudioGeneratorSkill } from './elevenlabs-audio-generator';
 import { n8nWebhookTriggerWorkflowsSkill } from './n8n-webhook-trigger-workflows';
+import { marketingPlanSkill } from './marketing-plan';
+import { salesDevelopmentOutreachSkill } from './sales-development-outreach';
+import { leadGenerationSkill } from './lead-generation';
+import { facebookAdsSkill } from './facebook-ads';
 
 // Register all native skills here
 nativeSkillRegistry.register(n8nWorkflowAutomationsSkill);
@@ -15,5 +19,9 @@ nativeSkillRegistry.register(gitOperationsSkill);
 nativeSkillRegistry.register(remotionVideoGeneratorSkill);
 nativeSkillRegistry.register(elevenlabsAudioGeneratorSkill);
 nativeSkillRegistry.register(n8nWebhookTriggerWorkflowsSkill);
+nativeSkillRegistry.register(marketingPlanSkill);
+nativeSkillRegistry.register(salesDevelopmentOutreachSkill);
+nativeSkillRegistry.register(leadGenerationSkill);
+nativeSkillRegistry.register(facebookAdsSkill);
 
 export { nativeSkillRegistry };

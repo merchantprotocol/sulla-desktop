@@ -347,6 +347,46 @@ export class IntegrationService {
     return provider.getOptions({ integrationId, accountId, formValues });
   }
 
+  // ─── OAuth convenience methods ──────────────────────────────────
+
+  /**
+   * Start an OAuth 2.0 authorization flow for an integration.
+   * Lazy-loads OAuthService to avoid circular deps.
+   */
+  async startOAuthFlow(
+    integrationId: string,
+    providerId: string,
+    clientId: string,
+    clientSecret: string,
+    accountId?: string,
+    extraScopes?: string[],
+  ): Promise<import('../integrations/oauth/OAuthProvider').OAuthTokenSet> {
+    const { getOAuthService } = await import('./OAuthService');
+    const oauthService = getOAuthService();
+    return oauthService.startFlow(
+      integrationId, providerId, clientId, clientSecret,
+      accountId || DEFAULT_ACCOUNT_ID, extraScopes || [],
+    );
+  }
+
+  /**
+   * Get a valid access token for an OAuth integration, auto-refreshing if needed.
+   */
+  async getOAuthAccessToken(integrationId: string, accountId?: string): Promise<string> {
+    const { getOAuthService } = await import('./OAuthService');
+    const oauthService = getOAuthService();
+    return oauthService.getAccessToken(integrationId, accountId || DEFAULT_ACCOUNT_ID);
+  }
+
+  /**
+   * Revoke and delete OAuth tokens, disconnecting the account.
+   */
+  async revokeOAuthTokens(integrationId: string, accountId?: string): Promise<void> {
+    const { getOAuthService } = await import('./OAuthService');
+    const oauthService = getOAuthService();
+    return oauthService.revokeTokens(integrationId, accountId || DEFAULT_ACCOUNT_ID);
+  }
+
   async deleteIntegrationValues(integrationId: string, accountId?: string): Promise<boolean> {
     if (accountId) {
       return this.deleteAccount(integrationId, accountId);
