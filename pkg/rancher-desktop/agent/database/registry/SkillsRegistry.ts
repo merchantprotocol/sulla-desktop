@@ -1,7 +1,6 @@
 import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Article } from '../models/Article';
 import { redisClient } from '../RedisClient';
 import {
   SkillService,
@@ -180,37 +179,7 @@ export class SkillsRegistry {
   }
 
   private async loadDatabaseSkills(): Promise<SkillService[]> {
-    try {
-      const articles = await Article.findByTag('skill');
-      const skills: SkillService[] = [];
-
-      for (const article of articles) {
-        const manifest = {
-          slug: String(article.attributes.slug || '').trim(),
-          title: String(article.attributes.title || '').trim(),
-          section: article.attributes.section,
-          category: article.attributes.category,
-          tags: Array.isArray(article.attributes.tags) ? article.attributes.tags : [],
-          order: article.attributes.order,
-          locked: article.attributes.locked,
-          author: article.attributes.author,
-          created_at: article.attributes.created_at,
-          updated_at: article.attributes.updated_at,
-          mentions: Array.isArray(article.attributes.mentions) ? article.attributes.mentions : [],
-          related_entities: Array.isArray(article.attributes.related_entities) ? article.attributes.related_entities : [],
-        };
-
-        const service = SkillService.fromParts('database', manifest, String(article.attributes.document || ''));
-        if (!service) continue;
-
-        skills.push(service);
-      }
-
-      return skills;
-    } catch (error) {
-      console.warn('[SkillsRegistry] Failed to load skills from database:', error);
-      return [];
-    }
+    return [];
   }
 
   private async loadFilesystemSkills(extraDirs: string[]): Promise<SkillService[]> {

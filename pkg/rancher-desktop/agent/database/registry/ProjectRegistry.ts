@@ -1,7 +1,6 @@
 import { readdir, readFile, mkdir, writeFile, rm } from 'node:fs/promises';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Article } from '../models/Article';
 import { redisClient } from '../RedisClient';
 import {
   ProjectService,
@@ -562,32 +561,7 @@ updated_at: "${now}"
   }
 
   private async loadDatabaseProjects(): Promise<ProjectService[]> {
-    try {
-      const articles = await Article.findByTag('project');
-      const projects: ProjectService[] = [];
-
-      for (const article of articles) {
-        const manifest = {
-          slug: String(article.attributes.slug || '').trim(),
-          title: String(article.attributes.title || '').trim(),
-          section: article.attributes.section,
-          category: article.attributes.category,
-          tags: Array.isArray(article.attributes.tags) ? article.attributes.tags : [],
-          owner: article.attributes.author,
-          status: String(article.attributes.status || 'active'),
-        };
-
-        const service = ProjectService.fromParts('database', manifest, String(article.attributes.document || ''));
-        if (!service) continue;
-
-        projects.push(service);
-      }
-
-      return projects;
-    } catch (error) {
-      console.warn('[ProjectRegistry] Failed to load projects from database:', error);
-      return [];
-    }
+    return [];
   }
 
   private async loadFilesystemProjects(extraDirs: string[]): Promise<ProjectService[]> {

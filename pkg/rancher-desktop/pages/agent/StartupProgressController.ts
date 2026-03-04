@@ -4,11 +4,9 @@ import type { ComputedRef, Ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { IpcRendererEvent } from 'electron';
 
-import { getLocalService } from '../../agent/languagemodels';
 
 export class StartupProgressController {
 
-  private readonly OLLAMA_BASE = 'http://127.0.0.1:30114';
   private readonly WS_URL = 'ws://localhost:30118/';
   private readinessInterval: ReturnType<typeof setInterval> | null = null;
   private k8sReady = false;
@@ -69,53 +67,13 @@ export class StartupProgressController {
     
     ipcRenderer.on('k8s-progress', this.handleProgress);
 
-    // Use type assertion until you extend IpcRendererEvents
-    ipcRenderer.on('ollama-model-status' as any, this.handleOllamaModelStatus);
-
     this.startReadinessCheck();
     this.probeWebSocket();
   }
 
-  /**
-   * 
-   * @param event 
-   * @param payload 
-   */
-  private readonly handleOllamaModelStatus = (event: IpcRendererEvent, payload: unknown) => {
-    console.log('[StartupProgressController] ollama-model-status:', payload);
-    // Safely narrow the payload
-    if (payload && typeof payload === 'object' && 'status' in payload) {
-      const typedPayload = payload as { status: string; model?: string };
-      this.state.modelDownloading.value =
-        typedPayload.status.includes('Downloading') ||
-        typedPayload.status.includes('pulling') ||
-        typedPayload.status.includes('Extracting');
-
-      this.state.modelName.value = typedPayload.model || this.state.modelName.value;
-      this.state.modelDownloadStatus.value = typedPayload.status;
-
-      // Show overlay if model is downloading
-      if (this.state.modelDownloading.value && this.state.progressMax.value <= 0) {
-        this.state.progressMax.value = 100;
-        this.state.progressCurrent.value = 0;
-        this.state.progressDescription.value = 'Downloading model...';
-      }
-
-      // Show overlay on any model status event
-      this.state.showOverlay.value = true;
-
-      if (typedPayload.status === 'success' || typedPayload.status.includes('complete')) {
-        this.state.modelDownloading.value = false;
-        this.state.modelDownloadStatus.value = 'Model ready';
-      }
-    }
-  };
-
   dispose(): void {
     ipcRenderer.removeListener('sulla-main-started' as any, this.handleMainStarted);
     ipcRenderer.removeListener('k8s-progress', this.handleProgress);
-    ipcRenderer.removeListener('ollama-model-status' as any, this.handleOllamaModelStatus);
-
     if (this.readinessInterval) {
       clearInterval(this.readinessInterval);
       this.readinessInterval = null;
@@ -157,9 +115,7 @@ export class StartupProgressController {
     }
     this.state.progressDescription.value = progress.description || this.state.progressDescription.value;
 
-    if (progress.description?.includes('Ollama') || progress.description?.includes('model')) {
-      this.state.startupPhase.value = 'model';
-    } else if (
+    if (
       progress.description?.includes('Kubernetes') ||
       progress.description?.includes('deployment') ||
       progress.description?.includes('pod')
@@ -259,43 +215,4 @@ export class StartupProgressController {
     }, 3000);
   }
 
-  private async pullNomicEmbedTextModel(): Promise<void> {
-    try {
-      console.log('[StartupProgressController] Checking for nomic-embed-text model...');
-
-      // Get the local Ollama service
-      const ollamaService = await getLocalService();
-      if (!ollamaService) {
-        console.warn('[StartupProgressController] No local Ollama service available, skipping nomic-embed-text check');
-        return;
-      }
-
-      // Cast to OllamaService to access Ollama-specific methods
-      const ollama = ollamaService as any; // OllamaService has refreshModels and hasModel methods
-
-      // Refresh the model list to ensure we have the latest available models
-      await ollama.refreshModels();
-
-      // Check if the model is already available
-      if (ollama.hasModel('nomic-embed-text')) {
-        console.log('[StartupProgressController] nomic-embed-text model already available, skipping pull');
-        return;
-      }
-
-      console.log('[StartupProgressController] nomic-embed-text model not found, pulling...');
-
-      // Pull the model
-      const success = await ollamaService!.pullModel('nomic-embed-text', (status: string) => {
-        console.log(`[StartupProgressController] nomic-embed-text pull status: ${status}`);
-      });
-
-      if (success) {
-        console.log('[StartupProgressController] Successfully pulled nomic-embed-text model');
-      } else {
-        console.warn('[StartupProgressController] Failed to pull nomic-embed-text model');
-      }
-    } catch (error) {
-      console.error('[StartupProgressController] Error checking/pulling nomic-embed-text model:', error);
-    }
-  }
 }

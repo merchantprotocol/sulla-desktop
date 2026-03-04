@@ -6,7 +6,6 @@ import { postgresClient, PostgresClient } from '@pkg/agent/database/PostgresClie
 import { migrationsRegistry } from './migrations';
 import { seedersRegistry } from './seeders';
 import { SullaSettingsModel } from './models/SullaSettingsModel';
-import { VectorBaseModel } from './VectorBaseModel';
 import { skillsRegistry } from './registry/SkillsRegistry';
 import { projectRegistry } from './registry/ProjectRegistry';
 
@@ -60,9 +59,6 @@ export class DatabaseManager {
 
         // now that tables are ready, sync to persistent storage
         await SullaSettingsModel.bootstrap();
-
-        // initialize vector embeddings
-        await VectorBaseModel.vectorDB.initializeEmbeddings();
 
         // settings are ready to be used in seeding
         await this.runSeeders();

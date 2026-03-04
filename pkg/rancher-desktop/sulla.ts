@@ -10,7 +10,6 @@ import { SullaIntegrations } from './agent/integrations';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { createN8nService } from './agent/services/N8nService';
-import { VectorBaseModel } from '@pkg/agent/database/VectorBaseModel';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
 import { getLlamaCppService } from '@pkg/agent/services/LlamaCppService';
@@ -133,8 +132,6 @@ export async function instantiateSullaStart(): Promise<void> {
     initSullaEvents();
 
     try {
-
-        await VectorBaseModel.vectorDB.initializeEmbeddings();
 
         const backendGraphWebSocketService = getBackendGraphWebSocketService();
         console.log('[Background] BackendGraphWebSocketService initialized - backend agent messages will be processed');

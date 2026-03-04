@@ -2094,44 +2094,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     
   }
 
-  /**
-   * Pulls the nomic-embed-text model into the running Ollama container.
-   */
-  private async pullNomicEmbedModel(): Promise<void> {
-    console.log(`Pulling nomic-embed-text model`);
-    const nomicProc = this.limaSpawn({ root: true }, ['docker', 'exec', 'sulla_ollama', 'ollama', 'pull', 'nomic-embed-text']);
-
-    return new Promise<void>((resolveNomic, rejectNomic) => {
-      let nomicOutput = '';
-      nomicProc.stdout?.on('data', (chunk: Buffer | string) => {
-        const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-        const lines = text.split('\n');
-        lines.forEach((line: string) => {
-          const trimmed = line.trim();
-          if (trimmed) {
-            console.log(`[Ollama Pull Nomic] ${trimmed}`);
-            nomicOutput += trimmed + '\n';
-          }
-        });
-      });
-      nomicProc.stderr?.on('data', (chunk: Buffer | string) => {
-        const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-        const trimmed = text.trim();
-        if (trimmed) {
-          console.error(`[Ollama Pull Nomic Error] ${trimmed}`);
-        }
-      });
-      nomicProc.on('close', (code) => {
-        if (code === 0) {
-          console.log(`Ollama model nomic-embed-text pulled successfully`);
-          resolveNomic();
-        } else {
-          rejectNomic(new Error(`Nomic model pull failed with code ${code}. Output: ${nomicOutput}`));
-        }
-      });
-      nomicProc.on('error', rejectNomic);
-    });
-  }
 
   /**
    * Deploys Sulla services using Docker Compose when Kubernetes is disabled.
@@ -2155,15 +2117,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       await this.waitForSullaDockerServices();
       this.progressTracker.numeric('Sulla services ready', 64, 100);
     });
-
-    // Ollama model pulls replaced by bare-metal llama.cpp (LlamaCppService)
-    // await this.progressTracker.action('Pulling & loading Ollama model', 300, async () => {
-    //   await this.pullOllamaModelDocker();
-    // });
-    //
-    // await this.progressTracker.action('Pulling & loading Vector Embedding model', 300, async () => {
-    //   await this.pullNomicEmbedModel();
-    // });
 
     markSullaDockerServicesStarted();
     instantiateSullaStart();
@@ -2208,13 +2161,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         return env;
       });
     }
-
-    // Ollama GPU config removed — replaced by bare-metal llama.cpp (LlamaCppService)
-    // if (compose.services?.sulla_ollama) {
-    //   if (!compose.services.sulla_ollama.environment) {
-    //     compose.services.sulla_ollama.environment = [];
-    //   }
-    // }
 
     const composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
@@ -2261,8 +2207,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * Waits for all Sulla Docker services to be healthy by checking their container status.
    */
   private async waitForSullaDockerServices(): Promise<void> {
-    // sulla_ollama removed — replaced by bare-metal llama.cpp (LlamaCppService)
-    const services = ['sulla_neo4j', 'sulla_postgres', 'sulla_redis', 'sulla_ws_server', 'sulla_n8n'];
+    const services = ['sulla_postgres', 'sulla_redis', 'sulla_ws_server', 'sulla_n8n'];
 
     for (const service of services) {
       await this.waitForDockerServiceHealthy(service);
@@ -2291,97 +2236,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     throw new Error(`Docker service ${serviceName} not healthy after ${timeoutSec}s`);
   }
 
-  /**
-   * Pulls the specified Ollama model into the running container.
-   * Checks if the model is already downloaded first to avoid redundant pulls.
-   */
-  private async pullOllamaModelDocker(): Promise<void> {
-    try {
-      const MODEL = await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
-
-      console.log(`Starting Ollama model pull: ${MODEL}`);
-
-      // Check if model is already downloaded
-      try {
-        const listOutput = await this.execCommand({ capture: true, root: true }, 'docker', 'exec', 'sulla_ollama', 'ollama', 'list');
-        if (listOutput.includes(MODEL)) {
-          console.log(`Ollama model ${MODEL} is already downloaded, skipping pull`);
-          return;
-        }
-      } catch (error) {
-        console.warn(`Failed to check if model ${MODEL} is already downloaded:`, error);
-      }
-
-      const proc = this.limaSpawn({ root: true }, ['docker', 'exec', 'sulla_ollama', 'ollama', 'pull', MODEL]);
-
-      return new Promise((resolve, reject) => {
-        let output = '';
-        proc.stdout?.on('data', (chunk: Buffer | string) => {
-          const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-          const lines = text.split('\n');
-          lines.forEach((line: string) => {
-            const trimmed = line.trim();
-            if (trimmed) {
-              console.log(`[Ollama Pull] ${trimmed}`);
-              output += trimmed + '\n';
-            }
-          });
-        });
-        proc.stderr?.on('data', (chunk: Buffer | string) => {
-          const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-          const trimmed = text.trim();
-          if (trimmed) {
-            console.error(`[Ollama Pull Error] ${trimmed}`);
-          }
-        });
-        proc.on('close', (code) => {
-          if (code === 0) {
-            console.log(`Ollama model ${MODEL} pulled successfully`);
-            // Preload the model to keep it responsive
-            this.preloadOllamaModel(MODEL);
-            resolve();
-          } else {
-            reject(new Error(`Model pull failed with code ${code}. Output: ${output}`));
-          }
-        });
-        proc.on('error', reject);
-      });
-
-    } catch (error) {
-      console.error('[Ollama Pull] Failed to spawn process:', error);
-      return Promise.resolve();
-    }
-  }
-
-  /**
-   * Preloads the specified Ollama model by making a dummy generate request with keep_alive.
-   * This keeps the model loaded in memory for faster subsequent responses.
-   */
-  private async preloadOllamaModel(modelName: string): Promise<void> {
-    try {
-      console.log(`Preloading Ollama model: ${modelName}`);
-      const response = await fetch('http://127.0.0.1:30114/api/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: modelName,
-          prompt: 'Hello',
-          keep_alive: -1,
-          stream: false,
-        }),
-      });
-
-      if (response.ok) {
-        console.log(`Ollama model ${modelName} preloaded successfully`);
-      } else {
-        console.warn(`Failed to preload model ${modelName}: ${response.status}`);
-      }
-    } catch (error) {
-      console.warn(`Error preloading model ${modelName}:`, error);
-    }
-  }
   async waitForApiReady(timeoutSec = 120): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < timeoutSec * 1000) {
