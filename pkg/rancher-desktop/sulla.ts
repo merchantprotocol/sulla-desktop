@@ -171,6 +171,16 @@ export async function instantiateSullaStart(): Promise<void> {
 
         SullaIntegrations();
 
+        // Resume OAuth token refresh timers for any previously connected OAuth integrations
+        try {
+            const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
+            const oauthService = getOAuthService();
+            await oauthService.resumeRefreshTimers();
+            console.log('[Background] OAuthService refresh timers resumed');
+        } catch (error) {
+            console.error('[Background] Failed to resume OAuth refresh timers:', error);
+        }
+
         // Ensure llama.cpp binaries are installed, download user's model, and start server
         try {
             const llamaCppService = getLlamaCppService();
@@ -278,6 +288,13 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
     });
 
     app.on('will-quit', async () => {
+        // Clear OAuth refresh timers
+        try {
+            const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
+            getOAuthService().shutdown();
+            console.log('[Shutdown] OAuth refresh timers cleared');
+        } catch { /* OAuthService may not have been initialized */ }
+
         try {
             await getDatabaseManager().stop();
             console.log('[Shutdown] Postgres closed');

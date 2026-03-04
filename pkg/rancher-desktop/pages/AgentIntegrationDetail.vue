@@ -346,7 +346,22 @@
                 </div>
                 
                 <div class="space-y-4">
+                  <!-- OAuth connect button -->
                   <button
+                    v-if="integration.authType === 'oauth' && !isEditingAccount"
+                    @click="handleOAuthConnect()"
+                    :disabled="isLoading"
+                    class="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 flex items-center justify-center"
+                  >
+                    <svg v-if="isLoading" class="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a8 8 0 01-16 0v4a8 8 0 0016 0z"></path>
+                    </svg>
+                    {{ isLoading ? 'Authorizing...' : `Connect with ${integration.name}` }}
+                  </button>
+                  <!-- Standard credentials connect button -->
+                  <button
+                    v-else
                     @click="handleConnect()"
                     :disabled="isLoading"
                     class="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 flex items-center justify-center"
@@ -359,11 +374,15 @@
                       ? (isEditingAccount ? 'Saving...' : 'Connecting...')
                       : (isEditingAccount ? 'Save Changes' : 'Connect Now') }}
                   </button>
-                  <p class="text-xs text-slate-500 dark:text-slate-400">
+                  <p v-if="integration.authType === 'oauth' && !isEditingAccount" class="text-xs text-slate-500 dark:text-slate-400">
+                    Your browser will open to authorize access. Client credentials are saved locally.
+                  </p>
+                  <p v-else class="text-xs text-slate-500 dark:text-slate-400">
                     {{ isEditingAccount
                       ? 'Update and save credentials for this connected account'
                       : 'Connect your account to start using this integration' }}
                   </p>
+                  <p v-if="oauthError" class="text-xs text-red-500">{{ oauthError }}</p>
                 </div>
               </div>
 
@@ -594,6 +613,7 @@ const isAddingAccount = ref(false);
 const isEditingAccount = ref(false);
 const editingAccountId = ref<string | null>(null);
 const newAccountLabel = ref('');
+const oauthError = ref('');
 
 /** Only accounts that are connected */
 const connectedAccounts = computed(() => accounts.value.filter(a => a.connected));
@@ -696,6 +716,14 @@ const disconnectAccount = async (accountId: string) => {
   if (!integration.value) return;
   isLoading.value = true;
   try {
+    // For OAuth integrations, revoke tokens first
+    if (integration.value.authType === 'oauth') {
+      try {
+        await integrationService.revokeOAuthTokens(integration.value.id, accountId);
+      } catch (err) {
+        console.warn('OAuth token revocation failed (continuing with disconnect):', err);
+      }
+    }
     await integrationService.deleteAccount(integration.value.id, accountId);
     await refreshAccounts();
     integration.value.connected = await integrationService.isAnyAccountConnected(integration.value.id);
@@ -811,6 +839,82 @@ const validateForm = (): boolean => {
   }
   
   return isValid;
+};
+
+const handleOAuthConnect = async () => {
+  if (!integration.value) return;
+
+  errors.value = {};
+  oauthError.value = '';
+
+  const isCreatingAccount = connectedAccounts.value.length === 0 || isAddingAccount.value;
+  const label = newAccountLabel.value.trim();
+
+  if (isCreatingAccount && !label) {
+    errors.value['__account_label'] = 'Account label is required';
+    return;
+  }
+
+  const targetAccountId = isCreatingAccount
+    ? label.toLowerCase().replace(/[^a-z0-9]+/g, '_')
+    : (editingAccountId.value || selectedAccountId.value || activeAccountId.value);
+
+  // Validate form (client_id and client_secret are required for OAuth)
+  if (!validateForm()) return;
+
+  const clientId = formData.value['client_id'];
+  const clientSecret = formData.value['client_secret'];
+
+  if (!clientId || !clientSecret) {
+    oauthError.value = 'Client ID and Client Secret are required for OAuth connection.';
+    return;
+  }
+
+  isLoading.value = true;
+  try {
+    if (isCreatingAccount) {
+      await integrationService.setAccountLabel(integration.value.id, targetAccountId, label);
+    }
+
+    // Save client credentials for this account before starting the flow
+    const formInputs = Object.entries(formData.value).map(([key, value]) => ({
+      integration_id: integration.value!.id,
+      account_id: targetAccountId,
+      property: key,
+      value: value
+    }));
+    await integrationService.setFormValues(formInputs);
+
+    // Start the OAuth flow — this opens the browser and waits for callback
+    await integrationService.startOAuthFlow(
+      integration.value.id,
+      integration.value.oauthProviderId!,
+      clientId,
+      clientSecret,
+      targetAccountId,
+    );
+
+    // If this is the first account, set it as active
+    if (isCreatingAccount && connectedAccounts.value.length === 0) {
+      await integrationService.setActiveAccount(integration.value.id, targetAccountId);
+    }
+
+    // Reset form state
+    isAddingAccount.value = false;
+    isEditingAccount.value = false;
+    editingAccountId.value = null;
+    newAccountLabel.value = '';
+    formData.value = {};
+
+    await refreshAccounts();
+    integration.value.connected = await integrationService.isAnyAccountConnected(integration.value.id);
+    mergedIntegrations.value[integration.value.id].connected = integration.value.connected;
+  } catch (error: any) {
+    console.error('OAuth connection failed:', error);
+    oauthError.value = error?.message || 'OAuth authorization failed. Please try again.';
+  } finally {
+    isLoading.value = false;
+  }
 };
 
 const handleConnect = async () => {

@@ -152,6 +152,27 @@ export const nativeSlackIntegration: Record<string, Integration> = {
     id: 'gmail', sort: 2, paid: false, beta: false, comingSoon: false, connected: false,
     name: 'Gmail', description: 'Send, receive, and manage emails. Automate email workflows, parse incoming messages, and create drafts.',
     category: 'Communication', icon: 'gmail.svg', version: '1.0.0', lastUpdated: '2026-02-28', developer: 'Google',
+    authType: 'oauth',
+    oauthProviderId: 'google',
+    formGuide: 'Create OAuth credentials in Google Cloud Console, then click "Connect with Google" below.',
+    properties: [
+      {
+        key: 'client_id',
+        title: 'OAuth Client ID',
+        hint: 'From Google Cloud Console → Credentials',
+        type: 'text',
+        required: true,
+        placeholder: 'xxxx.apps.googleusercontent.com'
+      },
+      {
+        key: 'client_secret',
+        title: 'OAuth Client Secret',
+        hint: 'From Google Cloud Console → Credentials',
+        type: 'password',
+        required: true,
+        placeholder: ''
+      }
+    ],
   },
   discord: {
     id: 'discord', sort: 3, paid: false, beta: false, comingSoon: false, connected: false,
