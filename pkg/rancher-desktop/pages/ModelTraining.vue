@@ -2,7 +2,7 @@
 import { ipcRenderer } from 'electron';
 import { defineComponent } from 'vue';
 
-import './assets/AgentKnowledgeBase.css';
+import './assets/theme.css';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 
 const navItems = [

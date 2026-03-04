@@ -39,24 +39,6 @@ export interface ThreadContext {
 }
 
 // ============================================================================
-// VECTOR DATABASE TYPES
-// ============================================================================
-
-export interface IVectorDatabase {
-  getCollection(name: string): Promise<any>;
-  getOrCreateCollection(name: string): Promise<any>;
-  listCollections(): Promise<any[]>;
-  deleteCollection(name: string): Promise<void>;
-  addDocuments(collectionName: string, documents: string[], metadatas?: any, ids?: string[]): Promise<any>;
-  queryDocuments(collectionName: string, queryTexts: string[], nResults?: number, where?: any): Promise<any>;
-  getDocuments(collectionName: string, ids: string[], where?: any): Promise<any>;
-  updateDocuments(collectionName: string, ids: string[], documents?: string[], metadatas?: any): Promise<any>;
-  countDocuments(collectionName: string, where?: any): Promise<number>;
-  deleteDocuments(collectionName: string, ids?: string[], where?: any): Promise<any>;
-  initializeEmbeddings(): Promise<void>;
-}
-
-// ============================================================================
 // CONVERSATION THREAD TYPES
 // ============================================================================
 

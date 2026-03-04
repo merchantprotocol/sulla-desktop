@@ -1,39 +1,4 @@
 services:
-  # Ollama replaced by bare-metal llama.cpp (LlamaCppService)
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: sulla_ollama
-  #   ports:
-  #     - "30114:11434"
-  #   volumes:
-  #     - /var/lib/sulla/ollama:/root/.ollama
-  #   restart: unless-stopped
-  #   environment:
-  #     - OLLAMA_KEEP_ALIVE=999999999
-  #     - OLLAMA_MAX_LOADED_MODELS=3
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:11434/"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-
-  neo4j:
-    image: neo4j:latest
-    container_name: sulla_neo4j
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    environment:
-      - NEO4J_AUTH=none
-    volumes:
-      - /var/lib/sulla/neo4j:/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7474"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
   postgres:
     image: postgres:16-alpine
     container_name: sulla_postgres

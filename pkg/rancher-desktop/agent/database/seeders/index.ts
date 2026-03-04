@@ -2,7 +2,6 @@
 // Central registry for all seeders
 // DatabaseManager imports this to run tracked seeders
 
-import { initialize as knowledgeBaseSectionsSeeder } from './KnowledgeBaseSectionsSeeder';
 import { initialize as n8nUserSeeder } from './N8nUserSeeder';
 import { initialize as n8nSettingsSeeder } from './N8nSettingsSeeder';
 import { initialize as ollamaIntegrationSeeder } from './OllamaIntegrationSeeder';
@@ -12,10 +11,6 @@ import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteC
 // import { initialize as someOtherSeeder } from './some-other-seeder';
 
 export const seedersRegistry = [
-  {
-    name: 'knowledgebase-sections-seeder',
-    run: knowledgeBaseSectionsSeeder,
-  },
   {
     name: 'n8n-user-seeder',
     run: n8nUserSeeder,

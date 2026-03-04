@@ -45,7 +45,7 @@ entry/index.ts dynamically determines the layout based on the current route's co
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue';
 import SimpleHeader from './agent/SimpleHeader.vue';
-import './assets/AgentKnowledgeBase.css';
+import './assets/theme.css';
 
 const isDark = ref(false);
 const THEME_STORAGE_KEY = 'agentTheme';

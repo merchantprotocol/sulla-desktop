@@ -463,47 +463,12 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     this.tempSullaWorkdir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-deploy-'));
     const deploymentPath = path.join(this.tempSullaWorkdir, 'sulla-deployments.yaml');
 
-    const vmMemoryGB = this.cfg?.virtualMachine.memoryInGB || 4;
-    const vmCPUs = this.cfg?.virtualMachine.numberCPUs || 4;
-    const ollamaMemoryGB = Math.max(2, Math.floor(vmMemoryGB * 0.7));
-    const ollamaCPUs = Math.max(1, Math.floor(vmCPUs * 0.75));
-    console.log(`Configuring Ollama pod: ${ollamaMemoryGB}Gi memory, ${ollamaCPUs} CPUs (VM: ${vmMemoryGB}GB, ${vmCPUs} CPUs)`);
-
     // Fetch settings from SullaSettingsModel
     const sullaServicePassword = await SullaSettingsModel.get('sullaServicePassword') || 'sulla_dev_password';
     const sullaN8nEncryptionKey = await SullaSettingsModel.get('sullaN8nEncryptionKey') || 'changeMeToA32CharRandomString1234';
 
     const deployments = (SULLA_DEPLOYMENTS as unknown[]).map((doc: unknown) => {
       const deployment = doc as Record<string, unknown>;
-      if (deployment.kind === 'Deployment' && (deployment.metadata as Record<string, unknown>)?.name === 'ollama') {
-        const spec = deployment.spec as Record<string, unknown>;
-        const template = spec?.template as Record<string, unknown>;
-        const podSpec = template?.spec as Record<string, unknown>;
-        const containers = podSpec?.containers as Array<Record<string, unknown>>;
-        if (containers?.[0]) {
-          // Add environment variables
-          if (!containers[0].env) {
-            containers[0].env = [];
-          }
-          (containers[0].env as Array<Record<string, string>>).push(
-            { name: 'OLLAMA_NUM_GPU_LAYERS', value: '999' },
-            { name: 'OLLAMA_KEEP_ALIVE', value: '-1' },
-            { name: 'OLLAMA_NUM_THREAD', value: '4' },
-            { name: 'OLLAMA_MAX_LOADED_MODELS', value: '1' }
-          );
-          // Add GPU resources
-          const resources = containers[0].resources as Record<string, unknown> || {};
-          if (!resources.limits) {
-            resources.limits = {};
-          }
-          if (!resources.requests) {
-            resources.requests = {};
-          }
-          (resources.limits as Record<string, unknown>)['nvidia.com/gpu'] = 1;
-          (resources.requests as Record<string, unknown>)['nvidia.com/gpu'] = 1;
-          containers[0].resources = resources;
-        }
-      }
       if (deployment.kind === 'Deployment' && (deployment.metadata as Record<string, unknown>)?.name === 'postgres') {
         const spec = deployment.spec as Record<string, unknown>;
         const template = spec?.template as Record<string, unknown>;
@@ -601,160 +566,13 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     throw new Error(`Timeout waiting for condition after ${timeoutSec}s`);
   }
 
-  private async pullOllamaModelWithProgress(): Promise<void> {
-    try {
-      const MODEL = await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
-
-      console.log(`Starting Ollama model pull: ${MODEL}`);
-
-      // Check if model is already downloaded
-      try {
-        const listOutput = await this.vm.execCommand({ capture: true, root: true }, 'k3s', 'kubectl', 'exec', '-n', 'sulla', 'deploy/ollama', '--', 'ollama', 'list');
-        if (listOutput.includes(MODEL)) {
-          console.log(`Ollama model ${MODEL} is already downloaded, skipping pull`);
-          return;
-        }
-      } catch (error) {
-        console.warn(`Failed to check if model ${MODEL} is already downloaded:`, error);
-        // Continue with pull if check fails
-      }
-
-      const proc = this.vm.spawn({ root: true }, 'k3s', 'kubectl', 'exec', '-n', 'sulla', 'deploy/ollama', '--', 'ollama', 'pull', MODEL);
-
-      return new Promise((resolve, reject) => {
-        let output = '';
-        proc.stdout?.on('data', (chunk: Buffer | string) => {
-          const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-          const lines = text.split('\n');
-          lines.forEach((line: string) => {
-            const trimmed = line.trim();
-            if (trimmed) {
-              console.log(`[Ollama Pull] ${trimmed}`);
-              output += trimmed + '\n';
-            }
-          });
-        });
-        proc.stderr?.on('data', (chunk: Buffer | string) => {
-          const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-          const trimmed = text.trim();
-          if (trimmed) {
-            console.error(`[Ollama Pull Error] ${trimmed}`);
-          }
-        });
-        proc.on('close', (code) => {
-          if (code === 0) {
-            console.log(`Ollama model ${MODEL} pulled successfully`);
-            resolve();
-          } else {
-            reject(new Error(`Model pull failed with code ${code}. Output: ${output}`));
-          }
-        });
-        proc.on('error', reject);
-      });
-    } catch (error) {
-      console.error('[Ollama Pull] Failed to spawn process:', error);
-      // Graceful fail: resolve the promise without throwing
-      return Promise.resolve();
-    }
-  }
-
-  private async pullNomicEmbedTextModel(): Promise<void> {
-    try {
-      const MODEL = 'nomic-embed-text';
-
-      console.log(`Starting Ollama embed model pull: ${MODEL}`);
-
-      // Check if model is already downloaded
-      try {
-        const listOutput = await this.vm.execCommand({ capture: true, root: true }, 'k3s', 'kubectl', 'exec', '-n', 'sulla', 'deploy/ollama', '--', 'ollama', 'list');
-        if (listOutput.includes(MODEL)) {
-          console.log(`Ollama embed model ${MODEL} is already downloaded, skipping pull`);
-          return;
-        }
-      } catch (error) {
-        console.warn(`Failed to check if embed model ${MODEL} is already downloaded:`, error);
-        // Continue with pull if check fails
-      }
-
-      const proc = this.vm.spawn({ root: true }, 'k3s', 'kubectl', 'exec', '-n', 'sulla', 'deploy/ollama', '--', 'ollama', 'pull', MODEL);
-
-      return new Promise((resolve, reject) => {
-        let output = '';
-        // Initialize progress at 0
-        this.progressTracker.numeric(`Pulling Ollama embed model ${MODEL}`, 0, 100);
-        proc.stdout?.on('data', (chunk: Buffer | string) => {
-          const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-          const lines = text.split('\n');
-          lines.forEach((line: string) => {
-            const trimmed = line.trim();
-            if (trimmed) {
-              console.log(`[Ollama Embed Pull] ${trimmed}`);
-              output += trimmed + '\n';
-              // Parse for progress percentage
-              const progressMatch = trimmed.match(/(\d+)%/);
-              if (progressMatch) {
-                const progress = parseInt(progressMatch[1], 10);
-                this.progressTracker.numeric(`Pulling Ollama embed model ${MODEL}`, progress, 100);
-              }
-            }
-          });
-        });
-        proc.stderr?.on('data', (chunk: Buffer | string) => {
-          const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-          const trimmed = text.trim();
-          if (trimmed) {
-            console.error(`[Ollama Embed Pull Error] ${trimmed}`);
-          }
-        });
-        proc.on('close', (code) => {
-          if (code === 0) {
-            console.log(`Ollama embed model ${MODEL} pulled successfully`);
-            // Set to 100% on success
-            this.progressTracker.numeric(`Pulling Ollama embed model ${MODEL}`, 100, 100);
-            resolve();
-          } else {
-            reject(new Error(`Embed model pull failed with code ${code}. Output: ${output}`));
-          }
-        });
-        proc.on('error', reject);
-      });
-    } catch (error) {
-      console.error('[Ollama Embed Pull] Failed to spawn process:', error);
-      // Graceful fail: resolve the promise without throwing
-      return Promise.resolve();
-    }
-  }
-
   private async logK8sDiagnostics(message: string): Promise<void> {
     console.error(message);
     try {
       const events = await this.vm.execCommand({ capture: true, root: true }, 'k3s', 'kubectl', 'get', 'events', '-n', 'sulla', '--sort-by=.metadata.creationTimestamp');
       console.log('Sulla namespace events:\n', events);
-
-      const podName = await this.vm.execCommand({ capture: true, root: true }, 'k3s', 'kubectl', 'get', 'pod', '-n', 'sulla', '-l', 'app=ollama', '-o', 'name').then(n => n.trim());
-      if (podName) {
-        const describe = await this.vm.execCommand({ capture: true, root: true }, 'k3s', 'kubectl', 'describe', 'pod', podName, '-n', 'sulla');
-        console.log('Ollama pod description:\n', describe);
-
-        const logs = await this.vm.execCommand({ capture: true, root: true }, 'k3s', 'kubectl', 'logs', podName, '-n', 'sulla');
-        console.log('Ollama pod logs:\n', logs);
-      }
     } catch (e) {
       console.error('Failed to collect K8s diagnostics:', e);
-    }
-  }
-
-  private async logQuickDeploymentStatus(): Promise<void> {
-    try {
-      const depl = await this.vm.execCommand({ capture: true, root: true },
-        'k3s', 'kubectl', 'get', 'deployment', '-n', 'sulla', 'ollama', '-o', 'wide');
-      console.log('Deployment status immediately after apply:\n', depl);
-
-      const rs = await this.vm.execCommand({ capture: true, root: true },
-        'k3s', 'kubectl', 'get', 'rs', '-n', 'sulla', '-l', 'app=ollama', '-o', 'wide');
-      console.log('ReplicaSet status:\n', rs);
-    } catch (e) {
-      console.warn('Early status check failed:', e);
     }
   }
 
@@ -776,7 +594,7 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
 
     await this.progressTracker.action('Booting Virtual Container Environment...', 60, async () => {
       this.progressTracker.numeric('Booting Virtual Container Environment', 40, 100);
-      const containers = ['ws-server', 'redis', 'postgres', 'neo4j', 'n8n', 'ollama'];
+      const containers = ['ws-server', 'redis', 'postgres', 'n8n'];
       
       // Track each container individually
       for (const container of containers) {
@@ -787,33 +605,7 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
       this.progressTracker.numeric('Container environment booted', 60, 100);
     });
 
-    await this.progressTracker.action('Waiting for Ollama pod scheduling', 60, async () => {
-      this.progressTracker.numeric('Waiting for Ollama pod scheduling', 65, 100);
-      await this.waitForPodCondition('ollama', 'Initialized', 'True', 300);
-      this.progressTracker.numeric('Ollama pod scheduled', 75, 100);
-    });
-
-    await this.progressTracker.action('Waiting for Ollama pod fully ready', 180, async () => {
-      this.progressTracker.numeric('Waiting for Ollama pod to be ready', 80, 100);
-      await this.waitForPodCondition('ollama', 'Ready', 'True', 600);
-      this.progressTracker.numeric('Ollama pod ready', 90, 100);
-    });
-
-    await this.progressTracker.action('Running quick deployment diagnostics', 30, async () => {
-      this.progressTracker.numeric('Running deployment diagnostics', 92, 100);
-      await this.logQuickDeploymentStatus();
-      this.progressTracker.numeric('Diagnostics completed', 95, 100);
-    });
-
-    // Ollama model pulls replaced by bare-metal llama.cpp (LlamaCppService)
-    // await this.progressTracker.action('Pulling & loading Ollama model', 300, async () => {
-    //   await this.pullOllamaModelWithProgress();
-    // });
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
-
-    // await this.progressTracker.action('Pulling nomic-embed-text model', 300, async () => {
-    //   await this.pullNomicEmbedTextModel();
-    // });
 
     instantiateSullaStart();
 

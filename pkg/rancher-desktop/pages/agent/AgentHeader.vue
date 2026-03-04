@@ -38,13 +38,6 @@
           Calendar
         </router-link>
         <router-link
-          to="/KnowledgeBase"
-          class="text-sm font-semibold"
-          :class="route.path === '/KnowledgeBase' ? 'text-[#0d0d0d] dark:text-white' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] dark:text-white/60 dark:hover:text-white'"
-        >
-          KnowledgeBase
-        </router-link>
-        <router-link
           to="/Integrations"
           class="text-sm font-semibold"
           :class="route.path === '/Integrations' ? 'text-[#0d0d0d] dark:text-white' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] dark:text-white/60 dark:hover:text-white'"
@@ -133,14 +126,6 @@
           @click="toggleMobileMenu"
         >
           Calendar
-        </router-link>
-        <router-link
-          to="/KnowledgeBase"
-          class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
-          :class="route.path === '/KnowledgeBase' ? 'text-[#0d0d0d] bg-slate-100 dark:text-white dark:bg-slate-800' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] hover:bg-slate-50 dark:text-white/60 dark:hover:text-white dark:hover:bg-slate-800'"
-          @click="toggleMobileMenu"
-        >
-          KnowledgeBase
         </router-link>
         <router-link
           to="/Integrations"

@@ -11,7 +11,6 @@ import { githubToolManifests } from './github/manifests';
 import { integrationsToolManifests } from './integrations/manifests';
 import { kubectlToolManifests } from './kubectl/manifests';
 import { limaToolManifests } from './lima/manifests';
-import { memoryToolManifests } from './memory/manifests';
 import { metaToolManifests } from './meta/manifests';
 import { n8nToolManifests } from './n8n/manifests';
 import { pgToolManifests } from './pg/manifests';
@@ -35,7 +34,6 @@ toolRegistry.registerManifests([
   ...integrationsToolManifests,
   ...kubectlToolManifests,
   ...limaToolManifests,
-  ...memoryToolManifests,
   ...metaToolManifests,
   ...n8nToolManifests,
   ...pgToolManifests,
