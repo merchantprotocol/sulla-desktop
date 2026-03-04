@@ -49,7 +49,7 @@ export const memoryToolManifests: ToolManifest[] = [
     schemaDef: {
     slug: { type: 'string', description: "The slug of the article to find related articles for" },
     relType: { type: 'string', optional: true, default: "MENTIONS", description: "Type of relationship to search (e.g., MENTIONS)" },
-    limit: { type: 'number', optional: true, default: 10, description: "Maximum number of related articles to return" },
+    limit: { type: 'integer', optional: true, default: 10, description: "Maximum number of related articles to return" },
   },
     operationTypes: ['read'],
     loader: () => import('./article_find_related'),
@@ -59,7 +59,7 @@ export const memoryToolManifests: ToolManifest[] = [
     description: 'List articles ordered by their order field. Returns article metadata without full content.',
     category: 'memory',
     schemaDef: {
-    limit: { type: 'number', optional: true, default: 10, description: "Maximum number of articles to return" },
+    limit: { type: 'integer', optional: true, default: 10, description: "Maximum number of articles to return" },
   },
     operationTypes: ['read'],
     loader: () => import('./article_list'),

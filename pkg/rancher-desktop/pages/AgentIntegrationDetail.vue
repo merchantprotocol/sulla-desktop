@@ -17,7 +17,7 @@
             Back to Integrations
           </button>
 
-          <div v-if="integration" class="grid grid-cols-1 gap-8 lg:grid-cols-3">
+          <div v-if="integration" class="grid grid-cols-1 gap-8 lg:grid-cols-2">
             <!-- Main Content -->
             <div class="lg:col-span-2 space-y-8">
               <!-- Media -->

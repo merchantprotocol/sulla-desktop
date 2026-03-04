@@ -52,6 +52,15 @@ export class SullaWebRequestFixer {
 
     // ==================== onHeadersReceived ====================
     session.webRequest.onHeadersReceived((details, callback) => {
+      // Skip header rewriting for app:// and x-rd-extension:// protocol responses —
+      // Electron.protocol.handle responses don't support header modification and
+      // attempting it causes ERR_UNEXPECTED (breaks SVG/image loading).
+      if (details.url.startsWith('app://') || details.url.startsWith('x-rd-extension://')) {
+        callback({});
+
+        return;
+      }
+
       let headers = { ...(details.responseHeaders || {}) };
       const shouldLog = this.shouldLogRequest(details.url);
 
@@ -103,6 +112,12 @@ export class SullaWebRequestFixer {
 
     // ==================== onBeforeSendHeaders ====================
     session.webRequest.onBeforeSendHeaders((details, callback) => {
+      if (details.url.startsWith('app://') || details.url.startsWith('x-rd-extension://')) {
+        callback({ requestHeaders: details.requestHeaders });
+
+        return;
+      }
+
       void (async() => {
         const url = details.url.toLowerCase();
         let parsedUrl: URL | undefined;

@@ -89,6 +89,7 @@ import { PathManagementStrategy } from '@pkg/integrations/pathManager';
 import { highestStableVersion, VersionEntry } from '@pkg/utils/kubeVersions';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { LOCAL_MODELS } from '@pkg/shared/localModels';
 
 const settings = inject<Ref<Settings>>('settings')!;
 const commitChanges = inject<(settings: RecursivePartial<Settings>) => Promise<void>>('commitChanges')!;
@@ -162,18 +163,8 @@ onMounted(async () => {
 });
 
 // GGUF models sorted by resource requirements (smallest to largest)
-// Keys match the GGUF_MODELS registry in LlamaCppService.ts
-const GGUF_MODELS = [
-  {
-    name: 'qwen3.5-0.8b', displayName: 'Qwen3.5 0.8B', size: '600MB', minMemoryGB: 1, minCPUs: 1, description: 'Qwen3.5 0.8B \u2014 fast and lightweight',
-  },
-  {
-    name: 'qwen3.5-4b', displayName: 'Qwen3.5 4B', size: '2.7GB', minMemoryGB: 4, minCPUs: 2, description: 'Qwen3.5 4B \u2014 balanced performance and speed',
-  },
-  {
-    name: 'qwen3.5-9b', displayName: 'Qwen3.5 9B', size: '5.6GB', minMemoryGB: 8, minCPUs: 4, description: 'Qwen3.5 9B \u2014 strongest reasoning, recommended',
-  },
-];
+// Shared with LanguageModelSettings — single source of truth
+const GGUF_MODELS = LOCAL_MODELS;
 
 // Dynamic system resources
 const availMemoryInGB = computed(() => Math.ceil(os.totalmem() / 2 ** 30));

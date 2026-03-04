@@ -103,13 +103,12 @@ export class ObservationalSummaryService {
    * Trigger background observation trimming for a conversation thread.
    * Non-blocking: returns immediately, work happens asynchronously.
    */
-  static triggerBackgroundTrimming(state: BaseThreadState): void {
+  static triggerBackgroundTrimming(state: BaseThreadState, _deferLogged = false): void {
     const threadId = state.metadata.threadId as string;
     
     // Skip if already processing this thread or any thread
     if (ObservationalSummaryService.isProcessing || 
         ObservationalSummaryService.processingQueue.has(threadId)) {
-      console.log(`[ObservationalSummary] Skipping - already processing thread ${threadId}`);
       return;
     }
 
@@ -119,9 +118,11 @@ export class ObservationalSummaryService {
       const { ConversationSummaryService } = require('./ConversationSummaryService');
       if (ConversationSummaryService.isProcessingThread && 
           ConversationSummaryService.isProcessingThread(threadId)) {
-        console.log(`[ObservationalSummary] Deferring - ConversationSummaryService processing thread ${threadId}`);
-        // Retry after delay
-        setTimeout(() => ObservationalSummaryService.triggerBackgroundTrimming(state), 2000);
+        if (!_deferLogged) {
+          console.log(`[ObservationalSummary] Deferring until ConversationSummaryService finishes thread ${threadId}`);
+        }
+        // Retry after delay (suppress repeated log)
+        setTimeout(() => ObservationalSummaryService.triggerBackgroundTrimming(state, true), 2000);
         return;
       }
     } catch (err) {

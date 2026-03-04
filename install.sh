@@ -20,6 +20,7 @@ set -euo pipefail
 REPO_URL="https://github.com/sulla-ai/sulla-desktop.git"
 REPO_DIR="sulla-desktop"
 NODE_VERSION="22.22.0"
+GO_VERSION="1.24.2"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,6 +124,28 @@ ensure_yarn() {
   ok "yarn installed"
 }
 
+ensure_curl() {
+  if command_exists curl; then
+    ok "curl already installed"
+    return
+  fi
+  info "Installing curl..."
+  case "$OS" in
+    macos)   ;; # curl ships with macOS
+    linux)
+      case "$(detect_pkg_manager)" in
+        apt)    sudo apt-get update -qq && sudo apt-get install -yqq curl ;;
+        dnf)    sudo dnf install -y curl ;;
+        yum)    sudo yum install -y curl ;;
+        pacman) sudo pacman -Sy --noconfirm curl ;;
+        *)      fail "Cannot auto-install curl. Please install it manually." ;;
+      esac ;;
+    windows) fail "Please install curl manually." ;;
+  esac
+  command_exists curl || fail "curl installation failed"
+  ok "curl installed"
+}
+
 ensure_build_tools() {
   case "$OS" in
     macos)
@@ -155,6 +178,72 @@ ensure_build_tools() {
       ok "Build tools check skipped on Windows (use Visual Studio Build Tools if native modules fail)"
       ;;
   esac
+}
+
+ensure_go() {
+  local required_major=1
+  local required_minor=24
+
+  if command_exists go; then
+    local go_ver
+    go_ver="$(go version | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/^go//')"
+    local cur_major cur_minor
+    cur_major="$(echo "$go_ver" | cut -d. -f1)"
+    cur_minor="$(echo "$go_ver" | cut -d. -f2)"
+    if [ "$cur_major" -gt "$required_major" ] 2>/dev/null || \
+       { [ "$cur_major" -eq "$required_major" ] && [ "$cur_minor" -ge "$required_minor" ]; } 2>/dev/null; then
+      ok "Go already installed (go$go_ver >= $required_major.$required_minor)"
+      return
+    fi
+    warn "Go go$go_ver found but >= $required_major.$required_minor required — upgrading..."
+  else
+    info "Installing Go $GO_VERSION..."
+  fi
+
+  case "$OS" in
+    macos)
+      if command_exists brew; then
+        brew install go || brew upgrade go
+      else
+        local arch
+        arch="$(uname -m)"
+        local go_arch="amd64"
+        [ "$arch" = "arm64" ] && go_arch="arm64"
+        local go_pkg="go${GO_VERSION}.darwin-${go_arch}.pkg"
+        local go_url="https://go.dev/dl/${go_pkg}"
+        info "Downloading $go_url ..."
+        curl -fsSL -o "/tmp/$go_pkg" "$go_url"
+        info "Installing Go via pkg installer (may require password)..."
+        sudo installer -pkg "/tmp/$go_pkg" -target /
+        rm -f "/tmp/$go_pkg"
+        # Ensure Go is on PATH for this session
+        export PATH="/usr/local/go/bin:$PATH"
+      fi
+      ;;
+    linux)
+      local arch
+      arch="$(uname -m)"
+      local go_arch="amd64"
+      [ "$arch" = "aarch64" ] && go_arch="arm64"
+      [ "$arch" = "armv7l" ]  && go_arch="armv6l"
+      local go_tar="go${GO_VERSION}.linux-${go_arch}.tar.gz"
+      local go_url="https://go.dev/dl/${go_tar}"
+      info "Downloading $go_url ..."
+      curl -fsSL -o "/tmp/$go_tar" "$go_url"
+      info "Extracting to /usr/local/go ..."
+      sudo rm -rf /usr/local/go
+      sudo tar -C /usr/local -xzf "/tmp/$go_tar"
+      rm -f "/tmp/$go_tar"
+      export PATH="/usr/local/go/bin:$PATH"
+      ;;
+    windows)
+      fail "Please install Go $GO_VERSION manually from https://go.dev/dl/"
+      ;;
+  esac
+
+  command_exists go    || fail "Go installation failed — 'go' not found in PATH"
+  command_exists gofmt || fail "Go installation failed — 'gofmt' not found in PATH"
+  ok "Go $(go version | grep -oE 'go[0-9]+\.[0-9]+\.[0-9]+') installed"
 }
 
 # ---------------------------------------------------------------------------
@@ -202,22 +291,16 @@ install_deps() {
   ensure_nvm
   nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
 
-  if [ -d "node_modules" ] && [ -d "node_modules/electron" ] && [ -d "node_modules/tsx" ]; then
-    ok "node_modules already present — skipping install (run 'yarn install' to refresh)"
-  else
-    # Clean up partial node_modules from a failed previous run
-    if [ -d "node_modules" ]; then
-      warn "Found incomplete node_modules from a previous run — cleaning up..."
-      rm -rf node_modules
-    fi
-    info "Installing dependencies (this may take a few minutes)..."
-    yarn install --ignore-engines || {
-      warn "yarn install failed — retrying with clean state..."
-      rm -rf node_modules
-      yarn install --ignore-engines
-    }
-    ok "Dependencies installed"
-  fi
+  # Always run yarn install — it's already idempotent and handles
+  # partially-built states (e.g. node_modules present but Go binaries missing).
+  # The postinstall script builds Go binaries, downloads deps, etc.
+  info "Installing dependencies (this may take a few minutes on first run)..."
+  yarn install --ignore-engines || {
+    warn "yarn install failed — retrying with clean state..."
+    rm -rf node_modules
+    yarn install --ignore-engines
+  }
+  ok "Dependencies installed"
 }
 
 build_app() {
@@ -280,10 +363,12 @@ main() {
   echo ""
 
   info "Checking dependencies..."
+  ensure_curl
   ensure_git
   ensure_node
   ensure_yarn
   ensure_build_tools
+  ensure_go
   echo ""
 
   info "Setting up repository..."

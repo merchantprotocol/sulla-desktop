@@ -136,6 +136,25 @@ export interface IpcMainInvokeEvents {
   'app-quit':                  () => void;
   // #endregion
 
+  // #region Training
+  'training-run':          (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
+  'training-status':       () => { running: boolean };
+  'training-docs-config-exists': () => boolean;
+  'training-history':      () => Array<{ filename: string; size: number; createdAt: string; modifiedAt: string }>;
+  'training-log-read':     (filename: string) => string;
+  'training-schedule-get': () => { enabled: boolean; hour: number; minute: number };
+  'training-schedule-set': (opts: { enabled: boolean; hour: number; minute: number }) => { ok: boolean };
+  'training-models-downloaded': () => Array<{ key: string; displayName: string; trainingRepo: string }>;
+  'training-docs-config-load':  () => { folders: string[]; files: string[]; fileTypes: string[] };
+  'training-docs-list-dir':     (dirPath: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }>;
+  'training-docs-config-save':  (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
+  // #endregion
+
+  // #region Local Models
+  'local-models-status':  () => Record<string, boolean>;
+  'local-model-download': (modelKey: string) => { ok: boolean };
+  // #endregion
+
   // #region main/imageEvents
   'images-mounted':     (mounted: boolean) => { imageName: string, tag: string, imageID: string, size: string }[];
   'images-check-state': () => boolean;

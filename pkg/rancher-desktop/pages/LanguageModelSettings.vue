@@ -13,11 +13,14 @@ import { getSupportedProviders, fetchModelsForProvider, clearModelCache } from '
 import { getIntegrationService } from '../agent/services/IntegrationService';
 import { integrations } from '../agent/integrations/catalog';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+import { LOCAL_MODELS } from '../shared/localModels';
+import type { LocalModelOption } from '../shared/localModels';
 
 // Nav items for the Language Model Settings sidebar
 const navItems = [
   { id: 'overview', name: 'Overview' },
   { id: 'models', name: 'Models' },
+  { id: 'local-models', name: 'Local Models' },
   { id: 'soul', name: 'Soul' },
   { id: 'heartbeat', name: 'Heartbeat' },
 ];
@@ -151,6 +154,14 @@ export default defineComponent({
 
       // Guard flag to prevent feedback loop between primaryProvider watcher and IPC handler
       _suppressProviderWatch: false,
+
+      // Local Models tab
+      localModels:              LOCAL_MODELS,
+      localModelDownloadStatus: {} as Record<string, boolean>,
+      localModelSelected:       '' as string,
+      localModelDownloading:    null as string | null,
+      localModelError:          '' as string,
+      loadingLocalModels:       false,
     };
   },
 
@@ -478,6 +489,8 @@ export default defineComponent({
         this.fetchContainerStats();
         this.checkModelStatuses();
         console.log('After models nav, viewingTab:', this.viewingTab);
+      } else if (navId === 'local-models') {
+        this.loadLocalModelStatuses();
       }
     },
 
@@ -990,6 +1003,74 @@ export default defineComponent({
       }
     },
 
+    async loadLocalModelStatuses() {
+      this.loadingLocalModels = true;
+      this.localModelError = '';
+      try {
+        const status: Record<string, boolean> = await ipcRenderer.invoke('local-models-status');
+        this.localModelDownloadStatus = status;
+
+        // Load current sullaModel as the selected local model
+        const currentModel = await SullaSettingsModel.get('sullaModel', '');
+        if (currentModel && LOCAL_MODELS.some(m => m.name === currentModel)) {
+          this.localModelSelected = currentModel;
+        }
+      } catch (err) {
+        console.error('[LM Settings] Failed to load local model statuses:', err);
+        this.localModelError = 'Failed to load model statuses.';
+      } finally {
+        this.loadingLocalModels = false;
+      }
+    },
+
+    async selectLocalModel(modelName: string) {
+      this.localModelSelected = modelName;
+      this.localModelError = '';
+    },
+
+    async downloadLocalModel(modelName: string) {
+      this.localModelDownloading = modelName;
+      this.localModelError = '';
+      try {
+        await ipcRenderer.invoke('local-model-download', modelName);
+        this.localModelDownloadStatus[modelName] = true;
+      } catch (err) {
+        console.error('[LM Settings] Failed to download local model:', err);
+        this.localModelError = `Failed to download ${modelName}. Check your internet connection.`;
+      } finally {
+        this.localModelDownloading = null;
+      }
+    },
+
+    async activateSelectedGgufModel() {
+      if (!this.localModelSelected) return;
+      this.localModelError = '';
+      try {
+        // Save sullaModel setting
+        await SullaSettingsModel.set('sullaModel', this.localModelSelected, 'string');
+
+        // Update the ollama integration model property
+        const integrationService = getIntegrationService();
+        await integrationService.setFormValues([{
+          integration_id: 'ollama',
+          property:       'model',
+          value:          this.localModelSelected,
+        }]);
+
+        // Also set primary provider to ollama
+        this.primaryProvider = 'ollama';
+        await this.writeExperimentalSettings();
+
+        // Emit event for other windows
+        ipcRenderer.send('model-changed', { model: this.localModelSelected, type: 'local' });
+
+        console.log(`[LM Settings] Local GGUF model activated: ${this.localModelSelected}`);
+      } catch (err) {
+        console.error('[LM Settings] Failed to activate local GGUF model:', err);
+        this.localModelError = 'Failed to activate model.';
+      }
+    },
+
     closeWindow() {
       window.close();
     },
@@ -1208,6 +1289,98 @@ export default defineComponent({
             <p style="font-size: 0.9rem; color: var(--muted);">
               Only Ollama (local) is available. To add remote providers, go to
               <strong>Integrations</strong> and configure an AI provider (e.g. Grok, OpenAI, Anthropic).
+            </p>
+          </div>
+        </div>
+
+        <!-- Local Models Tab -->
+        <div
+          v-if="currentNav === 'local-models'"
+          class="tab-content"
+        >
+          <h2>Local Models</h2>
+          <p class="description">
+            Select and manage locally downloaded GGUF models. Downloaded models appear in full color; models not yet downloaded are grayed out but still selectable.
+          </p>
+
+          <div
+            v-if="localModelError"
+            class="activation-error"
+          >
+            {{ localModelError }}
+          </div>
+
+          <div
+            v-if="loadingLocalModels"
+            class="loading"
+          >
+            Loading model statuses...
+          </div>
+
+          <div
+            v-else
+            class="local-models-grid"
+          >
+            <div
+              v-for="model in localModels"
+              :key="model.name"
+              class="local-model-card"
+              :class="{
+                'is-downloaded': localModelDownloadStatus[model.name],
+                'is-not-downloaded': !localModelDownloadStatus[model.name],
+                'is-selected': localModelSelected === model.name,
+              }"
+              @click="selectLocalModel(model.name)"
+            >
+              <div class="local-model-header">
+                <span class="local-model-name">{{ model.displayName }}</span>
+                <span
+                  class="local-model-badge"
+                  :class="localModelDownloadStatus[model.name] ? 'badge-downloaded' : 'badge-not-downloaded'"
+                >
+                  {{ localModelDownloadStatus[model.name] ? 'Downloaded' : 'Not Downloaded' }}
+                </span>
+              </div>
+              <div class="local-model-meta">
+                <span>{{ model.size }}</span>
+                <span>{{ model.minMemoryGB }}GB RAM</span>
+                <span>{{ model.minCPUs }} CPUs</span>
+              </div>
+              <p class="local-model-desc">
+                {{ model.description }}
+              </p>
+
+              <div
+                v-if="localModelSelected === model.name && !localModelDownloadStatus[model.name]"
+                class="local-model-actions"
+              >
+                <button
+                  class="btn role-primary"
+                  :disabled="localModelDownloading === model.name"
+                  @click.stop="downloadLocalModel(model.name)"
+                >
+                  {{ localModelDownloading === model.name ? 'Downloading...' : 'Download Model' }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="localModelSelected"
+            class="local-model-activate"
+          >
+            <button
+              class="btn role-primary activate-btn"
+              :disabled="!localModelDownloadStatus[localModelSelected] || !!localModelDownloading"
+              @click="activateSelectedGgufModel"
+            >
+              Activate {{ localModels.find(m => m.name === localModelSelected)?.displayName || localModelSelected }}
+            </button>
+            <p
+              v-if="!localModelDownloadStatus[localModelSelected]"
+              class="setting-description"
+            >
+              Download this model first before activating.
             </p>
           </div>
         </div>
@@ -1432,9 +1605,19 @@ export default defineComponent({
     padding: 0.5rem 0.75rem;
     cursor: pointer;
     user-select: none;
+    color: var(--muted);
+    transition: background 0.15s, color 0.15s;
+
+    &:hover {
+      background: var(--nav-active);
+      color: var(--body-text);
+    }
 
     &.active {
-      background-color: var(--nav-active);
+      background: var(--primary-light-bg, rgba(59, 130, 246, 0.05));
+      color: var(--primary, #3b82f6);
+      border-left: 2px solid var(--primary, #3b82f6);
+      font-weight: 500;
     }
   }
 }
@@ -2318,6 +2501,92 @@ export default defineComponent({
     font-size: 0.75rem;
   }
 }
+// Local Models tab styles
+.local-models-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
 
+.local-model-card {
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  padding: 1rem;
+  cursor: pointer;
+  transition: border-color 0.15s, opacity 0.15s, background 0.15s;
+
+  &.is-not-downloaded {
+    opacity: 0.45;
+  }
+
+  &.is-downloaded {
+    opacity: 1;
+  }
+
+  &.is-selected {
+    border-color: var(--primary, #3b82f6);
+    background: var(--primary-bg, rgba(59, 130, 246, 0.06));
+  }
+
+  &:hover {
+    border-color: var(--primary, #3b82f6);
+  }
+}
+
+.local-model-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.local-model-name {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.local-model-badge {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-weight: 500;
+
+  &.badge-downloaded {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+  }
+
+  &.badge-not-downloaded {
+    background: rgba(156, 163, 175, 0.15);
+    color: #9ca3af;
+  }
+}
+
+.local-model-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.local-model-desc {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+.local-model-actions {
+  margin-top: 0.75rem;
+}
+
+.local-model-activate {
+  margin-top: 0.5rem;
+
+  .setting-description {
+    margin-top: 0.5rem;
+  }
+}
 
 </style>

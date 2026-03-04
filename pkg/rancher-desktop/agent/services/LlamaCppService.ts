@@ -296,9 +296,10 @@ function httpGet(url: string, headers: Record<string, string> = {}): Promise<Buf
 
             const mod = requestUrl.startsWith('https') ? https : http;
             const req = mod.get(requestUrl, { headers }, (res) => {
-                // Follow redirects
+                // Follow redirects (resolve relative Location headers)
                 if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    return makeRequest(res.headers.location, remainingRedirects - 1);
+                    const next = new URL(res.headers.location, requestUrl).href;
+                    return makeRequest(next, remainingRedirects - 1);
                 }
                 if (res.statusCode && res.statusCode >= 400) {
                     return reject(new Error(`HTTP ${res.statusCode} for ${requestUrl}`));
@@ -327,7 +328,8 @@ function httpGetToFile(url: string, destPath: string): Promise<void> {
             const mod = requestUrl.startsWith('https') ? https : http;
             const req = mod.get(requestUrl, { headers: { 'User-Agent': 'sulla-desktop' } }, (res) => {
                 if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    return makeRequest(res.headers.location, remainingRedirects - 1);
+                    const next = new URL(res.headers.location, requestUrl).href;
+                    return makeRequest(next, remainingRedirects - 1);
                 }
                 if (res.statusCode && res.statusCode >= 400) {
                     return reject(new Error(`HTTP ${res.statusCode} for ${requestUrl}`));
@@ -462,9 +464,39 @@ function findBinary(name: string): string | null {
 // ---------------------------------------------------------------------------
 
 /** Resolve the root-level training/ directory containing our Python training scripts. */
-function getTrainingScriptsDir(): string {
-    // From agent/services/ → project root training/
-    return path.resolve(__dirname, '..', '..', '..', '..', 'training');
+export function getTrainingScriptsDir(): string {
+    // __dirname is not available in the bundled ESM background runtime.
+    // Resolve against Electron app paths first, then fall back to cwd.
+    const candidates: string[] = [];
+
+    try {
+        const { app } = require('electron');
+        const appPath = app?.getAppPath?.() as string | undefined;
+
+        if (appPath) {
+            candidates.push(path.join(appPath, 'training'));
+            candidates.push(path.resolve(appPath, '..', 'training'));
+            candidates.push(path.resolve(appPath, '..', '..', 'training'));
+        }
+
+        if (process.resourcesPath) {
+            candidates.push(path.join(process.resourcesPath, 'training'));
+            candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'training'));
+        }
+    } catch {
+        // Not running in Electron main process; use cwd fallback below.
+    }
+
+    candidates.push(path.resolve(process.cwd(), 'training'));
+
+    for (const dir of candidates) {
+        if (fs.existsSync(dir)) {
+            return dir;
+        }
+    }
+
+    // Last resort (non-existent is still useful for diagnostics/logging).
+    return candidates[0] || path.resolve(process.cwd(), 'training');
 }
 
 // ---------------------------------------------------------------------------
@@ -543,7 +575,7 @@ export class LlamaCppService {
      * @param modelKey Key from GGUF_MODELS (e.g. 'qwen3.5-9b')
      * @returns Absolute path to the training model directory
      */
-    async downloadTrainingModel(modelKey: string): Promise<string> {
+    async downloadTrainingModel(modelKey: string, logPath?: string): Promise<string> {
         const entry = GGUF_MODELS[modelKey];
         if (!entry) {
             throw new Error(`${LOG_PREFIX} Unknown model key: ${modelKey}`);
@@ -552,30 +584,38 @@ export class LlamaCppService {
             throw new Error(`${LOG_PREFIX} Model ${modelKey} has no training repo defined`);
         }
 
+        const log = (msg: string) => {
+            console.log(`${LOG_PREFIX} ${msg}`);
+            if (logPath) fs.appendFileSync(logPath, `${msg}\n`, 'utf-8');
+        };
+
         // e.g. 'unsloth/Qwen3.5-9B' → directory 'Qwen3.5-9B'
         const dirName = entry.trainingRepo.split('/').pop()!;
         const destDir = path.join(getTrainingDir(), dirName);
 
         if (fs.existsSync(destDir) && fs.readdirSync(destDir).length > 0) {
-            console.log(`${LOG_PREFIX} Training model ${entry.trainingRepo} already exists at ${destDir}`);
+            log(`Training model ${entry.trainingRepo} already downloaded`);
             return destDir;
         }
 
         fs.mkdirSync(destDir, { recursive: true });
 
-        console.log(`${LOG_PREFIX} Downloading training model ${entry.trainingRepo} ...`);
+        log(`Downloading training model ${entry.trainingRepo} ...`);
 
         // Fetch the file list from HuggingFace API
         const apiUrl = `https://huggingface.co/api/models/${entry.trainingRepo}/tree/main`;
         const listBuf = await httpGet(apiUrl, { 'User-Agent': 'sulla-desktop' });
-        const files: Array<{ rfilename: string; type: string }> = JSON.parse(listBuf.toString('utf-8'));
+        const files: Array<{ path: string; type: string }> = JSON.parse(listBuf.toString('utf-8'));
+
+        const fileList = files.filter(f => f.type === 'file');
+        log(`  ${fileList.length} files to download`);
 
         // Download each file (skip directories)
-        for (const file of files) {
-            if (file.type !== 'file') continue;
+        for (let i = 0; i < fileList.length; i++) {
+            const file = fileList[i];
 
-            const fileUrl = `https://huggingface.co/${entry.trainingRepo}/resolve/main/${file.rfilename}`;
-            const fileDest = path.join(destDir, file.rfilename);
+            const fileUrl = `https://huggingface.co/${entry.trainingRepo}/resolve/main/${file.path}`;
+            const fileDest = path.join(destDir, file.path);
 
             // Create subdirectories if needed
             const fileDir = path.dirname(fileDest);
@@ -583,11 +623,11 @@ export class LlamaCppService {
                 fs.mkdirSync(fileDir, { recursive: true });
             }
 
-            console.log(`${LOG_PREFIX}   Downloading ${file.rfilename} ...`);
+            log(`  [${i + 1}/${fileList.length}] ${file.path}`);
             await httpGetToFile(fileUrl, fileDest);
         }
 
-        console.log(`${LOG_PREFIX} Training model ${entry.trainingRepo} downloaded to ${destDir}`);
+        log(`Training model ${entry.trainingRepo} downloaded to ${destDir}`);
         return destDir;
     }
 
@@ -623,63 +663,148 @@ export class LlamaCppService {
      * Platform-aware: uses MLX backend on macOS, CUDA on Linux/Windows.
      * No-ops if the venv already exists and has unsloth installed.
      */
-    async installTrainingDeps(): Promise<void> {
+    async installTrainingDeps(logPath?: string, onProgress?: (description: string, current: number, max: number) => void): Promise<void> {
         const venvDir = this.trainingVenvDir;
         const feedbackDir = this.feedbackQueueDir;
+
+        const log = (msg: string) => {
+            console.log(`${LOG_PREFIX} ${msg}`);
+            if (logPath) fs.appendFileSync(logPath, `${msg}\n`, 'utf-8');
+        };
+
+        const progress = (description: string, current: number, max: number) => {
+            onProgress?.(description, current, max);
+        };
 
         // Ensure directories exist
         fs.mkdirSync(getTrainingDir(), { recursive: true });
         fs.mkdirSync(feedbackDir, { recursive: true });
 
-        // Check if venv already has unsloth
+        // Check if venv already has all required packages
         const existingPython = this.getTrainingPython();
         if (existingPython) {
             try {
-                execSync(`"${existingPython}" -c "import unsloth"`, { stdio: 'pipe' });
-                console.log(`${LOG_PREFIX} Training deps already installed`);
+                execSync(`"${existingPython}" -c "import unsloth; import fitz; import docx"`, { stdio: 'pipe' });
+                log('Training deps already installed');
+                progress('Training dependencies ready', 100, 100);
                 return;
             } catch {
-                console.log(`${LOG_PREFIX} Venv exists but unsloth not found, reinstalling...`);
+                log('Venv exists but required packages missing, recreating venv...');
+                fs.rmSync(venvDir, { recursive: true, force: true });
             }
         }
 
         // Find system Python 3
+        progress('Finding Python 3...', 5, 100);
         const python3 = this.findPython3();
         if (!python3) {
             throw new Error(`${LOG_PREFIX} Python 3 not found on this system — required for training`);
         }
-        console.log(`${LOG_PREFIX} Using system Python: ${python3}`);
+        log(`Using system Python: ${python3}`);
 
         // Create venv
-        console.log(`${LOG_PREFIX} Creating training venv at ${venvDir} ...`);
+        progress('Creating Python virtual environment...', 10, 100);
+        log(`Creating training venv at ${venvDir} ...`);
         execSync(`"${python3}" -m venv "${venvDir}"`, { stdio: 'pipe' });
 
         const venvPython = this.getTrainingPython()!;
 
-        // Upgrade pip
-        console.log(`${LOG_PREFIX} Upgrading pip...`);
-        execSync(`"${venvPython}" -m pip install --upgrade pip`, { stdio: 'pipe' });
+        // Upgrade pip (stream output)
+        progress('Upgrading pip...', 15, 100);
+        log('Upgrading pip...');
+        await this.spawnWithLog(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip'], logPath);
 
         // Install platform-specific deps
         const platform = os.platform();
-        let pipCmd: string;
+        let packages: string[];
 
         if (platform === 'darwin') {
-            // macOS: Unsloth-MLX backend + CPU PyTorch + doc processing libs
-            pipCmd = `"${venvPython}" -m pip install "unsloth[mlx]" torch torchvision torchaudio pymupdf python-docx markdown --index-url https://download.pytorch.org/whl/cpu`;
+            // macOS: plain unsloth + mlx-lm for Apple Silicon fine-tuning + doc processing libs
+            packages = ['unsloth', 'mlx-lm', 'torch', 'torchvision', 'torchaudio', 'pymupdf', 'python-docx', 'markdown'];
         } else {
             // Linux / Windows: CUDA backend + doc processing libs
-            pipCmd = `"${venvPython}" -m pip install "unsloth[colab-new]" torch torchvision torchaudio pymupdf python-docx markdown --index-url https://download.pytorch.org/whl/cu121`;
+            packages = ['unsloth', 'torch', 'torchvision', 'torchaudio', 'pymupdf', 'python-docx', 'markdown', '--extra-index-url', 'https://download.pytorch.org/whl/cu121'];
         }
 
-        console.log(`${LOG_PREFIX} Installing training deps: ${pipCmd}`);
-        execSync(pipCmd, {
-            stdio: 'pipe',
-            timeout: 600_000, // 10 min timeout for large installs
-            env: { ...process.env, PIP_NO_CACHE_DIR: '1' },
-        });
+        log('Installing training dependencies (this may take several minutes)...');
+        log(`  Packages: ${packages.filter(p => !p.startsWith('--')).join(', ')}`);
 
-        console.log(`${LOG_PREFIX} Training system installed successfully`);
+        if (platform === 'darwin') {
+            // macOS: install torch first, then unsloth --no-deps to avoid xformers (CUDA-only) build failure
+            progress('Installing PyTorch (step 1/3)...', 20, 100);
+            log('  Step 1/3: Installing PyTorch...');
+            await this.spawnWithLog(venvPython, ['-m', 'pip', 'install', 'torch', 'torchvision', 'torchaudio'], logPath, 600_000);
+
+            progress('Installing Unsloth + MLX (step 2/3)...', 50, 100);
+            log('  Step 2/3: Installing unsloth + mlx-lm...');
+            await this.spawnWithLog(venvPython, ['-m', 'pip', 'install', '--no-deps', 'unsloth', 'unsloth_zoo'], logPath, 600_000);
+            await this.spawnWithLog(venvPython, ['-m', 'pip', 'install', 'mlx-lm'], logPath, 600_000);
+
+            progress('Installing document processing libs (step 3/3)...', 75, 100);
+            log('  Step 3/3: Installing remaining deps + doc processing libs...');
+            await this.spawnWithLog(venvPython, ['-m', 'pip', 'install',
+                // unsloth runtime deps (--no-deps means we must supply them)
+                'wheel', 'diffusers', 'msgspec', 'torchao',
+                'peft', 'datasets', 'bitsandbytes',
+                'trl', 'accelerate', 'huggingface_hub', 'hf_transfer',
+                'sentencepiece', 'protobuf', 'tyro',
+                // doc processing
+                'pymupdf', 'python-docx', 'markdown',
+            ], logPath, 600_000);
+        } else {
+            progress('Installing training dependencies...', 30, 100);
+            await this.spawnWithLog(venvPython, ['-m', 'pip', 'install', ...packages], logPath, 600_000);
+        }
+
+        progress('Training dependencies installed', 100, 100);
+        log('Training dependencies installed successfully');
+    }
+
+    /**
+     * Spawn a process and stream its output to a log file in real-time.
+     * Resolves on exit code 0, rejects otherwise.
+     */
+    private spawnWithLog(cmd: string, args: string[], logPath?: string, timeout?: number): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const { spawn: spawnProc } = require('child_process');
+            const proc = spawnProc(cmd, args, {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                env: { ...process.env, PIP_NO_CACHE_DIR: '1' },
+            });
+
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            if (timeout) {
+                timer = setTimeout(() => {
+                    proc.kill();
+                    reject(new Error(`Process timed out after ${timeout}ms`));
+                }, timeout);
+            }
+
+            let stderrBuf = '';
+            proc.stdout?.on('data', (chunk: Buffer) => {
+                const text = chunk.toString();
+                console.log(text.trimEnd());
+                if (logPath) fs.appendFileSync(logPath, text, 'utf-8');
+            });
+            proc.stderr?.on('data', (chunk: Buffer) => {
+                const text = chunk.toString();
+                stderrBuf += text;
+                console.error(text.trimEnd());
+                if (logPath) fs.appendFileSync(logPath, text, 'utf-8');
+            });
+            proc.on('close', (code: number | null) => {
+                if (timer) clearTimeout(timer);
+                if (code === 0) resolve();
+                else {
+                    const tail = stderrBuf.slice(-500).trim();
+                    reject(new Error(`Process exited with code ${code}${tail ? `\n${tail}` : ''}`));
+                }
+            });
+            proc.on('error', (err: Error) => {
+                if (timer) clearTimeout(timer);
+                reject(err);
+            });
+        });
     }
 
     /**
@@ -710,12 +835,17 @@ export class LlamaCppService {
      * Scripts live in agent/scripts/ as real project files — nothing is written out.
      * Safe to call on every startup — no-ops if everything is already in place.
      */
-    async ensureTrainingSystem(modelKey: string): Promise<void> {
-        console.log(`${LOG_PREFIX} Ensuring training system...`);
+    async ensureTrainingSystem(modelKey: string, logPath?: string): Promise<void> {
+        const log = (msg: string) => {
+            console.log(`${LOG_PREFIX} ${msg}`);
+            if (logPath) fs.appendFileSync(logPath, `${msg}\n`, 'utf-8');
+        };
+
+        log('Ensuring training system...');
 
         try {
             // 1. Install Python venv + unsloth + torch + doc libs
-            await this.installTrainingDeps();
+            await this.installTrainingDeps(logPath);
 
             // 2. Write default documents_config.json (only if not already present)
             this.writeDocumentsConfig();
@@ -723,13 +853,13 @@ export class LlamaCppService {
             // 3. Download the Unsloth training model for the selected size
             const entry = GGUF_MODELS[modelKey];
             if (entry?.trainingRepo) {
-                await this.downloadTrainingModel(modelKey);
+                await this.downloadTrainingModel(modelKey, logPath);
             }
 
-            console.log(`${LOG_PREFIX} Training system ready`);
+            log('Training system ready');
         } catch (err) {
-            console.error(`${LOG_PREFIX} Failed to set up training system:`, err);
-            // Non-fatal — inference still works without training
+            log(`Failed to set up training system: ${err}`);
+            throw err;
         }
     }
 

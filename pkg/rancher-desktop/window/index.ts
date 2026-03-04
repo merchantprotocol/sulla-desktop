@@ -108,6 +108,7 @@ export function createWindow(name: string, url: string, options: Electron.Browse
 const mainUrl = `${ webRoot }/agent.html`;
 const dockerDashboardUrl = `${ webRoot }/index.html`;
 const languageModelSettingsUrl = `${ webRoot }/lm-settings.html`;
+const modelTrainingUrl = `${ webRoot }/model-training.html`;
 
 console.log('[window/index] URLs configured:', { webRoot, mainUrl, dockerDashboardUrl });
 
@@ -263,6 +264,43 @@ export function openLanguageModelSettings() {
   // Clean up window mapping when closed so it can be reopened
   window.on('closed', () => {
     delete windowMapping['language-model-settings'];
+  });
+
+  app.dock?.show();
+
+  return window;
+}
+
+/**
+ * Open the Model Training window; if it is already open, focus it.
+ */
+export function openModelTraining() {
+  console.log('[openModelTraining] Called.');
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+
+  const defaultWidth = Math.min(Math.trunc(width * 0.7), 1000);
+  const defaultHeight = Math.min(Math.trunc(height * 0.7), 700);
+
+  const window = createWindow(
+    'model-training',
+    modelTrainingUrl,
+    {
+      title:          'Sulla Desktop - Model Training',
+      width:          defaultWidth,
+      height:         defaultHeight,
+      resizable:      true,
+      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      webPreferences: {
+        devTools:         !app.isPackaged,
+        nodeIntegration:  true,
+        contextIsolation: false,
+        webSecurity:      false,
+      },
+    });
+
+  window.on('closed', () => {
+    delete windowMapping['model-training'];
   });
 
   app.dock?.show();

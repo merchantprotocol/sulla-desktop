@@ -7,7 +7,7 @@ import { State } from '@pkg/backend/k8s';
 import { Settings } from '@pkg/config/settings';
 import mainEvents from '@pkg/main/mainEvents';
 import paths from '@pkg/utils/paths';
-import { openDockerDashboard, openLanguageModelSettings, openMain } from '@pkg/window';
+import { openDockerDashboard, openLanguageModelSettings, openModelTraining, openMain } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -89,6 +89,11 @@ function getNeuralNetworkMenu(): MenuItem {
         label:       'Language Model Settings…',
         accelerator: 'CmdOrCtrl+L',
         click:       openLanguageModelSettings,
+      },
+      {
+        label:       'Model Training…',
+        accelerator: 'CmdOrCtrl+T',
+        click:       openModelTraining,
       },
       {
         label: 'Preferences…',

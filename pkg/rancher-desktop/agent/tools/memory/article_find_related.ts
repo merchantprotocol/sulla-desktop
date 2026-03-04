@@ -9,6 +9,7 @@ export class ArticleFindRelatedWorker extends BaseTool {
   description: string = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { slug, relType = "MENTIONS", limit = 10 } = input;
+    const limitInt = Math.floor(limit);
 
     try {
       const registry = ArticlesRegistry.getInstance();
