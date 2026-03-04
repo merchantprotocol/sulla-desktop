@@ -342,10 +342,22 @@ copy_app_to_desktop() {
 
 launch_app() {
   info "Launching Sulla Desktop..."
-  NODE_NO_WARNINGS=1 npx electron . &
+
+  # Redirect Electron's stdout/stderr to a log file so it doesn't crash with
+  # "write EIO" when the parent shell (e.g. curl | bash pipe) exits.
+  local log_dir="$HOME/Library/Logs/Sulla Desktop"
+  if [ "$OS" = "linux" ]; then
+    log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/sulla-desktop/logs"
+  fi
+  mkdir -p "$log_dir"
+  local log_file="$log_dir/launcher.log"
+
+  NODE_NO_WARNINGS=1 nohup npx electron . >>"$log_file" 2>&1 &
   local pid=$!
+  disown "$pid" 2>/dev/null || true
   ok "Sulla Desktop running (PID $pid)"
   echo ""
+  echo "  Logs:       $log_file"
   echo "  To stop:    kill $pid"
   echo "  To restart: cd $REPO_DIR && NODE_NO_WARNINGS=1 npx electron ."
   echo ""

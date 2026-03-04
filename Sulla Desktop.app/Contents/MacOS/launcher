@@ -17,5 +17,11 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 export NODE_NO_WARNINGS=1
 
+# When launched from Finder there is no TTY — redirect stdout/stderr to a log
+# file so Electron doesn't crash with "write EIO" on console.log calls.
+LOG_DIR="$HOME/Library/Logs/Sulla Desktop"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/launcher.log"
+
 cd "$PROJECT_DIR"
-exec npx electron .
+exec npx electron . >>"$LOG_FILE" 2>&1
