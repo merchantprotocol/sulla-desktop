@@ -64,7 +64,7 @@
                     Open N8N Dashboard
                   </button>
                   <p class="text-xs text-slate-500 dark:text-slate-400">
-                    Opens N8N in your default web browser at localhost:5678
+                    Opens N8N in your default web browser at localhost:30119
                   </p>
                 </div>
               </div>
