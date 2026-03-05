@@ -803,7 +803,7 @@ export function initSullaEvents(): void {
   ipcMainProxy.handle('qmd-search', async(_event: unknown, query: string, dirPath: string) => {
     const { search } = require('@pkg/main/qmdService');
 
-    return search(query, dirPath);
+    return await search(query, dirPath);
   });
 
   console.log('[Sulla] IPC event handlers initialized');

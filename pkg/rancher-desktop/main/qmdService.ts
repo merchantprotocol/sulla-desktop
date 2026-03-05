@@ -3,6 +3,8 @@
  *
  * Provides file indexing and hybrid search (BM25 full-text + filename matching)
  * for the AgentEditor's FileSearch component.
+ *
+ * qmd is an ESM package with top-level await, so all imports use dynamic import().
  */
 
 import * as path from 'path';
@@ -12,10 +14,7 @@ import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
-// Lazy-loaded qmd modules (native deps — must not be imported at module level
-// to avoid breaking renderer bundles if this file is ever transitively imported).
 let _store: any = null;
-let _storePath: string | null = null;
 
 const TEXT_FILE_GLOB = '**/*.{md,txt,ts,js,vue,json,yaml,yml,jsx,tsx,css,scss,html,py,sh,toml,cfg,ini,xml,svg}';
 
@@ -40,15 +39,14 @@ function ensureDbDir(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 }
 
-function getStore(): any {
+async function getStore(): Promise<any> {
   if (_store) {
     return _store;
   }
   ensureDbDir();
-  const { createStore } = require('@tobilu/qmd/dist/store.js');
+  const { createStore } = await import('@tobilu/qmd/dist/store.js');
 
   _store = createStore(getDbPath());
-  _storePath = getDbPath();
 
   return _store;
 }
@@ -62,7 +60,6 @@ export function closeQmdStore(): void {
       _store.close();
     } catch { /* ignore */ }
     _store = null;
-    _storePath = null;
   }
 }
 
@@ -81,20 +78,20 @@ export async function indexDirectory(
   dirPath: string,
   glob: string = TEXT_FILE_GLOB,
 ): Promise<{ indexed: number; updated: number; removed: number }> {
-  const store = getStore();
+  const store = await getStore();
   const resolvedDir = path.resolve(dirPath);
   const colName = collectionName(resolvedDir);
   const now = new Date().toISOString();
 
   // Register the collection in qmd's YAML config
-  const collections = require('@tobilu/qmd/dist/collections.js');
+  const collections = await import('@tobilu/qmd/dist/collections.js');
 
   collections.addCollection(colName, resolvedDir, glob);
 
   // Walk files using fast-glob (same as qmd internally uses)
-  const fastGlob = require('fast-glob');
+  const fastGlob = await import('fast-glob');
   const excludeDirs = ['node_modules', '.git', '.cache', 'vendor', 'dist', 'build'];
-  const allFiles: string[] = await fastGlob(glob, {
+  const allFiles: string[] = await fastGlob.default(glob, {
     cwd:                  resolvedDir,
     onlyFiles:            true,
     followSymbolicLinks:  false,
@@ -109,7 +106,7 @@ export async function indexDirectory(
     return !parts.some((part: string) => part.startsWith('.'));
   });
 
-  const { hashContent, extractTitle, handelize } = require('@tobilu/qmd/dist/store.js');
+  const { hashContent, extractTitle, handelize } = await import('@tobilu/qmd/dist/store.js');
 
   let indexed = 0;
   let updated = 0;
@@ -178,8 +175,8 @@ export async function indexDirectory(
  * Search files using qmd's BM25 full-text search + filename matching.
  * Merges and deduplicates results from both sources.
  */
-export function search(query: string, dirPath: string, limit = 20): QmdSearchResult[] {
-  const store = getStore();
+export async function search(query: string, dirPath: string, limit = 20): Promise<QmdSearchResult[]> {
+  const store = await getStore();
   const resolvedDir = path.resolve(dirPath);
   const colName = collectionName(resolvedDir);
 
@@ -196,7 +193,7 @@ export function search(query: string, dirPath: string, limit = 20): QmdSearchRes
       }
       seenPaths.add(r.filepath);
 
-      const { extractSnippet } = require('@tobilu/qmd/dist/store.js');
+      const { extractSnippet } = await import('@tobilu/qmd/dist/store.js');
       const body = store.getDocumentBody(r) || '';
       const snippet = extractSnippet(body, query);
 
