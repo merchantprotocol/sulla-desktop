@@ -790,6 +790,22 @@ export function initSullaEvents(): void {
     return { logFilename };
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // QMD Search handlers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('qmd-index', async(_event: unknown, dirPath: string, glob?: string) => {
+    const { indexDirectory } = require('@pkg/main/qmdService');
+
+    return await indexDirectory(dirPath, glob);
+  });
+
+  ipcMainProxy.handle('qmd-search', async(_event: unknown, query: string, dirPath: string) => {
+    const { search } = require('@pkg/main/qmdService');
+
+    return search(query, dirPath);
+  });
+
   console.log('[Sulla] IPC event handlers initialized');
 }
 

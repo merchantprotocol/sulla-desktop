@@ -169,6 +169,18 @@ export interface IpcMainInvokeEvents {
   'training-docs-config-save':  (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
   // #endregion
 
+  // #region QMD Search
+  'qmd-index':  (dirPath: string, glob?: string) => { indexed: number; updated: number; removed: number };
+  'qmd-search': (query: string, dirPath: string) => Array<{
+    path: string;
+    name: string;
+    line: number;
+    preview: string;
+    score: number;
+    source: 'fts' | 'filename';
+  }>;
+  // #endregion
+
   // #region Local Models
   'local-models-status':  () => Record<string, boolean>;
   'local-model-download': (modelKey: string) => { ok: boolean };

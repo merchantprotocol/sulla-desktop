@@ -70,6 +70,7 @@ export default {
       'clone-deep':             'commonjs clone-deep',
       '@composio/core':         'commonjs @composio/core',
       '@composio/client':       'commonjs @composio/client',
+      '@reflink/reflink':       'commonjs @reflink/reflink',
     }
   },
   

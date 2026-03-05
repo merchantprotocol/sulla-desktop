@@ -33,7 +33,11 @@
             <FileSearch
               v-show="searchMode"
               v-model="searchQuery"
+              v-model:search-path="searchPath"
               :is-dark="isDark"
+              :results="searchResults"
+              :indexing="qmdIndexing"
+              @file-selected="onFileSelected"
             />
 
             <!-- Git pane -->
@@ -229,7 +233,18 @@
 
         <!-- Right pane: Chat -->
         <div class="right-pane" v-show="rightPaneVisible" :class="{ dark: isDark }" :style="{ width: rightPaneWidth + 'px' }">
-          <EditorChat :is-dark="isDark" />
+          <EditorChat
+            :is-dark="isDark"
+            :messages="chatMessages"
+            :query="chatQuery"
+            :loading="chatLoading"
+            :graph-running="chatGraphRunning"
+            :model-selector="modelSelector"
+            :total-tokens-used="chatTotalTokensUsed"
+            @update:query="chatUpdateQuery"
+            @send="chatSend"
+            @stop="chatStop"
+          />
         </div>
       </div>
     </div>
@@ -250,7 +265,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, nextTick, type Component } from 'vue';
+import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, nextTick, watch, type Component } from 'vue';
 import { ipcRenderer } from 'electron';
 
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
@@ -265,6 +280,10 @@ import IconPanel from './editor/IconPanel.vue';
 import FileSearch from './editor/FileSearch.vue';
 import GitPane from './editor/GitPane.vue';
 import EditorChat from './editor/EditorChat.vue';
+import { EditorChatInterface } from './editor/EditorChatInterface';
+import { FrontendGraphWebSocketService } from '@pkg/agent/services/FrontendGraphWebSocketService';
+import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
+import { getAgentPersonaRegistry } from '@pkg/agent';
 
 import type { FileEntry } from './filesystem/FileTreeSidebar.vue';
 
@@ -342,6 +361,40 @@ export default defineComponent({
     const rightPaneVisible = ref(true);
     const bottomPaneVisible = ref(true);
 
+    // Editor chat (dev-editor channel)
+    const editorCurrentThreadId = ref<string | null>(null);
+    const editorGraphWs = new FrontendGraphWebSocketService({ currentThreadId: editorCurrentThreadId }, 'dev-editor');
+    const editorChat = new EditorChatInterface();
+    const chatMessages = editorChat.messages;
+    const chatQuery = editorChat.query;
+    const chatLoading = editorChat.loading;
+    const chatGraphRunning = editorChat.graphRunning;
+    const chatSend = () => editorChat.send();
+    const chatStop = () => editorChat.stop();
+    const chatUpdateQuery = (val: string) => { editorChat.query.value = val; };
+
+    // Model selector for editor chat
+    const editorModelName = ref('');
+    const editorModelMode = ref<'local' | 'remote'>('local');
+    const editorSystemReady = ref(true);
+    const editorModelLoading = ref(false);
+    const editorIsRunning = chatGraphRunning;
+
+    const modelSelector = new AgentModelSelectorController({
+      systemReady: editorSystemReady,
+      loading:     editorModelLoading,
+      isRunning:   editorIsRunning,
+      modelName:   editorModelName,
+      modelMode:   editorModelMode,
+    });
+
+    // Token usage from the dev-editor persona
+    const registry = getAgentPersonaRegistry();
+    const chatTotalTokensUsed = computed(() => {
+      const persona = registry.getPersonaService('dev-editor');
+      return persona?.state.totalTokensUsed ?? 0;
+    });
+
     // Resizable pane sizes (persisted to localStorage)
     const PANE_STORAGE_KEY = 'agentEditorPaneSizes';
     const savedSizes = (() => {
@@ -410,6 +463,9 @@ export default defineComponent({
     const searchMode = ref(false);
     const gitMode = ref(false);
     const searchQuery = ref('');
+    const searchPath = ref('');
+    const searchResults = ref<Array<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }>>([]);
+    const qmdIndexing = ref(false);
     const gitChanges = ref<{status: string, file: string}[]>([]);
 
     // Terminal tabs state
@@ -467,6 +523,8 @@ export default defineComponent({
       } else {
         isDark.value = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
       }
+
+      await modelSelector.start();
     });
 
     function toggleTheme() {
@@ -516,10 +574,47 @@ export default defineComponent({
     async function loadRootPath() {
       try {
         rootPath.value = await ipcRenderer.invoke('filesystem-get-root');
+        searchPath.value = rootPath.value;
         await getGitChanges();
+        // Index the root directory in the background for qmd search
+        qmdIndexing.value = true;
+        ipcRenderer.invoke('qmd-index', rootPath.value).catch(() => {}).finally(() => {
+          qmdIndexing.value = false;
+        });
       } catch { /* ignore */ }
     }
     loadRootPath();
+
+    // Debounced search via qmd
+    let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    watch(searchQuery, (query) => {
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+      }
+      if (!query.trim()) {
+        searchResults.value = [];
+        return;
+      }
+      searchDebounceTimer = setTimeout(async() => {
+        try {
+          const dir = searchPath.value || rootPath.value;
+          searchResults.value = await ipcRenderer.invoke('qmd-search', query, dir);
+        } catch {
+          searchResults.value = [];
+        }
+      }, 300);
+    });
+
+    // Re-index when the search path changes
+    watch(searchPath, (newPath) => {
+      if (!newPath.trim()) {
+        return;
+      }
+      qmdIndexing.value = true;
+      ipcRenderer.invoke('qmd-index', newPath).catch(() => {}).finally(() => {
+        qmdIndexing.value = false;
+      });
+    });
 
     const activeTab = computed(() => {
       return openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === activeTabKey.value) || null;
@@ -721,11 +816,23 @@ export default defineComponent({
     onBeforeUnmount(() => {
       window.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('mousedown', () => {});
+      editorChat.dispose();
+      editorGraphWs.dispose();
+      modelSelector.dispose();
     });
 
     return {
       isDark,
       sullaMutedIconUrl,
+      chatMessages,
+      chatQuery,
+      chatLoading,
+      chatGraphRunning,
+      chatSend,
+      chatStop,
+      chatUpdateQuery,
+      modelSelector,
+      chatTotalTokensUsed,
       toggleTheme,
       toggleFileTree,
       toggleSearch,
@@ -745,6 +852,9 @@ export default defineComponent({
       searchMode,
       gitMode,
       searchQuery,
+      searchPath,
+      searchResults,
+      qmdIndexing,
       gitChanges,
       terminalTabs,
       activeTerminalTab,
