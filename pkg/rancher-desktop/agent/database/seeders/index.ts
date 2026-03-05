@@ -4,7 +4,6 @@
 
 import { initialize as n8nUserSeeder } from './N8nUserSeeder';
 import { initialize as n8nSettingsSeeder } from './N8nSettingsSeeder';
-import { initialize as ollamaIntegrationSeeder } from './OllamaIntegrationSeeder';
 import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteCredentialsSeeder';
 
 // Add future seeders here in the same way
@@ -18,10 +17,6 @@ export const seedersRegistry = [
   {
     name: 'n8n-settings-seeder',
     run: n8nSettingsSeeder,
-  },
-  {
-    name: 'ollama-integration-seeder',
-    run: ollamaIntegrationSeeder,
   },
   {
     name: 'firstrun-remote-credentials-seeder',

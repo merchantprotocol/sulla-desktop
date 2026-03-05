@@ -1,10 +1,9 @@
 <template>
-  <div class="min-h-screen overflow-hidden bg-white text-[#0d0d0d] dark:bg-slate-900 dark:text-neutral-50 font-sans" :class="{ dark: isDark }">
+  <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentFilesystem" />
-    <div class="flex min-h-screen flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+    <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
 
-      <div class="flex flex-1 overflow-hidden">
+    <div class="flex flex-1 min-h-0 overflow-hidden">
         <!-- Left sidebar: File tree -->
         <div class="file-tree-panel" :class="{ dark: isDark }">
           <FileTreeSidebar
@@ -31,6 +30,7 @@
                 </svg>
               </span>
               <span class="tab-label">{{ tab.name }}</span>
+              <span v-if="tab.dirty" class="tab-dirty-dot"></span>
               <span class="tab-close" @click.stop="closeTab(tab.path)">
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.708L8 8.707z"/>
@@ -80,22 +80,23 @@
               <div class="editor-content">
                 <component
                   :is="activeEditorComponent"
+                  ref="editorRef"
                   :content="activeTab.content"
                   :file-path="activeTab.path"
                   :file-ext="activeTab.ext"
                   :is-dark="isDark"
+                  @dirty="markActiveTabDirty"
                 />
               </div>
             </template>
           </template>
         </div>
-      </div>
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, reactive, markRaw, type Component } from 'vue';
+import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, type Component } from 'vue';
 import { ipcRenderer } from 'electron';
 
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
@@ -113,6 +114,7 @@ interface TabState {
   content: string;
   loading: boolean;
   error: string;
+  dirty: boolean;
 }
 
 const MARKDOWN_EXTS = new Set(['.md', '.markdown', '.mdx']);
@@ -159,13 +161,27 @@ export default defineComponent({
   },
 
   setup() {
-    const isDark = ref(document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const isDark = ref(false);
+    const THEME_STORAGE_KEY = 'agentTheme';
     const rootPath = ref('');
     const openTabs = ref<TabState[]>([]);
     const activeTabPath = ref('');
 
+    onMounted(async () => {
+      const stored = localStorage.getItem(THEME_STORAGE_KEY);
+
+      if (stored === 'dark') {
+        isDark.value = true;
+      } else if (stored === 'light') {
+        isDark.value = false;
+      } else {
+        isDark.value = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+      }
+    });
+
     function toggleTheme() {
       isDark.value = !isDark.value;
+      localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
     }
 
     async function loadRootPath() {
@@ -211,6 +227,7 @@ export default defineComponent({
         content: '',
         loading: true,
         error:   '',
+        dirty:   false,
       });
 
       openTabs.value = [...openTabs.value, tab];
@@ -247,6 +264,49 @@ export default defineComponent({
       }
     }
 
+    // Editor ref for accessing exposed methods (e.g. getMarkdown)
+    const editorRef = ref<any>(null);
+
+    function markActiveTabDirty() {
+      const tab = activeTab.value;
+      if (tab && !tab.dirty) tab.dirty = true;
+    }
+
+    async function saveActiveTab() {
+      const tab = activeTab.value;
+      if (!tab || !tab.dirty) return;
+
+      try {
+        let content = tab.content;
+
+        // For markdown files, get content from BlockNote editor
+        if (MARKDOWN_EXTS.has(tab.ext.toLowerCase()) && editorRef.value?.getMarkdown) {
+          content = await editorRef.value.getMarkdown();
+        }
+
+        await ipcRenderer.invoke('filesystem-write-file', tab.path, content);
+        tab.dirty = false;
+        tab.content = content;
+      } catch (err: any) {
+        console.error('Save failed:', err);
+      }
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        saveActiveTab();
+      }
+    }
+
+    onMounted(() => {
+      window.addEventListener('keydown', onKeyDown);
+    });
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('keydown', onKeyDown);
+    });
+
     return {
       isDark,
       toggleTheme,
@@ -259,12 +319,25 @@ export default defineComponent({
       onFileSelected,
       switchTab,
       closeTab,
+      editorRef,
+      markActiveTabDirty,
+      saveActiveTab,
     };
   },
 });
 </script>
 
 <style scoped>
+.page-root {
+  background: #ffffff;
+  color: #0d0d0d;
+}
+
+.page-root.dark {
+  background: #0f172a;
+  color: #fafafa;
+}
+
 .file-tree-panel {
   width: 280px;
   min-width: 200px;
@@ -277,7 +350,7 @@ export default defineComponent({
 
 .file-tree-panel.dark {
   border-right-color: #3c3c3c;
-  background: #252526;
+  background: #1e293b;
 }
 
 .editor-panel {
@@ -289,7 +362,7 @@ export default defineComponent({
 }
 
 .editor-panel.dark {
-  background: #1e1e1e;
+  background: #1e293b;
 }
 
 .empty-state {
@@ -364,7 +437,7 @@ export default defineComponent({
 }
 
 .tab-bar.dark {
-  background: #252526;
+  background: #1e293b;
   border-bottom-color: #3c3c3c;
 }
 
@@ -406,8 +479,8 @@ export default defineComponent({
 }
 
 .tab.active.dark {
-  background: #1e1e1e;
-  border-bottom-color: #1e1e1e;
+  background: #0f172a;
+  border-bottom-color: #0f172a;
   color: #ccc;
 }
 
@@ -420,6 +493,14 @@ export default defineComponent({
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tab-dirty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #0078d4;
+  flex-shrink: 0;
 }
 
 .tab-close {
@@ -468,7 +549,7 @@ export default defineComponent({
 }
 
 .breadcrumb-bar.dark {
-  background: #1e1e1e;
+  background: #0f172a;
   color: #888;
   border-bottom-color: #2d2d2d;
 }

@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-white text-sm text-[#0d0d0d] dark:bg-slate-900 dark:text-neutral-50 font-sans overflow-y-auto" :class="{ dark: isDark }">
+  <div class="min-h-screen text-sm font-sans overflow-y-auto page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="Extension" />
     <div class="flex flex-col min-h-screen">
       <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
@@ -109,3 +109,15 @@ onMounted(async () => {
   }
 });
 </script>
+
+<style scoped>
+.page-root {
+  background: #ffffff;
+  color: #0d0d0d;
+}
+
+.page-root.dark {
+  background: #0f172a;
+  color: #fafafa;
+}
+</style>

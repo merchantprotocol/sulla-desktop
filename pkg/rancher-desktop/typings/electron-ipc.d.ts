@@ -139,7 +139,17 @@ export interface IpcMainInvokeEvents {
   // #region Filesystem
   'filesystem-get-root':  () => string;
   'filesystem-read-dir':  (dirPath: string) => Array<{ name: string; path: string; isDir: boolean; size: number; ext: string }>;
-  'filesystem-read-file': (filePath: string) => string;
+  'filesystem-read-file':  (filePath: string) => string;
+  'filesystem-write-file': (filePath: string, content: string) => void;
+  'filesystem-rename':     (oldPath: string, newName: string) => string;
+  'filesystem-delete':     (targetPath: string) => void;
+  'filesystem-create-file':(dirPath: string, fileName: string) => string;
+  'filesystem-create-dir': (dirPath: string, dirName: string) => string;
+  'filesystem-copy':       (srcPath: string, destDir: string) => string;
+  'filesystem-move':       (srcPath: string, destDir: string) => string;
+  'filesystem-reveal':     (targetPath: string) => void;
+  'filesystem-open-external': (targetPath: string) => void;
+  'filesystem-upload':       (destDir: string, fileName: string, base64Data: string) => string;
   // #endregion
 
   // #region Training

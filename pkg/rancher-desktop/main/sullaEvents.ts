@@ -92,7 +92,7 @@ function assertInsideSullaHome(targetPath: string): string {
 export function initSullaEvents(): void {
 
   // ─────────────────────────────────────────────────────────────
-  // Filesystem handlers (read-only)
+  // Filesystem handlers
   // ─────────────────────────────────────────────────────────────
 
   ipcMainProxy.handle('filesystem-get-root', async() => {
@@ -134,6 +134,109 @@ export function initSullaEvents(): void {
       throw new Error('File too large to open (>5MB)');
     }
     return fs.readFileSync(resolved, 'utf-8');
+  });
+
+  ipcMainProxy.handle('filesystem-write-file', async(_event: unknown, filePath: string, content: string) => {
+    const resolved = assertInsideSullaHome(filePath);
+    fs.writeFileSync(resolved, content, 'utf-8');
+  });
+
+  ipcMainProxy.handle('filesystem-rename', async(_event: unknown, oldPath: string, newName: string) => {
+    const resolved = assertInsideSullaHome(oldPath);
+    const newPath = path.join(path.dirname(resolved), newName);
+    assertInsideSullaHome(newPath);
+    fs.renameSync(resolved, newPath);
+    return newPath;
+  });
+
+  ipcMainProxy.handle('filesystem-delete', async(_event: unknown, targetPath: string) => {
+    const resolved = assertInsideSullaHome(targetPath);
+    fs.rmSync(resolved, { recursive: true, force: true });
+  });
+
+  ipcMainProxy.handle('filesystem-create-file', async(_event: unknown, dirPath: string, fileName: string) => {
+    const dir = assertInsideSullaHome(dirPath);
+    const filePath = path.join(dir, fileName);
+    assertInsideSullaHome(filePath);
+    if (fs.existsSync(filePath)) throw new Error(`File already exists: ${fileName}`);
+    fs.writeFileSync(filePath, '', 'utf-8');
+    return filePath;
+  });
+
+  ipcMainProxy.handle('filesystem-create-dir', async(_event: unknown, dirPath: string, dirName: string) => {
+    const dir = assertInsideSullaHome(dirPath);
+    const newDir = path.join(dir, dirName);
+    assertInsideSullaHome(newDir);
+    if (fs.existsSync(newDir)) throw new Error(`Directory already exists: ${dirName}`);
+    fs.mkdirSync(newDir, { recursive: true });
+    return newDir;
+  });
+
+  ipcMainProxy.handle('filesystem-copy', async(_event: unknown, srcPath: string, destDir: string) => {
+    const resolvedSrc = assertInsideSullaHome(srcPath);
+    const resolvedDest = assertInsideSullaHome(destDir);
+    const baseName = path.basename(resolvedSrc);
+    let target = path.join(resolvedDest, baseName);
+    assertInsideSullaHome(target);
+
+    // If target exists, add a suffix
+    if (fs.existsSync(target)) {
+      const ext = path.extname(baseName);
+      const stem = baseName.slice(0, baseName.length - ext.length);
+      let i = 1;
+      while (fs.existsSync(target)) {
+        target = path.join(resolvedDest, `${stem} (${i})${ext}`);
+        i++;
+      }
+    }
+
+    fs.cpSync(resolvedSrc, target, { recursive: true });
+    return target;
+  });
+
+  ipcMainProxy.handle('filesystem-move', async(_event: unknown, srcPath: string, destDir: string) => {
+    const resolvedSrc = assertInsideSullaHome(srcPath);
+    const resolvedDest = assertInsideSullaHome(destDir);
+    const baseName = path.basename(resolvedSrc);
+    const target = path.join(resolvedDest, baseName);
+    assertInsideSullaHome(target);
+    if (resolvedSrc === target) return target;
+    if (fs.existsSync(target)) throw new Error(`"${baseName}" already exists in destination`);
+    fs.renameSync(resolvedSrc, target);
+    return target;
+  });
+
+  ipcMainProxy.handle('filesystem-reveal', async(_event: unknown, targetPath: string) => {
+    const resolved = assertInsideSullaHome(targetPath);
+    const { shell } = require('electron');
+    shell.showItemInFolder(resolved);
+  });
+
+  ipcMainProxy.handle('filesystem-open-external', async(_event: unknown, targetPath: string) => {
+    const resolved = assertInsideSullaHome(targetPath);
+    const { shell } = require('electron');
+    await shell.openPath(resolved);
+  });
+
+  ipcMainProxy.handle('filesystem-upload', async(_event: unknown, destDir: string, fileName: string, base64Data: string) => {
+    const dir = assertInsideSullaHome(destDir);
+    let target = path.join(dir, fileName);
+    assertInsideSullaHome(target);
+
+    // Avoid overwriting existing files
+    if (fs.existsSync(target)) {
+      const ext = path.extname(fileName);
+      const stem = fileName.slice(0, fileName.length - ext.length);
+      let i = 1;
+      while (fs.existsSync(target)) {
+        target = path.join(dir, `${stem} (${i})${ext}`);
+        i++;
+      }
+    }
+
+    const buffer = Buffer.from(base64Data, 'base64');
+    fs.writeFileSync(target, buffer);
+    return target;
   });
 
   /**

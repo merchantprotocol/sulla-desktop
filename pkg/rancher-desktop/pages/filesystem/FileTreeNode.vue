@@ -5,9 +5,14 @@
       :class="{
         'is-dir': entry.isDir,
         'is-selected': selectedPath === entry.path,
+        'drop-target': entry.isDir && dropTargetPath === entry.path,
       }"
       :style="{ paddingLeft: (depth * 16 + 8) + 'px' }"
       @click="handleClick"
+      @contextmenu.prevent="handleContextMenu"
+      @dragover.prevent.stop="handleDragOver"
+      @dragleave.stop="handleDragLeave"
+      @drop.prevent.stop="handleDrop"
     >
       <!-- Chevron for directories -->
       <span v-if="entry.isDir" class="chevron" :class="{ expanded: isExpanded }">
@@ -19,15 +24,20 @@
 
       <!-- File/folder icon -->
       <span class="node-icon">
-        <svg v-if="entry.isDir && isExpanded" width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M1.5 3C1.5 2.44772 1.94772 2 2.5 2H5.79289C6.0581 2 6.31246 2.10536 6.5 2.29289L7.70711 3.5H13.5C14.0523 3.5 14.5 3.94772 14.5 4.5V12C14.5 12.5523 14.0523 13 13.5 13H2.5C1.94772 13 1.5 12.5523 1.5 12V3Z" fill="#C09553" stroke="#C09553" stroke-width="0.5"/>
+        <!-- Folder open -->
+        <svg v-if="entry.isDir && isExpanded" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon-folder">
+          <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2V7" />
+          <path d="M8 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+          <path d="M21 15H9.5a2 2 0 0 0-1.9 1.4L6 21h11.5a2 2 0 0 0 1.9-1.4L21 15Z" />
         </svg>
-        <svg v-else-if="entry.isDir" width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M1.5 3C1.5 2.44772 1.94772 2 2.5 2H5.79289C6.0581 2 6.31246 2.10536 6.5 2.29289L7.70711 3.5H13.5C14.0523 3.5 14.5 3.94772 14.5 4.5V12C14.5 12.5523 14.0523 13 13.5 13H2.5C1.94772 13 1.5 12.5523 1.5 12V3Z" fill="#C09553" stroke="#C09553" stroke-width="0.5"/>
+        <!-- Folder closed -->
+        <svg v-else-if="entry.isDir" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon-folder">
+          <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
         </svg>
-        <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M3.5 1C2.94772 1 2.5 1.44772 2.5 2V14C2.5 14.5523 2.94772 15 3.5 15H12.5C13.0523 15 13.5 14.5523 13.5 14V5L9.5 1H3.5Z" :fill="fileIconColor" stroke-width="0.5" :stroke="fileIconColor"/>
-          <path d="M9.5 1V5H13.5" :stroke="fileIconColor" stroke-width="0.8" fill="none"/>
+        <!-- File -->
+        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon-file">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="currentColor" opacity="0.08" />
+          <polyline points="14 2 14 8 20 8" />
         </svg>
       </span>
 
@@ -49,8 +59,12 @@
         :children-map="childrenMap"
         :loading-dirs="loadingDirs"
         :selected-path="selectedPath"
+        :drop-target-path="dropTargetPath"
         @toggle-dir="$emit('toggle-dir', $event)"
         @select-file="$emit('select-file', $event)"
+        @context-menu="$emit('context-menu', $event)"
+        @drop-files="$emit('drop-files', $event)"
+        @drag-hover="$emit('drag-hover', $event)"
       />
     </div>
   </div>
@@ -67,30 +81,6 @@ interface FileEntry {
   ext: string;
 }
 
-const EXT_COLORS: Record<string, string> = {
-  '.ts':       '#3178c6',
-  '.tsx':      '#3178c6',
-  '.js':       '#f0db4f',
-  '.jsx':      '#f0db4f',
-  '.vue':      '#41b883',
-  '.json':     '#f0db4f',
-  '.md':       '#519aba',
-  '.markdown': '#519aba',
-  '.py':       '#3572A5',
-  '.yaml':     '#cb171e',
-  '.yml':      '#cb171e',
-  '.toml':     '#9c4121',
-  '.sh':       '#89e051',
-  '.bash':     '#89e051',
-  '.css':      '#563d7c',
-  '.scss':     '#c6538c',
-  '.html':     '#e34c26',
-  '.xml':      '#f34b7d',
-  '.svg':      '#ff9900',
-  '.txt':      '#999',
-  '.log':      '#999',
-  '.gitignore':'#f54d27',
-};
 
 export default defineComponent({
   name: 'FileTreeNode',
@@ -101,20 +91,16 @@ export default defineComponent({
     expandedDirs: { type: Object as PropType<Set<string>>, required: true },
     childrenMap:  { type: Object as PropType<Record<string, FileEntry[]>>, required: true },
     loadingDirs:  { type: Object as PropType<Set<string>>, required: true },
-    selectedPath: { type: String, default: '' },
+    selectedPath:   { type: String, default: '' },
+    dropTargetPath: { type: String, default: '' },
   },
 
-  emits: ['toggle-dir', 'select-file'],
+  emits: ['toggle-dir', 'select-file', 'context-menu', 'drop-files', 'drag-hover'],
 
   setup(props, { emit }) {
     const isExpanded = computed(() => props.expandedDirs.has(props.entry.path));
     const isLoading = computed(() => props.loadingDirs.has(props.entry.path));
     const children = computed(() => props.childrenMap[props.entry.path] || []);
-
-    const fileIconColor = computed(() => {
-      if (props.entry.isDir) return '#C09553';
-      return EXT_COLORS[props.entry.ext] || '#999';
-    });
 
     function handleClick() {
       if (props.entry.isDir) {
@@ -124,7 +110,29 @@ export default defineComponent({
       }
     }
 
-    return { isExpanded, isLoading, children, fileIconColor, handleClick };
+    function handleContextMenu(event: MouseEvent) {
+      emit('context-menu', { event, entry: props.entry });
+    }
+
+    function handleDragOver(event: DragEvent) {
+      if (!props.entry.isDir) return;
+      if (!event.dataTransfer?.types.includes('Files')) return;
+      event.dataTransfer.dropEffect = 'copy';
+      emit('drag-hover', props.entry.path);
+    }
+
+    function handleDragLeave() {
+      if (!props.entry.isDir) return;
+      emit('drag-hover', '');
+    }
+
+    function handleDrop(event: DragEvent) {
+      if (!props.entry.isDir) return;
+      if (!event.dataTransfer?.files.length) return;
+      emit('drop-files', { dirPath: props.entry.path, files: event.dataTransfer.files });
+    }
+
+    return { isExpanded, isLoading, children, handleClick, handleContextMenu, handleDragOver, handleDragLeave, handleDrop };
   },
 });
 </script>
@@ -190,6 +198,27 @@ export default defineComponent({
   flex-shrink: 0;
   width: 16px;
   height: 16px;
+  color: #555;
+}
+
+:global(.dark) .node-icon {
+  color: #94a3b8;
+}
+
+.icon-folder {
+  color: inherit;
+}
+
+:global(.dark) .icon-folder {
+  color: #a4a6a9;
+}
+
+.icon-file {
+  color: #6b7280;
+}
+
+:global(.dark) .icon-file {
+  color: #cbd5e1;
 }
 
 .node-label {
@@ -204,5 +233,16 @@ export default defineComponent({
   color: #999;
   font-size: 12px;
   font-style: italic;
+}
+
+.file-tree-row.drop-target {
+  background: rgba(0, 120, 212, 0.1);
+  outline: 1px dashed rgba(0, 120, 212, 0.4);
+  outline-offset: -1px;
+}
+
+:global(.dark) .file-tree-row.drop-target {
+  background: rgba(0, 120, 212, 0.15);
+  outline-color: rgba(0, 120, 212, 0.5);
 }
 </style>

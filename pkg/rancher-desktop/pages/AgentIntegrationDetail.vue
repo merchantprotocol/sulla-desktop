@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-white text-sm text-[#0d0d0d] dark:bg-slate-900 dark:text-neutral-50 font-sans" :class="{ dark: isDark }">
+  <div class="min-h-screen text-sm font-sans page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentIntegrationDetail" />
     <div class="flex min-h-screen flex-col">
       <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
@@ -1020,6 +1020,16 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.page-root {
+  background: #ffffff;
+  color: #0d0d0d;
+}
+
+.page-root.dark {
+  background: #0f172a;
+  color: #fafafa;
+}
+
 /* Custom styles for integration detail page */
 .aspect-video {
   aspect-ratio: 16 / 9;
