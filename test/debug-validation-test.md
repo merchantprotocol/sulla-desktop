@@ -1,1 +1,0 @@
-# Debug Validation Test\n\nThis file was created by the debug validation test.\nTimestamp: 2026-03-03T20:16Z\n\nThis file can be safely deleted.
