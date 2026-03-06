@@ -12,8 +12,9 @@ import { toolRegistry } from '../tools/registry';
 import { BaseTool } from '../tools/base';
 import { ConversationSummaryService } from '../services/ConversationSummaryService';
 import { ObservationalSummaryService } from '../services/ObservationalSummaryService';
-import { resolveSullaProjectsDir, resolveSullaSkillsDir } from '../utils/sullaPaths';
+import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir } from '../utils/sullaPaths';
 import { environmentPrompt } from '../prompts/environment';
+import fs from 'node:fs';
 
 // ============================================================================
 // DEFAULT SETTINGS
@@ -118,6 +119,173 @@ async function getSoulPrompt(): Promise<string> {
   return prefix + prompt;
 }
 
+/**
+ * Build the template variable map used to substitute {{...}} placeholders
+ * in agent prompt files and the environment prompt.
+ */
+async function getTemplateVariables(): Promise<Record<string, string>> {
+  const botName = await SullaSettingsModel.get('botName', 'Sulla');
+  const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
+  const projectsDir = resolveSullaProjectsDir();
+  const skillsDir = resolveSullaSkillsDir();
+  const agentsDir = resolveSullaAgentsDir();
+
+  const now = new Date();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+  const formattedTime = now.toLocaleString('en-US', {
+    timeZone,
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  });
+
+  // Tool categories
+  const categoriesWithDesc = toolRegistry.getCategoriesWithDescriptions();
+  const categoriesText = categoriesWithDesc.map(({ category, description }: { category: string; description: string }) =>
+    `- ${category}: ${description}`).join('\n');
+
+  // Skills index
+  let skillsIndex = '_No skills registered yet._';
+  try {
+    const { skillsRegistry } = await import('../database/registry/SkillsRegistry');
+    const summaries = await skillsRegistry.getSkillSummaries();
+    if (summaries && summaries.length > 0) {
+      const lines = summaries.map((s: any) => {
+        const trigger = Array.isArray(s.triggers) && s.triggers.length > 0
+          ? ` — use when: ${s.triggers.join('; ')}` : '';
+        return `- **${s.name}** (\`${s.slug}\`)${s.description ? `: ${s.description}` : ''}${trigger}`;
+      });
+      skillsIndex = lines.join('\n');
+    }
+  } catch { /* registry not available */ }
+
+  // Installed extensions
+  let installedExtensions = '';
+  try {
+    const { getExtensionService } = await import('../services/ExtensionService');
+    const svc = getExtensionService();
+    await svc.initialize();
+    const installed = await svc.fetchInstalledExtensions();
+    if (installed.length > 0) {
+      const lines = installed.map((ext: any) => {
+        const title = ext.labels?.['org.opencontainers.image.title'] ?? ext.id;
+        const desc = ext.labels?.['org.opencontainers.image.description'] ?? '';
+        const urls = ext.extraUrls.map((u: any) => `${u.label}: ${u.url}`).join(', ');
+        return `- **${title}** (${ext.id}) v${ext.version}${urls ? ` — ${urls}` : ''}${desc ? ` — ${desc}` : ''}`;
+      });
+      installedExtensions = `\n#### Currently Installed Extensions (active products you can use)\nThese are running locally and our preferred system for you to interact with via their web UIs, APIs, database, and Docker tools:\n${lines.join('\n')}`;
+    }
+  } catch { /* extension service not available */ }
+
+  return {
+    '{{formattedTime}}':        formattedTime,
+    '{{timeZone}}':             timeZone,
+    '{{primaryUserName}}':      primaryUserName || '',
+    '{{botName}}':              botName,
+    '{{sulla_home}}':           path.dirname(agentsDir),
+    '{{projects_dir}}':         projectsDir,
+    '{{skills_dir}}':           skillsDir,
+    '{{agents_dir}}':           agentsDir,
+    '{{active_projects_file}}': path.join(projectsDir, 'ACTIVE_PROJECTS.md'),
+    '{{skills_index}}':         skillsIndex,
+    '{{tool_categories}}':      categoriesText,
+    '{{installed_extensions}}':  installedExtensions,
+  };
+}
+
+/** Apply template variable substitution to a string. */
+function applyTemplateVars(text: string, vars: Record<string, string>): string {
+  let result = text;
+  for (const [key, value] of Object.entries(vars)) {
+    result = result.replaceAll(key, value);
+  }
+  return result;
+}
+
+/** Cache for loaded agent prompt files (agentId -> combined markdown content). */
+const agentPromptCache = new Map<string, { content: string; loadedAt: number }>();
+const AGENT_PROMPT_CACHE_TTL = 30_000; // 30s — reload agent files periodically
+
+/**
+ * Load all .md files from an agent's directory and return them as a combined
+ * prompt string with template variables substituted.
+ *
+ * Returns null if the agent directory doesn't exist or has no .md files,
+ * in which case the caller should fall back to the global soul prompt.
+ */
+async function loadAgentPromptFiles(agentId: string): Promise<string | null> {
+  if (!agentId) return null;
+
+  // Check cache
+  const cached = agentPromptCache.get(agentId);
+  if (cached && Date.now() - cached.loadedAt < AGENT_PROMPT_CACHE_TTL) {
+    return cached.content;
+  }
+
+  const agentDir = path.join(resolveSullaAgentsDir(), agentId);
+  if (!fs.existsSync(agentDir)) return null;
+
+  try {
+    const entries = fs.readdirSync(agentDir, { withFileTypes: true });
+    const mdFiles = entries
+      .filter(e => e.isFile() && e.name.endsWith('.md'))
+      .sort((a, b) => {
+        // soul.md first, environment.md second, then alphabetical
+        const order = (name: string) =>
+          name === 'soul.md' ? 0 : name === 'environment.md' ? 1 : 2;
+        return order(a.name) - order(b.name) || a.name.localeCompare(b.name);
+      });
+
+    if (mdFiles.length === 0) return null;
+
+    // Read agent.yaml for agent name (used in the identity prefix)
+    let agentName = agentId;
+    const yamlPath = path.join(agentDir, 'agent.yaml');
+    if (fs.existsSync(yamlPath)) {
+      try {
+        const yaml = await import('yaml');
+        const parsed = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+        if (parsed?.name) agentName = parsed.name;
+      } catch { /* ignore yaml parse errors */ }
+    }
+
+    // Read all .md files
+    const sections: string[] = [];
+    for (const file of mdFiles) {
+      const filePath = path.join(agentDir, file.name);
+      const content = fs.readFileSync(filePath, 'utf-8').trim();
+      if (content) {
+        sections.push(content);
+      }
+    }
+
+    if (sections.length === 0) return null;
+
+    // Get template variables and substitute
+    const vars = await getTemplateVariables();
+    // Add agent-specific variables
+    vars['{{agent_name}}'] = agentName;
+    vars['{{agent_id}}'] = agentId;
+    vars['{{agent_dir}}'] = agentDir;
+
+    const combined = applyTemplateVars(sections.join('\n\n'), vars);
+
+    // Build the final prompt with an identity prefix
+    const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
+    const identityPrefix = primaryUserName.trim()
+      ? `You are ${agentName} (agent: ${agentId})\nThe Human's name is: ${primaryUserName}\n\n`
+      : `You are ${agentName} (agent: ${agentId})\n\n`;
+
+    const result = identityPrefix + combined;
+
+    // Cache it
+    agentPromptCache.set(agentId, { content: result, loadedAt: Date.now() });
+
+    return result;
+  } catch (err) {
+    console.error(`[BaseNode] Failed to load agent prompt files for ${agentId}:`, err);
+    return null;
+  }
+}
 
 export const ENVIRONMENT_PROMPT = environmentPrompt;
 
@@ -182,93 +350,27 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
         const parts: string[] = [];
 
-        if (options.includeSoul) {
+        // Resolve the agent ID from the graph state's wsChannel
+        const agentId = String(state.metadata.wsChannel || '').trim();
+
+        // Try to load agent-specific prompt files from ~/sulla/agents/{agentId}/
+        // If found, these replace the global soul prompt.
+        const agentPrompt = agentId ? await loadAgentPromptFiles(agentId) : null;
+
+        if (agentPrompt) {
+            // Agent has its own prompt files — use them as the identity/soul
+            parts.push(agentPrompt);
+        } else if (options.includeSoul) {
+            // Fall back to global soul prompt from settings
             const soulPrompt = await getSoulPrompt();
             if (soulPrompt.trim()) {
                 parts.push(soulPrompt);
             }
         }
 
-        let AwarenessMessage = ENVIRONMENT_PROMPT;
-
-            /////////////////////////////////////////////////////////////////
-            // add the tool categories
-            /////////////////////////////////////////////////////////////////
-            const categoriesWithDesc = toolRegistry.getCategoriesWithDescriptions();
-            const categoriesText = categoriesWithDesc.map(({category, description}) => `- ${category}: ${description}`).join('\n');
-            AwarenessMessage = AwarenessMessage.replace('{{tool_categories}}', categoriesText);
-
-
-            /////////////////////////////////////////////////////////////////
-            // adds the users time
-            /////////////////////////////////////////////////////////////////
-            const now = new Date();
-            const formattedTime = now.toLocaleString('en-US', {
-                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: true,
-            });
-            const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
-            const projectsDir = resolveSullaProjectsDir();
-            const skillsDir = resolveSullaSkillsDir();
-            const activeProjectsFile = path.join(projectsDir, 'ACTIVE_PROJECTS.md');
-
-            AwarenessMessage = AwarenessMessage.replaceAll('{{formattedTime}}', formattedTime);
-            AwarenessMessage = AwarenessMessage.replaceAll('{{timeZone}}', timeZone);
-            AwarenessMessage = AwarenessMessage.replaceAll('{{skills_dir}}', skillsDir);
-
-            // Build skills index from filesystem registry
-            let skillsIndex = '_No skills registered yet._';
-            try {
-                const indexLines: string[] = [];
-
-                // Filesystem skills
-                const { skillsRegistry } = await import('../database/registry/SkillsRegistry');
-                const summaries = await skillsRegistry.getSkillSummaries();
-                if (summaries && summaries.length > 0) {
-                    for (const s of summaries) {
-                        const trigger = Array.isArray(s.triggers) && s.triggers.length > 0
-                            ? ` — use when: ${s.triggers.join('; ')}`
-                            : '';
-                        indexLines.push(`- **${s.name}** (\`${s.slug}\`)${s.description ? `: ${s.description}` : ''}${trigger}`);
-                    }
-                }
-
-                if (indexLines.length > 0) {
-                    skillsIndex = indexLines.join('\n');
-                }
-            } catch { /* registry not available */ }
-            AwarenessMessage = AwarenessMessage.replaceAll('{{skills_index}}', skillsIndex);
-            AwarenessMessage = AwarenessMessage.replaceAll('{{projects_dir}}', projectsDir);
-            AwarenessMessage = AwarenessMessage.replaceAll('{{active_projects_file}}', activeProjectsFile);
-
-            /////////////////////////////////////////////////////////////////
-            // resolve installed extensions into environment awareness
-            /////////////////////////////////////////////////////////////////
-            let installedExtensionsBlock = '';
-            try {
-                const { getExtensionService } = await import('../services/ExtensionService');
-                const svc = getExtensionService();
-                await svc.initialize();
-                const installed = await svc.fetchInstalledExtensions();
-
-                if (installed.length > 0) {
-                    const lines = installed.map(ext => {
-                        const title = ext.labels?.['org.opencontainers.image.title'] ?? ext.id;
-                        const desc = ext.labels?.['org.opencontainers.image.description'] ?? '';
-                        const urls = ext.extraUrls.map((u: any) => `${u.label}: ${u.url}`).join(', ');
-                        return `- **${title}** (${ext.id}) v${ext.version}${urls ? ` — ${urls}` : ''}${desc ? ` — ${desc}` : ''}`;
-                    });
-                    installedExtensionsBlock = `\n#### Currently Installed Extensions (active products you can use)\nThese are running locally and our preferred system for you to interact with via their web UIs, APIs, database, and Docker tools:\n${lines.join('\n')}`;
-                }
-            } catch { /* extension service not available */ }
-            AwarenessMessage = AwarenessMessage.replaceAll('{{installed_extensions}}', installedExtensionsBlock);
+        // Build environment awareness with template variable substitution
+        const vars = await getTemplateVariables();
+        const AwarenessMessage = applyTemplateVars(ENVIRONMENT_PROMPT, vars);
 
         if (options.includeEnvironment !== false) {
             parts.push(AwarenessMessage);
@@ -305,11 +407,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
                 // Format observational memory into readable text
                 if (Array.isArray(memoryObj)) {
-                    memoryText = memoryObj.map((entry: any) => 
+                    memoryText = memoryObj.map((entry: any) =>
                         `${entry.priority} ${entry.timestamp} ${entry.content}`
                     ).join('\n');
                 }
-                
+
                 this.insertAssistantContextBeforeLatestUser(state, {
                     role: 'assistant',
                     content: `\nYour Observational Memory Storage:\n${memoryText}`,
@@ -324,7 +426,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
             parts.push(OBSERVATIONAL_MEMORY_SOP);
         }
-        
+
         // Always preserve the caller's base prompt and enrich around it.
         // Keep this after soul + environment context so node-specific directives
         // are anchored by runtime constraints and active asset state.

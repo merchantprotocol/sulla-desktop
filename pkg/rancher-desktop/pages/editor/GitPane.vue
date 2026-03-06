@@ -859,7 +859,7 @@ onMounted(() => discoverAndRefresh());
 
 .git-header.dark {
   background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  border-bottom-color: #334155;
 }
 
 .git-header-title {

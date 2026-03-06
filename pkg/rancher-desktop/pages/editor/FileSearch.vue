@@ -156,7 +156,7 @@ export default defineComponent({
 
 .search-pane-header.dark {
   background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  border-bottom-color: #334155;
 }
 
 .search-pane-title {
@@ -210,8 +210,8 @@ export default defineComponent({
 }
 
 .search-input-wrapper.dark {
-  background: #2d2d2d;
-  border-color: #404040;
+  background: #0f172a;
+  border-color: #334155;
 }
 
 .path-input-wrapper {
@@ -226,8 +226,8 @@ export default defineComponent({
 }
 
 .path-input-wrapper.dark {
-  background: #252525;
-  border-color: #3a3a3a;
+  background: #0f172a;
+  border-color: #334155;
 }
 
 .search-container svg {
@@ -245,7 +245,7 @@ export default defineComponent({
 }
 
 .search-input.dark {
-  color: #ccc;
+  color: #e2e8f0;
 }
 
 .path-input {
@@ -259,7 +259,7 @@ export default defineComponent({
 }
 
 .path-input.dark {
-  color: #999;
+  color: #94a3b8;
 }
 
 .search-input::placeholder,
@@ -283,7 +283,7 @@ export default defineComponent({
 }
 
 .status-bar.dark {
-  color: #8899a6;
+  color: #94a3b8;
 }
 
 .spinner {
@@ -296,8 +296,8 @@ export default defineComponent({
 }
 
 .dark .spinner {
-  border-color: #3a3a3a;
-  border-top-color: #8899a6;
+  border-color: #334155;
+  border-top-color: #94a3b8;
 }
 
 @keyframes spin {
@@ -322,7 +322,7 @@ export default defineComponent({
 }
 
 .result-item.dark:hover {
-  background: #333;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .result-name {
@@ -353,8 +353,8 @@ export default defineComponent({
 }
 
 .dark .result-icon {
-  background: #3a3a3a;
-  color: #8899a6;
+  background: #334155;
+  color: #94a3b8;
 }
 
 .result-path {
@@ -382,7 +382,7 @@ export default defineComponent({
 }
 
 .result-preview.dark {
-  color: #586e75;
+  color: #64748b;
 }
 
 .result-line {
@@ -397,8 +397,8 @@ export default defineComponent({
 }
 
 .dark .result-line {
-  background: #3a3a3a;
-  color: #8899a6;
+  background: #334155;
+  color: #94a3b8;
 }
 
 .no-results {

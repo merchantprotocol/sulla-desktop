@@ -1222,6 +1222,32 @@ export function initSullaEvents(): void {
     ];
   });
 
+  ipcMainProxy.handle('tools-list-by-category', async() => {
+    // Ensure manifests are registered (side-effect import)
+    require('@pkg/agent/tools/manifests');
+    const { toolRegistry } = require('@pkg/agent/tools/registry');
+    const categories = toolRegistry.getCategoriesWithDescriptions() as { category: string; description: string }[];
+    const result: { category: string; description: string; tools: { name: string; description: string; operationTypes: string[] }[] }[] = [];
+
+    for (const cat of categories) {
+      const getMetadata = toolRegistry.getCategoryToolMetadata(cat.category);
+      const tools: { name: string; description: string }[] = await getMetadata();
+      if (tools.length > 0) {
+        result.push({
+          category:    cat.category,
+          description: cat.description,
+          tools:       tools.map(t => ({
+            name:           t.name,
+            description:    t.description,
+            operationTypes: toolRegistry.getOperationTypes(t.name) as string[],
+          })),
+        });
+      }
+    }
+
+    return result;
+  });
+
   console.log('[Sulla] IPC event handlers initialized');
 }
 

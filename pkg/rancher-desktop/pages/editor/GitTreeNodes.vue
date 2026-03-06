@@ -228,6 +228,13 @@ export default defineComponent({
 .git-status-badge.renamed  { color: #2563eb; background: rgba(37, 99, 235, 0.12); }
 .git-status-badge.untracked { color: #64748b; background: rgba(100, 116, 139, 0.12); }
 
+.dark .git-status-badge.staged   { color: #34d399; background: rgba(16, 185, 129, 0.18); }
+.dark .git-status-badge.modified { color: #fbbf24; background: rgba(245, 158, 11, 0.18); }
+.dark .git-status-badge.deleted  { color: #f87171; background: rgba(239, 68, 68, 0.18); }
+.dark .git-status-badge.added    { color: #34d399; background: rgba(16, 185, 129, 0.18); }
+.dark .git-status-badge.renamed  { color: #60a5fa; background: rgba(59, 130, 246, 0.18); }
+.dark .git-status-badge.untracked { color: #94a3b8; background: rgba(148, 163, 184, 0.15); }
+
 .git-file-name {
   flex-shrink: 0;
   white-space: nowrap;

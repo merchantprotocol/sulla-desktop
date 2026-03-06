@@ -312,7 +312,7 @@ watch(() => props.messages.length, () => scrollToBottom());
 
 .chat-header.dark {
   background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  border-bottom-color: #334155;
 }
 
 .chat-header-title {
@@ -391,7 +391,11 @@ watch(() => props.messages.length, () => scrollToBottom());
 
 .chat-empty-text {
   font-size: 13px;
-  color: #999;
+  color: #94a3b8;
+}
+
+.dark .chat-empty-text {
+  color: #64748b;
 }
 
 .chat-message.user {
@@ -431,8 +435,8 @@ watch(() => props.messages.length, () => scrollToBottom());
 }
 
 .assistant-bubble.dark {
-  background: #2d3748;
-  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
 }
 
 .tool-bubble {
@@ -469,6 +473,10 @@ watch(() => props.messages.length, () => scrollToBottom());
 .tool-status.running { background: #fef3c7; color: #92400e; }
 .tool-status.success { background: #d1fae5; color: #065f46; }
 .tool-status.failed  { background: #fee2e2; color: #991b1b; }
+
+.dark .tool-status.running { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.dark .tool-status.success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.dark .tool-status.failed  { background: rgba(239, 68, 68, 0.15); color: #f87171; }
 
 .thinking-bubble {
   background: transparent;
@@ -508,6 +516,10 @@ watch(() => props.messages.length, () => scrollToBottom());
   overflow-x: auto;
   font-size: 12px;
   margin: 4px 0;
+}
+
+.dark .prose-content :deep(pre) {
+  background: #0f172a;
 }
 
 .prose-content :deep(code) {

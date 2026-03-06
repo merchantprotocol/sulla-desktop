@@ -156,6 +156,7 @@ export interface IpcMainInvokeEvents {
   'agents-get-prompt-templates': () => { soul: string; environment: string };
   'agents-delete':    (agentId: string) => boolean;
   'agents-get-template-variables': () => { key: string; label: string; preview: string }[];
+  'tools-list-by-category': () => Array<{ category: string; description: string; tools: { name: string; description: string; operationTypes: string[] }[] }>;
   'git-commit':       (dirPath: string, message: string) => boolean;
   'git-pull':         (dirPath: string) => { success: boolean; output: string };
   'git-push':         (dirPath: string) => { success: boolean; output: string };

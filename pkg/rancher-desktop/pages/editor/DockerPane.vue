@@ -213,7 +213,7 @@ export default defineComponent({
 .docker-header.dark {
   color: #94a3b8;
   background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  border-bottom-color: #334155;
 }
 
 .docker-header-actions {

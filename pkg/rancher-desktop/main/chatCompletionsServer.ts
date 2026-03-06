@@ -1,9 +1,10 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import fs from 'node:fs';
+import path from 'node:path';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import { getSettings } from '@pkg/config/settingsImpl';
+import { resolveSullaAgentsDir } from '@pkg/agent/utils/sullaPaths';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 const WS_CHANNEL = 'tasker';
@@ -207,8 +208,8 @@ export class ChatCompletionsServer {
 
       console.log(`[ChatCompletionsAPI] Processing message: ${userText.substring(0, 100)}...`);
 
-      // Process the user input directly
-      const responseContent = await this.processUserInputDirect(messages);
+      // Process the user input directly — model param is the agent ID
+      const responseContent = await this.processUserInputDirect(messages, model);
 
       // Return the response in OpenAI format
       const response = {
@@ -248,16 +249,16 @@ export class ChatCompletionsServer {
 
   /**
    * Process user input directly, without any UI interaction.
-   * This is used for testing and development purposes.
+   * The agentId is used as the wsChannel so the graph loads that agent's prompts.
    */
-  private async processUserInputDirect(messages: any): Promise<string> {
+  private async processUserInputDirect(messages: any, agentId: string = WS_CHANNEL): Promise<string> {
     const threadId = nextThreadId();
-    
+
     // Get or create persistent AgentGraph for this thread
-    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, threadId);
+    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId);
 
     try {
-      state.metadata.wsChannel = WS_CHANNEL;
+      state.metadata.wsChannel = agentId;
 
       // Append new user messages
       for (const msg of messages) {
@@ -306,85 +307,30 @@ export class ChatCompletionsServer {
 
   /**
    * Handle models requests (OpenAI-compatible).
+   * Returns available agent IDs read from ~/sulla/agents/.
    */
   public async handleModels(req: Request, res: Response) {
     try {
-      let models: string[] = [];
+      const agentsDir = resolveSullaAgentsDir();
+      let agentIds: string[] = [];
 
-      // Always include available Ollama models (filtered by CPU/RAM)
-      const settings = getSettings();
-      const numCPUs = settings.virtualMachine?.numberCPUs || 2;
-      const memoryGB = settings.virtualMachine?.memoryInGB || 4;
-
-      const allOllamaModels = [
-        'tinyllama:latest',
-        'llama2:7b',
-        'llama2:13b',
-        'llama3:8b',
-        'llama3:70b',
-        'codellama:7b',
-        'codellama:13b'
-      ];
-
-      const modelRequirements: Record<string, { ram: number, cpu: number }> = {
-        'tinyllama:latest': { ram: 1, cpu: 1 },
-        'llama2:7b': { ram: 8, cpu: 4 },
-        'llama2:13b': { ram: 16, cpu: 8 },
-        'llama3:8b': { ram: 16, cpu: 4 },
-        'llama3:70b': { ram: 40, cpu: 8 },
-        'codellama:7b': { ram: 8, cpu: 4 },
-        'codellama:13b': { ram: 16, cpu: 8 },
-      };
-
-      const availableOllamaModels = allOllamaModels.filter(model =>
-        modelRequirements[model] &&
-        modelRequirements[model].ram <= memoryGB &&
-        modelRequirements[model].cpu <= numCPUs
-      );
-
-      models.push(...availableOllamaModels);
-
-      const remoteProvider = await SullaSettingsModel.get('remoteProvider', 'grok');
-      const remoteApiKey = await SullaSettingsModel.get('remoteApiKey', '');
-      const isGrokConfigured: boolean = remoteProvider === 'grok' && remoteApiKey.startsWith('xai-');
-      const isOpenAiConfigured: boolean = remoteProvider === 'openai' && remoteApiKey.startsWith('sk-') && remoteApiKey.length > 50;
-      
-      // Add remote models if configured
-      if (isGrokConfigured) {
-        // Grok models
-        models.push(
-          'grok-beta',
-          'grok-1',
-          'grok-2-1212',
-          'grok-2',
-          'grok-1.5',
-          'grok-1.5v2',
-          'grok-2-1212',
-          'grok-vision-beta',
-          'grok-2-vision-1212'
-        );
-      } else if (isOpenAiConfigured) {
-        // OpenAI models
-        models.push(
-          'gpt-3.5-turbo',
-          'gpt-3.5-turbo-16k',
-          'gpt-4',
-          'gpt-4-32k',
-          'gpt-4-turbo-preview',
-          'gpt-4-vision-preview',
-          'gpt-4o',
-          'gpt-4o-mini'
-        );
+      try {
+        const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
+        agentIds = entries
+          .filter(e => e.isDirectory())
+          .map(e => e.name);
+      } catch {
+        // agents dir may not exist yet
       }
 
       const response = {
         object: 'list',
-        data: models.map(model => ({
-          id: model,
+        data: agentIds.map(id => ({
+          id,
           object: 'model',
           created: Math.floor(Date.now() / 1000),
-          owned_by: model.includes('grok') ? 'xai' : model.includes('gpt') ? 'openai' : 'ollama'
-        }))
+          owned_by: 'sulla',
+        })),
       };
 
       console.log('[ChatCompletionsAPI] Models response:', JSON.stringify(response, null, 2));
@@ -394,8 +340,8 @@ export class ChatCompletionsServer {
       res.status(500).json({
         error: {
           message: 'Internal server error',
-          type: 'internal_error'
-        }
+          type: 'internal_error',
+        },
       });
     }
   }
@@ -418,8 +364,8 @@ export class ChatCompletionsServer {
 
       console.log(`[ChatCompletionsAPI] Processing completion for prompt: ${prompt.substring(0, 100)}...`);
 
-      // Reuse chat logic with single user message
-      const responseContent = await this.processUserInputDirect([{ role: 'user', content: prompt }]);
+      // Reuse chat logic with single user message — model param is the agent ID
+      const responseContent = await this.processUserInputDirect([{ role: 'user', content: prompt }], model);
 
       const response = {
         id: `cmpl-${Date.now()}`,

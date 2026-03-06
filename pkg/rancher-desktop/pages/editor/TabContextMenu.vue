@@ -64,6 +64,18 @@
         </svg>
         <span>Close Tab</span>
       </button>
+      <button class="context-menu-item" @click="handleCloseOthers">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+        <span>Close Others</span>
+      </button>
+      <button class="context-menu-item" @click="handleCloseAll">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+        <span>Close All</span>
+      </button>
     </div>
   </Teleport>
 </template>
@@ -87,7 +99,7 @@ export interface TabState {
 
 export default defineComponent({
   name: 'TabContextMenu',
-  
+
   props: {
     visible: {
       type: Boolean,
@@ -115,7 +127,9 @@ export default defineComponent({
     'view-in-finder',
     'open-with-editor',
     'save-tab',
-    'close-tab'
+    'close-tab',
+    'close-others',
+    'close-all'
   ],
 
   setup(props, { emit }) {
@@ -145,13 +159,25 @@ export default defineComponent({
       }
     };
 
+    const handleCloseOthers = () => {
+      if (props.tab) {
+        emit('close-others', props.tab);
+      }
+    };
+
+    const handleCloseAll = () => {
+      emit('close-all');
+    };
+
     return {
       menuRef,
       MARKDOWN_EXTS,
       handleViewInFinder,
       handleOpenWithEditor,
       handleSaveTab,
-      handleCloseTab
+      handleCloseTab,
+      handleCloseOthers,
+      handleCloseAll
     };
   }
 });
@@ -172,8 +198,8 @@ export default defineComponent({
 }
 
 .tab-context-menu.dark {
-  background: #2d2d2d;
-  border-color: #404040;
+  background: #1e293b;
+  border-color: #334155;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
@@ -195,12 +221,12 @@ export default defineComponent({
   background: #f1f5f9;
 }
 
-.dark .tab-context-menu .context-menu-item {
-  color: #ccc;
+.tab-context-menu.dark .context-menu-item {
+  color: #e2e8f0;
 }
 
-.dark .tab-context-menu .context-menu-item:hover {
-  background: #383838;
+.tab-context-menu.dark .context-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .tab-context-menu .context-menu-sep {
@@ -209,29 +235,29 @@ export default defineComponent({
   margin: 4px 0;
 }
 
-.dark .tab-context-menu .context-menu-sep {
-  background: #404040;
+.tab-context-menu.dark .context-menu-sep {
+  background: #334155;
 }
 
 .tab-context-menu .context-menu-subheader {
   padding: 8px 12px;
   font-weight: bold;
   font-size: 12px;
-  color: #666;
+  color: #64748b;
 }
 
-.dark .tab-context-menu .context-menu-subheader {
-  color: #ccc;
+.tab-context-menu.dark .context-menu-subheader {
+  color: #94a3b8;
 }
 
 .tab-context-menu .context-menu-shortcut {
   margin-left: auto;
   font-size: 11px;
-  color: #999;
+  color: #94a3b8;
   padding-left: 16px;
 }
 
-.dark .tab-context-menu .context-menu-shortcut {
-  color: #666;
+.tab-context-menu.dark .context-menu-shortcut {
+  color: #64748b;
 }
 </style>

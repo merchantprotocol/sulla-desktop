@@ -30,8 +30,8 @@
         @click="$emit('toggle-left-pane')"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="1" y="2" width="14" height="12" rx="1" :stroke="isDark ? '#ccc' : '#333'" stroke-width="1.2"/>
-          <rect x="1" y="2" width="4" height="12" rx="1" :fill="leftPaneVisible ? (isDark ? '#ccc' : '#333') : 'none'" :stroke="isDark ? '#ccc' : '#333'" stroke-width="1.2"/>
+          <rect x="1" y="2" width="14" height="12" rx="1" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
+          <rect x="1" y="2" width="4" height="12" rx="1" :fill="leftPaneVisible ? (isDark ? '#94a3b8' : '#333') : 'none'" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
         </svg>
       </button>
 
@@ -45,8 +45,8 @@
         @click="$emit('toggle-bottom-pane')"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="1" y="2" width="14" height="12" rx="1" :stroke="isDark ? '#ccc' : '#333'" stroke-width="1.2"/>
-          <rect x="1" y="10" width="14" height="4" rx="1" :fill="bottomPaneVisible ? (isDark ? '#ccc' : '#333') : 'none'" :stroke="isDark ? '#ccc' : '#333'" stroke-width="1.2"/>
+          <rect x="1" y="2" width="14" height="12" rx="1" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
+          <rect x="1" y="10" width="14" height="4" rx="1" :fill="bottomPaneVisible ? (isDark ? '#94a3b8' : '#333') : 'none'" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
         </svg>
       </button>
 
@@ -60,8 +60,8 @@
         @click="$emit('toggle-right-pane')"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="1" y="2" width="14" height="12" rx="1" :stroke="isDark ? '#ccc' : '#333'" stroke-width="1.2"/>
-          <rect x="11" y="2" width="4" height="12" rx="1" :fill="rightPaneVisible ? (isDark ? '#ccc' : '#333') : 'none'" :stroke="isDark ? '#ccc' : '#333'" stroke-width="1.2"/>
+          <rect x="1" y="2" width="14" height="12" rx="1" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
+          <rect x="11" y="2" width="4" height="12" rx="1" :fill="rightPaneVisible ? (isDark ? '#94a3b8' : '#333') : 'none'" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
         </svg>
       </button>
 
@@ -121,7 +121,7 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 
 .editor-header-bar.dark {
   background: #1e1e2e;
-  border-bottom-color: #2d2d3d;
+  border-bottom-color: #334155;
 }
 
 .header-left {
@@ -170,7 +170,7 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 }
 
 .header-btn.dark {
-  color: #ccc;
+  color: #94a3b8;
 }
 
 .header-btn.dark:hover {
@@ -185,6 +185,6 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 }
 
 .editor-header-bar.dark .header-separator {
-  background: #444;
+  background: #334155;
 }
 </style>

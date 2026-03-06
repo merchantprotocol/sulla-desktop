@@ -98,7 +98,7 @@ export default defineComponent({
 
 .icon-panel.dark {
   background: #1e293b;
-  border-right-color: #3c3c3c;
+  border-right-color: #334155;
 }
 
 .icon-btn {

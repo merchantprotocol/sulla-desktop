@@ -363,6 +363,8 @@
     @open-with-editor="openWithEditor"
     @save-tab="saveTab"
     @close-tab="closeTab"
+    @close-others="closeOtherTabs"
+    @close-all="closeAllTabs"
   />
 
 </template>
@@ -938,6 +940,16 @@ export default defineComponent({
       }
     }
 
+    function closeOtherTabs(tab: TabState) {
+      openTabs.value = openTabs.value.filter(t => t === tab);
+      activeTabKey.value = `${tab.path}-${tab.editorType || 'code'}`;
+    }
+
+    function closeAllTabs() {
+      openTabs.value = [];
+      activeTabKey.value = '';
+    }
+
     const highlightPath = ref('');
 
     const tabContextMenu = ref<{
@@ -1362,6 +1374,8 @@ export default defineComponent({
       onTabContextMenu,
       getIconColor,
       closeTab,
+      closeOtherTabs,
+      closeAllTabs,
       activeBreadcrumbs,
       saveActiveTab,
       activeEditorComponent,

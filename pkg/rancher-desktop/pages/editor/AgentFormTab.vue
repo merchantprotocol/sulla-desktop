@@ -50,7 +50,13 @@
 
       <hr class="form-separator" :class="{ dark: isDark }" />
 
-      <h3 class="form-section-title">Skills</h3>
+      <div class="form-section-header">
+        <h3 class="form-section-title">Skills</h3>
+        <div v-if="!skillsLoading && skillsFolders.length > 0" class="bulk-actions">
+          <button class="bulk-btn" :class="{ dark: isDark }" @click="selectAllSkills">Select All</button>
+          <button class="bulk-btn" :class="{ dark: isDark }" @click="unselectAllSkills">Unselect All</button>
+        </div>
+      </div>
       <p v-if="skillsLoading" class="form-hint">Loading skills...</p>
       <p v-else-if="skillsFolders.length === 0" class="form-hint">No skills folders found.</p>
       <div v-else class="skills-list">
@@ -68,6 +74,73 @@
           />
           <span class="skill-name">{{ skill }}</span>
         </label>
+      </div>
+
+      <hr class="form-separator" :class="{ dark: isDark }" />
+
+      <div class="form-section-header">
+        <h3 class="form-section-title">Tools</h3>
+        <div v-if="!toolsLoading && toolCategories.length > 0" class="bulk-actions">
+          <button class="bulk-btn" :class="{ dark: isDark }" @click="selectAllTools">Select All</button>
+          <button class="bulk-btn" :class="{ dark: isDark }" @click="unselectAllTools">Unselect All</button>
+        </div>
+      </div>
+      <div v-if="!toolsLoading && toolCategories.length > 0" class="tool-filter-bar">
+        <select v-model="toolFilter" class="tool-filter-select" :class="{ dark: isDark }">
+          <option value="all">All operations</option>
+          <option v-for="op in ALL_OPERATION_TYPES" :key="op" :value="op">{{ op.charAt(0).toUpperCase() + op.slice(1) }}</option>
+        </select>
+        <span class="tool-filter-count" :class="{ dark: isDark }">
+          {{ filteredToolCategories.flatMap(c => c.tools).length }} tools
+        </span>
+      </div>
+      <p v-if="toolsLoading" class="form-hint">Loading tools...</p>
+      <p v-else-if="toolCategories.length === 0" class="form-hint">No tools found.</p>
+      <p v-else-if="filteredToolCategories.length === 0" class="form-hint">No tools match this filter.</p>
+      <div v-else class="tools-tree">
+        <div v-for="cat in filteredToolCategories" :key="cat.category" class="tool-category">
+          <button
+            class="tool-category-header"
+            :class="{ dark: isDark }"
+            @click="toggleCategory(cat.category)"
+          >
+            <svg
+              class="tool-chevron"
+              :class="{ expanded: expandedCategories.has(cat.category) }"
+              width="10" height="10" viewBox="0 0 24 24"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+            <input
+              type="checkbox"
+              :checked="isCategoryFullySelected(cat)"
+              :indeterminate="isCategoryPartiallySelected(cat)"
+              @click.stop
+              @change="toggleCategoryTools(cat, $event)"
+            />
+            <span class="tool-category-name">{{ cat.category }}</span>
+            <span class="tool-category-count">{{ cat.tools.length }}</span>
+          </button>
+          <div v-if="expandedCategories.has(cat.category)" class="tool-category-tools">
+            <label
+              v-for="tool in cat.tools"
+              :key="tool.name"
+              class="tool-checkbox"
+              :class="{ dark: isDark }"
+              :title="tool.description"
+            >
+              <input
+                type="checkbox"
+                :value="tool.name"
+                v-model="form.tools"
+                @change="emit('dirty')"
+              />
+              <span class="tool-name">{{ tool.name }}</span>
+            </label>
+          </div>
+        </div>
       </div>
 
       <div class="form-actions">
@@ -103,6 +176,18 @@ const isEditMode = computed(() => {
   return !!props.filePath && props.filePath.startsWith('agent-form://edit/');
 });
 
+interface ToolEntry {
+  name: string;
+  description: string;
+  operationTypes: string[];
+}
+
+interface ToolCategoryEntry {
+  category: string;
+  description: string;
+  tools: ToolEntry[];
+}
+
 const form = reactive({
   id: '',
   name: '',
@@ -110,6 +195,7 @@ const form = reactive({
   type: 'worker',
   templateId: 'glass-core',
   skills: [] as string[],
+  tools: [] as string[],
 });
 
 const errors = reactive({ id: '', name: '' });
@@ -117,6 +203,22 @@ const saving = ref(false);
 const saveError = ref('');
 const skillsFolders = ref<string[]>([]);
 const skillsLoading = ref(false);
+const toolCategories = ref<ToolCategoryEntry[]>([]);
+const toolsLoading = ref(false);
+const expandedCategories = ref(new Set<string>());
+const toolFilter = ref('all');
+
+const ALL_OPERATION_TYPES = ['read', 'create', 'update', 'delete', 'execute'] as const;
+
+const filteredToolCategories = computed(() => {
+  if (toolFilter.value === 'all') return toolCategories.value;
+  return toolCategories.value
+    .map(cat => ({
+      ...cat,
+      tools: cat.tools.filter(t => t.operationTypes.includes(toolFilter.value)),
+    }))
+    .filter(cat => cat.tools.length > 0);
+});
 
 onMounted(async() => {
   // If content is provided (edit mode), parse YAML to pre-fill form
@@ -129,6 +231,7 @@ onMounted(async() => {
         form.type = parsed.type || 'worker';
         form.templateId = parsed.templateId || 'glass-core';
         form.skills = Array.isArray(parsed.skills) ? parsed.skills : [];
+        form.tools = Array.isArray(parsed.tools) ? parsed.tools : [];
       }
     } catch { /* ignore parse errors */ }
   }
@@ -137,8 +240,8 @@ onMounted(async() => {
     form.id = props.filePath.replace('agent-form://edit/', '');
   }
 
-  // Load skills folders
-  await loadSkillsFolders();
+  // Load skills folders and tools in parallel
+  await Promise.all([loadSkillsFolders(), loadToolCategories()]);
 });
 
 async function loadSkillsFolders() {
@@ -149,12 +252,75 @@ async function loadSkillsFolders() {
     if (!skillsDirVar) return;
 
     const entries: { name: string; isDir: boolean }[] = await ipcRenderer.invoke('filesystem-read-dir', skillsDirVar.preview);
-    skillsFolders.value = entries.filter(e => e.isDir).map(e => e.name);
+    skillsFolders.value = entries.filter(e => e.isDir && !e.name.startsWith('.')).map(e => e.name);
   } catch (err) {
     console.error('Failed to load skills folders:', err);
   } finally {
     skillsLoading.value = false;
   }
+}
+
+async function loadToolCategories() {
+  toolsLoading.value = true;
+  try {
+    toolCategories.value = await ipcRenderer.invoke('tools-list-by-category');
+  } catch (err) {
+    console.error('Failed to load tools:', err);
+  } finally {
+    toolsLoading.value = false;
+  }
+}
+
+function toggleCategory(category: string) {
+  if (expandedCategories.value.has(category)) {
+    expandedCategories.value.delete(category);
+  } else {
+    expandedCategories.value.add(category);
+  }
+}
+
+function isCategoryFullySelected(cat: ToolCategoryEntry): boolean {
+  return cat.tools.length > 0 && cat.tools.every(t => form.tools.includes(t.name));
+}
+
+function isCategoryPartiallySelected(cat: ToolCategoryEntry): boolean {
+  const count = cat.tools.filter(t => form.tools.includes(t.name)).length;
+  return count > 0 && count < cat.tools.length;
+}
+
+function toggleCategoryTools(cat: ToolCategoryEntry, event: Event) {
+  const checked = (event.target as HTMLInputElement).checked;
+  const toolNames = cat.tools.map(t => t.name);
+  if (checked) {
+    const toAdd = toolNames.filter(n => !form.tools.includes(n));
+    form.tools.push(...toAdd);
+  } else {
+    form.tools = form.tools.filter(n => !toolNames.includes(n));
+  }
+  emit('dirty');
+}
+
+function selectAllSkills() {
+  form.skills = [...skillsFolders.value];
+  emit('dirty');
+}
+
+function unselectAllSkills() {
+  form.skills = [];
+  emit('dirty');
+}
+
+function selectAllTools() {
+  const visible = new Set(filteredToolCategories.value.flatMap(cat => cat.tools.map(t => t.name)));
+  const existing = form.tools.filter(n => !visible.has(n));
+  form.tools = [...existing, ...visible];
+  emit('dirty');
+}
+
+function unselectAllTools() {
+  const visible = new Set(filteredToolCategories.value.flatMap(cat => cat.tools.map(t => t.name)));
+  form.tools = form.tools.filter(n => !visible.has(n));
+  emit('dirty');
 }
 
 function enforceSlug() {
@@ -205,6 +371,7 @@ async function save() {
       type: form.type,
       templateId: form.templateId,
       skills: form.skills,
+      tools: form.tools,
     });
 
     await ipcRenderer.invoke('filesystem-write-file', `${agentDir}/agent.yaml`, agentYaml);
@@ -379,10 +546,80 @@ async function save() {
   border-top-color: #334155;
 }
 
+.form-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 12px 0;
+}
+
 .form-section-title {
   font-size: 14px;
   font-weight: 600;
-  margin: 0 0 12px 0;
+  margin: 0;
+}
+
+.bulk-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.bulk-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.bulk-btn:hover {
+  background: rgba(0,0,0,0.04);
+  color: #333;
+}
+
+.bulk-btn.dark {
+  border-color: #334155;
+  color: #94a3b8;
+}
+
+.bulk-btn.dark:hover {
+  background: rgba(255,255,255,0.06);
+  color: #e2e8f0;
+}
+
+.tool-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tool-filter-select {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #333;
+  outline: none;
+  cursor: pointer;
+}
+
+.tool-filter-select.dark {
+  background: #1e293b;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+.tool-filter-count {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.tool-filter-count.dark {
+  color: #64748b;
 }
 
 .skills-list {
@@ -416,5 +653,95 @@ async function save() {
 
 .skill-name {
   user-select: none;
+}
+
+.tools-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tool-category-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.tool-category-header:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+.tool-category-header.dark:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.tool-category-header input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.tool-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.tool-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.tool-category-name {
+  user-select: none;
+}
+
+.tool-category-count {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-left: auto;
+}
+
+.tool-category-tools {
+  padding-left: 20px;
+}
+
+.tool-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.tool-checkbox:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+.tool-checkbox.dark:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.tool-checkbox input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.tool-name {
+  user-select: none;
+  color: #64748b;
+}
+
+.agent-form.dark .tool-name {
+  color: #94a3b8;
 }
 </style>
