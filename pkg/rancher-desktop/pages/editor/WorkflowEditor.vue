@@ -9,6 +9,8 @@
       @nodes-change="onNodesChange"
       @edges-change="onEdgesChange"
       @connect="onConnect"
+      @node-click="onNodeClick"
+      @pane-click="onPaneClick"
     >
       <Background :variant="BackgroundVariant.Dots" :gap="16" :size="1" />
       <Controls />
@@ -32,6 +34,10 @@ import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/c
 
 defineProps<{
   isDark: boolean;
+}>();
+
+const emit = defineEmits<{
+  'node-selected': [node: { id: string; label: string; type?: string } | null];
 }>();
 
 const { applyNodeChanges, applyEdgeChanges, addEdges } = useVueFlow();
@@ -72,6 +78,28 @@ function onEdgesChange(changes: EdgeChange[]) {
 function onConnect(connection: Connection) {
   addEdges([connection]);
 }
+
+function onNodeClick({ node }: { node: Node }) {
+  emit('node-selected', {
+    id:    node.id,
+    label: node.label as string,
+    type:  node.type,
+  });
+}
+
+function onPaneClick() {
+  emit('node-selected', null);
+}
+
+function updateNodeLabel(nodeId: string, label: string) {
+  const node = nodes.value.find(n => n.id === nodeId);
+
+  if (node) {
+    node.label = label;
+  }
+}
+
+defineExpose({ updateNodeLabel });
 </script>
 
 <style scoped>

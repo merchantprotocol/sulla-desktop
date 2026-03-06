@@ -110,7 +110,7 @@
         <!-- Right content: Editor area -->
         <div class="editor-panel" v-show="centerPaneVisible" :class="{ dark: isDark }">
           <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
-          <WorkflowEditor v-if="workflowMode" :is-dark="isDark" />
+          <WorkflowEditor v-if="workflowMode" ref="workflowEditorRef" :is-dark="isDark" @node-selected="onWorkflowNodeSelected" />
 
           <!-- Top editor area -->
           <div class="editor-top" v-show="!workflowMode">
@@ -335,9 +335,20 @@
           @mousedown="startResize('right', $event)"
         ></div>
 
-        <!-- Right pane: Chat -->
+        <!-- Right pane -->
         <div class="right-pane" v-show="rightPaneVisible" :class="{ dark: isDark }" :style="{ width: rightPaneWidth + 'px' }">
+          <!-- Workflow node properties panel -->
+          <WorkflowNodePanel
+            v-if="workflowMode && selectedWorkflowNode"
+            :is-dark="isDark"
+            :node="selectedWorkflowNode"
+            @close="onWorkflowNodePanelClose"
+            @update-label="onWorkflowNodeLabelUpdate"
+            @update-trigger="() => {}"
+          />
+          <!-- Chat (default) -->
           <EditorChat
+            v-else
             :is-dark="isDark"
             :messages="chatMessages"
             :query="chatQuery"
@@ -392,6 +403,7 @@ import AgentPane from './editor/AgentPane.vue';
 import AgentFormTab from './editor/AgentFormTab.vue';
 import WorkflowPane from './editor/WorkflowPane.vue';
 import WorkflowEditor from './editor/WorkflowEditor.vue';
+import WorkflowNodePanel from './editor/WorkflowNodePanel.vue';
 import WebViewTab from './editor/WebViewTab.vue';
 import TerminalTab from './editor/TerminalTab.vue';
 import EditorChat from './editor/EditorChat.vue';
@@ -470,6 +482,7 @@ export default defineComponent({
     AgentFormTab,
     WorkflowPane,
     WorkflowEditor,
+    WorkflowNodePanel,
     EditorChat,
     DiffEditor,
   },
@@ -611,6 +624,8 @@ export default defineComponent({
     const dockerMode = ref(false);
     const agentMode = ref(false);
     const workflowMode = ref(false);
+    const selectedWorkflowNode = ref<{ id: string; label: string; type?: string } | null>(null);
+    const workflowEditorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null);
     const searchQuery = ref('');
     const searchPath = ref('');
     const searchResults = ref<Array<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }>>([]);
@@ -677,7 +692,16 @@ export default defineComponent({
       localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
     }
 
+    // Saved pane states to restore when exiting workflow mode
+    let savedBottomPaneVisible = false;
+    let savedRightPaneVisible = false;
+
     function clearModes() {
+      // Restore panes if leaving workflow mode
+      if (workflowMode.value) {
+        bottomPaneVisible.value = savedBottomPaneVisible;
+        rightPaneVisible.value = savedRightPaneVisible;
+      }
       searchMode.value = false;
       gitMode.value = false;
       dockerMode.value = false;
@@ -753,12 +777,44 @@ export default defineComponent({
         leftPaneVisible.value = true;
         clearModes();
         workflowMode.value = true;
+        savedBottomPaneVisible = bottomPaneVisible.value;
+        savedRightPaneVisible = rightPaneVisible.value;
+        bottomPaneVisible.value = false;
+        rightPaneVisible.value = false;
       } else if (!workflowMode.value) {
         clearModes();
         workflowMode.value = true;
+        savedBottomPaneVisible = bottomPaneVisible.value;
+        savedRightPaneVisible = rightPaneVisible.value;
+        bottomPaneVisible.value = false;
+        rightPaneVisible.value = false;
       } else {
         leftPaneVisible.value = false;
+        workflowMode.value = false;
+        bottomPaneVisible.value = savedBottomPaneVisible;
+        rightPaneVisible.value = savedRightPaneVisible;
       }
+    }
+
+    function onWorkflowNodeSelected(node: { id: string; label: string; type?: string } | null) {
+      selectedWorkflowNode.value = node;
+      if (node) {
+        rightPaneVisible.value = true;
+      } else {
+        rightPaneVisible.value = false;
+      }
+    }
+
+    function onWorkflowNodeLabelUpdate(nodeId: string, label: string) {
+      workflowEditorRef.value?.updateNodeLabel(nodeId, label);
+      if (selectedWorkflowNode.value && selectedWorkflowNode.value.id === nodeId) {
+        selectedWorkflowNode.value = { ...selectedWorkflowNode.value, label };
+      }
+    }
+
+    function onWorkflowNodePanelClose() {
+      selectedWorkflowNode.value = null;
+      rightPaneVisible.value = false;
     }
 
     async function loadRootPath() {
@@ -1343,6 +1399,11 @@ export default defineComponent({
       dockerMode,
       agentMode,
       workflowMode,
+      selectedWorkflowNode,
+      workflowEditorRef,
+      onWorkflowNodeSelected,
+      onWorkflowNodeLabelUpdate,
+      onWorkflowNodePanelClose,
       toggleAgent,
       toggleWorkflow,
       openContainerPort,
