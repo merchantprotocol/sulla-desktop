@@ -122,7 +122,6 @@ export function initSullaEvents(): void {
     const resolved = assertInsideSullaHome(dirPath);
     const entries = fs.readdirSync(resolved, { withFileTypes: true });
     return entries
-      .filter(e => !e.name.startsWith('.'))
       .map((e) => {
         const fullPath = path.join(resolved, e.name);
         const isDir = e.isDirectory();
