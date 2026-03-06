@@ -109,8 +109,11 @@
 
         <!-- Right content: Editor area -->
         <div class="editor-panel" v-show="centerPaneVisible" :class="{ dark: isDark }">
+          <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
+          <WorkflowEditor v-if="workflowMode" :is-dark="isDark" />
+
           <!-- Top editor area -->
-          <div class="editor-top">
+          <div class="editor-top" v-show="!workflowMode">
             <!-- Tab bar (always visible) -->
             <div class="tab-bar" :class="{ dark: isDark, empty: openTabs.length === 0 }">
               <div class="tab-bar-tabs">
@@ -388,6 +391,7 @@ import DockerPane from './editor/DockerPane.vue';
 import AgentPane from './editor/AgentPane.vue';
 import AgentFormTab from './editor/AgentFormTab.vue';
 import WorkflowPane from './editor/WorkflowPane.vue';
+import WorkflowEditor from './editor/WorkflowEditor.vue';
 import WebViewTab from './editor/WebViewTab.vue';
 import TerminalTab from './editor/TerminalTab.vue';
 import EditorChat from './editor/EditorChat.vue';
@@ -465,6 +469,7 @@ export default defineComponent({
     AgentPane,
     AgentFormTab,
     WorkflowPane,
+    WorkflowEditor,
     EditorChat,
     DiffEditor,
   },
