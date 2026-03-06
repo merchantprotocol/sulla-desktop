@@ -109,6 +109,7 @@ const mainUrl = `${ webRoot }/agent.html`;
 const dockerDashboardUrl = `${ webRoot }/index.html`;
 const languageModelSettingsUrl = `${ webRoot }/lm-settings.html`;
 const modelTrainingUrl = `${ webRoot }/model-training.html`;
+const editorUrl = `${ webRoot }/editor.html`;
 
 console.log('[window/index] URLs configured:', { webRoot, mainUrl, dockerDashboardUrl });
 
@@ -301,6 +302,46 @@ export function openModelTraining() {
 
   window.on('closed', () => {
     delete windowMapping['model-training'];
+  });
+
+  app.dock?.show();
+
+  return window;
+}
+
+/**
+ * Open the Editor window; if it is already open, focus it.
+ */
+export function openEditor() {
+  console.log('[openEditor] Called.');
+
+  const fullSize = screen.getPrimaryDisplay().size;
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+
+  const defaultWidth = Math.trunc(fullSize.width * 0.9);
+  const defaultHeight = workArea.height;
+
+  const window = createWindow(
+    'editor',
+    editorUrl,
+    {
+      title:          'Sulla Desktop - Agent Workbench',
+      x:              0,
+      y:              0,
+      width:          defaultWidth,
+      height:         defaultHeight,
+      resizable:      true,
+      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      webPreferences: {
+        devTools:         !app.isPackaged,
+        nodeIntegration:  true,
+        contextIsolation: false,
+        webSecurity:      false,
+      },
+    });
+
+  window.on('closed', () => {
+    delete windowMapping['editor'];
   });
 
   app.dock?.show();

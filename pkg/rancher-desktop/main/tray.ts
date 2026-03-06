@@ -19,7 +19,7 @@ import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send } from '@pkg/window';
+import { openMain, send, openEditor } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -58,6 +58,15 @@ export class Tray {
       type:  'normal',
       click() {
         void Electron.shell.openExternal('http://127.0.0.1:30119');
+      },
+    },
+    {
+      id:    'editor',
+      label: 'Open Agent Workbench',
+      icon:  path.join(paths.resources, 'icons', 'book-open-16.png'),
+      type:  'normal',
+      click() {
+        openEditor();
       },
     },
     { type: 'separator' },

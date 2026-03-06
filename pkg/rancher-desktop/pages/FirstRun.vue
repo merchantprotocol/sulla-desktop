@@ -1,5 +1,5 @@
 <template>
-  <div class="h-screen overflow-hidden bg-white text-[#0d0d0d] dark:bg-slate-900 dark:text-neutral-50 font-sans" :class="{ dark: isDark }">
+  <div class="h-screen overflow-hidden font-sans page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="FirstRun" />
     <div class="flex h-screen flex-col">
 
@@ -160,6 +160,16 @@ provide('commitChanges', commitChanges);
 defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 </script>
 <style lang="scss" scoped>
+.page-root {
+  background: #ffffff;
+  color: #0d0d0d;
+}
+
+.page-root.dark {
+  background: #0f172a;
+  color: #fafafa;
+}
+
 .button-area {
   align-self: flex-end;
   margin-top: 1.5rem;

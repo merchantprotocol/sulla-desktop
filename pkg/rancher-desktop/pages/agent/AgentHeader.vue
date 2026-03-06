@@ -63,6 +63,44 @@
       </nav>
     </div>
     <div class="relative flex basis-0 justify-end gap-6 sm:gap-8">
+      <div v-if="route.path === '/Filesystem'" class="flex gap-2">
+        <button
+          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset"
+          type="button"
+          aria-label="Toggle left pane"
+          @click="$emit('toggle-left-pane')"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="9" y1="9" x2="15" y2="9"/>
+            <line x1="9" y1="12" x2="15" y2="12"/>
+            <line x1="9" y1="15" x2="13" y2="15"/>
+          </svg>
+        </button>
+        <button
+          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset"
+          type="button"
+          aria-label="Toggle center pane"
+          @click="$emit('toggle-center-pane')"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+        </button>
+        <button
+          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset"
+          type="button"
+          aria-label="Toggle right pane"
+          @click="$emit('toggle-right-pane')"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="9" cy="9" r="2"/>
+            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+          </svg>
+        </button>
+      </div>
       <div class="relative z-10" data-headlessui-state="">
         <label class="sr-only" for="headlessui-listbox-button-_r_a_" id="headlessui-label-_r_9_" data-headlessui-state="">Theme</label>
         <button
@@ -72,10 +110,10 @@
           @click="toggleTheme"
         >
           <svg v-if="isDark" aria-hidden="true" viewBox="0 0 16 16" class="h-4 w-4 fill-sky-400">
-            <path fill-rule="evenodd" clip-rule="evenodd" d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 0 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z" />
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 1 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z" />
           </svg>
           <svg v-else aria-hidden="true" viewBox="0 0 16 16" class="h-4 w-4 fill-sky-400">
-            <path fill-rule="evenodd" clip-rule="evenodd" d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 1 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1 1 1 0 0 1 1-1Z" />
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1 1 1 0 0 1 1-1Z" />
           </svg>
         </button>
       </div>
@@ -128,6 +166,14 @@
           Calendar
         </router-link>
         <router-link
+          to="/Filesystem"
+          class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
+          :class="route.path === '/Filesystem' ? 'text-[#0d0d0d] bg-slate-100 dark:text-white dark:bg-slate-800' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] hover:bg-slate-50 dark:text-white/60 dark:hover:text-white dark:hover:bg-slate-800'"
+          @click="toggleMobileMenu"
+        >
+          Filesystem
+        </router-link>
+        <router-link
           to="/Integrations"
           class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
           :class="route.path === '/Integrations' ? 'text-[#0d0d0d] bg-slate-100 dark:text-white dark:bg-slate-800' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] hover:bg-slate-50 dark:text-white/60 dark:hover:text-white dark:hover:bg-slate-800'"
@@ -168,6 +214,12 @@ const extensionService = getExtensionService();
 defineProps<{
   isDark: boolean;
   toggleTheme: () => void;
+}>();
+
+defineEmits<{
+  'toggle-left-pane': [];
+  'toggle-center-pane': [];
+  'toggle-right-pane': [];
 }>();
 
 const extensionMenuItems = computed(() => extensionService.getHeaderMenuItems());

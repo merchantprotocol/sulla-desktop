@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen overflow-y-auto bg-white text-[#0d0d0d] dark:bg-slate-900 dark:text-neutral-50 font-sans" :class="{ dark: isDark }">
+  <div class="min-h-screen overflow-y-auto font-sans page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentAutomations" />
     <div class="flex min-h-screen flex-col">
       <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
@@ -206,5 +206,13 @@ const openN8N = () => {
 </script>
 
 <style scoped>
-/* Custom styles for automation detail page */
+.page-root {
+  background: #ffffff;
+  color: #0d0d0d;
+}
+
+.page-root.dark {
+  background: #0f172a;
+  color: #fafafa;
+}
 </style>

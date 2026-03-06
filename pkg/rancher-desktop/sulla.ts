@@ -9,6 +9,7 @@ import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGrap
 import { SullaIntegrations } from './agent/integrations';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
+
 import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
@@ -236,6 +237,18 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     SullaSettingsModel.setFallbackFilePath(fallbackPath);
     SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
 
+    // Start the terminal WebSocket server early (PTY into Lima VM)
+    // Dynamic import to avoid bundling node-pty into the renderer process
+    // The server starts immediately but individual sessions check Lima status on connect
+    try {
+        const { getTerminalServer } = await import('@pkg/main/terminalServer');
+        const termServer = getTerminalServer();
+        await termServer.start();
+        console.log('[Background] Terminal WebSocket server started on ws://127.0.0.1:6108');
+    } catch (error) {
+        console.error('[Background] Failed to start terminal WebSocket server:', error);
+    }
+
     // Cache it in settings on first request
     ipcMainProxy.handle('get-user-data-path', async () => {
         return app.getPath('userData');
@@ -335,5 +348,12 @@ export async function sullaEnd(event: any) {
         chatServer.stop();
     } catch (error) {
         console.error('[Background] Error stopping chat completions server:', error);
+    }
+
+    try {
+        const { getTerminalServer } = await import('@pkg/main/terminalServer');
+        getTerminalServer().stop();
+    } catch (error) {
+        console.error('[Background] Error stopping terminal server:', error);
     }
 };

@@ -5,7 +5,7 @@ import { AbortService } from './AbortService';
 import { GraphRegistry, nextThreadId, nextMessageId } from './GraphRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
-const FRONTEND_CHANNEL_ID = 'chat-controller';
+const DEFAULT_CHANNEL_ID = 'chat-controller';
 
 export type FrontendGraphWebSocketDeps = {
   currentThreadId: Ref<string | null>;
@@ -13,10 +13,12 @@ export type FrontendGraphWebSocketDeps = {
 
 export class FrontendGraphWebSocketService {
   private readonly wsService = getWebSocketClientService();
+  private readonly channelId: string;
   private unsubscribe: (() => void) | null = null;
   private activeAbort: AbortService | null = null;
 
-  constructor(private readonly deps: FrontendGraphWebSocketDeps) {
+  constructor(private readonly deps: FrontendGraphWebSocketDeps, channelId?: string) {
+    this.channelId = channelId || DEFAULT_CHANNEL_ID;
     this.initialize();
   }
 
@@ -36,8 +38,8 @@ export class FrontendGraphWebSocketService {
   }
 
   private initialize(): void {
-    this.wsService.connect(FRONTEND_CHANNEL_ID);
-    this.unsubscribe = this.wsService.onMessage(FRONTEND_CHANNEL_ID, (msg) => {
+    this.wsService.connect(this.channelId);
+    this.unsubscribe = this.wsService.onMessage(this.channelId, (msg) => {
       this.handleWebSocketMessage(msg);
     });
 
@@ -49,22 +51,22 @@ export class FrontendGraphWebSocketService {
     const { getActiveAgentsRegistry } = await import('./ActiveAgentsRegistry');
     const registry = getActiveAgentsRegistry();
     await registry.register({
-      agentId: FRONTEND_CHANNEL_ID,
-      name: 'Sulla',
-      role: 'Frontend chat agent',
-      channel: FRONTEND_CHANNEL_ID,
-      type: 'frontend',
-      status: 'running',
-      startedAt: Date.now(),
+      agentId:      this.channelId,
+      name:         this.channelId === DEFAULT_CHANNEL_ID ? 'Sulla' : `Sulla (${this.channelId})`,
+      role:         'Frontend chat agent',
+      channel:      this.channelId,
+      type:         'frontend',
+      status:       'running',
+      startedAt:    Date.now(),
       lastActiveAt: Date.now(),
-      description: 'Frontend chat agent — handles direct human conversations',
+      description:  `Frontend chat agent on channel ${this.channelId}`,
     });
   }
 
   private async deregisterAgent(): Promise<void> {
     const { getActiveAgentsRegistry } = await import('./ActiveAgentsRegistry');
     const registry = getActiveAgentsRegistry();
-    await registry.deregister(FRONTEND_CHANNEL_ID);
+    await registry.deregister(this.channelId);
   }
 
   private async handleWebSocketMessage(msg: WebSocketMessage): Promise<void> {
@@ -91,7 +93,7 @@ export class FrontendGraphWebSocketService {
     // Scheduler ack
     const metadata = data?.metadata;
     if (metadata?.origin === 'scheduler' && typeof metadata?.eventId === 'number') {
-      this.wsService.send(FRONTEND_CHANNEL_ID, {
+      this.wsService.send(this.channelId, {
         type: 'scheduler_ack',
         data: { eventId: metadata.eventId },
         timestamp: Date.now(),
@@ -102,7 +104,7 @@ export class FrontendGraphWebSocketService {
   }
 
   private async processUserInput(userText: string, threadIdFromMsg?: string): Promise<void> {
-    const channelId = FRONTEND_CHANNEL_ID;
+    const channelId = this.channelId;
     const threadId = threadIdFromMsg || nextThreadId();
     
     // Get or create persistent AgentGraph for this thread - do this outside try/catch
@@ -231,7 +233,7 @@ export class FrontendGraphWebSocketService {
   }
 
   private emitAssistantMessage(content: string): void {
-    this.wsService.send(FRONTEND_CHANNEL_ID, {
+    this.wsService.send(this.channelId, {
       type: 'assistant_message',
       data: { role: 'assistant', content },
       timestamp: Date.now(),
@@ -239,7 +241,7 @@ export class FrontendGraphWebSocketService {
   }
 
   private emitSystemMessage(content: string): void {
-    this.wsService.send(FRONTEND_CHANNEL_ID, {
+    this.wsService.send(this.channelId, {
       type: 'system_message',
       data: content,
       timestamp: Date.now(),

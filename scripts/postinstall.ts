@@ -255,6 +255,20 @@ const keepScriptAlive = setTimeout(() => { }, 24 * 3600 * 1000);
     await runScripts();
     await simpleSpawn('node',
       ['node_modules/electron-builder/out/cli/cli.js', 'install-app-deps']);
+
+    // node-pty prebuilds ship without execute permission on spawn-helper,
+    // which causes posix_spawn to fail on macOS/Linux at runtime.
+    const ptyPrebuildsDir = path.join(process.cwd(), 'node_modules', 'node-pty', 'prebuilds');
+    if (fs.existsSync(ptyPrebuildsDir)) {
+      for (const dir of fs.readdirSync(ptyPrebuildsDir)) {
+        const helper = path.join(ptyPrebuildsDir, dir, 'spawn-helper');
+        if (fs.existsSync(helper)) {
+          fs.chmodSync(helper, 0o755);
+          console.log(`Fixed execute permission: ${helper}`);
+        }
+      }
+    }
+
     exitCode = 0;
   } catch (e: any) {
     console.error('POSTINSTALL ERROR: ', e);

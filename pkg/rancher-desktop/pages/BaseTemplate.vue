@@ -4,7 +4,7 @@ entry/index.ts dynamically determines the layout based on the current route's co
 
 -->
 <template>
-  <div class="h-screen overflow-hidden bg-white text-[#0d0d0d] dark:bg-slate-900 dark:text-neutral-50 font-sans" :class="{ dark: isDark }">
+  <div class="h-screen overflow-hidden font-sans page-root" :class="{ dark: isDark }">
     <div class="flex h-screen flex-col">
 
       <SimpleHeader :is-dark="isDark" :toggle-theme="toggleTheme"/>
@@ -71,5 +71,17 @@ const toggleTheme = () => {
 <style lang="scss">
 html {
   height: initial;
+}
+</style>
+
+<style scoped>
+.page-root {
+  background: #ffffff;
+  color: #0d0d0d;
+}
+
+.page-root.dark {
+  background: #0f172a;
+  color: #fafafa;
 }
 </style>

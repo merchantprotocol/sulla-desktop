@@ -136,6 +136,46 @@ export interface IpcMainInvokeEvents {
   'app-quit':                  () => void;
   // #endregion
 
+  // #region Filesystem
+  'filesystem-get-root':  () => string;
+  'filesystem-get-git-changes': (path: string) => Promise<{status: string, file: string}[]>;
+
+  // Git source control
+  'git-discover-repos': (dirPath: string) => Array<{ root: string; name: string }>;
+  'git-branch':       (dirPath: string) => string;
+  'git-list-branches': (dirPath: string) => Array<{ name: string; current: boolean; remote: boolean }>;
+  'git-checkout-branch': (dirPath: string, branchName: string) => { success: boolean; error: string };
+  'git-create-branch': (dirPath: string, branchName: string) => { success: boolean; error: string };
+  'git-status-full':  (dirPath: string) => Array<{ index: string; worktree: string; file: string }>;
+  'git-stage':        (dirPath: string, files: string[]) => boolean;
+  'git-unstage':      (dirPath: string, files: string[]) => boolean;
+  'git-diff':         (dirPath: string, file: string, staged: boolean) => string;
+  'git-show-head':    (dirPath: string, file: string) => string;
+  'git-show-staged':  (dirPath: string, file: string) => string;
+  'git-commit':       (dirPath: string, message: string) => boolean;
+  'git-pull':         (dirPath: string) => { success: boolean; output: string };
+  'git-push':         (dirPath: string) => { success: boolean; output: string };
+  'git-fetch':        (dirPath: string) => { success: boolean; output: string };
+  'git-stash':        (dirPath: string) => { success: boolean; output: string };
+  'git-stash-pop':    (dirPath: string) => { success: boolean; output: string };
+  'git-discard-all':  (dirPath: string) => { success: boolean; output: string };
+  'git-add-gitignore': (repoRoot: string, pattern: string) => { success: boolean; output: string };
+
+  'filesystem-read-dir':  (dirPath: string) => Array<{ name: string; path: string; isDir: boolean; size: number; ext: string }>;
+  'filesystem-read-file':  (filePath: string) => string;
+  'filesystem-write-file': (filePath: string, content: string) => void;
+  'filesystem-rename':     (oldPath: string, newName: string) => string;
+  'filesystem-delete':     (targetPath: string) => void;
+  'filesystem-create-file':(dirPath: string, fileName: string) => string;
+  'filesystem-create-dir': (dirPath: string, dirName: string) => string;
+  'filesystem-copy':       (srcPath: string, destDir: string) => string;
+  'filesystem-move':       (srcPath: string, destDir: string) => string;
+  'filesystem-reveal':     (targetPath: string) => void;
+  'filesystem-open-external': (targetPath: string) => void;
+  'filesystem-open-in-editor': (targetPath: string, line?: number) => void;
+  'filesystem-upload':       (destDir: string, fileName: string, base64Data: string) => string;
+  // #endregion
+
   // #region Training
   'training-install-status': () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string };
   'training-install':        () => { logFilename: string };
@@ -150,6 +190,18 @@ export interface IpcMainInvokeEvents {
   'training-docs-config-load':  () => { folders: string[]; files: string[]; fileTypes: string[] };
   'training-docs-list-dir':     (dirPath: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }>;
   'training-docs-config-save':  (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
+  // #endregion
+
+  // #region QMD Search
+  'qmd-index':  (dirPath: string, glob?: string) => { indexed: number; updated: number; removed: number };
+  'qmd-search': (query: string, dirPath: string) => Array<{
+    path: string;
+    name: string;
+    line: number;
+    preview: string;
+    score: number;
+    source: 'fts' | 'filename';
+  }>;
   // #endregion
 
   // #region Local Models
@@ -176,6 +228,10 @@ export interface IpcMainInvokeEvents {
 
   // #region Host
   'host/isArm': () => boolean;
+  // #endregion
+
+  // #region Docker
+  'docker-list-containers': () => Array<{ id: string; name: string; image: string; status: string; state: string; ports: string }>;
   // #endregion
 
   // #region Snapshots

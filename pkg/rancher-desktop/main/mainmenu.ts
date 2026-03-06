@@ -7,7 +7,7 @@ import { State } from '@pkg/backend/k8s';
 import { Settings } from '@pkg/config/settings';
 import mainEvents from '@pkg/main/mainEvents';
 import paths from '@pkg/utils/paths';
-import { openDockerDashboard, openLanguageModelSettings, openModelTraining, openMain } from '@pkg/window';
+import { openDockerDashboard, openLanguageModelSettings, openModelTraining, openMain, openEditor } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -247,6 +247,11 @@ function getMacApplicationMenu(): MenuItem[] {
         { role: 'about' },
         { type: 'separator' },
         ...getPreferencesMenuItem(),
+        {
+          label: 'Open Agent Workbench',
+          click: openEditor,
+        },
+        { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
         { role: 'hide' },
@@ -260,9 +265,14 @@ function getMacApplicationMenu(): MenuItem[] {
       label:   'File',
       submenu: [
         {
-          label:       'Agent',
+          label:       'Open Sulla',
           accelerator: 'CmdOrCtrl+Shift+A',
+          icon:        path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
           click:       openMain,
+        },
+        {
+          label: 'Open Agent Workbench',
+          click: openEditor,
         },
         { type: 'separator' },
         { role: 'close' },
@@ -292,9 +302,14 @@ function getWindowsApplicationMenu(): MenuItem[] {
       label:   '&File',
       submenu: [
         {
-          label:       '&Agent',
+          label:       '&Open Sulla',
           accelerator: 'CmdOrCtrl+Shift+A',
+          icon:        path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
           click:       openMain,
+        },
+        {
+          label: '&Open Agent Workbench',
+          click: openEditor,
         },
         { type: 'separator' },
         ...getPreferencesMenuItem(),

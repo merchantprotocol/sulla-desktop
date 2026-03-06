@@ -67,10 +67,470 @@ function isTrainingLocked(): boolean {
   }
 }
 
+/** Resolve the absolute sulla home directory */
+function getSullaHomeDir(): string {
+  const os = require('os');
+  const envPath = String(process.env.SULLA_HOME_DIR || '').trim();
+  if (envPath && path.isAbsolute(envPath)) return envPath;
+  if (envPath) return path.resolve(envPath);
+  return path.join(os.homedir(), 'sulla');
+}
+
+/** Ensure a path is within the sulla home directory (sandbox) */
+function assertInsideSullaHome(targetPath: string): string {
+  const root = getSullaHomeDir();
+  const resolved = path.resolve(targetPath);
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+    throw new Error(`Path is outside sulla home: ${resolved}`);
+  }
+  return resolved;
+}
+
 /**
  * Initialize Sulla-specific IPC handlers.
  */
 export function initSullaEvents(): void {
+
+  // ─────────────────────────────────────────────────────────────
+  // Filesystem handlers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('filesystem-get-root', async() => {
+    const root = getSullaHomeDir();
+    fs.mkdirSync(root, { recursive: true });
+    return root;
+  });
+
+  ipcMainProxy.handle('filesystem-get-git-changes', async (event, path) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git status --porcelain', { cwd: path, encoding: 'utf8' });
+      const lines = output.split('\n').filter((line: string) => line.trim());
+      const changes = lines.map((line: string) => {
+        const status = line.slice(0, 2).trim();
+        const file = line.slice(3);
+        return { status, file };
+      });
+      return changes;
+    } catch (error) {
+      console.error('Error getting git changes:', error);
+      return [];
+    }
+  });
+
+  // ─── Git source control handlers ─────────────────────────────────
+
+  /**
+   * Discover git repositories at `dirPath` and up to 3 levels of subdirectories.
+   * Returns an array of { root, name } for each unique repo found.
+   */
+  ipcMainProxy.handle('git-discover-repos', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    const repoRoots = new Set<string>();
+    const results: Array<{ root: string; name: string }> = [];
+
+    function probe(dir: string): string | null {
+      try {
+        return execSync('git rev-parse --show-toplevel', { cwd: dir, encoding: 'utf8', stdio: 'pipe' }).trim();
+      } catch {
+        return null;
+      }
+    }
+
+    function scan(dir: string, depth: number) {
+      // Check if this directory is inside a git repo
+      const root = probe(dir);
+      if (root && !repoRoots.has(root)) {
+        repoRoots.add(root);
+        results.push({ root, name: path.basename(root) });
+      }
+
+      // If we already found a repo at this dir, don't scan its children
+      // (they'd be the same repo). Only recurse if no repo found here.
+      if (root || depth >= 3) return;
+
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+          scan(path.join(dir, entry.name), depth + 1);
+        }
+      } catch { /* permission errors, etc. */ }
+    }
+
+    scan(dirPath, 0);
+    return results;
+  });
+
+  ipcMainProxy.handle('git-branch', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      return execSync('git rev-parse --abbrev-ref HEAD', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' }).trim();
+    } catch {
+      return '';
+    }
+  });
+
+  ipcMainProxy.handle('git-list-branches', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git branch -a --no-color', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      const branches: Array<{ name: string; current: boolean; remote: boolean }> = [];
+      const seen = new Set<string>();
+      for (const line of output.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.includes('->')) continue;
+        const current = line.startsWith('*');
+        const remote = trimmed.startsWith('remotes/');
+        const name = trimmed.replace(/^\*\s*/, '').replace(/^remotes\/origin\//, '');
+        if (seen.has(name)) continue;
+        seen.add(name);
+        branches.push({ name, current, remote });
+      }
+      return branches;
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMainProxy.handle('git-checkout-branch', async (_event: unknown, dirPath: string, branchName: string) => {
+    const { execSync } = require('child_process');
+    try {
+      execSync(`git checkout "${branchName}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, error: '' };
+    } catch (err: any) {
+      return { success: false, error: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-create-branch', async (_event: unknown, dirPath: string, branchName: string) => {
+    const { execSync } = require('child_process');
+    try {
+      execSync(`git checkout -b "${branchName}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, error: '' };
+    } catch (err: any) {
+      return { success: false, error: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-status-full', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git status --porcelain', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      const lines = output.split('\n').filter((line: string) => line.trim());
+      return lines.map((line: string) => {
+        const index = line[0];
+        const worktree = line[1];
+        const file = line.slice(3);
+        return { index, worktree, file };
+      });
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMainProxy.handle('git-stage', async (_event: unknown, dirPath: string, files: string[]) => {
+    const { execSync } = require('child_process');
+    try {
+      const fileArgs = files.map((f: string) => `"${f}"`).join(' ');
+      execSync(`git add ${fileArgs}`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return true;
+    } catch (err: any) {
+      console.error('[git-stage] Error:', err.message);
+      return false;
+    }
+  });
+
+  ipcMainProxy.handle('git-unstage', async (_event: unknown, dirPath: string, files: string[]) => {
+    const { execSync } = require('child_process');
+    try {
+      const fileArgs = files.map((f: string) => `"${f}"`).join(' ');
+      execSync(`git reset HEAD ${fileArgs}`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return true;
+    } catch (err: any) {
+      console.error('[git-unstage] Error:', err.message);
+      return false;
+    }
+  });
+
+  ipcMainProxy.handle('git-diff', async (_event: unknown, dirPath: string, file: string, staged: boolean) => {
+    const { execSync } = require('child_process');
+    try {
+      const cmd = staged ? `git diff --cached "${file}"` : `git diff "${file}"`;
+      return execSync(cmd, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+    } catch {
+      return '';
+    }
+  });
+
+  // Get the HEAD (committed) version of a file for diff comparison
+  ipcMainProxy.handle('git-show-head', async (_event: unknown, dirPath: string, file: string) => {
+    const { execSync } = require('child_process');
+    try {
+      return execSync(`git show HEAD:"${file}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+    } catch {
+      return '';
+    }
+  });
+
+  // Get the staged version of a file for diff comparison
+  ipcMainProxy.handle('git-show-staged', async (_event: unknown, dirPath: string, file: string) => {
+    const { execSync } = require('child_process');
+    try {
+      return execSync(`git show :"${file}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+    } catch {
+      return '';
+    }
+  });
+
+  ipcMainProxy.handle('git-commit', async (_event: unknown, dirPath: string, message: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const escaped = message.replace(/"/g, '\\"');
+      execSync(`git commit -m "${escaped}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return true;
+    } catch (err: any) {
+      console.error('[git-commit] Error:', err.message);
+      return false;
+    }
+  });
+
+  ipcMainProxy.handle('git-pull', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git pull', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
+      return { success: true, output: output.trim() };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-push', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git push', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
+      return { success: true, output: (output || '').trim() };
+    } catch (err: any) {
+      // git push writes to stderr even on success
+      const stderr = err.stderr || '';
+      if (err.status === 0 || stderr.includes('->')) {
+        return { success: true, output: stderr.trim() };
+      }
+      return { success: false, output: stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-fetch', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      execSync('git fetch --all', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
+      return { success: true, output: 'Fetched all remotes.' };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-stash', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git stash', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, output: output.trim() };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-stash-pop', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git stash pop', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, output: output.trim() };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-discard-all', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      execSync('git checkout -- .', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      execSync('git clean -fd', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, output: 'Discarded all changes.' };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-add-gitignore', async (_event: unknown, repoRoot: string, pattern: string) => {
+    try {
+      const gitignorePath = path.join(repoRoot, '.gitignore');
+      let content = '';
+      try { content = fs.readFileSync(gitignorePath, 'utf8'); } catch { /* file may not exist */ }
+      // Check if pattern already exists
+      const lines = content.split('\n');
+      if (lines.some(l => l.trim() === pattern.trim())) {
+        return { success: true, output: 'Pattern already in .gitignore' };
+      }
+      // Append pattern
+      const newContent = content.endsWith('\n') || content === '' ? content + pattern + '\n' : content + '\n' + pattern + '\n';
+      fs.writeFileSync(gitignorePath, newContent, 'utf8');
+      return { success: true, output: `Added "${pattern}" to .gitignore` };
+    } catch (err: any) {
+      return { success: false, output: err.message };
+    }
+  });
+
+  ipcMainProxy.handle('filesystem-read-dir', async(_event: unknown, dirPath: string) => {
+    const resolved = assertInsideSullaHome(dirPath);
+    const entries = fs.readdirSync(resolved, { withFileTypes: true });
+    return entries
+      .map((e) => {
+        const fullPath = path.join(resolved, e.name);
+        const isDir = e.isDirectory();
+        let size = 0;
+        try {
+          if (!isDir) size = fs.statSync(fullPath).size;
+        } catch { /* ignore */ }
+        return {
+          name:    e.name,
+          path:    fullPath,
+          isDir,
+          size,
+          ext:     isDir ? '' : path.extname(e.name).toLowerCase(),
+        };
+      })
+      .sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+  });
+
+  ipcMainProxy.handle('filesystem-read-file', async(_event: unknown, filePath: string) => {
+    console.log('filesystem-read-file called with path:', filePath);
+    const resolved = assertInsideSullaHome(filePath);
+    console.log('Resolved path:', resolved);
+    const stat = fs.statSync(resolved);
+    if (stat.size > 5 * 1024 * 1024) {
+      throw new Error('File too large to open (>5MB)');
+    }
+    const content = fs.readFileSync(resolved, 'utf-8');
+    console.log('File read successfully, size:', content.length);
+    return content;
+  });
+
+  ipcMainProxy.handle('filesystem-write-file', async(_event: unknown, filePath: string, content: string) => {
+    const resolved = assertInsideSullaHome(filePath);
+    fs.writeFileSync(resolved, content, 'utf-8');
+  });
+
+  ipcMainProxy.handle('filesystem-rename', async(_event: unknown, oldPath: string, newName: string) => {
+    const resolved = assertInsideSullaHome(oldPath);
+    const newPath = path.join(path.dirname(resolved), newName);
+    assertInsideSullaHome(newPath);
+    fs.renameSync(resolved, newPath);
+    return newPath;
+  });
+
+  ipcMainProxy.handle('filesystem-delete', async(_event: unknown, targetPath: string) => {
+    const resolved = assertInsideSullaHome(targetPath);
+    fs.rmSync(resolved, { recursive: true, force: true });
+  });
+
+  ipcMainProxy.handle('filesystem-create-file', async(_event: unknown, dirPath: string, fileName: string) => {
+    const dir = assertInsideSullaHome(dirPath);
+    const filePath = path.join(dir, fileName);
+    assertInsideSullaHome(filePath);
+    if (fs.existsSync(filePath)) throw new Error(`File already exists: ${fileName}`);
+    fs.writeFileSync(filePath, '', 'utf-8');
+    return filePath;
+  });
+
+  ipcMainProxy.handle('filesystem-create-dir', async(_event: unknown, dirPath: string, dirName: string) => {
+    const dir = assertInsideSullaHome(dirPath);
+    const newDir = path.join(dir, dirName);
+    assertInsideSullaHome(newDir);
+    if (fs.existsSync(newDir)) throw new Error(`Directory already exists: ${dirName}`);
+    fs.mkdirSync(newDir, { recursive: true });
+    return newDir;
+  });
+
+  ipcMainProxy.handle('filesystem-copy', async(_event: unknown, srcPath: string, destDir: string) => {
+    const resolvedSrc = assertInsideSullaHome(srcPath);
+    const resolvedDest = assertInsideSullaHome(destDir);
+    const baseName = path.basename(resolvedSrc);
+    let target = path.join(resolvedDest, baseName);
+    assertInsideSullaHome(target);
+
+    // If target exists, add a suffix
+    if (fs.existsSync(target)) {
+      const ext = path.extname(baseName);
+      const stem = baseName.slice(0, baseName.length - ext.length);
+      let i = 1;
+      while (fs.existsSync(target)) {
+        target = path.join(resolvedDest, `${stem} (${i})${ext}`);
+        i++;
+      }
+    }
+
+    fs.cpSync(resolvedSrc, target, { recursive: true });
+    return target;
+  });
+
+  ipcMainProxy.handle('filesystem-move', async(_event: unknown, srcPath: string, destDir: string) => {
+    const resolvedSrc = assertInsideSullaHome(srcPath);
+    const resolvedDest = assertInsideSullaHome(destDir);
+    const baseName = path.basename(resolvedSrc);
+    const target = path.join(resolvedDest, baseName);
+    assertInsideSullaHome(target);
+    if (resolvedSrc === target) return target;
+    if (fs.existsSync(target)) throw new Error(`"${baseName}" already exists in destination`);
+    fs.renameSync(resolvedSrc, target);
+    return target;
+  });
+
+  ipcMainProxy.handle('filesystem-reveal', async(_event: unknown, targetPath: string) => {
+    const resolved = assertInsideSullaHome(targetPath);
+    const { shell } = require('electron');
+    shell.showItemInFolder(resolved);
+  });
+
+  ipcMainProxy.handle('filesystem-open-external', async(_event: unknown, targetPath: string) => {
+    const resolved = assertInsideSullaHome(targetPath);
+    const { shell } = require('electron');
+    await shell.openPath(resolved);
+  });
+
+  ipcMainProxy.handle('filesystem-open-in-editor', async(_event: unknown, targetPath: string, line?: number) => {
+    const { spawn } = require('child_process');
+    const gotoArg = line ? `${ targetPath }:${ line }` : targetPath;
+
+    spawn('code', ['--goto', gotoArg], {
+      detached: true,
+      stdio:    'ignore',
+    }).unref();
+  });
+
+  ipcMainProxy.handle('filesystem-upload', async(_event: unknown, destDir: string, fileName: string, base64Data: string) => {
+    const dir = assertInsideSullaHome(destDir);
+    let target = path.join(dir, fileName);
+    assertInsideSullaHome(target);
+
+    // Avoid overwriting existing files
+    if (fs.existsSync(target)) {
+      const ext = path.extname(fileName);
+      const stem = fileName.slice(0, fileName.length - ext.length);
+      let i = 1;
+      while (fs.existsSync(target)) {
+        target = path.join(dir, `${stem} (${i})${ext}`);
+        i++;
+      }
+    }
+
+    const buffer = Buffer.from(base64Data, 'base64');
+    fs.writeFileSync(target, buffer);
+    return target;
+  });
 
   /**
    * Run training manually. Spawns the training pipeline as a child process,
@@ -600,6 +1060,56 @@ export function initSullaEvents(): void {
     runInstall().catch(() => { isTrainingInstalling = false; });
 
     return { logFilename };
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // QMD Search handlers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('qmd-index', async(_event: unknown, dirPath: string, glob?: string) => {
+    const { indexDirectory } = require('@pkg/main/qmdService');
+
+    return await indexDirectory(dirPath, glob);
+  });
+
+  ipcMainProxy.handle('qmd-search', async(_event: unknown, query: string, dirPath: string) => {
+    const { search } = require('@pkg/main/qmdService');
+
+    return await search(query, dirPath);
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Docker handlers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('docker-list-containers', async () => {
+    const { execSync } = require('child_process');
+
+    try {
+      const raw = execSync('docker ps -a --format "{{json .}}"', {
+        encoding: 'utf8',
+        timeout:  15000,
+      }).trim();
+
+      if (!raw) return [];
+
+      return raw.split('\n').filter((l: string) => l.trim()).map((line: string) => {
+        const c = JSON.parse(line);
+
+        return {
+          id:     c.ID,
+          name:   c.Names,
+          image:  c.Image,
+          status: c.Status,
+          state:  c.State,
+          ports:  c.Ports,
+        };
+      });
+    } catch (err: any) {
+      console.error('[Sulla] docker-list-containers failed:', err.message);
+
+      return [];
+    }
   });
 
   console.log('[Sulla] IPC event handlers initialized');

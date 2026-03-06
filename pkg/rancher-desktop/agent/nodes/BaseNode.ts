@@ -384,21 +384,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             AwarenessMessage = AwarenessMessage.replaceAll('{{timeZone}}', timeZone);
             AwarenessMessage = AwarenessMessage.replaceAll('{{skills_dir}}', skillsDir);
 
-            // Build skills index from native + dynamic registries
+            // Build skills index from filesystem registry
             let skillsIndex = '_No skills registered yet._';
             try {
                 const indexLines: string[] = [];
 
-                // Native skills
-                try {
-                    const { nativeSkillRegistry } = await import('../skills/native/index');
-                    const nativeSkills = nativeSkillRegistry.getAll();
-                    for (const ns of nativeSkills) {
-                        indexLines.push(`- **${ns.name}** (native): ${ns.description}`);
-                    }
-                } catch { /* native registry not available */ }
-
-                // Dynamic / filesystem skills
+                // Filesystem skills
                 const { skillsRegistry } = await import('../database/registry/SkillsRegistry');
                 const summaries = await skillsRegistry.getSkillSummaries();
                 if (summaries && summaries.length > 0) {

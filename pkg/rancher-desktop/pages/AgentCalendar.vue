@@ -1,7 +1,7 @@
 <template>
-  <div class="min-h-screen overflow-y-auto bg-white text-[#0d0d0d] dark:bg-slate-900 dark:text-neutral-50 font-sans" :class="{ dark: isDark }">
+  <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentCalendar" />
-    <div class="flex min-h-screen flex-col">
+    <div class="flex flex-1 min-h-0 flex-col">
       <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
 
       <div class="flex items-center justify-end px-4 py-3">
@@ -651,6 +651,26 @@ const deleteEvent = async () => {
 };
 </script>
 
-<style>
-/* unchanged */
+<style scoped>
+.page-root {
+  background: #ffffff;
+  color: #0d0d0d;
+}
+
+.page-root.dark {
+  background: #0f172a;
+  color: #fafafa;
+}
+
+.page-root :deep(.sx__calendar-wrapper) {
+  background: #ffffff;
+}
+
+.page-root.dark :deep(.sx__calendar-wrapper),
+.page-root.dark :deep(.sx__view-container),
+.page-root.dark :deep(.sx__month-grid-wrapper),
+.page-root.dark :deep(.sx__week-grid),
+.page-root.dark :deep(.sx__day-grid) {
+  background: #0f172a;
+}
 </style>

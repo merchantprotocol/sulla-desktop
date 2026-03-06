@@ -70,6 +70,7 @@ export default {
       'clone-deep':             'commonjs clone-deep',
       '@composio/core':         'commonjs @composio/core',
       '@composio/client':       'commonjs @composio/client',
+      '@reflink/reflink':       'commonjs @reflink/reflink',
     }
   },
   
@@ -116,6 +117,11 @@ export default {
       entry:    path.join(import.meta.dirname, 'entry', 'model-training.ts'),
       template: path.join(import.meta.dirname, 'public', 'model-training.html'),
       filename: 'model-training.html',
+    },
+    'editor': {
+      entry:    path.join(import.meta.dirname, 'entry', 'editor.ts'),
+      template: path.join(import.meta.dirname, 'public', 'editor.html'),
+      filename: 'editor.html',
     },
   },
 };

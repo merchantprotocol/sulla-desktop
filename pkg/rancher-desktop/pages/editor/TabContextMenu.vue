@@ -1,0 +1,237 @@
+<template>
+  <Teleport to="body">
+    <div
+      v-if="visible"
+      ref="menuRef"
+      class="tab-context-menu"
+      :class="{ dark: isDark }"
+      :style="{ top: y + 'px', left: x + 'px' }"
+      @contextmenu.prevent
+    >
+      <!-- View in Finder -->
+      <button class="context-menu-item" @click="handleViewInFinder">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+        <span>View in Finder</span>
+      </button>
+
+      <!-- Open with... -->
+      <div class="context-menu-sep"></div>
+      <div class="context-menu-subheader">Open with…</div>
+      <button class="context-menu-item" @click="handleOpenWithEditor('code')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+        <span>Code Editor</span>
+      </button>
+      <button
+        v-if="tab && MARKDOWN_EXTS.has(tab.ext.toLowerCase())"
+        class="context-menu-item"
+        @click="handleOpenWithEditor('markdown')"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 11H3v2h6v-2zm0-4H3v2h6V7zm0 8H3v2h6v-2zm12-8h-6v2h6V7zm0 4h-6v2h6v-2zm0 4h-6v2h6v-2z"/>
+        </svg>
+        <span>Markdown Editor</span>
+      </button>
+      <button
+        v-if="tab && MARKDOWN_EXTS.has(tab.ext.toLowerCase())"
+        class="context-menu-item"
+        @click="handleOpenWithEditor('preview')"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+        <span>Preview</span>
+      </button>
+
+      <!-- Tab actions -->
+      <div class="context-menu-sep"></div>
+      <button class="context-menu-item" @click="handleSaveTab">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+          <polyline points="17,21 17,13 7,13 7,21"/>
+          <polyline points="7,3 7,8 15,8"/>
+        </svg>
+        <span>Save</span>
+      </button>
+      <button class="context-menu-item" @click="handleCloseTab">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+        <span>Close Tab</span>
+      </button>
+    </div>
+  </Teleport>
+</template>
+
+<script lang="ts">
+import { defineComponent, ref, watch } from 'vue';
+
+const MARKDOWN_EXTS = new Set(['.md', '.markdown', '.mdx']);
+
+export interface TabState {
+  path: string;
+  name: string;
+  ext: string;
+  content: string;
+  loading: boolean;
+  error: string;
+  dirty: boolean;
+  editorType?: 'code' | 'markdown' | 'preview' | 'webview' | 'terminal' | 'diff';
+  originalContent?: string;
+}
+
+export default defineComponent({
+  name: 'TabContextMenu',
+  
+  props: {
+    visible: {
+      type: Boolean,
+      default: false
+    },
+    x: {
+      type: Number,
+      default: 0
+    },
+    y: {
+      type: Number,
+      default: 0
+    },
+    tab: {
+      type: Object as () => TabState | null,
+      default: null
+    },
+    isDark: {
+      type: Boolean,
+      default: false
+    }
+  },
+
+  emits: [
+    'view-in-finder',
+    'open-with-editor',
+    'save-tab',
+    'close-tab'
+  ],
+
+  setup(props, { emit }) {
+    const menuRef = ref<HTMLElement>();
+
+    const handleViewInFinder = () => {
+      if (props.tab) {
+        emit('view-in-finder', props.tab);
+      }
+    };
+
+    const handleOpenWithEditor = (editorType: 'code' | 'markdown' | 'preview') => {
+      if (props.tab) {
+        emit('open-with-editor', props.tab, editorType);
+      }
+    };
+
+    const handleSaveTab = () => {
+      if (props.tab) {
+        emit('save-tab', props.tab);
+      }
+    };
+
+    const handleCloseTab = () => {
+      if (props.tab) {
+        emit('close-tab', props.tab);
+      }
+    };
+
+    return {
+      menuRef,
+      MARKDOWN_EXTS,
+      handleViewInFinder,
+      handleOpenWithEditor,
+      handleSaveTab,
+      handleCloseTab
+    };
+  }
+});
+</script>
+
+<style scoped>
+.tab-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 180px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+}
+
+.tab-context-menu.dark {
+  background: #2d2d2d;
+  border-color: #404040;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.tab-context-menu .context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  color: #333;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1;
+}
+
+.tab-context-menu .context-menu-item:hover {
+  background: #f1f5f9;
+}
+
+.dark .tab-context-menu .context-menu-item {
+  color: #ccc;
+}
+
+.dark .tab-context-menu .context-menu-item:hover {
+  background: #383838;
+}
+
+.tab-context-menu .context-menu-sep {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 4px 0;
+}
+
+.dark .tab-context-menu .context-menu-sep {
+  background: #404040;
+}
+
+.tab-context-menu .context-menu-subheader {
+  padding: 8px 12px;
+  font-weight: bold;
+  font-size: 12px;
+  color: #666;
+}
+
+.dark .tab-context-menu .context-menu-subheader {
+  color: #ccc;
+}
+
+.tab-context-menu .context-menu-shortcut {
+  margin-left: auto;
+  font-size: 11px;
+  color: #999;
+  padding-left: 16px;
+}
+
+.dark .tab-context-menu .context-menu-shortcut {
+  color: #666;
+}
+</style>
