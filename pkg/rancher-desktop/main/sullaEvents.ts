@@ -1106,14 +1106,17 @@ export function initSullaEvents(): void {
 
       return raw.split('\n').filter((l: string) => l.trim()).map((line: string) => {
         const c = JSON.parse(line);
+        const labels = c.Labels || '';
+        const projectMatch = labels.match(/com\.docker\.compose\.project=([^,]+)/);
 
         return {
-          id:     c.ID,
-          name:   c.Names,
-          image:  c.Image,
-          status: c.Status,
-          state:  c.State,
-          ports:  c.Ports,
+          id:             c.ID,
+          name:           c.Names,
+          image:          c.Image,
+          status:         c.Status,
+          state:          c.State,
+          ports:          c.Ports,
+          composeProject: projectMatch ? projectMatch[1] : '',
         };
       });
     } catch (err: any) {
