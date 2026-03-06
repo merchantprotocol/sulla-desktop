@@ -22,11 +22,15 @@ export class WebSocketTerminalServer {
   private wss: WebSocketServer | null = null;
   private sessions: Map<string, TerminalSession> = new Map();
 
-  private trySpawnPty(cols: number, rows: number): pty.IPty {
+  private trySpawnPty(cols: number, rows: number, command?: string): pty.IPty {
     const limactlPath = resolveLimactlPath({});
     const limaHome = resolveLimaHome({});
 
-    return pty.spawn(limactlPath, ['shell', '0'], {
+    const args = command
+      ? ['shell', '0', '--', 'sh', '-lc', command]
+      : ['shell', '0'];
+
+    return pty.spawn(limactlPath, args, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -71,6 +75,7 @@ export class WebSocketTerminalServer {
     sessionId: string,
     cols: number,
     rows: number,
+    command?: string,
   ): Promise<void> {
     // Show booting message
     ws.send('\x1B[1;36mVM is starting up, connecting...\x1B[0m');
@@ -81,7 +86,7 @@ export class WebSocketTerminalServer {
       }
 
       try {
-        const ptyProcess = this.trySpawnPty(cols, rows);
+        const ptyProcess = this.trySpawnPty(cols, rows, command);
         // Success — create the session and attach client
         const session = this.createPtySession(sessionId, ptyProcess);
         session.clients.add(ws);
@@ -120,6 +125,7 @@ export class WebSocketTerminalServer {
       if (parsed && parsed.type === 'start') {
         const cols = parsed.cols || 80;
         const rows = parsed.rows || 24;
+        const command = parsed.command || undefined;
         sessionId = parsed.sessionId || `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
         // Join existing session
@@ -132,12 +138,12 @@ export class WebSocketTerminalServer {
         // Try to spawn immediately
         if (sessionId) {
           try {
-            const ptyProcess = this.trySpawnPty(cols, rows);
+            const ptyProcess = this.trySpawnPty(cols, rows, command);
             session = this.createPtySession(sessionId, ptyProcess);
             session.clients.add(ws);
           } catch (err) {
             console.log('[TerminalServer] Initial spawn failed, retrying:', String(err));
-            this.startSessionWithRetry(ws, sessionId, cols, rows).then(() => {
+            this.startSessionWithRetry(ws, sessionId, cols, rows, command).then(() => {
               // Update the closure's session reference so subsequent input goes to PTY
               if (sessionId && this.sessions.has(sessionId)) {
                 session = this.sessions.get(sessionId)!;

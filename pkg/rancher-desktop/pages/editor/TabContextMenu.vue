@@ -81,7 +81,8 @@ export interface TabState {
   loading: boolean;
   error: string;
   dirty: boolean;
-  editorType?: 'code' | 'markdown' | 'preview' | 'webview';
+  editorType?: 'code' | 'markdown' | 'preview' | 'webview' | 'terminal' | 'diff';
+  originalContent?: string;
 }
 
 export default defineComponent({

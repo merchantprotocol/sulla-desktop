@@ -150,6 +150,8 @@ export interface IpcMainInvokeEvents {
   'git-stage':        (dirPath: string, files: string[]) => boolean;
   'git-unstage':      (dirPath: string, files: string[]) => boolean;
   'git-diff':         (dirPath: string, file: string, staged: boolean) => string;
+  'git-show-head':    (dirPath: string, file: string) => string;
+  'git-show-staged':  (dirPath: string, file: string) => string;
   'git-commit':       (dirPath: string, message: string) => boolean;
   'git-pull':         (dirPath: string) => { success: boolean; output: string };
   'git-push':         (dirPath: string) => { success: boolean; output: string };

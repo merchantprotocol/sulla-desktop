@@ -32,6 +32,14 @@ export default defineComponent({
       type: String,
       default: 'Menlo, Monaco, "Courier New", monospace',
     },
+    command: {
+      type: String,
+      default: '',
+    },
+    readOnly: {
+      type: Boolean,
+      default: false,
+    },
   },
 
   emits: ['connected', 'disconnected', 'error'],
@@ -90,6 +98,7 @@ export default defineComponent({
           sessionId: props.sessionId || undefined,
           cols: dims?.cols || 80,
           rows: dims?.rows || 24,
+          command: props.command || undefined,
         }));
         emit('connected');
       };
@@ -124,6 +133,7 @@ export default defineComponent({
       fitAddon.fit();
 
       terminal.onData((data: string) => {
+        if (props.readOnly) return;
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(data);
         }

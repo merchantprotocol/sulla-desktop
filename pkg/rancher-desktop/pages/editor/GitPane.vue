@@ -170,7 +170,7 @@
                   :key="'s-' + repo.root + f.file"
                   class="git-file-row"
                   :class="{ dark: isDark }"
-                  @click="openFile(repo, f.file)"
+                  @click="openFile(repo, f.file, true)"
                   @contextmenu.prevent="showFileContextMenu($event, repo, f.file, true)"
                 >
                   <span class="git-status-badge staged">{{ f.index }}</span>
@@ -193,7 +193,7 @@
                   action-type="unstage"
                   :depth="0"
                   :is-dark="isDark"
-                  @open-file="openFile(repo, $event)"
+                  @open-file="openFile(repo, $event, true)"
                   @stage="stage(repo, $event)"
                   @unstage="unstage(repo, $event)"
                   @contextmenu="(ev: MouseEvent, file: string) => showFileContextMenu(ev, repo, file, true)"
@@ -681,7 +681,12 @@ function onDocumentClick() {
 onMounted(() => document.addEventListener('click', onDocumentClick));
 onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick));
 
-function openFile(repo: RepoState, file: string) {
+function openFile(repo: RepoState, file: string, staged = false) {
+  // Open diff view for changed files by default
+  emit('open-diff', repo.root, file, staged);
+}
+
+function openFileRaw(repo: RepoState, file: string) {
   const fullPath = repo.root + '/' + file;
   const name = basename(file);
   const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
@@ -713,7 +718,7 @@ function closeFileContextMenu() {
 }
 
 function ctxOpen() {
-  if (fileCtx.repo) openFile(fileCtx.repo, fileCtx.file);
+  if (fileCtx.repo) openFileRaw(fileCtx.repo, fileCtx.file);
   closeFileContextMenu();
 }
 

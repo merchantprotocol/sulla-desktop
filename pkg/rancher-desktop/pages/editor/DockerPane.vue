@@ -52,6 +52,24 @@
               >{{ port.hostPort }} &rarr; {{ port.containerPort }}</a>
             </div>
           </div>
+          <div class="detail-actions">
+            <button class="action-btn" :class="{ dark: isDark }" @click.stop="$emit('docker-logs', c.name)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14,2 14,8 20,8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+              </svg>
+              Logs
+            </button>
+            <button v-if="c.state === 'running'" class="action-btn" :class="{ dark: isDark }" @click.stop="$emit('docker-exec', c.name)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4,17 10,11 4,5"/>
+                <line x1="12" y1="19" x2="20" y2="19"/>
+              </svg>
+              Shell
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -84,7 +102,7 @@ export default defineComponent({
     isDark: { type: Boolean, default: false },
   },
 
-  emits: ['open-container-port'],
+  emits: ['open-container-port', 'docker-logs', 'docker-exec'],
 
   setup() {
     const containers = ref<DockerContainer[]>([]);
@@ -121,10 +139,12 @@ export default defineComponent({
         const key = `${hostPort}-${containerPort}`;
         if (seen.has(key)) continue;
         seen.add(key);
+        const HTTPS_PORTS = new Set(['443', '8443', '9443']);
+        const protocol = HTTPS_PORTS.has(hostPort) || HTTPS_PORTS.has(containerPort) ? 'https' : 'http';
         results.push({
           hostPort,
           containerPort,
-          url: `http://localhost:${hostPort}`,
+          url: `${protocol}://localhost:${hostPort}`,
         });
       }
       return results;
@@ -159,6 +179,11 @@ export default defineComponent({
   height: 100%;
   overflow: hidden;
   font-size: 13px;
+  background: #f8fafc;
+}
+
+.docker-pane.dark {
+  background: #1e293b;
 }
 
 .docker-header {
@@ -307,5 +332,38 @@ export default defineComponent({
 
 .port-link.dark {
   color: #60a5fa;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+}
+
+.action-btn:hover {
+  background: #e2e8f0;
+}
+
+.action-btn.dark {
+  border-color: #475569;
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.action-btn.dark:hover {
+  background: #475569;
 }
 </style>

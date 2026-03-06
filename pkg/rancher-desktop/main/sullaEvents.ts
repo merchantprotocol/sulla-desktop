@@ -264,6 +264,26 @@ export function initSullaEvents(): void {
     }
   });
 
+  // Get the HEAD (committed) version of a file for diff comparison
+  ipcMainProxy.handle('git-show-head', async (_event: unknown, dirPath: string, file: string) => {
+    const { execSync } = require('child_process');
+    try {
+      return execSync(`git show HEAD:"${file}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+    } catch {
+      return '';
+    }
+  });
+
+  // Get the staged version of a file for diff comparison
+  ipcMainProxy.handle('git-show-staged', async (_event: unknown, dirPath: string, file: string) => {
+    const { execSync } = require('child_process');
+    try {
+      return execSync(`git show :"${file}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+    } catch {
+      return '';
+    }
+  });
+
   ipcMainProxy.handle('git-commit', async (_event: unknown, dirPath: string, message: string) => {
     const { execSync } = require('child_process');
     try {

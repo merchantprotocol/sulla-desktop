@@ -49,6 +49,7 @@
               :root-path="rootPath"
               :is-dark="isDark"
               @file-selected="onFileSelected"
+              @open-diff="onOpenDiff"
             />
 
             <!-- Docker pane -->
@@ -56,6 +57,8 @@
               v-show="dockerMode"
               :is-dark="isDark"
               @open-container-port="openContainerPort"
+              @docker-logs="openDockerLogs"
+              @docker-exec="openDockerExec"
             />
 
             <!-- File tree -->
@@ -97,7 +100,7 @@
                     <path d="M9.5 1V5H13.5" :stroke="getIconColor(tab.ext)" stroke-width="0.8" fill="none"/>
                   </svg>
                 </span>
-                <span class="tab-label">{{ tab.name }}</span>
+                <span class="tab-label">{{ tab.name }}{{ tab.editorType === 'diff' ? ' (diff)' : '' }}</span>
                 <span v-if="tab.dirty" class="tab-dirty-dot"></span>
                 <span class="tab-close" @click.stop="closeTab(tab)">
                   <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
@@ -163,10 +166,11 @@
                     :is="activeEditorComponent"
                     ref="editorRef"
                     :content="activeTab?.content || ''"
+                    :original-content="activeTab?.originalContent || ''"
                     :file-path="activeTab?.path || ''"
                     :file-ext="activeTab?.ext || ''"
                     :is-dark="isDark"
-                    :read-only="activeTab?.editorType === 'preview'"
+                    :read-only="activeTab?.editorType === 'preview' || activeTab?.editorType === 'diff' || activeTab?.editorType === 'terminal'"
                     @dirty="markActiveTabDirty"
                   />
                 </div>
@@ -228,7 +232,7 @@
                 v-show="activeTerminalTab === tab.id"
                 class="terminal-pane"
               >
-                <XTermTerminal :is-dark="isDark" :session-id="tab.sessionId" />
+                <XTermTerminal :is-dark="isDark" :session-id="tab.sessionId" :command="tab.command || ''" :read-only="tab.readOnly || false" />
               </div>
             </div>
           </div>
@@ -284,6 +288,7 @@ import EditorHeader from './editor/EditorHeader.vue';
 import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
 import MarkdownEditor from './filesystem/MarkdownEditor.vue';
 import CodeEditor from './filesystem/CodeEditor.vue';
+import DiffEditor from './filesystem/DiffEditor.vue';
 import XTermTerminal from './editor/XTermTerminal.vue';
 import TabContextMenu from './editor/TabContextMenu.vue';
 import IconPanel from './editor/IconPanel.vue';
@@ -291,6 +296,7 @@ import FileSearch from './editor/FileSearch.vue';
 import GitPane from './editor/GitPane.vue';
 import DockerPane from './editor/DockerPane.vue';
 import WebViewTab from './editor/WebViewTab.vue';
+import TerminalTab from './editor/TerminalTab.vue';
 import EditorChat from './editor/EditorChat.vue';
 import { EditorChatInterface } from './editor/EditorChatInterface';
 import { FrontendGraphWebSocketService } from '@pkg/agent/services/FrontendGraphWebSocketService';
@@ -307,7 +313,8 @@ interface TabState {
   loading: boolean;
   error: string;
   dirty: boolean;
-  editorType?: 'code' | 'markdown' | 'preview' | 'webview';
+  editorType?: 'code' | 'markdown' | 'preview' | 'webview' | 'terminal' | 'diff';
+  originalContent?: string; // For diff editor: the HEAD version
 }
 
 const MARKDOWN_EXTS = new Set(['.md', '.markdown', '.mdx']);
@@ -337,6 +344,8 @@ const editorRegistry: Record<string, Component> = {
   code:      markRaw(CodeEditor),
   preview:   markRaw(MarkdownEditor), // Preview uses markdown editor but read-only
   webview:   markRaw(WebViewTab),
+  terminal:  markRaw(TerminalTab),
+  diff:      markRaw(DiffEditor),
 };
 
 function resolveEditorType(ext: string): string {
@@ -360,6 +369,7 @@ export default defineComponent({
     GitPane,
     DockerPane,
     EditorChat,
+    DiffEditor,
   },
 
   setup(props, { emit }) {
@@ -483,7 +493,7 @@ export default defineComponent({
     const qmdSearching = ref(false);
 
     // Terminal tabs state
-    const terminalTabs = ref([
+    const terminalTabs = ref<Array<{ id: string; name: string; sessionId: string; command?: string; readOnly?: boolean }>>([
       { id: 'terminal-1', name: 'Terminal 1', sessionId: '' }
     ]);
     const activeTerminalTab = ref('terminal-1');
@@ -704,6 +714,51 @@ export default defineComponent({
       await loadTabContent(tab);
     }
 
+    async function onOpenDiff(repoRoot: string, file: string, staged: boolean) {
+      const fullPath = repoRoot + '/' + file;
+      const key = `${fullPath}-diff`;
+      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      if (existing) {
+        activeTabKey.value = key;
+        return;
+      }
+
+      const name = file.split('/').pop() || file;
+      const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
+
+      const tab: TabState = reactive({
+        path:            fullPath,
+        name:            name,
+        ext:             ext,
+        content:         '',
+        originalContent: '',
+        loading:         true,
+        error:           '',
+        dirty:           false,
+        editorType:      'diff',
+      });
+
+      openTabs.value = [...openTabs.value, tab];
+      activeTabKey.value = key;
+
+      try {
+        // For staged files: compare HEAD vs staged (index) version
+        // For unstaged files: compare HEAD vs working copy
+        const [modifiedContent, originalContent] = await Promise.all([
+          staged
+            ? ipcRenderer.invoke('git-show-staged', repoRoot, file)
+            : ipcRenderer.invoke('filesystem-read-file', fullPath),
+          ipcRenderer.invoke('git-show-head', repoRoot, file),
+        ]);
+        tab.content = modifiedContent || '';
+        tab.originalContent = originalContent || '';
+      } catch (err: any) {
+        tab.error = err?.message || 'Failed to load diff';
+      } finally {
+        tab.loading = false;
+      }
+    }
+
     function switchTab(tab: TabState) {
       activeTabKey.value = `${tab.path}-${tab.editorType || 'code'}`;
     }
@@ -861,6 +916,50 @@ export default defineComponent({
       activeTabKey.value = key;
     }
 
+    function openDockerTerminalTab(name: string, command: string, readOnly: boolean) {
+      terminalCounter++;
+      const newTab = {
+        id: `terminal-${terminalCounter}`,
+        name,
+        sessionId: '',
+        command,
+        readOnly,
+      };
+      terminalTabs.value.push(newTab);
+      activeTerminalTab.value = newTab.id;
+      bottomPaneVisible.value = true;
+    }
+
+    function openDockerLogs(containerName: string) {
+      const command = `docker logs -f ${containerName}`;
+      const key = `${command}-terminal`;
+      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      if (existing) {
+        activeTabKey.value = key;
+        return;
+      }
+      const tab: TabState = reactive({
+        path:       command,
+        name:       `Logs: ${containerName}`,
+        ext:        '',
+        content:    command,
+        loading:    false,
+        error:      '',
+        dirty:      false,
+        editorType: 'terminal',
+      });
+      openTabs.value = [...openTabs.value, tab];
+      activeTabKey.value = key;
+    }
+
+    function openDockerExec(containerName: string) {
+      openDockerTerminalTab(
+        `Shell: ${containerName}`,
+        `docker exec -it ${containerName} sh`,
+        false,
+      );
+    }
+
     onBeforeUnmount(() => {
       window.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('mousedown', () => {});
@@ -888,6 +987,8 @@ export default defineComponent({
       toggleDocker,
       dockerMode,
       openContainerPort,
+      openDockerLogs,
+      openDockerExec,
       openTabs,
       activeTabKey,
       activeTab,
@@ -927,6 +1028,7 @@ export default defineComponent({
       openWithEditor,
       saveTab,
       onFileSelected,
+      onOpenDiff,
       editorRef,
       tabContextMenu,
     };
