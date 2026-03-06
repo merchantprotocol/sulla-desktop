@@ -110,7 +110,15 @@ export default defineComponent({
       }
     });
 
-    expose({ getMarkdown });
+    function insertAtCursor(text: string) {
+      if (!_sharedEditor) return;
+      const cursor = _sharedEditor.getTextCursorPosition();
+      if (cursor?.block) {
+        _sharedEditor.insertInlineContent([{ type: 'text', text, styles: {} }]);
+      }
+    }
+
+    expose({ getMarkdown, insertAtCursor });
 
     return { containerRef };
   },

@@ -21,10 +21,14 @@
           :search-mode="searchMode"
           :git-mode="gitMode"
           :docker-mode="dockerMode"
+          :agent-mode="agentMode"
+          :workflow-mode="workflowMode"
           @toggle-file-tree="toggleFileTree"
           @toggle-search="toggleSearch"
           @toggle-git="toggleGit"
           @toggle-docker="toggleDocker"
+          @toggle-agent="toggleAgent"
+          @toggle-workflow="toggleWorkflow"
         />
         </div>
 
@@ -64,10 +68,28 @@
               @close="leftPaneVisible = false"
             />
 
+            <!-- Agent pane -->
+            <AgentPane
+              ref="agentPaneRef"
+              v-show="agentMode"
+              :is-dark="isDark"
+              @close="leftPaneVisible = false"
+              @file-selected="onFileSelected"
+              @open-new-agent-tab="onNewAgentTab"
+              @edit-agent="onEditAgent"
+            />
+
+            <!-- Workflow pane -->
+            <WorkflowPane
+              v-show="workflowMode"
+              :is-dark="isDark"
+              @close="leftPaneVisible = false"
+            />
+
             <!-- File tree -->
             <FileTreeSidebar
               ref="fileTreeRef"
-              v-show="!searchMode && !gitMode && !dockerMode"
+              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !workflowMode"
               :root-path="rootPath"
               :highlight-path="highlightPath"
               :is-dark="isDark"
@@ -173,6 +195,9 @@
                       {{ segment }}
                     </span>
                   </div>
+                  <span v-if="agentMode && activeTab && !activeTab.loading" class="token-estimate" :class="{ dark: isDark }">
+                    ~{{ estimatedTokens }} tokens
+                  </span>
                   <button
                     v-if="activeTab?.dirty"
                     class="save-button"
@@ -190,7 +215,7 @@
                 </div>
 
                 <!-- Editor content -->
-                <div class="editor-content">
+                <div class="editor-content" @contextmenu="onEditorContextMenu">
                   <component
                     :is="activeEditorComponent"
                     ref="editorRef"
@@ -201,8 +226,32 @@
                     :is-dark="isDark"
                     :read-only="activeTab?.editorType === 'preview' || activeTab?.editorType === 'diff' || activeTab?.editorType === 'terminal'"
                     @dirty="markActiveTabDirty"
+                    @saved="onAgentFormSaved"
                   />
                 </div>
+
+                <!-- Inject Variable context menu -->
+                <Teleport to="body">
+                  <div
+                    v-if="injectMenu.visible"
+                    class="inject-menu"
+                    :class="{ dark: isDark }"
+                    :style="{ top: injectMenu.y + 'px', left: injectMenu.x + 'px' }"
+                    @contextmenu.prevent
+                  >
+                    <div class="inject-menu-header">Inject Variable</div>
+                    <button
+                      v-for="v in injectMenu.variables"
+                      :key="v.key"
+                      class="inject-menu-item"
+                      :class="{ dark: isDark }"
+                      @click="doInjectVariable(v.key)"
+                    >
+                      <span class="inject-var-label">{{ v.label }}</span>
+                      <span class="inject-var-key">{{ v.key }}</span>
+                    </button>
+                  </div>
+                </Teleport>
               </template>
             </template>
           </div>
@@ -332,6 +381,9 @@ import IconPanel from './editor/IconPanel.vue';
 import FileSearch from './editor/FileSearch.vue';
 import GitPane from './editor/GitPane.vue';
 import DockerPane from './editor/DockerPane.vue';
+import AgentPane from './editor/AgentPane.vue';
+import AgentFormTab from './editor/AgentFormTab.vue';
+import WorkflowPane from './editor/WorkflowPane.vue';
 import WebViewTab from './editor/WebViewTab.vue';
 import TerminalTab from './editor/TerminalTab.vue';
 import EditorChat from './editor/EditorChat.vue';
@@ -350,7 +402,7 @@ interface TabState {
   loading: boolean;
   error: string;
   dirty: boolean;
-  editorType?: 'code' | 'markdown' | 'preview' | 'webview' | 'terminal' | 'diff';
+  editorType?: 'code' | 'markdown' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
   originalContent?: string; // For diff editor: the HEAD version
 }
 
@@ -382,7 +434,8 @@ const editorRegistry: Record<string, Component> = {
   preview:   markRaw(MarkdownEditor), // Preview uses markdown editor but read-only
   webview:   markRaw(WebViewTab),
   terminal:  markRaw(TerminalTab),
-  diff:      markRaw(DiffEditor),
+  diff:         markRaw(DiffEditor),
+  'agent-form': markRaw(AgentFormTab),
 };
 
 function resolveEditorType(ext: string): string {
@@ -405,6 +458,9 @@ export default defineComponent({
     FileSearch,
     GitPane,
     DockerPane,
+    AgentPane,
+    AgentFormTab,
+    WorkflowPane,
     EditorChat,
     DiffEditor,
   },
@@ -523,6 +579,8 @@ export default defineComponent({
     const searchMode = ref(false);
     const gitMode = ref(false);
     const dockerMode = ref(false);
+    const agentMode = ref(false);
+    const workflowMode = ref(false);
     const searchQuery = ref('');
     const searchPath = ref('');
     const searchResults = ref<Array<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }>>([]);
@@ -581,6 +639,7 @@ export default defineComponent({
 
       await modelSelector.start();
       document.addEventListener('mousedown', onEditorMenuOutsideClick);
+      document.addEventListener('click', onInjectMenuOutsideClick);
     });
 
     function toggleTheme() {
@@ -592,6 +651,8 @@ export default defineComponent({
       searchMode.value = false;
       gitMode.value = false;
       dockerMode.value = false;
+      agentMode.value = false;
+      workflowMode.value = false;
     }
 
     function toggleFileTree() {
@@ -639,6 +700,32 @@ export default defineComponent({
       } else if (!dockerMode.value) {
         clearModes();
         dockerMode.value = true;
+      } else {
+        leftPaneVisible.value = false;
+      }
+    }
+
+    function toggleAgent() {
+      if (!leftPaneVisible.value) {
+        leftPaneVisible.value = true;
+        clearModes();
+        agentMode.value = true;
+      } else if (!agentMode.value) {
+        clearModes();
+        agentMode.value = true;
+      } else {
+        leftPaneVisible.value = false;
+      }
+    }
+
+    function toggleWorkflow() {
+      if (!leftPaneVisible.value) {
+        leftPaneVisible.value = true;
+        clearModes();
+        workflowMode.value = true;
+      } else if (!workflowMode.value) {
+        clearModes();
+        workflowMode.value = true;
       } else {
         leftPaneVisible.value = false;
       }
@@ -710,6 +797,15 @@ export default defineComponent({
       if (!activeTab.value || !rootPath.value) return [];
       const relative = activeTab.value.path.replace(rootPath.value, '').replace(/^\//, '');
       return relative.split('/');
+    });
+
+    const estimatedTokens = computed(() => {
+      const content = activeTab.value?.content || '';
+      const count = Math.ceil(content.length / 4);
+      if (count >= 1000) {
+        return `${(count / 1000).toFixed(1)}k`;
+      }
+      return String(count);
     });
 
     async function loadTabContent(tab: TabState) {
@@ -879,6 +975,47 @@ export default defineComponent({
       }
     }
 
+    // ─── Inject Variable context menu ─────────────────────────
+    interface TemplateVar { key: string; label: string; preview: string }
+    const injectMenu = reactive({
+      visible: false,
+      x: 0,
+      y: 0,
+      variables: [] as TemplateVar[],
+    });
+
+    function isAgentFile(): boolean {
+      const p = activeTab.value?.path || '';
+      return p.includes('/agents/') && !p.startsWith('agent-form://');
+    }
+
+    async function onEditorContextMenu(e: MouseEvent) {
+      if (!isAgentFile()) return; // let default context menu through
+      e.preventDefault();
+      try {
+        const vars: TemplateVar[] = await ipcRenderer.invoke('agents-get-template-variables');
+        injectMenu.variables = vars;
+        injectMenu.x = e.clientX;
+        injectMenu.y = e.clientY;
+        injectMenu.visible = true;
+      } catch (err) {
+        console.error('Failed to load template variables:', err);
+      }
+    }
+
+    function doInjectVariable(key: string) {
+      injectMenu.visible = false;
+      if (editorRef.value?.insertAtCursor) {
+        editorRef.value.insertAtCursor(key);
+      }
+    }
+
+    function onInjectMenuOutsideClick() {
+      if (injectMenu.visible) {
+        injectMenu.visible = false;
+      }
+    }
+
     // Functions needed by FileTree component
     function viewInFinder(tab: TabState) {
       // Set highlight path to highlight the file in the file tree
@@ -928,6 +1065,73 @@ export default defineComponent({
     // Editor ref for accessing exposed methods (e.g. getMarkdown)
     const editorRef = ref<any>(null);
     const fileTreeRef = ref<any>(null);
+    const agentPaneRef = ref<any>(null);
+
+    function onNewAgentTab() {
+      const key = 'agent-form://new-agent-form';
+      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      if (existing) {
+        activeTabKey.value = key;
+        return;
+      }
+      const tab: TabState = reactive({
+        path:       'agent-form://new',
+        name:       'New Agent',
+        ext:        '',
+        content:    '',
+        loading:    false,
+        error:      '',
+        dirty:      false,
+        editorType: 'agent-form',
+      });
+      openTabs.value = [...openTabs.value, tab];
+      activeTabKey.value = key;
+    }
+
+    async function onEditAgent(agent: { id: string; name: string; description: string; type: string; path: string }) {
+      const editPath = `agent-form://edit/${agent.id}`;
+      const key = `${editPath}-agent-form`;
+      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      if (existing) {
+        activeTabKey.value = key;
+        return;
+      }
+
+      // Read agent.yaml content so form can pre-fill
+      let yamlContent = '';
+      try {
+        yamlContent = await ipcRenderer.invoke('filesystem-read-file', `${agent.path}/agent.yaml`);
+      } catch { /* ignore */ }
+
+      const tab: TabState = reactive({
+        path:       editPath,
+        name:       `Edit: ${agent.name}`,
+        ext:        '',
+        content:    yamlContent,
+        loading:    false,
+        error:      '',
+        dirty:      false,
+        editorType: 'agent-form',
+      });
+      openTabs.value = [...openTabs.value, tab];
+      activeTabKey.value = key;
+    }
+
+    function onAgentFormSaved(agentPath: string) {
+      // Close the form tab
+      const formTab = openTabs.value.find(t => t.editorType === 'agent-form');
+      if (formTab) closeTab(formTab);
+      // Refresh the agent pane listing
+      agentPaneRef.value?.refresh();
+      // Open the newly created agent.yaml
+      onFileSelected({
+        name: 'agent.yaml',
+        path: `${agentPath}/agent.yaml`,
+        isDir: false,
+        size:  0,
+        ext:   '.yaml',
+      });
+    }
 
     function markActiveTabDirty() {
       const tab = activeTab.value;
@@ -1054,6 +1258,7 @@ export default defineComponent({
     onBeforeUnmount(() => {
       window.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('mousedown', onEditorMenuOutsideClick);
+      document.removeEventListener('click', onInjectMenuOutsideClick);
       editorChat.dispose();
       editorGraphWs.dispose();
       modelSelector.dispose();
@@ -1077,6 +1282,10 @@ export default defineComponent({
       toggleGit,
       toggleDocker,
       dockerMode,
+      agentMode,
+      workflowMode,
+      toggleAgent,
+      toggleWorkflow,
       openContainerPort,
       openDockerLogs,
       openDockerExec,
@@ -1126,6 +1335,14 @@ export default defineComponent({
       editorMenu,
       editorDropdownRef,
       createNewUntitledTab,
+      agentPaneRef,
+      onNewAgentTab,
+      onEditAgent,
+      onAgentFormSaved,
+      estimatedTokens,
+      injectMenu,
+      onEditorContextMenu,
+      doInjectVariable,
     };
   },
 });
@@ -1547,6 +1764,19 @@ export default defineComponent({
   color: #aaa;
 }
 
+.token-estimate {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: auto;
+  margin-right: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.token-estimate.dark {
+  color: #64748b;
+}
+
 <style scoped>
 .page-root {
   background: #ffffff;
@@ -1635,6 +1865,84 @@ export default defineComponent({
 
 .git-container {
   padding: 12px;
+}
+
+/* Inject Variable context menu */
+.inject-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 240px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+}
+
+.inject-menu.dark {
+  background: #2d2d2d;
+  border-color: #404040;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.inject-menu-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #64748b;
+}
+
+.inject-menu.dark .inject-menu-header {
+  color: #94a3b8;
+}
+
+.inject-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  color: #333;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.3;
+}
+
+.inject-menu-item:hover {
+  background: #f1f5f9;
+}
+
+.inject-menu-item.dark {
+  color: #ccc;
+}
+
+.inject-menu-item.dark:hover {
+  background: #383838;
+}
+
+.inject-var-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.inject-var-key {
+  font-size: 11px;
+  font-family: monospace;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.inject-menu.dark .inject-var-key {
+  color: #64748b;
 }
 
 .git-change {

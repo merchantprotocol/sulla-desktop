@@ -1123,6 +1123,104 @@ export function initSullaEvents(): void {
     }
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // Agent handlers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('agents-get-prompt-templates', async() => {
+    const { soulPrompt } = require('@pkg/agent/prompts/soul');
+    const { environmentPrompt } = require('@pkg/agent/prompts/environment');
+
+    return { soul: soulPrompt, environment: environmentPrompt };
+  });
+
+  ipcMainProxy.handle('agents-list', async() => {
+    const yaml = require('yaml');
+    const agentsDir = path.join(getSullaHomeDir(), 'agents');
+
+    if (!fs.existsSync(agentsDir)) return [];
+
+    const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
+    const agents: { id: string; name: string; description: string; type: string; path: string }[] = [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      const agentDir = path.join(agentsDir, entry.name);
+      const yamlPath = path.join(agentDir, 'agent.yaml');
+
+      if (!fs.existsSync(yamlPath)) continue;
+      try {
+        const content = fs.readFileSync(yamlPath, 'utf-8');
+        const parsed = yaml.parse(content) || {};
+
+        agents.push({
+          id:          entry.name,
+          name:        parsed.name || entry.name,
+          description: parsed.description || '',
+          type:        parsed.type || 'worker',
+          path:        agentDir,
+        });
+      } catch (err) {
+        console.warn(`[Sulla] Failed to parse agent.yaml in ${entry.name}:`, err);
+      }
+    }
+
+    return agents;
+  });
+
+  ipcMainProxy.handle('agents-delete', async(_event: any, agentId: string) => {
+    const agentsDir = path.join(getSullaHomeDir(), 'agents');
+    const agentDir = path.join(agentsDir, agentId);
+
+    // Safety: ensure the path is actually inside agents dir
+    if (!agentDir.startsWith(agentsDir) || agentId.includes('..') || agentId.includes('/')) {
+      throw new Error('Invalid agent ID');
+    }
+
+    if (!fs.existsSync(agentDir)) {
+      throw new Error(`Agent directory not found: ${agentId}`);
+    }
+
+    fs.rmSync(agentDir, { recursive: true, force: true });
+
+    return true;
+  });
+
+  ipcMainProxy.handle('agents-get-template-variables', async() => {
+    const { resolveSullaHomeDir, resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaWorkspacesDir, resolveSullaAgentsDir, resolveSullaWorkflowsDir } = require('@pkg/agent/utils/sullaPaths');
+    const { SullaSettingsModel } = require('@pkg/agent/database/models/SullaSettingsModel');
+    const nodePath = require('node:path');
+
+    const projectsDir = resolveSullaProjectsDir();
+    const botName = await SullaSettingsModel.get('botName', 'Sulla');
+    const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
+
+    const now = new Date();
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+    const formattedTime = now.toLocaleString('en-US', {
+      timeZone: tz,
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+    });
+
+    return [
+      { key: '{{formattedTime}}',        label: 'Current Date/Time',     preview: formattedTime },
+      { key: '{{timeZone}}',             label: 'Time Zone',             preview: tz },
+      { key: '{{primaryUserName}}',      label: "Human's Name",          preview: primaryUserName || '(not set)' },
+      { key: '{{botName}}',              label: 'Bot Name',              preview: botName },
+      { key: '{{sulla_home}}',           label: 'Sulla Home Dir',        preview: resolveSullaHomeDir() },
+      { key: '{{projects_dir}}',         label: 'Projects Dir',          preview: projectsDir },
+      { key: '{{skills_dir}}',           label: 'Skills Dir',            preview: resolveSullaSkillsDir() },
+      { key: '{{workspaces_dir}}',       label: 'Workspaces Dir',        preview: resolveSullaWorkspacesDir() },
+      { key: '{{agents_dir}}',           label: 'Agents Dir',            preview: resolveSullaAgentsDir() },
+      { key: '{{workflows_dir}}',        label: 'Workflows Dir',         preview: resolveSullaWorkflowsDir() },
+      { key: '{{active_projects_file}}', label: 'Active Projects File',  preview: nodePath.join(projectsDir, 'ACTIVE_PROJECTS.md') },
+      { key: '{{skills_index}}',         label: 'Skills Index',          preview: '(resolved at runtime)' },
+      { key: '{{tool_categories}}',      label: 'Tool Categories',       preview: '(resolved at runtime)' },
+      { key: '{{installed_extensions}}', label: 'Installed Extensions',  preview: '(resolved at runtime)' },
+    ];
+  });
+
   console.log('[Sulla] IPC event handlers initialized');
 }
 

@@ -271,9 +271,23 @@ export default defineComponent({
       return editor?.getValue() || props.content;
     };
 
+    const insertAtCursor = (text: string) => {
+      if (!editor) return;
+      const selection = editor.getSelection();
+      if (selection) {
+        editor.executeEdits('inject-variable', [{
+          range: selection,
+          text,
+          forceMoveMarkers: true,
+        }]);
+      }
+      editor.focus();
+    };
+
     return {
       containerRef,
       getContent,
+      insertAtCursor,
     };
   },
 });
