@@ -1,22 +1,19 @@
 /**
  * QMD Search Service — main-process wrapper around @tobilu/qmd.
  *
- * Provides file indexing and hybrid search (BM25 full-text + filename matching)
- * for the AgentEditor's FileSearch component.
+ * All heavy work (SQLite queries, file indexing) runs in a Worker thread
+ * so the Electron main process and UI never block.
  *
- * qmd is an ESM package with top-level await, so all imports use dynamic import().
+ * qmd is an ESM package with top-level await, so the worker uses dynamic import().
  */
 
 import * as path from 'path';
 import * as fs from 'fs';
+import { Worker } from 'worker_threads';
 
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
-
-let _store: any = null;
-
-const TEXT_FILE_GLOB = '**/*.{md,txt,ts,js,vue,json,yaml,yml,jsx,tsx,css,scss,html,py,sh,toml,cfg,ini,xml,svg}';
 
 export interface QmdSearchResult {
   path: string;
@@ -27,213 +24,277 @@ export interface QmdSearchResult {
   source: 'fts' | 'filename';
 }
 
-function getDbPath(): string {
-  const os = require('os');
+// ── Worker management ───────────────────────────────────────────
 
+let _worker: Worker | null = null;
+let _requestId = 0;
+const _pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+
+/**
+ * Resolve the app root so the worker can find node_modules.
+ * Walks up from Electron's app path (or cwd) looking for node_modules/@tobilu/qmd.
+ */
+function getAppRoot(): string {
+  const { app } = require('electron');
+  // app.getAppPath() returns e.g. /path/to/sulla-desktop/dist/app in dev
+  let dir = app.getAppPath();
+
+  for (let i = 0; i < 5; i++) {
+    if (fs.existsSync(path.join(dir, 'node_modules', '@tobilu', 'qmd'))) {
+      return dir;
+    }
+    dir = path.dirname(dir);
+  }
+
+  return process.cwd();
+}
+
+function getWorkerPath(): string {
+  const os = require('os');
+  const workerDir = path.join(os.homedir(), '.cache', 'sulla-qmd');
+
+  fs.mkdirSync(workerDir, { recursive: true });
+
+  const workerPath = path.join(workerDir, 'worker.mjs');
+
+  fs.writeFileSync(workerPath, WORKER_SOURCE);
+
+  return workerPath;
+}
+
+function getWorker(): Worker {
+  if (_worker) {
+    return _worker;
+  }
+
+  const workerPath = getWorkerPath();
+  const appRoot = getAppRoot();
+
+  _worker = new Worker(workerPath, { workerData: { appRoot } });
+  _worker.on('message', (msg: any) => {
+    const pending = _pending.get(msg.id);
+
+    if (!pending) {
+      return;
+    }
+    _pending.delete(msg.id);
+    if (msg.error) {
+      pending.reject(new Error(msg.error));
+    } else {
+      pending.resolve(msg.result);
+    }
+  });
+  _worker.on('error', (err: Error) => {
+    console.error('[QMD Worker] error:', err);
+  });
+  _worker.on('exit', (code: number) => {
+    console.log(`[QMD Worker] exited with code ${ code }`);
+    _worker = null;
+    for (const [id, pending] of _pending) {
+      pending.reject(new Error(`Worker exited with code ${ code }`));
+      _pending.delete(id);
+    }
+  });
+
+  return _worker;
+}
+
+function postRequest(action: string, params: any): Promise<any> {
+  const id = ++_requestId;
+  const worker = getWorker();
+
+  return new Promise((resolve, reject) => {
+    _pending.set(id, { resolve, reject });
+    worker.postMessage({ id, action, ...params });
+  });
+}
+
+// ── Public API ──────────────────────────────────────────────────
+
+export function closeQmdStore(): void {
+  if (_worker) {
+    _worker.terminate();
+    _worker = null;
+  }
+}
+
+export async function indexDirectory(
+  dirPath: string,
+  glob?: string,
+): Promise<{ indexed: number; updated: number; removed: number }> {
+  return postRequest('index', { dirPath, glob });
+}
+
+export async function search(
+  query: string,
+  dirPath: string,
+  limit = 20,
+): Promise<QmdSearchResult[]> {
+  return postRequest('search', { query, dirPath, limit });
+}
+
+// ── Inline worker source ────────────────────────────────────────
+// This ESM script runs in a separate thread. It owns the SQLite handle
+// and performs all qmd operations, keeping the main process responsive.
+
+const WORKER_SOURCE = `
+import { parentPort, workerData } from 'worker_threads';
+import { createRequire } from 'module';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+
+// Create a require function rooted at the app so we can find node_modules
+const appRequire = createRequire(path.join(workerData.appRoot, 'package.json'));
+
+// Resolve qmd module paths relative to the app's node_modules
+const qmdStorePath = appRequire.resolve('@tobilu/qmd/dist/store.js');
+const qmdCollectionsPath = appRequire.resolve('@tobilu/qmd/dist/collections.js');
+const fastGlobPath = appRequire.resolve('fast-glob');
+
+const TEXT_FILE_GLOB = '**/*.{md,txt,ts,js,vue,json,yaml,yml,jsx,tsx,css,scss,html,py,sh,toml,cfg,ini,xml,svg}';
+
+let _store = null;
+let _storeModule = null;
+let _collectionsModule = null;
+let _fastGlobModule = null;
+
+async function getStoreModule() {
+  if (!_storeModule) _storeModule = await import(qmdStorePath);
+  return _storeModule;
+}
+async function getCollectionsModule() {
+  if (!_collectionsModule) _collectionsModule = await import(qmdCollectionsPath);
+  return _collectionsModule;
+}
+async function getFastGlob() {
+  if (!_fastGlobModule) _fastGlobModule = await import(fastGlobPath);
+  return _fastGlobModule;
+}
+
+function getDbPath() {
   return path.join(os.homedir(), '.cache', 'sulla-qmd', 'index.sqlite');
 }
 
-function ensureDbDir(): void {
+async function getStore() {
+  if (_store) return _store;
   const dbPath = getDbPath();
-
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-}
-
-async function getStore(): Promise<any> {
-  if (_store) {
-    return _store;
-  }
-  ensureDbDir();
-  const { createStore } = await import('@tobilu/qmd/dist/store.js');
-
-  _store = createStore(getDbPath());
-
+  const { createStore } = await getStoreModule();
+  _store = createStore(dbPath);
   return _store;
 }
 
-/**
- * Close the store and release the SQLite handle.
- */
-export function closeQmdStore(): void {
-  if (_store) {
-    try {
-      _store.close();
-    } catch { /* ignore */ }
-    _store = null;
+function collectionName(dirPath) {
+  return dirPath.replace(/\\//g, '_').replace(/^_/, '');
+}
+
+function quickSnippet(body, query) {
+  if (!body) return null;
+  const terms = query.toLowerCase().split(/\\s+/).filter(t => t.length > 1);
+  if (!terms.length) return null;
+  const searchable = body.length > 50000 ? body.slice(0, 50000) : body;
+  const lines = searchable.split('\\n');
+  for (let i = 0; i < lines.length; i++) {
+    const lower = lines[i].toLowerCase();
+    if (terms.some(t => lower.includes(t))) {
+      return { line: i + 1, snippet: lines[i].trim().slice(0, 200) };
+    }
   }
+  return null;
 }
 
-/**
- * Derive a safe collection name from a directory path.
- */
-function collectionName(dirPath: string): string {
-  return dirPath.replace(/\//g, '_').replace(/^_/, '');
-}
-
-/**
- * Index all text files in a directory into qmd.
- * Adds/updates documents, deactivates removed files.
- */
-export async function indexDirectory(
-  dirPath: string,
-  glob: string = TEXT_FILE_GLOB,
-): Promise<{ indexed: number; updated: number; removed: number }> {
+async function handleIndex({ dirPath, glob }) {
   const store = await getStore();
   const resolvedDir = path.resolve(dirPath);
   const colName = collectionName(resolvedDir);
   const now = new Date().toISOString();
-
-  // Register the collection in qmd's YAML config
-  const collections = await import('@tobilu/qmd/dist/collections.js');
-
-  collections.addCollection(colName, resolvedDir, glob);
-
-  // Walk files using fast-glob (same as qmd internally uses)
-  const fastGlob = await import('fast-glob');
+  const collections = await getCollectionsModule();
+  collections.addCollection(colName, resolvedDir, glob || TEXT_FILE_GLOB);
+  const fastGlob = await getFastGlob();
   const excludeDirs = ['node_modules', '.git', '.cache', 'vendor', 'dist', 'build'];
-  const allFiles: string[] = await fastGlob.default(glob, {
-    cwd:                  resolvedDir,
-    onlyFiles:            true,
-    followSymbolicLinks:  false,
-    dot:                  false,
-    ignore:               excludeDirs.map((d: string) => `**/${ d }/**`),
+  const allFiles = await fastGlob.default(glob || TEXT_FILE_GLOB, {
+    cwd: resolvedDir, onlyFiles: true, followSymbolicLinks: false, dot: false,
+    ignore: excludeDirs.map(d => '**/' + d + '/**'),
   });
-
-  // Filter hidden files
-  const files = allFiles.filter((file: string) => {
-    const parts = file.split('/');
-
-    return !parts.some((part: string) => part.startsWith('.'));
-  });
-
-  const { hashContent, extractTitle, handelize } = await import('@tobilu/qmd/dist/store.js');
-
-  let indexed = 0;
-  let updated = 0;
-
+  const files = allFiles.filter(file => !file.split('/').some(p => p.startsWith('.')));
+  const { hashContent, extractTitle, handelize } = await getStoreModule();
+  let indexed = 0, updated = 0;
   for (const relativeFile of files) {
     const filepath = path.resolve(resolvedDir, relativeFile);
     const normalizedPath = handelize(relativeFile);
-
-    let content: string;
-
-    try {
-      content = fs.readFileSync(filepath, 'utf-8');
-    } catch {
-      continue;
-    }
-    if (!content.trim()) {
-      continue;
-    }
-
+    let content;
+    try { content = fs.readFileSync(filepath, 'utf-8'); } catch { continue; }
+    if (!content.trim()) continue;
     const hash = await hashContent(content);
     const title = extractTitle(content, relativeFile);
     const existing = store.findActiveDocument(colName, normalizedPath);
-
     if (existing) {
       if (existing.hash !== hash) {
         store.insertContent(hash, content, now);
         const stat = fs.statSync(filepath);
-
         store.updateDocument(existing.id, title, hash, stat ? new Date(stat.mtime).toISOString() : now);
         updated++;
       }
     } else {
       store.insertContent(hash, content, now);
       const stat = fs.statSync(filepath);
-
-      store.insertDocument(
-        colName,
-        normalizedPath,
-        title,
-        hash,
+      store.insertDocument(colName, normalizedPath, title, hash,
         stat ? new Date(stat.birthtime).toISOString() : now,
-        stat ? new Date(stat.mtime).toISOString() : now,
-      );
+        stat ? new Date(stat.mtime).toISOString() : now);
       indexed++;
     }
   }
-
-  // Deactivate documents that no longer exist on disk
   const activePaths = store.getActiveDocumentPaths(colName);
-  const currentPaths = new Set(files.map((f: string) => handelize(f)));
+  const currentPaths = new Set(files.map(f => handelize(f)));
   let removed = 0;
-
   for (const activePath of activePaths) {
     if (!currentPaths.has(activePath)) {
       store.deactivateDocument(colName, activePath);
       removed++;
     }
   }
-
-  console.log(`[QMD] Indexed ${ dirPath }: ${ indexed } new, ${ updated } updated, ${ removed } removed`);
-
   return { indexed, updated, removed };
 }
 
-/**
- * Search files using qmd's BM25 full-text search + filename matching.
- * Merges and deduplicates results from both sources.
- */
-export async function search(query: string, dirPath: string, limit = 20): Promise<QmdSearchResult[]> {
+async function handleSearch({ query, dirPath, limit }) {
   const store = await getStore();
   const resolvedDir = path.resolve(dirPath);
   const colName = collectionName(resolvedDir);
-
-  const results: QmdSearchResult[] = [];
-  const seenPaths = new Set<string>();
-
-  // 1. Full-text search (BM25 via FTS5)
+  const results = [];
+  const seenPaths = new Set();
   try {
-    const ftsResults = store.searchFTS(query, limit, colName);
-
+    const ftsResults = store.searchFTS(query, limit || 20, colName);
     for (const r of ftsResults) {
-      if (seenPaths.has(r.filepath)) {
-        continue;
-      }
-      seenPaths.add(r.filepath);
-
-      const { extractSnippet } = await import('@tobilu/qmd/dist/store.js');
-      const body = store.getDocumentBody(r) || '';
-      const snippet = extractSnippet(body, query);
-
+      const relPath = r.displayPath || r.filepath;
+      const absPath = path.resolve(resolvedDir, relPath);
+      if (seenPaths.has(absPath)) continue;
+      seenPaths.add(absPath);
+      const snippet = quickSnippet(r.body, query);
       results.push({
-        path:    r.filepath,
-        name:    path.basename(r.filepath),
-        line:    snippet?.line ?? 0,
-        preview: snippet?.snippet ?? r.title ?? '',
-        score:   r.score,
-        source:  'fts',
+        path: absPath,
+        name: path.basename(relPath),
+        line: snippet?.line ?? 0,
+        preview: snippet?.snippet ?? r.title ?? relPath,
+        score: r.score,
+        source: 'fts',
       });
     }
   } catch (err) {
-    console.error('[QMD] FTS search error:', err);
+    // FTS error - return empty results
   }
-
-  // 2. Filename matching
-  try {
-    const similarFiles = store.findSimilarFiles(query, 5, limit);
-
-    for (const filepath of similarFiles) {
-      if (seenPaths.has(filepath)) {
-        continue;
-      }
-      seenPaths.add(filepath);
-      results.push({
-        path:    filepath,
-        name:    path.basename(filepath),
-        line:    0,
-        preview: filepath,
-        score:   0.5,
-        source:  'filename',
-      });
-    }
-  } catch (err) {
-    console.error('[QMD] Filename search error:', err);
-  }
-
-  // Sort by score descending, limit
-  results.sort((a, b) => b.score - a.score);
-
-  return results.slice(0, limit);
+  return results;
 }
+
+parentPort.on('message', async (msg) => {
+  try {
+    let result;
+    if (msg.action === 'index') result = await handleIndex(msg);
+    else if (msg.action === 'search') result = await handleSearch(msg);
+    else throw new Error('Unknown action: ' + msg.action);
+    parentPort.postMessage({ id: msg.id, result });
+  } catch (err) {
+    parentPort.postMessage({ id: msg.id, error: err?.message || String(err) });
+  }
+});
+`;

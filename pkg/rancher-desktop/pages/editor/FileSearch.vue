@@ -28,8 +28,9 @@
       />
     </div>
 
-    <div v-if="indexing" class="status-bar" :class="{ dark: isDark }">
-      Indexing...
+    <div v-if="indexing || searching" class="status-bar" :class="{ dark: isDark }">
+      <span class="spinner" />
+      {{ indexing ? 'Indexing...' : 'Searching...' }}
     </div>
 
     <div class="results-list" :class="{ dark: isDark }">
@@ -53,7 +54,7 @@
         </div>
       </div>
 
-      <div v-if="modelValue && !results.length && !indexing" class="no-results" :class="{ dark: isDark }">
+      <div v-if="modelValue && !results.length && !indexing && !searching" class="no-results" :class="{ dark: isDark }">
         No results found
       </div>
     </div>
@@ -62,6 +63,8 @@
 
 <script lang="ts">
 import { defineComponent, type PropType } from 'vue';
+
+const { ipcRenderer } = window.require('electron');
 
 export interface SearchResult {
   path: string;
@@ -96,6 +99,10 @@ export default defineComponent({
       type:    Boolean,
       default: false,
     },
+    searching: {
+      type:    Boolean,
+      default: false,
+    },
   },
 
   emits: ['update:modelValue', 'update:searchPath', 'file-selected'],
@@ -106,15 +113,8 @@ export default defineComponent({
 
   methods: {
     openResult(result: SearchResult) {
-      const ext = result.name.includes('.') ? result.name.split('.').pop() || '' : '';
-
-      this.$emit('file-selected', {
-        name:  result.name,
-        path:  result.path,
-        isDir: false,
-        size:  0,
-        ext,
-      });
+      // Open the file in VS Code at the matched line
+      ipcRenderer.invoke('filesystem-open-in-editor', result.path, result.line || undefined);
     },
   },
 });
@@ -210,6 +210,9 @@ export default defineComponent({
 }
 
 .status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 8px;
   margin-top: 6px;
   font-size: 11px;
@@ -218,6 +221,24 @@ export default defineComponent({
 
 .status-bar.dark {
   color: #8899a6;
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #64748b;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+.dark .spinner {
+  border-color: #3a3a3a;
+  border-top-color: #8899a6;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .results-list {

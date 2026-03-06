@@ -150,6 +150,7 @@ export interface IpcMainInvokeEvents {
   'filesystem-move':       (srcPath: string, destDir: string) => string;
   'filesystem-reveal':     (targetPath: string) => void;
   'filesystem-open-external': (targetPath: string) => void;
+  'filesystem-open-in-editor': (targetPath: string, line?: number) => void;
   'filesystem-upload':       (destDir: string, fileName: string, base64Data: string) => string;
   // #endregion
 

@@ -37,6 +37,7 @@
               :is-dark="isDark"
               :results="searchResults"
               :indexing="qmdIndexing"
+              :searching="qmdSearching"
               @file-selected="onFileSelected"
             />
 
@@ -466,6 +467,7 @@ export default defineComponent({
     const searchPath = ref('');
     const searchResults = ref<Array<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }>>([]);
     const qmdIndexing = ref(false);
+    const qmdSearching = ref(false);
     const gitChanges = ref<{status: string, file: string}[]>([]);
 
     // Terminal tabs state
@@ -597,10 +599,13 @@ export default defineComponent({
       }
       searchDebounceTimer = setTimeout(async() => {
         try {
+          qmdSearching.value = true;
           const dir = searchPath.value || rootPath.value;
           searchResults.value = await ipcRenderer.invoke('qmd-search', query, dir);
         } catch {
           searchResults.value = [];
+        } finally {
+          qmdSearching.value = false;
         }
       }, 300);
     });
@@ -855,6 +860,7 @@ export default defineComponent({
       searchPath,
       searchResults,
       qmdIndexing,
+      qmdSearching,
       gitChanges,
       terminalTabs,
       activeTerminalTab,

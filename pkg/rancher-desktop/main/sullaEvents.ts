@@ -239,6 +239,16 @@ export function initSullaEvents(): void {
     await shell.openPath(resolved);
   });
 
+  ipcMainProxy.handle('filesystem-open-in-editor', async(_event: unknown, targetPath: string, line?: number) => {
+    const { spawn } = require('child_process');
+    const gotoArg = line ? `${ targetPath }:${ line }` : targetPath;
+
+    spawn('code', ['--goto', gotoArg], {
+      detached: true,
+      stdio:    'ignore',
+    }).unref();
+  });
+
   ipcMainProxy.handle('filesystem-upload', async(_event: unknown, destDir: string, fileName: string, base64Data: string) => {
     const dir = assertInsideSullaHome(destDir);
     let target = path.join(dir, fileName);
