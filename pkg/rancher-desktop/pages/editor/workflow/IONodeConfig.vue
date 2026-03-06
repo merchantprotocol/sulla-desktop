@@ -8,10 +8,16 @@
           class="node-field-input node-field-textarea"
           :class="{ dark: isDark }"
           rows="3"
-          placeholder="Message shown to the user when asking for input..."
+          placeholder="e.g. Please provide your order number so I can look it up"
           :value="config.promptText || ''"
           @input="updateField('promptText', ($event.target as HTMLTextAreaElement).value)"
         ></textarea>
+      </div>
+      <div class="node-field help-section">
+        <p class="help-text" :class="{ dark: isDark }">
+          Pauses the workflow and sends the prompt text to the user. The workflow resumes
+          when the user replies, and their response is passed to the next node as input.
+        </p>
       </div>
     </template>
 
@@ -29,13 +35,23 @@
           <option v-for="wf in workflows" :key="wf.id" :value="wf.id">{{ wf.name }}</option>
         </select>
       </div>
+      <div class="node-field help-section">
+        <p class="help-text" :class="{ dark: isDark }">
+          Hands off the conversation to another workflow entirely. The current workflow ends
+          and the target workflow takes over from this point. Use this for escalation
+          or switching between completely different conversation flows.
+        </p>
+      </div>
     </template>
 
-    <!-- Response — no extra config for now -->
+    <!-- Response -->
     <template v-else-if="subtype === 'response'">
-      <div class="node-field">
-        <p class="config-hint" :class="{ dark: isDark }">
-          This node sends a response back to the user. Configure the label to describe the response.
+      <div class="node-field help-section">
+        <p class="help-text" :class="{ dark: isDark }">
+          Sends the output from the previous node back to the user as a visible message.
+          Use the node label to describe what kind of response this is (e.g. "Final Answer",
+          "Summary", "Error Message"). The actual content is determined at runtime from the
+          upstream node's output.
         </p>
       </div>
     </template>
@@ -123,11 +139,14 @@ function updateField(field: string, value: any) {
   min-height: 60px;
 }
 
-.config-hint {
-  font-size: 12px;
+.help-section { border-bottom: none; }
+
+.help-text {
+  font-size: 11px;
   color: #94a3b8;
-  margin: 0;
-  line-height: 1.4;
+  margin: 0 0 6px;
+  line-height: 1.5;
 }
-.config-hint.dark { color: #64748b; }
+.help-text:last-child { margin-bottom: 0; }
+.help-text.dark { color: #64748b; }
 </style>

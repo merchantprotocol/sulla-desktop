@@ -57,6 +57,7 @@ export interface MergeNodeConfig {
 
 export interface SubWorkflowNodeConfig {
   workflowId: string | null;
+  awaitResponse: boolean;
 }
 
 export interface UserInputNodeConfig {

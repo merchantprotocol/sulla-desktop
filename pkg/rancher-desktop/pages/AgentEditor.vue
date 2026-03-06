@@ -114,6 +114,35 @@
         <div class="editor-panel" v-show="centerPaneVisible" :class="{ dark: isDark }">
           <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
           <WorkflowEditor v-if="workflowMode" ref="workflowEditorRef" :is-dark="isDark" :workflow-data="activeWorkflowData" @node-selected="onWorkflowNodeSelected" @workflow-changed="onWorkflowChanged" />
+          <!-- Workflow save toolbar -->
+          <div v-if="workflowMode && activeWorkflowData" class="workflow-save-bar" :class="{ dark: isDark }">
+            <span v-if="workflowSaveStatus === 'saving'" class="workflow-save-status saving">
+              <svg class="workflow-save-spinner" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              Saving…
+            </span>
+            <span v-else-if="workflowSaveStatus === 'saved'" class="workflow-save-status saved">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              Saved
+            </span>
+            <span v-else-if="workflowSaveStatus === 'unsaved'" class="workflow-save-status unsaved">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+              Unsaved
+            </span>
+            <button class="workflow-save-btn" :class="{ dark: isDark }" title="Save workflow (⌘S)" @click="saveWorkflowNow">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/>
+                <polyline points="7 3 7 8 15 8"/>
+              </svg>
+              Save
+            </button>
+            <button class="workflow-save-btn" :class="{ dark: isDark }" title="Workflow settings" @click="toggleWorkflowSettings">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </button>
+          </div>
 
           <!-- Top editor area -->
           <div class="editor-top" v-show="!workflowMode">
@@ -340,9 +369,38 @@
 
         <!-- Right pane -->
         <div class="right-pane" v-show="rightPaneVisible" :class="{ dark: isDark }" :style="{ width: rightPaneWidth + 'px' }">
+          <!-- Workflow settings panel -->
+          <div v-if="workflowMode && workflowSettingsOpen && activeWorkflowData" class="workflow-settings-panel" :class="{ dark: isDark }">
+            <div class="workflow-settings-header">
+              <span class="workflow-settings-title">Workflow Settings</span>
+              <button class="workflow-settings-close" @click="onWorkflowSettingsClose" title="Close">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div class="workflow-settings-body">
+              <label class="workflow-settings-label">Name</label>
+              <input
+                class="workflow-settings-input"
+                :class="{ dark: isDark }"
+                type="text"
+                :value="activeWorkflowData.name"
+                @input="onWorkflowNameUpdate(($event.target as HTMLInputElement).value)"
+                placeholder="Workflow name"
+              />
+              <label class="workflow-settings-label">Description</label>
+              <textarea
+                class="workflow-settings-textarea"
+                :class="{ dark: isDark }"
+                :value="activeWorkflowData.description"
+                @input="onWorkflowDescriptionUpdate(($event.target as HTMLTextAreaElement).value)"
+                placeholder="Describe what this workflow does…"
+                rows="4"
+              />
+            </div>
+          </div>
           <!-- Workflow node properties panel -->
           <WorkflowNodePanel
-            v-if="workflowMode && selectedWorkflowNode"
+            v-else-if="workflowMode && selectedWorkflowNode"
             :is-dark="isDark"
             :node="selectedWorkflowNode"
             @close="onWorkflowNodePanelClose"
@@ -631,7 +689,10 @@ export default defineComponent({
     const selectedWorkflowNode = ref<{ id: string; label: string; type?: string; data?: any } | null>(null);
     const workflowEditorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null);
     const activeWorkflowData = ref<any>(null);
+    const workflowSaveStatus = ref<'idle' | 'unsaved' | 'saving' | 'saved'>('idle');
+    const workflowSettingsOpen = ref(false);
     let workflowSaveTimer: ReturnType<typeof setTimeout> | null = null;
+    let workflowSavedResetTimer: ReturnType<typeof setTimeout> | null = null;
     const searchQuery = ref('');
     const searchPath = ref('');
     const searchResults = ref<Array<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }>>([]);
@@ -719,7 +780,7 @@ export default defineComponent({
       if (!leftPaneVisible.value) {
         leftPaneVisible.value = true;
         clearModes();
-      } else if (searchMode.value || gitMode.value || dockerMode.value) {
+      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || workflowMode.value) {
         clearModes();
       } else {
         leftPaneVisible.value = false;
@@ -805,6 +866,7 @@ export default defineComponent({
     function onWorkflowNodeSelected(node: { id: string; label: string; type?: string; data?: any } | null) {
       selectedWorkflowNode.value = node;
       if (node) {
+        workflowSettingsOpen.value = false;
         rightPaneVisible.value = true;
       } else {
         rightPaneVisible.value = false;
@@ -827,7 +889,38 @@ export default defineComponent({
       rightPaneVisible.value = false;
     }
 
+    function toggleWorkflowSettings() {
+      if (workflowSettingsOpen.value) {
+        workflowSettingsOpen.value = false;
+        rightPaneVisible.value = false;
+      } else {
+        selectedWorkflowNode.value = null;
+        workflowSettingsOpen.value = true;
+        rightPaneVisible.value = true;
+      }
+    }
+
+    function onWorkflowSettingsClose() {
+      workflowSettingsOpen.value = false;
+      rightPaneVisible.value = false;
+    }
+
+    function onWorkflowNameUpdate(name: string) {
+      if (activeWorkflowData.value) {
+        activeWorkflowData.value = { ...activeWorkflowData.value, name };
+        onWorkflowChanged();
+      }
+    }
+
+    function onWorkflowDescriptionUpdate(description: string) {
+      if (activeWorkflowData.value) {
+        activeWorkflowData.value = { ...activeWorkflowData.value, description };
+        onWorkflowChanged();
+      }
+    }
+
     async function onWorkflowActivated(workflowId: string) {
+      workflowSaveStatus.value = 'idle';
       try {
         const data = await ipcRenderer.invoke('workflow-get', workflowId);
         activeWorkflowData.value = data;
@@ -844,6 +937,8 @@ export default defineComponent({
     function onWorkflowClosed(_workflowId: string) {
       activeWorkflowData.value = null;
       selectedWorkflowNode.value = null;
+      workflowSettingsOpen.value = false;
+      workflowSaveStatus.value = 'idle';
       rightPaneVisible.value = false;
     }
 
@@ -861,23 +956,43 @@ export default defineComponent({
       activeWorkflowData.value = newWorkflow;
     }
 
+    function doWorkflowSave() {
+      const serialized = workflowEditorRef.value?.serialize();
+      if (serialized && activeWorkflowData.value) {
+        workflowSaveStatus.value = 'saving';
+        const toSave = {
+          ...activeWorkflowData.value,
+          nodes:    serialized.nodes,
+          edges:    serialized.edges,
+          viewport: serialized.viewport,
+          updatedAt: new Date().toISOString(),
+        };
+        ipcRenderer.invoke('workflow-save', toSave).then(() => {
+          workflowSaveStatus.value = 'saved';
+          if (workflowSavedResetTimer) clearTimeout(workflowSavedResetTimer);
+          workflowSavedResetTimer = setTimeout(() => {
+            if (workflowSaveStatus.value === 'saved') {
+              workflowSaveStatus.value = 'idle';
+            }
+          }, 2000);
+        }).catch((err: any) => {
+          console.error('Failed to save workflow:', err);
+          workflowSaveStatus.value = 'unsaved';
+        });
+      }
+    }
+
     function onWorkflowChanged() {
       if (!activeWorkflowData.value) return;
+      workflowSaveStatus.value = 'unsaved';
       if (workflowSaveTimer) clearTimeout(workflowSaveTimer);
-      workflowSaveTimer = setTimeout(() => {
-        const serialized = workflowEditorRef.value?.serialize();
-        if (serialized && activeWorkflowData.value) {
-          const toSave = {
-            ...activeWorkflowData.value,
-            nodes: serialized.nodes,
-            edges: serialized.edges,
-            viewport: serialized.viewport,
-          };
-          ipcRenderer.invoke('workflow-save', toSave).catch((err: any) => {
-            console.error('Failed to auto-save workflow:', err);
-          });
-        }
-      }, 500);
+      workflowSaveTimer = setTimeout(doWorkflowSave, 500);
+    }
+
+    function saveWorkflowNow() {
+      if (!activeWorkflowData.value) return;
+      if (workflowSaveTimer) clearTimeout(workflowSaveTimer);
+      doWorkflowSave();
     }
 
     async function loadRootPath() {
@@ -1472,7 +1587,14 @@ export default defineComponent({
       onWorkflowClosed,
       onWorkflowCreated,
       onWorkflowChanged,
+      saveWorkflowNow,
+      workflowSaveStatus,
+      workflowSettingsOpen,
       activeWorkflowData,
+      toggleWorkflowSettings,
+      onWorkflowSettingsClose,
+      onWorkflowNameUpdate,
+      onWorkflowDescriptionUpdate,
       toggleAgent,
       toggleWorkflow,
       openContainerPort,
@@ -1556,6 +1678,7 @@ export default defineComponent({
   flex-direction: column;
   overflow: hidden;
   background: #ffffff;
+  position: relative;
 }
 
 .editor-panel.dark {
@@ -2145,6 +2268,199 @@ export default defineComponent({
 
 .dark .git-change {
   color: #ccc;
+}
+
+/* ── Workflow save bar ── */
+.workflow-save-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  font-size: 11px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.workflow-save-bar.dark {
+  background: rgba(30, 41, 59, 0.85);
+  border-color: #3c3c5c;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.workflow-save-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.workflow-save-status.saving {
+  color: #6366f1;
+}
+
+.workflow-save-status.saved {
+  color: #22c55e;
+}
+
+.workflow-save-status.unsaved {
+  color: #f59e0b;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.workflow-save-spinner {
+  animation: spin 0.8s linear infinite;
+}
+
+.workflow-save-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background: #fff;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workflow-save-btn:hover {
+  background: #f1f5f9;
+  border-color: #6366f1;
+  color: #6366f1;
+}
+
+.workflow-save-btn.dark {
+  background: #2d2d44;
+  border-color: #3c3c5c;
+  color: #94a3b8;
+}
+
+.workflow-save-btn.dark:hover {
+  background: #33334e;
+  border-color: #6366f1;
+  color: #818cf8;
+}
+
+.workflow-settings-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.workflow-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.workflow-settings-panel.dark .workflow-settings-header {
+  border-bottom-color: #3c3c5c;
+}
+
+.workflow-settings-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.workflow-settings-panel.dark .workflow-settings-title {
+  color: #e2e8f0;
+}
+
+.workflow-settings-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  color: #64748b;
+  border-radius: 4px;
+}
+
+.workflow-settings-close:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.workflow-settings-panel.dark .workflow-settings-close:hover {
+  background: #2d2d44;
+  color: #e2e8f0;
+}
+
+.workflow-settings-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.workflow-settings-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #475569;
+  margin-top: 4px;
+}
+
+.workflow-settings-panel.dark .workflow-settings-label {
+  color: #94a3b8;
+}
+
+.workflow-settings-input,
+.workflow-settings-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #1e293b;
+  outline: none;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.workflow-settings-input:focus,
+.workflow-settings-textarea:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.workflow-settings-input.dark,
+.workflow-settings-textarea.dark {
+  background: #1e1e2e;
+  border-color: #3c3c5c;
+  color: #e2e8f0;
+}
+
+.workflow-settings-input.dark:focus,
+.workflow-settings-textarea.dark:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+}
+
+.workflow-settings-textarea {
+  resize: vertical;
+  min-height: 60px;
 }
 </style>
 

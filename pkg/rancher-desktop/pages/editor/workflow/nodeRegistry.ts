@@ -173,7 +173,7 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     description:   'Execute another workflow as a step',
     iconSvg:       ICONS.subWorkflow,
     defaultLabel:  'Sub-workflow',
-    defaultConfig: () => ({ workflowId: null }),
+    defaultConfig: () => ({ workflowId: null, awaitResponse: true }),
   },
 
   // ── I/O ──

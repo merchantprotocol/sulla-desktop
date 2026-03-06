@@ -25,23 +25,30 @@
     <!-- Label -->
     <div class="node-label">{{ data.label }}</div>
 
-    <!-- Source handle (bottom) -->
+    <!-- Source handle (bottom) — hidden when node has route handles -->
     <Handle
+      v-if="routeHandles.length === 0"
       type="source"
       :position="Position.Bottom"
       class="node-handle"
     />
 
-    <!-- Extra output handles for router/condition (right side) -->
-    <Handle
-      v-for="(_, idx) in extraOutputCount"
-      :key="`route-${idx}`"
-      type="source"
-      :id="`route-${idx}`"
-      :position="Position.Right"
-      :style="{ top: `${24 + idx * 16}px` }"
-      class="node-handle"
-    />
+    <!-- Route output handles (bottom) — one per configured route -->
+    <div v-if="routeHandles.length > 0" class="route-handles-bar">
+      <div
+        v-for="route in routeHandles"
+        :key="route.id"
+        class="route-handle-col"
+      >
+        <Handle
+          type="source"
+          :id="route.id"
+          :position="Position.Bottom"
+          class="node-handle route-handle-dot"
+        />
+        <span class="route-handle-label" :class="{ dark: isDark }">{{ route.label }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -65,14 +72,27 @@ const iconSvg = computed(() => {
   return def?.iconSvg ?? '';
 });
 
-const extraOutputCount = computed(() => {
+const routeHandles = computed(() => {
   const def = getNodeDefinition(props.data.subtype);
-  if (!def?.hasMultipleOutputs) return 0;
-  // Router/Condition: show extra handles based on configured routes/rules
+  if (!def?.hasMultipleOutputs) return [];
+
+  // Condition nodes always have True/False outputs
+  if (props.data.subtype === 'condition') {
+    return [
+      { id: 'condition-true',  label: 'True' },
+      { id: 'condition-false', label: 'False' },
+    ];
+  }
+
+  // Router nodes: one handle per configured route
   const routes = props.data.config?.routes;
-  if (Array.isArray(routes) && routes.length > 1) return routes.length;
-  return 2; // default: two outputs (true/false or route A/B)
+  if (!Array.isArray(routes) || routes.length === 0) return [];
+  return routes.map((r: any, idx: number) => ({
+    id:    `route-${idx}`,
+    label: r.label || `Route ${idx + 1}`,
+  }));
 });
+
 </script>
 
 <style scoped>
@@ -158,5 +178,40 @@ const extraOutputCount = computed(() => {
 
 .workflow-custom-node.dark .node-handle {
   border-color: #1a1a2e;
+}
+
+.route-handles-bar {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 2px;
+}
+
+.route-handle-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+}
+
+.route-handle-dot {
+  position: relative;
+}
+
+.route-handle-label {
+  font-size: 8px;
+  font-weight: 500;
+  color: #475569;
+  white-space: nowrap;
+  line-height: 1;
+  text-align: center;
+  max-width: 48px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.route-handle-label.dark {
+  color: #94a3b8;
 }
 </style>

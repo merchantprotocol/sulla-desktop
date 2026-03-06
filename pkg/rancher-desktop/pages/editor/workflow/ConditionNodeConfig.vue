@@ -23,7 +23,7 @@
           <input
             class="node-field-input rule-input"
             :class="{ dark: isDark }"
-            placeholder="Field"
+            placeholder="e.g. sentiment"
             :value="rule.field"
             @input="onRuleChange(idx, 'field', ($event.target as HTMLInputElement).value)"
           />
@@ -45,7 +45,7 @@
           <input
             class="node-field-input rule-input"
             :class="{ dark: isDark }"
-            placeholder="Value"
+            placeholder="e.g. positive"
             :value="rule.value"
             @input="onRuleChange(idx, 'value', ($event.target as HTMLInputElement).value)"
           />
@@ -64,6 +64,19 @@
           Add Rule
         </button>
       </div>
+    </div>
+    <div class="node-field help-section" :class="{ dark: isDark }">
+      <p class="help-title" :class="{ dark: isDark }">How conditions work</p>
+      <p class="help-text" :class="{ dark: isDark }">
+        Conditions evaluate data fields from the previous node's output.
+        If the combined rules evaluate to <strong>true</strong>, flow continues
+        down the True output. Otherwise it follows the False output.
+      </p>
+      <p class="help-text" :class="{ dark: isDark }">
+        <strong>Field</strong> is the data key to check (e.g. <em>sentiment</em>, <em>message.type</em>, <em>user.role</em>).
+        <strong>Value</strong> is what to compare against.
+        Use <strong>AND</strong> when all rules must pass, or <strong>OR</strong> when any single rule is enough.
+      </p>
     </div>
   </div>
 </template>
@@ -209,4 +222,25 @@ function removeRule(idx: number) {
 .rule-add-btn:hover { border-color: #6366f1; color: #6366f1; }
 .rule-add-btn.dark { border-color: #3c3c5c; color: #94a3b8; }
 .rule-add-btn.dark:hover { border-color: #6366f1; color: #818cf8; }
+
+.help-section { border-bottom: none; }
+
+.help-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+  margin: 0 0 8px;
+}
+.help-title.dark { color: #94a3b8; }
+
+.help-text {
+  font-size: 11px;
+  color: #94a3b8;
+  margin: 0 0 6px;
+  line-height: 1.5;
+}
+.help-text:last-child { margin-bottom: 0; }
+.help-text.dark { color: #64748b; }
 </style>

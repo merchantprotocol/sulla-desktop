@@ -364,12 +364,15 @@ function showContextMenu(event: MouseEvent, filePath: string, isDir: boolean, ex
 }
 
 async function handleContextAction(action: { type: string; path: string; isDir: boolean }) {
+  // For new-file, new-folder, and paste: use parent directory when acting on a file
+  const targetDir = action.isDir ? action.path : action.path.replace(/\/[^/]+$/, '');
+
   switch (action.type) {
     case 'new-file': {
       const name = await inlinePromptRef.value?.show('New file name:');
       if (!name) return;
       try {
-        await ipcRenderer.invoke('filesystem-create-file', action.path, name);
+        await ipcRenderer.invoke('filesystem-create-file', targetDir, name);
         await loadAgents();
       } catch (err: any) {
         alert(err?.message || 'Failed to create file');
@@ -380,7 +383,7 @@ async function handleContextAction(action: { type: string; path: string; isDir: 
       const name = await inlinePromptRef.value?.show('New folder name:');
       if (!name) return;
       try {
-        await ipcRenderer.invoke('filesystem-create-dir', action.path, name);
+        await ipcRenderer.invoke('filesystem-create-dir', targetDir, name);
         await loadAgents();
       } catch (err: any) {
         alert(err?.message || 'Failed to create folder');
@@ -397,9 +400,9 @@ async function handleContextAction(action: { type: string; path: string; isDir: 
       if (!fileClipboard.value) return;
       try {
         if (fileClipboard.value.operation === 'copy') {
-          await ipcRenderer.invoke('filesystem-copy', fileClipboard.value.path, action.path);
+          await ipcRenderer.invoke('filesystem-copy', fileClipboard.value.path, targetDir);
         } else {
-          await ipcRenderer.invoke('filesystem-move', fileClipboard.value.path, action.path);
+          await ipcRenderer.invoke('filesystem-move', fileClipboard.value.path, targetDir);
           fileClipboard.value = null;
         }
         await loadAgents();

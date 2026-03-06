@@ -24,6 +24,18 @@
         @input="onPromptChange"
       ></textarea>
     </div>
+    <div class="node-field help-section" :class="{ dark: isDark }">
+      <p class="help-title" :class="{ dark: isDark }">How agents work</p>
+      <p class="help-text" :class="{ dark: isDark }">
+        Select a Sulla agent to run at this step. The agent receives the output from
+        the previous node as its input message.
+      </p>
+      <p class="help-text" :class="{ dark: isDark }">
+        Use <strong>Additional Prompt</strong> to give this agent extra context specific to this
+        workflow step &mdash; for example, "Focus only on extracting the customer's order number"
+        or "Respond in Spanish". This is appended to the agent's built-in prompt.
+      </p>
+    </div>
   </div>
 </template>
 
@@ -140,4 +152,25 @@ function onPromptChange(event: Event) {
   font-family: inherit;
   min-height: 60px;
 }
+
+.help-section { border-bottom: none; }
+
+.help-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+  margin: 0 0 8px;
+}
+.help-title.dark { color: #94a3b8; }
+
+.help-text {
+  font-size: 11px;
+  color: #94a3b8;
+  margin: 0 0 6px;
+  line-height: 1.5;
+}
+.help-text:last-child { margin-bottom: 0; }
+.help-text.dark { color: #64748b; }
 </style>

@@ -8,27 +8,25 @@
       :style="{ top: posY + 'px', left: posX + 'px' }"
       @contextmenu.prevent
     >
-      <!-- New File / New Folder (dirs only) -->
-      <template v-if="isDir">
-        <button class="context-menu-item" @click="action('new-file')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="12" y1="18" x2="12" y2="12" />
-            <line x1="9" y1="15" x2="15" y2="15" />
-          </svg>
-          <span>New File</span>
-        </button>
-        <button class="context-menu-item" @click="action('new-folder')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-            <line x1="12" y1="11" x2="12" y2="17" />
-            <line x1="9" y1="14" x2="15" y2="14" />
-          </svg>
-          <span>New Folder</span>
-        </button>
-        <div class="context-menu-sep"></div>
-      </template>
+      <!-- New File / New Folder -->
+      <button class="context-menu-item" @click="action('new-file')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="12" y1="18" x2="12" y2="12" />
+          <line x1="9" y1="15" x2="15" y2="15" />
+        </svg>
+        <span>New File</span>
+      </button>
+      <button class="context-menu-item" @click="action('new-folder')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          <line x1="12" y1="11" x2="12" y2="17" />
+          <line x1="9" y1="14" x2="15" y2="14" />
+        </svg>
+        <span>New Folder</span>
+      </button>
+      <div class="context-menu-sep"></div>
 
       <!-- Cut / Copy / Paste -->
       <button class="context-menu-item" @click="action('cut')">
@@ -50,7 +48,7 @@
         <span>Copy</span>
         <span class="context-menu-shortcut">⌘C</span>
       </button>
-      <button v-if="isDir && hasClipboard" class="context-menu-item" @click="action('paste')">
+      <button v-if="hasClipboard" class="context-menu-item" @click="action('paste')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
           <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
