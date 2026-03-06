@@ -139,6 +139,26 @@ export interface IpcMainInvokeEvents {
   // #region Filesystem
   'filesystem-get-root':  () => string;
   'filesystem-get-git-changes': (path: string) => Promise<{status: string, file: string}[]>;
+
+  // Git source control
+  'git-discover-repos': (dirPath: string) => Array<{ root: string; name: string }>;
+  'git-branch':       (dirPath: string) => string;
+  'git-list-branches': (dirPath: string) => Array<{ name: string; current: boolean; remote: boolean }>;
+  'git-checkout-branch': (dirPath: string, branchName: string) => { success: boolean; error: string };
+  'git-create-branch': (dirPath: string, branchName: string) => { success: boolean; error: string };
+  'git-status-full':  (dirPath: string) => Array<{ index: string; worktree: string; file: string }>;
+  'git-stage':        (dirPath: string, files: string[]) => boolean;
+  'git-unstage':      (dirPath: string, files: string[]) => boolean;
+  'git-diff':         (dirPath: string, file: string, staged: boolean) => string;
+  'git-commit':       (dirPath: string, message: string) => boolean;
+  'git-pull':         (dirPath: string) => { success: boolean; output: string };
+  'git-push':         (dirPath: string) => { success: boolean; output: string };
+  'git-fetch':        (dirPath: string) => { success: boolean; output: string };
+  'git-stash':        (dirPath: string) => { success: boolean; output: string };
+  'git-stash-pop':    (dirPath: string) => { success: boolean; output: string };
+  'git-discard-all':  (dirPath: string) => { success: boolean; output: string };
+  'git-add-gitignore': (repoRoot: string, pattern: string) => { success: boolean; output: string };
+
   'filesystem-read-dir':  (dirPath: string) => Array<{ name: string; path: string; isDir: boolean; size: number; ext: string }>;
   'filesystem-read-file':  (filePath: string) => string;
   'filesystem-write-file': (filePath: string, content: string) => void;

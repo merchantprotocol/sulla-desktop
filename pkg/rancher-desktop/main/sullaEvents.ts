@@ -118,6 +118,249 @@ export function initSullaEvents(): void {
     }
   });
 
+  // ─── Git source control handlers ─────────────────────────────────
+
+  /**
+   * Discover git repositories at `dirPath` and up to 3 levels of subdirectories.
+   * Returns an array of { root, name } for each unique repo found.
+   */
+  ipcMainProxy.handle('git-discover-repos', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    const repoRoots = new Set<string>();
+    const results: Array<{ root: string; name: string }> = [];
+
+    function probe(dir: string): string | null {
+      try {
+        return execSync('git rev-parse --show-toplevel', { cwd: dir, encoding: 'utf8', stdio: 'pipe' }).trim();
+      } catch {
+        return null;
+      }
+    }
+
+    function scan(dir: string, depth: number) {
+      // Check if this directory is inside a git repo
+      const root = probe(dir);
+      if (root && !repoRoots.has(root)) {
+        repoRoots.add(root);
+        results.push({ root, name: path.basename(root) });
+      }
+
+      // If we already found a repo at this dir, don't scan its children
+      // (they'd be the same repo). Only recurse if no repo found here.
+      if (root || depth >= 3) return;
+
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+          scan(path.join(dir, entry.name), depth + 1);
+        }
+      } catch { /* permission errors, etc. */ }
+    }
+
+    scan(dirPath, 0);
+    return results;
+  });
+
+  ipcMainProxy.handle('git-branch', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      return execSync('git rev-parse --abbrev-ref HEAD', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' }).trim();
+    } catch {
+      return '';
+    }
+  });
+
+  ipcMainProxy.handle('git-list-branches', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git branch -a --no-color', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      const branches: Array<{ name: string; current: boolean; remote: boolean }> = [];
+      const seen = new Set<string>();
+      for (const line of output.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.includes('->')) continue;
+        const current = line.startsWith('*');
+        const remote = trimmed.startsWith('remotes/');
+        const name = trimmed.replace(/^\*\s*/, '').replace(/^remotes\/origin\//, '');
+        if (seen.has(name)) continue;
+        seen.add(name);
+        branches.push({ name, current, remote });
+      }
+      return branches;
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMainProxy.handle('git-checkout-branch', async (_event: unknown, dirPath: string, branchName: string) => {
+    const { execSync } = require('child_process');
+    try {
+      execSync(`git checkout "${branchName}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, error: '' };
+    } catch (err: any) {
+      return { success: false, error: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-create-branch', async (_event: unknown, dirPath: string, branchName: string) => {
+    const { execSync } = require('child_process');
+    try {
+      execSync(`git checkout -b "${branchName}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, error: '' };
+    } catch (err: any) {
+      return { success: false, error: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-status-full', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git status --porcelain', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      const lines = output.split('\n').filter((line: string) => line.trim());
+      return lines.map((line: string) => {
+        const index = line[0];
+        const worktree = line[1];
+        const file = line.slice(3);
+        return { index, worktree, file };
+      });
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMainProxy.handle('git-stage', async (_event: unknown, dirPath: string, files: string[]) => {
+    const { execSync } = require('child_process');
+    try {
+      const fileArgs = files.map((f: string) => `"${f}"`).join(' ');
+      execSync(`git add ${fileArgs}`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return true;
+    } catch (err: any) {
+      console.error('[git-stage] Error:', err.message);
+      return false;
+    }
+  });
+
+  ipcMainProxy.handle('git-unstage', async (_event: unknown, dirPath: string, files: string[]) => {
+    const { execSync } = require('child_process');
+    try {
+      const fileArgs = files.map((f: string) => `"${f}"`).join(' ');
+      execSync(`git reset HEAD ${fileArgs}`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return true;
+    } catch (err: any) {
+      console.error('[git-unstage] Error:', err.message);
+      return false;
+    }
+  });
+
+  ipcMainProxy.handle('git-diff', async (_event: unknown, dirPath: string, file: string, staged: boolean) => {
+    const { execSync } = require('child_process');
+    try {
+      const cmd = staged ? `git diff --cached "${file}"` : `git diff "${file}"`;
+      return execSync(cmd, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+    } catch {
+      return '';
+    }
+  });
+
+  ipcMainProxy.handle('git-commit', async (_event: unknown, dirPath: string, message: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const escaped = message.replace(/"/g, '\\"');
+      execSync(`git commit -m "${escaped}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return true;
+    } catch (err: any) {
+      console.error('[git-commit] Error:', err.message);
+      return false;
+    }
+  });
+
+  ipcMainProxy.handle('git-pull', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git pull', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
+      return { success: true, output: output.trim() };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-push', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git push', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
+      return { success: true, output: (output || '').trim() };
+    } catch (err: any) {
+      // git push writes to stderr even on success
+      const stderr = err.stderr || '';
+      if (err.status === 0 || stderr.includes('->')) {
+        return { success: true, output: stderr.trim() };
+      }
+      return { success: false, output: stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-fetch', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      execSync('git fetch --all', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
+      return { success: true, output: 'Fetched all remotes.' };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-stash', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git stash', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, output: output.trim() };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-stash-pop', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('git stash pop', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, output: output.trim() };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-discard-all', async (_event: unknown, dirPath: string) => {
+    const { execSync } = require('child_process');
+    try {
+      execSync('git checkout -- .', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      execSync('git clean -fd', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return { success: true, output: 'Discarded all changes.' };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.message };
+    }
+  });
+
+  ipcMainProxy.handle('git-add-gitignore', async (_event: unknown, repoRoot: string, pattern: string) => {
+    try {
+      const gitignorePath = path.join(repoRoot, '.gitignore');
+      let content = '';
+      try { content = fs.readFileSync(gitignorePath, 'utf8'); } catch { /* file may not exist */ }
+      // Check if pattern already exists
+      const lines = content.split('\n');
+      if (lines.some(l => l.trim() === pattern.trim())) {
+        return { success: true, output: 'Pattern already in .gitignore' };
+      }
+      // Append pattern
+      const newContent = content.endsWith('\n') || content === '' ? content + pattern + '\n' : content + '\n' + pattern + '\n';
+      fs.writeFileSync(gitignorePath, newContent, 'utf8');
+      return { success: true, output: `Added "${pattern}" to .gitignore` };
+    } catch (err: any) {
+      return { success: false, output: err.message };
+    }
+  });
+
   ipcMainProxy.handle('filesystem-read-dir', async(_event: unknown, dirPath: string) => {
     const resolved = assertInsideSullaHome(dirPath);
     const entries = fs.readdirSync(resolved, { withFileTypes: true });

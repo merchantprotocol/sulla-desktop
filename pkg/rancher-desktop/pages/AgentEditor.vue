@@ -44,8 +44,9 @@
             <!-- Git pane -->
             <GitPane
               v-show="gitMode"
-              :git-changes="gitChanges"
+              :root-path="rootPath"
               :is-dark="isDark"
+              @file-selected="onFileSelected"
             />
 
             <!-- File tree -->
@@ -276,7 +277,6 @@ import MarkdownEditor from './filesystem/MarkdownEditor.vue';
 import CodeEditor from './filesystem/CodeEditor.vue';
 import XTermTerminal from './editor/XTermTerminal.vue';
 import TabContextMenu from './editor/TabContextMenu.vue';
-import GitChanges from './editor/GitChanges.vue';
 import IconPanel from './editor/IconPanel.vue';
 import FileSearch from './editor/FileSearch.vue';
 import GitPane from './editor/GitPane.vue';
@@ -343,7 +343,6 @@ export default defineComponent({
     CodeEditor,
     XTermTerminal,
     TabContextMenu,
-    GitChanges,
     IconPanel,
     FileSearch,
     GitPane,
@@ -468,7 +467,6 @@ export default defineComponent({
     const searchResults = ref<Array<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }>>([]);
     const qmdIndexing = ref(false);
     const qmdSearching = ref(false);
-    const gitChanges = ref<{status: string, file: string}[]>([]);
 
     // Terminal tabs state
     const terminalTabs = ref([
@@ -508,12 +506,6 @@ export default defineComponent({
     function switchTerminalTab(tabId: string) {
       activeTerminalTab.value = tabId;
     }
-
-    const getGitChanges = async () => {
-      if (rootPath.value) {
-        gitChanges.value = await (window as any).sulla.getGitChanges(rootPath.value);
-      }
-    };
 
     onMounted(async () => {
       const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -577,7 +569,6 @@ export default defineComponent({
       try {
         rootPath.value = await ipcRenderer.invoke('filesystem-get-root');
         searchPath.value = rootPath.value;
-        await getGitChanges();
         // Index the root directory in the background for qmd search
         qmdIndexing.value = true;
         ipcRenderer.invoke('qmd-index', rootPath.value).catch(() => {}).finally(() => {
@@ -861,7 +852,6 @@ export default defineComponent({
       searchResults,
       qmdIndexing,
       qmdSearching,
-      gitChanges,
       terminalTabs,
       activeTerminalTab,
       createNewTerminalTab,
