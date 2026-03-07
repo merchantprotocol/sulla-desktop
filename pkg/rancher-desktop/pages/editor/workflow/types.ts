@@ -27,6 +27,8 @@ export interface AgentNodeConfig {
   agentId: string | null;
   agentName: string;
   additionalPrompt: string;
+  /** Template string for the user message sent to this agent. Supports {{variable}} syntax. */
+  userMessage: string;
 }
 
 export interface RouterNodeConfig {
@@ -67,7 +69,8 @@ export interface UserInputNodeConfig {
 }
 
 export interface ResponseNodeConfig {
-  // Output node — content determined at runtime
+  /** Template string for the response. Supports {{variable}} syntax. When empty, passes through upstream output. */
+  responseTemplate: string;
 }
 
 export interface TransferNodeConfig {

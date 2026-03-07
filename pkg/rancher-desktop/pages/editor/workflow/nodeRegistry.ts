@@ -104,7 +104,7 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     iconSvg:       ICONS.agent,
     useImageIcon:  true,
     defaultLabel:  'Agent',
-    defaultConfig: () => ({ agentId: null, agentName: '', additionalPrompt: '' }),
+    defaultConfig: () => ({ agentId: null, agentName: '', additionalPrompt: '', userMessage: '' }),
   },
 
   // ── Routing ──
@@ -193,7 +193,7 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     description:   'Send a response to the user',
     iconSvg:       ICONS.response,
     defaultLabel:  'Response',
-    defaultConfig: () => ({}),
+    defaultConfig: () => ({ responseTemplate: '' }),
   },
   {
     subtype:       'transfer',

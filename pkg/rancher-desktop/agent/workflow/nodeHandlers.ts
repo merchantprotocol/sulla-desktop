@@ -6,7 +6,7 @@
  */
 
 import type { WorkflowNodeSubtype } from '@pkg/pages/editor/workflow/types';
-import type { NodeHandler } from './types';
+import type { NodeHandler, NodeOutput, WorkflowExecutionContext } from './types';
 
 // ── Handler implementations ──
 
@@ -21,24 +21,65 @@ const triggerHandler: NodeHandler = async({ context }) => {
  * Agent node — spawns a full AgentGraph, runs to completion, captures output.
  * Uses the existing GraphRegistry + createAgentGraph() infrastructure.
  */
+/**
+ * Resolve {{variable}} templates against the execution context.
+ * Supports: {{trigger.result}}, {{NodeLabel.result}}, {{NodeLabel.threadId}}
+ */
+function resolveTemplate(template: string, context: WorkflowExecutionContext, upstreamOutputs: NodeOutput[]): string {
+  return template.replace(/\{\{(\s*[\w\-. ]+\s*)\}\}/g, (_match, expr: string) => {
+    const parts = expr.trim().split('.');
+    const name = parts[0];
+    const field = parts[1] || 'result';
+
+    // {{trigger.result}}
+    if (name === 'trigger') {
+      const payload = context.triggerPayload;
+      return typeof payload === 'string' ? payload : JSON.stringify(payload ?? '');
+    }
+
+    // Find matching upstream output by label or nodeId
+    const output = upstreamOutputs.find(o => o.label === name || o.nodeId === name)
+      ?? Array.from(context.nodeOutputs.values()).find(o => o.label === name || o.nodeId === name);
+
+    if (!output) return _match; // leave unresolved tokens as-is
+
+    if (field === 'threadId') return output.threadId ?? '';
+    if (field === 'result') {
+      return typeof output.result === 'string' ? output.result : JSON.stringify(output.result ?? '');
+    }
+
+    return _match;
+  });
+}
+
 const agentHandler: NodeHandler = async(args) => {
   const { nodeId, config, context, upstreamOutputs, abortSignal } = args;
 
   const agentId = (config.agentId as string) || '';
   const additionalPrompt = (config.additionalPrompt as string) || '';
+  const userMessageTemplate = (config.userMessage as string) || '';
 
-  // Build the prompt from upstream outputs + additional prompt
-  const upstreamContext = upstreamOutputs
-    .map(o => `[${o.label}]: ${typeof o.result === 'string' ? o.result : JSON.stringify(o.result)}`)
-    .join('\n\n');
+  // If userMessage template is provided, resolve it; otherwise fall back to legacy behavior
+  let prompt: string;
+  if (userMessageTemplate.trim()) {
+    prompt = resolveTemplate(userMessageTemplate, context, upstreamOutputs);
+    if (additionalPrompt) {
+      prompt = `${additionalPrompt}\n\n${prompt}`;
+    }
+  } else {
+    // Legacy: build prompt from upstream outputs + additional prompt
+    const upstreamContext = upstreamOutputs
+      .map(o => `[${o.label}]: ${typeof o.result === 'string' ? o.result : JSON.stringify(o.result)}`)
+      .join('\n\n');
 
-  const prompt = [
-    additionalPrompt,
-    upstreamContext ? `\nUpstream context:\n${upstreamContext}` : '',
-    typeof context.triggerPayload === 'string' && upstreamOutputs.length === 0
-      ? context.triggerPayload
-      : '',
-  ].filter(Boolean).join('\n');
+    prompt = [
+      additionalPrompt,
+      upstreamContext ? `\nUpstream context:\n${upstreamContext}` : '',
+      typeof context.triggerPayload === 'string' && upstreamOutputs.length === 0
+        ? context.triggerPayload
+        : '',
+    ].filter(Boolean).join('\n');
+  }
 
   // Dynamic imports to avoid bundling main-process modules into renderer
   const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
@@ -333,8 +374,16 @@ const userInputHandler: NodeHandler = async(args) => {
 
 /**
  * Response node — sends the accumulated output to the user.
+ * If a responseTemplate is configured, resolves {{variable}} tokens against the context.
  */
-const responseHandler: NodeHandler = async({ upstreamOutputs, context }) => {
+const responseHandler: NodeHandler = async({ config, upstreamOutputs, context }) => {
+  const template = (config.responseTemplate as string) || '';
+
+  if (template.trim()) {
+    return { result: resolveTemplate(template, context, upstreamOutputs) };
+  }
+
+  // Legacy: concatenate upstream outputs
   const output = upstreamOutputs.length > 0
     ? upstreamOutputs.map(o => typeof o.result === 'string' ? o.result : JSON.stringify(o.result)).join('\n\n')
     : String(context.triggerPayload || '');

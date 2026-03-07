@@ -455,6 +455,7 @@
             v-else-if="workflowMode && selectedWorkflowNode"
             :is-dark="isDark"
             :node="selectedWorkflowNode"
+            :upstream-nodes="selectedNodeUpstream"
             @close="onWorkflowNodePanelClose"
             @update-label="onWorkflowNodeLabelUpdate"
             @update-trigger="() => {}"
@@ -802,6 +803,7 @@ export default defineComponent({
       }
 
       await modelSelector.start();
+      window.addEventListener('keydown', onKeyDown);
       document.addEventListener('mousedown', onEditorMenuOutsideClick);
       document.addEventListener('click', onInjectMenuOutsideClick);
     });
@@ -940,6 +942,48 @@ export default defineComponent({
       selectedWorkflowNode.value = null;
       rightPaneVisible.value = false;
     }
+
+    /** Walk edges backward to collect all upstream nodes for the selected node */
+    const selectedNodeUpstream = computed(() => {
+      const node = selectedWorkflowNode.value;
+      if (!node || !workflowEditorRef.value) return [];
+
+      const allNodes = workflowEditorRef.value.getNodes();
+      const allEdges = workflowEditorRef.value.getEdges();
+      if (!allNodes || !allEdges) return [];
+
+      const visited = new Set<string>();
+      const queue: string[] = [];
+
+      // Seed with direct upstream of the selected node
+      for (const edge of allEdges) {
+        if (edge.target === node.id && !visited.has(edge.source)) {
+          visited.add(edge.source);
+          queue.push(edge.source);
+        }
+      }
+
+      // BFS backward through all edges
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        for (const edge of allEdges) {
+          if (edge.target === current && !visited.has(edge.source)) {
+            visited.add(edge.source);
+            queue.push(edge.source);
+          }
+        }
+      }
+
+      // Map to UpstreamNodeInfo
+      return allNodes
+        .filter((n: any) => visited.has(n.id))
+        .map((n: any) => ({
+          nodeId:   n.id,
+          label:    n.data?.label || n.id,
+          subtype:  n.data?.subtype || '',
+          category: n.data?.category || '',
+        }));
+    });
 
     function toggleWorkflowSettings() {
       if (workflowSettingsOpen.value) {
@@ -1922,6 +1966,7 @@ export default defineComponent({
       agentMode,
       workflowMode,
       selectedWorkflowNode,
+      selectedNodeUpstream,
       workflowEditorRef,
       onWorkflowNodeSelected,
       onWorkflowNodeLabelUpdate,

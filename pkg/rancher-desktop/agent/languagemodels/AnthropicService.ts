@@ -234,6 +234,10 @@ export class AnthropicService extends BaseLanguageModel {
       anthropicBody.system = systemMessage.content;
     }
 
+    // Explicitly disable extended thinking to prevent conflicts with
+    // assistant prefill patterns in the conversation history.
+    anthropicBody.thinking = { type: 'disabled' };
+
     if (options.tools?.length) {
       anthropicBody.tools = options.tools.map((tool: any) => {
         if (tool.type === 'function') {
@@ -257,7 +261,7 @@ export class AnthropicService extends BaseLanguageModel {
   protected buildFetchOptions(body: any, signal?: AbortSignal): RequestInit {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'anthropic-version': '2023-06-01',
+      'anthropic-version': '2024-10-22',
     };
 
     if (this.apiKey) {

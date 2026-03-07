@@ -406,7 +406,7 @@ function setEdgeAnimated(sourceId: string, targetId: string, animated: boolean) 
   }
 }
 
-defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution, clearAllExecution, setEdgeAnimated });
+defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution, clearAllExecution, setEdgeAnimated, getNodes: () => nodes.value, getEdges: () => edges.value });
 </script>
 
 <style scoped>
