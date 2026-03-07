@@ -630,7 +630,9 @@ export class ChatCompletionsServer {
   }
 
   private async handleIntegrationCall(req: Request, res: Response) {
-    const { accountId, slug, endpoint } = req.params;
+    const accountId = String(req.params.accountId);
+    const slug = String(req.params.slug);
+    const endpoint = String(req.params.endpoint);
 
     try {
       const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
