@@ -86,4 +86,9 @@ export const nativeCrmSalesIntegrations: Record<string, Integration> = {
     name: 'Hunter.io', description: 'Find and verify professional email addresses for outreach and prospecting.',
     category: 'CRM & Sales', icon: 'hunter.svg', version: '1.0.0', lastUpdated: '2026-02-28', developer: 'Hunter',
   },
+  smartlead: {
+    id: 'smartlead', sort: 18, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'Smartlead', description: 'AI-powered cold email outreach. Manage campaigns, leads, mailboxes, and track deliverability.',
+    category: 'CRM & Sales', icon: 'smartlead.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'Smartlead',
+  },
 };

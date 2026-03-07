@@ -174,6 +174,16 @@ export async function instantiateSullaStart(): Promise<void> {
 
         SullaIntegrations();
 
+        // Load YAML-defined API integrations from ~/sulla/integrations
+        try {
+            const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+            const configLoader = getIntegrationConfigLoader();
+            await configLoader.loadAll();
+            console.log('[Background] IntegrationConfigLoader ready:', configLoader.getAvailableIntegrations().join(', ') || '(none)');
+        } catch (error) {
+            console.error('[Background] Failed to load integration configs:', error);
+        }
+
         // Resume OAuth token refresh timers for any previously connected OAuth integrations
         try {
             const { getOAuthService } = await import('@pkg/agent/services/OAuthService');

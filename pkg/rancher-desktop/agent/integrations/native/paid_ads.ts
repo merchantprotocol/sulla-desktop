@@ -1,0 +1,44 @@
+import type { Integration } from '../types';
+
+export const nativePaidAdsIntegrations: Record<string, Integration> = {
+  meta_ads: {
+    id: 'meta-ads', sort: 1, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'Meta Ads', description: 'Manage Facebook and Instagram ad campaigns, audiences, creatives, and performance insights via the Meta Marketing API.',
+    category: 'Paid Ads', icon: 'meta_ads.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'Meta',
+  },
+  google_ads: {
+    id: 'google_ads', sort: 2, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'Google Ads', description: 'Manage search, display, and video ad campaigns, keywords, and budgets. Retrieve performance reports.',
+    category: 'Paid Ads', icon: 'google_ads.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'Google',
+  },
+  linkedin_ads: {
+    id: 'linkedin_ads', sort: 3, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'LinkedIn Ads', description: 'Manage sponsored content, lead gen forms, and B2B ad campaigns on LinkedIn.',
+    category: 'Paid Ads', icon: 'linkedin_ads.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'Microsoft',
+  },
+  tiktok_ads: {
+    id: 'tiktok_ads', sort: 4, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'TikTok Ads', description: 'Manage TikTok ad campaigns, ad groups, creatives, and audience targeting.',
+    category: 'Paid Ads', icon: 'tiktok_ads.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'ByteDance',
+  },
+  twitter_ads: {
+    id: 'twitter_ads', sort: 5, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'X Ads', description: 'Manage promoted tweets, ad campaigns, and audience targeting on X (Twitter).',
+    category: 'Paid Ads', icon: 'twitter_ads.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'X Corp',
+  },
+  pinterest_ads: {
+    id: 'pinterest_ads', sort: 6, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'Pinterest Ads', description: 'Manage promoted pins, shopping ads, and campaign performance on Pinterest.',
+    category: 'Paid Ads', icon: 'pinterest_ads.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'Pinterest',
+  },
+  snapchat_ads: {
+    id: 'snapchat_ads', sort: 7, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'Snapchat Ads', description: 'Manage Snap ad campaigns, creatives, and audience segments.',
+    category: 'Paid Ads', icon: 'snapchat_ads.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'Snap Inc',
+  },
+  microsoft_ads: {
+    id: 'microsoft_ads', sort: 8, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'Microsoft Ads', description: 'Manage Bing search ads, shopping campaigns, and audience network placements.',
+    category: 'Paid Ads', icon: 'microsoft_ads.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'Microsoft',
+  },
+};

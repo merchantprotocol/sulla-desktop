@@ -371,7 +371,10 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
   }
 
   getCategories(): string[] {
-    return this.categoriesList;
+    return this.categoriesList.filter(cat => {
+      const tools = this.categories.get(cat);
+      return tools && tools.length > 0;
+    });
   }
 
   getToolNamesForCategory(category: string): string[] {
@@ -379,7 +382,7 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
   }
 
   getCategoriesWithDescriptions(): { category: string; description: string }[] {
-    return this.categoriesList.map(cat => ({
+    return this.getCategories().map(cat => ({
       category: cat,
       description: this.categoryDescriptions[cat] || 'No description available.',
     }));

@@ -22,11 +22,13 @@
           :git-mode="gitMode"
           :docker-mode="dockerMode"
           :agent-mode="agentMode"
+          :integrations-mode="integrationsMode"
           :workflow-mode="workflowMode"
           @toggle-file-tree="toggleFileTree"
           @toggle-search="toggleSearch"
           @toggle-git="toggleGit"
           @toggle-docker="toggleDocker"
+          @toggle-integrations="toggleIntegrations"
           @toggle-agent="toggleAgent"
           @toggle-workflow="toggleWorkflow"
         />
@@ -79,6 +81,15 @@
               @edit-agent="onEditAgent"
             />
 
+            <!-- Integrations pane -->
+            <IntegrationsPane
+              v-show="integrationsMode"
+              :is-dark="isDark"
+              @file-selected="onFileSelected"
+              @open-api-test="openApiTest"
+              @close="leftPaneVisible = false"
+            />
+
             <!-- Workflow pane -->
             <WorkflowPane
               ref="workflowPaneRef"
@@ -94,7 +105,7 @@
             <!-- File tree -->
             <FileTreeSidebar
               ref="fileTreeRef"
-              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !workflowMode"
+              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode"
               :root-path="rootPath"
               :highlight-path="highlightPath"
               :is-dark="isDark"
@@ -348,8 +359,8 @@
                   v-for="tab in terminalTabs"
                   :key="tab.id"
                   class="terminal-tab"
-                  :class="{ active: activeTerminalTab === tab.id, dark: isDark }"
-                  @click="switchTerminalTab(tab.id)"
+                  :class="{ active: bottomPaneTab === 'terminal' && activeTerminalTab === tab.id, dark: isDark }"
+                  @click="bottomPaneTab = 'terminal'; switchTerminalTab(tab.id)"
                 >
                   <span>{{ tab.name }}</span>
                   <button
@@ -364,6 +375,29 @@
                     </svg>
                   </button>
                 </div>
+              </div>
+              <!-- API Test tabs -->
+              <div
+                v-for="atab in apiTabs"
+                :key="atab.id"
+                class="terminal-tab"
+                :class="{ active: bottomPaneTab === 'api' && activeApiTab === atab.id, dark: isDark }"
+                @click="bottomPaneTab = 'api'; activeApiTab = atab.id"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
+                  <path d="M4 6h16M4 12h16M4 18h16"/>
+                </svg>
+                <span>API:{{ atab.slug }}</span>
+                <button
+                  class="terminal-tab-close"
+                  :class="{ dark: isDark }"
+                  @click.stop="closeApiTab(atab.id)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
               </div>
               <button
                 class="terminal-tab-add"
@@ -385,7 +419,7 @@
             </div>
             
             <!-- Terminal content -->
-            <div class="terminal-content">
+            <div v-show="bottomPaneTab === 'terminal'" class="terminal-content">
               <div
                 v-for="tab in terminalTabs"
                 :key="tab.id"
@@ -393,6 +427,18 @@
                 class="terminal-pane"
               >
                 <XTermTerminal :is-dark="isDark" :session-id="tab.sessionId" :command="tab.command || ''" :read-only="tab.readOnly || false" />
+              </div>
+            </div>
+
+            <!-- API Test Panels -->
+            <div v-show="bottomPaneTab === 'api'" class="terminal-content">
+              <div
+                v-for="atab in apiTabs"
+                :key="atab.id"
+                v-show="activeApiTab === atab.id"
+                style="height: 100%"
+              >
+                <ApiTestPanel :is-dark="isDark" :initial-slug="atab.slug" />
               </div>
             </div>
           </div>
@@ -500,7 +546,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, nextTick, watch, type Component } from 'vue';
+import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, watch, type Component } from 'vue';
 import { ipcRenderer } from 'electron';
 
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
@@ -515,6 +561,8 @@ import FileSearch from './editor/FileSearch.vue';
 import GitPane from './editor/GitPane.vue';
 import DockerPane from './editor/DockerPane.vue';
 import AgentPane from './editor/AgentPane.vue';
+import IntegrationsPane from './editor/IntegrationsPane.vue';
+import ApiTestPanel from './editor/ApiTestPanel.vue';
 import AgentFormTab from './editor/AgentFormTab.vue';
 import WorkflowPane from './editor/WorkflowPane.vue';
 import WorkflowEditor from './editor/WorkflowEditor.vue';
@@ -590,6 +638,8 @@ export default defineComponent({
     GitPane,
     DockerPane,
     AgentPane,
+    IntegrationsPane,
+    ApiTestPanel,
     AgentFormTab,
     WorkflowPane,
     WorkflowEditor,
@@ -609,6 +659,27 @@ export default defineComponent({
     const centerPaneVisible = ref(true);
     const rightPaneVisible = ref(true);
     const bottomPaneVisible = ref(true);
+    const bottomPaneTab = ref<'terminal' | 'api'>('terminal');
+    const apiTabs = ref<Array<{ id: string; slug: string }>>([]);
+    const activeApiTab = ref('');
+    let apiTabCounter = 0;
+
+    function openApiTest(slug: string) {
+      // Check if a tab for this slug already exists
+      const existing = apiTabs.value.find(t => t.slug === slug);
+      if (existing) {
+        activeApiTab.value = existing.id;
+        bottomPaneVisible.value = true;
+        bottomPaneTab.value = 'api';
+        return;
+      }
+      apiTabCounter++;
+      const newTab = { id: `api-${apiTabCounter}`, slug };
+      apiTabs.value.push(newTab);
+      activeApiTab.value = newTab.id;
+      bottomPaneVisible.value = true;
+      bottomPaneTab.value = 'api';
+    }
 
     // Agent registry for agent selector
     const agentRegistry = getAgentPersonaRegistry();
@@ -734,6 +805,7 @@ export default defineComponent({
     const gitMode = ref(false);
     const dockerMode = ref(false);
     const agentMode = ref(false);
+    const integrationsMode = ref(false);
     const workflowMode = ref(false);
     const selectedWorkflowNode = ref<{ id: string; label: string; type?: string; data?: any } | null>(null);
     const workflowEditorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null);
@@ -787,6 +859,22 @@ export default defineComponent({
       }
     }
 
+    function closeApiTab(tabId: string) {
+      const index = apiTabs.value.findIndex(t => t.id === tabId);
+      if (index === -1) return;
+      const wasActive = activeApiTab.value === tabId;
+      apiTabs.value.splice(index, 1);
+      if (wasActive) {
+        if (apiTabs.value.length > 0) {
+          const last = apiTabs.value[apiTabs.value.length - 1];
+          activeApiTab.value = last.id;
+        } else {
+          activeApiTab.value = '';
+          bottomPaneTab.value = 'terminal';
+        }
+      }
+    }
+
     function switchTerminalTab(tabId: string) {
       activeTerminalTab.value = tabId;
     }
@@ -827,6 +915,7 @@ export default defineComponent({
       gitMode.value = false;
       dockerMode.value = false;
       agentMode.value = false;
+      integrationsMode.value = false;
       workflowMode.value = false;
     }
 
@@ -834,7 +923,7 @@ export default defineComponent({
       if (!leftPaneVisible.value) {
         leftPaneVisible.value = true;
         clearModes();
-      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || workflowMode.value) {
+      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || integrationsMode.value || workflowMode.value) {
         clearModes();
       } else {
         leftPaneVisible.value = false;
@@ -888,6 +977,19 @@ export default defineComponent({
       } else if (!agentMode.value) {
         clearModes();
         agentMode.value = true;
+      } else {
+        leftPaneVisible.value = false;
+      }
+    }
+
+    function toggleIntegrations() {
+      if (!leftPaneVisible.value) {
+        leftPaneVisible.value = true;
+        clearModes();
+        integrationsMode.value = true;
+      } else if (!integrationsMode.value) {
+        clearModes();
+        integrationsMode.value = true;
       } else {
         leftPaneVisible.value = false;
       }
@@ -1982,6 +2084,8 @@ export default defineComponent({
       toggleDocker,
       dockerMode,
       agentMode,
+      integrationsMode,
+      toggleIntegrations,
       workflowMode,
       selectedWorkflowNode,
       selectedNodeUpstream,
@@ -2024,6 +2128,11 @@ export default defineComponent({
       centerPaneVisible,
       rightPaneVisible,
       bottomPaneVisible,
+      bottomPaneTab,
+      apiTabs,
+      activeApiTab,
+      openApiTest,
+      closeApiTab,
       leftPaneWidth,
       rightPaneWidth,
       bottomPaneHeight,

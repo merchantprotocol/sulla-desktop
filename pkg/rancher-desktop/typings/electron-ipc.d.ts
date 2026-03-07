@@ -261,6 +261,25 @@ export interface IpcMainInvokeEvents {
   'show-snapshots-blocking-dialog': (options: { window: Partial<Electron.MessageBoxOptions>, format: SnapshotDialog }) => any;
   'snapshot-cancel': () => void;
   // #endregion
+
+  // #region Config API (integration YAML -> live API calls)
+  'configapi-list-integrations': () => Array<{
+    slug: string;
+    name: string;
+    baseUrl: string;
+    version: string;
+    endpoints: Array<{
+      name: string;
+      path: string;
+      method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+      description: string;
+      auth: 'required' | 'optional' | 'none';
+      queryParams: Array<{ key: string; type: string; required?: boolean; default?: any; description?: string; enum?: string[] }>;
+    }>;
+  } | null>;
+  'configapi-reload': () => string[];
+  'configapi-call': (slug: string, endpointName: string, params: Record<string, any>, options?: Record<string, any>) => any;
+  // #endregion
 }
 
 /**
