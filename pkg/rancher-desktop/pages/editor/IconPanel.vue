@@ -1,6 +1,6 @@
 <template>
   <div class="icon-panel" :class="{ dark: isDark }">
-    <button class="icon-btn" :class="{ active: leftPaneVisible && !searchMode && !gitMode && !dockerMode && !agentMode && !workflowMode }" @click="toggleFileTree">
+    <button class="icon-btn" :class="{ active: leftPaneVisible && !searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode }" @click="toggleFileTree">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
         <polyline points="9,22 9,12 15,12 15,22"></polyline>
@@ -25,6 +25,15 @@
 
     <button class="icon-btn" :class="{ active: agentMode }" @click="$emit('toggle-agent')" title="Agent">
       <img :src="logoUrl" class="icon-logo" alt="Agent" />
+    </button>
+    <button class="icon-btn" :class="{ active: integrationsMode }" @click="$emit('toggle-integrations')" title="Integrations">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 6h16M4 12h16M4 18h16"/>
+        <circle cx="8" cy="6" r="1.5" fill="currentColor" stroke="none"/>
+        <circle cx="16" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+        <circle cx="10" cy="18" r="1.5" fill="currentColor" stroke="none"/>
+        <path d="M8 6h8M8 12h8M10 18h6"/>
+      </svg>
     </button>
     <button class="icon-btn" :class="{ active: workflowMode }" @click="$emit('toggle-workflow')" title="Agent Workflows">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -51,6 +60,7 @@ export default defineComponent({
     gitMode: { type: Boolean, default: false },
     dockerMode: { type: Boolean, default: false },
     agentMode: { type: Boolean, default: false },
+    integrationsMode: { type: Boolean, default: false },
     workflowMode: { type: Boolean, default: false },
   },
 
@@ -60,6 +70,7 @@ export default defineComponent({
     'toggle-git',
     'toggle-docker',
     'toggle-agent',
+    'toggle-integrations',
     'toggle-workflow',
   ],
 

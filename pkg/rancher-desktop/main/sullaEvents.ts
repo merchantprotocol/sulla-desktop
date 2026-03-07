@@ -1254,6 +1254,66 @@ export function initSullaEvents(): void {
 
   initSullaWorkflowEvents();
 
+  // ── Integration Config API (YAML-defined integrations) ──────────
+
+  /** List available integrations and their endpoints */
+  ipcMainProxy.handle('configapi-list-integrations', async () => {
+    const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+    const loader = getIntegrationConfigLoader();
+    const names = loader.getAvailableIntegrations();
+
+    return names.map((slug) => {
+      const integration = loader.getIntegration(slug);
+      if (!integration) return null;
+
+      const endpoints = [...integration.endpoints.entries()].map(([name, ep]) => ({
+        name,
+        path:        ep.endpoint.path,
+        method:      ep.endpoint.method,
+        description: ep.endpoint.description,
+        auth:        ep.endpoint.auth,
+        queryParams: ep.query_params ? Object.entries(ep.query_params).map(([k, v]) => ({
+          key: k, ...v,
+        })) : [],
+      }));
+
+      return {
+        slug,
+        name:    integration.auth.api.name,
+        baseUrl: integration.auth.api.base_url,
+        version: integration.auth.api.version,
+        endpoints,
+      };
+    }).filter(Boolean);
+  });
+
+  /** Reload integrations from disk */
+  ipcMainProxy.handle('configapi-reload', async () => {
+    const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+    const loader = getIntegrationConfigLoader();
+    await loader.loadAll();
+    return loader.getAvailableIntegrations();
+  });
+
+  /** Execute an API call through a YAML-configured integration */
+  ipcMainProxy.handle('configapi-call', async (
+    _event: unknown,
+    slug: string,
+    endpointName: string,
+    params: Record<string, any>,
+    options?: { token?: string; apiKey?: string; body?: unknown; raw?: boolean },
+  ) => {
+    const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+    const loader = getIntegrationConfigLoader();
+    const client = loader.getClient(slug);
+    if (!client) {
+      throw new Error(`Integration "${slug}" not found`);
+    }
+
+    const result = await client.call(endpointName, params, options || {});
+    return JSON.parse(JSON.stringify(result)); // ensure serializable
+  });
+
   console.log('[Sulla] IPC event handlers initialized');
 }
 

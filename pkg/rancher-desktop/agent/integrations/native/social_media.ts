@@ -18,8 +18,19 @@ export const nativeSocialMediaIntegrations: Record<string, Integration> = {
   },
   youtube: {
     id: 'youtube', sort: 4, paid: false, beta: false, comingSoon: false, connected: false,
-    name: 'YouTube', description: 'Manage videos, playlists, and comments. Retrieve analytics and automate content workflows.',
-    category: 'Social Media', icon: 'youtube.svg', version: '1.0.0', lastUpdated: '2026-02-28', developer: 'Google',
+    name: 'YouTube', description: 'Search videos, manage playlists, retrieve channel info, and automate content workflows via the YouTube Data API v3.',
+    category: 'Social Media', icon: 'youtube.svg', version: '1.0.0', lastUpdated: '2026-03-06', developer: 'Google',
+    formGuide: 'Go to console.cloud.google.com → APIs & Services → Credentials → Create an API key. Then enable the "YouTube Data API v3" under APIs & Services → Library.',
+    properties: [
+      {
+        key: 'api_key',
+        title: 'YouTube Data API Key',
+        hint: 'From Google Cloud Console → Credentials. Enable "YouTube Data API v3" in the API Library.',
+        type: 'password',
+        required: true,
+        placeholder: 'AIzaSy...',
+      },
+    ],
   },
   tiktok: {
     id: 'tiktok', sort: 5, paid: true, beta: false, comingSoon: false, connected: false,

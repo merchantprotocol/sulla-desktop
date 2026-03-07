@@ -149,7 +149,7 @@ export default defineComponent({
           theme:       props.isDark ? 'vs-dark' : 'vs',
           readOnly:    props.readOnly,
           automaticLayout: true,
-          minimap:     { enabled: false }, // Disable minimap to reduce issues
+          minimap:     { enabled: true },
           scrollBeyondLastLine: false,
           fontSize:    13,
           lineNumbers: 'on',
@@ -297,5 +297,7 @@ export default defineComponent({
 .code-editor-container {
   width: 100%;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 </style>

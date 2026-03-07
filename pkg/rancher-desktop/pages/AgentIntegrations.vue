@@ -309,16 +309,17 @@ const filteredIntegrations = computed(() => {
 
   return integrationsList.value
     .filter((integration) => {
+      if (q) {
+        // When searching, search across all categories
+        const hay = `${integration.name} ${integration.description} ${integration.category}`.toLowerCase();
+        return hay.includes(q);
+      }
+
       if (category && integration.category !== category) {
         return false;
       }
 
-      if (!q) {
-        return true;
-      }
-
-      const hay = `${integration.name} ${integration.description} ${integration.category}`.toLowerCase();
-      return hay.includes(q);
+      return true;
     })
     .sort((a, b) => {
       // Use the sort field if available, otherwise fall back to name comparison
