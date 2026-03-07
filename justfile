@@ -66,7 +66,7 @@ nvm:
 
 # Install dependencies and build the application for production
 install:
-    yarn install
+    yarn install --ignore-platform
 
 build:
     NODE_OPTIONS="--max-old-space-size=12288" yarn build

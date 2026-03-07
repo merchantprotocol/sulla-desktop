@@ -25,6 +25,12 @@
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
         </button>
+        <button class="action-btn" title="Close Panel" @click="$emit('close')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
       </div>
       <input
         ref="uploadInputRef"
@@ -53,7 +59,7 @@
         :expanded-dirs="expandedDirs"
         :children-map="childrenMap"
         :loading-dirs="loadingDirs"
-        :selected-path="selectedPath"
+        :selected-paths="selectedPaths"
         :drop-target-path="dropTargetPath"
         :highlight-path="highlightPath"
         @toggle-dir="toggleDir"
@@ -69,14 +75,16 @@
       :has-clipboard="!!fileClipboard"
       @action="onContextAction"
     />
+    <InlinePrompt ref="inlinePromptRef" :is-dark="isDark" />
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted, watch } from 'vue';
+import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { ipcRenderer, clipboard } from 'electron';
 import FileTreeNode from './FileTreeNode.vue';
 import FileContextMenu from './FileContextMenu.vue';
+import InlinePrompt from '../editor/InlinePrompt.vue';
 
 export interface FileEntry {
   name: string;
@@ -84,20 +92,20 @@ export interface FileEntry {
   isDir: boolean;
   size: number;
   ext: string;
-  editorType?: 'code' | 'markdown';
+  editorType?: 'code';
 }
 
 export default defineComponent({
   name: 'FileTreeSidebar',
 
-  components: { FileTreeNode, FileContextMenu },
+  components: { FileTreeNode, FileContextMenu, InlinePrompt },
 
   props: {
     isDark: { type: Boolean, default: false },
     highlightPath: { type: String, default: '' },
   },
 
-  emits: ['file-selected', 'tree-changed'],
+  emits: ['file-selected', 'tree-changed', 'close'],
 
   setup(props, { emit }) {
     const entries = ref<FileEntry[]>([]);
@@ -105,8 +113,10 @@ export default defineComponent({
     const childrenMap = ref<Record<string, FileEntry[]>>({});
     const loadingDirs = ref<Set<string>>(new Set());
     const loading = ref(true);
-    const selectedPath = ref('');
+    const selectedPaths = ref<Set<string>>(new Set());
+    const lastSelectedPath = ref('');
     const rootPath = ref('');
+    const inlinePromptRef = ref<InstanceType<typeof InlinePrompt> | null>(null);
 
     async function loadRoot() {
       loading.value = true;
@@ -146,9 +156,59 @@ export default defineComponent({
       expandedDirs.value = expanded;
     }
 
-    function selectFile(entry: FileEntry) {
-      selectedPath.value = entry.path;
-      emit('file-selected', entry);
+    /** Build a flat list of all visible entry paths in tree order */
+    function getVisiblePaths(): string[] {
+      const result: string[] = [];
+      function walk(items: FileEntry[]) {
+        for (const item of items) {
+          result.push(item.path);
+          if (item.isDir && expandedDirs.value.has(item.path)) {
+            const kids = childrenMap.value[item.path];
+            if (kids) walk(kids);
+          }
+        }
+      }
+      walk(entries.value);
+      return result;
+    }
+
+    function selectFile(payload: { entry: FileEntry; shiftKey: boolean; metaKey: boolean }) {
+      const { entry, shiftKey, metaKey } = payload;
+
+      if (shiftKey && lastSelectedPath.value) {
+        // Range select: select everything between lastSelectedPath and this entry
+        const visible = getVisiblePaths();
+        const startIdx = visible.indexOf(lastSelectedPath.value);
+        const endIdx = visible.indexOf(entry.path);
+        if (startIdx !== -1 && endIdx !== -1) {
+          const from = Math.min(startIdx, endIdx);
+          const to = Math.max(startIdx, endIdx);
+          const rangeSet = new Set(selectedPaths.value);
+          for (let i = from; i <= to; i++) {
+            rangeSet.add(visible[i]);
+          }
+          selectedPaths.value = rangeSet;
+        }
+      } else if (metaKey) {
+        // Toggle individual item
+        const next = new Set(selectedPaths.value);
+        if (next.has(entry.path)) {
+          next.delete(entry.path);
+        } else {
+          next.add(entry.path);
+        }
+        selectedPaths.value = next;
+        lastSelectedPath.value = entry.path;
+      } else {
+        // Normal click — single select
+        selectedPaths.value = new Set([entry.path]);
+        lastSelectedPath.value = entry.path;
+      }
+
+      // Open the file in the editor (only for non-dir single clicks without meta)
+      if (!entry.isDir && !metaKey && !shiftKey) {
+        emit('file-selected', entry);
+      }
     }
 
     const contextMenuRef = ref<any>(null);
@@ -180,7 +240,7 @@ export default defineComponent({
       try {
         switch (type) {
         case 'new-file': {
-          const name = prompt('New file name:');
+          const name = await inlinePromptRef.value?.show('New file name:');
           if (!name) return;
           await ipcRenderer.invoke('filesystem-create-file', targetPath, name);
           await refreshDir(targetPath);
@@ -191,7 +251,7 @@ export default defineComponent({
           break;
         }
         case 'new-folder': {
-          const name = prompt('New folder name:');
+          const name = await inlinePromptRef.value?.show('New folder name:');
           if (!name) return;
           await ipcRenderer.invoke('filesystem-create-dir', targetPath, name);
           await refreshDir(targetPath);
@@ -227,7 +287,7 @@ export default defineComponent({
         }
         case 'rename': {
           const oldName = targetPath.substring(targetPath.lastIndexOf('/') + 1);
-          const newName = prompt('Rename to:', oldName);
+          const newName = await inlinePromptRef.value?.show('Rename to:', oldName);
           if (!newName || newName === oldName) return;
           await ipcRenderer.invoke('filesystem-rename', targetPath, newName);
           await refreshParentOrRoot(targetPath);
@@ -272,17 +332,6 @@ export default defineComponent({
             editorType: 'code'
           });
           break;
-        case 'open-markdown-editor':
-          // Emit file-selected with forced markdown editor
-          emit('file-selected', {
-            name: targetPath.split('/').pop() || '',
-            path: targetPath,
-            isDir: false,
-            size: 0,
-            ext: targetPath.split('.').pop() || '',
-            editorType: 'markdown'
-          });
-          break;
         }
       } catch (err: any) {
         console.error(`Context action "${type}" failed:`, err);
@@ -294,7 +343,7 @@ export default defineComponent({
     const uploadInputRef = ref<HTMLInputElement | null>(null);
 
     async function newFileAtRoot() {
-      const name = prompt('New file name:');
+      const name = await inlinePromptRef.value?.show('New file name:');
       if (!name) return;
       try {
         await ipcRenderer.invoke('filesystem-create-file', rootPath.value, name);
@@ -306,7 +355,7 @@ export default defineComponent({
     }
 
     async function newFolderAtRoot() {
-      const name = prompt('New folder name:');
+      const name = await inlinePromptRef.value?.show('New folder name:');
       if (!name) return;
       try {
         await ipcRenderer.invoke('filesystem-create-dir', rootPath.value, name);
@@ -404,10 +453,54 @@ export default defineComponent({
       }
 
       // Set as selected path to highlight it
-      selectedPath.value = newPath;
+      selectedPaths.value = new Set([newPath]);
+      lastSelectedPath.value = newPath;
     }, { immediate: true });
 
-    onMounted(loadRoot);
+    // ── Auto-refresh heartbeat ─────────────────────────────
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+    async function heartbeat() {
+      if (!rootPath.value) return;
+      try {
+        const freshRoot = await ipcRenderer.invoke('filesystem-read-dir', rootPath.value);
+        const oldNames = entries.value.map(e => `${e.name}:${e.isDir}`).join(',');
+        const newNames = freshRoot.map((e: FileEntry) => `${e.name}:${e.isDir}`).join(',');
+        if (oldNames !== newNames) {
+          entries.value = freshRoot;
+        }
+        // Also refresh any expanded directories
+        for (const dirPath of expandedDirs.value) {
+          const freshChildren = await ipcRenderer.invoke('filesystem-read-dir', dirPath);
+          const oldChildNames = (childrenMap.value[dirPath] || []).map((e: FileEntry) => `${e.name}:${e.isDir}`).join(',');
+          const newChildNames = freshChildren.map((e: FileEntry) => `${e.name}:${e.isDir}`).join(',');
+          if (oldChildNames !== newChildNames) {
+            childrenMap.value = { ...childrenMap.value, [dirPath]: freshChildren };
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Expose refresh for parent components
+    function refresh() {
+      loadRoot();
+      // Also refresh expanded dirs
+      for (const dirPath of expandedDirs.value) {
+        refreshDir(dirPath);
+      }
+    }
+
+    onMounted(() => {
+      loadRoot();
+      heartbeatTimer = setInterval(heartbeat, 3000);
+    });
+
+    onBeforeUnmount(() => {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    });
 
     return {
       entries,
@@ -415,11 +508,12 @@ export default defineComponent({
       childrenMap,
       loadingDirs,
       loading,
-      selectedPath,
+      selectedPaths,
       rootPath,
       toggleDir,
       selectFile,
       contextMenuRef,
+      inlinePromptRef,
       fileClipboard,
       onContextMenu,
       onContextAction,
@@ -434,6 +528,7 @@ export default defineComponent({
       onScrollDrop,
       onDragHover,
       onDropFiles,
+      refresh,
     };
   },
 });
@@ -460,14 +555,22 @@ export default defineComponent({
 .file-tree-header {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 0 8px 0 12px;
+  height: 35px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.8px;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: #6f6f6f;
-  border-bottom: 1px solid #e0e0e0;
+  color: #64748b;
+  background: #f8fafc;
+  border-bottom: 1px solid #cbd5e1;
   flex-shrink: 0;
+}
+
+.dark .file-tree-header {
+  color: #94a3b8;
+  background: #1e293b;
+  border-bottom-color: #3c3c3c;
 }
 
 .file-tree-actions {
@@ -502,11 +605,6 @@ export default defineComponent({
 .dark .action-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #ccc;
-}
-
-.dark .file-tree-header {
-  color: #999;
-  border-bottom-color: #3c3c3c;
 }
 
 .file-tree-scroll.drop-active {

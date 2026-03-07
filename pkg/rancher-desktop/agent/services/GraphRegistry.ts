@@ -4,6 +4,9 @@ import type { HeartbeatThreadState } from '../nodes/HeartbeatNode';
 export type { HeartbeatThreadState as OverlordThreadState } from '../nodes/HeartbeatNode';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel, getCurrentMode } from '../languagemodels';
+import { resolveSullaAgentsDir } from '../utils/sullaPaths';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
@@ -232,11 +235,16 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
 async function buildAgentState(wsChannel: string, threadId?: string): Promise<AgentGraphState> {
   const id = threadId ?? nextThreadId();
 
+  console.log(`[GraphRegistry] buildAgentState() — wsChannel="${wsChannel}", threadId="${id}"`);
+
   const mode = await SullaSettingsModel.get('modelMode', 'local');
   const llmModel = mode === 'remote'
     ? await SullaSettingsModel.get('remoteModel', '')
     : await SullaSettingsModel.get('sullaModel', '');
   const llmLocal = mode === 'local';
+
+  const agentConfig = await loadAgentConfig(wsChannel);
+  console.log(`[GraphRegistry] buildAgentState() — agent config for "${wsChannel}": name="${agentConfig?.name || '(none)'}", hasPrompt=${!!agentConfig?.prompt}, type="${agentConfig?.type || '(none)'}"`);
 
   return {
     messages: [],
@@ -271,8 +279,71 @@ async function buildAgentState(wsChannel: string, threadId?: string): Promise<Ag
       n8nLiveEventsEnabled: false,
       returnTo: null,
 
-      agent: undefined,
+      agent: agentConfig,
       agentLoopCount: 0
     }
   };
+}
+
+
+/**
+ * Load agent configuration from ~/sulla/agents/{agentId}/
+ * Reads agent.yaml for config and compiles all .md files into a single prompt.
+ * Returns undefined if agent directory doesn't exist.
+ */
+async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metadata']['agent']> {
+  console.log(`[GraphRegistry] loadAgentConfig() — agentId="${agentId}"`);
+  if (!agentId) {
+    console.log(`[GraphRegistry] loadAgentConfig() — empty agentId, returning undefined`);
+    return undefined;
+  }
+
+  const agentDir = path.join(resolveSullaAgentsDir(), agentId);
+  if (!fs.existsSync(agentDir)) {
+    console.log(`[GraphRegistry] loadAgentConfig() — agent dir not found: ${agentDir}`);
+    return undefined;
+  }
+
+  const yamlPath = path.join(agentDir, 'agent.yaml');
+  if (!fs.existsSync(yamlPath)) {
+    console.log(`[GraphRegistry] loadAgentConfig() — agent.yaml not found: ${yamlPath}`);
+    return undefined;
+  }
+  console.log(`[GraphRegistry] loadAgentConfig() — found agent at ${agentDir}`);
+
+  try {
+    const yaml = await import('yaml');
+    const parsed = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+
+    // Compile all .md files into a single prompt (no variable substitution)
+    const entries = fs.readdirSync(agentDir, { withFileTypes: true });
+    const mdFiles = entries
+      .filter(e => e.isFile() && e.name.endsWith('.md'))
+      .sort((a, b) => {
+        // soul.md first, environment.md second, then alphabetical
+        const order = (name: string) =>
+          name === 'soul.md' ? 0 : name === 'environment.md' ? 1 : 2;
+        return order(a.name) - order(b.name) || a.name.localeCompare(b.name);
+      });
+
+    const sections: string[] = [];
+    for (const file of mdFiles) {
+      const content = fs.readFileSync(path.join(agentDir, file.name), 'utf-8').trim();
+      if (content) {
+        sections.push(content);
+      }
+    }
+
+    return {
+      name:        parsed.name || agentId,
+      description: parsed.description || '',
+      type:        parsed.type || 'worker',
+      skills:      parsed.skills || [],
+      tools:       parsed.tools || [],
+      prompt:      sections.length > 0 ? sections.join('\n\n') : undefined,
+    };
+  } catch (err) {
+    console.error(`[GraphRegistry] Failed to load agent config for ${agentId}:`, err);
+    return undefined;
+  }
 }

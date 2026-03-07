@@ -49,7 +49,7 @@ export type AgentRegistryEntry = {
 };
 
 export class AgentPersonaRegistry {
-  private readonly backgroundAgentId = 'dreaming-protocol';
+  private readonly backgroundAgentId = 'heartbeat';
   private readonly activeAgentListeners = new Set<(agent: AgentRegistryEntry | undefined) => void>();
 
   private readonly personaServices = new Map<string, AgentPersonaService>();
@@ -58,7 +58,7 @@ export class AgentPersonaRegistry {
     agents: [
       {
         isRunning: true,
-        agentId: 'chat-controller',
+        agentId: 'sulla-desktop',
         agentName: 'Sulla',
         templateId: 'glass-core',
         emotion: 'calm',
@@ -71,8 +71,8 @@ export class AgentPersonaRegistry {
       },
       {
         isRunning: true,
-        agentId: 'dreaming-protocol',
-        agentName: 'Radius',
+        agentId: 'heartbeat',
+        agentName: 'Heartbeat',
         templateId: 'terminal',
         emotion: 'focus',
         status: 'idle',
@@ -81,22 +81,9 @@ export class AgentPersonaRegistry {
         temperature: 0.2,
         messages: [],
         loading: false,
-      },/*
-      {
-        isRunning: true,
-        agentId: 'tasker',
-        agentName: 'Lima',
-        templateId: 'biosynthetic',
-        emotion: 'industrious',
-        status: 'idle',
-        tokensPerSecond: 400,
-        totalTokensUsed: 0,
-        temperature: 0.2,
-        messages: [],
-        loading: false,
-      },*/
+      },
     ],
-    activeAgentId: 'chat-controller',
+    activeAgentId: 'sulla-desktop',
   });
 
   constructor() {

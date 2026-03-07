@@ -7,8 +7,8 @@ import { getWebSocketClientService, type WebSocketMessage } from './WebSocketCli
 import { CalendarEvent } from '../database/models/CalendarEvent'; // new model
 import { eventPrompt } from '../prompts/event';
 
-const FRONTEND_CHANNEL_ID = 'chat-controller';
-const BACKEND_CHANNEL_ID = 'dreaming-protocol';
+const FRONTEND_CHANNEL_ID = 'sulla-desktop';
+const BACKEND_CHANNEL_ID = 'heartbeat';
 const ACK_TIMEOUT_MS = 3_000;
 
 interface ScheduledJob {
@@ -98,6 +98,13 @@ export class SchedulerService {
       const prompt = this.buildEventPrompt(event);
       console.log(`[SchedulerService] Built prompt (${prompt.length} chars)`);
 
+      // Try workflow dispatch first
+      const handled = await this.tryWorkflowDispatch(prompt);
+      if (handled) {
+        console.log(`[SchedulerService] Event ${event.id} handled by workflow`);
+        return;
+      }
+
       const acknowledged = await this.sendToFrontend(event, prompt);
       if (acknowledged) {
         console.log(`[SchedulerService] Frontend acknowledged event ${event.id}`);
@@ -108,6 +115,18 @@ export class SchedulerService {
       void this.sendToBackend(event, prompt);
     } catch (err) {
       console.error(`[SchedulerService] Failed to trigger event ${event.id}:`, err);
+    }
+  }
+
+  private async tryWorkflowDispatch(message: string): Promise<boolean> {
+    try {
+      const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
+      const registry = getWorkflowRegistry();
+      const result = await registry.dispatch({ triggerType: 'calendar', message });
+      return result !== null;
+    } catch (err) {
+      console.warn('[SchedulerService] Workflow dispatch failed, falling back:', err);
+      return false;
     }
   }
 

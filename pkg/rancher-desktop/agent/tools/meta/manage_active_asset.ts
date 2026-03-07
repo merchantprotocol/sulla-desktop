@@ -17,7 +17,7 @@ export class ManageActiveAssetWorker extends BaseTool {
     const assetType = String(input.assetType || '').trim().toLowerCase();
     const skillSlug = typeof input.skillSlug === 'string' ? input.skillSlug.trim() : '';
     const metadata = (this.state as any).metadata || {};
-    const agentId = String(metadata.wsChannel || 'chat-controller');
+    const agentId = String(metadata.wsChannel || 'sulla-desktop');
 
     const registry = getAgentPersonaRegistry();
     const persona = registry.getOrCreatePersonaService(agentId);

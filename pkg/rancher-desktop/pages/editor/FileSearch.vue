@@ -1,5 +1,14 @@
 <template>
   <div class="search-container" :class="{ dark: isDark }">
+    <div class="search-pane-header" :class="{ dark: isDark }">
+      <span class="search-pane-title">Search</span>
+      <button class="search-close-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
     <div class="search-input-wrapper" :class="{ dark: isDark }">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="11" cy="11" r="8"/>
@@ -105,7 +114,7 @@ export default defineComponent({
     },
   },
 
-  emits: ['update:modelValue', 'update:searchPath', 'file-selected'],
+  emits: ['update:modelValue', 'update:searchPath', 'file-selected', 'close'],
 
   mounted() {
     (this.$refs.searchInput as HTMLInputElement)?.focus();
@@ -124,22 +133,76 @@ export default defineComponent({
 .search-container {
   display: flex;
   flex-direction: column;
-  padding: 8px 12px;
+  padding: 0;
   background: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
   height: 100%;
   overflow: hidden;
 }
 
 .search-container.dark {
   background: #1e293b;
-  border-bottom-color: #3c3c3c;
+}
+
+.search-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 12px;
+  height: 35px;
+  flex-shrink: 0;
+  background: #f8fafc;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.search-pane-header.dark {
+  background: #1e293b;
+  border-bottom-color: #334155;
+}
+
+.search-pane-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+}
+
+.search-pane-header.dark .search-pane-title {
+  color: #94a3b8;
+}
+
+.search-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.search-close-btn:hover {
+  background: rgba(0,0,0,0.06);
+  color: #475569;
+}
+
+.search-close-btn.dark {
+  color: #64748b;
+}
+
+.search-close-btn.dark:hover {
+  background: rgba(255,255,255,0.08);
+  color: #94a3b8;
 }
 
 .search-input-wrapper {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 8px 12px;
   padding: 8px 12px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
@@ -147,8 +210,8 @@ export default defineComponent({
 }
 
 .search-input-wrapper.dark {
-  background: #2d2d2d;
-  border-color: #404040;
+  background: #0f172a;
+  border-color: #334155;
 }
 
 .path-input-wrapper {
@@ -156,15 +219,15 @@ export default defineComponent({
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  margin-top: 6px;
+  margin: 6px 12px 0 12px;
   background: #f1f5f9;
   border: 1px solid #e2e8f0;
   border-radius: 4px;
 }
 
 .path-input-wrapper.dark {
-  background: #252525;
-  border-color: #3a3a3a;
+  background: #0f172a;
+  border-color: #334155;
 }
 
 .search-container svg {
@@ -182,7 +245,7 @@ export default defineComponent({
 }
 
 .search-input.dark {
-  color: #ccc;
+  color: #e2e8f0;
 }
 
 .path-input {
@@ -196,7 +259,7 @@ export default defineComponent({
 }
 
 .path-input.dark {
-  color: #999;
+  color: #94a3b8;
 }
 
 .search-input::placeholder,
@@ -220,7 +283,7 @@ export default defineComponent({
 }
 
 .status-bar.dark {
-  color: #8899a6;
+  color: #94a3b8;
 }
 
 .spinner {
@@ -233,8 +296,8 @@ export default defineComponent({
 }
 
 .dark .spinner {
-  border-color: #3a3a3a;
-  border-top-color: #8899a6;
+  border-color: #334155;
+  border-top-color: #94a3b8;
 }
 
 @keyframes spin {
@@ -259,7 +322,7 @@ export default defineComponent({
 }
 
 .result-item.dark:hover {
-  background: #333;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .result-name {
@@ -290,8 +353,8 @@ export default defineComponent({
 }
 
 .dark .result-icon {
-  background: #3a3a3a;
-  color: #8899a6;
+  background: #334155;
+  color: #94a3b8;
 }
 
 .result-path {
@@ -319,7 +382,7 @@ export default defineComponent({
 }
 
 .result-preview.dark {
-  color: #586e75;
+  color: #64748b;
 }
 
 .result-line {
@@ -334,8 +397,8 @@ export default defineComponent({
 }
 
 .dark .result-line {
-  background: #3a3a3a;
-  color: #8899a6;
+  background: #334155;
+  color: #94a3b8;
 }
 
 .no-results {

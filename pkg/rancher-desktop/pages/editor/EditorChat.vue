@@ -3,6 +3,12 @@
     <!-- Header -->
     <div class="chat-header" :class="{ dark: isDark }">
       <span class="chat-header-title">Chat</span>
+      <button class="chat-close-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
     </div>
 
     <!-- Messages -->
@@ -83,8 +89,49 @@
         </button>
       </div>
 
-      <!-- Model selector + token info -->
+      <!-- Agent selector + Model selector + token info -->
       <div class="chat-footer-bar" :class="{ dark: isDark }">
+        <!-- Agent selector -->
+        <div v-if="!hideAgentSelector" class="agent-selector-wrap">
+          <button
+            type="button"
+            class="agent-trigger"
+            :class="{ dark: isDark }"
+            @click="toggleAgentMenu"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="8" r="4"/>
+              <path d="M20 21a8 8 0 0 0-16 0"/>
+            </svg>
+            <span class="agent-label">{{ activeAgentName }}</span>
+            <svg width="10" height="10" viewBox="0 0 15 15" fill="currentColor">
+              <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill-rule="evenodd" clip-rule="evenodd"/>
+            </svg>
+          </button>
+
+          <div v-if="showAgentMenu" class="agent-menu" :class="{ dark: isDark }">
+            <div class="agent-menu-header" :class="{ dark: isDark }">
+              <span>Agents</span>
+              <button type="button" class="agent-menu-close" :class="{ dark: isDark }" @click="showAgentMenu = false">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z"/>
+                </svg>
+              </button>
+            </div>
+            <button
+              v-for="agent in visibleAgents"
+              :key="agent.agentId"
+              type="button"
+              class="agent-option"
+              :class="{ dark: isDark, active: agent.agentId === agentRegistry?.state.activeAgentId }"
+              @click="selectAgent(agent.agentId)"
+            >
+              <span class="agent-option-label">{{ agent.agentName }}</span>
+              <span class="agent-option-status" :class="agent.status">{{ agent.status }}</span>
+            </button>
+          </div>
+        </div>
+
         <!-- Model selector -->
         <div class="model-selector-wrap" :ref="(el: any) => { if (modelSelector) modelSelector.modelMenuEl.value = el }">
           <button
@@ -155,6 +202,7 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import type { ChatMessage } from '@pkg/agent';
 import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
+import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 
 const props = defineProps<{
   isDark: boolean;
@@ -163,13 +211,30 @@ const props = defineProps<{
   loading: boolean;
   graphRunning: boolean;
   modelSelector?: AgentModelSelectorController;
+  agentRegistry?: AgentPersonaRegistry;
   totalTokensUsed?: number;
+  hideAgentSelector?: boolean;
 }>();
+
+const showAgentMenu = ref(false);
+
+const activeAgentName = computed(() => props.agentRegistry?.activeAgent.value?.agentName || 'Agent');
+const visibleAgents = computed(() => props.agentRegistry?.visibleAgents.value || []);
+
+function toggleAgentMenu() {
+  showAgentMenu.value = !showAgentMenu.value;
+}
+
+function selectAgent(agentId: string) {
+  props.agentRegistry?.setActiveAgent(agentId);
+  showAgentMenu.value = false;
+}
 
 const emit = defineEmits<{
   'update:query': [value: string];
   'send': [];
   'stop': [];
+  'close': [];
 }>();
 
 const tokenLabel = computed(() => {
@@ -238,7 +303,8 @@ watch(() => props.messages.length, () => scrollToBottom());
 .chat-header {
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  justify-content: space-between;
+  padding: 0 8px 0 12px;
   height: 35px;
   background: #f8fafc;
   border-bottom: 1px solid #cbd5e1;
@@ -247,17 +313,46 @@ watch(() => props.messages.length, () => scrollToBottom());
 
 .chat-header.dark {
   background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  border-bottom-color: #334155;
 }
 
 .chat-header-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: #333;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
 }
 
 .chat-header.dark .chat-header-title {
-  color: #ccc;
+  color: #94a3b8;
+}
+
+.chat-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.chat-close-btn:hover {
+  background: rgba(0,0,0,0.06);
+  color: #475569;
+}
+
+.chat-close-btn.dark {
+  color: #64748b;
+}
+
+.chat-close-btn.dark:hover {
+  background: rgba(255,255,255,0.08);
+  color: #94a3b8;
 }
 
 .chat-messages {
@@ -297,7 +392,11 @@ watch(() => props.messages.length, () => scrollToBottom());
 
 .chat-empty-text {
   font-size: 13px;
-  color: #999;
+  color: #94a3b8;
+}
+
+.dark .chat-empty-text {
+  color: #64748b;
 }
 
 .chat-message.user {
@@ -337,8 +436,8 @@ watch(() => props.messages.length, () => scrollToBottom());
 }
 
 .assistant-bubble.dark {
-  background: #2d3748;
-  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
 }
 
 .tool-bubble {
@@ -375,6 +474,10 @@ watch(() => props.messages.length, () => scrollToBottom());
 .tool-status.running { background: #fef3c7; color: #92400e; }
 .tool-status.success { background: #d1fae5; color: #065f46; }
 .tool-status.failed  { background: #fee2e2; color: #991b1b; }
+
+.dark .tool-status.running { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.dark .tool-status.success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.dark .tool-status.failed  { background: rgba(239, 68, 68, 0.15); color: #f87171; }
 
 .thinking-bubble {
   background: transparent;
@@ -414,6 +517,10 @@ watch(() => props.messages.length, () => scrollToBottom());
   overflow-x: auto;
   font-size: 12px;
   margin: 4px 0;
+}
+
+.dark .prose-content :deep(pre) {
+  background: #0f172a;
 }
 
 .prose-content :deep(code) {
@@ -568,6 +675,165 @@ watch(() => props.messages.length, () => scrollToBottom());
   flex-shrink: 0;
 }
 
+/* Agent selector */
+.agent-selector-wrap {
+  position: relative;
+}
+
+.agent-trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.agent-trigger:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.agent-trigger.dark {
+  color: #94a3b8;
+}
+
+.agent-trigger.dark:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.agent-label {
+  white-space: nowrap;
+  font-weight: 500;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-menu {
+  position: absolute;
+  bottom: 28px;
+  left: 0;
+  z-index: 9999;
+  width: 200px;
+  max-height: 240px;
+  overflow-y: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.agent-menu.dark {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: #1e293b;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.agent-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 1;
+}
+
+.agent-menu-header.dark {
+  background: #1e293b;
+  color: #64748b;
+}
+
+.agent-menu-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.agent-menu-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.agent-menu-close.dark:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.agent-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+}
+
+.agent-option:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.agent-option.dark {
+  color: #e2e8f0;
+}
+
+.agent-option.dark:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.agent-option.active {
+  font-weight: 600;
+}
+
+.agent-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-option-status {
+  font-size: 9px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 8px;
+  text-transform: capitalize;
+  flex-shrink: 0;
+}
+
+.agent-option-status.online { background: #d1fae5; color: #065f46; }
+.agent-option-status.idle { background: #fef3c7; color: #92400e; }
+.agent-option-status.busy { background: #e0f2fe; color: #0369a1; }
+.agent-option-status.offline { background: #f1f5f9; color: #64748b; }
+
+.dark .agent-option-status.online { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.dark .agent-option-status.idle { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.dark .agent-option-status.busy { background: rgba(14, 165, 233, 0.15); color: #38bdf8; }
+.dark .agent-option-status.offline { background: rgba(100, 116, 139, 0.15); color: #94a3b8; }
+
+/* Model selector */
 .model-selector-wrap {
   position: relative;
 }

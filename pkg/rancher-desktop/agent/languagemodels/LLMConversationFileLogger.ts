@@ -3,6 +3,8 @@ import os from 'os';
 import path from 'path';
 import { app } from 'electron';
 
+import { resolveSullaConversationsDir } from '../utils/sullaPaths';
+
 type LLMLogEvent = {
   direction: 'request' | 'response' | 'error';
   provider: string;
@@ -14,7 +16,7 @@ type LLMLogEvent = {
   attempt?: number;
 };
 
-const PROJECT_LOG_DIR = path.join(process.cwd(), 'log');
+const PROJECT_LOG_DIR = resolveSullaConversationsDir();
 const LOG_FILE_PREFIX = 'llm-conversation';
 
 // ---------------------------------------------------------------------------

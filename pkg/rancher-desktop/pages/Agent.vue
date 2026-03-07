@@ -16,22 +16,10 @@
       <div class="flex min-h-0 min-w-0 flex-1 flex-col">
         <div
           v-if="hasMessages"
-          class="relative mx-auto flex w-full flex-1 "
-          :class="isAssetPaneExpanded ? 'max-w-none justify-start' : 'max-w-8xl xl:px-12 sm:px-2 lg:px-8 justify-center'"
+          class="relative mx-auto flex w-full flex-1 max-w-8xl xl:px-12 sm:px-2 lg:px-8 justify-center"
         >
-          <div v-if="!isAssetPaneExpanded" class="hidden lg:relative lg:block lg:flex-none lg:w-72 xl:w-80 bg-slate-50 dark:bg-slate-800/30">
-            <div class="sticky top-[15px] pt-[15px] h-[calc(100vh-5rem-15px)] w-full overflow-x-hidden overflow-y-auto">
-
-              <AgentPersonaLibrary/>
-
-            </div>
-          </div>
-
           <div
-            class="min-w-0 py-16"
-            :class="isAssetPaneExpanded
-              ? 'flex-[0_0_30%] px-4 lg:pr-2 lg:pl-4 xl:px-6'
-              : 'max-w-2xl flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16'"
+            class="min-w-0 py-16 max-w-2xl flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16"
           >
             <div ref="transcriptEl" id="chat-messages-list" class="pb-40">
               <div
@@ -156,61 +144,7 @@
               </div>
             </div>
           </div>
-
-          <div
-            class="hidden xl:sticky xl:top-0 xl:block xl:max-h-[calc(100vh-1rem-10rem)]"
-            :class="isAssetPaneExpanded ? 'xl:flex-[0_0_70%] xl:overflow-hidden' : 'xl:flex-none xl:overflow-y-auto'"
-            @wheel="handleAssetPaneScrollLock"
-            @touchmove="handleAssetPaneScrollLock"
-          >
-            <div :class="isAssetPaneExpanded ? 'h-full w-full' : 'w-72'">
-              <div v-if="latestChatError" class="my-8 flex rounded-3xl p-6 bg-amber-50 dark:bg-slate-800/60 dark:ring-1 dark:ring-slate-300/10">
-                <svg aria-hidden="true" viewBox="0 0 32 32" fill="none" class="h-8 w-8 flex-none [--icon-foreground:var(--color-amber-900)] [--icon-background:var(--color-amber-100)]">
-                  <defs>
-                    <radialGradient cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" id="_ChatWarn-gradient" gradientTransform="rotate(65.924 1.519 20.92) scale(25.7391)">
-                      <stop stop-color="#FDE68A" offset=".08"></stop>
-                      <stop stop-color="#F59E0B" offset=".837"></stop>
-                    </radialGradient>
-                    <radialGradient cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" id="_ChatWarn-gradient-dark" gradientTransform="matrix(0 24.5 -24.5 0 16 5.5)">
-                      <stop stop-color="#FDE68A" offset=".08"></stop>
-                      <stop stop-color="#F59E0B" offset=".837"></stop>
-                    </radialGradient>
-                  </defs>
-                  <g class="dark:hidden">
-                    <circle cx="20" cy="20" r="12" fill="url(#_ChatWarn-gradient)"></circle>
-                    <path d="M3 16c0 7.18 5.82 13 13 13s13-5.82 13-13S23.18 3 16 3 3 8.82 3 16Z" fill-opacity="0.5" class="fill-(--icon-background) stroke-(--icon-foreground)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-                    <path d="m15.408 16.509-1.04-5.543a1.66 1.66 0 1 1 3.263 0l-1.039 5.543a.602.602 0 0 1-1.184 0Z" class="fill-(--icon-foreground) stroke-(--icon-foreground)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-                    <path d="M16 23a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill-opacity="0.5" stroke="currentColor" class="fill-(--icon-background) stroke-(--icon-foreground)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-                  </g>
-                  <g class="hidden dark:inline">
-                    <path fill-rule="evenodd" clip-rule="evenodd" d="M2 16C2 8.268 8.268 2 16 2s14 6.268 14 14-6.268 14-14 14S2 23.732 2 16Zm11.386-4.85a2.66 2.66 0 1 1 5.228 0l-1.039 5.543a1.602 1.602 0 0 1-3.15 0l-1.04-5.543ZM16 20a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z" fill="url(#_ChatWarn-gradient-dark)"></path>
-                  </g>
-                </svg>
-                <div class="ml-4 flex-auto">
-                  <p class="not-prose font-display text-xl text-amber-900 dark:text-amber-500">Oh no! Something bad happened!</p>
-                  <div class="prose mt-2.5 text-amber-800 [--tw-prose-underline:var(--color-amber-400)] [--tw-prose-background:var(--color-amber-50)] prose-a:text-amber-900 prose-code:text-amber-900 dark:text-slate-300 dark:[--tw-prose-underline:var(--color-sky-700)] dark:prose-code:text-slate-300">
-                    <p>{{ latestChatError }}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div class="flex flex-col gap-2" :class="isAssetPaneExpanded ? 'h-full min-h-0 pb-2' : ''">
-                <AgentPersonaAssetCard
-                  v-for="asset in visiblePersonaAssets"
-                  :key="asset.id"
-                  :asset="asset"
-                  :asset-size="getAssetSize(asset.id)"
-                  :is-active="assetIsActive(asset)"
-                  :sanitize-asset-html="sanitizeAssetHtml"
-                  :thread-id="currentThreadId || undefined"
-                  @toggle-size="cycleAssetSize(asset.id)"
-                  @document-format="applyDocumentFormat"
-                  @document-input="onDocumentAssetInput"
-                />
-              </div>
-            </div>
-            </div>
-          </div>
+        </div>
 
           <div
             :class="hasMessages ? 'fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white/80 pt-6 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80' : 'flex flex-1 items-center justify-center bg-white dark:bg-slate-900'"
@@ -262,27 +196,20 @@
 <script setup lang="ts">
 import StartupOverlay from './agent/StartupOverlay.vue';
 import AgentHeader from './agent/AgentHeader.vue';
-import AgentPersonaLibrary from './agent/personas/AgentPersonaLibrary.vue';
-import AgentPersonaAssetCard from './agent/AgentPersonaAssetCard.vue';
 import AgentComposer from './agent/AgentComposer.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import {
-  type PersonaSidebarAsset,
-} from '@pkg/agent';
 import { AgentSettingsController } from './agent/AgentSettingsController';
-import { ChatInterface } from './agent/ChatInterface';
-import { FrontendGraphWebSocketService } from '@pkg/agent/services/FrontendGraphWebSocketService';
+import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
-import { getAgentPersonaRegistry, type ChatMessage } from '@pkg/agent';
 import { getN8nVueBridgeService } from '@pkg/agent/services/N8nVueBridgeService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import './assets/AgentModelSelector.css';
-import './agent/personas/persona-profiles.css';
+
 
 const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|flac|m4a|aac|webm)$/i;
 
@@ -320,25 +247,8 @@ const renderMarkdown = (markdown: string): string => {
   });
 };
 
-const sanitizeAssetHtml = (html: string): string => {
-  const raw = typeof html === 'string' ? html : String(html || '');
-  const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(raw);
-
-  if (!looksLikeHtml) {
-    return renderMarkdown(raw);
-  }
-
-  return DOMPurify.sanitize(raw, {
-    USE_PROFILES: { html: true },
-    ADD_TAGS: ['audio', 'source'],
-    ADD_ATTR: ['controls', 'preload', 'src', 'type'],
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|file):|data:image\/(?:png|gif|jpe?g|webp);base64,|\/|\.|#)/i,
-  });
-};
-
 const THEME_STORAGE_KEY = 'agentTheme';
 const isDark = ref(false);
-
 const syncN8nInterfaceTheme = (): void => {
   const n8nVueBridgeService = getN8nVueBridgeService();
   if (isDark.value) {
@@ -348,8 +258,6 @@ const syncN8nInterfaceTheme = (): void => {
 
   n8nVueBridgeService.setLightMode();
 };
-
-const currentThreadId = ref<string | null>(null);
 
 const showOverlay = ref(false);
 const modelName = ref('');
@@ -364,10 +272,6 @@ const settingsController = new AgentSettingsController(
 );
 
 const chatController = new ChatInterface();
-
-const frontendGraphController = new FrontendGraphWebSocketService({
-  currentThreadId,
-});
 
 const presenceTracker = getHumanPresenceTracker();
 
@@ -385,24 +289,13 @@ const displayMessages = computed(() => {
   });
 });
 
-const registry = getAgentPersonaRegistry();
-const loading = computed<boolean>(() => {
-  const agent = registry.activeAgent.value;
-  if (!agent) return false;
-  return agent.loading;
-});
-
-const showContinueButton = computed<boolean>(() => {
-  const persona = registry.getActivePersonaService();
-  if (!persona) return false;
-  return persona.stopReason.value === 'max_loops' && !persona.graphRunning.value;
-});
+const loading = chatController.loading;
+const showContinueButton = chatController.showContinueButton;
+const activeAssets = chatController.activeAssets;
+const threadId = chatController.threadId;
 
 const continueRun = () => {
-  const persona = registry.getActivePersonaService();
-  if (persona) {
-    persona.emitContinueRun();
-  }
+  chatController.continueRun();
 };
 
 const handleModelChanged = async (event: Electron.IpcRendererEvent, data: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string }) => {
@@ -492,119 +385,7 @@ watch(() => messages.value.length, async () => {
   container.scrollTop = container.scrollHeight; // Instant scroll, no smooth behavior
 }, { flush: 'post' });
 
-const latestChatError = computed(() => {
-  for (let i = messages.value.length - 1; i >= 0; i--) {
-    const m: ChatMessage = messages.value[i];
-    if (m.role === 'error') {
-      return m.content;
-    }
-  }
-  return '';
-});
-
-const activePersonaService = computed(() => registry.getActivePersonaService());
-const personaAssets = computed(() => activePersonaService.value?.activeAssets ?? []);
-type AssetSize = 'medium' | 'large';
-const assetSizes = ref<Record<string, AssetSize>>({});
-
-const normalizeAssetSize = (value: unknown): AssetSize => {
-  return value === 'large' ? 'large' : 'medium';
-};
-
-const getAssetSize = (assetId: string): AssetSize => normalizeAssetSize(assetSizes.value[assetId]);
-
-const largeAssetId = computed(() => {
-  return personaAssets.value.find((asset) => getAssetSize(asset.id) === 'large')?.id || null;
-});
-
-const visiblePersonaAssets = computed(() => {
-  if (largeAssetId.value) {
-    return personaAssets.value.filter((asset) => asset.id === largeAssetId.value);
-  }
-  return personaAssets.value;
-});
-
-const isAssetPaneExpanded = computed(() => !!largeAssetId.value);
-
-const setAssetSize = (assetId: string, nextSize: AssetSize): void => {
-  if (nextSize === 'large') {
-    const nextMap: Record<string, AssetSize> = {};
-    personaAssets.value.forEach((asset) => {
-      nextMap[asset.id] = asset.id === assetId ? 'large' : 'medium';
-    });
-    assetSizes.value = nextMap;
-    return;
-  }
-
-  assetSizes.value = {
-    ...assetSizes.value,
-    [assetId]: nextSize,
-  };
-};
-
-const cycleAssetSize = (assetId: string): void => {
-  const current = getAssetSize(assetId);
-  if (current === 'medium') {
-    setAssetSize(assetId, 'large');
-    return;
-  }
-  setAssetSize(assetId, 'medium');
-};
-
-const handleAssetPaneScrollLock = (event: Event): void => {
-  if (!isAssetPaneExpanded.value) {
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
-};
-
-watch(personaAssets, (assets) => {
-  const ids = new Set(assets.map((asset) => asset.id));
-  const nextSizes: Record<string, AssetSize> = {};
-  Object.entries(assetSizes.value).forEach(([assetId, size]) => {
-    if (ids.has(assetId)) {
-      nextSizes[assetId] = normalizeAssetSize(size);
-    }
-  });
-  assets.forEach((asset) => {
-    if (!nextSizes[asset.id]) {
-      nextSizes[asset.id] = 'medium';
-    }
-  });
-  assetSizes.value = nextSizes;
-}, { immediate: true });
-
-const onDocumentAssetInput = (assetId: string, event: Event): void => {
-  const service = activePersonaService.value;
-  if (!service) {
-    return;
-  }
-  const target = event.target as HTMLElement;
-  service.updateDocumentAssetContent(assetId, target.innerHTML || '');
-};
-
-const applyDocumentFormat = (command: string, value?: string): void => {
-  if (command === 'createLink') {
-    const url = window.prompt('Enter URL');
-    if (!url) {
-      return;
-    }
-    document.execCommand(command, false, url);
-    return;
-  }
-  document.execCommand(command, false, value);
-};
-
-const assetIsActive = (asset: PersonaSidebarAsset): boolean => {
-  return asset.active === true;
-};
-
-const isRunning = computed<boolean>(() => {
-  const agent = registry.activeAgent.value;
-  if (!agent) return false;
-  return agent.isRunning;
-});
+const isRunning = computed<boolean>(() => true);
 
 const modelSelector = new AgentModelSelectorController({
   systemReady,
@@ -618,15 +399,10 @@ onMounted(async () => {
   const n8nVueBridgeService = getN8nVueBridgeService();
   n8nVueBridgeService.markInitialized('Agent.vue:onMounted');
 
-  // Re-subscribe persona service WS handlers (they get unsubscribed on unmount)
-  registry.state.agents.forEach((agent: { agentId: string }) => {
-    registry.getOrCreatePersonaService(agent.agentId).startListening();
-  });
-
   // Start human presence tracker — writes presence to Redis so agents know where the human is
   presenceTracker.setCurrentView('Agent Chat');
   presenceTracker.setCurrentActivity('chatting with agent');
-  presenceTracker.setActiveChannel('chat-controller');
+  presenceTracker.setActiveChannel('sulla-desktop');
   presenceTracker.start();
 
   const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -659,12 +435,7 @@ watch(systemReady, async (ready) => {
 onUnmounted(() => {
   presenceTracker.stop();
   modelSelector.dispose();
-  // Stop listening on each agent's persona service
-  registry.state.agents.forEach((agent: { agentId: string }) => {
-    registry.getOrCreatePersonaService(agent.agentId).stopListening();
-  });
   chatController.dispose();
-  frontendGraphController.dispose();
 });
 
 const send = () => {

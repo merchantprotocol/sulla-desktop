@@ -18,7 +18,7 @@ import { HeartbeatNode, type HeartbeatThreadState } from './HeartbeatNode';
 // DEFAULT SETTINGS
 // ============================================================================
 
-const DEFAULT_WS_CHANNEL = 'dreaming-protocol';
+const DEFAULT_WS_CHANNEL = 'heartbeat';
 const MAX_CONSECTUIVE_LOOP = 40;
 const MAX_MESSAGES_IN_THREAD = 120;
 
@@ -143,6 +143,15 @@ export interface BaseThreadState {
 export interface AgentGraphState extends BaseThreadState {
   metadata: BaseThreadState['metadata'] & {
     agent?: {
+      // Config (loaded at graph creation from agent.yaml)
+      name?: string;
+      description?: string;
+      type?: string;
+      skills?: string[];
+      tools?: string[];         // allowlist of tool names
+      prompt?: string;          // compiled .md files, no variable substitution
+
+      // Execution outcomes (set during runtime)
       status?: 'done' | 'blocked' | 'continue' | 'in_progress';
       status_report?: string | null;
       response?: string | null;
@@ -381,7 +390,7 @@ export class Graph<TState = BaseThreadState> {
     const stopReason = (state as any).metadata.stopReason || null;
     console.log('[Graph] Sending graph_execution_complete signal, stopReason:', stopReason);
     const ws = getWebSocketClientService();
-    const connId = (state as any).metadata.wsChannel || 'dreaming-protocol';
+    const connId = (state as any).metadata.wsChannel || 'heartbeat';
     ws.send(connId, {
       type: 'transfer_data',
       data: { role: 'system', content: 'graph_execution_complete', stopReason },
@@ -553,7 +562,7 @@ const MAX_HEARTBEAT_CYCLES = 10;
  *   4. Captures outcome and decides whether to loop or stop
  *
  * The heartbeat graph is triggered by HeartbeatService on a timer
- * and by BackendGraphWebSocketService for the dreaming-protocol channel.
+ * and by BackendGraphWebSocketService for the heartbeat channel.
  */
 export function createHeartbeatGraph(): Graph<HeartbeatThreadState> {
   const graph = new Graph<HeartbeatThreadState>();

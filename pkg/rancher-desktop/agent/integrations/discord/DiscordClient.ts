@@ -20,7 +20,7 @@ const INTEGRATION_ID = 'discord';
 const TOKEN_PROPERTY = 'bot_token';
 
 const WS_SERVICE = WebSocketClientService.getInstance();
-const DISCORD_EVENTS_CHANNEL = 'dreaming-protocol';
+const DISCORD_EVENTS_CHANNEL = 'heartbeat';
 
 function generateUUID(): string {
   const bytes = new Uint8Array(16);
@@ -95,6 +95,18 @@ export class DiscordClient {
     this.botToken = botToken;
   }
 
+  private async tryWorkflowDispatch(message: string): Promise<boolean> {
+    try {
+      const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
+      const registry = getWorkflowRegistry();
+      const result = await registry.dispatch({ triggerType: 'chat-app', message });
+      return result !== null;
+    } catch (err) {
+      console.warn('[DiscordClient] Workflow dispatch failed, falling back:', err);
+      return false;
+    }
+  }
+
   async initialize(): Promise<boolean> {
     if (this.connected) return true;
 
@@ -139,21 +151,28 @@ export class DiscordClient {
       // Forward events
       this.client.on(Events.MessageCreate, async (message) => {
         console.log('[DiscordClient] Message received:', message.content);
-        
+
         // Ignore bot messages
         if (message.author.bot) return;
-        
+
         // Extract key facts from the message
         const facts = extractMessageFacts(message);
         const factsText = facts.map(fact => `- ${fact}`).join('\n');
-        
+
         // Create the complete message with facts + prompt
         const fullMessage = `${factsText}\n\n${incomingMessage}`;
-        
+
+        // Try workflow dispatch first
+        const handled = await this.tryWorkflowDispatch(fullMessage);
+        if (handled) {
+          console.log('[DiscordClient] Message handled by workflow');
+          return;
+        }
+
         WS_SERVICE.send(DISCORD_EVENTS_CHANNEL, {
           type: 'user_message',
-          data: { 
-            content: fullMessage 
+          data: {
+            content: fullMessage
           },
           id: generateUUID(),
           timestamp: Date.now(),

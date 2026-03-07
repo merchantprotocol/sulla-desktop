@@ -152,6 +152,27 @@ export interface IpcMainInvokeEvents {
   'git-diff':         (dirPath: string, file: string, staged: boolean) => string;
   'git-show-head':    (dirPath: string, file: string) => string;
   'git-show-staged':  (dirPath: string, file: string) => string;
+  'agents-list':      () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
+  'agents-get-prompt-templates': () => { soul: string; environment: string };
+  'agents-delete':    (agentId: string) => boolean;
+  'agents-get-template-variables': () => { key: string; label: string; preview: string }[];
+  'tools-list-by-category': () => Array<{ category: string; description: string; tools: { name: string; description: string; operationTypes: string[] }[] }>;
+
+  // Workflow CRUD
+  'workflow-list':   () => Array<{ id: string; name: string; updatedAt: string }>;
+  'workflow-get':    (workflowId: string) => any;
+  'workflow-save':   (workflow: any) => boolean;
+  'workflow-delete': (workflowId: string) => boolean;
+
+  // Workflow execution
+  'workflow-execute':          (workflowId: string, triggerPayload: unknown) => { executionId: string };
+  'workflow-execution-status': (executionId: string) => { executionId: string; status: string; startedAt?: string; completedAt?: string; error?: string } | null;
+  'workflow-execution-abort':  (executionId: string) => boolean;
+  'workflow-execution-resume': (executionId: string, nodeId: string, userData: unknown) => boolean;
+
+  // Workflow registry dispatch (used by external trigger sources)
+  'workflow-dispatch': (triggerType: string, message: string, workflowId?: string) => { executionId: string; workflowId: string; workflowName: string } | null;
+
   'git-commit':       (dirPath: string, message: string) => boolean;
   'git-pull':         (dirPath: string) => { success: boolean; output: string };
   'git-push':         (dirPath: string) => { success: boolean; output: string };
@@ -164,6 +185,7 @@ export interface IpcMainInvokeEvents {
   'filesystem-read-dir':  (dirPath: string) => Array<{ name: string; path: string; isDir: boolean; size: number; ext: string }>;
   'filesystem-read-file':  (filePath: string) => string;
   'filesystem-write-file': (filePath: string, content: string) => void;
+  'filesystem-save-dialog': (defaultName: string, defaultPath?: string) => string | null;
   'filesystem-rename':     (oldPath: string, newName: string) => string;
   'filesystem-delete':     (targetPath: string) => void;
   'filesystem-create-file':(dirPath: string, fileName: string) => string;

@@ -40,7 +40,7 @@ export interface HeartbeatThreadState extends BaseThreadState {
 // ============================================================================
 
 const MAX_HEARTBEAT_CYCLES = 10;
-const HEARTBEAT_WS_CHANNEL = 'dreaming-protocol';
+const HEARTBEAT_WS_CHANNEL = 'heartbeat';
 
 // ============================================================================
 // NODE
@@ -167,7 +167,7 @@ export class HeartbeatNode extends BaseNode {
       return `## Active Projects\n${lines.join('\n')}`;
     } catch (err) {
       console.warn('[HeartbeatNode] Failed to load projects:', err);
-      return 'Unable to load projects — use search_projects to discover them or browse the projects directory.';
+      return 'Unable to load projects — use meta_search to discover them or browse the projects directory.';
     }
   }
 
@@ -186,7 +186,7 @@ export class HeartbeatNode extends BaseNode {
       return `## Available Skills\n${lines.join('\n')}`;
     } catch (err) {
       console.warn('[HeartbeatNode] Failed to load skills:', err);
-      return 'Unable to load skills — use search_skills tool to discover them.';
+      return 'Unable to load skills — use meta_search tool to discover them.';
     }
   }
 

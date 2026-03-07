@@ -1,13 +1,21 @@
 <template>
   <div class="docker-pane" :class="{ dark: isDark }">
-    <div class="docker-header">
+    <div class="docker-header" :class="{ dark: isDark }">
       <span class="docker-title">Docker</span>
-      <button class="refresh-btn" :class="{ dark: isDark }" @click="refresh" :disabled="loading">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="23,4 23,10 17,10" />
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-        </svg>
-      </button>
+      <div class="docker-header-actions">
+        <button class="refresh-btn" :class="{ dark: isDark }" @click="refresh" :disabled="loading">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23,4 23,10 17,10" />
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+          </svg>
+        </button>
+        <button class="refresh-btn" :class="{ dark: isDark }" @click="$emit('close')" title="Close Panel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div v-if="loading && containers.length === 0" class="docker-status">Loading...</div>
@@ -15,69 +23,104 @@
     <div v-else-if="containers.length === 0" class="docker-status">No containers found</div>
 
     <div class="container-list" v-else>
-      <div
-        v-for="c in containers"
-        :key="c.id"
-        class="container-item"
-        :class="{ dark: isDark, expanded: expandedId === c.id }"
-        @click="toggleExpand(c.id)"
-      >
-        <div class="container-row">
-          <span class="status-dot" :class="c.state === 'running' ? 'running' : 'stopped'"></span>
-          <span class="container-name">{{ c.name }}</span>
-        </div>
+      <!-- Compose project groups -->
+      <template v-for="group in groupedContainers" :key="group.project">
+        <button
+          v-if="group.project"
+          class="compose-group-header"
+          :class="{ dark: isDark }"
+          @click="toggleGroup(group.project)"
+        >
+          <svg
+            class="compose-chevron"
+            :class="{ expanded: expandedGroups.has(group.project) }"
+            width="10" height="10" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+          >
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+          <svg class="compose-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="6" height="5" rx="1"/>
+            <rect x="16" y="3" width="6" height="5" rx="1"/>
+            <rect x="9" y="16" width="6" height="5" rx="1"/>
+            <path d="M5 8v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/>
+            <line x1="12" y1="12" x2="12" y2="16"/>
+          </svg>
+          <span class="compose-group-name">{{ group.project }}</span>
+          <span class="compose-group-count" :class="{ dark: isDark }">{{ group.containers.length }}</span>
+          <span
+            class="compose-group-status"
+            :class="groupRunningStatus(group.containers)"
+          >{{ groupStatusLabel(group.containers) }}</span>
+        </button>
 
-        <div v-if="expandedId === c.id" class="container-details">
-          <div class="detail-row">
-            <span class="detail-label">Image</span>
-            <span class="detail-value">{{ c.image }}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Status</span>
-            <span class="detail-value">{{ c.status }}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">ID</span>
-            <span class="detail-value">{{ c.id }}</span>
-          </div>
-          <div v-if="parsedPorts(c.ports).length > 0" class="detail-row">
-            <span class="detail-label">Ports</span>
-            <div class="ports-list">
-              <a
-                v-for="port in parsedPorts(c.ports)"
-                :key="port.url"
-                class="port-link"
-                :class="{ dark: isDark }"
-                @click.stop="$emit('open-container-port', { url: port.url, name: c.name + ':' + port.hostPort })"
-              >{{ port.hostPort }} &rarr; {{ port.containerPort }}</a>
+        <template v-if="!group.project || expandedGroups.has(group.project)">
+          <div
+            v-for="c in group.containers"
+            :key="c.id"
+            class="container-item"
+            :class="{ dark: isDark, expanded: expandedId === c.id, indented: !!group.project }"
+            @click="toggleExpand(c.id)"
+          >
+            <div class="container-row">
+              <span class="status-dot" :class="c.state === 'running' ? 'running' : 'stopped'"></span>
+              <span class="container-name">{{ group.project ? stripProjectPrefix(c.name, group.project) : c.name }}</span>
+            </div>
+
+            <div v-if="expandedId === c.id" class="container-details">
+              <div class="detail-row">
+                <span class="detail-label">Image</span>
+                <span class="detail-value">{{ c.image }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Status</span>
+                <span class="detail-value">{{ c.status }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">ID</span>
+                <span class="detail-value">{{ c.id }}</span>
+              </div>
+              <div v-if="parsedPorts(c.ports).length > 0" class="detail-row">
+                <span class="detail-label">Ports</span>
+                <div class="ports-list">
+                  <a
+                    v-for="port in parsedPorts(c.ports)"
+                    :key="port.url"
+                    class="port-link"
+                    :class="{ dark: isDark }"
+                    @click.stop="$emit('open-container-port', { url: port.url, name: c.name + ':' + port.hostPort })"
+                  >{{ port.hostPort }} &rarr; {{ port.containerPort }}</a>
+                </div>
+              </div>
+              <div class="detail-actions">
+                <button class="action-btn" :class="{ dark: isDark }" @click.stop="$emit('docker-logs', c.name)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14,2 14,8 20,8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                  </svg>
+                  Logs
+                </button>
+                <button v-if="c.state === 'running'" class="action-btn" :class="{ dark: isDark }" @click.stop="$emit('docker-exec', c.name)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="4,17 10,11 4,5"/>
+                    <line x1="12" y1="19" x2="20" y2="19"/>
+                  </svg>
+                  Shell
+                </button>
+              </div>
             </div>
           </div>
-          <div class="detail-actions">
-            <button class="action-btn" :class="{ dark: isDark }" @click.stop="$emit('docker-logs', c.name)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14,2 14,8 20,8"/>
-                <line x1="16" y1="13" x2="8" y2="13"/>
-                <line x1="16" y1="17" x2="8" y2="17"/>
-              </svg>
-              Logs
-            </button>
-            <button v-if="c.state === 'running'" class="action-btn" :class="{ dark: isDark }" @click.stop="$emit('docker-exec', c.name)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="4,17 10,11 4,5"/>
-                <line x1="12" y1="19" x2="20" y2="19"/>
-              </svg>
-              Shell
-            </button>
-          </div>
-        </div>
-      </div>
+        </template>
+      </template>
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted, onBeforeUnmount } from 'vue';
+import { defineComponent, ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { ipcRenderer } from 'electron';
 
 interface DockerContainer {
@@ -87,6 +130,12 @@ interface DockerContainer {
   status: string;
   state: string;
   ports: string;
+  composeProject: string;
+}
+
+interface ContainerGroup {
+  project: string; // '' for standalone containers
+  containers: DockerContainer[];
 }
 
 interface ParsedPort {
@@ -102,14 +151,45 @@ export default defineComponent({
     isDark: { type: Boolean, default: false },
   },
 
-  emits: ['open-container-port', 'docker-logs', 'docker-exec'],
+  emits: ['open-container-port', 'docker-logs', 'docker-exec', 'close'],
 
   setup() {
     const containers = ref<DockerContainer[]>([]);
     const loading = ref(false);
     const error = ref('');
     const expandedId = ref<string | null>(null);
+    const expandedGroups = ref(new Set<string>());
     let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+    const groupedContainers = computed<ContainerGroup[]>(() => {
+      const projectMap = new Map<string, DockerContainer[]>();
+      const standalone: DockerContainer[] = [];
+
+      for (const c of containers.value) {
+        if (c.composeProject) {
+          if (!projectMap.has(c.composeProject)) {
+            projectMap.set(c.composeProject, []);
+          }
+          projectMap.get(c.composeProject)!.push(c);
+        } else {
+          standalone.push(c);
+        }
+      }
+
+      const groups: ContainerGroup[] = [];
+
+      // Compose groups first, sorted by project name
+      for (const [project, ctrs] of [...projectMap.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        groups.push({ project, containers: ctrs });
+      }
+
+      // Standalone containers at the end
+      if (standalone.length > 0) {
+        groups.push({ project: '', containers: standalone });
+      }
+
+      return groups;
+    });
 
     async function refresh() {
       loading.value = true;
@@ -127,10 +207,43 @@ export default defineComponent({
       expandedId.value = expandedId.value === id ? null : id;
     }
 
+    function toggleGroup(project: string) {
+      if (expandedGroups.value.has(project)) {
+        expandedGroups.value.delete(project);
+      } else {
+        expandedGroups.value.add(project);
+      }
+    }
+
+    function stripProjectPrefix(name: string, project: string): string {
+      // Docker Compose names: "project-service-1" or "project_service_1"
+      const prefixes = [`${project}-`, `${project}_`];
+      for (const prefix of prefixes) {
+        if (name.startsWith(prefix)) {
+          // Strip trailing replica number too: "service-1" -> "service"
+          return name.slice(prefix.length).replace(/-\d+$/, '');
+        }
+      }
+      return name;
+    }
+
+    function groupRunningStatus(ctrs: DockerContainer[]): string {
+      const running = ctrs.filter(c => c.state === 'running').length;
+      if (running === ctrs.length) return 'all-running';
+      if (running > 0) return 'partial';
+      return 'all-stopped';
+    }
+
+    function groupStatusLabel(ctrs: DockerContainer[]): string {
+      const running = ctrs.filter(c => c.state === 'running').length;
+      if (running === ctrs.length) return 'running';
+      if (running > 0) return `${running}/${ctrs.length}`;
+      return 'stopped';
+    }
+
     function parsedPorts(portsStr: string): ParsedPort[] {
       if (!portsStr) return [];
       const results: ParsedPort[] = [];
-      // Docker ports format: "0.0.0.0:8080->80/tcp, :::8080->80/tcp"
       const matches = portsStr.matchAll(/(?:(\d+\.\d+\.\d+\.\d+):)?(\d+)->(\d+)\/\w+/g);
       const seen = new Set<string>();
       for (const m of matches) {
@@ -164,8 +277,14 @@ export default defineComponent({
       loading,
       error,
       expandedId,
+      expandedGroups,
+      groupedContainers,
       refresh,
       toggleExpand,
+      toggleGroup,
+      stripProjectPrefix,
+      groupRunningStatus,
+      groupStatusLabel,
       parsedPorts,
     };
   },
@@ -190,18 +309,28 @@ export default defineComponent({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 0 8px 0 12px;
+  height: 35px;
   font-weight: 600;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: #64748b;
-  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-bottom: 1px solid #cbd5e1;
+  flex-shrink: 0;
 }
 
-.dark .docker-header {
+.docker-header.dark {
   color: #94a3b8;
+  background: #1e293b;
   border-bottom-color: #334155;
+}
+
+.docker-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .refresh-btn {
@@ -244,10 +373,119 @@ export default defineComponent({
   flex: 1;
 }
 
+/* Compose group header */
+.compose-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.compose-group-header:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.compose-group-header.dark {
+  color: #e2e8f0;
+  border-bottom-color: rgba(255, 255, 255, 0.04);
+}
+
+.compose-group-header.dark:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.compose-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  color: #94a3b8;
+}
+
+.compose-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.compose-icon {
+  flex-shrink: 0;
+  color: #94a3b8;
+}
+
+.compose-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compose-group-count {
+  font-size: 10px;
+  font-weight: 500;
+  color: #94a3b8;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: #f1f5f9;
+}
+
+.compose-group-count.dark {
+  background: #334155;
+  color: #64748b;
+}
+
+.compose-group-status {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.compose-group-status.all-running {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.compose-group-status.partial {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.compose-group-status.all-stopped {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.dark .compose-group-status.all-running {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.dark .compose-group-status.partial {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+}
+
+.dark .compose-group-status.all-stopped {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+}
+
 .container-item {
   padding: 6px 12px;
   cursor: pointer;
   border-bottom: 1px solid #f1f5f9;
+}
+
+.container-item.indented {
+  padding-left: 32px;
 }
 
 .container-item:hover {

@@ -1,7 +1,5 @@
 // HeartbeatService.ts
 
-import type { HeartbeatThreadState } from '../nodes/HeartbeatNode';
-import { GraphRegistry } from './GraphRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 let heartbeatServiceInstance: HeartbeatService | null = null;
@@ -60,14 +58,13 @@ export class HeartbeatService {
 
   private async triggerHeartbeat(): Promise<void> {
     if (this.isExecuting) {
-      console.log('[HeartbeatService] ⏭️ Already executing — skip');
+      console.log('[HeartbeatService] Already executing — skip');
       return;
     }
 
     this.isExecuting = true;
 
     try {
-      // Fresh config every execution — no caching
       const basePrompt  = await SullaSettingsModel.get('heartbeatPrompt', '');
       const providerSetting = await SullaSettingsModel.get('heartbeatProvider', 'default');
 
@@ -75,18 +72,24 @@ export class HeartbeatService {
 
       console.log(`[HeartbeatService] Building heartbeat prompt (provider=${providerSetting})`);
 
-      const { graph, state } = await GraphRegistry.getOrCreateOverlordGraph(
-        'dreaming-protocol',
-        fullPrompt
-      ) as { graph: any; state: HeartbeatThreadState };
+      const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
+      const registry = getWorkflowRegistry();
 
-      console.log(`[HeartbeatService] 🧠 Executing heartbeat (threadId=${state.metadata.threadId})`);
+      console.log('[HeartbeatService] Dispatching to WorkflowRegistry — triggerType="heartbeat", originChannel="heartbeat"');
 
-      await graph.execute(state);
+      const result = await registry.dispatch({
+        triggerType: 'heartbeat',
+        message: fullPrompt,
+        originChannel: 'heartbeat',
+      });
 
-      console.log('[HeartbeatService] ✅ Heartbeat completed');
+      if (result) {
+        console.log(`[HeartbeatService] Heartbeat dispatched to workflow "${result.workflowName}" (${result.workflowId})`);
+      } else {
+        console.log('[HeartbeatService] No heartbeat workflow matched — no action taken');
+      }
     } catch (err) {
-      console.error('[HeartbeatService] ❌ Heartbeat execution failed:', err);
+      console.error('[HeartbeatService] Heartbeat execution failed:', err);
     } finally {
       this.isExecuting = false;
     }

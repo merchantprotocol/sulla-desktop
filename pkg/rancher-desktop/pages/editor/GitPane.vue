@@ -19,6 +19,12 @@
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
           </svg>
         </button>
+        <button class="git-header-btn" :class="{ dark: isDark }" @click="$emit('close')" title="Close Panel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -449,11 +455,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   'file-selected': [entry: FileEntry];
   'open-diff': [repoRoot: string, file: string, staged: boolean];
+  'close': [];
 }>();
 
 const loading = ref(false);
 const repoStates = ref<RepoState[]>([]);
-const treeView = ref(false);
+const treeView = ref(true);
 
 // ─── Tree view helpers ───────────────────────────────────────────
 
@@ -843,15 +850,23 @@ onMounted(() => discoverAndRefresh());
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
+  padding: 0 8px 0 12px;
+  height: 35px;
   flex-shrink: 0;
+  background: #f8fafc;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.git-header.dark {
+  background: #1e293b;
+  border-bottom-color: #334155;
 }
 
 .git-header-title {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.5px;
   color: #64748b;
 }
 

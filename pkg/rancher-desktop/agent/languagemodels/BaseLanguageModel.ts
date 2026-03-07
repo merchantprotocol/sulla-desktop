@@ -382,6 +382,18 @@ export abstract class BaseLanguageModel {
       }
     }
 
+    // ── Extract tool calls from XML-style tags in content ──
+    // Local models (Qwen, Llama, etc.) sometimes emit tool calls as XML tags
+    // instead of using the structured tool_calls response field.
+    if (toolCalls.length === 0 && typeof content === 'string') {
+      const xmlToolCalls = this.extractToolCallsFromXmlTags(content);
+      if (xmlToolCalls.length > 0) {
+        toolCalls.push(...xmlToolCalls);
+        // Strip tool tags and fake tool_result blocks from content
+        content = this.stripToolTagsFromContent(content);
+      }
+    }
+
     // ── Extract tool_calls from OpenAI-compatible response ──
     const message = raw.choices?.[0]?.message;
     const toolCallsArray = message?.tool_calls || message?.content?.tool_calls;
@@ -435,6 +447,91 @@ export abstract class BaseLanguageModel {
         rawProviderContent,
       },
     };
+  }
+
+  /**
+   * Extract tool calls from XML-style tags that local models sometimes emit.
+   * Handles patterns like:
+   *   <tool_call>{"name":"exec","arguments":{...}}</tool_call>
+   *   <tool_code>await exec({"command":"echo hi"})</tool_code>
+   *   <function_call>{"name":"exec","parameters":{...}}</function_call>
+   */
+  private extractToolCallsFromXmlTags(content: string): Array<{ id?: string; name: string; args: any }> {
+    const results: Array<{ id?: string; name: string; args: any }> = [];
+
+    // Pattern 1: <tool_call>JSON</tool_call> or <function_call>JSON</function_call>
+    const jsonTagPattern = /<(?:tool_call|function_call)\s*>([\s\S]*?)<\/(?:tool_call|function_call)\s*>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = jsonTagPattern.exec(content)) !== null) {
+      const parsed = this.parseJson(match[1].trim());
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const name = parsed.name || parsed.function?.name;
+        if (name) {
+          let args = parsed.arguments || parsed.parameters || parsed.input || parsed.function?.arguments || {};
+          if (typeof args === 'string') {
+            try { args = JSON.parse(args); } catch { /* keep as string */ }
+          }
+          results.push({ id: parsed.id, name, args });
+        }
+      }
+    }
+
+    // Pattern 2: <tool_code>await toolName({...})</tool_code> or <tool_code>toolName({...})</tool_code>
+    if (results.length === 0) {
+      const codeTagPattern = /<tool_code\s*>([\s\S]*?)<\/tool_code\s*>/gi;
+      while ((match = codeTagPattern.exec(content)) !== null) {
+        const code = match[1].trim();
+        // Match: [await] [const x =] toolName({...}) or toolName(JSON)
+        const callPattern = /(?:(?:const\s+\w+\s*=\s*)?await\s+)?(\w+)\s*\(\s*(\{[\s\S]*\})\s*\)/;
+        const callMatch = callPattern.exec(code);
+        if (callMatch) {
+          const [, name, argsStr] = callMatch;
+          const args = this.parseLooseJson(argsStr);
+          if (args !== null) {
+            results.push({ name, args });
+          }
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Parse a potentially JS-style object literal (unquoted keys, single quotes)
+   * into a proper object. Falls back through multiple strategies.
+   */
+  private parseLooseJson(str: string): any | null {
+    const trimmed = str.trim();
+    // Try strict JSON first
+    try { return JSON.parse(trimmed); } catch { /* continue */ }
+    // Quote unquoted keys and convert single quotes to double
+    try {
+      const fixed = trimmed
+        .replace(/,\s*([}\]])/g, '$1')                    // trailing commas
+        .replace(/'/g, '"')                                // single -> double quotes
+        .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":');       // unquoted keys
+      return JSON.parse(fixed);
+    } catch { /* continue */ }
+    // Last resort: eval-safe subset using Function constructor
+    try {
+      const fn = new Function(`return (${trimmed})`);
+      const result = fn();
+      if (result && typeof result === 'object') return result;
+    } catch { /* give up */ }
+    return null;
+  }
+
+  /**
+   * Strip XML tool tags and fake tool_result blocks from content text.
+   */
+  private stripToolTagsFromContent(content: string): string {
+    return content
+      .replace(/<tool_code\s*>[\s\S]*?<\/tool_code\s*>/gi, '')
+      .replace(/<tool_call\s*>[\s\S]*?<\/tool_call\s*>/gi, '')
+      .replace(/<function_call\s*>[\s\S]*?<\/function_call\s*>/gi, '')
+      .replace(/<tool_result\s*>[\s\S]*?<\/tool_result\s*>/gi, '')
+      .trim();
   }
 
   // Optional: helper for building fetch options (auth, timeout, etc.)

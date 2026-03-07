@@ -18,7 +18,17 @@ export class BrowseToolsWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { category, query, operationType, operationTypes } = input;
-    const availableCategories = toolRegistry.getCategories();
+    let availableCategories = toolRegistry.getCategories();
+    const agentTools = (this.state?.metadata as any)?.agent?.tools;
+    if (Array.isArray(agentTools) && agentTools.length > 0) {
+      const allowSet = new Set(agentTools);
+      // Keep only categories that have at least one allowed tool
+      availableCategories = availableCategories.filter(cat => {
+        if (cat === 'meta') return true;
+        const toolsInCat = toolRegistry.getToolNamesForCategory(cat);
+        return toolsInCat.some(name => allowSet.has(name));
+      });
+    }
     const requestedOperationTypes = this.normalizeOperationTypes(operationType, operationTypes);
 
     if (category && !availableCategories.includes(category)) {
@@ -115,7 +125,7 @@ ${JSON.stringify(toolDetails, null, 2)}`
 
         stateAny.metadata.__n8nAssetActivated = true;
 
-        const wsChannel = String(stateAny.metadata?.wsChannel || 'chat-controller');
+        const wsChannel = String(stateAny.metadata?.wsChannel || 'sulla-desktop');
         const selectedSkillSlug = String(stateAny.metadata?.planRetrieval?.selected_skill_slug || '');
         const n8nRootUrl = String(bridge.getAppRootUrl() || 'http://127.0.0.1:30119/').trim();
 

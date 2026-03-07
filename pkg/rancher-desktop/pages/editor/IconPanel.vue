@@ -1,6 +1,6 @@
 <template>
   <div class="icon-panel" :class="{ dark: isDark }">
-    <button class="icon-btn" :class="{ active: leftPaneVisible && !searchMode && !gitMode && !dockerMode }" @click="toggleFileTree">
+    <button class="icon-btn" :class="{ active: leftPaneVisible && !searchMode && !gitMode && !dockerMode && !agentMode && !workflowMode }" @click="toggleFileTree">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
         <polyline points="9,22 9,12 15,12 15,22"></polyline>
@@ -22,67 +22,63 @@
         <path d="M13.983 11.078h2.119a.186.186 0 0 0 .186-.185V9.006a.186.186 0 0 0-.186-.186h-2.119a.186.186 0 0 0-.187.186v1.887c0 .102.084.185.187.185m-2.954-5.43h2.118a.186.186 0 0 0 .187-.186V3.574a.186.186 0 0 0-.187-.186h-2.118a.186.186 0 0 0-.187.186v1.888c0 .102.085.185.187.185m0 2.716h2.118a.187.187 0 0 0 .187-.186V6.29a.186.186 0 0 0-.187-.186h-2.118a.186.186 0 0 0-.187.186v1.887c0 .102.085.186.187.186m-2.93 0h2.12a.186.186 0 0 0 .186-.186V6.29a.186.186 0 0 0-.187-.186H8.1a.186.186 0 0 0-.185.186v1.887c0 .102.083.186.185.186m-2.964 0h2.119a.186.186 0 0 0 .185-.186V6.29a.186.186 0 0 0-.185-.186H5.136a.186.186 0 0 0-.186.186v1.887c0 .102.084.186.186.186m5.893 2.715h2.118a.186.186 0 0 0 .186-.185V9.006a.186.186 0 0 0-.186-.186h-2.118a.187.187 0 0 0-.187.186v1.887c0 .102.085.185.187.185m-2.93 0h2.12a.185.185 0 0 0 .185-.185V9.006a.186.186 0 0 0-.185-.186h-2.12a.186.186 0 0 0-.184.186v1.887c0 .102.083.185.185.185m-2.964 0h2.119a.186.186 0 0 0 .185-.185V9.006a.186.186 0 0 0-.185-.186H5.136a.186.186 0 0 0-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 0 0 .184-.185V9.006a.186.186 0 0 0-.184-.186h-2.12a.186.186 0 0 0-.186.186v1.887c0 .102.084.185.186.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 0 0-.75.748 11.376 11.376 0 0 0 .692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 0 0 3.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288Z"/>
       </svg>
     </button>
+
+    <button class="icon-btn" :class="{ active: agentMode }" @click="$emit('toggle-agent')" title="Agent">
+      <img :src="logoUrl" class="icon-logo" alt="Agent" />
+    </button>
+    <button class="icon-btn" :class="{ active: workflowMode }" @click="$emit('toggle-workflow')" title="Agent Workflows">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="6" height="5" rx="1"/>
+        <rect x="16" y="3" width="6" height="5" rx="1"/>
+        <rect x="9" y="16" width="6" height="5" rx="1"/>
+        <path d="M5 8v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/>
+        <line x1="12" y1="12" x2="12" y2="16"/>
+      </svg>
+    </button>
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent } from 'vue';
+import { defineComponent, computed } from 'vue';
 
 export default defineComponent({
   name: 'IconPanel',
-  
+
   props: {
-    isDark: {
-      type: Boolean,
-      default: false
-    },
-    leftPaneVisible: {
-      type: Boolean,
-      default: true
-    },
-    searchMode: {
-      type: Boolean,
-      default: false
-    },
-    gitMode: {
-      type: Boolean,
-      default: false
-    },
-    dockerMode: {
-      type: Boolean,
-      default: false
-    }
+    isDark: { type: Boolean, default: false },
+    leftPaneVisible: { type: Boolean, default: true },
+    searchMode: { type: Boolean, default: false },
+    gitMode: { type: Boolean, default: false },
+    dockerMode: { type: Boolean, default: false },
+    agentMode: { type: Boolean, default: false },
+    workflowMode: { type: Boolean, default: false },
   },
 
   emits: [
     'toggle-file-tree',
     'toggle-search',
     'toggle-git',
-    'toggle-docker'
+    'toggle-docker',
+    'toggle-agent',
+    'toggle-workflow',
   ],
 
-  setup(props, { emit }) {
-    function toggleFileTree() {
-      emit('toggle-file-tree');
-    }
+  setup(_props, { emit }) {
+    const logoUrl = computed(() => {
+      return new URL('../../../../resources/icons/logo-tray-Template@2x.png', import.meta.url).href;
+    });
 
-    function toggleSearch() {
-      emit('toggle-search');
-    }
-
-    function toggleGit() {
-      emit('toggle-git');
-    }
-
-    function toggleDocker() {
-      emit('toggle-docker');
-    }
+    function toggleFileTree() { emit('toggle-file-tree'); }
+    function toggleSearch() { emit('toggle-search'); }
+    function toggleGit() { emit('toggle-git'); }
+    function toggleDocker() { emit('toggle-docker'); }
 
     return {
+      logoUrl,
       toggleFileTree,
       toggleSearch,
       toggleGit,
-      toggleDocker
+      toggleDocker,
     };
   }
 });
@@ -102,7 +98,7 @@ export default defineComponent({
 
 .icon-panel.dark {
   background: #1e293b;
-  border-right-color: #3c3c3c;
+  border-right-color: #334155;
 }
 
 .icon-btn {
@@ -159,5 +155,32 @@ export default defineComponent({
   background: #0078d4;
   border-top-right-radius: 3px;
   border-bottom-right-radius: 3px;
+}
+
+.icon-logo {
+  width: 21px;
+  height: 21px;
+  opacity: 0.6;
+}
+
+.icon-btn:hover .icon-logo {
+  opacity: 0.8;
+}
+
+.icon-btn.active .icon-logo {
+  opacity: 1;
+}
+
+.dark .icon-logo {
+  filter: invert(1);
+  opacity: 0.5;
+}
+
+.dark .icon-btn:hover .icon-logo {
+  opacity: 0.7;
+}
+
+.dark .icon-btn.active .icon-logo {
+  opacity: 0.9;
 }
 </style>

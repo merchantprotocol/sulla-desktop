@@ -3,12 +3,12 @@ import type { ToolManifest } from '../registry';
 export const bridgeToolManifests: ToolManifest[] = [
   {
     name: 'send_channel_message',
-    description: 'Send a message to any WebSocket channel and wait up to 5 seconds for a reply. If the receiver responds in time, the reply is returned inline. Otherwise a "no reply" result is returned and any late reply will arrive on your channel as an incoming message. Every agent runs on a channel (e.g. "chat-controller" for the frontend, "dreaming-protocol" for the heartbeat). Always include your sender_id and sender_channel so the receiver knows where to reply.',
+    description: 'Send a message to any WebSocket channel and wait up to 5 seconds for a reply. If the receiver responds in time, the reply is returned inline. Otherwise a "no reply" result is returned and any late reply will arrive on your channel as an incoming message. Every agent runs on a channel (e.g. "sulla-desktop" for the frontend, "heartbeat" for the heartbeat). Always include your sender_id and sender_channel so the receiver knows where to reply.',
     category: 'bridge',
     schemaDef: {
-      channel: { type: 'string', description: 'The target WebSocket channel to send to (e.g. "chat-controller", "dreaming-protocol").' },
+      channel: { type: 'string', description: 'The target WebSocket channel to send to (e.g. "sulla-desktop", "heartbeat").' },
       message: { type: 'string', description: 'The message content to send. Supports markdown.' },
-      sender_id: { type: 'string', description: 'Your agent identifier so the receiver knows who sent the message (e.g. "heartbeat", "chat-controller").' },
+      sender_id: { type: 'string', description: 'Your agent identifier so the receiver knows who sent the message (e.g. "heartbeat", "sulla-desktop").' },
       sender_channel: { type: 'string', optional: true, description: 'The channel you are listening on, so the receiver knows where to reply.' },
     },
     operationTypes: ['create'],

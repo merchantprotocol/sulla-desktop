@@ -374,6 +374,10 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
     return this.categoriesList;
   }
 
+  getToolNamesForCategory(category: string): string[] {
+    return this.categories.get(category) || [];
+  }
+
   getCategoriesWithDescriptions(): { category: string; description: string }[] {
     return this.categoriesList.map(cat => ({
       category: cat,

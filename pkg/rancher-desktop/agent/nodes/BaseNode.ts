@@ -12,13 +12,15 @@ import { toolRegistry } from '../tools/registry';
 import { BaseTool } from '../tools/base';
 import { ConversationSummaryService } from '../services/ConversationSummaryService';
 import { ObservationalSummaryService } from '../services/ObservationalSummaryService';
-import { resolveSullaProjectsDir, resolveSullaSkillsDir } from '../utils/sullaPaths';
+import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir } from '../utils/sullaPaths';
+import { environmentPrompt } from '../prompts/environment';
+import fs from 'node:fs';
 
 // ============================================================================
 // DEFAULT SETTINGS
 // ============================================================================
 
-const DEFAULT_WS_CHANNEL = 'dreaming-protocol';
+const DEFAULT_WS_CHANNEL = 'heartbeat';
 
 export const JSON_ONLY_RESPONSE_INSTRUCTIONS = `When you respond it will be parsed as JSON and ONLY the following object will be read.
 Any text outside this exact structure will break downstream parsing.\nRespond ONLY with this valid JSON — nothing before, nothing after, no fences, no commentary:`;
@@ -117,170 +119,175 @@ async function getSoulPrompt(): Promise<string> {
   return prefix + prompt;
 }
 
+/**
+ * Build the template variable map used to substitute {{...}} placeholders
+ * in agent prompt files and the environment prompt.
+ */
+async function getTemplateVariables(): Promise<Record<string, string>> {
+  const botName = await SullaSettingsModel.get('botName', 'Sulla');
+  const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
+  const projectsDir = resolveSullaProjectsDir();
+  const skillsDir = resolveSullaSkillsDir();
+  const agentsDir = resolveSullaAgentsDir();
 
-export const ENVIRONMENT_PROMPT = `---
-# Core Identity & Principles
+  const now = new Date();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+  const formattedTime = now.toLocaleString('en-US', {
+    timeZone,
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  });
 
-You are an expert autonomous agent (Sulla) operating inside a highly capable, purpose-built runtime environment.
+  // Tool categories
+  const categoriesWithDesc = toolRegistry.getCategoriesWithDescriptions();
+  const categoriesText = categoriesWithDesc.map(({ category, description }: { category: string; description: string }) =>
+    `- ${category}: ${description}`).join('\n');
 
-You exist to complete every user request with maximum reliability, efficiency, and intelligence.
+  // Skills index
+  let skillsIndex = '_No skills registered yet._';
+  try {
+    const { skillsRegistry } = await import('../database/registry/SkillsRegistry');
+    const summaries = await skillsRegistry.getSkillSummaries();
+    if (summaries && summaries.length > 0) {
+      const lines = summaries.map((s: any) => {
+        const trigger = Array.isArray(s.triggers) && s.triggers.length > 0
+          ? ` — use when: ${s.triggers.join('; ')}` : '';
+        return `- **${s.name}** (\`${s.slug}\`)${s.description ? `: ${s.description}` : ''}${trigger}`;
+      });
+      skillsIndex = lines.join('\n');
+    }
+  } catch { /* registry not available */ }
 
-**You ALWAYS follow these principles (non-negotiable):**
-- Prefer your built-in environment and tools before any alternative.
-- Use the skill system when you know a relevant skill exists or are creating one.
-- You think step-by-step in <thinking> tags.
-- You perform macro reflection every 4 turns or when stuck (using your MACRO_REVIEW rule).
-- You never get stuck optimizing something unnecessary — always prefer simpler/better overall solutions.
-- When you finish a successful task, you automatically consider distilling it into a new skill.
-- when you have nothing new to add to the conversation, end the turn.
+  // Installed extensions
+  let installedExtensions = '';
+  try {
+    const { getExtensionService } = await import('../services/ExtensionService');
+    const svc = getExtensionService();
+    await svc.initialize();
+    const installed = await svc.fetchInstalledExtensions();
+    if (installed.length > 0) {
+      const lines = installed.map((ext: any) => {
+        const title = ext.labels?.['org.opencontainers.image.title'] ?? ext.id;
+        const desc = ext.labels?.['org.opencontainers.image.description'] ?? '';
+        const urls = ext.extraUrls.map((u: any) => `${u.label}: ${u.url}`).join(', ');
+        return `- **${title}** (${ext.id}) v${ext.version}${urls ? ` — ${urls}` : ''}${desc ? ` — ${desc}` : ''}`;
+      });
+      installedExtensions = `\n#### Currently Installed Extensions (active products you can use)\nThese are running locally and our preferred system for you to interact with via their web UIs, APIs, database, and Docker tools:\n${lines.join('\n')}`;
+    }
+  } catch { /* extension service not available */ }
 
-# Environment & Persistent Systems
+  return {
+    '{{formattedTime}}':        formattedTime,
+    '{{timeZone}}':             timeZone,
+    '{{primaryUserName}}':      primaryUserName || '',
+    '{{botName}}':              botName,
+    '{{sulla_home}}':           path.dirname(agentsDir),
+    '{{projects_dir}}':         projectsDir,
+    '{{skills_dir}}':           skillsDir,
+    '{{agents_dir}}':           agentsDir,
+    '{{active_projects_file}}': path.join(projectsDir, 'ACTIVE_PROJECTS.md'),
+    '{{skills_index}}':         skillsIndex,
+    '{{tool_categories}}':      categoriesText,
+    '{{installed_extensions}}':  installedExtensions,
+  };
+}
 
-You operate inside a custom runtime that contains the following built-in persistent systems. All of them are immediately available to you via tools.
+/** Apply template variable substitution to a string. */
+function applyTemplateVars(text: string, vars: Record<string, string>): string {
+  let result = text;
+  for (const [key, value] of Object.entries(vars)) {
+    result = result.replaceAll(key, value);
+  }
+  return result;
+}
 
-Current datetime: {{formattedTime}}
-Computer time zone: {{timeZone}}
+/** Cache for loaded agent prompt files (agentId -> combined markdown content). */
+const agentPromptCache = new Map<string, { content: string; loadedAt: number }>();
+const AGENT_PROMPT_CACHE_TTL = 30_000; // 30s — reload agent files periodically
 
-### Calendar System
-The single source of truth for all time-based actions. Reminders, meetings, recurring reports, and scheduled tasks are stored as calendar events. Events automatically trigger at the scheduled time with full context. You use this to manage any time-sensitive work.
+/**
+ * Load all .md files from an agent's directory and return them as a combined
+ * prompt string with template variables substituted.
+ *
+ * Returns null if the agent directory doesn't exist or has no .md files,
+ * in which case the caller should fall back to the global soul prompt.
+ */
+async function loadAgentPromptFiles(agentId: string): Promise<string | null> {
+  if (!agentId) return null;
 
-### Observational Memory (short-term context layer)
-Timestamped snapshot entries delivered as assistant messages. Each entry contains:
-- UTC timestamp (ISO)
-- Status indicator (🔴 significant, 🟡 completed)
-- Neutral factual sentences about user requests, confirmations, submissions, or state changes
-- Optional reference slugs
+  // Check cache
+  const cached = agentPromptCache.get(agentId);
+  if (cached && Date.now() - cached.loadedAt < AGENT_PROMPT_CACHE_TTL) {
+    return cached.content;
+  }
 
-### Long-term Memory (vector database)
-Your permanent knowledge base and identity store containing:
-- SOPs and skills
-- Project documentation (solutions-architect format: user stories, MoSCoW, architecture, acceptance criteria)
-- Wikipedia-style reference pages
-- Project resource documents (PRDs) — the source of truth for every active project
+  const agentDir = path.join(resolveSullaAgentsDir(), agentId);
+  if (!fs.existsSync(agentDir)) return null;
 
-You query this whenever you need historical context or project details.
+  try {
+    const entries = fs.readdirSync(agentDir, { withFileTypes: true });
+    const mdFiles = entries
+      .filter(e => e.isFile() && e.name.endsWith('.md'))
+      .sort((a, b) => {
+        // soul.md first, environment.md second, then alphabetical
+        const order = (name: string) =>
+          name === 'soul.md' ? 0 : name === 'environment.md' ? 1 : 2;
+        return order(a.name) - order(b.name) || a.name.localeCompare(b.name);
+      });
 
-### Workspaces
-Dedicated project folders in the user data directory. One workspace per project containing code, assets, and outputs. You access them via list/read tools using full absolute paths.
+    if (mdFiles.length === 0) return null;
 
-### Docker Environment
-Full Docker runtime with host access. You can launch safe containers and images. Workspace directories are mounted via docker-compose for hot reloading. You have dedicated docker tools for full container management.
+    // Read agent.yaml for agent name (used in the identity prefix)
+    let agentName = agentId;
+    const yamlPath = path.join(agentDir, 'agent.yaml');
+    if (fs.existsSync(yamlPath)) {
+      try {
+        const yaml = await import('yaml');
+        const parsed = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+        if (parsed?.name) agentName = parsed.name;
+      } catch { /* ignore yaml parse errors */ }
+    }
 
-### Automation Workflows (n8n)
-n8n is your automation engine with thousands of templates. You have full control via:
-- WebSocket integration (live events, trigger socket updates)
-- API bridge (read/update/run workflows, inspect state)
-- Postgres integration (persist workflow state)
-- Docker integration (same containerized environment)
-- n8n: http://localhost:30119
+    // Read all .md files
+    const sections: string[] = [];
+    for (const file of mdFiles) {
+      const filePath = path.join(agentDir, file.name);
+      const content = fs.readFileSync(filePath, 'utf-8').trim();
+      if (content) {
+        sections.push(content);
+      }
+    }
 
-When automation is active you run a monitor-and-act loop: getCurrentWorkflowState() → decide changes → updateNode()/runWorkflow() → waitForExecutionComplete() → analyze logs.
+    if (sections.length === 0) return null;
 
-### Tools
-You have rich built-in tools across multiple categories: {{tool_categories}}.  
-You can use browse_tools to navigate a full catalog of tools
-Never start by using exec when you have specific built tools.
+    // Get template variables and substitute
+    const vars = await getTemplateVariables();
+    // Add agent-specific variables
+    vars['{{agent_name}}'] = agentName;
+    vars['{{agent_id}}'] = agentId;
+    vars['{{agent_dir}}'] = agentDir;
 
-### OpenAI Compatible API
-Local OpenAI-compatible server:
-- Parent machine: http://localhost:3000
-- Inside Docker: http://host.docker.internal:3000
-All endpoints prefixed with /v1/.
+    const combined = applyTemplateVars(sections.join('\n\n'), vars);
 
-### Codebase
-Your agent codebase is at https://github.com/sulla-ai/sulla-desktop.  
-Architecture and system docs live in the /doc folder.
+    // Build the final prompt with an identity prefix
+    const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
+    const identityPrefix = primaryUserName.trim()
+      ? `You are ${agentName} (agent: ${agentId})\nThe Human's name is: ${primaryUserName}\n\n`
+      : `You are ${agentName} (agent: ${agentId})\n\n`;
 
-### Extensions — Software Marketplace (IMPORTANT)
-You have access to a **rich marketplace of pre-built, pre-configured open-source software** that can be installed with a single tool call. The catalog includes production-grade applications across many categories — project management, CRM, ERP, notifications, social media, cloud storage, email servers, media servers, document tools, smart home, voice AI, and more. New extensions are added regularly.
+    const result = identityPrefix + combined;
 
-**Before building something from scratch or suggesting the human install software manually**, call \`list_extension_catalog\` to check if a ready-made extension already exists. Prefer installing an extension over DIY — these are fully configured and launch automatically.
+    // Cache it
+    agentPromptCache.set(agentId, { content: result, loadedAt: Date.now() });
 
-You can install extensions autonomously with \`install_extension\`. Once installed, you can interact with them via their web UIs (Playwright tools), APIs, and Docker tools. Each extension supports lifecycle commands: start, stop, restart, status, update, logs.
+    return result;
+  } catch (err) {
+    console.error(`[BaseNode] Failed to load agent prompt files for ${agentId}:`, err);
+    return null;
+  }
+}
 
-**Tools:** \`list_extension_catalog\`, \`list_installed_extensions\`, \`install_extension\`, \`uninstall_extension\`
-{{installed_extensions}}
-
-### Playwright & Web Interaction
-Full Playwright tool suite for browsing and interacting with websites.  
-You activate assets with manage_active_asset(action: 'upsert', assetType: 'iframe', url: '...', title: '...').  
-Remove them when finished. highly prefer these tools for any web task.
-
-# SKILL SYSTEM
-
-You have a permanent, growing library of expert skills stored at {{skills_dir}}
-
-**Core Rule (never break this):**  
-You are a skill-driven desktop agent. Use existing skills for EVERYTHING possible — never reinvent the wheel or improvise when a skill already exists. This is non-negotiable.
-
-**Skill Index:**
-{{skills_index}}
-
-**Exact reasoning order on EVERY single turn (follow this step-by-step):**
-1. Read the user request.
-2. Look at the always-visible Skill Index. Is there an obvious or close match?
-3. If yes → immediately call load_skill("exact-skill-name") and follow it exactly.
-4. If unsure or no obvious match → IMMEDIATELY call search_skills("precise one-sentence description of what you need") to get the best matches.
-5. Pick the best skill(s) from the results (native skills are executable code — call them directly like any other tool). You may call multiple in parallel or chain them.
-6. Only if literally ZERO skills match (even after searching) may you improvise or propose creating a new one.
-
-**When to use search_skills:**
-- Any time step 2 or 4 above triggers it.  
-- Before creating any new skill (to avoid duplicates).  
-- This is now encouraged and lightweight — it is your #1 tool for success.
-
-**Creating / editing skills:**
-- Skills live as folders inside {{skills_dir}}. Each skill is a folder named in kebab-case containing a \`SKILL.md\` file.
-- The \`SKILL.md\` format is YAML frontmatter + markdown body:
-\`\`\`
----
-slug: my-skill-name
-title: My Skill Name
-tags: [skill]
-triggers: ["when the user asks to ...", "short phrase"]
----
-(markdown instructions / steps)
-\`\`\`
-- Required frontmatter: \`slug\`, \`title\`, \`tags\` (must include "skill"). Optional: \`triggers\`, \`category\`, \`section\`, \`author\`.
-- To create or edit a skill, just write/edit the file directly at \`{{skills_dir}}/<skill-name>/SKILL.md\`. You have full filesystem access — use it.
-- Before creating a new skill, call search_skills to check for duplicates.
-
-Native skills (marked as "native" in search results) are executable code — call them directly like any other tool.
-
-Current skills directory: {{skills_dir}}
-
-# PROJECT SYSTEM
-
-Projects are workspace folders that contain a \`PROJECT.md\` file (the PRD — project resource document). A folder becomes a project when it has a \`PROJECT.md\`. Projects live at {{projects_dir}} by default.
-
-**Discovery tools:**
-- \`search_projects\` (always available in meta) — find existing projects by name/description/status/tags
-- \`load_project\` — load the full PROJECT.md content for a project
-
-**Creating a project:**
-1. Use \`create_workspace("my-project-name")\` to create the folder — it returns the absolute path.
-2. Create a \`PROJECT.md\` file in that folder. This is what makes it a project. Write it directly using your filesystem tools.
-3. The PROJECT.md format is YAML frontmatter + markdown body (see the \`project-management\` skill for templates).
-
-**Editing a project:**
-- Read and edit \`PROJECT.md\` directly using your filesystem tools. No special project tools needed.
-
-**Active Projects tracking:**
-There is a single file at \`{{active_projects_file}}\` (in the root of the projects directory — NOT inside any individual project folder). This file lists all projects that are currently active and being worked on. Maintain this file:
-- When a new project is created and is active, add it to this file.
-- When the human says a project is no longer relevant, outdated, or completed, remove it from this file.
-- When the human says to prioritize a project or deprioritize others, update this file accordingly.
-- This file is your record of what's in-flight. Keep it current.
-
-**Rules:**
-- Before creating a new project, call search_projects to check for duplicates.
-- Projects live at {{projects_dir}} by default. Each project is a subfolder with a \`PROJECT.md\` inside it.
-- Do NOT call search_projects as a pre-check on every task. Only search when you intend to create or load a project.
-- There is NO \`ACTIVE_PROJECTS.md\` inside individual project folders. It only exists once, at the projects root.
-
-Current projects directory: {{projects_dir}}
----
-`;
+export const ENVIRONMENT_PROMPT = environmentPrompt;
 
 // ============================================================================
 // Primary Classes
@@ -343,93 +350,71 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
         const parts: string[] = [];
 
-        if (options.includeSoul) {
+        // Resolve the agent ID and config from graph state
+        const agentId = String(state.metadata.wsChannel || '').trim();
+        const agentMeta = (state.metadata as any).agent as {
+            name?: string; prompt?: string; tools?: string[];
+        } | undefined;
+
+        // Use pre-compiled prompt from state if available, otherwise fall back to filesystem
+        let agentPrompt: string | null = null;
+        if (agentMeta?.prompt) {
+            // Apply template vars + identity prefix to pre-compiled prompt
+            const promptVars = await getTemplateVariables();
+            promptVars['{{agent_name}}'] = agentMeta.name || agentId;
+            promptVars['{{agent_id}}'] = agentId;
+            promptVars['{{agent_dir}}'] = path.join(resolveSullaAgentsDir(), agentId);
+
+            // Filter {{tool_categories}} to only show categories with allowed tools
+            if (agentMeta.tools?.length) {
+                const allowSet = new Set(agentMeta.tools);
+                const filteredCategories = toolRegistry.getCategoriesWithDescriptions()
+                    .filter(({ category }: { category: string }) => {
+                        const toolsInCat = toolRegistry.getToolNamesForCategory(category);
+                        return category === 'meta' || toolsInCat.some((name: string) => allowSet.has(name));
+                    });
+                promptVars['{{tool_categories}}'] = filteredCategories
+                    .map(({ category, description }: { category: string; description: string }) => `- ${category}: ${description}`)
+                    .join('\n');
+            }
+
+            const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
+            const identityPrefix = primaryUserName.trim()
+                ? `You are ${agentMeta.name || agentId} (agent: ${agentId})\nThe Human's name is: ${primaryUserName}\n\n`
+                : `You are ${agentMeta.name || agentId} (agent: ${agentId})\n\n`;
+            agentPrompt = identityPrefix + applyTemplateVars(agentMeta.prompt, promptVars);
+        } else {
+            agentPrompt = agentId ? await loadAgentPromptFiles(agentId) : null;
+        }
+
+        if (agentPrompt) {
+            // Agent has its own prompt — use as the identity/soul
+            parts.push(agentPrompt);
+        } else if (options.includeSoul) {
+            // Fall back to global soul prompt from settings
             const soulPrompt = await getSoulPrompt();
             if (soulPrompt.trim()) {
                 parts.push(soulPrompt);
             }
         }
 
-        let AwarenessMessage = ENVIRONMENT_PROMPT;
+        // Build environment awareness with template variable substitution
+        const vars = await getTemplateVariables();
 
-            /////////////////////////////////////////////////////////////////
-            // add the tool categories
-            /////////////////////////////////////////////////////////////////
-            const categoriesWithDesc = toolRegistry.getCategoriesWithDescriptions();
-            const categoriesText = categoriesWithDesc.map(({category, description}) => `- ${category}: ${description}`).join('\n');
-            AwarenessMessage = AwarenessMessage.replace('{{tool_categories}}', categoriesText);
+        // Filter {{tool_categories}} for agent allowlist (if not already done above)
+        if (agentMeta?.tools?.length) {
+            const allowSet = new Set(agentMeta.tools);
+            const filteredCategories = toolRegistry.getCategoriesWithDescriptions()
+                .filter(({ category }: { category: string }) => {
+                    const toolsInCat = toolRegistry.getToolNamesForCategory(category);
+                    return category === 'meta' || toolsInCat.some((name: string) => allowSet.has(name));
+                });
+            vars['{{tool_categories}}'] = filteredCategories
+                .map(({ category, description }: { category: string; description: string }) => `- ${category}: ${description}`)
+                .join('\n');
+        }
 
-
-            /////////////////////////////////////////////////////////////////
-            // adds the users time
-            /////////////////////////////////////////////////////////////////
-            const now = new Date();
-            const formattedTime = now.toLocaleString('en-US', {
-                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: true,
-            });
-            const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
-            const projectsDir = resolveSullaProjectsDir();
-            const skillsDir = resolveSullaSkillsDir();
-            const activeProjectsFile = path.join(projectsDir, 'ACTIVE_PROJECTS.md');
-
-            AwarenessMessage = AwarenessMessage.replaceAll('{{formattedTime}}', formattedTime);
-            AwarenessMessage = AwarenessMessage.replaceAll('{{timeZone}}', timeZone);
-            AwarenessMessage = AwarenessMessage.replaceAll('{{skills_dir}}', skillsDir);
-
-            // Build skills index from filesystem registry
-            let skillsIndex = '_No skills registered yet._';
-            try {
-                const indexLines: string[] = [];
-
-                // Filesystem skills
-                const { skillsRegistry } = await import('../database/registry/SkillsRegistry');
-                const summaries = await skillsRegistry.getSkillSummaries();
-                if (summaries && summaries.length > 0) {
-                    for (const s of summaries) {
-                        const trigger = Array.isArray(s.triggers) && s.triggers.length > 0
-                            ? ` — use when: ${s.triggers.join('; ')}`
-                            : '';
-                        indexLines.push(`- **${s.name}** (\`${s.slug}\`)${s.description ? `: ${s.description}` : ''}${trigger}`);
-                    }
-                }
-
-                if (indexLines.length > 0) {
-                    skillsIndex = indexLines.join('\n');
-                }
-            } catch { /* registry not available */ }
-            AwarenessMessage = AwarenessMessage.replaceAll('{{skills_index}}', skillsIndex);
-            AwarenessMessage = AwarenessMessage.replaceAll('{{projects_dir}}', projectsDir);
-            AwarenessMessage = AwarenessMessage.replaceAll('{{active_projects_file}}', activeProjectsFile);
-
-            /////////////////////////////////////////////////////////////////
-            // resolve installed extensions into environment awareness
-            /////////////////////////////////////////////////////////////////
-            let installedExtensionsBlock = '';
-            try {
-                const { getExtensionService } = await import('../services/ExtensionService');
-                const svc = getExtensionService();
-                await svc.initialize();
-                const installed = await svc.fetchInstalledExtensions();
-
-                if (installed.length > 0) {
-                    const lines = installed.map(ext => {
-                        const title = ext.labels?.['org.opencontainers.image.title'] ?? ext.id;
-                        const desc = ext.labels?.['org.opencontainers.image.description'] ?? '';
-                        const urls = ext.extraUrls.map((u: any) => `${u.label}: ${u.url}`).join(', ');
-                        return `- **${title}** (${ext.id}) v${ext.version}${urls ? ` — ${urls}` : ''}${desc ? ` — ${desc}` : ''}`;
-                    });
-                    installedExtensionsBlock = `\n#### Currently Installed Extensions (active products you can use)\nThese are running locally and our preferred system for you to interact with via their web UIs, APIs, database, and Docker tools:\n${lines.join('\n')}`;
-                }
-            } catch { /* extension service not available */ }
-            AwarenessMessage = AwarenessMessage.replaceAll('{{installed_extensions}}', installedExtensionsBlock);
+        const AwarenessMessage = applyTemplateVars(ENVIRONMENT_PROMPT, vars);
 
         if (options.includeEnvironment !== false) {
             parts.push(AwarenessMessage);
@@ -466,11 +451,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
                 // Format observational memory into readable text
                 if (Array.isArray(memoryObj)) {
-                    memoryText = memoryObj.map((entry: any) => 
+                    memoryText = memoryObj.map((entry: any) =>
                         `${entry.priority} ${entry.timestamp} ${entry.content}`
                     ).join('\n');
                 }
-                
+
                 this.insertAssistantContextBeforeLatestUser(state, {
                     role: 'assistant',
                     content: `\nYour Observational Memory Storage:\n${memoryText}`,
@@ -485,7 +470,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
             parts.push(OBSERVATIONAL_MEMORY_SOP);
         }
-        
+
         // Always preserve the caller's base prompt and enrich around it.
         // Keep this after soul + environment context so node-specific directives
         // are anchored by runtime constraints and active asset state.
@@ -712,6 +697,19 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
           const filtered = await this.filterLLMToolsByAccessPolicy(llmTools, options);
           llmTools = filtered.tools;
+
+          // Apply agent tool allowlist from agent config
+          const agentToolAllowlist = (state.metadata as any).agent?.tools;
+          if (Array.isArray(agentToolAllowlist) && agentToolAllowlist.length > 0) {
+            const allowSet = new Set(agentToolAllowlist);
+            // Always allow meta tools (browse_tools, etc.)
+            const metaNames = toolRegistry.getToolNamesForCategory('meta');
+            metaNames.forEach(n => allowSet.add(n));
+            llmTools = llmTools.filter((t: any) => {
+              const name = t?.function?.name;
+              return name && allowSet.has(name);
+            });
+          }
         }
 
         const previousToolAccessPolicy = (state.metadata as any).__toolAccessPolicy;
@@ -1104,7 +1102,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     /**
      * Emit a chat message to the UI dashboard via WebSocket
-     * Connection ID is read from state.metadata.wsChannel (defaults to 'chat-controller')
+     * Connection ID is read from state.metadata.wsChannel (defaults to 'sulla-desktop')
      * @param state BaseThreadState containing the connection ID in metadata
      * @param content Message content to display
      * @param role 'assistant' | 'system' - defaults to 'assistant'
@@ -1515,6 +1513,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const allowedCategories = policy.allowedCategories;
         if (allowedCategories?.length && !allowedCategories.includes(category)) {
             return `Tool category not allowed in this node: ${toolName} (category: ${category || 'unknown'})`;
+        }
+
+        // Agent config tool allowlist (defense in depth)
+        const agentTools = (state.metadata as any).agent?.tools;
+        if (Array.isArray(agentTools) && agentTools.length > 0) {
+            const metaNames = toolRegistry.getToolNamesForCategory('meta');
+            if (!agentTools.includes(toolName) && !metaNames.includes(toolName)) {
+                return `Tool not allowed by agent config: ${toolName}`;
+            }
         }
 
         return null;

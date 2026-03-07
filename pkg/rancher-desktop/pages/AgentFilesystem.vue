@@ -202,7 +202,6 @@ import { ipcRenderer } from 'electron';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
-import MarkdownEditor from './filesystem/MarkdownEditor.vue';
 import CodeEditor from './filesystem/CodeEditor.vue';
 
 import type { FileEntry } from './filesystem/FileTreeSidebar.vue';
@@ -215,7 +214,7 @@ interface TabState {
   loading: boolean;
   error: string;
   dirty: boolean;
-  editorType?: 'code' | 'markdown' | 'preview';
+  editorType?: 'code' | 'preview';
 }
 
 const MARKDOWN_EXTS = new Set(['.md', '.markdown', '.mdx']);
@@ -241,13 +240,10 @@ const EXT_ICON_COLORS: Record<string, string> = {
  * Extensible: add new entries here to support more file types.
  */
 const editorRegistry: Record<string, Component> = {
-  markdown:  markRaw(MarkdownEditor),
   code:      markRaw(CodeEditor),
-  preview:   markRaw(MarkdownEditor), // Preview uses markdown editor but read-only
 };
 
-function resolveEditorType(ext: string): string {
-  if (MARKDOWN_EXTS.has(ext.toLowerCase())) return 'markdown';
+function resolveEditorType(_ext: string): string {
   return 'code';
 }
 
@@ -258,7 +254,6 @@ export default defineComponent({
     PostHogTracker,
     AgentHeader,
     FileTreeSidebar,
-    MarkdownEditor,
     CodeEditor,
   },
 
@@ -448,7 +443,7 @@ export default defineComponent({
       hideTabContextMenu();
     }
 
-    // Editor ref for accessing exposed methods (e.g. getMarkdown)
+    // Editor ref for accessing exposed methods (e.g. getContent)
     const editorRef = ref<any>(null);
 
     function markActiveTabDirty() {
@@ -463,12 +458,8 @@ export default defineComponent({
       try {
         let content = tab.content;
 
-        // For markdown files, get content from BlockNote editor
-        if (MARKDOWN_EXTS.has(tab.ext.toLowerCase()) && editorRef.value?.getMarkdown) {
-          content = await editorRef.value.getMarkdown();
-        }
-        // For code files, get content from Monaco editor
-        else if (editorRef.value?.getContent) {
+        // Get content from Monaco editor
+        if (editorRef.value?.getContent) {
           content = editorRef.value.getContent();
         }
 
