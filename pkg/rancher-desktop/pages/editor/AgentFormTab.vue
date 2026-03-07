@@ -40,14 +40,6 @@
         <option value="judge">Judge</option>
       </select>
 
-      <label class="form-label">Template</label>
-      <select v-model="form.templateId" class="form-select" :class="{ dark: isDark }">
-        <option value="glass-core">Glass Core</option>
-        <option value="terminal">Terminal</option>
-        <option value="industrial">Industrial</option>
-        <option value="biosynthetic">Biosynthetic</option>
-      </select>
-
       <hr class="form-separator" :class="{ dark: isDark }" />
 
       <div class="form-section-header">
@@ -193,7 +185,6 @@ const form = reactive({
   name: '',
   description: '',
   type: 'worker',
-  templateId: 'glass-core',
   skills: [] as string[],
   tools: [] as string[],
 });
@@ -229,7 +220,6 @@ onMounted(async() => {
         form.name = parsed.name || '';
         form.description = parsed.description || '';
         form.type = parsed.type || 'worker';
-        form.templateId = parsed.templateId || 'glass-core';
         form.skills = Array.isArray(parsed.skills) ? parsed.skills : [];
         form.tools = Array.isArray(parsed.tools) ? parsed.tools : [];
       }
@@ -369,7 +359,6 @@ async function save() {
       name: form.name.trim(),
       description: form.description.trim(),
       type: form.type,
-      templateId: form.templateId,
       skills: form.skills,
       tools: form.tools,
     });

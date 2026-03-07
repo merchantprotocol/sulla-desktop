@@ -104,11 +104,18 @@ const { applyNodeChanges, applyEdgeChanges, addEdges, addNodes, project, getView
 const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
 
-// Load workflow data when prop changes
+// Load workflow data when a *different* workflow is loaded (id changes).
+// Metadata-only changes (name, enabled, description) should NOT reset the canvas.
+let currentWorkflowId: string | null = null;
+
 watch(
   () => props.workflowData,
   (wf) => {
     if (wf) {
+      // Skip canvas reset if same workflow — metadata-only change
+      if (wf.id === currentWorkflowId) return;
+      currentWorkflowId = wf.id;
+
       const newNodes = wf.nodes.map(n => ({
         id:       n.id,
         type:     n.type,
@@ -132,6 +139,7 @@ watch(
         setEdges(newEdges);
       });
     } else {
+      currentWorkflowId = null;
       nodes.value = [];
       edges.value = [];
       nextTick(() => {

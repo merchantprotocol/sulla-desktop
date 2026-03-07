@@ -985,6 +985,20 @@ export default defineComponent({
         }));
     });
 
+    /**
+     * Snapshot current canvas state into activeWorkflowData before metadata changes.
+     * This prevents the WorkflowEditor watch from resetting nodes/edges to stale data
+     * when activeWorkflowData is reassigned with a new object reference.
+     */
+    function snapshotCanvasIntoWorkflowData(): void {
+      const serialized = workflowEditorRef.value?.serialize();
+      if (serialized && activeWorkflowData.value) {
+        activeWorkflowData.value.nodes = serialized.nodes;
+        activeWorkflowData.value.edges = serialized.edges;
+        activeWorkflowData.value.viewport = serialized.viewport;
+      }
+    }
+
     function toggleWorkflowSettings() {
       if (workflowSettingsOpen.value) {
         workflowSettingsOpen.value = false;
@@ -998,6 +1012,7 @@ export default defineComponent({
 
     function toggleWorkflowEnabled() {
       if (!activeWorkflowData.value) return;
+      snapshotCanvasIntoWorkflowData();
       activeWorkflowData.value = { ...activeWorkflowData.value, enabled: !activeWorkflowData.value.enabled };
       onWorkflowChanged();
       saveWorkflowNow();
@@ -1010,6 +1025,7 @@ export default defineComponent({
 
     function onWorkflowNameUpdate(name: string) {
       if (activeWorkflowData.value) {
+        snapshotCanvasIntoWorkflowData();
         activeWorkflowData.value = { ...activeWorkflowData.value, name };
         onWorkflowChanged();
         // Sync tab name in WorkflowPane
@@ -1051,6 +1067,7 @@ export default defineComponent({
 
     function onWorkflowDescriptionUpdate(description: string) {
       if (activeWorkflowData.value) {
+        snapshotCanvasIntoWorkflowData();
         activeWorkflowData.value = { ...activeWorkflowData.value, description };
         onWorkflowChanged();
       }

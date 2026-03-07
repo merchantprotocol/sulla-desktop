@@ -1,6 +1,7 @@
 // ChatInterface.ts
 import { ref, computed, watch } from 'vue';
 import { AgentPersonaService } from '@pkg/agent';
+import type { PersonaSidebarAsset } from '@pkg/agent';
 import { AgentPersonaRegistry, type ChatMessage as RegistryChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 
 export type ChatMessage = RegistryChatMessage;
@@ -19,7 +20,6 @@ export class ChatInterface {
   readonly messages = ref<ChatMessage[]>([]);
 
   constructor() {
-    // Create a minimal registry just for the persona service's internal needs
     this.registry = new AgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(SULLA_DESKTOP_CHANNEL);
 
@@ -32,6 +32,27 @@ export class ChatInterface {
 
   readonly graphRunning = computed(() => {
     return this.persona.graphRunning.value;
+  });
+
+  readonly stopReason = computed(() => {
+    return this.persona.stopReason.value;
+  });
+
+  readonly loading = computed(() => {
+    return this.registry.isLoading(SULLA_DESKTOP_CHANNEL);
+  });
+
+  readonly showContinueButton = computed(() => {
+    return this.persona.stopReason.value === 'max_loops' && !this.persona.graphRunning.value;
+  });
+
+  /** Active sidebar assets (iframes, documents) managed by the persona service */
+  readonly activeAssets = computed<PersonaSidebarAsset[]>(() => {
+    return [...this.persona.activeAssets];
+  });
+
+  readonly threadId = computed(() => {
+    return this.persona.getThreadId();
   });
 
   // Track if user has ever sent a message (persisted in localStorage)
@@ -49,6 +70,18 @@ export class ChatInterface {
   stop(): void {
     this.persona.emitStopSignal(SULLA_DESKTOP_CHANNEL);
     this.persona.graphRunning.value = false;
+  }
+
+  continueRun(): void {
+    this.persona.emitContinueRun();
+  }
+
+  setAssetCollapsed(assetId: string, collapsed: boolean): void {
+    this.persona.setAssetCollapsed(assetId, collapsed);
+  }
+
+  removeAsset(assetId: string): void {
+    this.persona.removeAsset(assetId);
   }
 
   async send(): Promise<void> {

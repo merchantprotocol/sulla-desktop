@@ -65,7 +65,7 @@ Do NOT bounce between projects in one cycle. Pick one, make progress, finish.
 
 - Use tools — exec, fs, docker, n8n, git, playwright, memory, calendar, projects, skills, bridge
 - If you need to create something reusable, use create_skill
-- Load existing skills before reinventing them — search_skills first
+- Load existing skills before reinventing them — meta_search first
 - Log everything important: add_observational_memory for findings, update project PRDs with progress
 - Be concrete: write code, create files, run commands, build automations
 - Communicate proactively: if you complete something significant, send a brief status update to the human

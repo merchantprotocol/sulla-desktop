@@ -203,9 +203,8 @@ import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { AgentSettingsController } from './agent/AgentSettingsController';
-import { ChatInterface } from './agent/ChatInterface';
+import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
-import { getAgentPersonaRegistry, type ChatMessage } from '@pkg/agent';
 import { getN8nVueBridgeService } from '@pkg/agent/services/N8nVueBridgeService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
@@ -290,24 +289,13 @@ const displayMessages = computed(() => {
   });
 });
 
-const registry = getAgentPersonaRegistry();
-const loading = computed<boolean>(() => {
-  const agent = registry.activeAgent.value;
-  if (!agent) return false;
-  return agent.loading;
-});
-
-const showContinueButton = computed<boolean>(() => {
-  const persona = registry.getActivePersonaService();
-  if (!persona) return false;
-  return persona.stopReason.value === 'max_loops' && !persona.graphRunning.value;
-});
+const loading = chatController.loading;
+const showContinueButton = chatController.showContinueButton;
+const activeAssets = chatController.activeAssets;
+const threadId = chatController.threadId;
 
 const continueRun = () => {
-  const persona = registry.getActivePersonaService();
-  if (persona) {
-    persona.emitContinueRun();
-  }
+  chatController.continueRun();
 };
 
 const handleModelChanged = async (event: Electron.IpcRendererEvent, data: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string }) => {
@@ -397,11 +385,7 @@ watch(() => messages.value.length, async () => {
   container.scrollTop = container.scrollHeight; // Instant scroll, no smooth behavior
 }, { flush: 'post' });
 
-const isRunning = computed<boolean>(() => {
-  const agent = registry.activeAgent.value;
-  if (!agent) return false;
-  return agent.isRunning;
-});
+const isRunning = computed<boolean>(() => true);
 
 const modelSelector = new AgentModelSelectorController({
   systemReady,
@@ -414,11 +398,6 @@ const modelSelector = new AgentModelSelectorController({
 onMounted(async () => {
   const n8nVueBridgeService = getN8nVueBridgeService();
   n8nVueBridgeService.markInitialized('Agent.vue:onMounted');
-
-  // Re-subscribe persona service WS handlers (they get unsubscribed on unmount)
-  registry.state.agents.forEach((agent: { agentId: string }) => {
-    registry.getOrCreatePersonaService(agent.agentId).startListening();
-  });
 
   // Start human presence tracker — writes presence to Redis so agents know where the human is
   presenceTracker.setCurrentView('Agent Chat');
@@ -456,10 +435,6 @@ watch(systemReady, async (ready) => {
 onUnmounted(() => {
   presenceTracker.stop();
   modelSelector.dispose();
-  // Stop listening on each agent's persona service
-  registry.state.agents.forEach((agent: { agentId: string }) => {
-    registry.getOrCreatePersonaService(agent.agentId).stopListening();
-  });
   chatController.dispose();
 });
 
