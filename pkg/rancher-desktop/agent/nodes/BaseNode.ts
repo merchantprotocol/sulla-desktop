@@ -1145,6 +1145,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             state.metadata.hadUserMessages = true;
         }
 
+        // Log to conversation logger if a conversationId is set
+        const convId = (state.metadata as any).conversationId;
+        if (convId && kind !== 'thinking') {
+            try {
+                const { getConversationLogger } = require('../services/ConversationLogger');
+                getConversationLogger().logMessage(convId, role, content.trim());
+            } catch { /* best-effort */ }
+        }
+
         return sent;
     }
 
@@ -1427,12 +1436,21 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                             error: toolError,
                         });
                     }
+
+                    // Conversation logging for tool calls
+                    const convIdSuccess = (state.metadata as any).conversationId;
+                    if (convIdSuccess) {
+                        try {
+                            const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
+                            getLogger().logToolCall(convIdSuccess, toolName, args, result);
+                        } catch { /* best-effort */ }
+                    }
                 } catch (err: any) {
                     const error = err.message || String(err);
-                    
+
                     // Emit tool result event on error
                     await this.emitToolResultEvent(state, toolRunId, false, error);
-                    
+
                     await this.appendToolResultMessage(state, toolName, {
                         toolName,
                         success: false,
@@ -1447,6 +1465,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                         error,
                     });
                     results.push({ toolName, success: false, error });
+
+                    // Conversation logging for failed tool calls
+                    const convIdFail = (state.metadata as any).conversationId;
+                    if (convIdFail) {
+                        try {
+                            const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
+                            getLogger().logToolCall(convIdFail, toolName, args, { error });
+                        } catch { /* best-effort */ }
+                    }
                     if (this.currentNodeRunContext) {
                         this.currentNodeRunContext.toolTranscript.push({
                             toolName,

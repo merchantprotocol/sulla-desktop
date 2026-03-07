@@ -18,6 +18,9 @@
         <p class="chat-empty-text">Ask anything about your code</p>
       </div>
 
+      <!-- Spacer pushes messages to bottom when few messages -->
+      <div v-if="messages.length > 0" class="chat-messages-spacer"></div>
+
       <div v-for="msg in messages" :key="msg.id" class="chat-message" :class="[msg.role]">
         <!-- User bubble -->
         <div v-if="msg.role === 'user'" class="bubble user-bubble" :class="{ dark: isDark }">
@@ -357,12 +360,16 @@ watch(() => props.messages.length, () => scrollToBottom());
 
 .chat-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 12px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 10px;
+}
+
+.chat-messages-spacer {
+  flex: 1;
 }
 
 .chat-messages.dark::-webkit-scrollbar {

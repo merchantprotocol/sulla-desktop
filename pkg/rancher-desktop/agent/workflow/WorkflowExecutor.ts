@@ -23,6 +23,7 @@ import type {
 } from './types';
 
 import { getNodeHandler } from './nodeHandlers';
+import { getConversationLogger } from '@pkg/agent/services/ConversationLogger';
 
 // ── Helpers ──
 
@@ -112,6 +113,12 @@ export class WorkflowExecutor {
     console.log(`[WorkflowExecutor] execute() — workflow="${this.definition.name}" (${this.definition.id}), executionId=${this.executionId}, originChannel="${this.context.originChannel || '(none)'}", triggerPayload="${String(this.triggerPayload).slice(0, 80)}"`);
     this.emitEvent({ type: 'workflow_started' });
 
+    const convLogger = getConversationLogger();
+    convLogger.logWorkflowStarted(this.executionId, this.definition.name, this.definition.id, {
+      channel:  this.context.originChannel,
+      parentId: this.options.parentExecutionId,
+    });
+
     const startedAt = now();
     let status: WorkflowRunStatus = 'running';
     let error: string | undefined;
@@ -148,6 +155,8 @@ export class WorkflowExecutor {
         this.emitEvent({ type: 'workflow_failed', error });
       }
     }
+
+    convLogger.logWorkflowCompleted(this.executionId, status, error);
 
     return {
       executionId: this.executionId,
@@ -272,6 +281,7 @@ export class WorkflowExecutor {
       nodeLabel: nodeData.label,
       status:    'running',
     });
+    getConversationLogger().logNodeEvent(this.executionId, 'node_started', nodeId, nodeData.label, { subtype: nodeData.subtype, category: nodeData.category });
 
     try {
       // Execute the handler
@@ -327,6 +337,7 @@ export class WorkflowExecutor {
         threadId:  result.threadId,
         output:    this.truncateOutput(result.result),
       });
+      getConversationLogger().logNodeEvent(this.executionId, 'node_completed', nodeId, nodeData.label, { threadId: result.threadId, output: this.truncateOutput(result.result) });
 
       // Follow outgoing edges
       await this.followEdges(nodeId, result.selectedHandle);
@@ -348,6 +359,7 @@ export class WorkflowExecutor {
         status:    'failed',
         error:     err.message || String(err),
       });
+      getConversationLogger().logNodeEvent(this.executionId, 'node_failed', nodeId, nodeData.label, { error: err.message || String(err) });
     }
   }
 

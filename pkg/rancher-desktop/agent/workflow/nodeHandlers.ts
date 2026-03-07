@@ -140,6 +140,21 @@ const agentHandler: NodeHandler = async(args) => {
   if (state.metadata) {
     state.metadata.abortSignal = abortSignal;
     state.metadata.wsChannel = wsChannel;
+
+    // Link this graph conversation to the parent workflow conversation
+    const graphConvId = `graph-${threadId}`;
+    state.metadata.conversationId = graphConvId;
+    state.metadata.parentConversationId = context.executionId;
+  }
+
+  // Log the child graph reference in the workflow conversation
+  const { getConversationLogger } = await import('@pkg/agent/services/ConversationLogger');
+  const graphConvId = state.metadata?.conversationId;
+  if (graphConvId) {
+    getConversationLogger().logNodeEvent(context.executionId, 'child_graph_started', nodeId, config.agentName as string || agentId, {
+      childConversationId: graphConvId,
+      threadId,
+    });
   }
 
   console.log(`[WorkflowAgent] Executing agent graph — wsChannel="${state.metadata?.wsChannel}", messages=${state.messages.length}`);

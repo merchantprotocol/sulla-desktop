@@ -6,6 +6,7 @@ import { throwIfAborted } from '../services/AbortService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { getConversationLogger } from '../services/ConversationLogger';
 import { InputHandlerNode } from './InputHandlerNode';
 import { AgentNode } from './AgentNode';
 import { HeartbeatNode, type HeartbeatThreadState } from './HeartbeatNode';
@@ -89,6 +90,10 @@ export interface BaseThreadState {
     action: 'direct_answer' | 'ask_clarification' | 'use_tools' | 'create_plan' | 'run_again';
     threadId: string;
     wsChannel: string;
+    /** Conversation logger ID — set by workflow agent handler or graph creator */
+    conversationId?: string;
+    /** Parent conversation ID (e.g. the workflow execution that spawned this graph) */
+    parentConversationId?: string;
 
     reasoning?: string;
 
@@ -311,6 +316,27 @@ export class Graph<TState = BaseThreadState> {
 
     console.log(`[Graph] Start from ${(state as any).metadata.currentNodeId}`);
 
+    // Conversation logging
+    const convId = (state as any).metadata.conversationId;
+    if (convId) {
+      const convLogger = getConversationLogger();
+      const agentName = (state as any).metadata.agent?.name || (state as any).metadata.wsChannel || 'unknown';
+      const parentId = (state as any).metadata.parentConversationId;
+      convLogger.logGraphStarted(convId, agentName, {
+        agentId: (state as any).metadata.wsChannel,
+        channel: (state as any).metadata.wsChannel,
+        parentId,
+      });
+      // Log the initial user message if present
+      const msgs = (state as any).messages;
+      if (Array.isArray(msgs) && msgs.length > 0) {
+        const lastMsg = msgs[msgs.length - 1];
+        if (lastMsg?.role === 'user' && lastMsg?.content) {
+          convLogger.logMessage(convId, 'user', String(lastMsg.content));
+        }
+      }
+    }
+
     (state as any).metadata.iterations ??= 0;
     (state as any).metadata.consecutiveSameNode ??= 0;
 
@@ -371,10 +397,15 @@ export class Graph<TState = BaseThreadState> {
       }
     } catch (error: any) {
       console.log('[Graph] Execution stopped:', error);
-      // Don't re-throw AbortError, just log and continue to send completion signal
       if (error?.name === 'AbortError') {
         console.log('[Graph] Graph execution aborted by user');
+        if (convId) {
+          getConversationLogger().logGraphCompleted(convId, 'aborted');
+        }
       } else {
+        if (convId) {
+          getConversationLogger().logGraphCompleted(convId, 'failed', { error: error?.message || String(error) });
+        }
         // Re-throw non-abort errors
         throw error;
       }
@@ -384,6 +415,17 @@ export class Graph<TState = BaseThreadState> {
       console.warn('Max iterations hit');
       (state as any).metadata.maxIterationsReached = true;
       (state as any).metadata.stopReason = 'max_loops';
+    }
+
+    // Conversation logging — graph completed
+    if (convId) {
+      const convLogger = getConversationLogger();
+      const finalStatus = (state as any).metadata.maxIterationsReached ? 'max_iterations' :
+        (state as any).metadata.stopReason === 'max_loops' ? 'max_loops' : 'completed';
+      convLogger.logGraphCompleted(convId, finalStatus, {
+        iterations: (state as any).metadata.iterations,
+        agentStatus: (state as any).metadata.agent?.status,
+      });
     }
 
     // Always send completion signal, whether completed naturally or aborted

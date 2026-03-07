@@ -279,6 +279,8 @@ async function buildAgentState(wsChannel: string, threadId?: string): Promise<Ag
       n8nLiveEventsEnabled: false,
       returnTo: null,
 
+      conversationId: id,
+
       agent: agentConfig,
       agentLoopCount: 0
     }
