@@ -86,6 +86,7 @@
               v-show="integrationsMode"
               :is-dark="isDark"
               @file-selected="onFileSelected"
+              @open-api-test="openApiTest"
               @close="leftPaneVisible = false"
             />
 
@@ -375,16 +376,28 @@
                   </button>
                 </div>
               </div>
-              <!-- API Test tab -->
+              <!-- API Test tabs -->
               <div
+                v-for="atab in apiTabs"
+                :key="atab.id"
                 class="terminal-tab"
-                :class="{ active: bottomPaneTab === 'api', dark: isDark }"
-                @click="bottomPaneTab = 'api'"
+                :class="{ active: bottomPaneTab === 'api' && activeApiTab === atab.id, dark: isDark }"
+                @click="bottomPaneTab = 'api'; activeApiTab = atab.id"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
                   <path d="M4 6h16M4 12h16M4 18h16"/>
                 </svg>
-                <span>API</span>
+                <span>API:{{ atab.slug }}</span>
+                <button
+                  class="terminal-tab-close"
+                  :class="{ dark: isDark }"
+                  @click.stop="closeApiTab(atab.id)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
               </div>
               <button
                 class="terminal-tab-add"
@@ -417,9 +430,16 @@
               </div>
             </div>
 
-            <!-- API Test Panel -->
+            <!-- API Test Panels -->
             <div v-show="bottomPaneTab === 'api'" class="terminal-content">
-              <ApiTestPanel :is-dark="isDark" />
+              <div
+                v-for="atab in apiTabs"
+                :key="atab.id"
+                v-show="activeApiTab === atab.id"
+                style="height: 100%"
+              >
+                <ApiTestPanel :is-dark="isDark" :initial-slug="atab.slug" />
+              </div>
             </div>
           </div>
         </div>
@@ -526,7 +546,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, nextTick, watch, type Component } from 'vue';
+import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, watch, type Component } from 'vue';
 import { ipcRenderer } from 'electron';
 
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
@@ -640,6 +660,26 @@ export default defineComponent({
     const rightPaneVisible = ref(true);
     const bottomPaneVisible = ref(true);
     const bottomPaneTab = ref<'terminal' | 'api'>('terminal');
+    const apiTabs = ref<Array<{ id: string; slug: string }>>([]);
+    const activeApiTab = ref('');
+    let apiTabCounter = 0;
+
+    function openApiTest(slug: string) {
+      // Check if a tab for this slug already exists
+      const existing = apiTabs.value.find(t => t.slug === slug);
+      if (existing) {
+        activeApiTab.value = existing.id;
+        bottomPaneVisible.value = true;
+        bottomPaneTab.value = 'api';
+        return;
+      }
+      apiTabCounter++;
+      const newTab = { id: `api-${apiTabCounter}`, slug };
+      apiTabs.value.push(newTab);
+      activeApiTab.value = newTab.id;
+      bottomPaneVisible.value = true;
+      bottomPaneTab.value = 'api';
+    }
 
     // Agent registry for agent selector
     const agentRegistry = getAgentPersonaRegistry();
@@ -816,6 +856,22 @@ export default defineComponent({
         // Switch to the last tab
         const lastTab = terminalTabs.value[terminalTabs.value.length - 1];
         activeTerminalTab.value = lastTab.id;
+      }
+    }
+
+    function closeApiTab(tabId: string) {
+      const index = apiTabs.value.findIndex(t => t.id === tabId);
+      if (index === -1) return;
+      const wasActive = activeApiTab.value === tabId;
+      apiTabs.value.splice(index, 1);
+      if (wasActive) {
+        if (apiTabs.value.length > 0) {
+          const last = apiTabs.value[apiTabs.value.length - 1];
+          activeApiTab.value = last.id;
+        } else {
+          activeApiTab.value = '';
+          bottomPaneTab.value = 'terminal';
+        }
       }
     }
 
@@ -2073,6 +2129,10 @@ export default defineComponent({
       rightPaneVisible,
       bottomPaneVisible,
       bottomPaneTab,
+      apiTabs,
+      activeApiTab,
+      openApiTest,
+      closeApiTab,
       leftPaneWidth,
       rightPaneWidth,
       bottomPaneHeight,

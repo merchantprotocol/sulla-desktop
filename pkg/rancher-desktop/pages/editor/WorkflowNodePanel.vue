@@ -31,6 +31,15 @@
         @update-config="(nodeId, config) => $emit('update-node-config', nodeId, config)"
       />
 
+      <ToolCallNodeConfig
+        v-else-if="node.data?.subtype === 'tool-call'"
+        :is-dark="isDark"
+        :node-id="node.id"
+        :config="node.data.config"
+        :upstream-nodes="upstreamNodes || []"
+        @update-config="(nodeId, config) => $emit('update-node-config', nodeId, config)"
+      />
+
       <AgentNodeConfig
         v-else-if="node.data?.category === 'agent'"
         :is-dark="isDark"
@@ -84,6 +93,7 @@ import type { WorkflowNodeData } from './workflow/types';
 import type { UpstreamNodeInfo } from './workflow/AgentNodeConfig.vue';
 import TriggerNodeConfig from './workflow/TriggerNodeConfig.vue';
 import AgentNodeConfig from './workflow/AgentNodeConfig.vue';
+import ToolCallNodeConfig from './workflow/ToolCallNodeConfig.vue';
 import RouterNodeConfig from './workflow/RouterNodeConfig.vue';
 import ConditionNodeConfig from './workflow/ConditionNodeConfig.vue';
 import FlowControlNodeConfig from './workflow/FlowControlNodeConfig.vue';
@@ -111,7 +121,7 @@ const panelTitle = computed(() => {
   if (props.node.data?.category) {
     const cat = props.node.data.category;
     if (cat === 'trigger') return 'Trigger';
-    if (cat === 'agent') return 'Agent';
+    if (cat === 'agent') return props.node.data?.subtype === 'tool-call' ? 'Tool Call' : 'Agent';
     if (cat === 'routing') return 'Routing';
     if (cat === 'flow-control') return 'Flow Control';
     if (cat === 'io') return 'I/O';

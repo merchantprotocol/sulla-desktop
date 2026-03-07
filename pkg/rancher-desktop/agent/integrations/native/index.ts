@@ -17,6 +17,7 @@ import { nativeAutomationIntegrations } from './automation';
 import { nativeDesignIntegrations } from './design';
 import { nativeAiMlIntegrations } from './ai_ml';
 import { nativeDatabaseIntegrations } from './database';
+import { nativePaidAdsIntegrations } from './paid_ads';
 
 export const nativeIntegrations: Record<string, Integration> = {
   ...nativeSlackIntegration,
@@ -37,4 +38,5 @@ export const nativeIntegrations: Record<string, Integration> = {
   ...nativeDesignIntegrations,
   ...nativeAiMlIntegrations,
   ...nativeDatabaseIntegrations,
+  ...nativePaidAdsIntegrations,
 };

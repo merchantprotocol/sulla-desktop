@@ -69,7 +69,18 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
             </svg>
-            <span>{{ entry.name }}</span>
+            <span class="integrations-row-name">{{ entry.name }}</span>
+            <button
+              class="integrations-api-btn"
+              :class="{ dark: isDark }"
+              title="Open in API tester"
+              @click.stop="$emit('open-api-test', entry.name)"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34"/>
+                <polygon points="18 2 22 6 12 16 8 16 8 12 18 2"/>
+              </svg>
+            </button>
           </button>
           <!-- Directory children -->
           <div v-if="entry.isDir && expandedDirs.has(entry.path) && dirChildren.get(entry.path)" class="integrations-subfiles">
@@ -159,7 +170,7 @@ export default defineComponent({
     isDark: { type: Boolean, default: false },
   },
 
-  emits: ['file-selected', 'close'],
+  emits: ['file-selected', 'close', 'open-api-test'],
 
   setup(props, { emit }) {
     const integrationsDir = path.join(os.homedir(), 'sulla', 'integrations');
@@ -418,6 +429,27 @@ export default defineComponent({
 .integrations-row.dark:hover { background: rgba(255,255,255,0.04); }
 
 .integrations-nested { padding-left: 28px; }
+
+.integrations-row-name { flex: 1; min-width: 0; }
+
+.integrations-api-btn {
+  display: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+.integrations-api-btn:hover { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.integrations-api-btn.dark { color: #94a3b8; }
+.integrations-api-btn.dark:hover { background: rgba(96,165,250,0.15); color: #60a5fa; }
+.integrations-row:hover .integrations-api-btn { display: flex; }
 
 .integrations-subfiles { /* nesting container */ }
 

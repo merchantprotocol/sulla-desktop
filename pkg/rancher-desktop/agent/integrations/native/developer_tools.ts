@@ -182,4 +182,9 @@ export const nativeGitHubIntegration: Record<string, Integration> = {
     name: 'Fly.io', description: 'Deploy and manage applications on Fly.io edge infrastructure.',
     category: 'Developer Tools', icon: 'fly_io.svg', version: '1.0.0', lastUpdated: '2026-02-28', developer: 'Fly.io',
   },
+  aws: {
+    id: 'aws', sort: 19, paid: true, beta: false, comingSoon: false, connected: false,
+    name: 'AWS', description: 'Manage S3 buckets, Lambda functions, EC2 instances, DynamoDB tables, and other AWS services via REST APIs.',
+    category: 'Developer Tools', icon: 'aws.svg', version: '1.0.0', lastUpdated: '2026-03-07', developer: 'Amazon',
+  },
 };

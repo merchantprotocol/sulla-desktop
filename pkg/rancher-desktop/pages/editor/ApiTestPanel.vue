@@ -158,11 +158,12 @@ export default defineComponent({
 
   props: {
     isDark: { type: Boolean, default: false },
+    initialSlug: { type: String, default: '' },
   },
 
   emits: ['close'],
 
-  setup() {
+  setup(props) {
     const integrations = ref<IntegrationInfo[]>([]);
     const selectedSlug = ref('');
     const selectedEndpoint = ref('');
@@ -219,10 +220,6 @@ export default defineComponent({
     async function loadIntegrations() {
       try {
         integrations.value = await ipcRenderer.invoke('configapi-list-integrations');
-        if (integrations.value.length > 0 && !selectedSlug.value) {
-          selectedSlug.value = integrations.value[0].slug;
-          onSlugChange();
-        }
       } catch (err) {
         console.error('[ApiTestPanel] Failed to load integrations:', err);
       }
@@ -348,6 +345,19 @@ export default defineComponent({
 
     // Auto-rebuild URL when params change
     watch(paramRows, rebuildUrl, { deep: true });
+
+    // When parent sets initialSlug, select that integration
+    watch(() => props.initialSlug, async (slug) => {
+      if (!slug) return;
+      // Ensure integrations are loaded
+      if (integrations.value.length === 0) {
+        await loadIntegrations();
+      }
+      if (integrations.value.find(i => i.slug === slug)) {
+        selectedSlug.value = slug;
+        onSlugChange();
+      }
+    }, { immediate: true });
 
     return {
       integrations,

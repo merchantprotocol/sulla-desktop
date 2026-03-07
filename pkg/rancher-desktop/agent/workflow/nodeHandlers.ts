@@ -121,6 +121,63 @@ const agentHandler: NodeHandler = async(args) => {
 };
 
 /**
+ * Tool Call node — executes a YAML-configured integration API call.
+ * Resolves {{variable}} templates in parameter defaults, then calls
+ * the existing ConfigApiClient infrastructure.
+ */
+const toolCallHandler: NodeHandler = async(args) => {
+  const { config, context, upstreamOutputs } = args;
+
+  const integrationSlug = (config.integrationSlug as string) || '';
+  const endpointName = (config.endpointName as string) || '';
+  const accountId = (config.accountId as string) || 'default';
+  const defaults = (config.defaults as Record<string, string>) || {};
+
+  if (!integrationSlug || !endpointName) {
+    return { result: { error: 'Missing integration or endpoint configuration' } };
+  }
+
+  // Resolve {{variable}} templates in parameter defaults
+  const params: Record<string, any> = {};
+  for (const [key, value] of Object.entries(defaults)) {
+    params[key] = resolveTemplate(value, context, upstreamOutputs);
+  }
+
+  // Load the integration client
+  const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+  const loader = getIntegrationConfigLoader();
+  const client = loader.getClient(integrationSlug);
+
+  if (!client) {
+    return { result: { error: `Integration "${integrationSlug}" not found or not loaded` } };
+  }
+
+  // Resolve credentials from IntegrationService
+  const options: Record<string, any> = {};
+  try {
+    const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+    const integrationService = getIntegrationService();
+    const values = await integrationService.getFormValues(integrationSlug, accountId);
+    const apiKeyVal = values.find((v: { property: string; value: string }) =>
+      v.property === 'api_key' || v.property === 'apiKey' || v.property === 'token',
+    );
+    if (apiKeyVal?.value) {
+      options.apiKey = apiKeyVal.value;
+    }
+    const tokenVal = values.find((v: { property: string; value: string }) => v.property === 'access_token');
+    if (tokenVal?.value) {
+      options.token = tokenVal.value;
+    }
+  } catch (err) {
+    console.warn('[ToolCallHandler] Could not load credentials:', err);
+  }
+
+  const result = await client.call(endpointName, params, options);
+
+  return { result };
+};
+
+/**
  * Router node — uses LLM to classify input into one of the configured routes.
  * Returns the selected route handle so the executor follows the correct edge.
  */
@@ -449,6 +506,7 @@ const handlers: Record<string, NodeHandler> = {
 
   // Agent
   'agent':             agentHandler,
+  'tool-call':         toolCallHandler,
 
   // Routing
   'router':            routerHandler,

@@ -3,7 +3,7 @@
 export type WorkflowNodeCategory = 'trigger' | 'agent' | 'routing' | 'flow-control' | 'io';
 
 export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'sulla-desktop' | 'workbench' | 'chat-completions';
-export type AgentNodeSubtype = 'agent';
+export type AgentNodeSubtype = 'agent' | 'tool-call';
 export type RoutingNodeSubtype = 'router' | 'condition';
 export type FlowControlNodeSubtype = 'wait' | 'loop' | 'parallel' | 'merge' | 'sub-workflow';
 export type IONodeSubtype = 'user-input' | 'response' | 'transfer';
@@ -29,6 +29,17 @@ export interface AgentNodeConfig {
   additionalPrompt: string;
   /** Template string for the user message sent to this agent. Supports {{variable}} syntax. */
   userMessage: string;
+}
+
+export interface ToolCallNodeConfig {
+  /** Integration slug (e.g. "anthropic", "apollo") */
+  integrationSlug: string;
+  /** Endpoint name from the YAML (e.g. "messages-create") */
+  endpointName: string;
+  /** Account ID for the integration connection */
+  accountId: string;
+  /** Default parameter values — keys are param names, values support {{variable}} syntax */
+  defaults: Record<string, string>;
 }
 
 export interface RouterNodeConfig {
