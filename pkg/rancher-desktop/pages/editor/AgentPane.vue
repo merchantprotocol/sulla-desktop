@@ -450,12 +450,6 @@ async function handleContextAction(action: { type: string; path: string; isDir: 
       emit('file-selected', { name, path: action.path, isDir: false, size: 0, ext });
       break;
     }
-    case 'open-markdown-editor': {
-      const name = action.path.split('/').pop() || '';
-      const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
-      emit('file-selected', { name, path: action.path, isDir: false, size: 0, ext, editorType: 'markdown' });
-      break;
-    }
   }
 }
 

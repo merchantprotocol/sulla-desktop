@@ -67,6 +67,7 @@
           class="picker-card"
           :class="{ dark: isDark }"
           @click="openWorkflow(wf.id, wf.name)"
+          @contextmenu.prevent="showContextMenu($event, wf)"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="6" height="5" rx="1"/>
@@ -80,6 +81,36 @@
             <span v-if="wf.updatedAt" class="picker-card-date">{{ formatDate(wf.updatedAt) }}</span>
           </div>
         </div>
+
+        <!-- Context menu -->
+        <Teleport to="body">
+          <div
+            v-if="contextMenu.visible"
+            class="wf-context-overlay"
+            @click="hideContextMenu"
+            @contextmenu.prevent="hideContextMenu"
+          />
+          <div
+            v-if="contextMenu.visible"
+            class="wf-context-menu"
+            :class="{ dark: isDark }"
+            :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
+          >
+            <button class="wf-context-item" :class="{ dark: isDark }" @click="renameWorkflow">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+              </svg>
+              Rename
+            </button>
+            <button class="wf-context-item danger" :class="{ dark: isDark }" @click="deleteWorkflowFromMenu">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+              Delete
+            </button>
+          </div>
+        </Teleport>
 
         <div v-if="availableWorkflows.length === 0" class="picker-empty">
           <p class="picker-empty-text">No workflows saved yet</p>
@@ -110,6 +141,7 @@ const emit = defineEmits<{
   'workflow-activated': [workflowId: string];
   'workflow-closed': [workflowId: string];
   'workflow-created': [workflowId: string, workflowName: string];
+  'workflow-deleted': [workflowId: string];
 }>();
 
 interface OpenTab {
@@ -122,6 +154,10 @@ const activeTabId = ref<string | null>(null);
 const showingPicker = ref(false);
 const availableWorkflows = ref<WorkflowListItem[]>([]);
 let nextNewId = 1;
+
+const contextMenu = ref<{ visible: boolean; x: number; y: number; workflow: WorkflowListItem | null }>({
+  visible: false, x: 0, y: 0, workflow: null,
+});
 
 onMounted(async() => {
   await loadWorkflowList();
@@ -194,6 +230,59 @@ function formatDate(iso: string): string {
     return '';
   }
 }
+
+function showContextMenu(event: MouseEvent, wf: WorkflowListItem) {
+  contextMenu.value = { visible: true, x: event.clientX, y: event.clientY, workflow: wf };
+}
+
+function hideContextMenu() {
+  contextMenu.value = { visible: false, x: 0, y: 0, workflow: null };
+}
+
+function renameWorkflow() {
+  const wf = contextMenu.value.workflow;
+  hideContextMenu();
+  if (!wf) return;
+
+  // Open the workflow so the user can rename via settings
+  openWorkflow(wf.id, wf.name);
+  // Emit activated so AgentEditor loads it, then the user can use the gear to rename
+}
+
+async function deleteWorkflowFromMenu() {
+  const wf = contextMenu.value.workflow;
+  hideContextMenu();
+  if (!wf) return;
+
+  // Close the tab if it's open
+  const tabIdx = openTabs.value.findIndex(t => t.id === wf.id);
+  if (tabIdx !== -1) {
+    closeTab(wf.id);
+  }
+
+  // Delete via IPC
+  try {
+    await ipcRenderer.invoke('workflow-delete', wf.id);
+  } catch (err) {
+    console.error('[WorkflowPane] Failed to delete workflow:', err);
+  }
+
+  emit('workflow-deleted', wf.id);
+  await loadWorkflowList();
+}
+
+/**
+ * Update the tab name when the workflow is renamed via settings.
+ */
+function updateTabName(workflowId: string, newName: string) {
+  const tab = openTabs.value.find(t => t.id === workflowId);
+  if (tab) tab.name = newName;
+
+  const wf = availableWorkflows.value.find(w => w.id === workflowId);
+  if (wf) wf.name = newName;
+}
+
+defineExpose({ updateTabName, loadWorkflowList, closeTab });
 </script>
 
 <style scoped>
@@ -458,5 +547,78 @@ function formatDate(iso: string): string {
   font-size: 12px;
   color: #94a3b8;
   margin: 0;
+}
+</style>
+
+<style>
+/* Context menu styles — unscoped because they're teleported to body */
+.wf-context-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9998;
+}
+
+.wf-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 140px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  font-size: 13px;
+}
+
+.wf-context-menu.dark {
+  background: #1e293b;
+  border-color: #334155;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.wf-context-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: #334155;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.wf-context-item:hover {
+  background: #f1f5f9;
+}
+
+.wf-context-item.dark {
+  color: #e2e8f0;
+}
+
+.wf-context-item.dark:hover {
+  background: #334155;
+}
+
+.wf-context-item.danger {
+  color: #ef4444;
+}
+
+.wf-context-item.danger:hover {
+  background: #fef2f2;
+}
+
+.wf-context-item.danger.dark {
+  color: #f87171;
+}
+
+.wf-context-item.danger.dark:hover {
+  background: #451a1a;
 }
 </style>

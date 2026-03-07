@@ -81,12 +81,14 @@
 
             <!-- Workflow pane -->
             <WorkflowPane
+              ref="workflowPaneRef"
               v-show="workflowMode"
               :is-dark="isDark"
               @close="leftPaneVisible = false"
               @workflow-activated="onWorkflowActivated"
               @workflow-closed="onWorkflowClosed"
               @workflow-created="onWorkflowCreated"
+              @workflow-deleted="onWorkflowDeleted"
             />
 
             <!-- File tree -->
@@ -433,6 +435,19 @@
                 placeholder="Describe what this workflow does…"
                 rows="4"
               />
+              <div class="workflow-settings-danger-zone">
+                <button
+                  class="workflow-delete-btn"
+                  :class="{ dark: isDark }"
+                  @click="deleteActiveWorkflow"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                  Delete Workflow
+                </button>
+              </div>
             </div>
           </div>
           <!-- Workflow node properties panel -->
@@ -490,7 +505,6 @@ import { ipcRenderer } from 'electron';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import EditorHeader from './editor/EditorHeader.vue';
 import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
-import MarkdownEditor from './filesystem/MarkdownEditor.vue';
 import CodeEditor from './filesystem/CodeEditor.vue';
 import DiffEditor from './filesystem/DiffEditor.vue';
 import XTermTerminal from './editor/XTermTerminal.vue';
@@ -522,7 +536,7 @@ interface TabState {
   loading: boolean;
   error: string;
   dirty: boolean;
-  editorType?: 'code' | 'markdown' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
+  editorType?: 'code' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
   originalContent?: string; // For diff editor: the HEAD version
 }
 
@@ -549,17 +563,14 @@ const EXT_ICON_COLORS: Record<string, string> = {
  * Extensible: add new entries here to support more file types.
  */
 const editorRegistry: Record<string, Component> = {
-  markdown:  markRaw(MarkdownEditor),
   code:      markRaw(CodeEditor),
-  preview:   markRaw(MarkdownEditor), // Preview uses markdown editor but read-only
   webview:   markRaw(WebViewTab),
   terminal:  markRaw(TerminalTab),
   diff:         markRaw(DiffEditor),
   'agent-form': markRaw(AgentFormTab),
 };
 
-function resolveEditorType(ext: string): string {
-  if (MARKDOWN_EXTS.has(ext.toLowerCase())) return 'markdown';
+function resolveEditorType(_ext: string): NonNullable<TabState['editorType']> {
   return 'code';
 }
 
@@ -570,7 +581,6 @@ export default defineComponent({
     PostHogTracker,
     EditorHeader,
     FileTreeSidebar,
-    MarkdownEditor,
     CodeEditor,
     XTermTerminal,
     TabContextMenu,
@@ -726,6 +736,7 @@ export default defineComponent({
     const workflowMode = ref(false);
     const selectedWorkflowNode = ref<{ id: string; label: string; type?: string; data?: any } | null>(null);
     const workflowEditorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null);
+    const workflowPaneRef = ref<InstanceType<typeof WorkflowPane> | null>(null);
     const activeWorkflowData = ref<any>(null);
     const workflowSaveStatus = ref<'idle' | 'unsaved' | 'saving' | 'saved'>('idle');
     const workflowSettingsOpen = ref(false);
@@ -957,7 +968,41 @@ export default defineComponent({
       if (activeWorkflowData.value) {
         activeWorkflowData.value = { ...activeWorkflowData.value, name };
         onWorkflowChanged();
+        // Sync tab name in WorkflowPane
+        workflowPaneRef.value?.updateTabName(activeWorkflowData.value.id, name);
       }
+    }
+
+    function onWorkflowDeleted(workflowId: string) {
+      // If the deleted workflow is currently active, clear it
+      if (activeWorkflowData.value?.id === workflowId) {
+        activeWorkflowData.value = null;
+        workflowSettingsOpen.value = false;
+        rightPaneVisible.value = false;
+      }
+    }
+
+    async function deleteActiveWorkflow() {
+      if (!activeWorkflowData.value) return;
+      const wfId = activeWorkflowData.value.id;
+      const wfName = activeWorkflowData.value.name;
+
+      // Close settings
+      workflowSettingsOpen.value = false;
+      rightPaneVisible.value = false;
+      activeWorkflowData.value = null;
+
+      // Delete via IPC
+      try {
+        await ipcRenderer.invoke('workflow-delete', wfId);
+        console.log(`[AgentEditor] Deleted workflow: ${wfName} (${wfId})`);
+      } catch (err) {
+        console.error('[AgentEditor] Failed to delete workflow:', err);
+      }
+
+      // Close the tab and refresh the list
+      workflowPaneRef.value?.closeTab(wfId);
+      workflowPaneRef.value?.loadWorkflowList();
     }
 
     function onWorkflowDescriptionUpdate(description: string) {
@@ -969,6 +1014,12 @@ export default defineComponent({
 
     async function runWorkflow() {
       if (!activeWorkflowData.value) return;
+
+      // If already in workflow chat mode, just ensure the pane is visible
+      if (workflowChatMode.value) {
+        rightPaneVisible.value = true;
+        return;
+      }
 
       // Save first to ensure latest version is on disk
       saveWorkflowNow();
@@ -1358,8 +1409,12 @@ export default defineComponent({
     }
 
     async function onFileSelected(entry: FileEntry) {
+      // Resolve editor type: use explicit type if provided, otherwise auto-detect
+      // ('markdown' is no longer supported — treat as code)
+      const editorType = entry.editorType === 'markdown' ? 'code' : (entry.editorType || resolveEditorType(entry.ext));
+
       // Check if tab already open with same path and editorType
-      const key = `${entry.path}-${entry.editorType || 'code'}`;
+      const key = `${entry.path}-${editorType}`;
       const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
       if (existing) {
         activeTabKey.value = key;
@@ -1379,7 +1434,7 @@ export default defineComponent({
         loading:    true,
         error:      '',
         dirty:      false,
-        editorType: entry.editorType, // Use explicit editor type if provided
+        editorType,
       });
 
       openTabs.value = [...openTabs.value, tab];
@@ -1575,7 +1630,7 @@ export default defineComponent({
       hideTabContextMenu();
     }
 
-    function openWithEditor(tab: TabState, editorType: 'code' | 'markdown' | 'preview') {
+    function openWithEditor(tab: TabState, editorType: 'code' | 'preview') {
       // Check if tab with same path and editorType already exists
       const key = `${tab.path}-${editorType}`;
       const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
@@ -1612,7 +1667,7 @@ export default defineComponent({
       hideTabContextMenu();
     }
 
-    // Editor ref for accessing exposed methods (e.g. getMarkdown)
+    // Editor ref for accessing exposed methods (e.g. getContent)
     const editorRef = ref<any>(null);
     const fileTreeRef = ref<any>(null);
     const agentPaneRef = ref<any>(null);
@@ -1713,12 +1768,8 @@ export default defineComponent({
       try {
         let content = tab.content;
 
-        // For markdown files, get content from BlockNote editor
-        if (MARKDOWN_EXTS.has(tab.ext.toLowerCase()) && editorRef.value?.getMarkdown) {
-          content = await editorRef.value.getMarkdown();
-        }
-        // For code files, get content from Monaco editor
-        else if (editorRef.value?.getContent) {
+        // Get content from Monaco editor
+        if (editorRef.value?.getContent) {
           content = editorRef.value.getContent();
         }
 
@@ -1889,6 +1940,9 @@ export default defineComponent({
       onWorkflowSettingsClose,
       onWorkflowNameUpdate,
       onWorkflowDescriptionUpdate,
+      onWorkflowDeleted,
+      deleteActiveWorkflow,
+      workflowPaneRef,
       workflowExecutionId,
       workflowChatMode,
       runWorkflow,
@@ -2877,6 +2931,48 @@ export default defineComponent({
 .workflow-settings-textarea {
   resize: vertical;
   min-height: 60px;
+}
+
+.workflow-settings-danger-zone {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.workflow-settings-panel.dark .workflow-settings-danger-zone {
+  border-top-color: #3c3c5c;
+}
+
+.workflow-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.workflow-delete-btn:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+.workflow-delete-btn.dark {
+  background: #451a1a;
+  border-color: #7f1d1d;
+  color: #f87171;
+}
+
+.workflow-delete-btn.dark:hover {
+  background: #5a2020;
+  border-color: #ef4444;
 }
 </style>
 

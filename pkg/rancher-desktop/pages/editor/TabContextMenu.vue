@@ -29,16 +29,6 @@
       <button
         v-if="tab && MARKDOWN_EXTS.has(tab.ext.toLowerCase())"
         class="context-menu-item"
-        @click="handleOpenWithEditor('markdown')"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 11H3v2h6v-2zm0-4H3v2h6V7zm0 8H3v2h6v-2zm12-8h-6v2h6V7zm0 4h-6v2h6v-2zm0 4h-6v2h6v-2z"/>
-        </svg>
-        <span>Markdown Editor</span>
-      </button>
-      <button
-        v-if="tab && MARKDOWN_EXTS.has(tab.ext.toLowerCase())"
-        class="context-menu-item"
         @click="handleOpenWithEditor('preview')"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -93,7 +83,7 @@ export interface TabState {
   loading: boolean;
   error: string;
   dirty: boolean;
-  editorType?: 'code' | 'markdown' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
+  editorType?: 'code' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
   originalContent?: string;
 }
 
@@ -141,7 +131,7 @@ export default defineComponent({
       }
     };
 
-    const handleOpenWithEditor = (editorType: 'code' | 'markdown' | 'preview') => {
+    const handleOpenWithEditor = (editorType: 'code' | 'preview') => {
       if (props.tab) {
         emit('open-with-editor', props.tab, editorType);
       }

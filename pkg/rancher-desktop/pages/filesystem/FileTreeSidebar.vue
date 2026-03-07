@@ -281,17 +281,6 @@ export default defineComponent({
             editorType: 'code'
           });
           break;
-        case 'open-markdown-editor':
-          // Emit file-selected with forced markdown editor
-          emit('file-selected', {
-            name: targetPath.split('/').pop() || '',
-            path: targetPath,
-            isDir: false,
-            size: 0,
-            ext: targetPath.split('.').pop() || '',
-            editorType: 'markdown'
-          });
-          break;
         }
       } catch (err: any) {
         console.error(`Context action "${type}" failed:`, err);
