@@ -140,6 +140,32 @@ export class BackendGraphWebSocketService {
 
       if (result) {
         console.log(`[BackendGraphWS] Workflow dispatched: "${result.workflowName}" (${result.workflowId}), executionId=${result.executionId}`);
+
+        // Monitor the execution in the background — report failures and empty results to the chat
+        result.done.then((runState) => {
+          if (runState.status === 'failed') {
+            console.error(`[BackendGraphWS] Workflow "${result.workflowName}" failed: ${runState.error}`);
+            this.emitMessage(channelId, 'assistant_message', {
+              content: `⚠️ Workflow "${result.workflowName}" failed: ${runState.error || 'unknown error'}`,
+              role: 'assistant',
+            });
+          } else if (runState.status === 'completed') {
+            // Check if any node failed
+            const failedNodes: string[] = [];
+            for (const [nodeId, nodeState] of runState.nodeStates) {
+              if (nodeState.status === 'failed') {
+                failedNodes.push(`${nodeId}: ${nodeState.error || 'unknown'}`);
+              }
+            }
+            if (failedNodes.length > 0) {
+              console.warn(`[BackendGraphWS] Workflow "${result.workflowName}" completed with ${failedNodes.length} failed node(s): ${failedNodes.join(', ')}`);
+              this.emitMessage(channelId, 'assistant_message', {
+                content: `⚠️ Workflow "${result.workflowName}" completed with errors:\n${failedNodes.join('\n')}`,
+                role: 'assistant',
+              });
+            }
+          }
+        }).catch(() => {});
       } else {
         console.log(`[BackendGraphWS] No workflow matched for triggerType="${triggerType}" — no action taken`);
         this.emitMessage(channelId, 'system_message', `No workflow configured for trigger type "${triggerType}". Create and enable a workflow with a "${triggerType}" trigger node.`);

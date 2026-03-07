@@ -43,6 +43,8 @@ export interface WorkflowDispatchResult {
   workflowId: string;
   workflowName: string;
   executor: WorkflowExecutor;
+  /** Resolves when the workflow execution finishes (success or failure). */
+  done: Promise<WorkflowRunState>;
 }
 
 interface WorkflowCandidate {
@@ -104,9 +106,20 @@ export class WorkflowRegistry {
 
     console.log(`[WorkflowRegistry] Dispatching to workflow "${definition.name}" (${definition.id}) via ${triggerType}, executionId=${executor.id}`);
 
-    // Run in background
-    executor.execute().catch(err => {
+    // Run in background — capture the promise so callers can monitor completion
+    const done = executor.execute().catch(err => {
       console.error(`[WorkflowRegistry] Workflow "${definition.id}" failed:`, err);
+      // Return a failed run state so callers always get a WorkflowRunState
+      return {
+        executionId: executor.id,
+        workflowId:  definition.id,
+        status:      'failed' as const,
+        nodeStates:  new Map(),
+        context:     { executionId: executor.id, triggerPayload: message, nodeOutputs: new Map(), variables: {} },
+        startedAt:   new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        error:       err?.message || String(err),
+      } satisfies WorkflowRunState;
     });
 
     return {
@@ -114,6 +127,7 @@ export class WorkflowRegistry {
       workflowId:   definition.id,
       workflowName: definition.name,
       executor,
+      done,
     };
   }
 

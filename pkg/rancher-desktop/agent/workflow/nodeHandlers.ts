@@ -8,6 +8,25 @@
 import type { WorkflowNodeSubtype } from '@pkg/pages/editor/workflow/types';
 import type { NodeHandler, NodeOutput, WorkflowExecutionContext } from './types';
 
+// ── Helpers ──
+
+/**
+ * Send an error message to a WebSocket channel so the user sees it in the chat.
+ */
+async function sendErrorToChannel(channel: string, errorText: string): Promise<void> {
+  try {
+    const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
+    const ws = getWebSocketClientService();
+    await ws.send(channel, {
+      type: 'assistant_message',
+      data: { content: `⚠️ ${errorText}`, role: 'assistant' },
+      timestamp: Date.now(),
+    });
+  } catch {
+    // Best-effort — don't let error reporting itself throw
+  }
+}
+
 // ── Handler implementations ──
 
 /**
@@ -90,14 +109,26 @@ const agentHandler: NodeHandler = async(args) => {
   const agentConfigChannel = agentId || threadId;
   const wsChannel = context.originChannel || agentConfigChannel;
 
-  console.log(`[WorkflowAgent] agentId="${agentId}", agentConfigChannel="${agentConfigChannel}", wsChannel="${wsChannel}", originChannel="${context.originChannel}", threadId="${threadId}"`);
+  console.log(`[WorkflowAgent] agentId="${agentId}", agentConfigChannel="${agentConfigChannel}", wsChannel="${wsChannel}", originChannel="${context.originChannel}", threadId="${threadId}", prompt="${prompt.slice(0, 120)}"`);
 
-  const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentConfigChannel, threadId) as {
-    graph: any;
-    state: any;
-  };
+  let graph: any;
+  let state: any;
 
-  console.log(`[WorkflowAgent] Agent config loaded: name="${state.metadata?.agent?.name || '(none)'}", hasPrompt=${!!state.metadata?.agent?.prompt}`);
+  try {
+    const result = await GraphRegistry.getOrCreateAgentGraph(agentConfigChannel, threadId) as {
+      graph: any;
+      state: any;
+    };
+    graph = result.graph;
+    state = result.state;
+  } catch (err: any) {
+    console.error(`[WorkflowAgent] Failed to create agent graph:`, err);
+    // Send error to the originating channel so the user sees it
+    await sendErrorToChannel(wsChannel, `Workflow agent error: failed to create agent graph — ${err.message || String(err)}`);
+    throw err;
+  }
+
+  console.log(`[WorkflowAgent] Agent config loaded: name="${state.metadata?.agent?.name || '(none)'}", hasPrompt=${!!state.metadata?.agent?.prompt}, wsChannel="${state.metadata?.wsChannel}"`);
 
   // Inject the prompt as a user message
   state.messages.push({
@@ -111,13 +142,25 @@ const agentHandler: NodeHandler = async(args) => {
     state.metadata.wsChannel = wsChannel;
   }
 
-  // Execute the agent graph
-  const finalState = await graph.execute(state);
+  console.log(`[WorkflowAgent] Executing agent graph — wsChannel="${state.metadata?.wsChannel}", messages=${state.messages.length}`);
 
-  return {
-    result:   finalState.metadata?.finalSummary || finalState.messages?.[finalState.messages.length - 1]?.content || '',
-    threadId,
-  };
+  try {
+    // Execute the agent graph
+    const finalState = await graph.execute(state);
+
+    const result = finalState.metadata?.finalSummary || finalState.messages?.[finalState.messages.length - 1]?.content || '';
+
+    if (!result) {
+      console.warn(`[WorkflowAgent] Agent graph completed but produced no output — wsChannel="${wsChannel}", messages=${finalState.messages?.length || 0}`);
+    }
+
+    return { result, threadId };
+  } catch (err: any) {
+    console.error(`[WorkflowAgent] Agent graph execution failed:`, err);
+    // Send error to the originating channel so the user sees it in the chat
+    await sendErrorToChannel(wsChannel, `Workflow agent error: ${err.message || String(err)}`);
+    throw err;
+  }
 };
 
 /**
@@ -503,6 +546,7 @@ const handlers: Record<string, NodeHandler> = {
   'heartbeat':         triggerHandler,
   'sulla-desktop':     triggerHandler,
   'chat-completions':  triggerHandler,
+  'workbench':         triggerHandler,
 
   // Agent
   'agent':             agentHandler,
