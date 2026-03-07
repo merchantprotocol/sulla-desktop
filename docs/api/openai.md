@@ -255,3 +255,7 @@ All endpoints return standard HTTP status codes and JSON error responses:
 ```
 
 Common error types: `invalid_request_error`, `internal_error`
+
+## Integration API Endpoints
+
+The same server also hosts integration API endpoints for calling third-party APIs (YouTube, GitHub, Postmark, etc.) with managed credentials. See [Integrations API](./integrations.md) for full documentation.
