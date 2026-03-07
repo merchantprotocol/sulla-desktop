@@ -21,6 +21,8 @@ export interface CallOptions {
   headers?: Record<string, string>;
   /** AbortSignal for cancellation */
   signal?: AbortSignal;
+  /** Account ID for credential lookup (overrides active account) */
+  accountId?: string;
 }
 
 export interface PaginatedResult<T = any> {
@@ -94,8 +96,8 @@ export class ConfigApiClient {
     }
 
     const ep = epConfig.endpoint;
-    const url = await this.buildUrl(epConfig, params, options);
-    const headers = await this.buildHeaders(epConfig, options);
+    const url = await this.buildUrl(epConfig, params, options, options.accountId);
+    const headers = await this.buildHeaders(epConfig, options, options.accountId);
 
     const fetchInit: RequestInit = {
       method: ep.method,
@@ -165,11 +167,11 @@ export class ConfigApiClient {
    *  2. YAML ${ENV_VAR} -> process.env
    *  3. Raw string value
    */
-  private async resolveCredential(property: string, yamlValue?: string): Promise<string> {
+  private async resolveCredential(property: string, yamlValue?: string, accountId?: string): Promise<string> {
     // Try IntegrationService first (DB-stored credentials)
     try {
       const svc = getIntegrationService();
-      const dbValue = await svc.getIntegrationValue(this.slug, property);
+      const dbValue = await svc.getIntegrationValue(this.slug, property, accountId);
       if (dbValue?.value) {
         return dbValue.value;
       }
@@ -188,16 +190,16 @@ export class ConfigApiClient {
   /**
    * Get an OAuth access token from IntegrationService.
    */
-  private async getOAuthToken(): Promise<string> {
+  private async getOAuthToken(accountId?: string): Promise<string> {
     try {
       const svc = getIntegrationService();
-      return await svc.getOAuthAccessToken(this.slug);
+      return await svc.getOAuthAccessToken(this.slug, accountId);
     } catch {
       return '';
     }
   }
 
-  private async buildUrl(epConfig: EndpointConfig, params: Record<string, any>, options: CallOptions): Promise<URL> {
+  private async buildUrl(epConfig: EndpointConfig, params: Record<string, any>, options: CallOptions, accountId?: string): Promise<URL> {
     let urlPath = epConfig.endpoint.path;
 
     // Interpolate path params
@@ -240,7 +242,7 @@ export class ConfigApiClient {
     // API key fallback
     const auth = this.integration.auth;
     if (auth.api_key_fallback?.enabled) {
-      const apiKey = options.apiKey || await this.resolveCredential('api_key', auth.api_key_fallback.value);
+      const apiKey = options.apiKey || await this.resolveCredential('api_key', auth.api_key_fallback.value, accountId);
       if (apiKey) {
         url.searchParams.set(auth.api_key_fallback.param_name, apiKey);
       }
@@ -249,7 +251,7 @@ export class ConfigApiClient {
     return url;
   }
 
-  private async buildHeaders(epConfig: EndpointConfig, options: CallOptions): Promise<Record<string, string>> {
+  private async buildHeaders(epConfig: EndpointConfig, options: CallOptions, accountId?: string): Promise<Record<string, string>> {
     const headers: Record<string, string> = { Referer: 'https://sulla.app', ...this.defaultHeaders, ...options.headers };
     const authConfig = this.integration.auth.auth;
 
@@ -257,17 +259,17 @@ export class ConfigApiClient {
       headers.Authorization = `Bearer ${options.token}`;
     } else if (authConfig.type === 'oauth2') {
       // Try to get a valid OAuth token from the credential store
-      const token = await this.getOAuthToken();
+      const token = await this.getOAuthToken(accountId);
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       }
     } else if (authConfig.type === 'bearer') {
-      const token = await this.resolveCredential('bearer_token', authConfig.client_secret);
+      const token = await this.resolveCredential('bearer_token', authConfig.client_secret, accountId);
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       }
     } else if (authConfig.type === 'apiKey' && authConfig.header) {
-      const key = await this.resolveCredential('api_key', authConfig.client_secret);
+      const key = await this.resolveCredential('api_key', authConfig.client_secret, accountId);
       if (key) {
         headers[authConfig.header] = key;
       }

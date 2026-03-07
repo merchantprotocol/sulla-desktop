@@ -165,6 +165,18 @@ export class ChatCompletionsServer {
       await this.handleModerations(req, res);
     });
 
+    // ── Integration API endpoints ────────────────────────────────────
+
+    // List all integrations and their endpoints
+    this.app.get('/v1/integrations', async (req: Request, res: Response) => {
+      await this.handleListIntegrations(req, res);
+    });
+
+    // Call an integration endpoint with specific account credentials
+    this.app.post('/v1/integrations/:accountId/:slug/:endpoint/call', async (req: Request, res: Response) => {
+      await this.handleIntegrationCall(req, res);
+    });
+
     // Catch-all for unknown routes
     this.app.use((req: Request, res: Response) => {
       res.status(404).json({
@@ -570,6 +582,89 @@ export class ChatCompletionsServer {
     } catch (err) {
       console.warn('[ChatCompletionsAPI] Workflow dispatch failed, falling back:', err);
       return null;
+    }
+  }
+
+  // ── Integration API handlers ──────────────────────────────────────
+
+  private async handleListIntegrations(_req: Request, res: Response) {
+    try {
+      const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+      const loader = getIntegrationConfigLoader();
+      const slugs = loader.getAvailableIntegrations();
+
+      const integrations = slugs.map((slug) => {
+        const client = loader.getClient(slug);
+        if (!client) return null;
+
+        const endpoints = client.endpointNames.map((name) => {
+          const ep = client.getEndpoint(name);
+          if (!ep) return null;
+          return {
+            name:        ep.endpoint.name,
+            method:      ep.endpoint.method,
+            path:        ep.endpoint.path,
+            description: ep.endpoint.description,
+            auth:        ep.endpoint.auth,
+            queryParams: ep.query_params
+              ? Object.entries(ep.query_params).map(([k, v]) => ({ name: k, ...v }))
+              : [],
+            pathParams: ep.path_params
+              ? Object.entries(ep.path_params).map(([k, v]) => ({ name: k, ...v }))
+              : [],
+          };
+        }).filter(Boolean);
+
+        return {
+          slug,
+          name: client.name,
+          endpoints,
+        };
+      }).filter(Boolean);
+
+      res.json({ success: true, integrations });
+    } catch (error: any) {
+      console.error('[ChatCompletionsAPI] Error listing integrations:', error);
+      res.status(500).json({ success: false, error: error.message || 'Failed to list integrations' });
+    }
+  }
+
+  private async handleIntegrationCall(req: Request, res: Response) {
+    const { accountId, slug, endpoint } = req.params;
+
+    try {
+      const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+      const loader = getIntegrationConfigLoader();
+      const client = loader.getClient(slug);
+
+      if (!client) {
+        const available = loader.getAvailableIntegrations();
+        return res.status(404).json({
+          success: false,
+          error:   `Integration "${slug}" not found. Available: ${available.join(', ')}`,
+        });
+      }
+
+      const epConfig = client.getEndpoint(endpoint);
+      if (!epConfig) {
+        return res.status(404).json({
+          success: false,
+          error:   `Endpoint "${endpoint}" not found. Available: ${client.endpointNames.join(', ')}`,
+        });
+      }
+
+      const { params = {}, body, raw } = req.body || {};
+
+      const result = await client.call(endpoint, params, {
+        accountId,
+        body,
+        raw: !!raw,
+      });
+
+      res.json({ success: true, result: JSON.parse(JSON.stringify(result)) });
+    } catch (error: any) {
+      console.error(`[ChatCompletionsAPI] Integration call failed (${slug}/${endpoint}):`, error);
+      res.status(500).json({ success: false, error: error.message || 'Integration call failed' });
     }
   }
 
