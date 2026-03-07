@@ -1,7 +1,5 @@
 // HeartbeatService.ts
 
-import type { HeartbeatThreadState } from '../nodes/HeartbeatNode';
-import { GraphRegistry } from './GraphRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 let heartbeatServiceInstance: HeartbeatService | null = null;
@@ -60,14 +58,13 @@ export class HeartbeatService {
 
   private async triggerHeartbeat(): Promise<void> {
     if (this.isExecuting) {
-      console.log('[HeartbeatService] ⏭️ Already executing — skip');
+      console.log('[HeartbeatService] Already executing — skip');
       return;
     }
 
     this.isExecuting = true;
 
     try {
-      // Fresh config every execution — no caching
       const basePrompt  = await SullaSettingsModel.get('heartbeatPrompt', '');
       const providerSetting = await SullaSettingsModel.get('heartbeatProvider', 'default');
 
@@ -75,39 +72,26 @@ export class HeartbeatService {
 
       console.log(`[HeartbeatService] Building heartbeat prompt (provider=${providerSetting})`);
 
-      // Try workflow dispatch first
-      const handled = await this.tryWorkflowDispatch(fullPrompt);
-      if (handled) {
-        console.log('[HeartbeatService] ✅ Heartbeat handled by workflow');
-        return;
-      }
-
-      const { graph, state } = await GraphRegistry.getOrCreateOverlordGraph(
-        'dreaming-protocol',
-        fullPrompt
-      ) as { graph: any; state: HeartbeatThreadState };
-
-      console.log(`[HeartbeatService] 🧠 Executing heartbeat (threadId=${state.metadata.threadId})`);
-
-      await graph.execute(state);
-
-      console.log('[HeartbeatService] ✅ Heartbeat completed');
-    } catch (err) {
-      console.error('[HeartbeatService] ❌ Heartbeat execution failed:', err);
-    } finally {
-      this.isExecuting = false;
-    }
-  }
-
-  private async tryWorkflowDispatch(message: string): Promise<boolean> {
-    try {
       const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
       const registry = getWorkflowRegistry();
-      const result = await registry.dispatch({ triggerType: 'heartbeat', message });
-      return result !== null;
+
+      console.log('[HeartbeatService] Dispatching to WorkflowRegistry — triggerType="heartbeat", originChannel="heartbeat"');
+
+      const result = await registry.dispatch({
+        triggerType: 'heartbeat',
+        message: fullPrompt,
+        originChannel: 'heartbeat',
+      });
+
+      if (result) {
+        console.log(`[HeartbeatService] Heartbeat dispatched to workflow "${result.workflowName}" (${result.workflowId})`);
+      } else {
+        console.log('[HeartbeatService] No heartbeat workflow matched — no action taken');
+      }
     } catch (err) {
-      console.warn('[HeartbeatService] Workflow dispatch failed, falling back:', err);
-      return false;
+      console.error('[HeartbeatService] Heartbeat execution failed:', err);
+    } finally {
+      this.isExecuting = false;
     }
   }
 

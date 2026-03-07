@@ -86,6 +86,15 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     defaultConfig: () => ({ triggerType: 'sulla-desktop', triggerDescription: '' }),
   },
   {
+    subtype:       'workbench',
+    category:      'trigger',
+    label:         'Workbench',
+    description:   'Chat from the workbench editor',
+    iconSvg:       ICONS.sullaDesktop,
+    defaultLabel:  'Workbench Trigger',
+    defaultConfig: () => ({ triggerType: 'workbench', triggerDescription: '' }),
+  },
+  {
     subtype:       'chat-completions',
     category:      'trigger',
     label:         'Chat Completions API',

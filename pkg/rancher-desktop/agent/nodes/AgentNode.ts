@@ -129,7 +129,7 @@ export class AgentNode extends BaseNode {
     // ----------------------------------------------------------------
     // 1. BUILD SYSTEM PROMPT
     // ----------------------------------------------------------------
-    const wsChannel = String(state.metadata.wsChannel || 'chat-controller');
+    const wsChannel = String(state.metadata.wsChannel || 'sulla-desktop');
     const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
     const systemPrompt = `${AGENT_PROMPT_BASE}\n\n${channelAwareness}\n\n${AGENT_PROMPT_DIRECTIVE}\n\n${AGENT_PROMPT_COMPLETION_WRAPPERS}`;
 

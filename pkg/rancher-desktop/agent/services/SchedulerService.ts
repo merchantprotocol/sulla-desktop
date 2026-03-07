@@ -7,8 +7,8 @@ import { getWebSocketClientService, type WebSocketMessage } from './WebSocketCli
 import { CalendarEvent } from '../database/models/CalendarEvent'; // new model
 import { eventPrompt } from '../prompts/event';
 
-const FRONTEND_CHANNEL_ID = 'chat-controller';
-const BACKEND_CHANNEL_ID = 'dreaming-protocol';
+const FRONTEND_CHANNEL_ID = 'sulla-desktop';
+const BACKEND_CHANNEL_ID = 'heartbeat';
 const ACK_TIMEOUT_MS = 3_000;
 
 interface ScheduledJob {

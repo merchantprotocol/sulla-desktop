@@ -19,7 +19,7 @@ export class HumanPresenceTracker {
   private lastActivityMs = Date.now();
   private currentView = 'Agent Chat';
   private currentActivity = 'active';
-  private activeChannel = 'chat-controller';
+  private activeChannel = 'sulla-desktop';
   private destroyed = false;
 
   private readonly PRESENCE_INTERVAL_MS = 30_000;   // update presence every 30s

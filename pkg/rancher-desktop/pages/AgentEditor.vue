@@ -615,7 +615,7 @@ export default defineComponent({
 
     // Editor chat (uses active agent from registry)
     const editorCurrentThreadId = ref<string | null>(null);
-    // Don't connect to 'chat-controller' — BackendGraphWebSocketService handles that channel in the main process.
+    // Don't connect to 'sulla-desktop' — BackendGraphWebSocketService handles that channel in the main process.
     // The graph WS will be created lazily when the user switches to a non-default agent.
     let editorGraphWs: FrontendGraphWebSocketService | null = null;
     const editorChat = new EditorChatInterface();
@@ -629,7 +629,7 @@ export default defineComponent({
 
     // Channels owned by BackendGraphWebSocketService in the main process.
     // The editor must NOT create a FrontendGraphWebSocketService for these.
-    const BACKEND_CHANNELS = new Set(['chat-controller', 'heartbeat', 'dreaming-protocol']);
+    const BACKEND_CHANNELS = new Set(['sulla-desktop', 'heartbeat']);
 
     // When the active agent changes, create or switch the graph WS to the new channel.
     watch(() => agentRegistry.state.activeAgentId, (newAgentId) => {
@@ -1321,6 +1321,7 @@ export default defineComponent({
         console.error('Failed to save new workflow:', err);
       }
       activeWorkflowData.value = newWorkflow;
+      workflowPaneRef.value?.loadWorkflowList();
     }
 
     function doWorkflowSave() {

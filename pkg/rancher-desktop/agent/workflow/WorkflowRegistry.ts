@@ -30,6 +30,8 @@ export interface WorkflowDispatchOptions {
   message: string;
   /** Optional: skip LLM selection and run this specific workflow */
   workflowId?: string;
+  /** The originating WebSocket channel so agent nodes route responses back correctly */
+  originChannel?: string;
   /** Callback for execution events (forwarded to the executor) */
   emitEvent?: (event: Omit<WorkflowExecutionEvent, 'executionId' | 'workflowId' | 'timestamp'>) => void;
 }
@@ -62,10 +64,13 @@ export class WorkflowRegistry {
   async dispatch(options: WorkflowDispatchOptions): Promise<WorkflowDispatchResult | null> {
     const { triggerType, message, workflowId, emitEvent } = options;
 
+    console.log(`[WorkflowRegistry] dispatch() called — triggerType="${triggerType}", workflowId="${workflowId || '(auto)'}", originChannel="${options.originChannel || '(none)'}", message="${message.slice(0, 80)}"`);
+
     let definition: WorkflowDefinition;
 
     if (workflowId) {
       // Direct dispatch — skip selection
+      console.log(`[WorkflowRegistry] Direct dispatch to workflowId="${workflowId}"`);
       definition = this.loadWorkflow(workflowId);
     } else {
       // Find candidates by trigger type
@@ -77,9 +82,11 @@ export class WorkflowRegistry {
       }
 
       if (candidates.length === 1) {
+        console.log(`[WorkflowRegistry] Single candidate found: "${candidates[0].definition.name}" (${candidates[0].definition.id})`);
         definition = candidates[0].definition;
       } else {
         // Multiple candidates — use LLM to select
+        console.log(`[WorkflowRegistry] ${candidates.length} candidates found, using LLM to select`);
         const selected = await this.selectWorkflow(candidates, message);
         if (!selected) {
           console.log(`[WorkflowRegistry] LLM could not select a workflow for: "${message.slice(0, 100)}"`);
@@ -90,9 +97,10 @@ export class WorkflowRegistry {
     }
 
     // Create and start the executor
-    const executor = new WorkflowExecutor(definition, message, { emitEvent });
+    console.log(`[WorkflowRegistry] Creating WorkflowExecutor for "${definition.name}" (${definition.id}), originChannel="${options.originChannel}"`);
+    const executor = new WorkflowExecutor(definition, message, { emitEvent, originChannel: options.originChannel });
 
-    console.log(`[WorkflowRegistry] Dispatching to workflow "${definition.name}" (${definition.id}) via ${triggerType}`);
+    console.log(`[WorkflowRegistry] Dispatching to workflow "${definition.name}" (${definition.id}) via ${triggerType}, executionId=${executor.id}`);
 
     // Run in background
     executor.execute().catch(err => {
@@ -113,9 +121,15 @@ export class WorkflowRegistry {
   findCandidates(triggerType: TriggerNodeSubtype): WorkflowCandidate[] {
     const candidates: WorkflowCandidate[] = [];
 
-    if (!fs.existsSync(this.workflowsDir)) return candidates;
+    console.log(`[WorkflowRegistry] findCandidates() — looking for triggerType="${triggerType}" in dir="${this.workflowsDir}"`);
+
+    if (!fs.existsSync(this.workflowsDir)) {
+      console.log(`[WorkflowRegistry] Workflows dir does not exist: ${this.workflowsDir}`);
+      return candidates;
+    }
 
     const entries = fs.readdirSync(this.workflowsDir, { withFileTypes: true });
+    console.log(`[WorkflowRegistry] Found ${entries.length} entries in workflows dir`);
 
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
@@ -124,28 +138,41 @@ export class WorkflowRegistry {
         const raw = fs.readFileSync(path.join(this.workflowsDir, entry.name), 'utf-8');
         const definition: WorkflowDefinition = JSON.parse(raw);
 
+        console.log(`[WorkflowRegistry] Scanning "${entry.name}": name="${definition.name}", enabled=${definition.enabled}`);
+
         // Only consider enabled workflows for production dispatch
-        if (!definition.enabled) continue;
+        if (!definition.enabled) {
+          console.log(`[WorkflowRegistry]   → Skipped (disabled)`);
+          continue;
+        }
 
         // Find trigger nodes matching this type
+        let matched = false;
         for (const node of definition.nodes) {
+          if (node.data.category === 'trigger') {
+            console.log(`[WorkflowRegistry]   → Trigger node found: subtype="${node.data.subtype}", looking for="${triggerType}", match=${node.data.subtype === triggerType}`);
+          }
           if (
             node.data.category === 'trigger' &&
-            node.data.subtype === triggerType &&
-            node.data.config?.triggerDescription
+            node.data.subtype === triggerType
           ) {
             candidates.push({
               definition,
-              triggerDescription: node.data.config.triggerDescription as string,
+              triggerDescription: (node.data.config?.triggerDescription as string) || definition.name || '',
             });
+            matched = true;
             break; // one match per workflow is enough
           }
         }
-      } catch {
-        // skip malformed files
+        if (!matched) {
+          console.log(`[WorkflowRegistry]   → No matching trigger for "${triggerType}"`);
+        }
+      } catch (err) {
+        console.warn(`[WorkflowRegistry] Failed to parse ${entry.name}:`, err);
       }
     }
 
+    console.log(`[WorkflowRegistry] findCandidates() result: ${candidates.length} candidate(s)`);
     return candidates;
   }
 

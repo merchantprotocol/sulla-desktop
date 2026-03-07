@@ -40,7 +40,7 @@ export interface HeartbeatThreadState extends BaseThreadState {
 // ============================================================================
 
 const MAX_HEARTBEAT_CYCLES = 10;
-const HEARTBEAT_WS_CHANNEL = 'dreaming-protocol';
+const HEARTBEAT_WS_CHANNEL = 'heartbeat';
 
 // ============================================================================
 // NODE

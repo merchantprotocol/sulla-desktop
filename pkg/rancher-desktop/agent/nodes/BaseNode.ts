@@ -20,7 +20,7 @@ import fs from 'node:fs';
 // DEFAULT SETTINGS
 // ============================================================================
 
-const DEFAULT_WS_CHANNEL = 'dreaming-protocol';
+const DEFAULT_WS_CHANNEL = 'heartbeat';
 
 export const JSON_ONLY_RESPONSE_INSTRUCTIONS = `When you respond it will be parsed as JSON and ONLY the following object will be read.
 Any text outside this exact structure will break downstream parsing.\nRespond ONLY with this valid JSON — nothing before, nothing after, no fences, no commentary:`;
@@ -1102,7 +1102,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     /**
      * Emit a chat message to the UI dashboard via WebSocket
-     * Connection ID is read from state.metadata.wsChannel (defaults to 'chat-controller')
+     * Connection ID is read from state.metadata.wsChannel (defaults to 'sulla-desktop')
      * @param state BaseThreadState containing the connection ID in metadata
      * @param content Message content to display
      * @param role 'assistant' | 'system' - defaults to 'assistant'

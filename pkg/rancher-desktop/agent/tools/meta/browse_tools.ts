@@ -125,7 +125,7 @@ ${JSON.stringify(toolDetails, null, 2)}`
 
         stateAny.metadata.__n8nAssetActivated = true;
 
-        const wsChannel = String(stateAny.metadata?.wsChannel || 'chat-controller');
+        const wsChannel = String(stateAny.metadata?.wsChannel || 'sulla-desktop');
         const selectedSkillSlug = String(stateAny.metadata?.planRetrieval?.selected_skill_slug || '');
         const n8nRootUrl = String(bridge.getAppRootUrl() || 'http://127.0.0.1:30119/').trim();
 

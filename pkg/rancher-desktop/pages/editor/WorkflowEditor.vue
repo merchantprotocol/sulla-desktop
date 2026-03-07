@@ -72,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue';
+import { ref, reactive, watch, nextTick } from 'vue';
 import { VueFlow, useVueFlow } from '@vue-flow/core';
 import { Background, BackgroundVariant } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -99,7 +99,7 @@ const emit = defineEmits<{
 
 const flowContainer = ref<HTMLElement | null>(null);
 
-const { applyNodeChanges, applyEdgeChanges, addEdges, addNodes, project, getViewport } = useVueFlow();
+const { applyNodeChanges, applyEdgeChanges, addEdges, addNodes, project, getViewport, setNodes, setEdges } = useVueFlow();
 
 const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
@@ -109,13 +109,13 @@ watch(
   () => props.workflowData,
   (wf) => {
     if (wf) {
-      nodes.value = wf.nodes.map(n => ({
+      const newNodes = wf.nodes.map(n => ({
         id:       n.id,
         type:     n.type,
         position: { ...n.position },
         data:     { ...n.data },
       }));
-      edges.value = wf.edges.map(e => ({
+      const newEdges = wf.edges.map(e => ({
         id:           e.id,
         source:       e.source,
         target:       e.target,
@@ -124,9 +124,20 @@ watch(
         label:        e.label,
         animated:     e.animated ?? true,
       }));
+      // Use vue-flow's setNodes/setEdges to properly sync internal state
+      nodes.value = newNodes;
+      edges.value = newEdges;
+      nextTick(() => {
+        setNodes(newNodes);
+        setEdges(newEdges);
+      });
     } else {
       nodes.value = [];
       edges.value = [];
+      nextTick(() => {
+        setNodes([]);
+        setEdges([]);
+      });
     }
   },
   { immediate: true },

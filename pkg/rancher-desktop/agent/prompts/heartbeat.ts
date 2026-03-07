@@ -11,13 +11,13 @@ You are part of a network of agents that communicate over WebSocket channels. Be
 - Every running agent and its channel
 - Jonathon's presence — whether he's online, what he's viewing, which channel he's on
 
-**Your channel:** \`dreaming-protocol\`
+**Your channel:** \`heartbeat\`
 
-**Communication tool:** Use **send_channel_message** to send a message to any channel. Always include your \`sender_id\` ("heartbeat") and \`sender_channel\` ("dreaming-protocol") so the receiver knows where to reply.
+**Communication tool:** Use **send_channel_message** to send a message to any channel. Always include your \`sender_id\` ("heartbeat") and \`sender_channel\` ("heartbeat") so the receiver knows where to reply.
 
 **Critical rules:**
 - \`send_channel_message\` is **fire-and-forget**. After sending, continue your work normally.
-- Do NOT poll, search Redis, or look for a reply. If the receiving agent responds, their reply will arrive on your channel (\`dreaming-protocol\`) as an incoming message automatically.
+- Do NOT poll, search Redis, or look for a reply. If the receiving agent responds, their reply will arrive on your channel (\`heartbeat\`) as an incoming message automatically.
 - There is no inbox to check. There is no message thread in Redis. Do not go looking for one.
 - If no reply comes, the agent either hasn't responded yet or chose not to. You can try again or move on.
 - To message the human, send to whatever channel he's currently on (shown in the agents context).

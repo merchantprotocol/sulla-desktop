@@ -85,12 +85,19 @@ const agentHandler: NodeHandler = async(args) => {
   const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
 
   const threadId = `workflow-${context.executionId}-${nodeId}`;
-  const wsChannel = agentId || threadId;
+  // Use the agentId to load the correct agent config, but route responses
+  // back to the originating channel (e.g. 'sulla-desktop') so the frontend sees them
+  const agentConfigChannel = agentId || threadId;
+  const wsChannel = context.originChannel || agentConfigChannel;
 
-  const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(wsChannel, threadId) as {
+  console.log(`[WorkflowAgent] agentId="${agentId}", agentConfigChannel="${agentConfigChannel}", wsChannel="${wsChannel}", originChannel="${context.originChannel}", threadId="${threadId}"`);
+
+  const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentConfigChannel, threadId) as {
     graph: any;
     state: any;
   };
+
+  console.log(`[WorkflowAgent] Agent config loaded: name="${state.metadata?.agent?.name || '(none)'}", hasPrompt=${!!state.metadata?.agent?.prompt}`);
 
   // Inject the prompt as a user message
   state.messages.push({
@@ -98,7 +105,7 @@ const agentHandler: NodeHandler = async(args) => {
     content: prompt,
   });
 
-  // Wire abort signal
+  // Wire abort signal and route responses to the ORIGINAL frontend channel
   if (state.metadata) {
     state.metadata.abortSignal = abortSignal;
     state.metadata.wsChannel = wsChannel;

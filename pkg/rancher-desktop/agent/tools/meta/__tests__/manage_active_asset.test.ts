@@ -36,7 +36,7 @@ describe('manage_active_asset tool', () => {
   it('upserts workflow iframe asset using stable id and mutable url', async () => {
     const { ManageActiveAssetWorker, manageActiveAssetRegistration } = await loadModule();
     const worker = configureWorker(new ManageActiveAssetWorker(), manageActiveAssetRegistration);
-    worker.setState({ metadata: { wsChannel: 'chat-controller' } });
+    worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({
       action: 'upsert',
@@ -50,7 +50,7 @@ describe('manage_active_asset tool', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(mockRegistry.getOrCreatePersonaService as any).toHaveBeenCalledWith('chat-controller');
+    expect(mockRegistry.getOrCreatePersonaService as any).toHaveBeenCalledWith('sulla-desktop');
     expect(mockPersona.registerIframeAsset).toHaveBeenCalledWith(expect.objectContaining({
       id: 'sulla_n8n',
       skillSlug: 'workflow_automation',
@@ -61,7 +61,7 @@ describe('manage_active_asset tool', () => {
   it('upserts document active asset content', async () => {
     const { ManageActiveAssetWorker, manageActiveAssetRegistration } = await loadModule();
     const worker = configureWorker(new ManageActiveAssetWorker(), manageActiveAssetRegistration);
-    worker.setState({ metadata: { wsChannel: 'chat-controller' } });
+    worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({
       action: 'upsert',
@@ -83,7 +83,7 @@ describe('manage_active_asset tool', () => {
   it('removes existing active asset by id', async () => {
     const { ManageActiveAssetWorker, manageActiveAssetRegistration } = await loadModule();
     const worker = configureWorker(new ManageActiveAssetWorker(), manageActiveAssetRegistration);
-    worker.setState({ metadata: { wsChannel: 'chat-controller' } });
+    worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({ action: 'remove', assetId: 'sulla_n8n' });
 

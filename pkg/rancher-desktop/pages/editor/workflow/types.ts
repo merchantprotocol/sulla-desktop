@@ -2,7 +2,7 @@
 
 export type WorkflowNodeCategory = 'trigger' | 'agent' | 'routing' | 'flow-control' | 'io';
 
-export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'sulla-desktop' | 'chat-completions';
+export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'sulla-desktop' | 'workbench' | 'chat-completions';
 export type AgentNodeSubtype = 'agent';
 export type RoutingNodeSubtype = 'router' | 'condition';
 export type FlowControlNodeSubtype = 'wait' | 'loop' | 'parallel' | 'merge' | 'sub-workflow';

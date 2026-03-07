@@ -20,7 +20,7 @@ const INTEGRATION_ID = 'discord';
 const TOKEN_PROPERTY = 'bot_token';
 
 const WS_SERVICE = WebSocketClientService.getInstance();
-const DISCORD_EVENTS_CHANNEL = 'dreaming-protocol';
+const DISCORD_EVENTS_CHANNEL = 'heartbeat';
 
 function generateUUID(): string {
   const bytes = new Uint8Array(16);

@@ -59,7 +59,7 @@
         :expanded-dirs="expandedDirs"
         :children-map="childrenMap"
         :loading-dirs="loadingDirs"
-        :selected-path="selectedPath"
+        :selected-paths="selectedPaths"
         :drop-target-path="dropTargetPath"
         :highlight-path="highlightPath"
         @toggle-dir="toggleDir"
@@ -92,7 +92,7 @@ export interface FileEntry {
   isDir: boolean;
   size: number;
   ext: string;
-  editorType?: 'code' | 'markdown';
+  editorType?: 'code';
 }
 
 export default defineComponent({
@@ -113,7 +113,8 @@ export default defineComponent({
     const childrenMap = ref<Record<string, FileEntry[]>>({});
     const loadingDirs = ref<Set<string>>(new Set());
     const loading = ref(true);
-    const selectedPath = ref('');
+    const selectedPaths = ref<Set<string>>(new Set());
+    const lastSelectedPath = ref('');
     const rootPath = ref('');
     const inlinePromptRef = ref<InstanceType<typeof InlinePrompt> | null>(null);
 
@@ -155,9 +156,59 @@ export default defineComponent({
       expandedDirs.value = expanded;
     }
 
-    function selectFile(entry: FileEntry) {
-      selectedPath.value = entry.path;
-      emit('file-selected', entry);
+    /** Build a flat list of all visible entry paths in tree order */
+    function getVisiblePaths(): string[] {
+      const result: string[] = [];
+      function walk(items: FileEntry[]) {
+        for (const item of items) {
+          result.push(item.path);
+          if (item.isDir && expandedDirs.value.has(item.path)) {
+            const kids = childrenMap.value[item.path];
+            if (kids) walk(kids);
+          }
+        }
+      }
+      walk(entries.value);
+      return result;
+    }
+
+    function selectFile(payload: { entry: FileEntry; shiftKey: boolean; metaKey: boolean }) {
+      const { entry, shiftKey, metaKey } = payload;
+
+      if (shiftKey && lastSelectedPath.value) {
+        // Range select: select everything between lastSelectedPath and this entry
+        const visible = getVisiblePaths();
+        const startIdx = visible.indexOf(lastSelectedPath.value);
+        const endIdx = visible.indexOf(entry.path);
+        if (startIdx !== -1 && endIdx !== -1) {
+          const from = Math.min(startIdx, endIdx);
+          const to = Math.max(startIdx, endIdx);
+          const rangeSet = new Set(selectedPaths.value);
+          for (let i = from; i <= to; i++) {
+            rangeSet.add(visible[i]);
+          }
+          selectedPaths.value = rangeSet;
+        }
+      } else if (metaKey) {
+        // Toggle individual item
+        const next = new Set(selectedPaths.value);
+        if (next.has(entry.path)) {
+          next.delete(entry.path);
+        } else {
+          next.add(entry.path);
+        }
+        selectedPaths.value = next;
+        lastSelectedPath.value = entry.path;
+      } else {
+        // Normal click — single select
+        selectedPaths.value = new Set([entry.path]);
+        lastSelectedPath.value = entry.path;
+      }
+
+      // Open the file in the editor (only for non-dir single clicks without meta)
+      if (!entry.isDir && !metaKey && !shiftKey) {
+        emit('file-selected', entry);
+      }
     }
 
     const contextMenuRef = ref<any>(null);
@@ -402,7 +453,8 @@ export default defineComponent({
       }
 
       // Set as selected path to highlight it
-      selectedPath.value = newPath;
+      selectedPaths.value = new Set([newPath]);
+      lastSelectedPath.value = newPath;
     }, { immediate: true });
 
     // ── Auto-refresh heartbeat ─────────────────────────────
@@ -456,7 +508,7 @@ export default defineComponent({
       childrenMap,
       loadingDirs,
       loading,
-      selectedPath,
+      selectedPaths,
       rootPath,
       toggleDir,
       selectFile,

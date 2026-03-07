@@ -235,11 +235,16 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
 async function buildAgentState(wsChannel: string, threadId?: string): Promise<AgentGraphState> {
   const id = threadId ?? nextThreadId();
 
+  console.log(`[GraphRegistry] buildAgentState() — wsChannel="${wsChannel}", threadId="${id}"`);
+
   const mode = await SullaSettingsModel.get('modelMode', 'local');
   const llmModel = mode === 'remote'
     ? await SullaSettingsModel.get('remoteModel', '')
     : await SullaSettingsModel.get('sullaModel', '');
   const llmLocal = mode === 'local';
+
+  const agentConfig = await loadAgentConfig(wsChannel);
+  console.log(`[GraphRegistry] buildAgentState() — agent config for "${wsChannel}": name="${agentConfig?.name || '(none)'}", hasPrompt=${!!agentConfig?.prompt}, type="${agentConfig?.type || '(none)'}"`);
 
   return {
     messages: [],
@@ -274,7 +279,7 @@ async function buildAgentState(wsChannel: string, threadId?: string): Promise<Ag
       n8nLiveEventsEnabled: false,
       returnTo: null,
 
-      agent: await loadAgentConfig(wsChannel),
+      agent: agentConfig,
       agentLoopCount: 0
     }
   };
@@ -287,13 +292,24 @@ async function buildAgentState(wsChannel: string, threadId?: string): Promise<Ag
  * Returns undefined if agent directory doesn't exist.
  */
 async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metadata']['agent']> {
-  if (!agentId) return undefined;
+  console.log(`[GraphRegistry] loadAgentConfig() — agentId="${agentId}"`);
+  if (!agentId) {
+    console.log(`[GraphRegistry] loadAgentConfig() — empty agentId, returning undefined`);
+    return undefined;
+  }
 
   const agentDir = path.join(resolveSullaAgentsDir(), agentId);
-  if (!fs.existsSync(agentDir)) return undefined;
+  if (!fs.existsSync(agentDir)) {
+    console.log(`[GraphRegistry] loadAgentConfig() — agent dir not found: ${agentDir}`);
+    return undefined;
+  }
 
   const yamlPath = path.join(agentDir, 'agent.yaml');
-  if (!fs.existsSync(yamlPath)) return undefined;
+  if (!fs.existsSync(yamlPath)) {
+    console.log(`[GraphRegistry] loadAgentConfig() — agent.yaml not found: ${yamlPath}`);
+    return undefined;
+  }
+  console.log(`[GraphRegistry] loadAgentConfig() — found agent at ${agentDir}`);
 
   try {
     const yaml = await import('yaml');

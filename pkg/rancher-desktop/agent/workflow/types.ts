@@ -51,6 +51,9 @@ export interface WorkflowExecutionContext {
 
   /** Global variables any node can read/write */
   variables: Record<string, unknown>;
+
+  /** The originating WebSocket channel (e.g. 'sulla-desktop') so agent nodes send responses back to the right place */
+  originChannel?: string;
 }
 
 // ── Overall workflow run state ──

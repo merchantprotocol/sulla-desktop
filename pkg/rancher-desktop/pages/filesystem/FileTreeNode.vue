@@ -4,12 +4,12 @@
       class="file-tree-row"
       :class="{
         'is-dir': entry.isDir,
-        'is-selected': selectedPath === entry.path,
+        'is-selected': selectedPaths.has(entry.path),
         'is-highlighted': highlightPath === entry.path,
         'drop-target': entry.isDir && dropTargetPath === entry.path,
       }"
       :style="{ paddingLeft: (depth * 16 + 8) + 'px' }"
-      @click="handleClick"
+      @click="handleClick($event)"
       @contextmenu.prevent="handleContextMenu"
       @dragover.prevent.stop="handleDragOver"
       @dragleave.stop="handleDragLeave"
@@ -59,7 +59,7 @@
         :expanded-dirs="expandedDirs"
         :children-map="childrenMap"
         :loading-dirs="loadingDirs"
-        :selected-path="selectedPath"
+        :selected-paths="selectedPaths"
         :drop-target-path="dropTargetPath"
         :highlight-path="highlightPath"
         @toggle-dir="$emit('toggle-dir', $event)"
@@ -93,7 +93,7 @@ export default defineComponent({
     expandedDirs: { type: Object as PropType<Set<string>>, required: true },
     childrenMap:  { type: Object as PropType<Record<string, FileEntry[]>>, required: true },
     loadingDirs:  { type: Object as PropType<Set<string>>, required: true },
-    selectedPath:   { type: String, default: '' },
+    selectedPaths:  { type: Object as PropType<Set<string>>, default: () => new Set() },
     dropTargetPath: { type: String, default: '' },
     highlightPath:  { type: String, default: '' },
   },
@@ -105,12 +105,11 @@ export default defineComponent({
     const isLoading = computed(() => props.loadingDirs.has(props.entry.path));
     const children = computed(() => props.childrenMap[props.entry.path] || []);
 
-    function handleClick() {
+    function handleClick(event: MouseEvent) {
       if (props.entry.isDir) {
         emit('toggle-dir', props.entry.path);
-      } else {
-        emit('select-file', props.entry);
       }
+      emit('select-file', { entry: props.entry, shiftKey: event.shiftKey, metaKey: event.metaKey || event.ctrlKey });
     }
 
     function handleContextMenu(event: MouseEvent) {

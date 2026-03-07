@@ -41,6 +41,8 @@ export interface WorkflowExecutorOptions {
   abortSignal?: AbortSignal;
   emitEvent?: (event: Omit<WorkflowExecutionEvent, 'executionId' | 'workflowId' | 'timestamp'>) => void;
   maxSubWorkflowDepth?: number;
+  /** The originating WebSocket channel so agent nodes route responses back correctly */
+  originChannel?: string;
 }
 
 // ── Executor ──
@@ -93,6 +95,7 @@ export class WorkflowExecutor {
       triggerPayload,
       nodeOutputs:    new Map(),
       variables:      {},
+      originChannel:  options.originChannel,
     };
 
     // Build adjacency maps
@@ -106,6 +109,7 @@ export class WorkflowExecutor {
   }
 
   async execute(): Promise<WorkflowRunState> {
+    console.log(`[WorkflowExecutor] execute() — workflow="${this.definition.name}" (${this.definition.id}), executionId=${this.executionId}, originChannel="${this.context.originChannel || '(none)'}", triggerPayload="${String(this.triggerPayload).slice(0, 80)}"`);
     this.emitEvent({ type: 'workflow_started' });
 
     const startedAt = now();
@@ -115,6 +119,7 @@ export class WorkflowExecutor {
     try {
       // Find trigger nodes (entry points)
       const triggerNodes = this.definition.nodes.filter(n => n.data.category === 'trigger');
+      console.log(`[WorkflowExecutor] Found ${triggerNodes.length} trigger node(s): ${triggerNodes.map(n => `${n.id}(${n.data.subtype})`).join(', ')}`);
       if (triggerNodes.length === 0) {
         throw new Error('Workflow has no trigger nodes');
       }
@@ -207,6 +212,8 @@ export class WorkflowExecutor {
 
     const nodeData = node.data;
     const incomingEdges = this.reverseEdges.get(nodeId) || [];
+
+    console.log(`[WorkflowExecutor] doExecuteNode "${nodeData.label}" (${nodeId}) — subtype="${nodeData.subtype}", category="${nodeData.category}", upstream=${incomingEdges.length}, config=${JSON.stringify(nodeData.config || {}).slice(0, 200)}`);
 
     // Wait for all upstream dependencies to complete
     await this.waitForUpstream(nodeId, incomingEdges);
