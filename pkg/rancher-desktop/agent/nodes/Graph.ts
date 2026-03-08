@@ -527,18 +527,16 @@ export class Graph<TState = BaseThreadState> {
 
     console.log(`[Graph:Playbook] Processing workflow "${playbook.workflowId}" — frontier: [${playbook.currentNodeIds.join(', ')}]`);
 
-    // ── Reset canvas and show trigger nodes as completed (green) ──
+    // ── Reset canvas and replay all already-completed nodes (triggers + checkpoint nodes) ──
     this.emitPlaybookEvent(state, 'workflow_started', { workflowId: playbook.workflowId });
 
     for (const [nodeId, output] of Object.entries(playbook.nodeOutputs)) {
-      if (output.category === 'trigger') {
-        this.emitPlaybookEvent(state, 'node_completed', {
-          nodeId,
-          nodeLabel: output.label,
-          output: output.result,
-        });
-        this.emitEdgeActivations(state, playbook.definition, nodeId, 'outgoing');
-      }
+      this.emitPlaybookEvent(state, 'node_completed', {
+        nodeId,
+        nodeLabel: output.label,
+        output: output.result,
+      });
+      this.emitEdgeActivations(state, playbook.definition, nodeId, 'outgoing');
     }
 
     // If the agent just responded and there's a pending decision, resolve it
