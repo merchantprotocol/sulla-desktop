@@ -1,6 +1,12 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
+import yaml from 'yaml';
+
 import { BaseTool, ToolResponse } from '../base';
-import { getWorkflowRegistry } from '../../workflow/WorkflowRegistry';
-import type { TriggerNodeSubtype } from '@pkg/pages/editor/workflow/types';
+import { resolveSullaWorkflowsDir } from '@pkg/agent/utils/sullaPaths';
+import { createPlaybookState } from '../../workflow/WorkflowPlaybook';
+import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
 
 export class ExecuteWorkflowWorker extends BaseTool {
   name = '';
@@ -12,33 +18,29 @@ export class ExecuteWorkflowWorker extends BaseTool {
     if (!workflowId) {
       return {
         successBoolean: false,
-        responseString: 'workflowId is required. Use list_workflows first to discover available workflows.',
+        responseString: 'workflowId is required. Check your available workflows in the system prompt.',
       };
     }
 
-    // Resolve trigger type and message from state
-    let triggerType: TriggerNodeSubtype = 'sulla-desktop';
+    // If scoped to a specific workflow (e.g. from workflow editor), enforce it
+    const scopedWorkflowId = (this.state as any)?.metadata?.scopedWorkflowId;
+    if (scopedWorkflowId && workflowId !== scopedWorkflowId) {
+      return {
+        successBoolean: false,
+        responseString: `You can only execute workflow "${scopedWorkflowId}" in this context. Check your available workflows in the system prompt.`,
+      };
+    }
+
+    // Resolve the trigger message from input or last user message
     let message = input.message || '';
 
-    if (this.state) {
-      const meta = (this.state as any).metadata;
-      const channel = meta?.wsChannel || '';
-      const validTriggers: TriggerNodeSubtype[] = [
-        'calendar', 'chat-app', 'heartbeat', 'sulla-desktop', 'workbench', 'chat-completions',
-      ];
-      if (validTriggers.includes(channel as TriggerNodeSubtype)) {
-        triggerType = channel as TriggerNodeSubtype;
-      }
-
-      // Fall back to the last user message if no explicit message provided
-      if (!message) {
-        const messages = (this.state as any).messages;
-        if (Array.isArray(messages)) {
-          for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i].role === 'user' && messages[i].content) {
-              message = messages[i].content;
-              break;
-            }
+    if (!message && this.state) {
+      const messages = (this.state as any).messages;
+      if (Array.isArray(messages)) {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === 'user' && messages[i].content) {
+            message = messages[i].content;
+            break;
           }
         }
       }
@@ -51,41 +53,57 @@ export class ExecuteWorkflowWorker extends BaseTool {
       };
     }
 
+    // Load the workflow definition from disk
+    const workflowsDir = resolveSullaWorkflowsDir();
+    let definition: WorkflowDefinition | null = null;
+
+    const yamlPath = path.join(workflowsDir, `${workflowId}.yaml`);
+    const jsonPath = path.join(workflowsDir, `${workflowId}.json`);
+
     try {
-      const registry = getWorkflowRegistry();
-      const originChannel = (this.state as any)?.metadata?.wsChannel || undefined;
+      if (fs.existsSync(yamlPath)) {
+        definition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+      } else if (fs.existsSync(jsonPath)) {
+        definition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+      }
+    } catch (err) {
+      return {
+        successBoolean: false,
+        responseString: `Error loading workflow "${workflowId}": ${(err as Error).message}`,
+      };
+    }
 
-      const result = await registry.dispatch({
-        triggerType,
-        message,
-        workflowId,
-        originChannel,
-      });
+    if (!definition) {
+      return {
+        successBoolean: false,
+        responseString: `Workflow "${workflowId}" not found. Check your available workflows in the system prompt.`,
+      };
+    }
 
-      if (!result) {
-        return {
-          successBoolean: false,
-          responseString: `Workflow "${workflowId}" not found or could not be dispatched.`,
-        };
+    // Create the playbook state and load it into the agent's metadata
+    try {
+      const playbook = createPlaybookState(definition, message);
+
+      if (this.state) {
+        (this.state as any).metadata.activeWorkflow = playbook;
       }
 
-      // Wait for completion
-      const runState = await result.done;
+      console.log(`[ExecuteWorkflow] Loaded workflow "${definition.name}" (${workflowId}) as playbook — executionId=${playbook.executionId}, frontier=[${playbook.currentNodeIds.join(', ')}]`);
 
       return {
-        successBoolean: runState.status === 'completed',
+        successBoolean: true,
         responseString: JSON.stringify({
-          executionId: result.executionId,
-          workflowId: result.workflowId,
-          workflowName: result.workflowName,
-          status: runState.status,
-          error: runState.error || undefined,
+          executionId: playbook.executionId,
+          workflowId:  definition.id,
+          workflowName: definition.name,
+          status: 'activated',
+          message: `Workflow "${definition.name}" activated. The workflow orchestration system has taken over. Do not respond further — the playbook will drive all subsequent steps.`,
         }, null, 2),
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing workflow "${workflowId}": ${(error as Error).message}`,
+        responseString: `Error activating workflow "${workflowId}": ${(error as Error).message}`,
       };
     }
   }

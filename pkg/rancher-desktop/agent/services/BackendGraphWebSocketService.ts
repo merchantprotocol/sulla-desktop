@@ -29,6 +29,7 @@ export class BackendGraphWebSocketService {
   private activeAborts = new Map<string, AbortService>();
   private subscribedChannels = new Set<string>();
 
+
   constructor() {
     this.initialize();
   }
@@ -149,13 +150,26 @@ export class BackendGraphWebSocketService {
       return;
     }
 
+    if (msg.type === 'new_conversation') {
+      const data = typeof msg.data === 'string' ? {} : (msg.data as any);
+      const threadId = data?.threadId as string | undefined;
+      console.log(`[BackendGraphWS] new_conversation on ${channelId} — clearing threadId="${threadId || '(none)'}"`);
+      if (threadId) {
+        GraphRegistry.delete(threadId);
+      }
+      return;
+    }
+
     if (msg.type !== 'user_message') return;
 
     const data = typeof msg.data === 'string' ? { content: msg.data } : (msg.data as any);
     const content = (data?.content ?? '').trim();
     if (!content) return;
 
-    console.log(`[BackendGraphWS] user_message on ${channelId} — content="${content.slice(0, 80)}"`);
+    // ThreadId is owned by the frontend chat interface — reuse it to maintain conversation
+    const threadIdFromMsg = data?.threadId as string | undefined;
+
+    console.log(`[BackendGraphWS] user_message on ${channelId} — content="${content.slice(0, 80)}", threadId="${threadIdFromMsg || '(none)'}"`);
 
     // Scheduler ack
     const metadata = data?.metadata;
@@ -167,21 +181,38 @@ export class BackendGraphWebSocketService {
       });
     }
 
-    await this.dispatchToAgent(channelId, _triggerType, content);
+    // Extract optional overrides from message metadata
+    const scopedWorkflowId = metadata?.workflowId as string | undefined;
+    const overrideAgentId = metadata?.agentId as string | undefined;
+
+    await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId);
   }
 
-  private async dispatchToAgent(channelId: string, triggerType: string, message: string): Promise<void> {
+  private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string): Promise<void> {
     console.log(`[BackendGraphWS] dispatchToAgent() START — channelId="${channelId}", triggerType="${triggerType}", message="${message.slice(0, 80)}"`);
 
-    const agentId = await getAgentIdForTrigger(triggerType);
-    const threadId = nextThreadId();
+    const agentId = overrideAgentId || await getAgentIdForTrigger(triggerType);
 
-    console.log(`[BackendGraphWS] dispatchToAgent() — resolved agentId="${agentId}", threadId="${threadId}"`);
+    // Use the frontend's threadId if provided (maintains conversation).
+    // Otherwise create a new one and notify the frontend via thread_created.
+    const isNewThread = !threadIdFromMsg;
+    const threadId = threadIdFromMsg || nextThreadId();
+
+    console.log(`[BackendGraphWS] dispatchToAgent() — resolved agentId="${agentId}", threadId="${threadId}", new=${isNewThread}`);
 
     try {
       console.log(`[BackendGraphWS] dispatchToAgent() — calling GraphRegistry.getOrCreateAgentGraph...`);
       const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
-      console.log(`[BackendGraphWS] dispatchToAgent() — graph ready, model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}`);
+      console.log(`[BackendGraphWS] dispatchToAgent() — graph ready, model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}, existingMessages=${state.messages.length}`);
+
+      // Notify frontend of the threadId so it can maintain the conversation
+      if (isNewThread) {
+        this.wsService.send(channelId, {
+          type: 'thread_created',
+          data: { threadId },
+          timestamp: Date.now(),
+        });
+      }
 
       // Create abort service for this run
       const abort = new AbortService();
@@ -190,6 +221,11 @@ export class BackendGraphWebSocketService {
 
       // Route responses back to the originating channel
       state.metadata.wsChannel = channelId;
+
+      // Scope workflow tools to a specific workflow (e.g. when chatting from workflow editor)
+      if (scopedWorkflowId) {
+        (state.metadata as any).scopedWorkflowId = scopedWorkflowId;
+      }
 
       // Append user message
       state.messages.push({
@@ -200,14 +236,14 @@ export class BackendGraphWebSocketService {
         metadata:  { source: 'backend' },
       } as any);
 
-      // Reset state for fresh run
+      // Reset execution counters for this run (but NOT messages — those accumulate)
       state.metadata.consecutiveSameNode = 0;
       state.metadata.iterations = 0;
       (state.metadata as any).agentLoopCount = 0;
       state.metadata.cycleComplete = false;
       state.metadata.waitingForUser = false;
 
-      console.log(`[BackendGraphWS] dispatchToAgent() — executing graph from 'input_handler'...`);
+      console.log(`[BackendGraphWS] dispatchToAgent() — executing graph from 'input_handler', totalMessages=${state.messages.length}`);
       const startMs = Date.now();
       await graph.execute(state, 'input_handler');
       console.log(`[BackendGraphWS] dispatchToAgent() — graph execution COMPLETED in ${Date.now() - startMs}ms`);

@@ -449,12 +449,11 @@ async function save() {
     await ipcRenderer.invoke('filesystem-write-file', `${agentDir}/agent.yaml`, agentYaml);
 
     if (!isEditMode.value) {
-      // Create soul.md and environment.md from prompt templates (only on new agent)
+      // Create soul.md from prompt template (only on new agent).
+      // environment.md is NOT created — the global environment prompt is always
+      // injected by enrichPrompt() and should not be overridable per-agent.
       const templates = await ipcRenderer.invoke('agents-get-prompt-templates');
-      await Promise.all([
-        ipcRenderer.invoke('filesystem-write-file', `${agentDir}/soul.md`, templates.soul),
-        ipcRenderer.invoke('filesystem-write-file', `${agentDir}/environment.md`, templates.environment),
-      ]);
+      await ipcRenderer.invoke('filesystem-write-file', `${agentDir}/soul.md`, templates.soul);
     }
 
     // Persist default agent setting

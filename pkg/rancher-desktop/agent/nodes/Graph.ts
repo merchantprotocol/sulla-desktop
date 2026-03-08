@@ -10,6 +10,13 @@ import { getConversationLogger } from '../services/ConversationLogger';
 import { InputHandlerNode } from './InputHandlerNode';
 import { AgentNode } from './AgentNode';
 import { HeartbeatNode, type HeartbeatThreadState } from './HeartbeatNode';
+import type { WorkflowPlaybookState } from '../workflow/types';
+import {
+  processNextStep,
+  resolveDecision,
+  completeSubAgent,
+  type PlaybookStepResult,
+} from '../workflow/WorkflowPlaybook';
 
 // ============================================================================
 // CONFIGURATION CONSTANTS
@@ -138,6 +145,12 @@ export interface BaseThreadState {
     datetimeIncluded?: boolean;
     hadToolCalls?: boolean;
     hadUserMessages?: boolean;
+
+    /** When set, workflow tools (list/execute) are scoped to only this workflow */
+    scopedWorkflowId?: string;
+
+    /** Active workflow playbook — when set, the agent orchestrates this workflow */
+    activeWorkflow?: WorkflowPlaybookState;
   };
 }
 
@@ -305,7 +318,7 @@ export class Graph<TState = BaseThreadState> {
   async execute(
     initialState: TState,
     entryPointNodeId?: string,
-    options?: { maxIterations: number }
+    options?: { maxIterations: number; _isPlaybookReentry?: boolean }
   ): Promise<TState> {
     if (!this.entryPoint) throw new Error('No entry point');
 
@@ -316,9 +329,10 @@ export class Graph<TState = BaseThreadState> {
 
     console.log(`[Graph] Start from ${(state as any).metadata.currentNodeId}`);
 
-    // Conversation logging
+    // Conversation logging (skip on playbook re-entry to avoid duplicates)
+    const isReentry = options?._isPlaybookReentry ?? false;
     const convId = (state as any).metadata.conversationId;
-    if (convId) {
+    if (convId && !isReentry) {
       const convLogger = getConversationLogger();
       const agentName = (state as any).metadata.agent?.name || (state as any).metadata.wsChannel || 'unknown';
       const parentId = (state as any).metadata.parentConversationId;
@@ -417,8 +431,16 @@ export class Graph<TState = BaseThreadState> {
       (state as any).metadata.stopReason = 'max_loops';
     }
 
-    // Conversation logging — graph completed
-    if (convId) {
+    // ── Workflow Playbook Integration ──
+    // After the agent's normal cycle completes, check if there's an active
+    // workflow to orchestrate. If so, process next steps and potentially
+    // re-enter the agent loop with new messages.
+    if (!isReentry) {
+      state = await this.processWorkflowPlaybook(state);
+    }
+
+    // Conversation logging — graph completed (skip on playbook re-entry)
+    if (convId && !isReentry) {
       const convLogger = getConversationLogger();
       const finalStatus = (state as any).metadata.maxIterationsReached ? 'max_iterations' :
         (state as any).metadata.stopReason === 'max_loops' ? 'max_loops' : 'completed';
@@ -428,19 +450,373 @@ export class Graph<TState = BaseThreadState> {
       });
     }
 
-    // Always send completion signal, whether completed naturally or aborted
-    const stopReason = (state as any).metadata.stopReason || null;
-    console.log('[Graph] Sending graph_execution_complete signal, stopReason:', stopReason);
-    const ws = getWebSocketClientService();
-    const connId = (state as any).metadata.wsChannel || 'heartbeat';
-    ws.send(connId, {
-      type: 'transfer_data',
-      data: { role: 'system', content: 'graph_execution_complete', stopReason },
-    });
-    // Clear stopReason after sending
-    (state as any).metadata.stopReason = null;
+    // Send completion signal (skip on playbook re-entry to avoid duplicate signals)
+    if (!isReentry) {
+      const stopReason = (state as any).metadata.stopReason || null;
+      console.log('[Graph] Sending graph_execution_complete signal, stopReason:', stopReason);
+      const ws = getWebSocketClientService();
+      const connId = (state as any).metadata.wsChannel || 'heartbeat';
+      ws.send(connId, {
+        type: 'transfer_data',
+        data: { role: 'system', content: 'graph_execution_complete', stopReason },
+      });
+      // Clear stopReason after sending
+      (state as any).metadata.stopReason = null;
+    }
 
     return state;
+  }
+
+  /**
+   * Process the active workflow playbook after the agent's normal cycle completes.
+   * Walks the DAG, handles structural nodes mechanically, spawns sub-agents,
+   * and injects prompts for router/condition decisions. Re-enters the agent loop
+   * if the workflow needs the agent to make a decision or process sub-agent results.
+   */
+  private async processWorkflowPlaybook(state: TState): Promise<TState> {
+    const meta = (state as any).metadata;
+    const playbook: WorkflowPlaybookState | undefined = meta?.activeWorkflow;
+
+    if (!playbook || playbook.status !== 'running') return state;
+
+    console.log(`[Graph:Playbook] Processing workflow "${playbook.workflowId}" — frontier: [${playbook.currentNodeIds.join(', ')}]`);
+
+    // ── Reset canvas and show trigger nodes as completed (green) ──
+    this.emitPlaybookEvent(state, 'workflow_started', { workflowId: playbook.workflowId });
+
+    for (const [nodeId, output] of Object.entries(playbook.nodeOutputs)) {
+      if (output.category === 'trigger') {
+        this.emitPlaybookEvent(state, 'node_completed', {
+          nodeId,
+          nodeLabel: output.label,
+          output: output.result,
+        });
+        this.emitEdgeActivations(state, playbook.definition, nodeId, 'outgoing');
+      }
+    }
+
+    // If the agent just responded and there's a pending decision, resolve it
+    if (playbook.pendingDecision) {
+      const msgs = (state as any).messages;
+      const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+
+      if (lastAssistant?.content) {
+        console.log(`[Graph:Playbook] Resolving pending ${playbook.pendingDecision.subtype} decision with agent response`);
+        const pendNodeId = playbook.pendingDecision.nodeId;
+        const resolved = resolveDecision(playbook, String(lastAssistant.content));
+        meta.activeWorkflow = resolved.updatedPlaybook;
+
+        this.emitPlaybookEvent(state, 'node_completed', {
+          nodeId: pendNodeId,
+          nodeLabel: this.getPlaybookNodeLabel(playbook, pendNodeId),
+          output: lastAssistant.content,
+        });
+        this.emitEdgeActivations(state, playbook.definition, pendNodeId, 'outgoing');
+
+        if (resolved.action === 'workflow_completed' || resolved.action === 'workflow_failed') {
+          console.log(`[Graph:Playbook] Workflow ${resolved.action} after decision resolution`);
+          this.emitPlaybookEvent(state, resolved.action, {});
+          this.injectWorkflowMessage(state, `Workflow "${playbook.definition.name}" ${resolved.action === 'workflow_completed' ? 'completed' : 'failed'}.`);
+          meta.activeWorkflow = undefined;
+          return state;
+        }
+        // Decision resolved, fall through to process next step
+      } else {
+        // No agent response yet — re-enter agent loop to get one
+        return state;
+      }
+    }
+
+    // Process steps until we need the agent or workflow completes
+    let continueProcessing = true;
+    while (continueProcessing) {
+      const currentPlaybook: WorkflowPlaybookState = meta.activeWorkflow;
+      if (!currentPlaybook || currentPlaybook.status !== 'running') break;
+
+      const step: PlaybookStepResult = processNextStep(currentPlaybook);
+      meta.activeWorkflow = step.updatedPlaybook;
+
+      switch (step.action) {
+        case 'prompt_agent': {
+          // Inject the prompt as a user message and re-enter agent loop
+          console.log(`[Graph:Playbook] Prompting agent for decision`);
+          const decisionNodeId = step.updatedPlaybook.pendingDecision?.nodeId;
+          if (decisionNodeId) {
+            this.emitEdgeActivations(state, step.updatedPlaybook.definition, decisionNodeId, 'incoming');
+            this.emitPlaybookEvent(state, 'node_started', {
+              nodeId: decisionNodeId,
+              nodeLabel: this.getPlaybookNodeLabel(step.updatedPlaybook, decisionNodeId),
+            });
+          }
+          this.injectWorkflowMessage(state, step.prompt);
+          // Re-execute the agent loop to get a response (playbook re-entry — no completion signals)
+          state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+          // Agent has responded — resolve the pending decision inline
+          const pendingPlaybook: WorkflowPlaybookState | undefined = meta.activeWorkflow;
+          if (pendingPlaybook?.pendingDecision) {
+            const msgs = (state as any).messages;
+            const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+            if (lastAssistant?.content) {
+              console.log(`[Graph:Playbook] Resolving decision after re-entry`);
+              const resolvedNodeId = pendingPlaybook.pendingDecision?.nodeId;
+              const resolved = resolveDecision(pendingPlaybook, String(lastAssistant.content));
+              meta.activeWorkflow = resolved.updatedPlaybook;
+              if (resolvedNodeId) {
+                this.emitPlaybookEvent(state, 'node_completed', {
+                  nodeId: resolvedNodeId,
+                  nodeLabel: this.getPlaybookNodeLabel(pendingPlaybook, resolvedNodeId),
+                  output: lastAssistant.content,
+                });
+                this.emitEdgeActivations(state, pendingPlaybook.definition, resolvedNodeId, 'outgoing');
+              }
+              if (resolved.action === 'workflow_completed' || resolved.action === 'workflow_failed') {
+                this.emitPlaybookEvent(state, resolved.action, {});
+                this.injectWorkflowMessage(state, `Workflow "${pendingPlaybook.definition.name}" ${resolved.action === 'workflow_completed' ? 'completed' : 'failed'}.`);
+                meta.activeWorkflow = undefined;
+                return state;
+              }
+              // Decision resolved — continue processing next nodes in the loop
+              break;
+            }
+          }
+          // No decision to resolve or no response — stop processing
+          return state;
+        }
+
+        case 'spawn_sub_agent': {
+          const subNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          console.log(`[Graph:Playbook] Agent node "${step.nodeId}" — prompting orchestrator before execution`);
+
+          // ── Phase 1: Before — prompt orchestrator with agent node context ──
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subNodeLabel });
+
+          const beforePrompt = `[Workflow Node: ${subNodeLabel}]\nThe following agent node is ready to execute.\n\nAgent: ${step.agentId || 'default'}\nPrompt that will be sent:\n---\n${step.prompt}\n---\n\nReview and process this step. Provide any additional context or modifications, then the agent will execute.`;
+          this.injectWorkflowMessage(state, beforePrompt);
+          state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+          // ── Phase 2: Execute the sub-agent ──
+          try {
+            const result = await this.executeSubAgent(state, step.nodeId, step.agentId, step.prompt, step.config);
+            const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+
+            // ── Phase 3: After — prompt orchestrator with results for approval ──
+            const afterPrompt = `[Workflow Node Complete: ${subNodeLabel}]\nThe agent has completed its work.\n\nResult summary:\n---\n${resultText}\n---\n\nReview this result. Once approved, the workflow will advance to the next node.`;
+            this.injectWorkflowMessage(state, afterPrompt);
+            state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+            // Complete the node and advance
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, result.output, result.threadId);
+            meta.activeWorkflow = completed.updatedPlaybook;
+
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: resultText, threadId: result.threadId });
+            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+
+            if (completed.action === 'workflow_completed') {
+              console.log(`[Graph:Playbook] Workflow completed after sub-agent`);
+              this.emitPlaybookEvent(state, 'workflow_completed', {});
+              this.injectWorkflowMessage(state, `Workflow "${currentPlaybook.definition.name}" completed.`);
+              meta.activeWorkflow = undefined;
+              return state;
+            }
+            // Continue processing next node
+          } catch (err: any) {
+            console.error(`[Graph:Playbook] Sub-agent failed:`, err);
+            this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, error: err.message || String(err) });
+            meta.activeWorkflow = {
+              ...meta.activeWorkflow,
+              status: 'failed',
+              error: err.message || String(err),
+            };
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
+            this.injectWorkflowMessage(state, `Workflow failed: sub-agent error — ${err.message || String(err)}`);
+            meta.activeWorkflow = undefined;
+            return state;
+          }
+          break;
+        }
+
+        case 'node_completed': {
+          const mechLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          console.log(`[Graph:Playbook] Node "${step.nodeId}" completed mechanically`);
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: mechLabel });
+          this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: mechLabel, output: step.result });
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+          break;
+        }
+
+        case 'wait': {
+          const waitLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          console.log(`[Graph:Playbook] Wait node "${step.nodeId}" — ${step.durationMs}ms`);
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: waitLabel });
+          await new Promise<void>(resolve => setTimeout(resolve, step.durationMs));
+          const waitNode = meta.activeWorkflow.definition.nodes.find((n: any) => n.id === step.nodeId);
+          if (waitNode) {
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, `Waited ${step.durationMs}ms`);
+            meta.activeWorkflow = completed.updatedPlaybook;
+          }
+          this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: waitLabel, output: `Waited ${step.durationMs}ms` });
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+          break;
+        }
+
+        case 'workflow_completed': {
+          console.log(`[Graph:Playbook] Workflow completed`);
+          this.emitPlaybookEvent(state, 'workflow_completed', {});
+          this.injectWorkflowMessage(state, `Workflow "${currentPlaybook.definition.name}" completed.`);
+          meta.activeWorkflow = undefined;
+          continueProcessing = false;
+          break;
+        }
+
+        case 'workflow_failed': {
+          console.error(`[Graph:Playbook] Workflow failed: ${step.error}`);
+          this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
+          this.injectWorkflowMessage(state, `Workflow failed: ${step.error}`);
+          meta.activeWorkflow = undefined;
+          continueProcessing = false;
+          break;
+        }
+      }
+    }
+
+    return state;
+  }
+
+  /**
+   * Emit a workflow execution event via WebSocket so the frontend can update the canvas.
+   */
+  private emitPlaybookEvent(state: TState, type: string, data: Record<string, unknown> = {}): void {
+    try {
+      const ws = getWebSocketClientService();
+      const channel = (state as any).metadata?.wsChannel || 'workbench';
+      ws.send(channel, {
+        type: 'workflow_execution_event',
+        data: { type, timestamp: new Date().toISOString(), ...data },
+        timestamp: Date.now(),
+      });
+    } catch { /* best-effort */ }
+  }
+
+  /**
+   * Emit edge_activated events for all edges connecting to/from a node.
+   * Direction 'incoming' animates edges pointing INTO the node,
+   * 'outgoing' animates edges going OUT of the node.
+   */
+  private emitEdgeActivations(
+    state: TState,
+    definition: { edges: Array<{ source: string; target: string }> },
+    nodeId: string,
+    direction: 'incoming' | 'outgoing',
+  ): void {
+    for (const edge of definition.edges) {
+      if (direction === 'incoming' && edge.target === nodeId) {
+        this.emitPlaybookEvent(state, 'edge_activated', { sourceId: edge.source, targetId: edge.target });
+      } else if (direction === 'outgoing' && edge.source === nodeId) {
+        this.emitPlaybookEvent(state, 'edge_activated', { sourceId: edge.source, targetId: edge.target });
+      }
+    }
+  }
+
+  /**
+   * Resolve a node label from the playbook definition.
+   */
+  private getPlaybookNodeLabel(playbook: WorkflowPlaybookState, nodeId: string): string {
+    const node = playbook.definition.nodes.find((n: any) => n.id === nodeId);
+    return node?.data?.label || nodeId;
+  }
+
+  /**
+   * Inject a workflow-related message into the agent's conversation.
+   */
+  private injectWorkflowMessage(state: TState, content: string): void {
+    const msgs = (state as any).messages;
+    if (Array.isArray(msgs)) {
+      msgs.push({ role: 'user', content: `[Workflow] ${content}` });
+    }
+  }
+
+  /**
+   * Execute a sub-agent graph for a workflow agent node.
+   * The sub-agent runs independently with its own persona/graph, then
+   * reports its result back to the orchestrator.
+   */
+  private async executeSubAgent(
+    _state: TState,
+    nodeId: string,
+    agentId: string,
+    prompt: string,
+    config: Record<string, unknown>,
+  ): Promise<{ output: unknown; threadId?: string }> {
+    // Handle tool-call nodes
+    if (agentId === '__tool_call__') {
+      return this.executeToolCall(config);
+    }
+
+    const { GraphRegistry } = await import('../services/GraphRegistry');
+
+    const threadId = `workflow-playbook-${nodeId}-${Date.now()}`;
+    const agentConfigChannel = agentId || threadId;
+
+    const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(agentConfigChannel, threadId) as {
+      graph: any;
+      state: any;
+    };
+
+    // Inject prompt
+    subState.messages.push({ role: 'user', content: prompt });
+
+    // Execute sub-agent graph
+    const finalState = await graph.execute(subState);
+    const output = finalState.metadata?.finalSummary
+      || finalState.messages?.[finalState.messages.length - 1]?.content
+      || '';
+
+    return { output, threadId };
+  }
+
+  /**
+   * Execute a tool call (integration API) for a workflow tool-call node.
+   */
+  private async executeToolCall(config: Record<string, unknown>): Promise<{ output: unknown }> {
+    const integrationSlug = (config.integrationSlug as string) || '';
+    const endpointName = (config.endpointName as string) || '';
+    const accountId = (config.accountId as string) || 'default';
+    const defaults = (config.defaults as Record<string, string>) || {};
+
+    if (!integrationSlug || !endpointName) {
+      return { output: { error: 'Missing integration or endpoint configuration' } };
+    }
+
+    const { getIntegrationConfigLoader } = await import('../integrations/configApi');
+    const loader = getIntegrationConfigLoader();
+    const client = loader.getClient(integrationSlug);
+
+    if (!client) {
+      return { output: { error: `Integration "${integrationSlug}" not found` } };
+    }
+
+    // Resolve credentials
+    const options: Record<string, any> = {};
+    try {
+      const { getIntegrationService } = await import('../services/IntegrationService');
+      const integrationService = getIntegrationService();
+      const values = await integrationService.getFormValues(integrationSlug, accountId);
+      const apiKeyVal = values.find((v: { property: string; value: string }) =>
+        v.property === 'api_key' || v.property === 'apiKey' || v.property === 'token',
+      );
+      if (apiKeyVal?.value) options.apiKey = apiKeyVal.value;
+      const tokenVal = values.find((v: { property: string; value: string }) => v.property === 'access_token');
+      if (tokenVal?.value) options.token = tokenVal.value;
+    } catch (err) {
+      console.warn('[Graph:Playbook] Could not load credentials:', err);
+    }
+
+    const result = await client.call(endpointName, defaults, options);
+    return { output: result };
   }
 
   /**
@@ -674,6 +1050,13 @@ export function createAgentGraph(): Graph<AgentGraphState> {
 
   // Agent routing: done/blocked → end, otherwise continue looping
   graph.addConditionalEdge('agent', state => {
+    // If a workflow has been activated, stop the agent loop immediately.
+    // The workflow playbook will take over orchestration.
+    if ((state.metadata as any).activeWorkflow?.status === 'running') {
+      console.log('[AgentGraph] Workflow activated — pausing agent for workflow orchestration');
+      return 'end';
+    }
+
     const agentMeta = (state.metadata as any).agent || {};
     const agentStatus = String(agentMeta.status || '').trim().toLowerCase();
     const hadToolCalls = Boolean((state.metadata as any).hadToolCalls);

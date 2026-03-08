@@ -169,28 +169,15 @@
             </button>
             <div class="workflow-save-divider" :class="{ dark: isDark }"></div>
             <button
-              v-if="!workflowExecutionId"
               class="workflow-run-btn"
               :class="{ dark: isDark }"
-              title="Run workflow"
+              title="Run workflow (opens chat)"
               @click="runWorkflow"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                 <polygon points="5 3 19 12 5 21 5 3"/>
               </svg>
               Run
-            </button>
-            <button
-              v-else
-              class="workflow-stop-btn"
-              :class="{ dark: isDark }"
-              title="Stop workflow"
-              @click="stopWorkflow"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="6" width="12" height="12" rx="1"/>
-              </svg>
-              Stop
             </button>
           </div>
 
@@ -514,14 +501,14 @@
             :messages="chatMessages"
             :query="chatQuery"
             :loading="chatLoading"
-            :graph-running="chatGraphRunning || !!workflowExecutionId"
+            :graph-running="chatGraphRunning"
             :model-selector="modelSelector"
             :agent-registry="agentRegistry"
             :hide-agent-selector="!agentMode && !workflowMode"
             :total-tokens-used="chatTotalTokensUsed"
             @update:query="chatUpdateQuery"
-            @send="workflowChatMode ? workflowChatSend() : chatSend()"
-            @stop="workflowExecutionId ? stopWorkflow() : chatStop()"
+            @send="chatSend()"
+            @stop="chatStop()"
             @close="rightPaneVisible = false"
           />
         </div>
@@ -698,12 +685,69 @@ export default defineComponent({
     const chatStop = () => editorChat.stop();
     const chatUpdateQuery = (val: string) => { editorChat.query.value = val; };
 
+    // Listen for workflow playbook events and update the canvas
+    editorChat.onWorkflowEvent((event) => {
+      if (!workflowEditorRef.value) return;
+
+      const nodeId = event.nodeId;
+      switch (event.type) {
+        case 'workflow_started':
+          // Reset canvas for fresh execution — de-animate all edges so they light up as traversed
+          workflowEditorRef.value.clearAllExecution();
+          break;
+        case 'node_started':
+          if (nodeId) {
+            workflowEditorRef.value.updateNodeExecution(nodeId, {
+              status: 'running',
+              startedAt: event.timestamp,
+            });
+          }
+          break;
+        case 'node_completed':
+          if (nodeId) {
+            workflowEditorRef.value.updateNodeExecution(nodeId, {
+              status: 'completed',
+              output: event.output,
+              threadId: event.threadId,
+              completedAt: event.timestamp,
+            });
+          }
+          break;
+        case 'node_failed':
+          if (nodeId) {
+            workflowEditorRef.value.updateNodeExecution(nodeId, {
+              status: 'failed',
+              error: event.error,
+              completedAt: event.timestamp,
+            });
+          }
+          break;
+        case 'edge_activated':
+          // Animate the edge connecting two nodes during workflow traversal
+          if (event.sourceId && event.targetId) {
+            workflowEditorRef.value.setEdgeAnimated(event.sourceId, event.targetId, true);
+          }
+          break;
+        case 'workflow_completed':
+        case 'workflow_failed':
+        case 'workflow_aborted':
+          // Canvas nodes already show their individual states — nothing extra needed
+          break;
+      }
+    });
+
     // Channels owned by BackendGraphWebSocketService in the main process.
     // The editor must NOT create a FrontendGraphWebSocketService for these.
     const BACKEND_CHANNELS = new Set(['sulla-desktop', 'heartbeat']);
 
-    // When the active agent changes, create or switch the graph WS to the new channel.
+    // When the active agent changes, reset the conversation and switch channels.
     watch(() => agentRegistry.state.activeAgentId, (newAgentId) => {
+      // Sync into EditorChatInterface so the backend uses this agent
+      editorChat.activeAgentId.value = newAgentId || null;
+
+      // Fresh conversation — clear old messages and threadId
+      editorChat.resetConversation();
+
       if (BACKEND_CHANNELS.has(newAgentId)) {
         return;
       }
@@ -813,9 +857,6 @@ export default defineComponent({
     const activeWorkflowData = ref<any>(null);
     const workflowSaveStatus = ref<'idle' | 'unsaved' | 'saving' | 'saved'>('idle');
     const workflowSettingsOpen = ref(false);
-    const workflowExecutionId = ref<string | null>(null);
-    const workflowChatMode = ref(false);
-    let workflowExecUnsubscribe: (() => void) | null = null;
     let workflowSaveTimer: ReturnType<typeof setTimeout> | null = null;
     let workflowSavedResetTimer: ReturnType<typeof setTimeout> | null = null;
     const searchQuery = ref('');
@@ -913,7 +954,7 @@ export default defineComponent({
       }
       // Clear chat when leaving agent mode so stale agent messages don't persist
       if (agentMode.value) {
-        editorChat.messages.value = [];
+        editorChat.resetConversation();
       }
       searchMode.value = false;
       gitMode.value = false;
@@ -978,11 +1019,11 @@ export default defineComponent({
         leftPaneVisible.value = true;
         clearModes();
         agentMode.value = true;
-        editorChat.messages.value = [];
+        editorChat.resetConversation();
       } else if (!agentMode.value) {
         clearModes();
         agentMode.value = true;
-        editorChat.messages.value = [];
+        editorChat.resetConversation();
       } else {
         leftPaneVisible.value = false;
       }
@@ -1184,227 +1225,19 @@ export default defineComponent({
     async function runWorkflow() {
       if (!activeWorkflowData.value) return;
 
-      // If already in workflow chat mode, just ensure the pane is visible
-      if (workflowChatMode.value) {
-        rightPaneVisible.value = true;
-        return;
-      }
-
       // Save first to ensure latest version is on disk
       saveWorkflowNow();
 
-      // Open the chat pane so the user can send a message to trigger the workflow
+      // Scope the chat to this workflow so the agent only sees it
+      editorChat.activeWorkflowId.value = activeWorkflowData.value.id;
+
+      // Open the chat pane so the user can talk to the agent
       selectedWorkflowNode.value = null;
       workflowSettingsOpen.value = false;
-      workflowChatMode.value = true;
       rightPaneVisible.value = true;
 
       // Clear previous execution state from nodes
       workflowEditorRef.value?.clearAllExecution();
-    }
-
-    /**
-     * Called when the user sends a message in chat while in workflow mode.
-     * Dispatches the message to the active workflow via the registry.
-     */
-    async function workflowChatSend() {
-      if (!activeWorkflowData.value || !chatQuery.value.trim()) return;
-
-      const message = chatQuery.value.trim();
-      chatUpdateQuery('');
-
-      // Add the user message to chat
-      chatMessages.value = [
-        ...chatMessages.value,
-        {
-          id:        `wf-user-${Date.now()}`,
-          channelId: 'workflow',
-          role:      'user' as const,
-          content:   message,
-        },
-      ];
-
-      try {
-        const { executionId } = await ipcRenderer.invoke(
-          'workflow-execute',
-          activeWorkflowData.value.id,
-          message,
-        );
-        workflowExecutionId.value = executionId;
-
-        // Subscribe to execution events via IPC
-        const handler = (_ev: any, event: any) => {
-          handleWorkflowExecutionEvent(event);
-        };
-        ipcRenderer.on(`workflow-execution-event-${executionId}`, handler);
-        workflowExecUnsubscribe = () => {
-          ipcRenderer.removeListener(`workflow-execution-event-${executionId}`, handler);
-        };
-
-        // Add a system message showing execution started
-        chatMessages.value = [
-          ...chatMessages.value,
-          {
-            id:        `wf-sys-${Date.now()}`,
-            channelId: 'workflow',
-            role:      'system' as const,
-            content:   `Workflow "${activeWorkflowData.value.name}" started...`,
-          },
-        ];
-
-        startExecutionPolling(executionId);
-      } catch (err: any) {
-        console.error('Failed to execute workflow:', err);
-        chatMessages.value = [
-          ...chatMessages.value,
-          {
-            id:        `wf-err-${Date.now()}`,
-            channelId: 'workflow',
-            role:      'error' as const,
-            content:   `Failed to start workflow: ${err.message}`,
-          },
-        ];
-      }
-    }
-
-    function stopWorkflow() {
-      if (!workflowExecutionId.value) return;
-      ipcRenderer.invoke('workflow-execution-abort', workflowExecutionId.value).catch(() => {});
-      cleanupExecution();
-    }
-
-    function cleanupExecution() {
-      if (workflowExecUnsubscribe) {
-        workflowExecUnsubscribe();
-        workflowExecUnsubscribe = null;
-      }
-      workflowExecutionId.value = null;
-    }
-
-    let executionPollTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function startExecutionPolling(executionId: string) {
-      if (executionPollTimer) clearTimeout(executionPollTimer);
-
-      const poll = async() => {
-        if (workflowExecutionId.value !== executionId) return;
-        try {
-          const status = await ipcRenderer.invoke('workflow-execution-status', executionId);
-          if (status && (status.status === 'completed' || status.status === 'failed' || status.status === 'aborted')) {
-            // Execution finished — keep the visual state but allow re-run
-            workflowExecutionId.value = null;
-            if (workflowExecUnsubscribe) {
-              workflowExecUnsubscribe();
-              workflowExecUnsubscribe = null;
-            }
-            return;
-          }
-        } catch { /* ignore */ }
-        executionPollTimer = setTimeout(poll, 1000);
-      };
-      executionPollTimer = setTimeout(poll, 1000);
-    }
-
-    function handleWorkflowExecutionEvent(event: any) {
-      if (!event || !workflowEditorRef.value) return;
-
-      const nodeId = event.nodeId;
-
-      switch (event.type) {
-        case 'node_started':
-          workflowEditorRef.value.updateNodeExecution(nodeId, {
-            status:    'running',
-            startedAt: event.timestamp,
-          });
-          break;
-
-        case 'node_completed':
-          workflowEditorRef.value.updateNodeExecution(nodeId, {
-            status:      'completed',
-            threadId:    event.threadId,
-            output:      event.output,
-            completedAt: event.timestamp,
-          });
-          // Push output to chat if in workflow chat mode
-          if (workflowChatMode.value && event.output) {
-            const outputStr = typeof event.output === 'string' ? event.output : JSON.stringify(event.output);
-            if (outputStr && outputStr !== '{}' && outputStr !== 'null') {
-              chatMessages.value = [
-                ...chatMessages.value,
-                {
-                  id:        `wf-node-${Date.now()}-${nodeId}`,
-                  channelId: 'workflow',
-                  role:      'assistant' as const,
-                  content:   `**${event.nodeLabel || nodeId}:** ${outputStr}`,
-                },
-              ];
-            }
-          }
-          break;
-
-        case 'node_failed':
-          workflowEditorRef.value.updateNodeExecution(nodeId, {
-            status:      'failed',
-            error:       event.error,
-            completedAt: event.timestamp,
-          });
-          if (workflowChatMode.value && event.error) {
-            chatMessages.value = [
-              ...chatMessages.value,
-              {
-                id:        `wf-err-${Date.now()}-${nodeId}`,
-                channelId: 'workflow',
-                role:      'error' as const,
-                content:   `**${event.nodeLabel || nodeId}** failed: ${event.error}`,
-              },
-            ];
-          }
-          break;
-
-        case 'node_skipped':
-          workflowEditorRef.value.updateNodeExecution(nodeId, { status: 'skipped' });
-          break;
-
-        case 'node_waiting':
-          workflowEditorRef.value.updateNodeExecution(nodeId, {
-            status: 'waiting',
-            output: event.output,
-          });
-          break;
-
-        case 'workflow_completed':
-          workflowExecutionId.value = null;
-          if (workflowExecUnsubscribe) { workflowExecUnsubscribe(); workflowExecUnsubscribe = null; }
-          if (workflowChatMode.value) {
-            chatMessages.value = [
-              ...chatMessages.value,
-              { id: `wf-done-${Date.now()}`, channelId: 'workflow', role: 'system' as const, content: 'Workflow completed.' },
-            ];
-          }
-          break;
-
-        case 'workflow_failed':
-          workflowExecutionId.value = null;
-          if (workflowExecUnsubscribe) { workflowExecUnsubscribe(); workflowExecUnsubscribe = null; }
-          if (workflowChatMode.value) {
-            chatMessages.value = [
-              ...chatMessages.value,
-              { id: `wf-fail-${Date.now()}`, channelId: 'workflow', role: 'error' as const, content: `Workflow failed: ${event.error || 'Unknown error'}` },
-            ];
-          }
-          break;
-
-        case 'workflow_aborted':
-          workflowExecutionId.value = null;
-          if (workflowExecUnsubscribe) { workflowExecUnsubscribe(); workflowExecUnsubscribe = null; }
-          if (workflowChatMode.value) {
-            chatMessages.value = [
-              ...chatMessages.value,
-              { id: `wf-abort-${Date.now()}`, channelId: 'workflow', role: 'system' as const, content: 'Workflow aborted.' },
-            ];
-          }
-          break;
-      }
     }
 
     async function onWorkflowActivated(workflowId: string) {
@@ -1423,15 +1256,13 @@ export default defineComponent({
     }
 
     function onWorkflowClosed(_workflowId: string) {
-      if (workflowExecutionId.value) {
-        stopWorkflow();
-      }
       activeWorkflowData.value = null;
       selectedWorkflowNode.value = null;
       workflowSettingsOpen.value = false;
-      workflowChatMode.value = false;
       workflowSaveStatus.value = 'idle';
       rightPaneVisible.value = false;
+      // Clear workflow scope so the agent goes back to normal
+      editorChat.activeWorkflowId.value = null;
     }
 
     async function onWorkflowCreated(workflowId: string, workflowName: string) {
@@ -1884,8 +1715,6 @@ export default defineComponent({
       agentRegistry.getOrCreatePersonaService(agent.id);
       // Set as active so the chat interface routes to this agent
       agentRegistry.setActiveAgent(agent.id);
-      // Clear chat messages when switching agents
-      editorChat.messages.value = [];
     }
 
     async function onEditAgent(agent: { id: string; name: string; description: string; type: string; templateId?: string; path: string }) {
@@ -2118,11 +1947,7 @@ export default defineComponent({
       onWorkflowDeleted,
       deleteActiveWorkflow,
       workflowPaneRef,
-      workflowExecutionId,
-      workflowChatMode,
       runWorkflow,
-      stopWorkflow,
-      workflowChatSend,
       toggleAgent,
       toggleWorkflow,
       openContainerPort,

@@ -381,11 +381,10 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
     // Compile all .md files into a single prompt (no variable substitution)
     const entries = fs.readdirSync(agentDir, { withFileTypes: true });
     const mdFiles = entries
-      .filter(e => e.isFile() && e.name.endsWith('.md'))
+      .filter(e => e.isFile() && e.name.endsWith('.md') && e.name !== 'environment.md')
       .sort((a, b) => {
-        // soul.md first, environment.md second, then alphabetical
-        const order = (name: string) =>
-          name === 'soul.md' ? 0 : name === 'environment.md' ? 1 : 2;
+        // soul.md first, then alphabetical
+        const order = (name: string) => name === 'soul.md' ? 0 : 1;
         return order(a.name) - order(b.name) || a.name.localeCompare(b.name);
       });
 

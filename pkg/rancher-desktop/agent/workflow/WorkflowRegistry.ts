@@ -102,7 +102,10 @@ export class WorkflowRegistry {
 
     // Create and start the executor
     console.log(`[WorkflowRegistry] Creating WorkflowExecutor for "${definition.name}" (${definition.id}), originChannel="${options.originChannel}"`);
-    const executor = new WorkflowExecutor(definition, message, { emitEvent, originChannel: options.originChannel });
+    const executor = new WorkflowExecutor(definition, message, {
+      emitEvent,
+      originChannel: options.originChannel,
+    });
 
     console.log(`[WorkflowRegistry] Dispatching to workflow "${definition.name}" (${definition.id}) via ${triggerType}, executionId=${executor.id}`);
 

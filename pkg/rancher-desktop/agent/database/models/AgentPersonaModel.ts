@@ -422,12 +422,12 @@ export class AgentPersonaService {
   }
 
   // Kept old signature for compatibility, but agentId is now ignored (service owns its channel)
-  async addUserMessage(_agentId: string, content: string): Promise<boolean> {
-    return this._addUserMessage(content);
+  async addUserMessage(_agentId: string, content: string, metadata?: Record<string, unknown>): Promise<boolean> {
+    return this._addUserMessage(content, metadata);
   }
 
   // Internal clean version
-  private async _addUserMessage(content: string): Promise<boolean> {
+  private async _addUserMessage(content: string, extraMetadata?: Record<string, unknown>): Promise<boolean> {
     if (!content.trim()) return false;
 
     const id = this.state.agentId;
@@ -448,7 +448,7 @@ export class AgentPersonaService {
       console.log(`[AgentPersonaService] _addUserMessage() — sending via WebSocket to channel="${id}"...`);
       delivered = await this.wsService.send(id, {
         type: 'user_message',
-        data: { role: 'user', content, threadId: this.state.threadId },
+        data: { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata },
         timestamp: Date.now(),
       });
       console.log(`[AgentPersonaService] _addUserMessage() — WebSocket send result: delivered=${delivered}`);

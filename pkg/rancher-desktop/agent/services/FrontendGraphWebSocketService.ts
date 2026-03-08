@@ -134,6 +134,10 @@ export class FrontendGraphWebSocketService {
     console.log(`[FrontendGraphWS] processUserInput() START — text="${userText.slice(0, 80)}", threadIdFromMsg="${threadIdFromMsg || '(none)'}"`);
 
     const channelId = this.channelId;
+
+    // ThreadId is owned by the frontend chat interface.
+    // Use the one from the message if provided, otherwise create a new one.
+    const isNewThread = !threadIdFromMsg;
     const threadId = threadIdFromMsg || nextThreadId();
     console.log(`[FrontendGraphWS] processUserInput() — resolving agent for channel="${channelId}"...`);
     const agentId = await getAgentIdForTrigger(channelId);
@@ -161,8 +165,8 @@ export class FrontendGraphWebSocketService {
 
     try {
 
-      // === NEW: Notify AgentPersonaService about the threadId ===
-      if (!threadIdFromMsg) {
+      // Notify AgentPersonaService about the threadId so it stores it
+      if (isNewThread) {
         this.wsService.send(channelId, {
           type: 'thread_created',
           data: {

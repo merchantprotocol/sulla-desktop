@@ -227,11 +227,10 @@ async function loadAgentPromptFiles(agentId: string): Promise<string | null> {
   try {
     const entries = fs.readdirSync(agentDir, { withFileTypes: true });
     const mdFiles = entries
-      .filter(e => e.isFile() && e.name.endsWith('.md'))
+      .filter(e => e.isFile() && e.name.endsWith('.md') && e.name !== 'environment.md')
       .sort((a, b) => {
-        // soul.md first, environment.md second, then alphabetical
-        const order = (name: string) =>
-          name === 'soul.md' ? 0 : name === 'environment.md' ? 1 : 2;
+        // soul.md first, then alphabetical
+        const order = (name: string) => name === 'soul.md' ? 0 : 1;
         return order(a.name) - order(b.name) || a.name.localeCompare(b.name);
       });
 
@@ -414,6 +413,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                 .join('\n');
         }
 
+        // Populate {{available_workflows}} based on trigger type and optional scope
+        vars['{{available_workflows}}'] = await this.buildWorkflowIndex(state);
+
         const AwarenessMessage = applyTemplateVars(ENVIRONMENT_PROMPT, vars);
 
         if (options.includeEnvironment !== false) {
@@ -482,11 +484,84 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     /**
-     * 
-     * @param state 
-     * @param systemPrompt 
-     * @param options 
-     * @returns 
+     * Build a human-readable index of available workflows for the agent's prompt.
+     * Respects scopedWorkflowId (testing a single workflow) and wsChannel (trigger filtering).
+     */
+    private async buildWorkflowIndex(state: ThreadState): Promise<string> {
+        try {
+            const scopedWorkflowId = (state.metadata as any)?.scopedWorkflowId as string | undefined;
+
+            // When scoped (testing a workflow from the editor), load that specific
+            // workflow directly — skip trigger filtering since the workflow's trigger
+            // type won't match the editor's 'workbench' channel.
+            if (scopedWorkflowId) {
+                return await this.buildScopedWorkflowIndex(scopedWorkflowId);
+            }
+
+            const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
+            const registry = getWorkflowRegistry();
+            const wsChannel = state.metadata?.wsChannel || '';
+
+            // Map wsChannel to a valid trigger type
+            const validTriggers = ['calendar', 'chat-app', 'heartbeat', 'sulla-desktop', 'workbench', 'chat-completions'];
+            const triggerType = validTriggers.includes(wsChannel) ? wsChannel : 'sulla-desktop';
+
+            const candidates = registry.findCandidates(triggerType as any);
+
+            if (candidates.length === 0) {
+                return '_No workflows available for your current trigger type._';
+            }
+
+            const lines = candidates.map(c => {
+                const desc = c.triggerDescription || c.definition.description || '';
+                return `- **${c.definition.name}** (\`${c.definition.id}\`)${desc ? `: ${desc}` : ''}`;
+            });
+
+            return lines.join('\n');
+        } catch (err) {
+            console.warn('[BaseNode] Failed to build workflow index:', err);
+            return '_Could not load workflow index._';
+        }
+    }
+
+    /**
+     * Load a single workflow by ID for the scoped/testing case.
+     * Bypasses trigger filtering — reads the file directly.
+     */
+    private async buildScopedWorkflowIndex(workflowId: string): Promise<string> {
+        try {
+            const { resolveSullaWorkflowsDir } = await import('../utils/sullaPaths');
+            const yaml = (await import('yaml')).default;
+            const workflowsDir = resolveSullaWorkflowsDir();
+
+            const yamlPath = path.join(workflowsDir, `${workflowId}.yaml`);
+            const jsonPath = path.join(workflowsDir, `${workflowId}.json`);
+
+            let definition: any = null;
+            if (fs.existsSync(yamlPath)) {
+                definition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+            } else if (fs.existsSync(jsonPath)) {
+                definition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+            }
+
+            if (!definition) {
+                return `_Workflow \`${workflowId}\` not found._`;
+            }
+
+            const desc = definition.description || '';
+            return `- **${definition.name}** (\`${definition.id}\`)${desc ? `: ${desc}` : ''}\n\n_You are testing this workflow. When the user asks you to run it, use \`execute_workflow\` with workflowId \`${workflowId}\`._`;
+        } catch (err) {
+            console.warn('[BaseNode] Failed to load scoped workflow:', err);
+            return `_Could not load workflow \`${workflowId}\`._`;
+        }
+    }
+
+    /**
+     *
+     * @param state
+     * @param systemPrompt
+     * @param options
+     * @returns
      */
     protected async chat(
         state: BaseThreadState,
@@ -691,7 +766,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             llmTools = [...metaLLMTools, ...foundLLMTools];
           }
           if (!llmTools) {
-            // Final fallback to just meta tools
+            // Default: meta tools (includes execute_workflow)
             llmTools = await toolRegistry.getLLMToolsFor(await toolRegistry.getToolsByCategory("meta"));
           }
 
