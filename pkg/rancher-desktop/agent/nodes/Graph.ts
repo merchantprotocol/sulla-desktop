@@ -535,14 +535,26 @@ export class Graph<TState = BaseThreadState> {
       this.emitEdgeActivations(state, playbook.definition, nodeId, 'outgoing');
     }
 
-    // If the agent just responded and there's a pending decision, resolve it
+    // If there's a pending decision, resolve it
     if (playbook.pendingDecision) {
       const msgs = (state as any).messages;
-      const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+      const pendingSubtype = playbook.pendingDecision.subtype;
 
-      if (lastAssistant?.content) {
+      // For user-input nodes, resolve with the user's last message (not the assistant's)
+      // For all other decision types (router, condition, response), resolve with the assistant's response
+      let resolveContent: string | undefined;
+
+      if (pendingSubtype === 'user-input') {
+        const lastUser = [...msgs].reverse().find((m: any) => m.role === 'user' && !m.content?.startsWith?.('[Workflow]'));
+        resolveContent = lastUser?.content ? String(lastUser.content) : undefined;
+      } else {
+        const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+        resolveContent = lastAssistant?.content ? String(lastAssistant.content) : undefined;
+      }
+
+      if (resolveContent) {
         const pendNodeId = playbook.pendingDecision.nodeId;
-        const resolved = resolveDecision(playbook, String(lastAssistant.content));
+        const resolved = resolveDecision(playbook, resolveContent);
         meta.activeWorkflow = resolved.updatedPlaybook;
 
         const pendNodeLabel = this.getPlaybookNodeLabel(playbook, pendNodeId);
@@ -550,10 +562,10 @@ export class Graph<TState = BaseThreadState> {
         this.emitPlaybookEvent(state, 'node_completed', {
           nodeId: pendNodeId,
           nodeLabel: pendNodeLabel,
-          output: lastAssistant.content,
+          output: resolveContent,
         });
         this.emitEdgeActivations(state, playbook.definition, pendNodeId, 'outgoing');
-        await this.saveCheckpoint(resolved.updatedPlaybook, pendNodeId, pendNodeLabel, pendNodeSubtype, lastAssistant.content);
+        await this.saveCheckpoint(resolved.updatedPlaybook, pendNodeId, pendNodeLabel, pendNodeSubtype, resolveContent);
 
         if (resolved.action === 'workflow_completed' || resolved.action === 'workflow_failed') {
           this.emitPlaybookEvent(state, resolved.action, {});
@@ -563,7 +575,7 @@ export class Graph<TState = BaseThreadState> {
         }
         // Decision resolved, fall through to process next step
       } else {
-        // No agent response yet — re-enter agent loop to get one
+        // No response yet — return and wait for user/agent input
         return state;
       }
     }
@@ -805,6 +817,26 @@ export class Graph<TState = BaseThreadState> {
           this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
           await this.saveCheckpoint(meta.activeWorkflow, step.nodeId, waitLabel, 'wait', `Waited ${step.durationMs}ms`);
           break;
+        }
+
+        case 'await_user_input': {
+          const uiNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          console.log(`[Graph:Playbook] User input node "${step.nodeId}" — waiting for user response`);
+
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: uiNodeLabel });
+          this.emitPlaybookEvent(state, 'node_waiting', { nodeId: step.nodeId, nodeLabel: uiNodeLabel, output: { promptText: step.promptText } });
+
+          // Tell the orchestrator to present the question to the user
+          this.injectWorkflowMessage(state, `[Workflow: User Input Required]\nThe workflow needs input from the user before it can continue.\n\nPrompt to present: ${step.promptText}\n\nAsk the user this question now. Do NOT answer it yourself — wait for the user to respond.`);
+
+          // Re-enter the agent loop so the orchestrator can present the question
+          state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+          // Return — the workflow is now paused. When the user responds,
+          // the next agent cycle will call processWorkflowPlaybook again,
+          // which will resolve the pendingDecision with the user's message.
+          return state;
         }
 
         case 'workflow_completed': {

@@ -195,7 +195,8 @@ export type PlaybookStepResult =
   | { action: 'spawn_sub_workflow'; nodeId: string; workflowId: string; payload: unknown; awaitResponse: boolean; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'workflow_completed'; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'workflow_failed'; error: string; updatedPlaybook: WorkflowPlaybookState }
-  | { action: 'wait'; nodeId: string; durationMs: number; updatedPlaybook: WorkflowPlaybookState };
+  | { action: 'wait'; nodeId: string; durationMs: number; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'await_user_input'; nodeId: string; promptText: string; updatedPlaybook: WorkflowPlaybookState };
 
 // ── Template resolution ──
 
@@ -684,10 +685,13 @@ function handleUserInputNode(
 ): PlaybookStepResult {
   const promptText = (config.promptText as string) || 'Please provide input:';
 
-  // Prompt the agent, which will in turn ask the user
+  // Pause the workflow and wait for real user input.
+  // The orchestrator will present the prompt to the user, then the workflow
+  // pauses until the user's next message resolves the pending decision.
   return {
-    action: 'prompt_agent',
-    prompt: promptText,
+    action: 'await_user_input',
+    nodeId,
+    promptText,
     updatedPlaybook: {
       ...playbook,
       pendingDecision: {
