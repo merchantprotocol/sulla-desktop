@@ -1,5 +1,5 @@
 <template>
-  <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
+  <div class="font-sans page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentFilesystem" />
     <EditorHeader
       :is-dark="isDark"
@@ -25,6 +25,7 @@
           :integrations-mode="integrationsMode"
           :workflow-mode="workflowMode"
           :training-mode="trainingMode"
+          :monitor-mode="monitorMode"
           @toggle-file-tree="toggleFileTree"
           @toggle-search="toggleSearch"
           @toggle-git="toggleGit"
@@ -33,6 +34,7 @@
           @toggle-agent="toggleAgent"
           @toggle-workflow="toggleWorkflow"
           @toggle-training="toggleTraining"
+          @toggle-monitor="toggleMonitor"
         />
         </div>
 
@@ -112,10 +114,20 @@
               @files-preprocessed="onTrainingFilesPreprocessed"
             />
 
+            <!-- Monitor pane -->
+            <MonitorPane
+              v-show="monitorMode"
+              :is-dark="isDark"
+              :active-section="monitorSection"
+              @close="toggleMonitor"
+              @section-change="monitorSection = $event"
+              @refresh="monitorDashboardRef?.refreshAll?.()"
+            />
+
             <!-- File tree -->
             <FileTreeSidebar
               ref="fileTreeRef"
-              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode"
+              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode && !monitorMode"
               :root-path="rootPath"
               :highlight-path="highlightPath"
               :is-dark="isDark"
@@ -135,6 +147,8 @@
 
         <!-- Right content: Editor area -->
         <div class="editor-panel" v-show="centerPaneVisible" :class="{ dark: isDark }">
+          <!-- Monitor dashboard (replaces editor area when monitor mode is active) -->
+          <MonitorDashboard v-if="monitorMode" ref="monitorDashboardRef" :is-dark="isDark" :active-section="monitorSection" @refresh="monitorDashboardRef?.refreshAll?.()" @open-detail="openMonitorDetail" />
           <!-- Training full-screen (replaces everything when training mode is active) -->
           <TrainingPane ref="trainingPaneRef" v-if="trainingMode" :is-dark="isDark" @env-ready="leftPaneVisible = true" />
           <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
@@ -194,7 +208,7 @@
           </div>
 
           <!-- Top editor area -->
-          <div class="editor-top" v-show="!workflowMode && !trainingMode">
+          <div class="editor-top" v-show="!workflowMode && !trainingMode && !monitorMode">
             <!-- Tab bar (always visible) -->
             <div class="tab-bar" :class="{ dark: isDark, empty: openTabs.length === 0 }">
               <div class="tab-bar-tabs">
@@ -398,6 +412,29 @@
                   </svg>
                 </button>
               </div>
+              <!-- Monitor detail tabs -->
+              <div
+                v-for="mtab in monitorTabs"
+                :key="mtab.id"
+                class="terminal-tab"
+                :class="{ active: bottomPaneTab === 'monitor' && activeMonitorTab === mtab.id, dark: isDark }"
+                @click="bottomPaneTab = 'monitor'; activeMonitorTab = mtab.id"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                </svg>
+                <span>{{ mtab.label }}</span>
+                <button
+                  class="terminal-tab-close"
+                  :class="{ dark: isDark }"
+                  @click.stop="closeMonitorTab(mtab.id)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+              </div>
               <button
                 class="terminal-tab-add"
                 :class="{ dark: isDark }"
@@ -438,6 +475,18 @@
                 style="height: 100%"
               >
                 <ApiTestPanel :is-dark="isDark" :initial-slug="atab.slug" />
+              </div>
+            </div>
+
+            <!-- Monitor Detail Panels -->
+            <div v-show="bottomPaneTab === 'monitor'" class="terminal-content">
+              <div
+                v-for="mtab in monitorTabs"
+                :key="mtab.id"
+                v-show="activeMonitorTab === mtab.id"
+                style="height: 100%"
+              >
+                <MonitorDetailPanel :is-dark="isDark" :tab-type="mtab.type" :tab-id="mtab.tabId" :error-data="mtab.errorData" />
               </div>
             </div>
           </div>
@@ -526,28 +575,36 @@
           />
         </div>
       </div>
+
+      <!-- Editor Status Bar Footer -->
+      <footer class="editor-footer" :class="{ dark: isDark }">
+        <div class="editor-footer-left">
+          <span class="footer-item" :title="`${formatBytes(footerStats.availableBytes)} free on disk`">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M16 2v20"/><path d="M2 12h14"/></svg>
+            {{ formatBytes(footerStats.availableBytes) }} free
+          </span>
+          <span class="footer-item" :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
+          </span>
+          <span v-if="activeTab" class="footer-item footer-lang">{{ extToLanguage(activeTab.ext) }}</span>
+        </div>
+        <div class="editor-footer-right">
+          <span v-if="backendProgressDesc" class="footer-item footer-progress-text">
+            {{ backendProgressDesc }}
+          </span>
+          <span v-if="backendProgressActive" class="footer-progress-bar-wrapper">
+            <span
+              class="footer-progress-bar-fill"
+              :class="{ indeterminate: backendProgressPct < 0 }"
+              :style="backendProgressPct >= 0 ? { width: backendProgressPct + '%' } : {}"
+            />
+          </span>
+          <span class="footer-item footer-state" :class="backendStateClass">{{ backendStateLabel }}</span>
+        </div>
+      </footer>
     </div>
 
-    <!-- Editor Status Bar Footer -->
-    <footer class="editor-footer" :class="{ dark: isDark }">
-      <div class="editor-footer-left">
-        <span class="footer-item" :title="`${formatBytes(footerStats.availableBytes)} free on disk`">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M16 2v20"/><path d="M2 12h14"/></svg>
-          {{ formatBytes(footerStats.availableBytes) }} free
-        </span>
-        <span class="footer-item" :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-          {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
-        </span>
-        <span v-if="activeTab" class="footer-item footer-lang">{{ extToLanguage(activeTab.ext) }}</span>
-      </div>
-      <div class="editor-footer-right">
-        <span v-if="backendProgressDesc" class="footer-item footer-progress-text">
-          {{ backendProgressDesc }}
-        </span>
-        <span class="footer-item footer-state" :class="backendStateClass">{{ backendStateLabel }}</span>
-      </div>
-    </footer>
 
   <!-- Tab Context Menu -->
   <TabContextMenu
@@ -588,6 +645,9 @@ import AgentFormTab from './editor/AgentFormTab.vue';
 import WorkflowPane from './editor/WorkflowPane.vue';
 import TrainingPane from './editor/TrainingPane.vue';
 import TrainingFileTreePane from './editor/TrainingFileTreePane.vue';
+import MonitorPane from './editor/MonitorPane.vue';
+import MonitorDashboard from './editor/MonitorDashboard.vue';
+import MonitorDetailPanel from './editor/MonitorDetailPanel.vue';
 import WorkflowEditor from './editor/WorkflowEditor.vue';
 import WorkflowNodePanel from './editor/WorkflowNodePanel.vue';
 import WebViewTab from './editor/WebViewTab.vue';
@@ -686,6 +746,9 @@ export default defineComponent({
     EditorChat,
     DiffEditor,
     TrainingFileTreePane,
+    MonitorPane,
+    MonitorDashboard,
+    MonitorDetailPanel,
   },
 
   setup(props, { emit }) {
@@ -701,6 +764,8 @@ export default defineComponent({
     // Backend state tracking for footer
     const backendState = ref('STOPPED');
     const backendProgressDesc = ref('');
+    const backendProgressCurrent = ref(0);
+    const backendProgressMax = ref(0);
 
     const STATE_LABELS: Record<string, string> = {
       STOPPED:  'Stopped',
@@ -722,6 +787,21 @@ export default defineComponent({
       return 'state-stopped';
     });
 
+    /** Whether the footer progress bar should be visible */
+    const backendProgressActive = computed(() => {
+      if (backendProgressMax.value <= 0) {
+        // Indeterminate — show when we have a description (something is happening)
+        return !!backendProgressDesc.value;
+      }
+      return backendProgressCurrent.value < backendProgressMax.value;
+    });
+
+    /** Progress bar percentage (0-100), or -1 for indeterminate */
+    const backendProgressPct = computed(() => {
+      if (backendProgressMax.value <= 0) return -1;
+      return Math.round((backendProgressCurrent.value / backendProgressMax.value) * 100);
+    });
+
     function onK8sCheckState(_event: any, state: string) {
       backendState.value = state;
     }
@@ -729,9 +809,17 @@ export default defineComponent({
       if (progress?.description) {
         backendProgressDesc.value = progress.description;
       }
-      // Clear description when progress completes
+      if (typeof progress?.current === 'number') {
+        backendProgressCurrent.value = progress.current;
+      }
+      if (typeof progress?.max === 'number') {
+        backendProgressMax.value = progress.max;
+      }
+      // Clear when progress completes
       if (progress?.current >= progress?.max && progress?.max > 0) {
         backendProgressDesc.value = '';
+        backendProgressCurrent.value = 0;
+        backendProgressMax.value = 0;
       }
     }
 
@@ -759,8 +847,11 @@ export default defineComponent({
     const centerPaneVisible = ref(true);
     const rightPaneVisible = ref(true);
     const bottomPaneVisible = ref(true);
-    const bottomPaneTab = ref<'terminal' | 'api'>('terminal');
+    const bottomPaneTab = ref<'terminal' | 'api' | 'monitor'>('terminal');
     const apiTabs = ref<Array<{ id: string; slug: string }>>([]);
+    const monitorTabs = ref<Array<{ id: string; type: 'ws' | 'service' | 'agent' | 'error'; tabId: string; label: string; errorData?: any }>>([]);
+    const activeMonitorTab = ref('');
+    let monitorTabCounter = 0;
     const activeApiTab = ref('');
     let apiTabCounter = 0;
 
@@ -976,6 +1067,9 @@ export default defineComponent({
     const integrationsMode = ref(false);
     const workflowMode = ref(false);
     const trainingMode = ref(false);
+    const monitorMode = ref(false);
+    const monitorSection = ref('health');
+    const monitorDashboardRef = ref<any>(null);
     const trainingPaneRef = ref<InstanceType<typeof TrainingPane> | null>(null);
     const selectedWorkflowNode = ref<{ id: string; label: string; type?: string; data?: any } | null>(null);
     const workflowEditorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null);
@@ -1042,6 +1136,38 @@ export default defineComponent({
       }
     }
 
+    function openMonitorDetail(type: 'ws' | 'service' | 'agent' | 'error', id: string, label: string, errorData?: any) {
+      // Check if a tab for this id already exists
+      const existing = monitorTabs.value.find(t => t.type === type && t.tabId === id);
+      if (existing) {
+        activeMonitorTab.value = existing.id;
+        bottomPaneVisible.value = true;
+        bottomPaneTab.value = 'monitor';
+        return;
+      }
+      monitorTabCounter++;
+      const newTab = { id: `mon-${monitorTabCounter}`, type, tabId: id, label, errorData };
+      monitorTabs.value.push(newTab);
+      activeMonitorTab.value = newTab.id;
+      bottomPaneVisible.value = true;
+      bottomPaneTab.value = 'monitor';
+    }
+
+    function closeMonitorTab(tabId: string) {
+      const index = monitorTabs.value.findIndex(t => t.id === tabId);
+      if (index === -1) return;
+      const wasActive = activeMonitorTab.value === tabId;
+      monitorTabs.value.splice(index, 1);
+      if (wasActive) {
+        if (monitorTabs.value.length > 0) {
+          activeMonitorTab.value = monitorTabs.value[monitorTabs.value.length - 1].id;
+        } else {
+          activeMonitorTab.value = '';
+          bottomPaneTab.value = 'terminal';
+        }
+      }
+    }
+
     function switchTerminalTab(tabId: string) {
       activeTerminalTab.value = tabId;
     }
@@ -1085,8 +1211,8 @@ export default defineComponent({
     let savedRightPaneVisible = false;
 
     function clearModes() {
-      // Restore panes if leaving workflow or training mode
-      if (workflowMode.value || trainingMode.value) {
+      // Restore panes if leaving workflow, training, or monitor mode
+      if (workflowMode.value || trainingMode.value || monitorMode.value) {
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
       }
@@ -1101,13 +1227,14 @@ export default defineComponent({
       integrationsMode.value = false;
       workflowMode.value = false;
       trainingMode.value = false;
+      monitorMode.value = false;
     }
 
     function toggleFileTree() {
       if (!leftPaneVisible.value) {
         leftPaneVisible.value = true;
         clearModes();
-      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || integrationsMode.value || workflowMode.value || trainingMode.value) {
+      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || integrationsMode.value || workflowMode.value || trainingMode.value || monitorMode.value) {
         clearModes();
       } else {
         leftPaneVisible.value = false;
@@ -1216,6 +1343,23 @@ export default defineComponent({
         rightPaneVisible.value = false;
       } else {
         trainingMode.value = false;
+        leftPaneVisible.value = true;
+        bottomPaneVisible.value = savedBottomPaneVisible;
+        rightPaneVisible.value = savedRightPaneVisible;
+      }
+    }
+
+    function toggleMonitor() {
+      if (!monitorMode.value) {
+        clearModes();
+        monitorMode.value = true;
+        savedBottomPaneVisible = bottomPaneVisible.value;
+        savedRightPaneVisible = rightPaneVisible.value;
+        leftPaneVisible.value = true;
+        bottomPaneVisible.value = false;
+        rightPaneVisible.value = false;
+      } else {
+        monitorMode.value = false;
         leftPaneVisible.value = true;
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
@@ -2092,6 +2236,10 @@ export default defineComponent({
       workflowMode,
       trainingMode,
       toggleTraining,
+      monitorMode,
+      monitorSection,
+      monitorDashboardRef,
+      toggleMonitor,
       selectedWorkflowNode,
       selectedNodeUpstream,
       workflowEditorRef,
@@ -2134,6 +2282,10 @@ export default defineComponent({
       activeApiTab,
       openApiTest,
       closeApiTab,
+      monitorTabs,
+      activeMonitorTab,
+      openMonitorDetail,
+      closeMonitorTab,
       leftPaneWidth,
       rightPaneWidth,
       bottomPaneHeight,
@@ -2189,12 +2341,25 @@ export default defineComponent({
       onTrainingFilesPreprocessed,
       backendState,
       backendProgressDesc,
+      backendProgressActive,
+      backendProgressPct,
       backendStateLabel,
       backendStateClass,
     };
   },
 });
 </script>
+
+<style>
+/* Unscoped: ensure html/body/#app don't add extra height */
+html, body, #app {
+  height: 100vh !important;
+  max-height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+</style>
 
 <style scoped>
 .page-root {
@@ -2301,6 +2466,36 @@ export default defineComponent({
 }
 .footer-state.state-stopped {
   color: #94a3b8;
+}
+
+/* Footer progress bar */
+.footer-progress-bar-wrapper {
+  display: inline-flex;
+  align-items: center;
+  width: 80px;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.editor-footer.dark .footer-progress-bar-wrapper {
+  background: rgba(255, 255, 255, 0.12);
+}
+.footer-progress-bar-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.footer-progress-bar-fill.indeterminate {
+  width: 40% !important;
+  animation: footer-progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes footer-progress-slide {
+  0%   { margin-left: 0; }
+  50%  { margin-left: 60%; }
+  100% { margin-left: 0; }
 }
 
 .editor-panel {
@@ -2722,15 +2917,9 @@ export default defineComponent({
   color: #64748b;
 }
 
-<style scoped>
-.page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
 .main-content {
   display: flex;
-  height: 100%;
+  flex-shrink: 0;
 }
 
 /* Resize handles */

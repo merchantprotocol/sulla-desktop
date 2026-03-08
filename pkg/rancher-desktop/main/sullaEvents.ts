@@ -9,6 +9,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import * as window from '@pkg/window';
 import Logging from '@pkg/utils/logging';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
+import { initSullaDebugEvents } from './sullaDebugEvents';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -959,6 +960,73 @@ export function initSullaEvents(): void {
     return results;
   });
 
+  /**
+   * Return the top-level Sulla content directories as tree roots,
+   * or list children of any directory (all file types, not just docs).
+   * Used by TrainingFileTreePane to browse skills, workflows, agents, etc.
+   */
+  ipcMainProxy.handle('training-content-tree', async(_event: unknown, dirPath?: string) => {
+    const sullaHome = getSullaHomeDir();
+    type TreeEntry = { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string };
+    const results: TreeEntry[] = [];
+
+    if (!dirPath) {
+      // Return top-level Sulla content categories
+      const categories: Array<{ name: string; dir: string }> = [
+        { name: 'Skills', dir: 'skills' },
+        { name: 'Workflows', dir: 'workflows' },
+        { name: 'Agents', dir: 'agents' },
+        { name: 'Projects', dir: 'projects' },
+        { name: 'Integrations', dir: 'integrations' },
+        { name: 'Training Data', dir: 'training' },
+      ];
+      for (const cat of categories) {
+        const catPath = path.join(sullaHome, cat.dir);
+        let hasChildren = false;
+        try {
+          const children = fs.readdirSync(catPath, { withFileTypes: true });
+          hasChildren = children.some(c => !c.name.startsWith('.'));
+        } catch { /* dir may not exist yet */ }
+        results.push({
+          path: catPath, name: cat.name, isDir: true, hasChildren, size: 0, ext: '', category: cat.dir,
+        });
+      }
+      return results;
+    }
+
+    // List children of the given directory (all files, not filtered by extension)
+    try {
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const fullPath = path.join(dirPath, entry.name);
+
+        if (entry.isDirectory()) {
+          let hasChildren = false;
+          try {
+            const children = fs.readdirSync(fullPath, { withFileTypes: true });
+            hasChildren = children.some(c => !c.name.startsWith('.'));
+          } catch { /* permission denied */ }
+          results.push({ path: fullPath, name: entry.name, isDir: true, hasChildren, size: 0, ext: '' });
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          try {
+            const stat = fs.statSync(fullPath);
+            results.push({ path: fullPath, name: entry.name, isDir: false, hasChildren: false, size: stat.size, ext });
+          } catch { /* skip unreadable */ }
+        }
+      }
+    } catch (err) {
+      console.error('[Sulla] Failed to list training content dir:', dirPath, err);
+    }
+
+    results.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return results;
+  });
+
   /** Save the documents_config.json with the user's chosen folders, files, and file types. */
   ipcMainProxy.handle('training-docs-config-save', async(_event: unknown, folders: string[], files: string[], fileTypes: string[]) => {
     const configPath = getDocsConfigPath();
@@ -1401,6 +1469,7 @@ export function initSullaEvents(): void {
   });
 
   initSullaWorkflowEvents();
+  initSullaDebugEvents();
 
   // ── Integration Config API (YAML-defined integrations) ──────────
 

@@ -214,6 +214,7 @@ export interface IpcMainInvokeEvents {
   'training-docs-config-load':  () => { folders: string[]; files: string[]; fileTypes: string[] };
   'training-docs-list-dir':     (dirPath: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }>;
   'training-docs-config-save':  (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
+  'training-content-tree':      (dirPath?: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string }>;
   'editor-footer-stats':        () => { availableBytes: number; unprocessedTrainingBytes: number };
   'training-data-files':        () => Array<{ filename: string; path: string; size: number; modifiedAt: string; status: 'unprocessed' | 'processed' }>;
   'training-preprocess':        () => { conversations: number; filesProcessed: number; filesSkipped: number };
@@ -265,6 +266,21 @@ export interface IpcMainInvokeEvents {
   'show-snapshots-confirm-dialog':  (options: { window: Partial<Electron.MessageBoxOptions>, format: SnapshotDialog }) => any;
   'show-snapshots-blocking-dialog': (options: { window: Partial<Electron.MessageBoxOptions>, format: SnapshotDialog }) => any;
   'snapshot-cancel': () => void;
+  // #endregion
+
+  // #region Debug & Monitoring
+  'debug-heartbeat-status':    () => { initialized: boolean; isExecuting: boolean; lastTriggerMs: number; schedulerRunning: boolean; totalTriggers: number; totalErrors: number; totalSkips: number; uptimeMs: number };
+  'debug-heartbeat-history':   (limit?: number) => Array<{ ts: number; type: string; message: string; durationMs?: number; error?: string; meta?: Record<string, unknown> }>;
+  'debug-heartbeat-schedule':  () => { enabled: boolean; delayMinutes: number; nextTriggerMs: number };
+  'debug-conversations-list':  () => Array<{ id: string; type: string; name: string; startedAt: string; completedAt?: string; status?: string; error?: string; channel?: string }>;
+  'debug-conversation-events': (conversationId: string) => Array<{ ts: string; type: string; [key: string]: unknown }>;
+  'debug-health-check':        () => Record<string, { name: string; ok: boolean; port?: number; error?: string }>;
+  'debug-active-agents':       () => Array<{ agentId: string; name: string; role: string; channel: string; type: string; status: string; startedAt: number; lastActiveAt: number; description: string; statusNote?: string }>;
+  'debug-errors':              (limit?: number) => Array<{ conversationId: string; type: string; name: string; startedAt: string; error: string; channel?: string }>;
+  'debug-ws-stats':            () => Record<string, { connected: boolean; reconnectAttempts: number; pendingMessages: number; subscribedChannels: string[] }>;
+  'debug-ws-tap':              (enabled: boolean) => { ok: boolean; error?: string };
+  'debug-ws-messages':         (connectionId?: string, limit?: number) => Array<{ connectionId: string; direction: 'in' | 'out'; message: any; ts: number }>;
+  'debug-service-detail':      (serviceKey: string) => any;
   // #endregion
 
   // #region Config API (integration YAML -> live API calls)

@@ -1,7 +1,7 @@
 <template>
   <div class="tft-pane" :class="{ dark: isDark }">
     <div class="tft-header" :class="{ dark: isDark }">
-      <span class="tft-header-title">Training Files</span>
+      <span class="tft-header-title">Training Sources</span>
       <div class="tft-header-actions">
         <button
           class="tft-header-btn"
@@ -78,7 +78,13 @@
     <!-- Scrollable tree content -->
     <div class="tft-content">
       <!-- Loading -->
-      <div v-if="treeRoot.length === 0 && treeLoading" class="tft-status">Loading…</div>
+      <div v-if="treeLoading" class="tft-status">Loading…</div>
+
+      <!-- Error -->
+      <div v-else-if="loadError" class="tft-status tft-error">{{ loadError }}</div>
+
+      <!-- Empty -->
+      <div v-else-if="treeRoot.length === 0" class="tft-status">No training sources found.<br>Create skills, workflows, or projects in ~/sulla/ to get started.</div>
 
       <!-- File tree -->
       <div v-else class="tft-tree">
@@ -113,6 +119,7 @@ interface TreeEntry {
   hasChildren: boolean;
   size: number;
   ext: string;
+  category?: string;
 }
 
 interface PreprocessResult {
@@ -212,18 +219,26 @@ export default defineComponent({
     const configDirty = ref(false);
     const preprocessing = ref(false);
     const preprocessResult = ref<PreprocessResult | null>(null);
+    const loadError = ref('');
 
-    async function loadTreeDir(dirPath: string, isRoot = false) {
-      treeLoading.value = dirPath;
+    async function loadTreeDir(dirPath?: string) {
+      const key = dirPath || '__root__';
+      treeLoading.value = key;
+      loadError.value = '';
       try {
-        const entries: TreeEntry[] = await ipcRenderer.invoke('training-docs-list-dir', dirPath);
-        if (isRoot) {
+        const entries: TreeEntry[] = dirPath
+          ? await ipcRenderer.invoke('training-content-tree', dirPath)
+          : await ipcRenderer.invoke('training-content-tree');
+        if (!dirPath) {
           treeRoot.value = entries;
         } else {
           treeChildren.value = { ...treeChildren.value, [dirPath]: entries };
         }
-      } catch (err) {
-        console.error('Failed to list directory:', dirPath, err);
+      } catch (err: any) {
+        console.error('Failed to list training content:', dirPath, err);
+        if (!dirPath) {
+          loadError.value = err?.message || 'Failed to load training sources. Try restarting the app.';
+        }
       } finally {
         treeLoading.value = '';
       }
@@ -317,9 +332,8 @@ export default defineComponent({
         selectedFiles.value = config.files || [];
       } catch { /* ignore */ }
 
-      // Load home directory as root
-      const homedir = require('os').homedir();
-      await loadTreeDir(homedir, true);
+      // Load top-level Sulla content categories (skills, workflows, agents, etc.)
+      await loadTreeDir();
     });
 
     return {
@@ -333,6 +347,7 @@ export default defineComponent({
       configDirty,
       preprocessing,
       preprocessResult,
+      loadError,
       toggleDir,
       toggleSelectFolder,
       toggleSelectFile,
@@ -524,6 +539,10 @@ export default defineComponent({
   text-align: center;
   font-size: 12px;
   color: #94a3b8;
+  line-height: 1.5;
+}
+.tft-error {
+  color: #ef4444;
 }
 
 .tft-tree {
