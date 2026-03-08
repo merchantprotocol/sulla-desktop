@@ -38,7 +38,7 @@
       @click.stop="thinkingExpanded = !thinkingExpanded"
     >
       <!-- Collapsed: small bubble with animated dots -->
-      <div v-if="!thinkingExpanded" class="thinking-bubble-collapsed">
+      <div v-if="!thinkingExpanded" class="thinking-bubble-collapsed nodrag nowheel nopan">
         <span class="thinking-dots">
           <span class="dot"></span>
           <span class="dot"></span>
@@ -47,7 +47,7 @@
       </div>
 
       <!-- Expanded: scrollable conversation panel -->
-      <div v-else class="thinking-bubble-expanded" @click.stop>
+      <div v-else class="thinking-bubble-expanded nodrag nowheel nopan" @click.stop>
         <div class="thinking-bubble-header">
           <span class="thinking-bubble-title">Agent Thinking</span>
           <button class="thinking-bubble-close" @click.stop="thinkingExpanded = false">
@@ -56,7 +56,7 @@
             </svg>
           </button>
         </div>
-        <div class="thinking-bubble-messages" ref="messagesContainer">
+        <div class="thinking-bubble-messages" ref="messagesContainer" @wheel.stop>
           <div
             v-for="(msg, idx) in thinkingMessages"
             :key="idx"
@@ -392,7 +392,7 @@ const routeHandles = computed(() => {
 }
 
 .thinking-bubble-title {
-  font-size: 11px;
+  font-size: 8px;
   font-weight: 600;
   color: #6366f1;
   text-transform: uppercase;
@@ -445,7 +445,7 @@ const routeHandles = computed(() => {
 }
 
 .thinking-msg-content {
-  font-size: 12px;
+  font-size: 9px;
   line-height: 1.4;
   padding: 5px 8px;
   border-radius: 8px;
@@ -468,7 +468,7 @@ const routeHandles = computed(() => {
   background: transparent;
   color: #94a3b8;
   font-style: italic;
-  font-size: 11px;
+  font-size: 8px;
 }
 
 /* Scrollbar styling */
