@@ -97,7 +97,7 @@ export function abortIfSignalReceived(signal?: AbortSignal): boolean {
  * Portable function to check abort signal and throw AbortError if triggered.
  * Use this to immediately stop execution when abort is detected.
  * 
- * @param stateOrSignal State object (with metadata.__abort) or AbortSignal to check
+ * @param stateOrSignal State object (with metadata.options.abort) or AbortSignal to check
  * @param message Optional error message
  * @throws AbortError if signal was aborted
  */

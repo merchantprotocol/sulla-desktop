@@ -8,6 +8,7 @@
 import type { WorkflowNodeSubtype } from '@pkg/pages/editor/workflow/types';
 import type { NodeHandler, NodeOutput, WorkflowExecutionContext } from './types';
 import { DEFAULT_HANDBACK_CONTRACT } from './WorkflowPlaybook';
+import { AbortService } from '@pkg/agent/services/AbortService';
 
 // ── Helpers ──
 
@@ -143,7 +144,16 @@ const agentHandler: NodeHandler = async(args) => {
 
   // Wire abort signal and route responses to the ORIGINAL frontend channel
   if (state.metadata) {
-    state.metadata.abortSignal = abortSignal;
+    // Create an AbortService linked to the workflow's abort signal so that
+    // BaseNode and throwIfAborted() both find it at options.abort.
+    if (abortSignal) {
+      const abort = new AbortService();
+      abortSignal.addEventListener('abort', () => abort.abort(), { once: true });
+      if (!state.metadata.options) {
+        state.metadata.options = {};
+      }
+      state.metadata.options.abort = abort;
+    }
     state.metadata.wsChannel = wsChannel;
 
     // Tag with workflow nodeId so BaseNode.wsChatMessage emits node_thinking

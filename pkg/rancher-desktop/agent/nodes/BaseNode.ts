@@ -802,7 +802,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                 maxTokens: options.maxTokens,
                 format: options.format,
                 temperature: options.temperature,
-                signal: (state as any).metadata?.__abort?.signal,
+                signal: state.metadata?.options?.abort?.signal,
                 tools: llmTools,
                 conversationId,
                 nodeName,
