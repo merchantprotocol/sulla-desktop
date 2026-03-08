@@ -29,6 +29,23 @@ import type {
   PlaybookNodeOutput,
 } from './types';
 
+// ── Default hand-back contract ──
+// Appended to every sub-agent prompt so the orchestrator gets a structured response.
+// Can be overridden per agent node via the completionContract config field.
+
+export const DEFAULT_HANDBACK_CONTRACT = `
+
+--- COMPLETION CONTRACT ---
+When you have finished your work, you MUST end your final message with the following structured hand-back block. This is required for the orchestrator to process your results.
+
+HAND_BACK
+Summary: [1-3 paragraph summary of what was accomplished, key decisions made, and any important context]
+Artifact: [file path to the primary output artifact, or "none" if no file was created]
+Needs user input: [yes/no — whether the user needs to review or approve before proceeding]
+Suggested next action: [optional — what should happen next in the workflow]
+--- END CONTRACT ---
+`;
+
 // ── Playbook initialization ──
 
 /**
@@ -385,6 +402,10 @@ function handleAgentNode(
     ].filter(Boolean).join('\n');
   }
 
+  // Append the completion contract — custom override or default
+  const completionContract = (config.completionContract as string) || '';
+  prompt += completionContract.trim() ? `\n\n${completionContract}` : DEFAULT_HANDBACK_CONTRACT;
+
   return {
     action: 'spawn_sub_agent',
     nodeId,
@@ -589,23 +610,42 @@ function handleLoopNode(
 function handleResponseNode(
   playbook: WorkflowPlaybookState,
   nodeId: string,
-  node: WorkflowNodeSerialized,
+  _node: WorkflowNodeSerialized,
   config: Record<string, unknown>,
   upstreamOutputs: PlaybookNodeOutput[],
   triggerPayload: unknown,
 ): PlaybookStepResult {
   const template = (config.responseTemplate as string) || '';
 
-  let result: string;
+  // Build upstream context for the orchestrator
+  const upstreamContext = upstreamOutputs
+    .map(o => `[${o.label}]: ${typeof o.result === 'string' ? o.result : JSON.stringify(o.result)}`)
+    .join('\n\n');
+
+  let prompt: string;
   if (template.trim()) {
-    result = resolveTemplate(template, triggerPayload, playbook.nodeOutputs, upstreamOutputs);
+    // The template is an instruction to the orchestrator (e.g. "let the user know what the first step is")
+    prompt = `[Workflow Response Node]\nYou need to respond to the user.\n\nInstruction: ${template}\n\n${upstreamContext ? `Upstream context:\n${upstreamContext}\n\n` : ''}Respond directly to the user based on the instruction above.`;
   } else {
-    result = upstreamOutputs.length > 0
+    // No template — pass through upstream output as the response instruction
+    const passthrough = upstreamOutputs.length > 0
       ? upstreamOutputs.map(o => typeof o.result === 'string' ? o.result : JSON.stringify(o.result)).join('\n\n')
       : String(triggerPayload || '');
+    prompt = `[Workflow Response Node]\nRespond to the user with the following:\n\n${passthrough}`;
   }
 
-  return completeNodeAndAdvance(playbook, nodeId, node, result);
+  return {
+    action: 'prompt_agent',
+    prompt,
+    updatedPlaybook: {
+      ...playbook,
+      pendingDecision: {
+        nodeId,
+        subtype: 'response' as any,
+        prompt,
+      },
+    },
+  };
 }
 
 function handleUserInputNode(
@@ -746,7 +786,8 @@ export function resolveDecision(
       );
     }
 
-    case 'user-input': {
+    case 'user-input':
+    case 'response': {
       return completeNodeAndAdvance(
         { ...playbook, pendingDecision: undefined },
         decision.nodeId,

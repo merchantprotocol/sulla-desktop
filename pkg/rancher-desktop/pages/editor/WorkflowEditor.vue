@@ -397,7 +397,7 @@ function serialize(): { nodes: any[]; edges: any[]; viewport: any } {
   };
 }
 
-import type { WorkflowNodeExecutionState } from './workflow/types';
+import type { WorkflowNodeExecutionState, NodeThinkingMessage } from './workflow/types';
 
 function updateNodeExecution(nodeId: string, execution: WorkflowNodeExecutionState | undefined) {
   const node = nodes.value.find(n => n.id === nodeId);
@@ -425,7 +425,18 @@ function setEdgeAnimated(sourceId: string, targetId: string, animated: boolean) 
   }
 }
 
-defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution, clearAllExecution, setEdgeAnimated, getNodes: () => nodes.value, getEdges: () => edges.value });
+function pushNodeThinking(nodeId: string, message: NodeThinkingMessage) {
+  const node = nodes.value.find(n => n.id === nodeId);
+  if (!node?.data) return;
+  const data = node.data as WorkflowNodeData;
+  if (!data.execution) return;
+  if (!data.execution.thinkingMessages) {
+    data.execution.thinkingMessages = [];
+  }
+  data.execution.thinkingMessages.push(message);
+}
+
+defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution, clearAllExecution, setEdgeAnimated, pushNodeThinking, getNodes: () => nodes.value, getEdges: () => edges.value });
 </script>
 
 <style scoped>

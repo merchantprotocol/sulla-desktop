@@ -722,6 +722,16 @@ export default defineComponent({
             });
           }
           break;
+        case 'node_thinking':
+          if (nodeId && event.content) {
+            workflowEditorRef.value.pushNodeThinking(nodeId, {
+              content: event.content,
+              role: event.role || 'assistant',
+              kind: event.kind || 'progress',
+              timestamp: event.timestamp,
+            });
+          }
+          break;
         case 'edge_activated':
           // Animate the edge connecting two nodes during workflow traversal
           if (event.sourceId && event.targetId) {

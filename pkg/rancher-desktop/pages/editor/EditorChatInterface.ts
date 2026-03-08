@@ -17,6 +17,10 @@ export type WorkflowExecutionEventHandler = (event: {
   threadId?: string;
   sourceId?: string;
   targetId?: string;
+  /** Present on node_thinking events */
+  content?: string;
+  role?: 'assistant' | 'system';
+  kind?: string;
   timestamp: string;
 }) => void;
 

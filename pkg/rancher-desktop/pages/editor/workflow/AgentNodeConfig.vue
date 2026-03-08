@@ -67,6 +67,57 @@
       ></textarea>
     </div>
 
+    <div class="node-field">
+      <div class="field-header">
+        <label class="node-field-label" :class="{ dark: isDark }">Before Prompt</label>
+        <button
+          class="var-insert-btn"
+          :class="{ dark: isDark }"
+          title="Insert variable"
+          @click="openVarMenu('beforePrompt', $event)"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 18 22 12 16 6"></polyline>
+            <polyline points="8 6 2 12 8 18"></polyline>
+          </svg>
+        </button>
+      </div>
+      <textarea
+        ref="beforePromptRef"
+        class="node-field-input node-field-textarea"
+        :class="{ dark: isDark }"
+        rows="3"
+        placeholder="Instructions for the orchestrator before this agent runs..."
+        :value="config.beforePrompt || ''"
+        @input="onBeforePromptChange"
+        @contextmenu.prevent="onTextareaContextMenu('beforePrompt', $event)"
+      ></textarea>
+    </div>
+
+    <div class="node-field">
+      <label class="node-field-label" :class="{ dark: isDark }">Success Criteria</label>
+      <textarea
+        class="node-field-input node-field-textarea"
+        :class="{ dark: isDark }"
+        rows="3"
+        placeholder="How the orchestrator validates this agent's output..."
+        :value="config.successCriteria || ''"
+        @input="onSuccessCriteriaChange"
+      ></textarea>
+    </div>
+
+    <div class="node-field">
+      <label class="node-field-label" :class="{ dark: isDark }">Completion Contract</label>
+      <textarea
+        class="node-field-input node-field-textarea"
+        :class="{ dark: isDark }"
+        rows="5"
+        placeholder="HAND_BACK&#10;Summary: [1-3 paragraph summary of what was accomplished]&#10;Artifact: /artifacts/[path-to-output-file]&#10;Needs user input: yes/no&#10;Suggested next action: [optional next step]"
+        :value="config.completionContract || ''"
+        @input="onCompletionContractChange"
+      ></textarea>
+    </div>
+
     <div class="node-field help-section" :class="{ dark: isDark }">
       <p class="help-title" :class="{ dark: isDark }">How agents work</p>
       <p class="help-text" :class="{ dark: isDark }">
@@ -74,13 +125,17 @@
         exactly what gets sent to the agent as its input.
       </p>
       <p class="help-text" :class="{ dark: isDark }">
+        <strong>Before Prompt</strong> is shown to the orchestrator before the agent fires.
+        <strong>Success Criteria</strong> is used by the orchestrator to validate the result after the agent completes.
+      </p>
+      <p class="help-text" :class="{ dark: isDark }">
+        <strong>Completion Contract</strong> defines the format the sub-agent must use when handing back results.
+        Leave empty to use the default HAND_BACK format. The orchestrator parses this to decide: approve, retry, or ask user.
+      </p>
+      <p class="help-text" :class="{ dark: isDark }">
         Click the <code>&lt;/&gt;</code> icon or <strong>right-click</strong> in a textarea to
         insert <strong>variables</strong> from upstream nodes &mdash; e.g.
         <code v-text="varToken('trigger.result')"></code>.
-      </p>
-      <p class="help-text" :class="{ dark: isDark }">
-        Use <strong>Additional Prompt</strong> to give this agent extra context specific to this
-        workflow step.
       </p>
     </div>
 
@@ -166,13 +221,16 @@ interface AgentInfo {
 const agents = ref<AgentInfo[]>([]);
 const userMessageRef = ref<HTMLTextAreaElement | null>(null);
 const additionalPromptRef = ref<HTMLTextAreaElement | null>(null);
+const beforePromptRef = ref<HTMLTextAreaElement | null>(null);
 const varMenuRef = ref<HTMLElement | null>(null);
 
 const MENU_WIDTH = 260;
 
+type VarMenuTarget = 'userMessage' | 'additionalPrompt' | 'beforePrompt';
+
 const varMenu = reactive({
   visible: false,
-  target: '' as 'userMessage' | 'additionalPrompt',
+  target: '' as VarMenuTarget,
   rawX: 0,
   rawY: 0,
 });
@@ -236,8 +294,32 @@ function onPromptChange(event: Event) {
   });
 }
 
+function onBeforePromptChange(event: Event) {
+  const el = event.target as HTMLTextAreaElement;
+  emit('update-config', props.nodeId, {
+    ...props.config,
+    beforePrompt: el.value,
+  });
+}
+
+function onSuccessCriteriaChange(event: Event) {
+  const el = event.target as HTMLTextAreaElement;
+  emit('update-config', props.nodeId, {
+    ...props.config,
+    successCriteria: el.value,
+  });
+}
+
+function onCompletionContractChange(event: Event) {
+  const el = event.target as HTMLTextAreaElement;
+  emit('update-config', props.nodeId, {
+    ...props.config,
+    completionContract: el.value,
+  });
+}
+
 /** Open variable menu from the icon button — anchor to the left of the button */
-function openVarMenu(target: 'userMessage' | 'additionalPrompt', event: MouseEvent) {
+function openVarMenu(target: VarMenuTarget, event: MouseEvent) {
   if (varMenu.visible && varMenu.target === target) {
     closeVarMenu();
     return;
@@ -252,7 +334,7 @@ function openVarMenu(target: 'userMessage' | 'additionalPrompt', event: MouseEve
 }
 
 /** Open variable menu from right-click on a textarea */
-function onTextareaContextMenu(target: 'userMessage' | 'additionalPrompt', event: MouseEvent) {
+function onTextareaContextMenu(target: VarMenuTarget, event: MouseEvent) {
   varMenu.target = target;
   varMenu.rawX = event.clientX;
   varMenu.rawY = event.clientY;
@@ -269,7 +351,7 @@ function varToken(name: string): string {
 
 function insertVariable(varName: string) {
   const token = `{{${varName}}}`;
-  const textareaRef = varMenu.target === 'userMessage' ? userMessageRef : additionalPromptRef;
+  const textareaRef = varMenu.target === 'userMessage' ? userMessageRef : varMenu.target === 'beforePrompt' ? beforePromptRef : additionalPromptRef;
   const textarea = textareaRef.value;
 
   if (textarea) {

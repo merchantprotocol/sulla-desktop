@@ -7,6 +7,7 @@
 
 import type { WorkflowNodeSubtype } from '@pkg/pages/editor/workflow/types';
 import type { NodeHandler, NodeOutput, WorkflowExecutionContext } from './types';
+import { DEFAULT_HANDBACK_CONTRACT } from './WorkflowPlaybook';
 
 // ── Helpers ──
 
@@ -100,6 +101,10 @@ const agentHandler: NodeHandler = async(args) => {
     ].filter(Boolean).join('\n');
   }
 
+  // Append the completion contract — custom override or default
+  const completionContract = (config.completionContract as string) || '';
+  prompt += completionContract.trim() ? `\n\n${completionContract}` : DEFAULT_HANDBACK_CONTRACT;
+
   // Dynamic imports to avoid bundling main-process modules into renderer
   const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
 
@@ -140,6 +145,11 @@ const agentHandler: NodeHandler = async(args) => {
   if (state.metadata) {
     state.metadata.abortSignal = abortSignal;
     state.metadata.wsChannel = wsChannel;
+
+    // Tag with workflow nodeId so BaseNode.wsChatMessage emits node_thinking
+    // events to the workflow canvas.
+    state.metadata.workflowNodeId = nodeId;
+    state.metadata.workflowParentChannel = wsChannel;
 
     // Link this graph conversation to the parent workflow conversation
     const graphConvId = `graph-${threadId}`;

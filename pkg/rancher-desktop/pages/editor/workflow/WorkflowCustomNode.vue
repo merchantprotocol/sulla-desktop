@@ -30,6 +30,45 @@
       <span v-else class="node-icon-svg" v-html="iconSvg"></span>
     </div>
 
+    <!-- Thinking bubble — appears when agent node is running and has thinking messages -->
+    <div
+      v-if="hasThinkingMessages"
+      class="thinking-bubble"
+      :class="{ dark: isDark, expanded: thinkingExpanded }"
+      @click.stop="thinkingExpanded = !thinkingExpanded"
+    >
+      <!-- Collapsed: small bubble with animated dots -->
+      <div v-if="!thinkingExpanded" class="thinking-bubble-collapsed">
+        <span class="thinking-dots">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </span>
+      </div>
+
+      <!-- Expanded: scrollable conversation panel -->
+      <div v-else class="thinking-bubble-expanded" @click.stop>
+        <div class="thinking-bubble-header">
+          <span class="thinking-bubble-title">Agent Thinking</span>
+          <button class="thinking-bubble-close" @click.stop="thinkingExpanded = false">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="thinking-bubble-messages" ref="messagesContainer">
+          <div
+            v-for="(msg, idx) in thinkingMessages"
+            :key="idx"
+            class="thinking-msg"
+            :class="msg.role"
+          >
+            <div class="thinking-msg-content">{{ msg.content }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Label -->
     <div class="node-label">{{ data.label }}</div>
 
@@ -69,10 +108,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch, nextTick } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
 import { getNodeDefinition } from './nodeRegistry';
-import type { WorkflowNodeData } from './types';
+import type { WorkflowNodeData, NodeThinkingMessage } from './types';
 
 const props = defineProps<{
   id: string;
@@ -83,9 +122,29 @@ const props = defineProps<{
 
 const sullaIconUrl = new URL('../../../../../resources/icons/sulla-node-icon.png', import.meta.url).href;
 
+const thinkingExpanded = ref(false);
+const messagesContainer = ref<HTMLElement | null>(null);
+
 const iconSvg = computed(() => {
   const def = getNodeDefinition(props.data.subtype);
   return def?.iconSvg ?? '';
+});
+
+const thinkingMessages = computed<NodeThinkingMessage[]>(() => {
+  return props.data.execution?.thinkingMessages ?? [];
+});
+
+const hasThinkingMessages = computed(() => {
+  return thinkingMessages.value.length > 0;
+});
+
+// Auto-scroll to bottom when new messages arrive while expanded
+watch(() => thinkingMessages.value.length, () => {
+  if (thinkingExpanded.value && messagesContainer.value) {
+    nextTick(() => {
+      messagesContainer.value!.scrollTop = messagesContainer.value!.scrollHeight;
+    });
+  }
 });
 
 const routeHandles = computed(() => {
@@ -119,6 +178,7 @@ const routeHandles = computed(() => {
   gap: 4px;
   padding: 4px;
   min-width: 60px;
+  position: relative;
 }
 
 .node-icon-box {
@@ -229,6 +289,204 @@ const routeHandles = computed(() => {
 
 .route-handle-label.dark {
   color: #94a3b8;
+}
+
+/* ── Thinking bubble ── */
+
+.thinking-bubble {
+  position: absolute;
+  top: -4px;
+  left: calc(100% + 6px);
+  z-index: 10;
+  cursor: pointer;
+  animation: bubble-appear 0.2s ease-out;
+}
+
+.thinking-bubble-collapsed {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px 12px 12px 4px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.thinking-bubble-collapsed:hover {
+  transform: scale(1.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.thinking-bubble.dark .thinking-bubble-collapsed {
+  background: #2d2d44;
+  border-color: #4a4a6a;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.thinking-dots {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.thinking-dots .dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #6366f1;
+  animation: dot-bounce 1.4s ease-in-out infinite;
+}
+
+.thinking-dots .dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-dots .dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes dot-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%           { transform: translateY(-3px); opacity: 1; }
+}
+
+@keyframes bubble-appear {
+  from { opacity: 0; transform: scale(0.8) translateX(-4px); }
+  to   { opacity: 1; transform: scale(1) translateX(0); }
+}
+
+/* ── Expanded thinking panel ── */
+
+.thinking-bubble-expanded {
+  width: 280px;
+  max-height: 320px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  cursor: default;
+}
+
+.thinking-bubble.dark .thinking-bubble-expanded {
+  background: #1e1e32;
+  border-color: #4a4a6a;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.thinking-bubble-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.thinking-bubble.dark .thinking-bubble-header {
+  border-bottom-color: #3a3a5a;
+}
+
+.thinking-bubble-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6366f1;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.thinking-bubble-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.thinking-bubble-close:hover {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.thinking-bubble.dark .thinking-bubble-close:hover {
+  background: #2d2d44;
+  color: #e2e8f0;
+}
+
+.thinking-bubble-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thinking-msg {
+  display: flex;
+}
+
+.thinking-msg.assistant {
+  justify-content: flex-start;
+}
+
+.thinking-msg.system {
+  justify-content: center;
+}
+
+.thinking-msg-content {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 5px 8px;
+  border-radius: 8px;
+  max-width: 240px;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.thinking-msg.assistant .thinking-msg-content {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.thinking-bubble.dark .thinking-msg.assistant .thinking-msg-content {
+  background: #2d2d44;
+  color: #e2e8f0;
+}
+
+.thinking-msg.system .thinking-msg-content {
+  background: transparent;
+  color: #94a3b8;
+  font-style: italic;
+  font-size: 11px;
+}
+
+/* Scrollbar styling */
+.thinking-bubble-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.thinking-bubble-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thinking-bubble-messages::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 2px;
+}
+
+.thinking-bubble.dark .thinking-bubble-messages::-webkit-scrollbar-thumb {
+  background: #4a4a6a;
 }
 
 /* ── Execution status styles ── */

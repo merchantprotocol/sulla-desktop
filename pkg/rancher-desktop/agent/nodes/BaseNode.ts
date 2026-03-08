@@ -1220,6 +1220,28 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             state.metadata.hadUserMessages = true;
         }
 
+        // If this agent is running inside a workflow, also emit a node_thinking
+        // event so the workflow canvas can display the conversation in a bubble.
+        const workflowNodeId = (state.metadata as any).workflowNodeId;
+        const workflowParentChannel = (state.metadata as any).workflowParentChannel;
+        if (workflowNodeId && workflowParentChannel) {
+            try {
+                const ws = getWebSocketClientService();
+                ws.send(workflowParentChannel, {
+                    type: 'workflow_execution_event',
+                    data: {
+                        type: 'node_thinking',
+                        nodeId: workflowNodeId,
+                        content: content.trim(),
+                        role,
+                        kind,
+                        timestamp: new Date().toISOString(),
+                    },
+                    timestamp: Date.now(),
+                });
+            } catch { /* best-effort */ }
+        }
+
         // Log to conversation logger if a conversationId is set
         const convId = (state.metadata as any).conversationId;
         if (convId && kind !== 'thinking') {
