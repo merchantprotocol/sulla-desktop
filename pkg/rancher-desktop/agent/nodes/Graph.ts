@@ -879,6 +879,84 @@ export class Graph<TState = BaseThreadState> {
           }
         }
 
+        case 'transfer_workflow': {
+          const transferLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          console.log(`[Graph:Playbook] Transfer to workflow "${step.targetWorkflowId}" from node "${step.nodeId}"`);
+
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: transferLabel });
+
+          try {
+            // Load the target workflow definition from disk
+            const fs = await import('fs');
+            const path = await import('path');
+            const { resolveSullaWorkflowsDir } = await import('@pkg/agent/utils/sullaPaths');
+            const workflowsDir = resolveSullaWorkflowsDir();
+
+            let targetDefinition: any;
+            const yamlPath = path.join(workflowsDir, `${step.targetWorkflowId}.yaml`);
+            const jsonPath = path.join(workflowsDir, `${step.targetWorkflowId}.json`);
+
+            if (fs.existsSync(yamlPath)) {
+              const yaml = await import('yaml');
+              targetDefinition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+            } else if (fs.existsSync(jsonPath)) {
+              targetDefinition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+            } else {
+              throw new Error(`Target workflow not found: ${step.targetWorkflowId}`);
+            }
+
+            // Mark the transfer node as completed
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: transferLabel, output: { transferred: step.targetWorkflowId } });
+            await this.saveCheckpoint(step.updatedPlaybook, step.nodeId, transferLabel, 'transfer', { transferred: step.targetWorkflowId });
+
+            // Capture outgoing workflow metadata (like releaseWorkflow, but without clearing activeWorkflow)
+            const outgoingPlaybook = meta.activeWorkflow as WorkflowPlaybookState;
+            const nodeSummaries = Object.values(outgoingPlaybook.nodeOutputs).map((output: PlaybookNodeOutput) => ({
+              nodeId: output.nodeId, label: output.label, subtype: output.subtype,
+              category: output.category,
+              result: typeof output.result === 'string' ? output.result : JSON.stringify(output.result),
+              threadId: output.threadId,
+            }));
+
+            meta.lastCompletedWorkflow = {
+              workflowId:   outgoingPlaybook.workflowId,
+              workflowName: outgoingPlaybook.definition.name,
+              executionId:  outgoingPlaybook.executionId,
+              outcome:      'completed',
+              startedAt:    outgoingPlaybook.startedAt,
+              completedAt:  new Date().toISOString(),
+              nodeResults:  nodeSummaries,
+              transferredTo: step.targetWorkflowId,
+            };
+
+            // Abandon the workflow stack — transfer is a clean break
+            meta.workflowStack = [];
+
+            // Complete the old workflow on the canvas
+            this.emitPlaybookEvent(state, 'workflow_completed', {});
+
+            // Create and activate the target workflow
+            const targetPlaybook = createPlaybookState(targetDefinition, step.payload);
+            meta.activeWorkflow = targetPlaybook;
+
+            console.log(`[Graph:Playbook] Transferred to "${targetDefinition.name}" (${targetPlaybook.executionId})`);
+
+            // Notify orchestrator about the transfer
+            this.injectWorkflowMessage(state, `[Workflow Transfer] The workflow "${outgoingPlaybook.definition.name}" has handed off to "${targetDefinition.name}". The new workflow is now active.`);
+
+            // The main while loop will pick up the new meta.activeWorkflow
+            break;
+          } catch (err: any) {
+            console.error(`[Graph:Playbook] Transfer failed:`, err);
+            this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: transferLabel, error: err.message || String(err) });
+            const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
+            state = await this.releaseWorkflow(state, failedPlaybook, 'failed', err.message || String(err));
+            return state;
+          }
+        }
+
         case 'node_completed': {
           const mechLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
           this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');

@@ -203,6 +203,42 @@ function areUpstreamComplete(
   return incomingEdges.every(edge => completedSet.has(edge.source));
 }
 
+// ── Parallel branch detection ──
+
+/**
+ * Check if a node is inside a parallel branch — i.e. it's reachable from a
+ * parallel node without first passing through a merge node.
+ * Uses reverse BFS from the target node back toward the sources.
+ */
+function isInsideParallelBranch(definition: WorkflowDefinition, nodeId: string): boolean {
+  const reverse = buildReverseEdges(definition);
+  const visited = new Set<string>();
+  const queue = [nodeId];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const node = getNode(definition, current);
+    if (!node) continue;
+
+    // If we hit a parallel node, this node is inside a parallel branch
+    if (node.data.subtype === 'parallel') return true;
+    // If we hit a merge node, stop traversing this path — it's outside the parallel scope
+    if (node.data.subtype === 'merge') continue;
+
+    const incomingEdges = reverse.get(current) || [];
+    for (const edge of incomingEdges) {
+      if (!visited.has(edge.source)) {
+        queue.push(edge.source);
+      }
+    }
+  }
+
+  return false;
+}
+
 // ── Loop body helpers ──
 
 /**
@@ -265,7 +301,8 @@ export type PlaybookStepResult =
   | { action: 'workflow_completed'; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'workflow_failed'; error: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'wait'; nodeId: string; durationMs: number; updatedPlaybook: WorkflowPlaybookState }
-  | { action: 'await_user_input'; nodeId: string; promptText: string; updatedPlaybook: WorkflowPlaybookState };
+  | { action: 'await_user_input'; nodeId: string; promptText: string; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'transfer_workflow'; nodeId: string; targetWorkflowId: string; payload: unknown; updatedPlaybook: WorkflowPlaybookState };
 
 // ── Template resolution ──
 
@@ -498,9 +535,9 @@ function processNode(
     case 'user-input':
       return handleUserInputNode(playbook, nodeId, config);
 
-    // ── Transfer — hand off to another workflow ──
+    // ── Transfer — terminate this workflow and hand off to another ──
     case 'transfer':
-      return completeNodeAndAdvance(playbook, nodeId, node, { transferred: config.targetWorkflowId });
+      return handleTransferNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
     default:
       return completeNodeAndAdvance(playbook, nodeId, node, null);
@@ -1016,6 +1053,56 @@ function handleUserInputNode(
         prompt: promptText,
       },
     },
+  };
+}
+
+function handleTransferNode(
+  playbook: WorkflowPlaybookState,
+  nodeId: string,
+  config: Record<string, unknown>,
+  upstreamOutputs: PlaybookNodeOutput[],
+  triggerPayload: unknown,
+): PlaybookStepResult {
+  const targetWorkflowId = (config.targetWorkflowId as string) || '';
+
+  if (!targetWorkflowId) {
+    const node = getNode(playbook.definition, nodeId)!;
+    return completeNodeAndAdvance(playbook, nodeId, node, { error: 'No target workflow configured' });
+  }
+
+  // Guard: transfer is not allowed inside a loop body
+  if (playbook.loopState) {
+    for (const [loopNodeId, iterState] of Object.entries(playbook.loopState)) {
+      if (iterState.bodyNodeIds.includes(nodeId)) {
+        return {
+          action: 'workflow_failed',
+          error: `Transfer node "${nodeId}" cannot be used inside a loop (loop node "${loopNodeId}"). Use a sub-workflow or response node instead.`,
+          updatedPlaybook: { ...playbook, status: 'failed', error: `Transfer inside loop is not allowed` },
+        };
+      }
+    }
+  }
+
+  // Guard: transfer is not allowed inside a parallel branch
+  if (isInsideParallelBranch(playbook.definition, nodeId)) {
+    return {
+      action: 'workflow_failed',
+      error: `Transfer node "${nodeId}" cannot be used inside a parallel branch. Use a sub-workflow or response node instead.`,
+      updatedPlaybook: { ...playbook, status: 'failed', error: `Transfer inside parallel branch is not allowed` },
+    };
+  }
+
+  // Pass the last upstream output as the payload to the target workflow
+  const payload = upstreamOutputs.length > 0
+    ? upstreamOutputs[upstreamOutputs.length - 1].result
+    : triggerPayload;
+
+  return {
+    action: 'transfer_workflow',
+    nodeId,
+    targetWorkflowId,
+    payload,
+    updatedPlaybook: playbook,
   };
 }
 
