@@ -56,11 +56,12 @@ export class OpenAICompatibleService extends BaseLanguageModel {
 
     for (let attempt = 0; attempt <= this.retryCount; attempt++) {
       try {
-        if (options?.signal?.aborted) throw new Error('Aborted');
+        if (options?.signal?.aborted) throw new DOMException('Operation aborted', 'AbortError');
 
         if (attempt > 0) {
           console.log(`[${this.constructor.name}] Retry ${attempt}/${this.retryCount} after ${Math.pow(2, attempt-1)}s backoff`);
           await new Promise(r => setTimeout(r, Math.pow(2, attempt - 1) * 1000));
+          if (options?.signal?.aborted) throw new DOMException('Aborted during retry backoff', 'AbortError');
         }
 
         writeLLMConversationEvent({

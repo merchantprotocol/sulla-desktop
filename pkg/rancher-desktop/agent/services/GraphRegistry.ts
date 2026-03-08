@@ -286,6 +286,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
 
       // Environmental context (loaded each cycle by HeartbeatNode)
       agentsContext: '',
+      isSubAgent: false,
     },
   };
 

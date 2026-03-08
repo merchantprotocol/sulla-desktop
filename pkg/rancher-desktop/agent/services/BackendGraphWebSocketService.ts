@@ -35,35 +35,27 @@ export class BackendGraphWebSocketService {
   }
 
   dispose(): void {
-    console.log('[BackendGraphWS] Disposing service, cleaning up', this.unsubscribes.length, 'subscriptions');
     this.unsubscribes.forEach(unsub => unsub());
     this.unsubscribes = [];
     for (const [, abort] of this.activeAborts) {
       abort.abort();
     }
     this.activeAborts.clear();
-    console.log('[BackendGraphWS] Service disposed');
   }
 
   private initialize(): void {
-    // Initialize sulla-desktop channel
-    console.log('[BackendGraphWS] Initializing channel:', SULLA_DESKTOP_CHANNEL_ID);
     this.wsService.connect(SULLA_DESKTOP_CHANNEL_ID);
     const sullaUnsub = this.wsService.onMessage(SULLA_DESKTOP_CHANNEL_ID, (msg) => {
       this.handleChannelMessage(SULLA_DESKTOP_CHANNEL_ID, 'sulla-desktop', msg);
     });
     if (sullaUnsub) this.unsubscribes.push(sullaUnsub);
 
-    // Initialize workbench channel
-    console.log('[BackendGraphWS] Initializing channel:', WORKBENCH_CHANNEL_ID);
     this.wsService.connect(WORKBENCH_CHANNEL_ID);
     const workbenchUnsub = this.wsService.onMessage(WORKBENCH_CHANNEL_ID, (msg) => {
       this.handleChannelMessage(WORKBENCH_CHANNEL_ID, 'workbench', msg);
     });
     if (workbenchUnsub) this.unsubscribes.push(workbenchUnsub);
 
-    // Initialize heartbeat channel
-    console.log('[BackendGraphWS] Initializing channel:', HEARTBEAT_CHANNEL_ID);
     this.wsService.connect(HEARTBEAT_CHANNEL_ID);
     const heartbeatUnsub = this.wsService.onMessage(HEARTBEAT_CHANNEL_ID, (msg) => {
       this.handleChannelMessage(HEARTBEAT_CHANNEL_ID, 'heartbeat', msg);
@@ -94,8 +86,6 @@ export class BackendGraphWebSocketService {
     // Subscribe to any custom agent channels from ~/sulla/agents/
     this.subscribeToAgentChannels().catch(err =>
       console.warn('[BackendGraphWS] Failed to subscribe to agent channels:', err));
-
-    console.log('[Background] BackendGraphWebSocketService initialized');
   }
 
   /**
@@ -104,8 +94,6 @@ export class BackendGraphWebSocketService {
    */
   subscribeToChannel(channelId: string): void {
     if (this.subscribedChannels.has(channelId)) return;
-
-    console.log(`[BackendGraphWS] Dynamically subscribing to channel: "${channelId}"`);
     this.wsService.connect(channelId);
     const unsub = this.wsService.onMessage(channelId, (msg) => {
       this.handleChannelMessage(channelId, 'sulla-desktop', msg);
@@ -129,7 +117,6 @@ export class BackendGraphWebSocketService {
         if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
         this.subscribeToChannel(entry.name);
       }
-      console.log(`[BackendGraphWS] Subscribed to ${this.subscribedChannels.size} total channels`);
     } catch (err) {
       console.error('[BackendGraphWS] Error scanning agent channels:', err);
     }
@@ -145,7 +132,6 @@ export class BackendGraphWebSocketService {
     msg: WebSocketMessage,
   ): Promise<void> {
     if (msg.type === 'stop_run') {
-      console.log(`[BackendGraphWS] stop_run on ${channelId}`);
       this.activeAborts.get(channelId)?.abort();
       return;
     }
@@ -153,7 +139,6 @@ export class BackendGraphWebSocketService {
     if (msg.type === 'new_conversation') {
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
       const threadId = data?.threadId as string | undefined;
-      console.log(`[BackendGraphWS] new_conversation on ${channelId} — clearing threadId="${threadId || '(none)'}"`);
       if (threadId) {
         GraphRegistry.delete(threadId);
       }
@@ -168,8 +153,6 @@ export class BackendGraphWebSocketService {
 
     // ThreadId is owned by the frontend chat interface — reuse it to maintain conversation
     const threadIdFromMsg = data?.threadId as string | undefined;
-
-    console.log(`[BackendGraphWS] user_message on ${channelId} — content="${content.slice(0, 80)}", threadId="${threadIdFromMsg || '(none)'}"`);
 
     // Scheduler ack
     const metadata = data?.metadata;
@@ -189,8 +172,6 @@ export class BackendGraphWebSocketService {
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string): Promise<void> {
-    console.log(`[BackendGraphWS] dispatchToAgent() START — channelId="${channelId}", triggerType="${triggerType}", message="${message.slice(0, 80)}"`);
-
     const agentId = overrideAgentId || await getAgentIdForTrigger(triggerType);
 
     // Use the frontend's threadId if provided (maintains conversation).
@@ -198,12 +179,8 @@ export class BackendGraphWebSocketService {
     const isNewThread = !threadIdFromMsg;
     const threadId = threadIdFromMsg || nextThreadId();
 
-    console.log(`[BackendGraphWS] dispatchToAgent() — resolved agentId="${agentId}", threadId="${threadId}", new=${isNewThread}`);
-
     try {
-      console.log(`[BackendGraphWS] dispatchToAgent() — calling GraphRegistry.getOrCreateAgentGraph...`);
       const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
-      console.log(`[BackendGraphWS] dispatchToAgent() — graph ready, model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}, existingMessages=${state.messages.length}`);
 
       // Notify frontend of the threadId so it can maintain the conversation
       if (isNewThread) {
@@ -214,10 +191,11 @@ export class BackendGraphWebSocketService {
         });
       }
 
-      // Create abort service for this run
+      // Create abort service for this run.
+      // Set state first so stop_run can't race between activeAborts and state.
       const abort = new AbortService();
-      this.activeAborts.set(channelId, abort);
       state.metadata.options.abort = abort;
+      this.activeAborts.set(channelId, abort);
 
       // Route responses back to the originating channel
       state.metadata.wsChannel = channelId;
@@ -252,13 +230,10 @@ export class BackendGraphWebSocketService {
       state.metadata.waitingForUser = false;
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
-      console.log(`[BackendGraphWS] dispatchToAgent() — executing graph from '${startNode}', totalMessages=${state.messages.length}`);
-      const startMs = Date.now();
       await graph.execute(state, startNode);
-      console.log(`[BackendGraphWS] dispatchToAgent() — graph execution COMPLETED in ${Date.now() - startMs}ms`);
     } catch (err: any) {
       if (err?.name === 'AbortError') {
-        console.log(`[BackendGraphWS] Execution aborted on ${channelId}`);
+        // Cleanly aborted by user — nothing to report
       } else {
         console.error(`[BackendGraphWS] Agent execution FAILED on ${channelId}:`, err);
         this.emitMessage(channelId, 'assistant_message', {

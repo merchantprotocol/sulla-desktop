@@ -1,9 +1,8 @@
 /**
  * WorkflowPlaybook — stateless DAG walker for agent-orchestrated workflows.
  *
- * Instead of running workflows independently (WorkflowExecutor), the playbook
- * integrates into the orchestrating agent's graph loop. The agent remains in
- * control at all times and can stop/switch workflows freely.
+ * The playbook integrates into the orchestrating agent's graph loop. The agent
+ * remains in control at all times and can stop/switch workflows freely.
  *
  * The playbook:
  * 1. Determines which nodes are ready to execute next
@@ -193,6 +192,7 @@ export type PlaybookStepResult =
   | { action: 'prompt_agent'; prompt: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'node_completed'; nodeId: string; result: unknown; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'spawn_sub_agent'; nodeId: string; agentId: string; prompt: string; config: Record<string, unknown>; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'spawn_sub_workflow'; nodeId: string; workflowId: string; payload: unknown; awaitResponse: boolean; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'workflow_completed'; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'workflow_failed'; error: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'wait'; nodeId: string; durationMs: number; updatedPlaybook: WorkflowPlaybookState };
@@ -348,10 +348,9 @@ function processNode(
     case 'loop':
       return handleLoopNode(playbook, nodeId, config);
 
-    // ── Sub-workflow — load another workflow ──
+    // ── Sub-workflow — load and execute another workflow ──
     case 'sub-workflow':
-      // For now, treat as a pass-through. Sub-workflow support will come later.
-      return completeNodeAndAdvance(playbook, nodeId, node, { todo: 'sub-workflow not yet implemented in playbook mode' });
+      return handleSubWorkflowNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
     // ── Response — send output ──
     case 'response':
@@ -560,6 +559,36 @@ function handleWaitNode(
     action: 'wait',
     nodeId,
     durationMs,
+    updatedPlaybook: playbook,
+  };
+}
+
+function handleSubWorkflowNode(
+  playbook: WorkflowPlaybookState,
+  nodeId: string,
+  config: Record<string, unknown>,
+  upstreamOutputs: PlaybookNodeOutput[],
+  triggerPayload: unknown,
+): PlaybookStepResult {
+  const workflowId = (config.workflowId as string) || '';
+  const awaitResponse = config.awaitResponse !== false;
+
+  if (!workflowId) {
+    const node = getNode(playbook.definition, nodeId)!;
+    return completeNodeAndAdvance(playbook, nodeId, node, { error: 'No workflow ID configured' });
+  }
+
+  // Determine the payload to pass to the sub-workflow
+  const payload = upstreamOutputs.length > 0
+    ? upstreamOutputs[upstreamOutputs.length - 1].result
+    : triggerPayload;
+
+  return {
+    action: 'spawn_sub_workflow',
+    nodeId,
+    workflowId,
+    payload,
+    awaitResponse,
     updatedPlaybook: playbook,
   };
 }

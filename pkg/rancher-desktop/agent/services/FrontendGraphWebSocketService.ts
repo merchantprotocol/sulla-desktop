@@ -93,16 +93,12 @@ export class FrontendGraphWebSocketService {
   }
 
   private async handleWebSocketMessage(msg: WebSocketMessage): Promise<void> {
-    console.log(`[FrontendGraphWS] handleWebSocketMessage — type="${msg.type}", channel="${this.channelId}"`);
-
     if (msg.type === 'stop_run') {
-      console.log('[FrontendGraphWS] stop_run received');
       this.activeAbort?.abort();
       return;
     }
 
     if (msg.type === 'continue_run') {
-      console.log('[FrontendGraphWS] continue_run received — resuming graph');
       await this.continueGraphExecution();
       return;
     }
@@ -115,8 +111,6 @@ export class FrontendGraphWebSocketService {
 
     const threadIdFromMsg = data?.threadId as string | undefined;
     const metadata = data?.metadata;
-
-    console.log(`[FrontendGraphWS] user_message received — content="${content.slice(0, 80)}", origin="${metadata?.origin || 'user'}", threadIdFromMsg="${threadIdFromMsg || '(none)'}"`);
 
     // Scheduler ack
     if (metadata?.origin === 'scheduler' && typeof metadata?.eventId === 'number') {
@@ -131,28 +125,22 @@ export class FrontendGraphWebSocketService {
   }
 
   private async processUserInput(userText: string, threadIdFromMsg?: string): Promise<void> {
-    console.log(`[FrontendGraphWS] processUserInput() START — text="${userText.slice(0, 80)}", threadIdFromMsg="${threadIdFromMsg || '(none)'}"`);
-
     const channelId = this.channelId;
 
     // ThreadId is owned by the frontend chat interface.
     // Use the one from the message if provided, otherwise create a new one.
     const isNewThread = !threadIdFromMsg;
     const threadId = threadIdFromMsg || nextThreadId();
-    console.log(`[FrontendGraphWS] processUserInput() — resolving agent for channel="${channelId}"...`);
     const agentId = await getAgentIdForTrigger(channelId);
 
-    console.log(`[FrontendGraphWS] processUserInput() — resolved agentId="${agentId}", threadId="${threadId}"`);
-
     // Get or create persistent AgentGraph for this thread using the default agent
-    console.log(`[FrontendGraphWS] processUserInput() — calling GraphRegistry.getOrCreateAgentGraph...`);
     const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
-    console.log(`[FrontendGraphWS] processUserInput() — graph ready: agent="${state.metadata?.agent?.name || '(none)'}", model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}`);
 
-    // Create a fresh AbortService for this run and wire it into state
+    // Create a fresh AbortService for this run and wire it into state.
+    // Set state first so stop_run can't race between activeAbort and state.
     const abort = new AbortService();
-    this.activeAbort = abort;
     state.metadata.options.abort = abort;
+    this.activeAbort = abort;
 
     // Always refresh model context from current settings so existing threads
     // follow the currently selected frontend model/provider.
@@ -161,7 +149,6 @@ export class FrontendGraphWebSocketService {
     state.metadata.llmModel = mode === 'remote'
       ? await SullaSettingsModel.get('remoteModel', '')
       : await SullaSettingsModel.get('sullaModel', '');
-    console.log(`[FrontendGraphWS] processUserInput() — model refreshed: mode="${mode}", model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}`);
 
     try {
 
@@ -209,16 +196,12 @@ export class FrontendGraphWebSocketService {
 
       // Execute on the persistent AgentGraph starting from input_handler
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
-      console.log(`[FrontendGraphWS] processUserInput() — executing graph from "${startNode}"...`);
-      const startMs = Date.now();
       await graph.execute(state, startNode);
-      console.log(`[FrontendGraphWS] processUserInput() — graph execution COMPLETED in ${Date.now() - startMs}ms`);
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        console.log('[FrontendGraphWS] Execution aborted');
         this.emitSystemMessage('Execution stopped.');
       } else {
-        console.error('[FrontendGraphWS] Error:', err?.message, err?.stack);
+        console.error('[FrontendGraphWS] Error:', err?.message);
         this.emitSystemMessage(`Error: ${err.message || String(err)}`);
       }
     } finally {
@@ -245,10 +228,11 @@ export class FrontendGraphWebSocketService {
 
     const { graph, state } = existing as { graph: any; state: AgentGraphState };
 
-    // Create a fresh AbortService for this run
+    // Create a fresh AbortService for this run.
+    // Set state first so stop_run can't race between activeAbort and state.
     const abort = new AbortService();
-    this.activeAbort = abort;
     state.metadata.options.abort = abort;
+    this.activeAbort = abort;
 
     try {
       // Reset loop counters so the graph can run another full set of cycles
@@ -262,10 +246,9 @@ export class FrontendGraphWebSocketService {
       await graph.execute(state, 'agent');
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        console.log('[FrontendGraphWS] Continue execution aborted');
         this.emitSystemMessage('Execution stopped.');
       } else {
-        console.error('[FrontendGraphWS] Continue error:', err);
+        console.error('[FrontendGraphWS] Continue error:', err?.message);
         this.emitSystemMessage(`Error: ${err.message || String(err)}`);
       }
     } finally {

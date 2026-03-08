@@ -1,6 +1,10 @@
 /**
  * Workflow IPC event handlers for the visual workflow editor.
- * Manages CRUD operations and execution for workflow definitions stored as YAML files.
+ * Manages CRUD operations for workflow definitions stored as YAML files.
+ *
+ * Workflow execution is handled by the agent's graph loop via WorkflowPlaybook —
+ * not by these IPC handlers. The frontend triggers workflows by sending messages
+ * to the agent (via execute_workflow tool).
  */
 
 import * as fs from 'fs';
@@ -10,22 +14,10 @@ import yaml from 'yaml';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
-import { BrowserWindow } from 'electron';
-
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
-import type { WorkflowExecutionEvent, WorkflowRunState } from '@pkg/agent/workflow/types';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
-
-// ── Active execution registry ──
-
-interface ActiveExecution {
-  executor: InstanceType<typeof import('@pkg/agent/workflow/WorkflowExecutor').WorkflowExecutor>;
-  runState?: WorkflowRunState;
-}
-
-const activeExecutions = new Map<string, ActiveExecution>();
 
 function getWorkflowsDir(): string {
   const { resolveSullaWorkflowsDir } = require('@pkg/agent/utils/sullaPaths');
@@ -156,118 +148,10 @@ export function initSullaWorkflowEvents(): void {
     return true;
   });
 
-  // ── Execution handlers ──
-
-  // Execute a workflow — returns executionId immediately, sends events via WebSocket
-  ipcMainProxy.handle('workflow-execute', async(_event: unknown, workflowId: string, triggerPayload: unknown) => {
-    const filePath = resolveWorkflowPath(getWorkflowsDir(), workflowId);
-
-    if (!filePath) {
-      throw new Error(`Workflow not found: ${ workflowId }`);
-    }
-
-    const definition: WorkflowDefinition = parseWorkflowFile(filePath);
-
-    // Dynamic import to avoid bundling workflow engine into renderer
-    const { WorkflowExecutor } = await import('@pkg/agent/workflow/WorkflowExecutor');
-    const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
-
-    const wsService = getWebSocketClientService();
-
-    const emitEvent = (partial: Omit<WorkflowExecutionEvent, 'executionId' | 'workflowId' | 'timestamp'>) => {
-      const event: WorkflowExecutionEvent = {
-        ...partial,
-        executionId: executor.id,
-        workflowId,
-        timestamp: new Date().toISOString(),
-      };
-
-      // Send via WebSocket on a dedicated channel for this execution
-      const channel = `workflow-exec-${ executor.id }`;
-      wsService.send(channel, {
-        type: 'workflow_execution_event',
-        data: event,
-        id:   `${ event.type }-${ event.nodeId || 'workflow' }-${ Date.now() }`,
-      }).catch(() => {});
-
-      // Send to renderer process(es) via IPC
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send(`workflow-execution-event-${ executor.id }`, event);
-      }
-    };
-
-    const executor = new WorkflowExecutor(definition, triggerPayload, { emitEvent });
-    const executionId = executor.id;
-
-    activeExecutions.set(executionId, { executor });
-
-    // Run in the background — don't await
-    executor.execute().then((runState) => {
-      const entry = activeExecutions.get(executionId);
-      if (entry) {
-        entry.runState = runState;
-      }
-      // Clean up after 5 minutes
-      setTimeout(() => activeExecutions.delete(executionId), 5 * 60 * 1000);
-    }).catch((err) => {
-      console.error(`[Sulla] Workflow execution failed: ${ executionId }`, err);
-      setTimeout(() => activeExecutions.delete(executionId), 5 * 60 * 1000);
-    });
-
-    console.log(`[Sulla] Workflow execution started: ${ workflowId } -> ${ executionId }`);
-
-    return { executionId };
-  });
-
-  // Get execution status
-  ipcMainProxy.handle('workflow-execution-status', async(_event: unknown, executionId: string) => {
-    const entry = activeExecutions.get(executionId);
-    if (!entry) {
-      return null;
-    }
-
-    if (entry.runState) {
-      return {
-        executionId,
-        status:      entry.runState.status,
-        startedAt:   entry.runState.startedAt,
-        completedAt: entry.runState.completedAt,
-        error:       entry.runState.error,
-      };
-    }
-
-    return { executionId, status: 'running' };
-  });
-
-  // Abort a running execution
-  ipcMainProxy.handle('workflow-execution-abort', async(_event: unknown, executionId: string) => {
-    const entry = activeExecutions.get(executionId);
-    if (entry) {
-      entry.executor.abort();
-      console.log(`[Sulla] Workflow execution aborted: ${ executionId }`);
-
-      return true;
-    }
-
-    return false;
-  });
-
-  // Resume a paused execution (user-input node)
-  ipcMainProxy.handle('workflow-execution-resume', async(_event: unknown, executionId: string, nodeId: string, userData: unknown) => {
-    const entry = activeExecutions.get(executionId);
-    if (entry) {
-      entry.executor.resume(nodeId, userData);
-      console.log(`[Sulla] Workflow execution resumed: ${ executionId } node ${ nodeId }`);
-
-      return true;
-    }
-
-    return false;
-  });
-
   // ── Registry dispatch handler ──
   // Used by external trigger sources (calendar, chat apps, heartbeat, API)
-  // to route a message to the right workflow based on trigger type.
+  // to find the right workflow based on trigger type.
+  // Returns the definition — execution happens through the agent's graph loop.
   ipcMainProxy.handle('workflow-dispatch', async(
     _event: unknown,
     triggerType: string,
@@ -277,26 +161,10 @@ export function initSullaWorkflowEvents(): void {
     const { getWorkflowRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
     const registry = getWorkflowRegistry();
 
-    const emitEvent = (partial: Omit<WorkflowExecutionEvent, 'executionId' | 'workflowId' | 'timestamp'>) => {
-      // Build the full event — executionId/workflowId will be filled by the executor
-      const event: WorkflowExecutionEvent = {
-        ...partial,
-        executionId: '',
-        workflowId:  '',
-        timestamp:   new Date().toISOString(),
-      };
-
-      // Send to renderer
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('workflow-dispatch-event', event);
-      }
-    };
-
     const result = await registry.dispatch({
       triggerType: triggerType as any,
       message,
       workflowId,
-      emitEvent,
     });
 
     if (!result) {
@@ -305,14 +173,10 @@ export function initSullaWorkflowEvents(): void {
       return null;
     }
 
-    // Track the execution
-    activeExecutions.set(result.executionId, { executor: result.executor });
-    setTimeout(() => activeExecutions.delete(result.executionId), 5 * 60 * 1000);
-
     console.log(`[Sulla] Dispatched "${ message.slice(0, 80) }" -> workflow "${ result.workflowName }"`);
 
     return {
-      executionId:  result.executionId,
+      executionId:  `wfd-${ Date.now() }-${ Math.random().toString(36).slice(2, 8) }`,
       workflowId:   result.workflowId,
       workflowName: result.workflowName,
     };

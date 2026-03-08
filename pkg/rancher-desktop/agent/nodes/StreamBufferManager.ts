@@ -247,14 +247,7 @@ export class StreamBufferManager {
    * Trigger new serverless instance to process complete buffer
    */
   private async triggerServerlessHandoff(threadId: string, content: string, reason: string): Promise<void> {
-    console.log(`[StreamBuffer] Triggering serverless handoff for ${threadId}`);
-    console.log(`[StreamBuffer] Handoff reason: ${reason}`);
-    console.log(`[StreamBuffer] Content: "${content}"`);
-    
-    // In real implementation, this would trigger a new Lambda/serverless function
-    // For now, we'll use console logging to indicate the handoff point
-    console.log(`[StreamBuffer] 🚀 NEW SERVERLESS INSTANCE SHOULD START NOW`);
-    console.log(`[StreamBuffer] Next instance will process: "${content}"`);
+    console.log(`[StreamBuffer] Serverless handoff for ${threadId} — reason=${reason}, content="${content.substring(0, 80)}"`);
   }
 
   /**

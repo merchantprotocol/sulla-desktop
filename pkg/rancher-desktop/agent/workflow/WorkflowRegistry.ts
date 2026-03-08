@@ -5,9 +5,12 @@
  * with a trigger type and a user message. The registry:
  *
  * 1. Scans all saved workflows for trigger nodes matching that type
- * 2. If one match → runs it directly
+ * 2. If one match → returns it directly
  * 3. If multiple matches → uses LLM to pick the best one based on triggerDescription
  * 4. Can also be called with a specific workflowId to skip selection
+ *
+ * The registry does NOT execute workflows — it only selects them. Execution is
+ * handled by the agent's graph loop via WorkflowPlaybook.
  */
 
 import * as fs from 'fs';
@@ -20,9 +23,6 @@ import type {
   TriggerNodeSubtype,
 } from '@pkg/pages/editor/workflow/types';
 
-import { WorkflowExecutor } from './WorkflowExecutor';
-import type { WorkflowExecutionEvent, WorkflowRunState } from './types';
-
 // ── Types ──
 
 export interface WorkflowDispatchOptions {
@@ -32,19 +32,12 @@ export interface WorkflowDispatchOptions {
   message: string;
   /** Optional: skip LLM selection and run this specific workflow */
   workflowId?: string;
-  /** The originating WebSocket channel so agent nodes route responses back correctly */
-  originChannel?: string;
-  /** Callback for execution events (forwarded to the executor) */
-  emitEvent?: (event: Omit<WorkflowExecutionEvent, 'executionId' | 'workflowId' | 'timestamp'>) => void;
 }
 
 export interface WorkflowDispatchResult {
-  executionId: string;
   workflowId: string;
   workflowName: string;
-  executor: WorkflowExecutor;
-  /** Resolves when the workflow execution finishes (success or failure). */
-  done: Promise<WorkflowRunState>;
+  definition: WorkflowDefinition;
 }
 
 interface WorkflowCandidate {
@@ -62,22 +55,20 @@ export class WorkflowRegistry {
   }
 
   /**
-   * Dispatch a message to the appropriate workflow.
-   * Returns the executor so callers can track or abort it.
+   * Select the appropriate workflow for a message.
+   * Returns the workflow definition so callers can activate it via the playbook.
    */
   async dispatch(options: WorkflowDispatchOptions): Promise<WorkflowDispatchResult | null> {
-    const { triggerType, message, workflowId, emitEvent } = options;
+    const { triggerType, message, workflowId } = options;
 
-    console.log(`[WorkflowRegistry] dispatch() called — triggerType="${triggerType}", workflowId="${workflowId || '(auto)'}", originChannel="${options.originChannel || '(none)'}", message="${message.slice(0, 80)}"`);
+    console.log(`[WorkflowRegistry] dispatch() called — triggerType="${triggerType}", workflowId="${workflowId || '(auto)'}", message="${message.slice(0, 80)}"`);
 
     let definition: WorkflowDefinition;
 
     if (workflowId) {
-      // Direct dispatch — skip selection
       console.log(`[WorkflowRegistry] Direct dispatch to workflowId="${workflowId}"`);
       definition = this.loadWorkflow(workflowId);
     } else {
-      // Find candidates by trigger type
       const candidates = this.findCandidates(triggerType);
 
       if (candidates.length === 0) {
@@ -89,7 +80,6 @@ export class WorkflowRegistry {
         console.log(`[WorkflowRegistry] Single candidate found: "${candidates[0].definition.name}" (${candidates[0].definition.id})`);
         definition = candidates[0].definition;
       } else {
-        // Multiple candidates — use LLM to select
         console.log(`[WorkflowRegistry] ${candidates.length} candidates found, using LLM to select`);
         const selected = await this.selectWorkflow(candidates, message);
         if (!selected) {
@@ -100,37 +90,12 @@ export class WorkflowRegistry {
       }
     }
 
-    // Create and start the executor
-    console.log(`[WorkflowRegistry] Creating WorkflowExecutor for "${definition.name}" (${definition.id}), originChannel="${options.originChannel}"`);
-    const executor = new WorkflowExecutor(definition, message, {
-      emitEvent,
-      originChannel: options.originChannel,
-    });
-
-    console.log(`[WorkflowRegistry] Dispatching to workflow "${definition.name}" (${definition.id}) via ${triggerType}, executionId=${executor.id}`);
-
-    // Run in background — capture the promise so callers can monitor completion
-    const done = executor.execute().catch(err => {
-      console.error(`[WorkflowRegistry] Workflow "${definition.id}" failed:`, err);
-      // Return a failed run state so callers always get a WorkflowRunState
-      return {
-        executionId: executor.id,
-        workflowId:  definition.id,
-        status:      'failed' as const,
-        nodeStates:  new Map(),
-        context:     { executionId: executor.id, triggerPayload: message, nodeOutputs: new Map(), variables: {} },
-        startedAt:   new Date().toISOString(),
-        completedAt: new Date().toISOString(),
-        error:       err?.message || String(err),
-      } satisfies WorkflowRunState;
-    });
+    console.log(`[WorkflowRegistry] Selected workflow "${definition.name}" (${definition.id}) via ${triggerType}`);
 
     return {
-      executionId:  executor.id,
       workflowId:   definition.id,
       workflowName: definition.name,
-      executor,
-      done,
+      definition,
     };
   }
 
@@ -160,13 +125,11 @@ export class WorkflowRegistry {
 
         console.log(`[WorkflowRegistry] Scanning "${entry.name}": name="${definition.name}", enabled=${definition.enabled}`);
 
-        // Only consider enabled workflows for production dispatch
         if (!definition.enabled) {
           console.log(`[WorkflowRegistry]   → Skipped (disabled)`);
           continue;
         }
 
-        // Find trigger nodes matching this type
         let matched = false;
         for (const node of definition.nodes) {
           if (node.data.category === 'trigger') {
@@ -181,7 +144,7 @@ export class WorkflowRegistry {
               triggerDescription: (node.data.config?.triggerDescription as string) || definition.name || '',
             });
             matched = true;
-            break; // one match per workflow is enough
+            break;
           }
         }
         if (!matched) {
@@ -194,6 +157,25 @@ export class WorkflowRegistry {
 
     console.log(`[WorkflowRegistry] findCandidates() result: ${candidates.length} candidate(s)`);
     return candidates;
+  }
+
+  /**
+   * Load a specific workflow by ID.
+   */
+  loadWorkflow(workflowId: string): WorkflowDefinition {
+    const yamlPath = path.join(this.workflowsDir, `${workflowId}.yaml`);
+
+    if (fs.existsSync(yamlPath)) {
+      return yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+    }
+
+    const jsonPath = path.join(this.workflowsDir, `${workflowId}.json`);
+
+    if (fs.existsSync(jsonPath)) {
+      return JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    }
+
+    throw new Error(`Workflow not found: ${workflowId}`);
   }
 
   /**
@@ -229,25 +211,6 @@ ${workflowList}`;
     }
 
     return null;
-  }
-
-  /**
-   * Load a specific workflow by ID.
-   */
-  private loadWorkflow(workflowId: string): WorkflowDefinition {
-    const yamlPath = path.join(this.workflowsDir, `${workflowId}.yaml`);
-
-    if (fs.existsSync(yamlPath)) {
-      return yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
-    }
-
-    const jsonPath = path.join(this.workflowsDir, `${workflowId}.json`);
-
-    if (fs.existsSync(jsonPath)) {
-      return JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-    }
-
-    throw new Error(`Workflow not found: ${workflowId}`);
   }
 }
 

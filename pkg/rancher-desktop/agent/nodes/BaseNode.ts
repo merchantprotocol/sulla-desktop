@@ -843,7 +843,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                         ['system', 'user', 'assistant'].includes(msg.role)
                     ) as ChatMessage[];
                     const reply = await secondary.chat(chatMessages, {
-                        signal: options.signal,
+                        signal: state.metadata?.options?.abort?.signal,
                         temperature: options.temperature,
                         maxTokens: options.maxTokens,
                         format: options.format,
@@ -857,6 +857,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                     }
                 }
             } catch (fallbackErr) {
+                if ((fallbackErr as any)?.name === 'AbortError') throw fallbackErr;
                 console.error(`[${this.name}:BaseNode] Secondary provider fallback failed:`, fallbackErr);
             }
 

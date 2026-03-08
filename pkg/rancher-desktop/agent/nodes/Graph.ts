@@ -15,6 +15,7 @@ import {
   processNextStep,
   resolveDecision,
   completeSubAgent,
+  createPlaybookState,
   type PlaybookStepResult,
 } from '../workflow/WorkflowPlaybook';
 
@@ -28,7 +29,6 @@ import {
 
 const DEFAULT_WS_CHANNEL = 'heartbeat';
 const MAX_CONSECTUIVE_LOOP = 40;
-const MAX_MESSAGES_IN_THREAD = 120;
 
 // ── Hand-back parser ──
 
@@ -133,7 +133,6 @@ export interface GraphEdge<TState> {
 export interface BaseThreadState {
   messages: ChatMessage[];
 
-  // for simple node
   prompt?: string;
 
   // Tools found by browse_tools calls (accumulates across multiple calls)
@@ -376,7 +375,6 @@ export class Graph<TState = BaseThreadState> {
     let state = initialState;
     (state as any).metadata.currentNodeId = entryPointNodeId || this.entryPoint;
 
-    console.log(`[Graph] Start from ${(state as any).metadata.currentNodeId}`);
 
     // Conversation logging (skip on playbook re-entry to avoid duplicates)
     const isReentry = options?._isPlaybookReentry ?? false;
@@ -412,14 +410,12 @@ export class Graph<TState = BaseThreadState> {
         throwIfAborted(state, 'Graph execution aborted');
 
         if ((state as any).metadata.waitingForUser && (state as any).metadata.currentNodeId === 'input_handler') {
-          console.log('[Graph] Waiting for user at input_handler → forcing end');
           break;
         }
 
         const node = this.nodes.get((state as any).metadata.currentNodeId);
         if (!node) throw new Error(`Node missing: ${(state as any).metadata.currentNodeId}`);
 
-        console.log(`[Graph] → ${node.name} (${(state as any).metadata.currentNodeId})`);
         const result: NodeResult<TState> = await node.execute(state);
 
         state = result.state;
@@ -432,7 +428,6 @@ export class Graph<TState = BaseThreadState> {
 
         const currentNodeId = String((state as any).metadata.currentNodeId || '');
         let nextId = this.resolveNext(currentNodeId, result.decision, state);
-        console.log(`[Graph] ${result.decision.type} → ${nextId}`);
 
         if (nextId === currentNodeId) {
           (state as any).metadata.consecutiveSameNode++;
@@ -452,16 +447,13 @@ export class Graph<TState = BaseThreadState> {
         }
 
         if (nextId === 'end' || (this.endPoints.has((state as any).metadata.currentNodeId) && result.decision.type === 'end')) {
-          console.log(`[Graph] Complete after ${(state as any).metadata.iterations} iterations`);
           break;
         }
 
         (state as any).metadata.currentNodeId = nextId;
       }
     } catch (error: any) {
-      console.log('[Graph] Execution stopped:', error);
       if (error?.name === 'AbortError') {
-        console.log('[Graph] Graph execution aborted by user');
         (state as any).metadata.waitingForUser = false;
         if (convId) {
           getConversationLogger().logGraphCompleted(convId, 'aborted');
@@ -505,7 +497,6 @@ export class Graph<TState = BaseThreadState> {
     if (!isReentry) {
       const stopReason = (state as any).metadata.stopReason || null;
       const waitingForUser = !!(state as any).metadata.waitingForUser;
-      console.log('[Graph] Sending graph_execution_complete signal, stopReason:', stopReason, 'waitingForUser:', waitingForUser);
       const ws = getWebSocketClientService();
       const connId = (state as any).metadata.wsChannel || 'heartbeat';
       ws.send(connId, {
@@ -531,7 +522,6 @@ export class Graph<TState = BaseThreadState> {
 
     if (!playbook || playbook.status !== 'running') return state;
 
-    console.log(`[Graph:Playbook] Processing workflow "${playbook.workflowId}" — frontier: [${playbook.currentNodeIds.join(', ')}]`);
 
     // ── Reset canvas and replay all already-completed nodes (triggers + checkpoint nodes) ──
     this.emitPlaybookEvent(state, 'workflow_started', { workflowId: playbook.workflowId });
@@ -551,7 +541,6 @@ export class Graph<TState = BaseThreadState> {
       const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
 
       if (lastAssistant?.content) {
-        console.log(`[Graph:Playbook] Resolving pending ${playbook.pendingDecision.subtype} decision with agent response`);
         const pendNodeId = playbook.pendingDecision.nodeId;
         const resolved = resolveDecision(playbook, String(lastAssistant.content));
         meta.activeWorkflow = resolved.updatedPlaybook;
@@ -567,7 +556,6 @@ export class Graph<TState = BaseThreadState> {
         await this.saveCheckpoint(resolved.updatedPlaybook, pendNodeId, pendNodeLabel, pendNodeSubtype, lastAssistant.content);
 
         if (resolved.action === 'workflow_completed' || resolved.action === 'workflow_failed') {
-          console.log(`[Graph:Playbook] Workflow ${resolved.action} after decision resolution`);
           this.emitPlaybookEvent(state, resolved.action, {});
           const outcome = resolved.action === 'workflow_completed' ? 'completed' : 'failed';
           state = await this.releaseWorkflow(state, resolved.updatedPlaybook, outcome);
@@ -592,7 +580,6 @@ export class Graph<TState = BaseThreadState> {
       switch (step.action) {
         case 'prompt_agent': {
           // Inject the prompt as a user message and re-enter agent loop
-          console.log(`[Graph:Playbook] Prompting agent for decision`);
           const decisionNodeId = step.updatedPlaybook.pendingDecision?.nodeId;
           if (decisionNodeId) {
             this.emitEdgeActivations(state, step.updatedPlaybook.definition, decisionNodeId, 'incoming');
@@ -611,7 +598,6 @@ export class Graph<TState = BaseThreadState> {
             const msgs = (state as any).messages;
             const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
             if (lastAssistant?.content) {
-              console.log(`[Graph:Playbook] Resolving decision after re-entry`);
               const resolvedNodeId = pendingPlaybook.pendingDecision?.nodeId;
               const resolved = resolveDecision(pendingPlaybook, String(lastAssistant.content));
               meta.activeWorkflow = resolved.updatedPlaybook;
@@ -649,7 +635,6 @@ export class Graph<TState = BaseThreadState> {
 
           if (isToolCall) {
             // ── Tool Call: orchestrator validates params, then execute silently ──
-            console.log(`[Graph:Playbook] Tool call "${step.nodeId}" — validating params`);
             const preCallDesc = (step.config.preCallDescription as string) || '';
             const toolInfo = `Integration: ${step.config.integrationSlug || 'unknown'}\nEndpoint: ${step.config.endpointName || 'unknown'}`;
             const paramSummary = Object.entries((step.config.defaults as Record<string, string>) || {})
@@ -676,7 +661,6 @@ export class Graph<TState = BaseThreadState> {
               await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'tool-call', resultText);
 
               if (completed.action === 'workflow_completed') {
-                console.log(`[Graph:Playbook] Workflow completed after tool call`);
                 this.emitPlaybookEvent(state, 'workflow_completed', {});
                 state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
                 return state;
@@ -691,7 +675,6 @@ export class Graph<TState = BaseThreadState> {
             }
           } else {
             // ── Agent Node: before prompt → execute (no orchestrator) → after validation ──
-            console.log(`[Graph:Playbook] Agent node "${step.nodeId}" — before prompt`);
             const beforePromptText = (step.config.beforePrompt as string) || '';
             const successCriteria = (step.config.successCriteria as string) || '';
 
@@ -735,7 +718,6 @@ export class Graph<TState = BaseThreadState> {
               await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'agent', resultText);
 
               if (completed.action === 'workflow_completed') {
-                console.log(`[Graph:Playbook] Workflow completed after sub-agent`);
                 this.emitPlaybookEvent(state, 'workflow_completed', {});
                 state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
                 return state;
@@ -752,9 +734,55 @@ export class Graph<TState = BaseThreadState> {
           break;
         }
 
+        case 'spawn_sub_workflow': {
+          const subWfLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subWfLabel });
+
+          try {
+            // Load the sub-workflow definition from disk
+            const fs = await import('fs');
+            const path = await import('path');
+            const { resolveSullaWorkflowsDir } = await import('@pkg/agent/utils/sullaPaths');
+            const workflowsDir = resolveSullaWorkflowsDir();
+
+            let subDefinition: any;
+            const yamlPath = path.join(workflowsDir, `${step.workflowId}.yaml`);
+            const jsonPath = path.join(workflowsDir, `${step.workflowId}.json`);
+
+            if (fs.existsSync(yamlPath)) {
+              const yaml = await import('yaml');
+              subDefinition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+            } else if (fs.existsSync(jsonPath)) {
+              subDefinition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+            } else {
+              throw new Error(`Sub-workflow not found: ${step.workflowId}`);
+            }
+
+            // Save parent workflow onto a stack
+            const parentPlaybook = meta.activeWorkflow;
+            if (!meta.workflowStack) meta.workflowStack = [];
+            meta.workflowStack.push({ playbook: parentPlaybook, nodeId: step.nodeId });
+
+            // Create and activate the sub-workflow playbook
+            const subPlaybook = createPlaybookState(subDefinition, step.payload);
+            meta.activeWorkflow = subPlaybook;
+
+            // Process the sub-workflow through the same loop (recursive via continue)
+            // The main while loop will pick up meta.activeWorkflow which is now the sub-workflow
+            break;
+          } catch (err: any) {
+            console.error(`[Graph:Playbook] Sub-workflow failed to load:`, err);
+            this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subWfLabel, error: err.message || String(err) });
+            const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
+            state = await this.releaseWorkflow(state, failedPlaybook, 'failed', err.message || String(err));
+            return state;
+          }
+        }
+
         case 'node_completed': {
           const mechLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-          console.log(`[Graph:Playbook] Node "${step.nodeId}" completed mechanically`);
           this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
           this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: mechLabel });
           this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: mechLabel, output: step.result });
@@ -765,7 +793,6 @@ export class Graph<TState = BaseThreadState> {
 
         case 'wait': {
           const waitLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-          console.log(`[Graph:Playbook] Wait node "${step.nodeId}" — ${step.durationMs}ms`);
           this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
           this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: waitLabel });
           await new Promise<void>(resolve => setTimeout(resolve, step.durationMs));
@@ -781,13 +808,55 @@ export class Graph<TState = BaseThreadState> {
         }
 
         case 'workflow_completed': {
-          console.log(`[Graph:Playbook] Workflow completed`);
+          // Check if this is a sub-workflow completing — pop the stack
+          if (meta.workflowStack?.length > 0) {
+            const parent = meta.workflowStack.pop();
+            const subOutputs = Object.values(step.updatedPlaybook.nodeOutputs) as PlaybookNodeOutput[];
+            const lastOutput = subOutputs[subOutputs.length - 1];
+            const subResult = lastOutput?.result ?? null;
+
+            this.emitPlaybookEvent(state, 'workflow_completed', {});
+
+            // Complete the sub-workflow node in the parent playbook
+            const completed = completeSubAgent(parent.playbook, parent.nodeId, subResult);
+            meta.activeWorkflow = completed.updatedPlaybook;
+
+            const parentNodeLabel = this.getPlaybookNodeLabel(parent.playbook, parent.nodeId);
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: parent.nodeId, nodeLabel: parentNodeLabel, output: subResult });
+            this.emitEdgeActivations(state, parent.playbook.definition, parent.nodeId, 'outgoing');
+            await this.saveCheckpoint(completed.updatedPlaybook, parent.nodeId, parentNodeLabel, 'sub-workflow', subResult);
+
+            if (completed.action === 'workflow_completed') {
+              // Parent workflow also completed
+              this.emitPlaybookEvent(state, 'workflow_completed', {});
+              state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+              return state;
+            }
+            // Continue processing parent workflow
+            break;
+          }
+
           this.emitPlaybookEvent(state, 'workflow_completed', {});
           state = await this.releaseWorkflow(state, step.updatedPlaybook, 'completed');
           return state;
         }
 
         case 'workflow_failed': {
+          // If a sub-workflow fails, propagate failure to the parent
+          if (meta.workflowStack?.length > 0) {
+            const parent = meta.workflowStack.pop();
+            console.error(`[Graph:Playbook] Sub-workflow failed: ${step.error}, propagating to parent node "${parent.nodeId}"`);
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
+            this.emitPlaybookEvent(state, 'node_failed', { nodeId: parent.nodeId, error: step.error });
+
+            // Fail the parent workflow
+            const failedParent = { ...parent.playbook, status: 'failed' as const, error: step.error };
+            meta.activeWorkflow = failedParent;
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
+            state = await this.releaseWorkflow(state, failedParent, 'failed', step.error);
+            return state;
+          }
+
           console.error(`[Graph:Playbook] Workflow failed: ${step.error}`);
           this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
           state = await this.releaseWorkflow(state, step.updatedPlaybook, 'failed', step.error);
@@ -902,7 +971,6 @@ export class Graph<TState = BaseThreadState> {
         nodeOutput,
       });
 
-      console.log(`[Graph:Checkpoint] Saved checkpoint #${sequence} for "${nodeLabel}" (${nodeId})`);
     } catch (err) {
       console.warn(`[Graph:Checkpoint] Failed to save checkpoint for "${nodeLabel}":`, err);
     }
@@ -959,7 +1027,6 @@ export class Graph<TState = BaseThreadState> {
     this.injectWorkflowMessage(state, summaryMsg);
 
     // Re-enter the agent loop so the agent can process the completion and continue naturally
-    console.log(`[Graph:Playbook] Releasing agent from workflow — re-entering agent loop`);
     state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
     return state;
@@ -995,6 +1062,9 @@ export class Graph<TState = BaseThreadState> {
     // Inject prompt
     subState.messages.push({ role: 'user', content: prompt });
 
+    // Mark as sub-agent so blocked status doesn't trigger waitingForUser
+    subState.metadata.isSubAgent = true;
+
     // Tag sub-agent with workflow nodeId so BaseNode.wsChatMessage can emit
     // node_thinking events back to the workflow canvas.
     const parentChannel = (_state as any).metadata?.wsChannel || 'workbench';
@@ -1003,6 +1073,19 @@ export class Graph<TState = BaseThreadState> {
 
     // Execute sub-agent graph
     const finalState = await graph.execute(subState);
+
+    // Check if the sub-agent is blocked — surface blocker info in the output
+    const agentMeta = (finalState.metadata as any)?.agent || {};
+    const agentStatus = String(agentMeta.status || '').toLowerCase();
+    if (agentStatus === 'blocked') {
+      const blockerReason = agentMeta.blocker_reason || 'Unknown blocker';
+      const unblockReqs = agentMeta.unblock_requirements || '';
+      return {
+        output: `[BLOCKED] ${blockerReason}${unblockReqs ? ` | Requirements: ${unblockReqs}` : ''}`,
+        threadId,
+      };
+    }
+
     const output = finalState.metadata?.finalSummary
       || finalState.messages?.[finalState.messages.length - 1]?.content
       || '';
@@ -1059,31 +1142,25 @@ export class Graph<TState = BaseThreadState> {
    * @returns Next node ID or 'end'
    */
   private resolveNext(current: string, decision: NodeDecision, state: TState): string {
-    console.log(`[Graph] resolveNext: current=${current}, decision=${decision.type}`);
-    
     switch (decision.type) {
       case 'end': return 'end';
       case 'goto':
         if (this.nodes.has(decision.nodeId)) return decision.nodeId;
-        console.warn(`Invalid goto: ${decision.nodeId}`);
+        console.warn(`[Graph] Invalid goto: ${decision.nodeId}`);
         return 'end';
       case 'continue': return current;
       case 'revise':
         return this.getReviserFor(current) || 'end';
       case 'next':
         const edges = this.edges.get(current) || [];
-        console.log(`[Graph] resolveNext: found ${edges.length} edges for ${current}`);
         for (const edge of edges) {
           if (typeof edge.to === 'function') {
             const nextId = edge.to(state);
-            console.log(`[Graph] resolveNext: conditional edge resolved to ${nextId}`);
             if (nextId && this.nodes.has(nextId)) return nextId;
           } else if (this.nodes.has(edge.to)) {
-            console.log(`[Graph] resolveNext: static edge to ${edge.to}`);
             return edge.to;
           }
         }
-        console.log(`[Graph] resolveNext: no valid edges found, ending`);
         return 'end';
     }
   }

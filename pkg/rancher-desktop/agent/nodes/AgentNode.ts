@@ -449,11 +449,18 @@ export class AgentNode extends BaseNode {
     }
 
     if (outcome.status === 'blocked') {
-      const parts = [outcome.blockerReason, outcome.unblockRequirements]
+      // Preserve any prose the agent wrote before the AGENT_BLOCKED wrapper —
+      // this is the agent's explanation or question to the user, critical for
+      // training data and user context.
+      const parts = [
+        proseWithoutWrappers,
+        outcome.blockerReason,
+        outcome.unblockRequirements,
+      ]
         .filter((part): part is string => Boolean(part && part.trim()))
         .map(part => part.trim());
       if (parts.length > 0) {
-        return parts.join('\n');
+        return parts.join('\n\n');
       }
       return 'Blocked.';
     }
