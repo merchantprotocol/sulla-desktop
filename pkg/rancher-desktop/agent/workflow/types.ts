@@ -40,9 +40,29 @@ export interface WorkflowPlaybookState {
     /** For conditions: the rules being evaluated */
     rules?: { field: string; operator: string; value: string }[];
   };
+  /** Active loop iteration state, keyed by loop nodeId */
+  loopState?: Record<string, LoopIterationState>;
   startedAt: string;
   completedAt?: string;
   error?: string;
+}
+
+/** Tracks iteration progress for a single loop node */
+export interface LoopIterationState {
+  currentIteration: number;
+  /** Shared thread ID across all iterations */
+  threadId: string;
+  /** Accumulated conversation messages across all iterations (for training data) */
+  accumulatedConversation: Array<{ role: string; content: string; iteration: number }>;
+  /** Snapshot of body node outputs from each completed iteration */
+  iterationResults: Array<{
+    index: number;
+    bodyOutputs: Record<string, PlaybookNodeOutput>;
+  }>;
+  /** Node IDs that form the loop body (cached after first discovery) */
+  bodyNodeIds: string[];
+  /** Node IDs at the start of the loop body */
+  bodyStartNodeIds: string[];
 }
 
 export interface PlaybookNodeOutput {

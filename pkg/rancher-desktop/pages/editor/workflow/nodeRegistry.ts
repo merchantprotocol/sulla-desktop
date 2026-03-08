@@ -10,6 +10,8 @@ export interface NodeTypeDefinition {
   defaultLabel: string;
   defaultConfig: () => Record<string, any>;
   hasMultipleOutputs?: boolean;
+  /** When true, the node renders custom positioned handles instead of the default top/bottom pair */
+  hasCustomHandles?: boolean;
 }
 
 // SVG icons — all stroke-based, 20x20 viewBox, matching TriggerNodePanel.vue pattern
@@ -164,7 +166,8 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     description:   'Repeat until condition or max iterations',
     iconSvg:       ICONS.loop,
     defaultLabel:  'Loop',
-    defaultConfig: () => ({ maxIterations: 10, condition: '' }),
+    defaultConfig: () => ({ maxIterations: 10, condition: '', conditionMode: 'template' }),
+    hasCustomHandles: true,
   },
   {
     subtype:       'parallel',

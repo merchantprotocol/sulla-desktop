@@ -26,6 +26,7 @@ import type { WorkflowNodeSubtype } from '@pkg/pages/editor/workflow/types';
 import type {
   WorkflowPlaybookState,
   PlaybookNodeOutput,
+  LoopIterationState,
 } from './types';
 
 // ── Default hand-back contract ──
@@ -171,11 +172,14 @@ function getUpstreamOutputs(
 
 /**
  * Check if all upstream dependencies of a node are completed.
+ * For loop nodes, handle-aware filtering ensures the loop-back edge
+ * doesn't block initial entry, and the loop-entry edge doesn't block re-entry.
  */
 function areUpstreamComplete(
   definition: WorkflowDefinition,
   nodeId: string,
   completedNodeIds: string[],
+  loopState?: Record<string, LoopIterationState>,
 ): boolean {
   const reverse = buildReverseEdges(definition);
   const incomingEdges = reverse.get(nodeId) || [];
@@ -183,7 +187,63 @@ function areUpstreamComplete(
   if (incomingEdges.length === 0) return true;
 
   const completedSet = new Set(completedNodeIds);
+  const node = getNode(definition, nodeId);
+
+  // Loop nodes: filter edges based on whether the loop has started iterating
+  if (node?.data.subtype === 'loop') {
+    const hasStarted = loopState?.[nodeId] !== undefined;
+    const relevantEdges = incomingEdges.filter(edge => {
+      if (!hasStarted && edge.targetHandle === 'loop-back') return false;
+      if (hasStarted && edge.targetHandle === 'loop-entry') return false;
+      return true;
+    });
+    return relevantEdges.length === 0 || relevantEdges.every(edge => completedSet.has(edge.source));
+  }
+
   return incomingEdges.every(edge => completedSet.has(edge.source));
+}
+
+// ── Loop body helpers ──
+
+/**
+ * Get the node ID that connects into a loop node's loop-back handle.
+ * This is the "last" node in the loop body.
+ */
+function getLoopBackSource(definition: WorkflowDefinition, loopNodeId: string): string | undefined {
+  const reverse = buildReverseEdges(definition);
+  const incomingEdges = reverse.get(loopNodeId) || [];
+  const backEdge = incomingEdges.find(e => e.targetHandle === 'loop-back');
+  return backEdge?.source;
+}
+
+/**
+ * Collect all node IDs that form the loop body — the subgraph between
+ * the loop-start downstream nodes and the loop-back source node.
+ * Uses BFS from bodyStartNodes, stopping at loopNodeId (to avoid escaping the body).
+ */
+function collectLoopBodyNodes(
+  definition: WorkflowDefinition,
+  bodyStartNodeIds: string[],
+  loopNodeId: string,
+): string[] {
+  const forward = buildForwardEdges(definition);
+  const visited = new Set<string>();
+  const queue = [...bodyStartNodeIds];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current) || current === loopNodeId) continue;
+    visited.add(current);
+
+    const edges = forward.get(current) || [];
+    for (const edge of edges) {
+      if (!visited.has(edge.target)) {
+        queue.push(edge.target);
+      }
+    }
+  }
+
+  return Array.from(visited);
 }
 
 // ── Step result types ──
@@ -293,7 +353,7 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
 
   // Filter to nodes whose upstream dependencies are all complete
   const readyNodes = currentNodeIds.filter(id =>
-    areUpstreamComplete(definition, id, completedNodeIds),
+    areUpstreamComplete(definition, id, completedNodeIds, playbook.loopState),
   );
 
   if (readyNodes.length === 0) {
@@ -422,9 +482,9 @@ function processNode(
         merged: upstreamOutputs.map(o => ({ nodeId: o.nodeId, label: o.label, result: o.result })),
       });
 
-    // ── Loop — check iteration count ──
+    // ── Loop — iterate body nodes between loop-start and loop-back ──
     case 'loop':
-      return handleLoopNode(playbook, nodeId, config);
+      return handleLoopNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
     // ── Sub-workflow — load and execute another workflow ──
     case 'sub-workflow':
@@ -675,42 +735,221 @@ function handleLoopNode(
   playbook: WorkflowPlaybookState,
   nodeId: string,
   config: Record<string, unknown>,
+  upstreamOutputs: PlaybookNodeOutput[],
+  triggerPayload: unknown,
 ): PlaybookStepResult {
+  const { definition } = playbook;
   const maxIterations = Number(config.maxIterations) || 10;
-  const iterKey = `__loop_${nodeId}_iteration`;
+  const condition = (config.condition as string) || '';
+  const conditionMode = (config.conditionMode as string) || 'template';
+  const node = getNode(definition, nodeId)!;
 
-  // Track iterations in nodeOutputs as a side-channel
-  const currentIteration = (playbook.nodeOutputs[iterKey]?.result as number) || 0;
+  // Initialize or retrieve loop state
+  const loopState = { ...(playbook.loopState || {}) };
+  let iterState = loopState[nodeId];
 
-  if (currentIteration >= maxIterations) {
-    const node = getNode(playbook.definition, nodeId)!;
+  // Discover body nodes (once, then cached in loop state)
+  const bodyStartNodeIds = getDownstreamNodes(definition, [nodeId], 'loop-start');
+
+  if (bodyStartNodeIds.length === 0) {
+    // No body connected — complete immediately via loop-exit
     return completeNodeAndAdvance(playbook, nodeId, node, {
-      continue: false,
-      iteration: currentIteration,
-      reason: 'max_iterations',
-    });
+      iteration: 0,
+      reason: 'no_body_connected',
+    }, 'loop-exit');
   }
 
-  // Increment iteration counter and continue the loop
-  const now = new Date().toISOString();
-  const updatedOutputs = {
-    ...playbook.nodeOutputs,
-    [iterKey]: {
-      nodeId:      iterKey,
-      label:       'loop_counter',
-      subtype:     'loop' as WorkflowNodeSubtype,
-      category:    'flow-control' as const,
-      result:      currentIteration + 1,
-      completedAt: now,
+  const bodyNodeIds = collectLoopBodyNodes(definition, bodyStartNodeIds, nodeId);
+
+  if (!iterState) {
+    // First entry — initialize loop state
+    const threadId = `loop_${nodeId}_${Date.now()}`;
+    iterState = {
+      currentIteration: 0,
+      threadId,
+      accumulatedConversation: [],
+      iterationResults: [],
+      bodyNodeIds,
+      bodyStartNodeIds,
+    };
+    loopState[nodeId] = iterState;
+
+    // Start iteration 0: add body-start nodes to frontier
+    return startLoopIteration(playbook, nodeId, iterState, loopState);
+  }
+
+  // Re-entry from loop-back — body just completed an iteration
+  // Snapshot body outputs before resetting
+  const bodyOutputs: Record<string, PlaybookNodeOutput> = {};
+  for (const bodyId of bodyNodeIds) {
+    if (playbook.nodeOutputs[bodyId]) {
+      bodyOutputs[bodyId] = playbook.nodeOutputs[bodyId];
+
+      // Accumulate conversation from body agent nodes
+      const output = playbook.nodeOutputs[bodyId];
+      if (output.category === 'agent' && output.result) {
+        iterState.accumulatedConversation.push({
+          role: 'assistant',
+          content: typeof output.result === 'string' ? output.result : JSON.stringify(output.result),
+          iteration: iterState.currentIteration,
+        });
+      }
+    }
+  }
+
+  iterState.iterationResults.push({
+    index: iterState.currentIteration,
+    bodyOutputs,
+  });
+
+  iterState.currentIteration += 1;
+
+  // Check max iterations
+  if (iterState.currentIteration >= maxIterations) {
+    return completeLoop(playbook, nodeId, node, iterState, loopState, 'max_iterations');
+  }
+
+  // Check stop condition
+  if (condition.trim()) {
+    if (conditionMode === 'llm') {
+      // LLM evaluation — prompt the orchestrator
+      const lastBodyOutput = Object.values(bodyOutputs)
+        .map(o => `[${o.label}]: ${typeof o.result === 'string' ? o.result : JSON.stringify(o.result)}`)
+        .join('\n');
+
+      const prompt = `You are evaluating a loop stop condition after iteration ${iterState.currentIteration}.
+
+Condition to evaluate: ${condition}
+
+Latest iteration output:
+${lastBodyOutput}
+
+Should the loop STOP? Respond with exactly "true" to stop or "false" to continue.`;
+
+      loopState[nodeId] = iterState;
+      return {
+        action: 'prompt_agent',
+        prompt,
+        updatedPlaybook: {
+          ...playbook,
+          loopState,
+          pendingDecision: {
+            nodeId,
+            subtype: 'loop' as any,
+            prompt,
+          },
+        },
+      };
+    } else {
+      // Template evaluation — resolve variables and check for truthy match
+      const resolved = resolveTemplate(condition, triggerPayload, playbook.nodeOutputs, upstreamOutputs);
+
+      // Simple truthy check: if the resolved template equals "true" or the condition contained
+      // a "contains" check that matched, stop the loop
+      if (resolved.toLowerCase() === 'true' || resolved.toLowerCase() === 'yes') {
+        return completeLoop(playbook, nodeId, node, iterState, loopState, 'condition_met');
+      }
+
+      // Check "contains" pattern: "{{X.result}} contains Y" → already resolved to "actualValue contains Y"
+      const containsMatch = resolved.match(/^(.+?)\s+contains\s+(.+)$/i);
+      if (containsMatch) {
+        const [, haystack, needle] = containsMatch;
+        if (haystack.toLowerCase().includes(needle.toLowerCase().trim())) {
+          return completeLoop(playbook, nodeId, node, iterState, loopState, 'condition_met');
+        }
+      }
+    }
+  }
+
+  // Condition not met — start next iteration
+  loopState[nodeId] = iterState;
+  return startLoopIteration(playbook, nodeId, iterState, loopState);
+}
+
+/**
+ * Reset body nodes and add body-start nodes to the frontier for a new iteration.
+ */
+function startLoopIteration(
+  playbook: WorkflowPlaybookState,
+  loopNodeId: string,
+  iterState: LoopIterationState,
+  loopState: Record<string, LoopIterationState>,
+): PlaybookStepResult {
+  const { bodyNodeIds, bodyStartNodeIds } = iterState;
+
+  // Remove body nodes from completedNodeIds
+  const bodySet = new Set(bodyNodeIds);
+  const updatedCompleted = playbook.completedNodeIds.filter(id => !bodySet.has(id));
+
+  // Clear body node outputs
+  const updatedOutputs = { ...playbook.nodeOutputs };
+  for (const bodyId of bodyNodeIds) {
+    delete updatedOutputs[bodyId];
+  }
+
+  // Update frontier: remove loop node, add body-start nodes
+  const frontier = new Set(playbook.currentNodeIds);
+  frontier.delete(loopNodeId);
+  for (const startId of bodyStartNodeIds) {
+    frontier.add(startId);
+  }
+
+  return {
+    action: 'node_completed',
+    nodeId: loopNodeId,
+    result: { continue: true, iteration: iterState.currentIteration },
+    updatedPlaybook: {
+      ...playbook,
+      currentNodeIds: Array.from(frontier),
+      completedNodeIds: updatedCompleted,
+      nodeOutputs: updatedOutputs,
+      loopState,
     },
   };
+}
 
-  const node = getNode(playbook.definition, nodeId)!;
+/**
+ * Finalize a loop — store accumulated results and advance via loop-exit handle.
+ */
+function completeLoop(
+  playbook: WorkflowPlaybookState,
+  loopNodeId: string,
+  node: WorkflowNodeSerialized,
+  iterState: LoopIterationState,
+  loopState: Record<string, LoopIterationState>,
+  exitReason: string,
+): PlaybookStepResult {
+  // Clean up body nodes from completedNodeIds so they don't interfere with downstream
+  const bodySet = new Set(iterState.bodyNodeIds);
+  const updatedCompleted = playbook.completedNodeIds.filter(id => !bodySet.has(id));
+  const updatedOutputs = { ...playbook.nodeOutputs };
+  for (const bodyId of iterState.bodyNodeIds) {
+    delete updatedOutputs[bodyId];
+  }
+
+  // Remove loop state for this node (loop is done)
+  const updatedLoopState = { ...loopState };
+  delete updatedLoopState[loopNodeId];
+
+  const finalResult = {
+    totalIterations: iterState.currentIteration,
+    exitReason,
+    conversation: iterState.accumulatedConversation,
+    iterationResults: iterState.iterationResults,
+    threadId: iterState.threadId,
+  };
+
   return completeNodeAndAdvance(
-    { ...playbook, nodeOutputs: updatedOutputs },
-    nodeId,
+    {
+      ...playbook,
+      completedNodeIds: updatedCompleted,
+      nodeOutputs: updatedOutputs,
+      loopState: Object.keys(updatedLoopState).length > 0 ? updatedLoopState : undefined,
+    },
+    loopNodeId,
     node,
-    { continue: true, iteration: currentIteration + 1 },
+    finalResult,
+    'loop-exit',
   );
 }
 
@@ -894,6 +1133,29 @@ export function resolveDecision(
         passed,
         handleId,
       );
+    }
+
+    case 'loop' as any: {
+      // LLM condition evaluation response — "true" means stop, "false" means continue
+      const response = agentResponse.trim().toLowerCase();
+      const shouldStop = response === 'true' || response === 'yes';
+      const loopNodeId = decision.nodeId;
+
+      const loopState = { ...(playbook.loopState || {}) };
+      const iterState = loopState[loopNodeId];
+
+      if (!iterState) {
+        return { action: 'workflow_failed', error: `No loop state for node "${loopNodeId}"`, updatedPlaybook: playbook };
+      }
+
+      const clearedPlaybook = { ...playbook, pendingDecision: undefined };
+
+      if (shouldStop) {
+        return completeLoop(clearedPlaybook, loopNodeId, node, iterState, loopState, 'condition_met');
+      }
+
+      // Continue iterating
+      return startLoopIteration(clearedPlaybook, loopNodeId, iterState, loopState);
     }
 
     case 'user-input':

@@ -3,14 +3,17 @@
     ref="flowContainer"
     class="workflow-editor"
     :class="{ dark: isDark }"
+    tabindex="0"
     @dragover.prevent="onDragOver"
     @drop="onDrop"
+    @keydown="onKeyDown"
   >
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
       :class="{ dark: isDark }"
       :default-viewport="{ zoom: 1 }"
+      :default-edge-options="{ type: 'smoothstep', pathOptions: { borderRadius: 12, offset: 20 } }"
       fit-view-on-init
       @nodes-change="onNodesChange"
       @edges-change="onEdgesChange"
@@ -115,6 +118,7 @@ const { applyNodeChanges, applyEdgeChanges, addEdges, addNodes, project, getView
 
 const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
+const selectedNodeId = ref<string | null>(null);
 
 // Load workflow data when a *different* workflow is loaded (id changes).
 // Metadata-only changes (name, enabled, description) should NOT reset the canvas.
@@ -190,6 +194,7 @@ function confirmDelete() {
   }
   applyNodeChanges(deleteConfirm.pendingChanges);
   deleteConfirm.pendingChanges = [];
+  selectedNodeId.value = null;
   emit('node-selected', null);
   emit('workflow-changed');
 }
@@ -232,6 +237,7 @@ function onNodesChange(changes: NodeChange[]) {
 
   // No connections on any removed node — delete immediately
   applyNodeChanges(removeChanges);
+  selectedNodeId.value = null;
   emit('node-selected', null);
   emit('workflow-changed');
 }
@@ -284,6 +290,83 @@ function onConnect(connection: Connection) {
   const sourceData = sourceNode?.data as WorkflowNodeData | undefined;
   const targetData = targetNode?.data as WorkflowNodeData | undefined;
 
+  // ── Loop handle connection rules ──
+  // Validate connections involving loop node handles
+  if (targetData?.subtype === 'loop') {
+    const targetHandle = connection.targetHandle;
+
+    // Block self-connections: no handle on a loop node should connect to another handle on the same loop node
+    if (connection.source === connection.target) {
+      console.warn('[WorkflowEditor] Cannot connect a loop node to itself.');
+      return;
+    }
+
+    // loop-entry (In): only accepts connections from upstream workflow nodes (not loop body nodes)
+    if (targetHandle === 'loop-entry') {
+      // Prevent loop body nodes from connecting to loop-entry
+      if (sourceData && isLoopBodyNode(connection.target!, connection.source!)) {
+        console.warn('[WorkflowEditor] Cannot connect a loop body node to the loop entry. Use the "Back" handle instead.');
+        return;
+      }
+    }
+
+    // loop-back (Back): only accepts connections from nodes downstream of loop-start (loop body)
+    if (targetHandle === 'loop-back') {
+      // Prevent upstream/external nodes from connecting to loop-back
+      if (sourceData && !isLoopBodyNode(connection.target!, connection.source!)) {
+        console.warn('[WorkflowEditor] Only loop body nodes (downstream of "Start") can connect to the "Back" handle.');
+        return;
+      }
+    }
+
+    // loop-exit (Exit): should not accept any incoming connections (it's a source handle)
+    // Vue Flow already handles this via handle type (source vs target), but double-check
+    if (targetHandle === 'loop-exit') {
+      console.warn('[WorkflowEditor] Cannot connect to the loop "Exit" handle — it is an output.');
+      return;
+    }
+
+    // loop-start (Start): should not accept incoming connections (it's a source handle)
+    if (targetHandle === 'loop-start') {
+      console.warn('[WorkflowEditor] Cannot connect to the loop "Start" handle — it is an output.');
+      return;
+    }
+  }
+
+  if (sourceData?.subtype === 'loop') {
+    const sourceHandle = connection.sourceHandle;
+
+    // loop-exit (Exit): should not connect back to the loop's own body nodes
+    if (sourceHandle === 'loop-exit') {
+      if (targetData && isLoopBodyNode(connection.source!, connection.target!)) {
+        console.warn('[WorkflowEditor] The loop "Exit" handle should connect to downstream nodes outside the loop body.');
+        return;
+      }
+    }
+
+    // loop-start (Start): should only connect to loop body nodes, not to external downstream
+    // (This is a soft guideline — not strictly enforced, but warn)
+  }
+
+  // ── Block nested loops ──
+  // A loop node cannot be placed inside another loop's body
+  if (targetData?.subtype === 'loop' && sourceData?.subtype !== 'loop') {
+    // Check if any existing loop node has the source in its body — that would make the target loop nested
+    const loopNodes = nodes.value.filter(n => (n.data as WorkflowNodeData).subtype === 'loop' && n.id !== connection.target);
+    for (const ln of loopNodes) {
+      if (isLoopBodyNode(ln.id, connection.source!)) {
+        console.warn('[WorkflowEditor] Cannot place a loop node inside another loop body. Nested loops are not supported.');
+        return;
+      }
+    }
+  }
+
+  // A loop's Start handle cannot connect to another loop node
+  if (sourceData?.subtype === 'loop' && connection.sourceHandle === 'loop-start' && targetData?.subtype === 'loop') {
+    console.warn('[WorkflowEditor] Cannot place a loop node inside another loop body. Nested loops are not supported.');
+    return;
+  }
+
   if (targetData && NON_PARALLELIZABLE_SUBTYPES.has(targetData.subtype)) {
     // Block direct connection from a parallel node
     if (sourceData?.subtype === 'parallel') {
@@ -310,8 +393,43 @@ function onConnect(connection: Connection) {
   emit('workflow-changed');
 }
 
+/**
+ * Check whether a node is (or would be) inside a loop body — i.e. it is reachable
+ * from the loop node's loop-start handle via forward edges, without leaving the loop.
+ */
+function isLoopBodyNode(loopNodeId: string, candidateNodeId: string): boolean {
+  // BFS forward from the loop node's loop-start edges
+  const visited = new Set<string>();
+  const queue: string[] = [];
+
+  // Find edges going out from the loop node's loop-start handle
+  for (const edge of edges.value) {
+    if (edge.source === loopNodeId && edge.sourceHandle === 'loop-start') {
+      queue.push(edge.target);
+    }
+  }
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current) || current === loopNodeId) continue;
+    visited.add(current);
+
+    if (current === candidateNodeId) return true;
+
+    // Follow forward edges (but stop at the loop node to avoid escaping)
+    for (const edge of edges.value) {
+      if (edge.source === current && !visited.has(edge.target)) {
+        queue.push(edge.target);
+      }
+    }
+  }
+
+  return false;
+}
+
 function onNodeClick({ node }: { node: Node }) {
   closeContextMenu();
+  selectedNodeId.value = node.id;
   emit('node-selected', {
     id:    node.id,
     label: (node.data as WorkflowNodeData)?.label ?? (node.label as string),
@@ -370,8 +488,16 @@ function ctxDisconnect() {
 
 function ctxDelete() {
   closeContextMenu();
-  // Trigger the same flow as keyboard delete
-  const nodeId = contextMenu.nodeId;
+  deleteNodeById(contextMenu.nodeId);
+}
+
+function onPaneClick() {
+  closeContextMenu();
+  selectedNodeId.value = null;
+  emit('node-selected', null);
+}
+
+function deleteNodeById(nodeId: string) {
   const connectedEdges = getEdgesForNode(nodeId);
   const node = nodes.value.find(n => n.id === nodeId);
   const label = (node?.data as WorkflowNodeData)?.label || 'This node';
@@ -385,14 +511,23 @@ function ctxDelete() {
     deleteConfirm.visible = true;
   } else {
     applyNodeChanges([removeChange]);
+    selectedNodeId.value = null;
     emit('node-selected', null);
     emit('workflow-changed');
   }
 }
 
-function onPaneClick() {
-  closeContextMenu();
-  emit('node-selected', null);
+function onKeyDown(event: KeyboardEvent) {
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    // Don't intercept if user is typing in an input field
+    const tag = (event.target as HTMLElement)?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+    if (selectedNodeId.value) {
+      event.preventDefault();
+      deleteNodeById(selectedNodeId.value);
+    }
+  }
 }
 
 function updateNodeLabel(nodeId: string, label: string) {
@@ -521,6 +656,7 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
   height: 100%;
   flex: 1;
   min-height: 0;
+  outline: none;
 }
 
 .workflow-editor :deep(.vue-flow) {

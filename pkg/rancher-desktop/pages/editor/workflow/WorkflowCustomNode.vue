@@ -11,9 +11,40 @@
       'exec-skipped':   data.execution?.status === 'skipped',
     }"
   >
-    <!-- Target handle (top) — hidden for trigger nodes -->
+    <!-- Loop node: 4 custom handles with labels -->
+    <template v-if="data.subtype === 'loop'">
+      <!-- In (top): label above the dot -->
+      <div class="loop-handle-top">
+        <span class="loop-handle-label loop-label-in" :class="{ dark: isDark }">In</span>
+        <Handle type="target" id="loop-entry" :position="Position.Top" class="node-handle" />
+      </div>
+
+      <!-- Start (bottom): dot then label below, like condition True/False -->
+      <div class="loop-handles-bottom">
+        <div class="route-handle-col">
+          <Handle type="source" id="loop-start" :position="Position.Bottom" class="node-handle route-handle-dot" />
+          <span class="route-handle-label" :class="{ dark: isDark }">Start</span>
+        </div>
+      </div>
+
+      <!-- Back (right): dot with label below it, left-aligned -->
+      <div class="loop-handle-right">
+        <Handle type="target" id="loop-back" :position="Position.Right" class="node-handle" />
+        <span class="loop-handle-label loop-label-back" :class="{ dark: isDark }">Back</span>
+      </div>
+
+      <!-- Exit (left): dot then label below, right-aligned so "t" is at the dot -->
+      <div class="loop-handle-left">
+        <div class="route-handle-col loop-exit-col">
+          <Handle type="source" id="loop-exit" :position="Position.Left" class="node-handle route-handle-dot" />
+          <span class="route-handle-label" :class="{ dark: isDark }">Exit</span>
+        </div>
+      </div>
+    </template>
+
+    <!-- Target handle (top) — hidden for trigger nodes and loop nodes -->
     <Handle
-      v-if="data.category !== 'trigger'"
+      v-if="data.category !== 'trigger' && data.subtype !== 'loop'"
       type="target"
       :position="Position.Top"
       class="node-handle"
@@ -80,9 +111,9 @@
       <svg v-else-if="data.execution.status === 'waiting'" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
     </div>
 
-    <!-- Source handle (bottom) — hidden when node has route handles -->
+    <!-- Source handle (bottom) — hidden when node has route handles or custom handles (loop) -->
     <Handle
-      v-if="routeHandles.length === 0"
+      v-if="routeHandles.length === 0 && data.subtype !== 'loop'"
       type="source"
       :position="Position.Bottom"
       class="node-handle"
@@ -120,7 +151,7 @@ const props = defineProps<{
   isDark: boolean;
 }>();
 
-const sullaIconUrl = new URL('../../../../../resources/icons/sulla-node-icon.png', import.meta.url).href;
+const sullaIconUrl = new URL('../../../../../resources/icons/robot-512-nobg.png', import.meta.url).href;
 
 const thinkingExpanded = ref(false);
 const messagesContainer = ref<HTMLElement | null>(null);
@@ -289,6 +320,109 @@ const routeHandles = computed(() => {
 
 .route-handle-label.dark {
   color: #94a3b8;
+}
+
+/* ── Loop handle positioning ── */
+/* Wrappers pin dots flush against the icon; only labels are offset */
+
+.loop-handle-top {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 1;
+}
+
+.loop-handles-bottom {
+  position: absolute;
+  bottom: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+  z-index: 1;
+}
+
+.loop-handle-right {
+  position: absolute;
+  right: -14px;
+  top: 38%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  z-index: 1;
+}
+
+.loop-handle-left {
+  position: absolute;
+  left: -8px;
+  top: 39%;
+  transform: translateY(-50%);
+  display: flex;
+  justify-content: center;
+  z-index: 1;
+}
+
+/* Exit: adjust dot position */
+.loop-handle-left :deep(.vue-flow__handle-left) {
+  top: 41%;
+  left: 0;
+  transform: translate(-50%, -50%);
+}
+
+.loop-handle-label {
+  font-size: 7px;
+  font-weight: 600;
+  color: #94a3b8;
+  white-space: nowrap;
+  line-height: 1;
+  pointer-events: none;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.loop-handle-label.dark {
+  color: #64748b;
+}
+
+/* In: label above the dot, raised 1.5x font height */
+.loop-label-in {
+  margin-top: -11px;
+  color: #475569;
+}
+
+/* Back: adjust dot position */
+.loop-handle-right :deep(.vue-flow__handle-right) {
+  top: 46%;
+  left: -5px;
+  transform: translate(50%, -50%);
+}
+
+/* Back: label below the dot, B starts at the dot */
+.loop-label-back {
+  margin-top: 12px;
+  margin-left: 0px;
+  color: #475569;
+  text-transform: none;
+}
+
+/* Start: label nudged left of dot */
+.loop-handles-bottom .route-handle-col {
+  margin-left: -11px;
+}
+
+/* Exit: label nudged right so "t" aligns with dot */
+.loop-handle-left .route-handle-label {
+  padding-right: 6px;
+}
+
+/* Exit: right-align label so "t" is at the dot */
+.loop-exit-col {
+  align-items: flex-end;
 }
 
 /* ── Thinking bubble ── */

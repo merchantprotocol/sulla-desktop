@@ -52,15 +52,45 @@
           class="node-field-input node-field-textarea"
           :class="{ dark: isDark }"
           rows="2"
-          placeholder="e.g. response.status === 'complete' or no more items to process"
+          :placeholder="config.conditionMode === 'llm'
+            ? 'e.g. Has the agent completed the task successfully?'
+            : 'e.g. {{Agent.result}} contains done'"
           :value="config.condition || ''"
           @input="updateField('condition', ($event.target as HTMLTextAreaElement).value)"
         ></textarea>
       </div>
+      <div class="node-field">
+        <label class="node-field-label" :class="{ dark: isDark }">Condition Mode</label>
+        <div class="behavior-toggle">
+          <button
+            class="behavior-btn"
+            :class="{ active: config.conditionMode !== 'llm', dark: isDark }"
+            @click="updateField('conditionMode', 'template')"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Template
+          </button>
+          <button
+            class="behavior-btn"
+            :class="{ active: config.conditionMode === 'llm', dark: isDark }"
+            @click="updateField('conditionMode', 'llm')"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            LLM
+          </button>
+        </div>
+        <p class="config-hint" :class="{ dark: isDark }" style="margin-top: 6px;">
+          {{ config.conditionMode === 'llm'
+            ? 'The orchestrator evaluates the condition in natural language after each iteration.'
+            : 'Condition is evaluated using variable template matching against the last body output.'
+          }}
+        </p>
+      </div>
       <div class="node-field help-section">
         <p class="help-text" :class="{ dark: isDark }">
-          Repeats the connected nodes up to the max iterations. Stops early if the stop condition
-          evaluates to true. The output of each iteration is fed as input to the next.
+          Connect the <strong>loop body</strong> between the bottom (start) and right (back) handles.
+          The loop repeats until the condition is met or max iterations reached.
+          Exit continues from the left handle. Each iteration accumulates conversation context.
         </p>
       </div>
     </template>

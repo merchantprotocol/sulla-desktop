@@ -68,6 +68,8 @@ export interface WaitNodeConfig {
 export interface LoopNodeConfig {
   maxIterations: number;
   condition: string;
+  /** How to evaluate the stop condition: 'template' for {{variable}} matching, 'llm' for orchestrator evaluation */
+  conditionMode: 'template' | 'llm';
 }
 
 export interface ParallelNodeConfig {
