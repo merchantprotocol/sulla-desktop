@@ -184,6 +184,24 @@ const agentHandler: NodeHandler = async(args) => {
     // Execute the agent graph
     const finalState = await graph.execute(state);
 
+    const agentMeta = (finalState.metadata as any)?.agent || {};
+    const agentStatus = String(agentMeta.status || '').toLowerCase();
+
+    // If the sub-agent is blocked, include blocker details in the result
+    // so the workflow orchestrator can surface it
+    if (agentStatus === 'blocked') {
+      const blockerReason = agentMeta.blocker_reason || 'Unknown blocker';
+      const unblockReqs = agentMeta.unblock_requirements || '';
+      console.log(`[WorkflowAgent] Sub-agent blocked — reason: ${blockerReason}, requirements: ${unblockReqs}`);
+      return {
+        result: `[BLOCKED] ${blockerReason}${unblockReqs ? ` | Requirements: ${unblockReqs}` : ''}`,
+        threadId,
+        blocked: true,
+        blockerReason,
+        unblockRequirements: unblockReqs,
+      };
+    }
+
     const result = finalState.metadata?.finalSummary || finalState.messages?.[finalState.messages.length - 1]?.content || '';
 
     if (!result) {

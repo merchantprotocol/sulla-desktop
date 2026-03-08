@@ -236,6 +236,14 @@ export class BackendGraphWebSocketService {
         metadata:  { source: 'backend' },
       } as any);
 
+      // Resume from current node if the agent was waiting for user input
+      const resumeNodeId = state.metadata.waitingForUser === true
+        ? String(state.metadata.currentNodeId || '').trim()
+        : '';
+      const shouldResumeFromCurrentNode = !!resumeNodeId
+        && resumeNodeId !== 'input_handler'
+        && resumeNodeId !== 'output';
+
       // Reset execution counters for this run (but NOT messages — those accumulate)
       state.metadata.consecutiveSameNode = 0;
       state.metadata.iterations = 0;
@@ -243,9 +251,10 @@ export class BackendGraphWebSocketService {
       state.metadata.cycleComplete = false;
       state.metadata.waitingForUser = false;
 
-      console.log(`[BackendGraphWS] dispatchToAgent() — executing graph from 'input_handler', totalMessages=${state.messages.length}`);
+      const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
+      console.log(`[BackendGraphWS] dispatchToAgent() — executing graph from '${startNode}', totalMessages=${state.messages.length}`);
       const startMs = Date.now();
-      await graph.execute(state, 'input_handler');
+      await graph.execute(state, startNode);
       console.log(`[BackendGraphWS] dispatchToAgent() — graph execution COMPLETED in ${Date.now() - startMs}ms`);
     } catch (err: any) {
       if (err?.name === 'AbortError') {

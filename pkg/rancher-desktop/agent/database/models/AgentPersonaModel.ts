@@ -488,11 +488,13 @@ export class AgentPersonaService {
   clearThreadId(): void {
     this.state.threadId = undefined;
     this.lastSentN8nLiveEventsEnabled = null;
+    this.waitingForUser.value = false;
   }
 
   async emitContinueRun(): Promise<boolean> {
     const id = this.state.agentId;
     this.stopReason.value = null;
+    this.waitingForUser.value = false;
     this.graphRunning.value = true;
     this.registry.setLoading(id, true);
 
@@ -560,6 +562,7 @@ export class AgentPersonaService {
         this.wsUnsub.delete(agentId);
       }
     }
+    this.waitingForUser.value = false;
   }
 
   private handleWebSocketMessage(agentId: string, msg: WebSocketMessage): void {

@@ -316,6 +316,7 @@ async function buildAgentState(wsChannel: string, threadId?: string): Promise<Ag
 
       cycleComplete: false,
       waitingForUser: false,
+      isSubAgent: false,
 
       llmModel,
       llmLocal,

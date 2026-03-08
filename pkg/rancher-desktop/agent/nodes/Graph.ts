@@ -462,6 +462,7 @@ export class Graph<TState = BaseThreadState> {
       console.log('[Graph] Execution stopped:', error);
       if (error?.name === 'AbortError') {
         console.log('[Graph] Graph execution aborted by user');
+        (state as any).metadata.waitingForUser = false;
         if (convId) {
           getConversationLogger().logGraphCompleted(convId, 'aborted');
         }
@@ -478,6 +479,7 @@ export class Graph<TState = BaseThreadState> {
       console.warn('Max iterations hit');
       (state as any).metadata.maxIterationsReached = true;
       (state as any).metadata.stopReason = 'max_loops';
+      (state as any).metadata.waitingForUser = false;
     }
 
     // ── Workflow Playbook Integration ──
