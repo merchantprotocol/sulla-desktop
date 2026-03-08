@@ -819,6 +819,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             // Send token information to AgentPersona
             this.dispatchTokenInfoToAgentPersona(state, reply);
             
+            // Training data: capture LLM turn (user message + assistant response + reasoning)
+            this.logTrainingTurn(state, nodeRunContext, reply);
+
             // Handle tool calls using the unified executeToolCalls method
             const toolCalls = reply.metadata.tool_calls || [];
             if (toolCalls.length) {
@@ -1768,6 +1771,69 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         }
 
         this.bumpStateVersion(state);
+
+        // Training data: capture tool result
+        try {
+            const trainingConvId = (state as any).metadata?.conversationId;
+            if (trainingConvId) {
+                const { getTrainingDataLogger } = require('../services/TrainingDataLogger');
+                const tl = getTrainingDataLogger();
+                if (tl.hasSession(trainingConvId)) {
+                    tl.logToolResult(trainingConvId, toolCallId, resultContent);
+                }
+            }
+        } catch { /* best-effort */ }
+    }
+
+    // ── Training data helpers ──
+
+    /**
+     * Log a complete LLM turn to the training data logger.
+     * Captures: latest user message, assistant response (with reasoning), tool calls.
+     */
+    private logTrainingTurn(
+        state: BaseThreadState,
+        runCtx: NodeRunContext,
+        reply: NormalizedResponse,
+    ): void {
+        try {
+            const convId = (state as any).metadata?.conversationId;
+            if (!convId) return;
+
+            const { getTrainingDataLogger } = require('../services/TrainingDataLogger');
+            const tl = getTrainingDataLogger();
+            if (!tl.hasSession(convId)) return;
+
+            // Log the latest user message (skip synthetic summaries)
+            const lastUser = [...runCtx.messages].reverse().find((m: ChatMessage) =>
+                m.role === 'user' && !(m.metadata as any)?._conversationSummary,
+            );
+            if (lastUser?.content) {
+                const content = typeof lastUser.content === 'string'
+                    ? lastUser.content
+                    : JSON.stringify(lastUser.content);
+                tl.logUserMessage(convId, content);
+            }
+
+            // Log assistant response with reasoning and tool calls
+            const reasoning = reply.metadata.reasoning || undefined;
+            const toolCalls = reply.metadata.tool_calls || [];
+
+            if (toolCalls.length > 0) {
+                tl.logToolCall(
+                    convId,
+                    toolCalls.map((tc: { id?: string; name: string; args: any }) => ({
+                        id: tc.id || `tc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                        name: tc.name,
+                        args: tc.args,
+                    })),
+                    reply.content || null,
+                    { reasoning },
+                );
+            } else if (reply.content) {
+                tl.logAssistantMessage(convId, reply.content, { reasoning });
+            }
+        } catch { /* best-effort — never block conversation */ }
     }
 
 }

@@ -684,6 +684,16 @@ export function initSullaEvents(): void {
           });
         };
 
+        // Phase 0: Preprocess TrainingDataLogger session files into feedback_queue
+        try {
+          const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
+          const result = preprocessTrainingData(logPath);
+          fs.appendFileSync(logPath, `\n--- Session Preprocessing ---\n\n`, 'utf-8');
+          fs.appendFileSync(logPath, `[preprocess] ${ result.conversations } conversation(s) from ${ result.filesProcessed } session file(s) (${ result.filesSkipped } skipped)\n`, 'utf-8');
+        } catch (err) {
+          fs.appendFileSync(logPath, `\n[preprocess] Session preprocessing failed: ${ err }\n`, 'utf-8');
+        }
+
         // Phase 1: Document Processing (only if selected)
         if (sources.documentProcessing) {
           try {

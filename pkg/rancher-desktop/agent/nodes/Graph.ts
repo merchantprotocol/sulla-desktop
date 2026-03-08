@@ -7,6 +7,7 @@ import { getWebSocketClientService } from '../services/WebSocketClientService';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getConversationLogger } from '../services/ConversationLogger';
+import { getTrainingDataLogger } from '../services/TrainingDataLogger';
 import { InputHandlerNode } from './InputHandlerNode';
 import { AgentNode } from './AgentNode';
 import { HeartbeatNode, type HeartbeatThreadState } from './HeartbeatNode';
@@ -396,6 +397,12 @@ export class Graph<TState = BaseThreadState> {
           convLogger.logMessage(convId, 'user', String(lastMsg.content));
         }
       }
+
+      // Training data capture
+      getTrainingDataLogger().startSession(convId, {
+        agentId: (state as any).metadata.wsChannel,
+        model:   (state as any).metadata.llmModel,
+      });
     }
 
     (state as any).metadata.iterations ??= 0;
@@ -457,10 +464,12 @@ export class Graph<TState = BaseThreadState> {
         (state as any).metadata.waitingForUser = false;
         if (convId) {
           getConversationLogger().logGraphCompleted(convId, 'aborted');
+          if (!isReentry) getTrainingDataLogger().endSession(convId);
         }
       } else {
         if (convId) {
           getConversationLogger().logGraphCompleted(convId, 'failed', { error: error?.message || String(error) });
+          if (!isReentry) getTrainingDataLogger().endSession(convId);
         }
         // Re-throw non-abort errors
         throw error;
@@ -491,6 +500,7 @@ export class Graph<TState = BaseThreadState> {
         iterations: (state as any).metadata.iterations,
         agentStatus: (state as any).metadata.agent?.status,
       });
+      getTrainingDataLogger().endSession(convId);
     }
 
     // Send completion signal (skip on playbook re-entry to avoid duplicate signals)
@@ -1123,6 +1133,11 @@ export class Graph<TState = BaseThreadState> {
     if (Array.isArray(msgs)) {
       msgs.push({ role: 'user', content: `[Workflow] ${content}` });
     }
+    // Training data: capture workflow-injected messages
+    const convId = (state as any).metadata?.conversationId;
+    if (convId) {
+      getTrainingDataLogger().logUserMessage(convId, `[Workflow] ${content}`);
+    }
   }
 
   /**
@@ -1258,6 +1273,10 @@ export class Graph<TState = BaseThreadState> {
     // Inject prompt
     subState.messages.push({ role: 'user', content: prompt });
 
+    // Training data: start sub-agent session
+    const trainingLogger = getTrainingDataLogger();
+    trainingLogger.startSession(threadId, { agentId: agentConfigChannel });
+
     // Mark as sub-agent so blocked status doesn't trigger waitingForUser
     subState.metadata.isSubAgent = true;
 
@@ -1269,6 +1288,13 @@ export class Graph<TState = BaseThreadState> {
 
     // Execute sub-agent graph
     const finalState = await graph.execute(subState);
+
+    // Training data: embed sub-agent conversation into parent
+    const parentConvId = (_state as any).metadata?.conversationId;
+    if (parentConvId && trainingLogger.hasSession(parentConvId)) {
+      const subNodeLabel = config.agentName as string || agentId || nodeId;
+      trainingLogger.embedSubAgentConversation(parentConvId, threadId, subNodeLabel);
+    }
 
     // Check if the sub-agent is blocked — surface blocker info in the output
     const agentMeta = (finalState.metadata as any)?.agent || {};

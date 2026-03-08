@@ -78,6 +78,10 @@ export function resolveSullaIntegrationsDir(): string {
   return path.join(resolveSullaHomeDir(), 'integrations');
 }
 
+export function resolveSullaTrainingDir(): string {
+  return path.join(resolveSullaHomeDir(), 'training');
+}
+
 export function resolveSullaConversationsDir(): string {
   const envPath = String(process.env[SULLA_CONVERSATIONS_DIR_ENV] || '').trim();
   if (envPath) {
