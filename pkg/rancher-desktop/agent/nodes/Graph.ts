@@ -552,12 +552,15 @@ export class Graph<TState = BaseThreadState> {
         const resolved = resolveDecision(playbook, String(lastAssistant.content));
         meta.activeWorkflow = resolved.updatedPlaybook;
 
+        const pendNodeLabel = this.getPlaybookNodeLabel(playbook, pendNodeId);
+        const pendNodeSubtype = this.getPlaybookNodeSubtype(playbook, pendNodeId);
         this.emitPlaybookEvent(state, 'node_completed', {
           nodeId: pendNodeId,
-          nodeLabel: this.getPlaybookNodeLabel(playbook, pendNodeId),
+          nodeLabel: pendNodeLabel,
           output: lastAssistant.content,
         });
         this.emitEdgeActivations(state, playbook.definition, pendNodeId, 'outgoing');
+        await this.saveCheckpoint(resolved.updatedPlaybook, pendNodeId, pendNodeLabel, pendNodeSubtype, lastAssistant.content);
 
         if (resolved.action === 'workflow_completed' || resolved.action === 'workflow_failed') {
           console.log(`[Graph:Playbook] Workflow ${resolved.action} after decision resolution`);
@@ -609,12 +612,15 @@ export class Graph<TState = BaseThreadState> {
               const resolved = resolveDecision(pendingPlaybook, String(lastAssistant.content));
               meta.activeWorkflow = resolved.updatedPlaybook;
               if (resolvedNodeId) {
+                const rNodeLabel = this.getPlaybookNodeLabel(pendingPlaybook, resolvedNodeId);
+                const rNodeSubtype = this.getPlaybookNodeSubtype(pendingPlaybook, resolvedNodeId);
                 this.emitPlaybookEvent(state, 'node_completed', {
                   nodeId: resolvedNodeId,
-                  nodeLabel: this.getPlaybookNodeLabel(pendingPlaybook, resolvedNodeId),
+                  nodeLabel: rNodeLabel,
                   output: lastAssistant.content,
                 });
                 this.emitEdgeActivations(state, pendingPlaybook.definition, resolvedNodeId, 'outgoing');
+                await this.saveCheckpoint(resolved.updatedPlaybook, resolvedNodeId, rNodeLabel, rNodeSubtype, lastAssistant.content);
               }
               if (resolved.action === 'workflow_completed' || resolved.action === 'workflow_failed') {
                 this.emitPlaybookEvent(state, resolved.action, {});
@@ -663,6 +669,7 @@ export class Graph<TState = BaseThreadState> {
 
               this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: resultText });
               this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+              await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'tool-call', resultText);
 
               if (completed.action === 'workflow_completed') {
                 console.log(`[Graph:Playbook] Workflow completed after tool call`);
@@ -721,6 +728,7 @@ export class Graph<TState = BaseThreadState> {
 
               this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: resultText, threadId: result.threadId });
               this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+              await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'agent', resultText);
 
               if (completed.action === 'workflow_completed') {
                 console.log(`[Graph:Playbook] Workflow completed after sub-agent`);
@@ -747,6 +755,7 @@ export class Graph<TState = BaseThreadState> {
           this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: mechLabel });
           this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: mechLabel, output: step.result });
           this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+          await this.saveCheckpoint(step.updatedPlaybook, step.nodeId, mechLabel, this.getPlaybookNodeSubtype(currentPlaybook, step.nodeId), step.result);
           break;
         }
 
@@ -763,6 +772,7 @@ export class Graph<TState = BaseThreadState> {
           }
           this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: waitLabel, output: `Waited ${step.durationMs}ms` });
           this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+          await this.saveCheckpoint(meta.activeWorkflow, step.nodeId, waitLabel, 'wait', `Waited ${step.durationMs}ms`);
           break;
         }
 
@@ -829,12 +839,68 @@ export class Graph<TState = BaseThreadState> {
   }
 
   /**
+   * Resolve a node subtype from the playbook definition.
+   */
+  private getPlaybookNodeSubtype(playbook: WorkflowPlaybookState, nodeId: string): string {
+    const node = playbook.definition.nodes.find((n: any) => n.id === nodeId);
+    return node?.data?.subtype || 'unknown';
+  }
+
+  /**
    * Inject a workflow-related message into the agent's conversation.
    */
   private injectWorkflowMessage(state: TState, content: string, _silent?: boolean): void {
     const msgs = (state as any).messages;
     if (Array.isArray(msgs)) {
       msgs.push({ role: 'user', content: `[Workflow] ${content}` });
+    }
+  }
+
+  /**
+   * Save a checkpoint for a completed node so the workflow can be restarted from this point.
+   * Best-effort — failures are logged but don't break the workflow.
+   */
+  private async saveCheckpoint(
+    playbook: WorkflowPlaybookState,
+    nodeId: string,
+    nodeLabel: string,
+    nodeSubtype: string,
+    nodeOutput: unknown,
+  ): Promise<void> {
+    try {
+      const { WorkflowCheckpointModel } = await import('../database/models/WorkflowCheckpointModel');
+      const sequence = Object.keys(playbook.nodeOutputs).length;
+
+      // Strip the full definition to avoid storing huge JSONB — keep only IDs and edges
+      const slimPlaybook = {
+        ...playbook,
+        definition: {
+          ...playbook.definition,
+          // Keep nodes but strip execution state to save space
+          nodes: playbook.definition.nodes.map(n => ({
+            id: n.id,
+            type: n.type,
+            position: n.position,
+            data: { subtype: n.data.subtype, category: n.data.category, label: n.data.label, config: n.data.config },
+          })),
+        },
+      };
+
+      await WorkflowCheckpointModel.saveCheckpoint({
+        executionId:  playbook.executionId,
+        workflowId:   playbook.workflowId,
+        workflowName: playbook.definition.name,
+        nodeId,
+        nodeLabel,
+        nodeSubtype,
+        sequence,
+        playbookState: slimPlaybook as any,
+        nodeOutput,
+      });
+
+      console.log(`[Graph:Checkpoint] Saved checkpoint #${sequence} for "${nodeLabel}" (${nodeId})`);
+    } catch (err) {
+      console.warn(`[Graph:Checkpoint] Failed to save checkpoint for "${nodeLabel}":`, err);
     }
   }
 

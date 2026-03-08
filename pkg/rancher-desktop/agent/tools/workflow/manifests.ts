@@ -12,4 +12,16 @@ export const workflowToolManifests: ToolManifest[] = [
     operationTypes: ['execute'],
     loader: () => import('./execute_workflow'),
   },
+  {
+    name: 'restart_from_checkpoint',
+    description: 'Restart a workflow execution from a specific node checkpoint. Use workflowId alone to list recent executions, executionId alone to list checkpoints, or executionId + nodeId to restart from that node.',
+    category: 'meta',
+    schemaDef: {
+      executionId: { type: 'string', optional: true, description: 'The execution ID to restart from. Omit to list recent executions for a workflow.' },
+      nodeId:      { type: 'string', optional: true, description: 'The node ID to restart from. The workflow will re-execute this node and everything after it.' },
+      workflowId:  { type: 'string', optional: true, description: 'The workflow ID. Used to list recent executions when executionId is not provided.' },
+    },
+    operationTypes: ['execute'],
+    loader: () => import('./restart_from_checkpoint'),
+  },
 ];
