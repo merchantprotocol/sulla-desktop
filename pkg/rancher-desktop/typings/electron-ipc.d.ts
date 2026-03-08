@@ -201,7 +201,7 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Training
-  'training-install-status': () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string };
+  'training-install-status': () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string; requiredBytes: number; availableBytes: number };
   'training-install':        () => { logFilename: string };
   'training-run':          (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
   'training-status':       () => { running: boolean };
@@ -214,6 +214,9 @@ export interface IpcMainInvokeEvents {
   'training-docs-config-load':  () => { folders: string[]; files: string[]; fileTypes: string[] };
   'training-docs-list-dir':     (dirPath: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }>;
   'training-docs-config-save':  (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
+  'editor-footer-stats':        () => { availableBytes: number; unprocessedTrainingBytes: number };
+  'training-data-files':        () => Array<{ filename: string; path: string; size: number; modifiedAt: string; status: 'unprocessed' | 'processed' }>;
+  'training-preprocess':        () => { conversations: number; filesProcessed: number; filesSkipped: number };
   // #endregion
 
   // #region QMD Search

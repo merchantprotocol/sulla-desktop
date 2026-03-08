@@ -12,7 +12,7 @@
       @toggle-right-pane="rightPaneVisible = !rightPaneVisible"
     />
 
-    <div class="flex h-full min-h-0 overflow-hidden">
+    <div class="flex flex-1 min-h-0 overflow-hidden">
         <div class="main-content">
         <!-- Icon Panel -->
         <IconPanel
@@ -24,6 +24,7 @@
           :agent-mode="agentMode"
           :integrations-mode="integrationsMode"
           :workflow-mode="workflowMode"
+          :training-mode="trainingMode"
           @toggle-file-tree="toggleFileTree"
           @toggle-search="toggleSearch"
           @toggle-git="toggleGit"
@@ -31,6 +32,7 @@
           @toggle-integrations="toggleIntegrations"
           @toggle-agent="toggleAgent"
           @toggle-workflow="toggleWorkflow"
+          @toggle-training="toggleTraining"
         />
         </div>
 
@@ -102,10 +104,18 @@
               @workflow-deleted="onWorkflowDeleted"
             />
 
+            <!-- Training file tree -->
+            <TrainingFileTreePane
+              v-show="trainingMode"
+              :is-dark="isDark"
+              @close="leftPaneVisible = false"
+              @files-preprocessed="onTrainingFilesPreprocessed"
+            />
+
             <!-- File tree -->
             <FileTreeSidebar
               ref="fileTreeRef"
-              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode"
+              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode"
               :root-path="rootPath"
               :highlight-path="highlightPath"
               :is-dark="isDark"
@@ -125,6 +135,8 @@
 
         <!-- Right content: Editor area -->
         <div class="editor-panel" v-show="centerPaneVisible" :class="{ dark: isDark }">
+          <!-- Training full-screen (replaces everything when training mode is active) -->
+          <TrainingPane ref="trainingPaneRef" v-if="trainingMode" :is-dark="isDark" @env-ready="leftPaneVisible = true" />
           <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
           <WorkflowEditor v-if="workflowMode" ref="workflowEditorRef" :is-dark="isDark" :workflow-data="activeWorkflowData" @node-selected="onWorkflowNodeSelected" @workflow-changed="onWorkflowChanged" />
           <!-- Workflow save toolbar -->
@@ -182,7 +194,7 @@
           </div>
 
           <!-- Top editor area -->
-          <div class="editor-top" v-show="!workflowMode">
+          <div class="editor-top" v-show="!workflowMode && !trainingMode">
             <!-- Tab bar (always visible) -->
             <div class="tab-bar" :class="{ dark: isDark, empty: openTabs.length === 0 }">
               <div class="tab-bar-tabs">
@@ -516,6 +528,27 @@
       </div>
     </div>
 
+    <!-- Editor Status Bar Footer -->
+    <footer class="editor-footer" :class="{ dark: isDark }">
+      <div class="editor-footer-left">
+        <span class="footer-item" :title="`${formatBytes(footerStats.availableBytes)} free on disk`">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M16 2v20"/><path d="M2 12h14"/></svg>
+          {{ formatBytes(footerStats.availableBytes) }} free
+        </span>
+        <span class="footer-item" :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
+        </span>
+        <span v-if="activeTab" class="footer-item footer-lang">{{ extToLanguage(activeTab.ext) }}</span>
+      </div>
+      <div class="editor-footer-right">
+        <span v-if="backendProgressDesc" class="footer-item footer-progress-text">
+          {{ backendProgressDesc }}
+        </span>
+        <span class="footer-item footer-state" :class="backendStateClass">{{ backendStateLabel }}</span>
+      </div>
+    </footer>
+
   <!-- Tab Context Menu -->
   <TabContextMenu
     :visible="tabContextMenu.visible"
@@ -553,6 +586,8 @@ import IntegrationsPane from './editor/IntegrationsPane.vue';
 import ApiTestPanel from './editor/ApiTestPanel.vue';
 import AgentFormTab from './editor/AgentFormTab.vue';
 import WorkflowPane from './editor/WorkflowPane.vue';
+import TrainingPane from './editor/TrainingPane.vue';
+import TrainingFileTreePane from './editor/TrainingFileTreePane.vue';
 import WorkflowEditor from './editor/WorkflowEditor.vue';
 import WorkflowNodePanel from './editor/WorkflowNodePanel.vue';
 import WebViewTab from './editor/WebViewTab.vue';
@@ -611,6 +646,21 @@ function resolveEditorType(_ext: string): NonNullable<TabState['editorType']> {
   return 'code';
 }
 
+const EXT_LANG_MAP: Record<string, string> = {
+  '.ts': 'TypeScript', '.tsx': 'TypeScript React', '.js': 'JavaScript', '.jsx': 'JavaScript React',
+  '.vue': 'Vue', '.json': 'JSON', '.md': 'Markdown', '.markdown': 'Markdown', '.mdx': 'MDX',
+  '.py': 'Python', '.yaml': 'YAML', '.yml': 'YAML', '.sh': 'Shell', '.bash': 'Bash',
+  '.css': 'CSS', '.scss': 'SCSS', '.less': 'Less', '.html': 'HTML', '.xml': 'XML',
+  '.go': 'Go', '.rs': 'Rust', '.java': 'Java', '.rb': 'Ruby', '.php': 'PHP',
+  '.c': 'C', '.cpp': 'C++', '.h': 'C Header', '.swift': 'Swift', '.kt': 'Kotlin',
+  '.sql': 'SQL', '.graphql': 'GraphQL', '.proto': 'Protobuf', '.toml': 'TOML',
+  '.env': 'Environment', '.dockerfile': 'Dockerfile', '.txt': 'Plain Text',
+};
+
+function extToLanguage(ext: string): string {
+  return EXT_LANG_MAP[ext.toLowerCase()] || ext.replace('.', '').toUpperCase() || 'Plain Text';
+}
+
 export default defineComponent({
   name: 'AgentFilesystem',
 
@@ -630,10 +680,12 @@ export default defineComponent({
     ApiTestPanel,
     AgentFormTab,
     WorkflowPane,
+    TrainingPane,
     WorkflowEditor,
     WorkflowNodePanel,
     EditorChat,
     DiffEditor,
+    TrainingFileTreePane,
   },
 
   setup(props, { emit }) {
@@ -641,6 +693,66 @@ export default defineComponent({
     const THEME_STORAGE_KEY = 'agentTheme';
     const sullaMutedIconUrl = new URL('../../../resources/icons/sulla-muted-icon.png', import.meta.url).toString();
     const rootPath = ref('');
+
+    // Footer stats: disk space + unprocessed training data
+    const footerStats = reactive({ availableBytes: 0, unprocessedTrainingBytes: 0 });
+    let footerStatsTimer: ReturnType<typeof setInterval> | undefined;
+
+    // Backend state tracking for footer
+    const backendState = ref('STOPPED');
+    const backendProgressDesc = ref('');
+
+    const STATE_LABELS: Record<string, string> = {
+      STOPPED:  'Stopped',
+      STARTING: 'Starting…',
+      STARTED:  'Running',
+      STOPPING: 'Shutting down…',
+      ERROR:    'Error',
+      DISABLED: 'Disabled',
+    };
+
+    const backendStateLabel = computed(() => STATE_LABELS[backendState.value] || backendState.value);
+    const backendStateClass = computed(() => {
+      const s = backendState.value;
+
+      if (s === 'STARTED' || s === 'DISABLED') return 'state-ok';
+      if (s === 'ERROR') return 'state-error';
+      if (s === 'STARTING' || s === 'STOPPING') return 'state-busy';
+
+      return 'state-stopped';
+    });
+
+    function onK8sCheckState(_event: any, state: string) {
+      backendState.value = state;
+    }
+    function onK8sProgress(_event: any, progress: any) {
+      if (progress?.description) {
+        backendProgressDesc.value = progress.description;
+      }
+      // Clear description when progress completes
+      if (progress?.current >= progress?.max && progress?.max > 0) {
+        backendProgressDesc.value = '';
+      }
+    }
+
+    function formatBytes(bytes: number): string {
+      if (bytes === 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
+      const val = bytes / (1024 ** i);
+
+      return `${ val < 10 ? val.toFixed(1) : Math.round(val) } ${ units[i] }`;
+    }
+
+    async function refreshFooterStats() {
+      try {
+        const stats = await ipcRenderer.invoke('editor-footer-stats');
+
+        footerStats.availableBytes = stats.availableBytes;
+        footerStats.unprocessedTrainingBytes = stats.unprocessedTrainingBytes;
+      } catch { /* ignore */ }
+    }
+
     const openTabs = ref<TabState[]>([]);
     const activeTabKey = ref('');
     const leftPaneVisible = ref(true);
@@ -863,6 +975,8 @@ export default defineComponent({
     const agentMode = ref(false);
     const integrationsMode = ref(false);
     const workflowMode = ref(false);
+    const trainingMode = ref(false);
+    const trainingPaneRef = ref<InstanceType<typeof TrainingPane> | null>(null);
     const selectedWorkflowNode = ref<{ id: string; label: string; type?: string; data?: any } | null>(null);
     const workflowEditorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null);
     const workflowPaneRef = ref<InstanceType<typeof WorkflowPane> | null>(null);
@@ -933,6 +1047,18 @@ export default defineComponent({
     }
 
     onMounted(async () => {
+      // Start footer stats polling (every 30s)
+      refreshFooterStats();
+      footerStatsTimer = setInterval(refreshFooterStats, 30_000);
+
+      // Listen for backend state and progress
+      ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
+      ipcRenderer.on('k8s-progress' as any, onK8sProgress);
+      // Fetch initial progress
+      ipcRenderer.invoke('k8s-progress').then((p: any) => {
+        if (p?.description) backendProgressDesc.value = p.description;
+      }).catch(() => {});
+
       const stored = localStorage.getItem(THEME_STORAGE_KEY);
 
       if (stored === 'dark') {
@@ -959,8 +1085,8 @@ export default defineComponent({
     let savedRightPaneVisible = false;
 
     function clearModes() {
-      // Restore panes if leaving workflow mode
-      if (workflowMode.value) {
+      // Restore panes if leaving workflow or training mode
+      if (workflowMode.value || trainingMode.value) {
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
       }
@@ -974,13 +1100,14 @@ export default defineComponent({
       agentMode.value = false;
       integrationsMode.value = false;
       workflowMode.value = false;
+      trainingMode.value = false;
     }
 
     function toggleFileTree() {
       if (!leftPaneVisible.value) {
         leftPaneVisible.value = true;
         clearModes();
-      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || integrationsMode.value || workflowMode.value) {
+      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || integrationsMode.value || workflowMode.value || trainingMode.value) {
         clearModes();
       } else {
         leftPaneVisible.value = false;
@@ -1076,6 +1203,27 @@ export default defineComponent({
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
       }
+    }
+
+    function toggleTraining() {
+      if (!trainingMode.value) {
+        clearModes();
+        trainingMode.value = true;
+        savedBottomPaneVisible = bottomPaneVisible.value;
+        savedRightPaneVisible = rightPaneVisible.value;
+        leftPaneVisible.value = true;
+        bottomPaneVisible.value = false;
+        rightPaneVisible.value = false;
+      } else {
+        trainingMode.value = false;
+        leftPaneVisible.value = true;
+        bottomPaneVisible.value = savedBottomPaneVisible;
+        rightPaneVisible.value = savedRightPaneVisible;
+      }
+    }
+
+    function onTrainingFilesPreprocessed() {
+      trainingPaneRef.value?.loadDataFiles?.();
     }
 
     function onWorkflowNodeSelected(node: { id: string; label: string; type?: string; data?: any } | null) {
@@ -1911,6 +2059,11 @@ export default defineComponent({
       editorChat.dispose();
       editorGraphWs?.dispose();
       modelSelector.dispose();
+      if (footerStatsTimer) {
+        clearInterval(footerStatsTimer);
+      }
+      ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);
+      ipcRenderer.removeListener('k8s-progress' as any, onK8sProgress);
     });
 
     return {
@@ -1937,6 +2090,8 @@ export default defineComponent({
       integrationsMode,
       toggleIntegrations,
       workflowMode,
+      trainingMode,
+      toggleTraining,
       selectedWorkflowNode,
       selectedNodeUpstream,
       workflowEditorRef,
@@ -2027,6 +2182,15 @@ export default defineComponent({
       injectMenu,
       onEditorContextMenu,
       doInjectVariable,
+      extToLanguage,
+      footerStats,
+      formatBytes,
+      trainingPaneRef,
+      onTrainingFilesPreprocessed,
+      backendState,
+      backendProgressDesc,
+      backendStateLabel,
+      backendStateClass,
     };
   },
 });
@@ -2036,11 +2200,107 @@ export default defineComponent({
 .page-root {
   background: #ffffff;
   color: #0d0d0d;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .page-root.dark {
   background: #0f172a;
   color: #fafafa;
+}
+
+/* Editor Status Bar Footer */
+.editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 22px;
+  min-height: 22px;
+  max-height: 22px;
+  padding: 0 10px;
+  font-size: 11px;
+  background: #f3f4f6;
+  border-top: 1px solid #e5e7eb;
+  color: #6b7280;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.editor-footer.dark {
+  background: #1b1c21;
+  border-top-color: #4a4b52;
+  color: #9ca3af;
+}
+
+.editor-footer-left,
+.editor-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.footer-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.footer-item svg {
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.footer-lang {
+  padding: 0 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.editor-footer.dark .footer-lang {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.footer-progress-text {
+  font-size: 10px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #94a3b8;
+}
+
+.footer-state {
+  padding: 0 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 10px;
+}
+.footer-state.state-ok {
+  color: #16a34a;
+}
+.editor-footer.dark .footer-state.state-ok {
+  color: #4ade80;
+}
+.footer-state.state-error {
+  color: #dc2626;
+}
+.editor-footer.dark .footer-state.state-error {
+  color: #f87171;
+}
+.footer-state.state-busy {
+  color: #d97706;
+}
+.editor-footer.dark .footer-state.state-busy {
+  color: #fbbf24;
+}
+.footer-state.state-stopped {
+  color: #94a3b8;
 }
 
 .editor-panel {

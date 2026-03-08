@@ -997,6 +997,24 @@ export function initSullaEvents(): void {
     const hasModel = entry?.trainingRepo ? service.getTrainingModelPath(modelKey) !== null : false;
     const installed = hasPython && hasModel;
 
+    // Estimate required disk space: model size + ~2GB for Python venv/deps
+    const modelSizeBytes = entry?.sizeBytes ?? 0;
+    const pythonDepsBytes = 2_000_000_000; // ~2GB for venv + pip packages
+    const requiredBytes = modelSizeBytes + pythonDepsBytes;
+
+    // Check available disk space on the volume where data will be stored
+    let availableBytes = 0;
+    try {
+      const { statfsSync } = await import('fs');
+      const { app } = await import('electron');
+      const targetPath = app.getPath('userData');
+      const stats = statfsSync(targetPath);
+      availableBytes = stats.bavail * stats.bsize;
+    } catch {
+      // If we can't determine, don't block install
+      availableBytes = Number.MAX_SAFE_INTEGER;
+    }
+
     return {
       installed,
       installing:  isTrainingInstalling,
@@ -1004,7 +1022,111 @@ export function initSullaEvents(): void {
       modelKey,
       displayName: entry?.displayName ?? modelKey,
       trainingRepo: entry?.trainingRepo ?? '',
+      requiredBytes,
+      availableBytes,
     };
+  });
+
+  /**
+   * Lightweight stats for the editor footer:
+   * - availableBytes: free disk space on the userData volume
+   * - unprocessedTrainingBytes: total size of unprocessed .jsonl session files
+   */
+  ipcMainProxy.handle('editor-footer-stats', async() => {
+    let availableBytes = 0;
+
+    try {
+      const { statfsSync } = await import('fs');
+      const { app } = await import('electron');
+      const stats = statfsSync(app.getPath('userData'));
+
+      availableBytes = stats.bavail * stats.bsize;
+    } catch {
+      availableBytes = 0;
+    }
+
+    let unprocessedTrainingBytes = 0;
+
+    try {
+      const { resolveSullaTrainingDir } = await import('@pkg/agent/utils/sullaPaths');
+      const fs = await import('fs');
+      const path = await import('path');
+      const dir = resolveSullaTrainingDir();
+
+      if (fs.existsSync(dir)) {
+        const entries = fs.readdirSync(dir);
+
+        for (const name of entries) {
+          if (name.endsWith('.jsonl')) {
+            try {
+              const stat = fs.statSync(path.join(dir, name));
+
+              unprocessedTrainingBytes += stat.size;
+            } catch { /* skip */ }
+          }
+        }
+      }
+    } catch { /* skip */ }
+
+    return { availableBytes, unprocessedTrainingBytes };
+  });
+
+  /**
+   * List all training data JSONL session files with their processed/unprocessed status.
+   */
+  ipcMainProxy.handle('training-data-files', async() => {
+    const results: Array<{ filename: string; path: string; size: number; modifiedAt: string; status: 'unprocessed' | 'processed' }> = [];
+
+    try {
+      const { resolveSullaTrainingDir } = await import('@pkg/agent/utils/sullaPaths');
+      const fs = await import('fs');
+      const pathMod = await import('path');
+      const dir = resolveSullaTrainingDir();
+
+      if (fs.existsSync(dir)) {
+        // Unprocessed files (root level)
+        for (const name of fs.readdirSync(dir)) {
+          if (!name.endsWith('.jsonl')) continue;
+          try {
+            const fullPath = pathMod.join(dir, name);
+            const stat = fs.statSync(fullPath);
+
+            results.push({ filename: name, path: fullPath, size: stat.size, modifiedAt: stat.mtime.toISOString(), status: 'unprocessed' });
+          } catch { /* skip */ }
+        }
+
+        // Processed files
+        const processedDir = pathMod.join(dir, 'processed');
+
+        if (fs.existsSync(processedDir)) {
+          for (const name of fs.readdirSync(processedDir)) {
+            if (!name.endsWith('.jsonl')) continue;
+            try {
+              const fullPath = pathMod.join(processedDir, name);
+              const stat = fs.statSync(fullPath);
+
+              results.push({ filename: name, path: fullPath, size: stat.size, modifiedAt: stat.mtime.toISOString(), status: 'processed' });
+            } catch { /* skip */ }
+          }
+        }
+      }
+    } catch { /* skip */ }
+
+    results.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+
+    return results;
+  });
+
+  /**
+   * Standalone preprocessing: convert unprocessed session JSONL files into
+   * feedback_queue format and move them to processed/.
+   * This is the same Phase 0 that training-run does, but exposed separately
+   * so the user can trigger it from the UI without running a full training.
+   */
+  ipcMainProxy.handle('training-preprocess', async() => {
+    const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
+
+    return preprocessTrainingData();
   });
 
   /**

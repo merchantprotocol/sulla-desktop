@@ -1,6 +1,6 @@
 <template>
   <div class="icon-panel" :class="{ dark: isDark }">
-    <button class="icon-btn" :class="{ active: leftPaneVisible && !searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode }" @click="toggleFileTree">
+    <button class="icon-btn" :class="{ active: leftPaneVisible && !searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode }" @click="toggleFileTree">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
         <polyline points="9,22 9,12 15,12 15,22"></polyline>
@@ -44,6 +44,9 @@
         <line x1="12" y1="12" x2="12" y2="16"/>
       </svg>
     </button>
+    <button class="icon-btn" :class="{ active: trainingMode }" @click="$emit('toggle-training')" title="Model Training">
+      <img :src="gearBrainUrl" class="icon-logo" alt="Training" />
+    </button>
   </div>
 </template>
 
@@ -62,6 +65,7 @@ export default defineComponent({
     agentMode: { type: Boolean, default: false },
     integrationsMode: { type: Boolean, default: false },
     workflowMode: { type: Boolean, default: false },
+    trainingMode: { type: Boolean, default: false },
   },
 
   emits: [
@@ -72,11 +76,15 @@ export default defineComponent({
     'toggle-agent',
     'toggle-integrations',
     'toggle-workflow',
+    'toggle-training',
   ],
 
   setup(_props, { emit }) {
     const logoUrl = computed(() => {
-      return new URL('../../../../resources/icons/logo-tray-Template@2x.png', import.meta.url).href;
+      return new URL('../../../../resources/icons/robot-512-nobg.png', import.meta.url).href;
+    });
+    const gearBrainUrl = computed(() => {
+      return new URL('../../../../resources/icons/gear-brain.svg', import.meta.url).href;
     });
 
     function toggleFileTree() { emit('toggle-file-tree'); }
@@ -86,6 +94,7 @@ export default defineComponent({
 
     return {
       logoUrl,
+      gearBrainUrl,
       toggleFileTree,
       toggleSearch,
       toggleGit,
