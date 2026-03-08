@@ -156,6 +156,9 @@ export interface BaseThreadState {
     cycleComplete: boolean;
     waitingForUser: boolean;
 
+    /** True when this graph was spawned as a sub-agent (heartbeat, workflow, etc.) */
+    isSubAgent: boolean;
+
     options: {
       abort?: AbortService;
     };
@@ -1133,6 +1136,7 @@ export async function createInitialThreadState<T extends BaseThreadState>(
       llmLocal,
       cycleComplete: false,
       waitingForUser: false,
+      isSubAgent: overrides.isSubAgent ?? false,
       options: overrides.options ?? { abort: undefined },
       currentNodeId: overrides.currentNodeId ?? 'input_handler',
       consecutiveSameNode: 0,

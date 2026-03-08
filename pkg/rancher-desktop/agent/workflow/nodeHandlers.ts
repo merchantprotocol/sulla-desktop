@@ -155,6 +155,7 @@ const agentHandler: NodeHandler = async(args) => {
       state.metadata.options.abort = abort;
     }
     state.metadata.wsChannel = wsChannel;
+    state.metadata.isSubAgent = true;
 
     // Tag with workflow nodeId so BaseNode.wsChatMessage emits node_thinking
     // events to the workflow canvas.

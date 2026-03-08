@@ -172,9 +172,17 @@ export class AgentNode extends BaseNode {
       updatedAt: Date.now(),
     };
 
-    // When the agent is blocked, pause the graph and wait for user input
+    // When the agent is blocked, decide how to pause based on context:
+    // - Primary agent (direct user conversation): wait for user input
+    // - Sub-agent (heartbeat/workflow): bubble blocker to orchestrator
     if (agentOutcome.status === 'blocked') {
-      state.metadata.waitingForUser = true;
+      if (state.metadata.isSubAgent) {
+        // Sub-agent: don't wait for user — the orchestrator will read
+        // blocker_reason / unblock_requirements from agent metadata
+        console.log(`[AgentNode] Sub-agent blocked — deferring to orchestrator. Reason: ${agentOutcome.blockerReason}`);
+      } else {
+        state.metadata.waitingForUser = true;
+      }
     }
 
     if (statusNote) {
