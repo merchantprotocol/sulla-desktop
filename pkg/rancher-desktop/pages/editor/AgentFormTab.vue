@@ -42,6 +42,45 @@
 
       <hr class="form-separator" :class="{ dark: isDark }" />
 
+      <h3 class="form-section-title">Agent Assignment</h3>
+
+      <label class="default-agent-toggle" :class="{ dark: isDark }">
+        <input
+          type="checkbox"
+          v-model="form.isDefault"
+          @change="onDefaultToggle"
+        />
+        <span class="toggle-label">Set as Default Agent</span>
+      </label>
+      <p class="form-hint">The default agent handles all triggers that don't have a specific agent assigned.</p>
+      <p v-if="currentDefaultAgentId && currentDefaultAgentId !== form.id && form.isDefault" class="form-hint form-hint-warn">
+        This will replace "{{ currentDefaultAgentId }}" as the default agent.
+      </p>
+
+      <label class="form-label">Trigger Assignments</label>
+      <p class="form-hint" style="margin-bottom: 8px;">Assign this agent to handle specific triggers. Leave empty to only use as default.</p>
+      <div class="trigger-list">
+        <label
+          v-for="trigger in TRIGGER_TYPES"
+          :key="trigger.value"
+          class="skill-checkbox"
+          :class="{ dark: isDark }"
+        >
+          <input
+            type="checkbox"
+            :value="trigger.value"
+            v-model="form.triggers"
+            @change="emit('dirty')"
+          />
+          <span class="skill-name">{{ trigger.label }}</span>
+          <span v-if="triggerCurrentAgents[trigger.value] && triggerCurrentAgents[trigger.value] !== form.id" class="trigger-current-agent">
+            (currently: {{ triggerCurrentAgents[trigger.value] }})
+          </span>
+        </label>
+      </div>
+
+      <hr class="form-separator" :class="{ dark: isDark }" />
+
       <div class="form-section-header">
         <h3 class="form-section-title">Skills</h3>
         <div v-if="!skillsLoading && skillsFolders.length > 0" class="bulk-actions">
@@ -180,11 +219,24 @@ interface ToolCategoryEntry {
   tools: ToolEntry[];
 }
 
+const TRIGGER_TYPES = [
+  { value: 'sulla-desktop', label: 'Sulla Desktop (Chat)' },
+  { value: 'workbench', label: 'Workbench' },
+  { value: 'heartbeat', label: 'Heartbeat' },
+  { value: 'calendar', label: 'Calendar' },
+  { value: 'chat-app', label: 'Chat App (Slack/Discord)' },
+  { value: 'chat-completions', label: 'Chat Completions API' },
+] as const;
+
+type TriggerType = typeof TRIGGER_TYPES[number]['value'];
+
 const form = reactive({
   id: '',
   name: '',
   description: '',
   type: 'worker',
+  isDefault: false,
+  triggers: [] as string[],
   skills: [] as string[],
   tools: [] as string[],
 });
@@ -198,6 +250,9 @@ const toolCategories = ref<ToolCategoryEntry[]>([]);
 const toolsLoading = ref(false);
 const expandedCategories = ref(new Set<string>());
 const toolFilter = ref('all');
+
+const currentDefaultAgentId = ref('');
+const triggerCurrentAgents = ref<Record<string, string>>({});
 
 const ALL_OPERATION_TYPES = ['read', 'create', 'update', 'delete', 'execute'] as const;
 
@@ -230,8 +285,8 @@ onMounted(async() => {
     form.id = props.filePath.replace('agent-form://edit/', '');
   }
 
-  // Load skills folders and tools in parallel
-  await Promise.all([loadSkillsFolders(), loadToolCategories()]);
+  // Load skills folders, tools, and agent assignment settings in parallel
+  await Promise.all([loadSkillsFolders(), loadToolCategories(), loadAgentAssignments()]);
 });
 
 async function loadSkillsFolders() {
@@ -259,6 +314,32 @@ async function loadToolCategories() {
   } finally {
     toolsLoading.value = false;
   }
+}
+
+async function loadAgentAssignments() {
+  try {
+    const defaultId: string = await ipcRenderer.invoke('sulla-settings-get', 'defaultAgentId', '');
+    currentDefaultAgentId.value = defaultId;
+    if (defaultId === form.id) {
+      form.isDefault = true;
+    }
+
+    const triggerMap: Record<string, string> = await ipcRenderer.invoke('sulla-settings-get', 'triggerAgentMap', {});
+    triggerCurrentAgents.value = triggerMap;
+
+    // Pre-check triggers assigned to this agent
+    for (const [trigger, agentId] of Object.entries(triggerMap)) {
+      if (agentId === form.id) {
+        form.triggers.push(trigger);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load agent assignments:', err);
+  }
+}
+
+function onDefaultToggle() {
+  emit('dirty');
 }
 
 function toggleCategory(category: string) {
@@ -338,6 +419,8 @@ function validate(): boolean {
   return !errors.id && !errors.name;
 }
 
+defineExpose({ save });
+
 async function save() {
   if (!validate()) return;
 
@@ -373,6 +456,31 @@ async function save() {
         ipcRenderer.invoke('filesystem-write-file', `${agentDir}/environment.md`, templates.environment),
       ]);
     }
+
+    // Persist default agent setting
+    if (form.isDefault) {
+      await ipcRenderer.invoke('sulla-settings-set', 'defaultAgentId', form.id);
+      currentDefaultAgentId.value = form.id;
+    } else if (currentDefaultAgentId.value === form.id) {
+      // Unset default if this agent was previously default and user unchecked it
+      await ipcRenderer.invoke('sulla-settings-set', 'defaultAgentId', '');
+      currentDefaultAgentId.value = '';
+    }
+
+    // Persist trigger-to-agent map
+    const triggerMap: Record<string, string> = await ipcRenderer.invoke('sulla-settings-get', 'triggerAgentMap', {});
+    // Remove this agent from any triggers it was previously assigned to
+    for (const key of Object.keys(triggerMap)) {
+      if (triggerMap[key] === form.id) {
+        delete triggerMap[key];
+      }
+    }
+    // Assign this agent to the selected triggers
+    for (const trigger of form.triggers) {
+      triggerMap[trigger] = form.id;
+    }
+    await ipcRenderer.invoke('sulla-settings-set', 'triggerAgentMap', triggerMap);
+    triggerCurrentAgents.value = triggerMap;
 
     emit('saved', agentDir);
   } catch (err: any) {
@@ -732,5 +840,50 @@ async function save() {
 
 .agent-form.dark .tool-name {
   color: #94a3b8;
+}
+
+.default-agent-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  margin: 8px 0 4px 0;
+}
+
+.default-agent-toggle:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+.default-agent-toggle.dark:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.default-agent-toggle input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.toggle-label {
+  font-weight: 500;
+  user-select: none;
+}
+
+.form-hint-warn {
+  color: #f59e0b;
+}
+
+.trigger-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trigger-current-agent {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: auto;
 }
 </style>

@@ -517,7 +517,7 @@
             :graph-running="chatGraphRunning || !!workflowExecutionId"
             :model-selector="modelSelector"
             :agent-registry="agentRegistry"
-            :hide-agent-selector="workflowChatMode"
+            :hide-agent-selector="!agentMode && !workflowMode"
             :total-tokens-used="chatTotalTokensUsed"
             @update:query="chatUpdateQuery"
             @send="workflowChatMode ? workflowChatSend() : chatSend()"
@@ -911,6 +911,10 @@ export default defineComponent({
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
       }
+      // Clear chat when leaving agent mode so stale agent messages don't persist
+      if (agentMode.value) {
+        editorChat.messages.value = [];
+      }
       searchMode.value = false;
       gitMode.value = false;
       dockerMode.value = false;
@@ -974,9 +978,11 @@ export default defineComponent({
         leftPaneVisible.value = true;
         clearModes();
         agentMode.value = true;
+        editorChat.messages.value = [];
       } else if (!agentMode.value) {
         clearModes();
         agentMode.value = true;
+        editorChat.messages.value = [];
       } else {
         leftPaneVisible.value = false;
       }
@@ -1878,6 +1884,8 @@ export default defineComponent({
       agentRegistry.getOrCreatePersonaService(agent.id);
       // Set as active so the chat interface routes to this agent
       agentRegistry.setActiveAgent(agent.id);
+      // Clear chat messages when switching agents
+      editorChat.messages.value = [];
     }
 
     async function onEditAgent(agent: { id: string; name: string; description: string; type: string; templateId?: string; path: string }) {

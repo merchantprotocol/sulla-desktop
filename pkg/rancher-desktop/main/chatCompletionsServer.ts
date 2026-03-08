@@ -44,13 +44,6 @@ export class ChatCompletionsServer {
     }
 
     try {
-      // Try workflow dispatch first
-      const handled = await this.tryWorkflowDispatch(content);
-      if (handled) {
-        console.log('[ChatCompletionsAPI] Tasker message handled by workflow');
-        return;
-      }
-
       const responseText = await this.processUserInputDirect([
         {
           id: nextMessageId(),
@@ -226,25 +219,6 @@ export class ChatCompletionsServer {
         : JSON.stringify(lastMessage.content);
 
       console.log(`[ChatCompletionsAPI] Processing message: ${userText.substring(0, 100)}...`);
-
-      // Try workflow dispatch first
-      const workflowResult = await this.tryWorkflowDispatch(userText);
-      if (workflowResult) {
-        console.log('[ChatCompletionsAPI] Request handled by workflow');
-        const wfResponse = {
-          id: `chatcmpl-${Date.now()}`,
-          object: 'chat.completion',
-          created: Math.floor(Date.now() / 1000),
-          model,
-          choices: [{
-            index: 0,
-            message: { role: 'assistant', content: `Workflow "${workflowResult}" dispatched.` },
-            finish_reason: 'stop',
-          }],
-          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        };
-        return res.json(wfResponse);
-      }
 
       // Process the user input directly — model param is the agent ID
       const responseContent = await this.processUserInputDirect(messages, model);
@@ -570,18 +544,6 @@ export class ChatCompletionsServer {
           type: 'internal_error'
         }
       });
-    }
-  }
-
-  private async tryWorkflowDispatch(message: string): Promise<string | null> {
-    try {
-      const { getWorkflowRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
-      const registry = getWorkflowRegistry();
-      const result = await registry.dispatch({ triggerType: 'chat-completions', message });
-      return result?.workflowName ?? null;
-    } catch (err) {
-      console.warn('[ChatCompletionsAPI] Workflow dispatch failed, falling back:', err);
-      return null;
     }
   }
 

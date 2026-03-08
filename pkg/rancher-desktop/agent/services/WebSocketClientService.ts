@@ -121,6 +121,7 @@ class WebSocketConnection {
 
         if (msg.id) this.ack(msg.id);
 
+        console.log(`[WS ${this.config.channel}] Received: type="${msg.type}", handlers=${this.messageHandlers.size}`);
         this.messageHandlers.forEach(h => {
           try { h(msg); } catch (e) { console.error('[WS handler error]', e); }
         });
@@ -319,11 +320,18 @@ export class WebSocketClientService {
   }
 
   async send(connectionId: string, message: unknown): Promise<boolean> {
+    const msgType = (message as any)?.type || '(unknown)';
+    console.log(`[WSService] send() — channel="${connectionId}", type="${msgType}"`);
+
     let conn = this.connections.get(connectionId);
     if (!conn || !conn.isConnected()) {
+      console.log(`[WSService] send() — channel="${connectionId}" not connected, connecting...`);
       this.connect(connectionId);
       conn = this.connections.get(connectionId);
-      if (!conn) return false;
+      if (!conn) {
+        console.error(`[WSService] send() — failed to create connection for "${connectionId}"`);
+        return false;
+      }
 
       // Wait for connection to establish
       let attempts = 0;
@@ -333,9 +341,10 @@ export class WebSocketClientService {
         attempts++;
       }
       if (!conn.isConnected()) {
-        console.error(`Failed to establish WebSocket connection for ${connectionId}`);
+        console.error(`[WSService] send() — connection timeout for "${connectionId}" after ${attempts * 100}ms`);
         return false;
       }
+      console.log(`[WSService] send() — channel="${connectionId}" connected after ${attempts * 100}ms`);
     }
 
     try {

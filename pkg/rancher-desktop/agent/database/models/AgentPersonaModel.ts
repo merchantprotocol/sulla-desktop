@@ -116,7 +116,7 @@ export class AgentPersonaService {
     this.wsService = getWebSocketClientService();
   }
 
-  constructor(registry: AgentPersonaRegistry, agentData?: AgentRegistryEntry) {
+  constructor(registry: AgentPersonaRegistry, agentData?: AgentRegistryEntry, requestedAgentId?: string) {
     this.registry = registry;
 
     if (agentData) {
@@ -130,6 +130,10 @@ export class AgentPersonaService {
         temperature: agentData.temperature ?? 0.7,
         totalTokensUsed: agentData.totalTokensUsed ?? 0,
       });
+    } else if (requestedAgentId) {
+      // No registry entry exists — use the requested ID so we connect on the right channel
+      this.state.agentId = requestedAgentId;
+      this.state.agentName = requestedAgentId;
     }
 
     // Connect immediately — this is the core fix
@@ -427,6 +431,7 @@ export class AgentPersonaService {
     if (!content.trim()) return false;
 
     const id = this.state.agentId;
+    console.log(`[AgentPersonaService] _addUserMessage() — channel="${id}", threadId="${this.state.threadId || '(none)'}", content="${content.slice(0, 80)}"`);
     this.stopReason.value = null;
 
     this.messages.push({
@@ -440,17 +445,20 @@ export class AgentPersonaService {
 
     let delivered: boolean;
     try {
+      console.log(`[AgentPersonaService] _addUserMessage() — sending via WebSocket to channel="${id}"...`);
       delivered = await this.wsService.send(id, {
         type: 'user_message',
         data: { role: 'user', content, threadId: this.state.threadId },
         timestamp: Date.now(),
       });
-    } catch {
+      console.log(`[AgentPersonaService] _addUserMessage() — WebSocket send result: delivered=${delivered}`);
+    } catch (err) {
+      console.error(`[AgentPersonaService] _addUserMessage() — WebSocket send THREW:`, err);
       delivered = false;
     }
 
     if (!delivered) {
-      console.warn(`[AgentPersonaService] Message delivery failed for ${id}`);
+      console.warn(`[AgentPersonaService] Message delivery FAILED for channel="${id}" — connection may be down`);
       this.registry.setLoading(id, false);
       this.graphRunning.value = false;
       this.messages.push({
@@ -571,6 +579,8 @@ export class AgentPersonaService {
         }
 
         if (typeof msg.data === 'string') {
+          // Skip raw tool_use JSON that leaked from the LLM response
+          if (msg.data.trimStart().startsWith('{"type":"tool_use"')) return;
           const message: ChatMessage = {
             id: `${Date.now()}_ws_${msg.type}`,
             channelId: agentId,
@@ -582,10 +592,14 @@ export class AgentPersonaService {
         }
 
         const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+        // Skip tool_use objects that leaked from the LLM response
+        if (data?.type === 'tool_use') return;
         const content = data?.content !== undefined ? String(data.content) : '';
         if (!content.trim()) {
           return;
         }
+        // Skip if content is raw tool_use JSON
+        if (content.trimStart().startsWith('{"type":"tool_use"')) return;
 
         const roleRaw = data?.role !== undefined ? String(data.role) : (msg.type === 'system_message' ? 'system' : 'assistant');
         const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
@@ -771,6 +785,12 @@ export class AgentPersonaService {
         }
         return;
       }
+      case 'ack':
+      case 'ping':
+      case 'pong':
+      case 'subscribe':
+        // Silent — these are protocol-level messages, not content
+        return;
       default:
         console.log('[AgentPersonaModel] Unhandled message type:', msg.type);
     }

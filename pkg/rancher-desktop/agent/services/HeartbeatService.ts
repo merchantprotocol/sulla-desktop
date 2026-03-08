@@ -65,29 +65,31 @@ export class HeartbeatService {
     this.isExecuting = true;
 
     try {
-      const basePrompt  = await SullaSettingsModel.get('heartbeatPrompt', '');
-      const providerSetting = await SullaSettingsModel.get('heartbeatProvider', 'default');
-
+      const basePrompt = await SullaSettingsModel.get('heartbeatPrompt', '');
       const fullPrompt = this.buildHeartbeatPrompt(basePrompt);
 
-      console.log(`[HeartbeatService] Building heartbeat prompt (provider=${providerSetting})`);
+      console.log('[HeartbeatService] Dispatching to HeartbeatGraph via GraphRegistry');
 
-      const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
-      const registry = getWorkflowRegistry();
+      const { GraphRegistry } = await import('./GraphRegistry');
+      const { graph, state } = await GraphRegistry.getOrCreateOverlordGraph('heartbeat', fullPrompt);
 
-      console.log('[HeartbeatService] Dispatching to WorkflowRegistry — triggerType="heartbeat", originChannel="heartbeat"');
+      // Reset for fresh run
+      state.metadata.consecutiveSameNode = 0;
+      state.metadata.iterations = 0;
+      state.metadata.cycleComplete = false;
+      state.metadata.waitingForUser = false;
+      (state.metadata as any).heartbeatCycleCount = 0;
+      (state.metadata as any).heartbeatStatus = 'idle';
 
-      const result = await registry.dispatch({
-        triggerType: 'heartbeat',
-        message: fullPrompt,
-        originChannel: 'heartbeat',
-      });
+      // Inject the prompt as a fresh user message
+      state.messages = [{
+        role: 'user',
+        content: fullPrompt,
+        metadata: { source: 'heartbeat' },
+      }];
 
-      if (result) {
-        console.log(`[HeartbeatService] Heartbeat dispatched to workflow "${result.workflowName}" (${result.workflowId})`);
-      } else {
-        console.log('[HeartbeatService] No heartbeat workflow matched — no action taken');
-      }
+      await graph.execute(state, 'input_handler');
+      console.log('[HeartbeatService] Heartbeat graph execution completed');
     } catch (err) {
       console.error('[HeartbeatService] Heartbeat execution failed:', err);
     } finally {

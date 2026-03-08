@@ -70,11 +70,15 @@ export const GraphRegistry = {
     state: AgentGraphState;
   }> {
     if (registry.has(threadId)) {
+      console.log(`[GraphRegistry] getOrCreate() — cache HIT for threadId="${threadId}"`);
       return Promise.resolve(registry.get(threadId)!);
     }
 
+    console.log(`[GraphRegistry] getOrCreate() — cache MISS, creating new graph for agentId="${wsChannel}", threadId="${threadId}"`);
     const graph = createAgentGraph();
+    console.log(`[GraphRegistry] getOrCreate() — agent graph created, building state...`);
     const state = await buildAgentState(wsChannel, threadId);
+    console.log(`[GraphRegistry] getOrCreate() — state built: model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}, agentName="${state.metadata.agent?.name || '(none)'}"`);
 
     registry.set(threadId, { graph, state });
     return { graph, state };
@@ -133,6 +137,63 @@ export const GraphRegistry = {
     return updatedCount;
   }
 };
+
+const DEFAULT_AGENT_FALLBACK = 'chat-controller';
+
+/**
+ * Resolve the default agent ID from settings, falling back to 'chat-controller'.
+ */
+export async function getDefaultAgentId(): Promise<string> {
+  console.log(`[GraphRegistry] getDefaultAgentId() — resolving...`);
+  const id = await SullaSettingsModel.get('defaultAgentId', '');
+  if (id) {
+    console.log(`[GraphRegistry] getDefaultAgentId() — found setting: "${id}"`);
+    return id;
+  }
+
+  // If no setting yet, check if chat-controller exists
+  const agentDir = path.join(resolveSullaAgentsDir(), DEFAULT_AGENT_FALLBACK);
+  if (fs.existsSync(agentDir)) {
+    console.log(`[GraphRegistry] getDefaultAgentId() — no setting, using fallback dir: "${DEFAULT_AGENT_FALLBACK}"`);
+    return DEFAULT_AGENT_FALLBACK;
+  }
+
+  // Last resort: pick the first agent directory that exists
+  const agentsRoot = resolveSullaAgentsDir();
+  console.log(`[GraphRegistry] getDefaultAgentId() — scanning agents root: "${agentsRoot}"`);
+  if (fs.existsSync(agentsRoot)) {
+    const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
+    const firstAgent = entries.find(e => e.isDirectory());
+    if (firstAgent) {
+      console.log(`[GraphRegistry] getDefaultAgentId() — picked first agent dir: "${firstAgent.name}"`);
+      return firstAgent.name;
+    }
+  }
+
+  console.log(`[GraphRegistry] getDefaultAgentId() — no agents found, hard fallback: "${DEFAULT_AGENT_FALLBACK}"`);
+  return DEFAULT_AGENT_FALLBACK;
+}
+
+/**
+ * Resolve the agent ID for a specific trigger type.
+ * Checks triggerAgentMap first, then falls back to getDefaultAgentId().
+ */
+export async function getAgentIdForTrigger(triggerType: string): Promise<string> {
+  console.log(`[GraphRegistry] getAgentIdForTrigger("${triggerType}") — resolving...`);
+  const triggerMap = await SullaSettingsModel.get('triggerAgentMap', {} as Record<string, string>);
+  console.log(`[GraphRegistry] getAgentIdForTrigger() — triggerMap:`, JSON.stringify(triggerMap));
+  const assigned = triggerMap[triggerType];
+  if (assigned) {
+    const agentDir = path.join(resolveSullaAgentsDir(), assigned);
+    const exists = fs.existsSync(agentDir);
+    console.log(`[GraphRegistry] getAgentIdForTrigger() — trigger "${triggerType}" mapped to "${assigned}", dir exists=${exists}`);
+    if (exists) return assigned;
+    console.warn(`[GraphRegistry] getAgentIdForTrigger() — agent dir not found for "${assigned}", falling back to default`);
+  } else {
+    console.log(`[GraphRegistry] getAgentIdForTrigger() — no mapping for "${triggerType}", falling back to default`);
+  }
+  return getDefaultAgentId();
+}
 
 let threadCounter = 0;
 let messageCounter = 0;

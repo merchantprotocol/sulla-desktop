@@ -93,6 +93,22 @@ function assertInsideSullaHome(targetPath: string): string {
 export function initSullaEvents(): void {
 
   // ─────────────────────────────────────────────────────────────
+  // Settings handlers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('sulla-settings-get', async (_event: unknown, property: string, defaultValue: any = null) => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+
+    return SullaSettingsModel.get(property, defaultValue);
+  });
+
+  ipcMainProxy.handle('sulla-settings-set', async (_event: unknown, property: string, value: any) => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+
+    await SullaSettingsModel.set(property, value);
+  });
+
+  // ─────────────────────────────────────────────────────────────
   // Filesystem handlers
   // ─────────────────────────────────────────────────────────────
 

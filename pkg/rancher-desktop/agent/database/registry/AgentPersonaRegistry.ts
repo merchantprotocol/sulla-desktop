@@ -97,7 +97,7 @@ export class AgentPersonaRegistry {
   getOrCreatePersonaService(agentId: string): AgentPersonaService {
     if (!this.personaServices.has(agentId)) {
       const agentData = this.state.agents.find(a => a.agentId === agentId);
-      const service = new AgentPersonaService(this, agentData);
+      const service = new AgentPersonaService(this, agentData, agentId);
       this.personaServices.set(agentId, service);
     }
     return this.personaServices.get(agentId)!;

@@ -2,7 +2,7 @@ import type { Ref } from 'vue';
 import type { AgentGraphState } from '../nodes/Graph';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { AbortService } from './AbortService';
-import { GraphRegistry, nextThreadId, nextMessageId } from './GraphRegistry';
+import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 const DEFAULT_CHANNEL_ID = 'sulla-desktop';
@@ -127,54 +127,23 @@ export class FrontendGraphWebSocketService {
       });
     }
 
-    // Try workflow dispatch first (skip for scheduler-originated messages — they have their own dispatch)
-    if (metadata?.origin !== 'scheduler') {
-      console.log('[FrontendGraphWS] Attempting workflow dispatch...');
-      const handled = await this.tryWorkflowDispatch(content);
-      if (handled) {
-        console.log('[FrontendGraphWS] Message handled by workflow — NOT calling processUserInput');
-        return;
-      }
-      console.log('[FrontendGraphWS] No workflow handled the message — falling through to processUserInput');
-    } else {
-      console.log('[FrontendGraphWS] Scheduler origin — skipping workflow dispatch');
-    }
-
     await this.processUserInput(content, threadIdFromMsg);
   }
 
-  private async tryWorkflowDispatch(message: string): Promise<boolean> {
-    try {
-      const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
-      const registry = getWorkflowRegistry();
-      const candidates = registry.findCandidates('sulla-desktop');
-      console.log(`[FrontendGraphWS] Workflow candidates for sulla-desktop: ${candidates.length}`, candidates.map(c => ({ id: c.definition.id, name: c.definition.name, enabled: c.definition.enabled })));
-      const result = await registry.dispatch({
-        triggerType: 'sulla-desktop',
-        message,
-        originChannel: this.channelId,
-      });
-      if (result) {
-        console.log(`[FrontendGraphWS] Dispatched to workflow "${result.workflowName}" (${result.workflowId}), executionId=${result.executionId}, originChannel=${this.channelId}`);
-      } else {
-        console.log('[FrontendGraphWS] No workflow matched — falling through to default agent');
-      }
-      return result !== null;
-    } catch (err) {
-      console.warn('[FrontendGraphWS] Workflow dispatch failed, falling back:', err);
-      return false;
-    }
-  }
-
   private async processUserInput(userText: string, threadIdFromMsg?: string): Promise<void> {
+    console.log(`[FrontendGraphWS] processUserInput() START — text="${userText.slice(0, 80)}", threadIdFromMsg="${threadIdFromMsg || '(none)'}"`);
+
     const channelId = this.channelId;
     const threadId = threadIdFromMsg || nextThreadId();
+    console.log(`[FrontendGraphWS] processUserInput() — resolving agent for channel="${channelId}"...`);
+    const agentId = await getAgentIdForTrigger(channelId);
 
-    console.log(`[FrontendGraphWS] processUserInput() — channelId="${channelId}", threadId="${threadId}", text="${userText.slice(0, 80)}"`);
+    console.log(`[FrontendGraphWS] processUserInput() — resolved agentId="${agentId}", threadId="${threadId}"`);
 
-    // Get or create persistent AgentGraph for this thread - do this outside try/catch
-    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(channelId, threadId) as { graph: any; state: AgentGraphState };
-    console.log(`[FrontendGraphWS] processUserInput() — agent loaded: name="${state.metadata?.agent?.name || '(default/none)'}", wsChannel="${state.metadata.wsChannel}"`);
+    // Get or create persistent AgentGraph for this thread using the default agent
+    console.log(`[FrontendGraphWS] processUserInput() — calling GraphRegistry.getOrCreateAgentGraph...`);
+    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
+    console.log(`[FrontendGraphWS] processUserInput() — graph ready: agent="${state.metadata?.agent?.name || '(none)'}", model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}`);
 
     // Create a fresh AbortService for this run and wire it into state
     const abort = new AbortService();
@@ -188,6 +157,7 @@ export class FrontendGraphWebSocketService {
     state.metadata.llmModel = mode === 'remote'
       ? await SullaSettingsModel.get('remoteModel', '')
       : await SullaSettingsModel.get('sullaModel', '');
+    console.log(`[FrontendGraphWS] processUserInput() — model refreshed: mode="${mode}", model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}`);
 
     try {
 
@@ -234,13 +204,17 @@ export class FrontendGraphWebSocketService {
       state.metadata.waitingForUser = false;
 
       // Execute on the persistent AgentGraph starting from input_handler
-      await graph.execute(state, shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler');
+      const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
+      console.log(`[FrontendGraphWS] processUserInput() — executing graph from "${startNode}"...`);
+      const startMs = Date.now();
+      await graph.execute(state, startNode);
+      console.log(`[FrontendGraphWS] processUserInput() — graph execution COMPLETED in ${Date.now() - startMs}ms`);
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('[FrontendGraphWS] Execution aborted');
         this.emitSystemMessage('Execution stopped.');
       } else {
-        console.error('[FrontendGraphWS] Error:', err);
+        console.error('[FrontendGraphWS] Error:', err?.message, err?.stack);
         this.emitSystemMessage(`Error: ${err.message || String(err)}`);
       }
     } finally {

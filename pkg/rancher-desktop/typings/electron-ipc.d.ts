@@ -134,6 +134,8 @@ export interface IpcMainInvokeEvents {
   'start-sulla-custom-env':    () => void;
   'sulla-restart-ollama':      () => void;
   'app-quit':                  () => void;
+  'sulla-settings-get':        (property: string, defaultValue?: any) => any;
+  'sulla-settings-set':        (property: string, value: any) => void;
   // #endregion
 
   // #region Filesystem

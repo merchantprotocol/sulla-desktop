@@ -1,11 +1,12 @@
 // BackendGraphWebSocketService.ts
-// Main-process workflow dispatcher: routes messages on the sulla-desktop and
-// heartbeat channels to the WorkflowRegistry. No direct GraphRegistry usage —
-// all agent execution is handled by workflow node handlers.
+// Main-process agent dispatcher: routes messages on the sulla-desktop, workbench,
+// and heartbeat channels to the default agent via GraphRegistry.
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { getSchedulerService } from './SchedulerService';
 import type { CalendarEventData } from './CalendarClient';
 import { AbortService } from './AbortService';
+import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
+import type { AgentGraphState } from '../nodes/Graph';
 
 const SULLA_DESKTOP_CHANNEL_ID = 'sulla-desktop';
 const WORKBENCH_CHANNEL_ID = 'workbench';
@@ -26,6 +27,7 @@ export class BackendGraphWebSocketService {
   private readonly schedulerService = getSchedulerService();
   private unsubscribes: (() => void)[] = [];
   private activeAborts = new Map<string, AbortService>();
+  private subscribedChannels = new Set<string>();
 
   constructor() {
     this.initialize();
@@ -74,6 +76,12 @@ export class BackendGraphWebSocketService {
     });
     if (calendarUnsub) this.unsubscribes.push(calendarUnsub);
 
+    // Track built-in channels
+    this.subscribedChannels.add(SULLA_DESKTOP_CHANNEL_ID);
+    this.subscribedChannels.add(WORKBENCH_CHANNEL_ID);
+    this.subscribedChannels.add(HEARTBEAT_CHANNEL_ID);
+    this.subscribedChannels.add(CALENDAR_CHANNEL_ID);
+
     // Register agents in the active agents registry
     this.registerAgent(SULLA_DESKTOP_CHANNEL_ID, 'Sulla', 'Frontend chat agent').catch(err =>
       console.warn('[BackendGraphWS] Failed to register sulla-desktop agent:', err));
@@ -82,16 +90,57 @@ export class BackendGraphWebSocketService {
     this.registerAgent(HEARTBEAT_CHANNEL_ID, 'Heartbeat', 'Autonomous heartbeat agent').catch(err =>
       console.warn('[BackendGraphWS] Failed to register heartbeat agent:', err));
 
+    // Subscribe to any custom agent channels from ~/sulla/agents/
+    this.subscribeToAgentChannels().catch(err =>
+      console.warn('[BackendGraphWS] Failed to subscribe to agent channels:', err));
+
     console.log('[Background] BackendGraphWebSocketService initialized');
   }
 
+  /**
+   * Dynamically subscribe to a custom agent channel so it can receive messages.
+   * Messages on custom agent channels are treated as 'sulla-desktop' trigger type.
+   */
+  subscribeToChannel(channelId: string): void {
+    if (this.subscribedChannels.has(channelId)) return;
+
+    console.log(`[BackendGraphWS] Dynamically subscribing to channel: "${channelId}"`);
+    this.wsService.connect(channelId);
+    const unsub = this.wsService.onMessage(channelId, (msg) => {
+      this.handleChannelMessage(channelId, 'sulla-desktop', msg);
+    });
+    if (unsub) this.unsubscribes.push(unsub);
+    this.subscribedChannels.add(channelId);
+  }
+
+  /**
+   * Scan ~/sulla/agents/ and subscribe to each agent's channel.
+   */
+  private async subscribeToAgentChannels(): Promise<void> {
+    try {
+      const { resolveSullaAgentsDir } = await import('../utils/sullaPaths');
+      const fs = await import('fs');
+      const agentsRoot = resolveSullaAgentsDir();
+      if (!fs.existsSync(agentsRoot)) return;
+
+      const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        this.subscribeToChannel(entry.name);
+      }
+      console.log(`[BackendGraphWS] Subscribed to ${this.subscribedChannels.size} total channels`);
+    } catch (err) {
+      console.error('[BackendGraphWS] Error scanning agent channels:', err);
+    }
+  }
+
   // ------------------------------------------------------------------
-  // Unified channel message handling — dispatches to WorkflowRegistry
+  // Unified channel message handling — dispatches to default agent via GraphRegistry
   // ------------------------------------------------------------------
 
   private async handleChannelMessage(
     channelId: string,
-    triggerType: 'sulla-desktop' | 'workbench' | 'heartbeat',
+    _triggerType: 'sulla-desktop' | 'workbench' | 'heartbeat',
     msg: WebSocketMessage,
   ): Promise<void> {
     if (msg.type === 'stop_run') {
@@ -106,7 +155,7 @@ export class BackendGraphWebSocketService {
     const content = (data?.content ?? '').trim();
     if (!content) return;
 
-    console.log(`[BackendGraphWS] user_message on ${channelId} — triggerType="${triggerType}", content="${content.slice(0, 80)}"`);
+    console.log(`[BackendGraphWS] user_message on ${channelId} — content="${content.slice(0, 80)}"`);
 
     // Scheduler ack
     const metadata = data?.metadata;
@@ -118,61 +167,62 @@ export class BackendGraphWebSocketService {
       });
     }
 
-    await this.dispatchToWorkflow(channelId, triggerType, content);
+    await this.dispatchToAgent(channelId, _triggerType, content);
   }
 
-  private async dispatchToWorkflow(
-    channelId: string,
-    triggerType: 'sulla-desktop' | 'workbench' | 'heartbeat',
-    message: string,
-  ): Promise<void> {
+  private async dispatchToAgent(channelId: string, triggerType: string, message: string): Promise<void> {
+    console.log(`[BackendGraphWS] dispatchToAgent() START — channelId="${channelId}", triggerType="${triggerType}", message="${message.slice(0, 80)}"`);
+
+    const agentId = await getAgentIdForTrigger(triggerType);
+    const threadId = nextThreadId();
+
+    console.log(`[BackendGraphWS] dispatchToAgent() — resolved agentId="${agentId}", threadId="${threadId}"`);
+
     try {
-      const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
-      const registry = getWorkflowRegistry();
+      console.log(`[BackendGraphWS] dispatchToAgent() — calling GraphRegistry.getOrCreateAgentGraph...`);
+      const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
+      console.log(`[BackendGraphWS] dispatchToAgent() — graph ready, model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}`);
 
-      console.log(`[BackendGraphWS] Dispatching to WorkflowRegistry — triggerType="${triggerType}", originChannel="${channelId}"`);
+      // Create abort service for this run
+      const abort = new AbortService();
+      this.activeAborts.set(channelId, abort);
+      state.metadata.options.abort = abort;
 
-      const result = await registry.dispatch({
-        triggerType,
-        message,
-        originChannel: channelId,
-      });
+      // Route responses back to the originating channel
+      state.metadata.wsChannel = channelId;
 
-      if (result) {
-        console.log(`[BackendGraphWS] Workflow dispatched: "${result.workflowName}" (${result.workflowId}), executionId=${result.executionId}`);
+      // Append user message
+      state.messages.push({
+        id:        nextMessageId(),
+        role:      'user',
+        content:   message,
+        timestamp: Date.now(),
+        metadata:  { source: 'backend' },
+      } as any);
 
-        // Monitor the execution in the background — report failures and empty results to the chat
-        result.done.then((runState) => {
-          if (runState.status === 'failed') {
-            console.error(`[BackendGraphWS] Workflow "${result.workflowName}" failed: ${runState.error}`);
-            this.emitMessage(channelId, 'assistant_message', {
-              content: `⚠️ Workflow "${result.workflowName}" failed: ${runState.error || 'unknown error'}`,
-              role: 'assistant',
-            });
-          } else if (runState.status === 'completed') {
-            // Check if any node failed
-            const failedNodes: string[] = [];
-            for (const [nodeId, nodeState] of runState.nodeStates) {
-              if (nodeState.status === 'failed') {
-                failedNodes.push(`${nodeId}: ${nodeState.error || 'unknown'}`);
-              }
-            }
-            if (failedNodes.length > 0) {
-              console.warn(`[BackendGraphWS] Workflow "${result.workflowName}" completed with ${failedNodes.length} failed node(s): ${failedNodes.join(', ')}`);
-              this.emitMessage(channelId, 'assistant_message', {
-                content: `⚠️ Workflow "${result.workflowName}" completed with errors:\n${failedNodes.join('\n')}`,
-                role: 'assistant',
-              });
-            }
-          }
-        }).catch(() => {});
-      } else {
-        console.log(`[BackendGraphWS] No workflow matched for triggerType="${triggerType}" — no action taken`);
-        this.emitMessage(channelId, 'system_message', `No workflow configured for trigger type "${triggerType}". Create and enable a workflow with a "${triggerType}" trigger node.`);
-      }
+      // Reset state for fresh run
+      state.metadata.consecutiveSameNode = 0;
+      state.metadata.iterations = 0;
+      (state.metadata as any).agentLoopCount = 0;
+      state.metadata.cycleComplete = false;
+      state.metadata.waitingForUser = false;
+
+      console.log(`[BackendGraphWS] dispatchToAgent() — executing graph from 'input_handler'...`);
+      const startMs = Date.now();
+      await graph.execute(state, 'input_handler');
+      console.log(`[BackendGraphWS] dispatchToAgent() — graph execution COMPLETED in ${Date.now() - startMs}ms`);
     } catch (err: any) {
-      console.error(`[BackendGraphWS] Workflow dispatch failed on ${channelId}:`, err);
-      this.emitMessage(channelId, 'system_message', `Error: ${err.message || String(err)}`);
+      if (err?.name === 'AbortError') {
+        console.log(`[BackendGraphWS] Execution aborted on ${channelId}`);
+      } else {
+        console.error(`[BackendGraphWS] Agent execution FAILED on ${channelId}:`, err);
+        this.emitMessage(channelId, 'assistant_message', {
+          content: `Agent error: ${err.message || String(err)}`,
+          role: 'assistant',
+        });
+      }
+    } finally {
+      this.activeAborts.delete(channelId);
     }
   }
 
