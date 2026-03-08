@@ -80,6 +80,7 @@ export class AgentPersonaService {
   readonly activeAssets: PersonaSidebarAsset[] = reactive([]);
 
   graphRunning = ref(false);
+  waitingForUser = ref(false);
   stopReason = ref<string | null>(null);
 
 
@@ -433,6 +434,7 @@ export class AgentPersonaService {
     const id = this.state.agentId;
     console.log(`[AgentPersonaService] _addUserMessage() — channel="${id}", threadId="${this.state.threadId || '(none)'}", content="${content.slice(0, 80)}"`);
     this.stopReason.value = null;
+    this.waitingForUser.value = false;
 
     this.messages.push({
       id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -754,8 +756,10 @@ export class AgentPersonaService {
         const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
         if (data === 'graph_execution_complete' || data?.content === 'graph_execution_complete') {
           const reason = data?.stopReason || null;
-          console.log('[AgentPersonaModel] Graph execution complete, stopReason:', reason);
+          const waiting = !!(data?.waitingForUser);
+          console.log('[AgentPersonaModel] Graph execution complete, stopReason:', reason, 'waitingForUser:', waiting);
           this.graphRunning.value = false;
+          this.waitingForUser.value = waiting;
           this.stopReason.value = reason;
           this.registry.setLoading(agentId, false);
         }

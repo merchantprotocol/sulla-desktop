@@ -73,6 +73,12 @@
           <span class="loading-dots">Thinking<span class="dot-anim">...</span></span>
         </div>
       </div>
+
+      <!-- Waiting for user indicator -->
+      <div v-if="waitingForUser && !loading && !graphRunning" class="waiting-for-user" :class="{ dark: isDark }">
+        <span class="waiting-dot"></span>
+        <span class="waiting-text">Waiting for your response</span>
+      </div>
     </div>
 
     <!-- Composer card -->
@@ -234,6 +240,7 @@ const props = defineProps<{
   query: string;
   loading: boolean;
   graphRunning: boolean;
+  waitingForUser?: boolean;
   modelSelector?: AgentModelSelectorController;
   agentRegistry?: AgentPersonaRegistry;
   totalTokensUsed?: number;
@@ -663,6 +670,41 @@ watch(() => props.messages.length, () => scrollToBottom());
 
 .dot-anim {
   animation: dotPulse 1.2s ease-in-out infinite;
+}
+
+.waiting-for-user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+}
+
+.waiting-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: waitingPulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.waiting-text {
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.waiting-for-user.dark .waiting-dot {
+  background: #fbbf24;
+}
+
+.waiting-for-user.dark .waiting-text {
+  color: #64748b;
+}
+
+@keyframes waitingPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 
 .chat-composer-wrapper {

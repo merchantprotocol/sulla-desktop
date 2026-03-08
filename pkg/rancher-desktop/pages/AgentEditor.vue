@@ -502,6 +502,7 @@
             :query="chatQuery"
             :loading="chatLoading"
             :graph-running="chatGraphRunning"
+            :waiting-for-user="chatWaitingForUser"
             :model-selector="modelSelector"
             :agent-registry="agentRegistry"
             :hide-agent-selector="!agentMode && !workflowMode"
@@ -681,6 +682,7 @@ export default defineComponent({
     const chatQuery = editorChat.query;
     const chatLoading = editorChat.loading;
     const chatGraphRunning = editorChat.graphRunning;
+    const chatWaitingForUser = editorChat.waitingForUser;
     const chatSend = () => editorChat.send();
     const chatStop = () => editorChat.stop();
     const chatUpdateQuery = (val: string) => { editorChat.query.value = val; };
@@ -1918,6 +1920,7 @@ export default defineComponent({
       chatQuery,
       chatLoading,
       chatGraphRunning,
+      chatWaitingForUser,
       chatSend,
       chatStop,
       chatUpdateQuery,

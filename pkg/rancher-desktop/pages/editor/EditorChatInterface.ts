@@ -45,6 +45,10 @@ export class EditorChatInterface {
     return this.persona.graphRunning.value;
   });
 
+  readonly waitingForUser = computed(() => {
+    return this.persona.waitingForUser.value;
+  });
+
   readonly loading = ref(false);
 
   constructor() {

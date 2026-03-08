@@ -172,6 +172,11 @@ export class AgentNode extends BaseNode {
       updatedAt: Date.now(),
     };
 
+    // When the agent is blocked, pause the graph and wait for user input
+    if (agentOutcome.status === 'blocked') {
+      state.metadata.waitingForUser = true;
+    }
+
     if (statusNote) {
       await this.updateAgentStatusNote(state, statusNote);
     }

@@ -499,12 +499,13 @@ export class Graph<TState = BaseThreadState> {
     // Send completion signal (skip on playbook re-entry to avoid duplicate signals)
     if (!isReentry) {
       const stopReason = (state as any).metadata.stopReason || null;
-      console.log('[Graph] Sending graph_execution_complete signal, stopReason:', stopReason);
+      const waitingForUser = !!(state as any).metadata.waitingForUser;
+      console.log('[Graph] Sending graph_execution_complete signal, stopReason:', stopReason, 'waitingForUser:', waitingForUser);
       const ws = getWebSocketClientService();
       const connId = (state as any).metadata.wsChannel || 'heartbeat';
       ws.send(connId, {
         type: 'transfer_data',
-        data: { role: 'system', content: 'graph_execution_complete', stopReason },
+        data: { role: 'system', content: 'graph_execution_complete', stopReason, waitingForUser },
       });
       // Clear stopReason after sending
       (state as any).metadata.stopReason = null;
