@@ -188,10 +188,19 @@ function areUpstreamComplete(
 
 // ── Step result types ──
 
+/** A single node's spawn info used inside a parallel batch. */
+export interface ParallelNodeSpawn {
+  nodeId: string;
+  agentId: string;
+  prompt: string;
+  config: Record<string, unknown>;
+}
+
 export type PlaybookStepResult =
   | { action: 'prompt_agent'; prompt: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'node_completed'; nodeId: string; result: unknown; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'spawn_sub_agent'; nodeId: string; agentId: string; prompt: string; config: Record<string, unknown>; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'spawn_parallel_agents'; nodes: ParallelNodeSpawn[]; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'spawn_sub_workflow'; nodeId: string; workflowId: string; payload: unknown; awaitResponse: boolean; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'workflow_completed'; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'workflow_failed'; error: string; updatedPlaybook: WorkflowPlaybookState }
@@ -228,6 +237,26 @@ function resolveTemplate(
   });
 }
 
+// ── Parallelization ──
+
+/**
+ * Node subtypes that cannot run in parallel — they require orchestrator
+ * attention, user interaction, or impose temporal constraints.
+ */
+export const NON_PARALLELIZABLE_SUBTYPES: ReadonlySet<WorkflowNodeSubtype> = new Set([
+  'router',
+  'condition',
+  'user-input',
+  'wait',
+]);
+
+/**
+ * Node subtypes that are safe to execute concurrently via Promise.allSettled.
+ */
+function isParallelizable(subtype: WorkflowNodeSubtype): boolean {
+  return !NON_PARALLELIZABLE_SUBTYPES.has(subtype);
+}
+
 // ── Core: process the next step ──
 
 /**
@@ -238,6 +267,7 @@ function resolveTemplate(
  * - prompt_agent: inject a prompt into agent messages (for router/condition decisions)
  * - node_completed: a node finished mechanically, advance the DAG
  * - spawn_sub_agent: launch an independent agent graph
+ * - spawn_parallel_agents: launch multiple independent agent/tool-call graphs concurrently
  * - workflow_completed: all nodes done
  * - workflow_failed: error
  * - wait: pause for a duration
@@ -280,7 +310,54 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
     };
   }
 
-  // Process the first ready node
+  // ── Parallel batch detection ──
+  // When multiple ready nodes are all parallelizable (agent/tool-call/response/sub-workflow),
+  // batch them into a single spawn_parallel_agents action for concurrent execution.
+  if (readyNodes.length > 1) {
+    const parallelizableNodes: Array<{ nodeId: string; node: WorkflowNodeSerialized }> = [];
+
+    for (const id of readyNodes) {
+      const n = getNode(definition, id);
+      if (n && isParallelizable(n.data.subtype) && (n.data.subtype === 'agent' || n.data.subtype === 'tool-call')) {
+        parallelizableNodes.push({ nodeId: id, node: n });
+      }
+    }
+
+    // Only batch if we have 2+ parallelizable spawn nodes
+    if (parallelizableNodes.length > 1) {
+      const triggerPayload = Object.values(nodeOutputs).find(o => o.category === 'trigger')?.result;
+      const spawns: ParallelNodeSpawn[] = [];
+
+      for (const { nodeId: pNodeId, node: pNode } of parallelizableNodes) {
+        const subtype = pNode.data.subtype;
+        const config = pNode.data.config || {};
+        const upstreamOutputs = getUpstreamOutputs(definition, pNodeId, nodeOutputs);
+
+        // Build the spawn result for this node (reuse existing handlers)
+        const singleResult = processNode(playbook, pNode, subtype, config, upstreamOutputs, triggerPayload);
+
+        // Only batch spawn_sub_agent actions; anything else falls through to sequential
+        if (singleResult.action === 'spawn_sub_agent') {
+          spawns.push({
+            nodeId:  singleResult.nodeId,
+            agentId: singleResult.agentId,
+            prompt:  singleResult.prompt,
+            config:  singleResult.config,
+          });
+        }
+      }
+
+      if (spawns.length > 1) {
+        return {
+          action: 'spawn_parallel_agents',
+          nodes: spawns,
+          updatedPlaybook: playbook,
+        };
+      }
+    }
+  }
+
+  // ── Sequential fallback — process the first ready node ──
   const nodeId = readyNodes[0];
   const node = getNode(definition, nodeId);
 

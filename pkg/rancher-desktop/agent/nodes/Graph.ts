@@ -746,6 +746,92 @@ export class Graph<TState = BaseThreadState> {
           break;
         }
 
+        case 'spawn_parallel_agents': {
+          // ── True parallel execution: fire all sub-agents concurrently ──
+          const parallelNodes = step.nodes;
+          const nodeLabels = parallelNodes.map(n => this.getPlaybookNodeLabel(currentPlaybook, n.nodeId));
+
+          // Emit started events for all parallel nodes
+          for (let i = 0; i < parallelNodes.length; i++) {
+            const pn = parallelNodes[i];
+            this.emitEdgeActivations(state, currentPlaybook.definition, pn.nodeId, 'incoming');
+            this.emitPlaybookEvent(state, 'node_started', { nodeId: pn.nodeId, nodeLabel: nodeLabels[i] });
+          }
+
+          // Before prompt: notify orchestrator about the parallel batch
+          const batchSummary = parallelNodes.map((pn, i) => {
+            const isToolCall = pn.agentId === '__tool_call__';
+            return `  ${i + 1}. [${nodeLabels[i]}] (${isToolCall ? 'tool-call' : `agent: ${pn.config.agentName || pn.agentId || 'default'}`})`;
+          }).join('\n');
+          this.injectWorkflowMessage(state, `[Workflow: Parallel Execution]\nThe following ${parallelNodes.length} nodes will execute concurrently:\n${batchSummary}\n\nAll branches are launching now.`);
+          state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+          // Fire all sub-agents concurrently with Promise.allSettled
+          const parallelPromises = parallelNodes.map(async (pn, i) => {
+            const result = await this.executeSubAgent(state, pn.nodeId, pn.agentId, pn.prompt, pn.config);
+            return { nodeId: pn.nodeId, label: nodeLabels[i], result, config: pn.config, agentId: pn.agentId };
+          });
+
+          const settled = await Promise.allSettled(parallelPromises);
+
+          // Process results — complete succeeded nodes, fail others
+          const successes: Array<{ nodeId: string; label: string; resultText: string; threadId?: string }> = [];
+          const failures: Array<{ nodeId: string; label: string; error: string }> = [];
+
+          for (const outcome of settled) {
+            if (outcome.status === 'fulfilled') {
+              const { nodeId: nId, label, result } = outcome.value;
+              const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+
+              const completed = completeSubAgent(meta.activeWorkflow, nId, result.output, result.threadId);
+              meta.activeWorkflow = completed.updatedPlaybook;
+
+              this.emitPlaybookEvent(state, 'node_completed', { nodeId: nId, nodeLabel: label, output: resultText, threadId: result.threadId });
+              this.emitEdgeActivations(state, currentPlaybook.definition, nId, 'outgoing');
+              const nodeSubtype = this.getPlaybookNodeSubtype(currentPlaybook, nId);
+              await this.saveCheckpoint(completed.updatedPlaybook, nId, label, nodeSubtype, resultText);
+
+              successes.push({ nodeId: nId, label, resultText, threadId: result.threadId });
+            } else {
+              const pn = parallelNodes[settled.indexOf(outcome)];
+              const label = this.getPlaybookNodeLabel(currentPlaybook, pn.nodeId);
+              const errMsg = outcome.reason?.message || String(outcome.reason);
+
+              this.emitPlaybookEvent(state, 'node_failed', { nodeId: pn.nodeId, nodeLabel: label, error: errMsg });
+              failures.push({ nodeId: pn.nodeId, label, error: errMsg });
+            }
+          }
+
+          // If all nodes failed, fail the workflow
+          if (successes.length === 0 && failures.length > 0) {
+            const errSummary = failures.map(f => `${f.label}: ${f.error}`).join('; ');
+            const failedPlaybook = { ...meta.activeWorkflow, status: 'failed' as const, error: `All parallel branches failed: ${errSummary}` };
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: failedPlaybook.error });
+            state = await this.releaseWorkflow(state, failedPlaybook, 'failed', failedPlaybook.error);
+            return state;
+          }
+
+          // After prompt: summarize results for orchestrator
+          const resultsSummary = [
+            ...successes.map(s => `  [${s.label}]: completed`),
+            ...failures.map(f => `  [${f.label}]: FAILED — ${f.error}`),
+          ].join('\n');
+          this.injectWorkflowMessage(state, `[Workflow: Parallel Execution Complete]\n${successes.length}/${parallelNodes.length} branches succeeded.\n${resultsSummary}\n\nReview and continue.`, failures.length === 0);
+          if (failures.length > 0) {
+            // Only re-enter agent if there were partial failures to review
+            state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+          }
+
+          // Check if workflow completed after all parallel nodes
+          if (meta.activeWorkflow?.status === 'completed') {
+            this.emitPlaybookEvent(state, 'workflow_completed', {});
+            state = await this.releaseWorkflow(state, meta.activeWorkflow, 'completed');
+            return state;
+          }
+
+          break;
+        }
+
         case 'spawn_sub_workflow': {
           const subWfLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
           this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');

@@ -83,9 +83,21 @@ import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
 
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core';
-import type { WorkflowDefinition, WorkflowNodeData } from './workflow/types';
+import type { WorkflowDefinition, WorkflowNodeData, WorkflowNodeSubtype } from './workflow/types';
 import WorkflowCustomNode from './workflow/WorkflowCustomNode.vue';
 import { getNodeDefinition } from './workflow/nodeRegistry';
+
+/**
+ * Node subtypes that cannot be placed downstream of a parallel node.
+ * These require orchestrator attention, user interaction, or temporal pauses
+ * and would break true parallel execution.
+ */
+const NON_PARALLELIZABLE_SUBTYPES: ReadonlySet<WorkflowNodeSubtype> = new Set([
+  'router',
+  'condition',
+  'user-input',
+  'wait',
+]);
 
 const props = defineProps<{
   isDark: boolean;
@@ -229,7 +241,71 @@ function onEdgesChange(changes: EdgeChange[]) {
   emit('workflow-changed');
 }
 
+/**
+ * Check whether a node sits inside a parallel branch — i.e. it is reachable
+ * from a 'parallel' node without crossing a 'merge' node first.
+ */
+function isInsideParallelBranch(nodeId: string): boolean {
+  // Walk backwards from nodeId. If we hit a 'parallel' node before hitting
+  // a 'merge' node (or running out of graph), the node is inside a parallel branch.
+  const visited = new Set<string>();
+  const queue = [nodeId];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const node = nodes.value.find(n => n.id === current);
+    if (!node) continue;
+
+    const data = node.data as WorkflowNodeData | undefined;
+    if (!data) continue;
+
+    // If we reached a parallel node, this nodeId is inside a parallel branch
+    if (data.subtype === 'parallel') return true;
+    // If we reached a merge node, this branch is past the parallel block — stop
+    if (data.subtype === 'merge') continue;
+
+    // Walk upstream
+    for (const edge of edges.value) {
+      if (edge.target === current && !visited.has(edge.source)) {
+        queue.push(edge.source);
+      }
+    }
+  }
+
+  return false;
+}
+
 function onConnect(connection: Connection) {
+  const sourceNode = nodes.value.find(n => n.id === connection.source);
+  const targetNode = nodes.value.find(n => n.id === connection.target);
+  const sourceData = sourceNode?.data as WorkflowNodeData | undefined;
+  const targetData = targetNode?.data as WorkflowNodeData | undefined;
+
+  if (targetData && NON_PARALLELIZABLE_SUBTYPES.has(targetData.subtype)) {
+    // Block direct connection from a parallel node
+    if (sourceData?.subtype === 'parallel') {
+      console.warn(
+        `[WorkflowEditor] Cannot connect "${targetData.subtype}" node directly to a parallel node. ` +
+        `Router, condition, user-input, and wait nodes cannot run in parallel branches.`,
+      );
+
+      return;
+    }
+
+    // Block connection if the source is already inside a parallel branch
+    if (connection.source && isInsideParallelBranch(connection.source)) {
+      console.warn(
+        `[WorkflowEditor] Cannot place "${targetData.subtype}" node inside a parallel branch. ` +
+        `Router, condition, user-input, and wait nodes cannot run in parallel branches.`,
+      );
+
+      return;
+    }
+  }
+
   addEdges([{ ...connection, animated: true }]);
   emit('workflow-changed');
 }
