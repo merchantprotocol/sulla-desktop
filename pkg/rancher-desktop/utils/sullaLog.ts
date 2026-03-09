@@ -1,7 +1,8 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
-const SULLA_LOG_DIR = path.join(process.cwd(), 'log');
+const SULLA_LOG_DIR = path.join(os.homedir(), 'sulla', 'logs');
 
 export interface SullaLogEvent {
   topic:      string;

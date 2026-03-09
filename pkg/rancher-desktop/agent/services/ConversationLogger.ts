@@ -47,6 +47,8 @@ export interface ConversationEvent {
 class ConversationLoggerImpl {
   private dir: string;
   private indexPath: string;
+  /** Set to true to disable all logging. */
+  private disabled = true;
 
   constructor() {
     this.dir = resolveSullaConversationsDir();
@@ -54,6 +56,7 @@ class ConversationLoggerImpl {
   }
 
   private ensureDir(): void {
+    if (this.disabled) return;
     fs.mkdirSync(this.dir, { recursive: true });
   }
 
@@ -66,6 +69,7 @@ class ConversationLoggerImpl {
    * Start a new conversation — writes an entry to the index.
    */
   start(meta: ConversationMeta): void {
+    if (this.disabled) return;
     try {
       this.ensureDir();
       fs.appendFileSync(this.indexPath, JSON.stringify(meta) + '\n', 'utf-8');
@@ -79,6 +83,7 @@ class ConversationLoggerImpl {
    * Appends a new line with the same id — readers use the last entry per id.
    */
   update(meta: Partial<ConversationMeta> & { id: string }): void {
+    if (this.disabled) return;
     try {
       this.ensureDir();
       fs.appendFileSync(this.indexPath, JSON.stringify({ ...meta, _update: true }) + '\n', 'utf-8');
@@ -91,6 +96,7 @@ class ConversationLoggerImpl {
    * Append an event to a conversation's event log.
    */
   log(conversationId: string, event: ConversationEvent): void {
+    if (this.disabled) return;
     try {
       this.ensureDir();
       const filePath = this.eventFilePath(conversationId);

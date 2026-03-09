@@ -110,8 +110,9 @@
             <TrainingFileTreePane
               v-show="trainingMode"
               :is-dark="isDark"
+              :current-step="trainingStep"
               @close="leftPaneVisible = false"
-              @files-preprocessed="onTrainingFilesPreprocessed"
+              @step-change="trainingStep = $event"
             />
 
             <!-- Monitor pane -->
@@ -150,7 +151,7 @@
           <!-- Monitor dashboard (replaces editor area when monitor mode is active) -->
           <MonitorDashboard v-if="monitorMode" ref="monitorDashboardRef" :is-dark="isDark" :active-section="monitorSection" @refresh="monitorDashboardRef?.refreshAll?.()" @open-detail="openMonitorDetail" />
           <!-- Training full-screen (replaces everything when training mode is active) -->
-          <TrainingPane ref="trainingPaneRef" v-if="trainingMode" :is-dark="isDark" @env-ready="leftPaneVisible = true" />
+          <TrainingPane ref="trainingPaneRef" v-if="trainingMode" :is-dark="isDark" :current-step="trainingStep" @env-ready="leftPaneVisible = true" @step-change="trainingStep = $event" @content-scale="trainingContentScale = $event" />
           <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
           <WorkflowEditor v-if="workflowMode" ref="workflowEditorRef" :is-dark="isDark" :workflow-data="activeWorkflowData" @node-selected="onWorkflowNodeSelected" @workflow-changed="onWorkflowChanged" />
           <!-- Workflow save toolbar -->
@@ -555,6 +556,44 @@
             @update-trigger="() => {}"
             @update-node-config="onWorkflowNodeConfigUpdate"
           />
+          <!-- Training mode: tabbed right pane (Chat / Help) -->
+          <template v-else-if="trainingMode">
+            <div class="rp-tabs" :class="{ dark: isDark }">
+              <button
+                class="rp-tab"
+                :class="{ active: rightPaneTab === 'chat', dark: isDark }"
+                @click="rightPaneTab = 'chat'"
+              >Chat</button>
+              <button
+                class="rp-tab"
+                :class="{ active: rightPaneTab === 'help', dark: isDark }"
+                @click="rightPaneTab = 'help'"
+              >Help</button>
+            </div>
+            <EditorChat
+              v-show="rightPaneTab === 'chat'"
+              :is-dark="isDark"
+              :messages="chatMessages"
+              :query="chatQuery"
+              :loading="chatLoading"
+              :graph-running="chatGraphRunning"
+              :waiting-for-user="chatWaitingForUser"
+              :model-selector="modelSelector"
+              :agent-registry="agentRegistry"
+              :hide-agent-selector="false"
+              :total-tokens-used="chatTotalTokensUsed"
+              @update:query="chatUpdateQuery"
+              @send="chatSend()"
+              @stop="chatStop()"
+              @close="rightPaneVisible = false"
+            />
+            <TrainingHelpPane
+              v-show="rightPaneTab === 'help'"
+              :is-dark="isDark"
+              :current-step="trainingStep"
+              :content-scale="trainingContentScale"
+            />
+          </template>
           <!-- Chat (default / workflow mode) -->
           <EditorChat
             v-else
@@ -645,6 +684,7 @@ import AgentFormTab from './editor/AgentFormTab.vue';
 import WorkflowPane from './editor/WorkflowPane.vue';
 import TrainingPane from './editor/TrainingPane.vue';
 import TrainingFileTreePane from './editor/TrainingFileTreePane.vue';
+import TrainingHelpPane from './editor/TrainingHelpPane.vue';
 import MonitorPane from './editor/MonitorPane.vue';
 import MonitorDashboard from './editor/MonitorDashboard.vue';
 import MonitorDetailPanel from './editor/MonitorDetailPanel.vue';
@@ -746,6 +786,7 @@ export default defineComponent({
     EditorChat,
     DiffEditor,
     TrainingFileTreePane,
+    TrainingHelpPane,
     MonitorPane,
     MonitorDashboard,
     MonitorDetailPanel,
@@ -1042,13 +1083,13 @@ export default defineComponent({
       if (!resizeTarget) return;
       if (resizeTarget === 'bottom') {
         const delta = resizeStartPos - e.clientY;
-        bottomPaneHeight.value = Math.max(100, Math.min(600, resizeStartSize + delta));
+        bottomPaneHeight.value = Math.max(100, resizeStartSize + delta);
       } else if (resizeTarget === 'left') {
         const delta = e.clientX - resizeStartPos;
         leftPaneWidth.value = Math.max(150, Math.min(600, resizeStartSize + delta));
       } else {
         const delta = resizeStartPos - e.clientX;
-        rightPaneWidth.value = Math.max(150, Math.min(600, resizeStartSize + delta));
+        rightPaneWidth.value = Math.max(150, resizeStartSize + delta);
       }
     }
 
@@ -1067,6 +1108,9 @@ export default defineComponent({
     const integrationsMode = ref(false);
     const workflowMode = ref(false);
     const trainingMode = ref(false);
+    const trainingStep = ref(0);
+    const trainingContentScale = ref({ size: 0, scale: 'poor', label: 'Not enough', pct: 0 });
+    const rightPaneTab = ref<'chat' | 'help'>('chat');
     const monitorMode = ref(false);
     const monitorSection = ref('health');
     const monitorDashboardRef = ref<any>(null);
@@ -1340,7 +1384,8 @@ export default defineComponent({
         savedRightPaneVisible = rightPaneVisible.value;
         leftPaneVisible.value = true;
         bottomPaneVisible.value = false;
-        rightPaneVisible.value = false;
+        rightPaneVisible.value = true;
+        rightPaneTab.value = 'help';
       } else {
         trainingMode.value = false;
         leftPaneVisible.value = true;
@@ -1364,10 +1409,6 @@ export default defineComponent({
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
       }
-    }
-
-    function onTrainingFilesPreprocessed() {
-      trainingPaneRef.value?.loadDataFiles?.();
     }
 
     function onWorkflowNodeSelected(node: { id: string; label: string; type?: string; data?: any } | null) {
@@ -2235,6 +2276,9 @@ export default defineComponent({
       toggleIntegrations,
       workflowMode,
       trainingMode,
+      trainingStep,
+      trainingContentScale,
+      rightPaneTab,
       toggleTraining,
       monitorMode,
       monitorSection,
@@ -2338,7 +2382,6 @@ export default defineComponent({
       footerStats,
       formatBytes,
       trainingPaneRef,
-      onTrainingFilesPreprocessed,
       backendState,
       backendProgressDesc,
       backendProgressActive,
@@ -2546,12 +2589,56 @@ html, body, #app {
   border-right: 1px solid #cbd5e1;
   overflow: hidden;
   background: #f8fafc;
+  display: flex;
+  flex-direction: column;
 }
 
 .right-pane.dark {
   border-left-color: #3c3c3c;
   border-right-color: #3c3c3c;
   background: #1e293b;
+}
+
+/* Right pane tabs (training mode) */
+.rp-tabs {
+  display: flex;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.rp-tabs.dark {
+  border-bottom-color: #334155;
+}
+.rp-tab {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: #64748b;
+  transition: all 0.15s;
+}
+.rp-tab:hover {
+  color: #334155;
+  background: #f1f5f9;
+}
+.rp-tab.dark {
+  color: #64748b;
+}
+.rp-tab.dark:hover {
+  color: #e2e8f0;
+  background: #1e293b;
+}
+.rp-tab.active {
+  color: #0284c7;
+  border-bottom-color: #0284c7;
+}
+.rp-tab.active.dark {
+  color: #38bdf8;
+  border-bottom-color: #38bdf8;
 }
 
 .empty-state {
@@ -2989,6 +3076,12 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+
+.left-pane.dark {
+  background: #1e293b;
+  border-right-color: #334155;
 }
 
 .file-tree-wrapper {

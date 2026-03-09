@@ -1,9 +1,9 @@
 <template>
-  <div class="tft-pane" :class="{ dark: isDark }">
-    <div class="tft-header" :class="{ dark: isDark }">
-      <span class="tft-header-title">Training Sources</span>
-      <div class="tft-header-actions">
-        <button class="tft-header-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
+  <div class="tw-pane" :class="{ dark: isDark }">
+    <div class="tw-header" :class="{ dark: isDark }">
+      <span class="tw-header-title">Training Wizard</span>
+      <div class="tw-header-actions">
+        <button class="tw-header-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="18" y1="6" x2="6" y2="18"/>
             <line x1="6" y1="6" x2="18" y2="18"/>
@@ -12,264 +12,145 @@
       </div>
     </div>
 
-    <!-- Selection count -->
-    <div class="tft-action-bar" :class="{ dark: isDark }">
-      <span class="tft-selection-count">
-        {{ selectedFolders.length }} folder{{ selectedFolders.length !== 1 ? 's' : '' }},
-        {{ selectedFiles.length }} file{{ selectedFiles.length !== 1 ? 's' : '' }} selected
-      </span>
-    </div>
+    <div class="tw-steps">
+      <!-- ─── Wizard 1: Create Training Data ─── -->
+      <div class="tw-section-title" :class="{ dark: isDark, active: currentStep <= 2 }">Create Training Data</div>
+      <div
+        v-for="(step, idx) in dataSteps"
+        :key="'d-' + idx"
+        class="tw-step"
+        :class="{
+          dark: isDark,
+          active: currentStep === idx,
+          completed: idx < currentStep && currentStep <= 2,
+          clickable: idx < currentStep || idx === 0,
+        }"
+        @click="goToStep(idx)"
+      >
+        <div class="tw-step-indicator" :class="{ active: currentStep === idx, completed: idx < currentStep && currentStep <= 2 }">
+          <svg v-if="idx < currentStep && currentStep <= 2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          <span v-else>{{ idx + 1 }}</span>
+        </div>
+        <div class="tw-step-content">
+          <div class="tw-step-title">{{ step.title }}</div>
+          <div class="tw-step-desc">{{ step.description }}</div>
+        </div>
+        <div v-if="idx < dataSteps.length - 1" class="tw-step-connector" :class="{ completed: idx < currentStep && currentStep <= 2 }" />
+      </div>
 
-    <!-- Scrollable tree content -->
-    <div class="tft-content">
-      <div v-if="treeLoading === '__root__'" class="tft-status">Loading…</div>
-      <div v-else-if="loadError" class="tft-status tft-error">{{ loadError }}</div>
-      <div v-else-if="treeRoot.length === 0" class="tft-status">No training sources found.<br>Create skills, workflows, or projects in ~/sulla/ to get started.</div>
-      <div v-else class="tft-tree">
-        <template v-for="node in treeRoot" :key="node.path">
-          <TreeNode
-            :node="node"
-            :depth="0"
-            :is-dark="isDark"
-            :expanded-dirs="expandedDirs"
-            :tree-children="treeChildren"
-            :tree-loading="treeLoading"
-            :selected-folders="selectedFolders"
-            :selected-files="selectedFiles"
-            @toggle-dir="toggleDir"
-            @toggle-folder="toggleSelectFolder"
-            @toggle-file="toggleSelectFile"
-          />
-        </template>
+      <!-- ─── Wizard 2: Train Model ─── -->
+      <div class="tw-section-title" :class="{ dark: isDark, active: currentStep >= 3 }" style="margin-top: 16px;">Train Model</div>
+      <div
+        v-for="(step, localIdx) in trainSteps"
+        :key="'t-' + localIdx"
+        class="tw-step"
+        :class="{
+          dark: isDark,
+          active: currentStep === localIdx + 3,
+          completed: localIdx + 3 < currentStep,
+          clickable: localIdx + 3 < currentStep || localIdx === 0,
+        }"
+        @click="goToStep(localIdx + 3)"
+      >
+        <div class="tw-step-indicator" :class="{ active: currentStep === localIdx + 3, completed: localIdx + 3 < currentStep }">
+          <svg v-if="localIdx + 3 < currentStep" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          <span v-else>{{ localIdx + 1 }}</span>
+        </div>
+        <div class="tw-step-content">
+          <div class="tw-step-title">{{ step.title }}</div>
+          <div class="tw-step-desc">{{ step.description }}</div>
+        </div>
+        <div v-if="localIdx < trainSteps.length - 1" class="tw-step-connector" :class="{ completed: localIdx + 3 < currentStep }" />
       </div>
     </div>
 
-    <!-- Action buttons (pinned to bottom) -->
-    <div class="tft-action-buttons" :class="{ dark: isDark }">
-      <!-- Save button -->
-      <button
-        class="tft-action-btn tft-save-btn"
-        :class="{ dark: isDark }"
-        :disabled="(selectedFolders.length === 0 && selectedFiles.length === 0) || saving"
-        @click="saveDocsConfig"
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-          <polyline points="17 21 17 13 7 13 7 21"/>
-          <polyline points="7 3 7 8 15 8"/>
-        </svg>
-        {{ saving ? 'Saving…' : 'Save Selections' }}
-      </button>
-
-      <!-- Prepare button -->
-      <button
-        class="tft-action-btn tft-prepare-btn"
-        :class="{ dark: isDark }"
-        :disabled="preprocessing"
-        @click="prepareForTraining"
-      >
-        <svg v-if="!preprocessing" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="16 16 12 12 8 16"/>
-          <line x1="12" y1="12" x2="12" y2="21"/>
-          <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
-        </svg>
-        <span v-else class="tft-btn-spinner" />
-        {{ preprocessing ? 'Processing…' : 'Prepare for Training' }}
-      </button>
-
-      <!-- Preprocessing result -->
-      <div v-if="preprocessResult" class="tft-preprocess-result" :class="{ dark: isDark }">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-          <polyline points="22 4 12 14.01 9 11.01"/>
-        </svg>
-        {{ preprocessResult.conversations }} conversation{{ preprocessResult.conversations !== 1 ? 's' : '' }} staged,
-        {{ preprocessResult.filesProcessed }} file{{ preprocessResult.filesProcessed !== 1 ? 's' : '' }} processed
-        <span v-if="preprocessResult.filesSkipped > 0">({{ preprocessResult.filesSkipped }} skipped)</span>
+    <!-- Bottom info -->
+    <div class="tw-footer" :class="{ dark: isDark }">
+      <div class="tw-footer-text" v-if="currentStep <= 2">
+        Create Data — Step {{ currentStep + 1 }} of 3
+      </div>
+      <div class="tw-footer-text" v-else>
+        Train Model — Step {{ currentStep - 2 }} of 3
       </div>
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted } from 'vue';
-import { ipcRenderer } from 'electron';
-import TreeNode from './TreeNode.vue';
+import { defineComponent } from 'vue';
 
-interface TreeEntry {
-  path: string;
-  name: string;
-  isDir: boolean;
-  hasChildren: boolean;
-  size: number;
-  ext: string;
-  category?: string;
-}
-
-interface PreprocessResult {
-  conversations: number;
-  filesProcessed: number;
-  filesSkipped: number;
+interface WizardStep {
+  title: string;
+  description: string;
 }
 
 export default defineComponent({
   name: 'TrainingFileTreePane',
-  components: { TreeNode },
 
   props: {
-    isDark: { type: Boolean, default: false },
+    isDark:      { type: Boolean, default: false },
+    currentStep: { type: Number, default: 0 },
   },
 
-  emits: ['close', 'config-saved', 'files-preprocessed'],
+  emits: ['close', 'step-change'],
 
-  setup(_props, { emit }) {
-    const treeRoot = ref<TreeEntry[]>([]);
-    const treeChildren = ref<Record<string, TreeEntry[]>>({});
-    const expandedDirs = ref<Set<string>>(new Set());
-    const treeLoading = ref('');
-    const loadError = ref('');
+  setup(props, { emit }) {
+    const dataSteps: WizardStep[] = [
+      {
+        title: 'Select Documents',
+        description: 'Pick folders and files for training data',
+      },
+      {
+        title: 'Craft Prompt',
+        description: 'Write or choose a prompt template for data generation',
+      },
+      {
+        title: 'Generate Data',
+        description: 'Choose an LLM to generate training examples from your docs',
+      },
+    ];
 
-    const selectedFolders = ref<string[]>([]);
-    const selectedFiles = ref<string[]>([]);
-    const saving = ref(false);
-    const preprocessing = ref(false);
-    const preprocessResult = ref<PreprocessResult | null>(null);
+    const trainSteps: WizardStep[] = [
+      {
+        title: 'Select Data Files',
+        description: 'Choose which training data files to use',
+      },
+      {
+        title: 'Model & Settings',
+        description: 'Choose base model, learning rate, LoRA rank',
+      },
+      {
+        title: 'Train & Deploy',
+        description: 'Run LoRA fine-tune and output your custom model',
+      },
+    ];
 
-    async function loadTreeDir(dirPath?: string) {
-      const key = dirPath || '__root__';
-      treeLoading.value = key;
-      loadError.value = '';
-      console.log('[TFT] loadTreeDir called, dirPath=', dirPath, 'key=', key);
-      try {
-        const entries: TreeEntry[] = dirPath
-          ? await ipcRenderer.invoke('training-content-tree', dirPath)
-          : await ipcRenderer.invoke('training-content-tree');
-        console.log('[TFT] IPC training-content-tree returned', entries.length, 'entries', dirPath ? `for ${dirPath}` : '(root)', entries);
-        if (!dirPath) {
-          treeRoot.value = entries;
-        } else {
-          treeChildren.value = { ...treeChildren.value, [dirPath]: entries };
-        }
-      } catch (err: any) {
-        console.error('[TFT] FAILED to list training content:', dirPath, err);
-        if (!dirPath) {
-          loadError.value = err?.message || 'Failed to load training sources. Try restarting the app.';
-        }
-      } finally {
-        treeLoading.value = '';
+    function goToStep(idx: number) {
+      if (idx === props.currentStep) return;
+      // First step of each wizard is always accessible
+      if (idx === 0 || idx === 3 || idx < props.currentStep) {
+        emit('step-change', idx);
       }
     }
 
-    async function toggleDir(dirPath: string) {
-      console.log('[TFT] toggleDir', dirPath);
-      if (expandedDirs.value.has(dirPath)) {
-        expandedDirs.value.delete(dirPath);
-        expandedDirs.value = new Set(expandedDirs.value);
-      } else {
-        expandedDirs.value.add(dirPath);
-        expandedDirs.value = new Set(expandedDirs.value);
-        if (!treeChildren.value[dirPath]) {
-          await loadTreeDir(dirPath);
-        }
-      }
-    }
-
-    function toggleSelectFolder(folderPath: string) {
-      const idx = selectedFolders.value.indexOf(folderPath);
-      if (idx >= 0) {
-        selectedFolders.value.splice(idx, 1);
-      } else {
-        selectedFolders.value.push(folderPath);
-      }
-      preprocessResult.value = null;
-    }
-
-    function toggleSelectFile(filePath: string) {
-      const idx = selectedFiles.value.indexOf(filePath);
-      if (idx >= 0) {
-        selectedFiles.value.splice(idx, 1);
-      } else {
-        selectedFiles.value.push(filePath);
-      }
-      preprocessResult.value = null;
-    }
-
-    async function saveDocsConfig() {
-      saving.value = true;
-      try {
-        await ipcRenderer.invoke(
-          'training-docs-config-save',
-          [...selectedFolders.value],
-          [...selectedFiles.value],
-          [],
-        );
-        emit('config-saved');
-      } catch (err) {
-        console.error('[TFT] FAILED to save docs config:', err);
-      } finally {
-        saving.value = false;
-      }
-    }
-
-    async function prepareForTraining() {
-      preprocessing.value = true;
-      preprocessResult.value = null;
-
-      try {
-        const result = await ipcRenderer.invoke(
-          'training-prepare-docs',
-          [...selectedFolders.value],
-          [...selectedFiles.value],
-        );
-        preprocessResult.value = {
-          conversations: 0,
-          filesProcessed: result.filesProcessed,
-          filesSkipped: 0,
-        };
-        emit('files-preprocessed');
-      } catch (err) {
-        console.error('[TFT] Document preparation failed:', err);
-      } finally {
-        preprocessing.value = false;
-      }
-    }
-
-    onMounted(async () => {
-      console.log('[TFT] onMounted — loading ~/sulla/ tree');
-      await loadTreeDir();
-      console.log('[TFT] onMounted complete. treeRoot.length=', treeRoot.value.length);
-    });
-
-    return {
-      treeRoot,
-      treeChildren,
-      expandedDirs,
-      treeLoading,
-      loadError,
-      toggleDir,
-      selectedFolders,
-      selectedFiles,
-      saving,
-      preprocessing,
-      preprocessResult,
-      toggleSelectFolder,
-      toggleSelectFile,
-      saveDocsConfig,
-      prepareForTraining,
-    };
+    return { dataSteps, trainSteps, goToStep };
   },
 });
 </script>
 
 <style>
-.tft-pane {
+.tw-pane {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
 
-.tft-header {
+.tw-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -277,24 +158,24 @@ export default defineComponent({
   border-bottom: 1px solid #e5e7eb;
   flex-shrink: 0;
 }
-.tft-header.dark {
+.tw-header.dark {
   border-bottom-color: #334155;
 }
-.tft-header-title {
+.tw-header-title {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: #64748b;
 }
-.tft-header.dark .tft-header-title {
+.tw-header.dark .tw-header-title {
   color: #94a3b8;
 }
-.tft-header-actions {
+.tw-header-actions {
   display: flex;
   gap: 2px;
 }
-.tft-header-btn {
+.tw-header-btn {
   background: none;
   border: none;
   padding: 3px;
@@ -304,256 +185,184 @@ export default defineComponent({
   display: flex;
   align-items: center;
 }
-.tft-header-btn:hover {
+.tw-header-btn:hover {
   background: #f1f5f9;
   color: #0f172a;
 }
-.tft-header-btn.dark:hover {
+.tw-header-btn.dark:hover {
   background: #1e293b;
   color: #e2e8f0;
 }
-.tft-header-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
 
-/* Action bar */
-.tft-action-bar {
-  padding: 8px;
-  border-bottom: 1px solid #e5e7eb;
-  flex-shrink: 0;
+/* Steps */
+.tw-steps {
+  flex: 1;
+  padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
+  overflow-y: auto;
 }
-.tft-action-bar.dark {
-  border-bottom-color: #334155;
+
+/* Section titles */
+.tw-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  padding: 4px 8px 8px;
 }
-.tft-action-top {
+.tw-section-title.dark {
+  color: #64748b;
+}
+.tw-section-title.active {
+  color: #0284c7;
+}
+.dark .tw-section-title.active {
+  color: #38bdf8;
+}
+
+.tw-step {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 8px;
+  border-radius: 6px;
+  cursor: default;
+  transition: background 0.15s;
+}
+.tw-step.clickable {
+  cursor: pointer;
+}
+.tw-step.clickable:hover {
+  background: #f1f5f9;
+}
+.tw-step.clickable.dark:hover {
+  background: #1e293b;
+}
+.tw-step.active {
+  background: #eff6ff;
+}
+.tw-step.active.dark {
+  background: #1e293b;
+}
+
+/* Step indicator circle */
+.tw-step-indicator {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  border: 2px solid #cbd5e1;
+  color: #94a3b8;
+  background: #fff;
+  transition: all 0.2s;
 }
-.tft-selection-count {
+.dark .tw-step-indicator {
+  border-color: #475569;
+  color: #64748b;
+  background: #0f172a;
+}
+.tw-step-indicator.active {
+  border-color: #0284c7;
+  color: #0284c7;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
+}
+.dark .tw-step-indicator.active {
+  border-color: #38bdf8;
+  color: #38bdf8;
+  background: #0f172a;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
+}
+.tw-step-indicator.completed {
+  border-color: #16a34a;
+  background: #16a34a;
+  color: #fff;
+}
+.dark .tw-step-indicator.completed {
+  border-color: #22c55e;
+  background: #22c55e;
+  color: #fff;
+}
+
+/* Step content */
+.tw-step-content {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+.tw-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  line-height: 1.3;
+}
+.dark .tw-step-title {
+  color: #e2e8f0;
+}
+.tw-step.active .tw-step-title {
+  color: #0284c7;
+}
+.dark .tw-step.active .tw-step-title {
+  color: #38bdf8;
+}
+.tw-step.completed .tw-step-title {
+  color: #16a34a;
+}
+.dark .tw-step.completed .tw-step-title {
+  color: #4ade80;
+}
+
+.tw-step-desc {
   font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+.dark .tw-step-desc {
   color: #64748b;
 }
 
-.tft-action-buttons {
-  padding: 8px;
+/* Connector line between steps */
+.tw-step-connector {
+  position: absolute;
+  left: 21px;
+  bottom: -8px;
+  width: 2px;
+  height: 16px;
+  background: #cbd5e1;
+  z-index: 0;
+}
+.dark .tw-step-connector {
+  background: #475569;
+}
+.tw-step-connector.completed {
+  background: #16a34a;
+}
+.dark .tw-step-connector.completed {
+  background: #22c55e;
+}
+
+/* Footer */
+.tw-footer {
+  padding: 10px 12px;
   border-top: 1px solid #e5e7eb;
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
-.tft-action-buttons.dark {
+.tw-footer.dark {
   border-top-color: #334155;
 }
-
-.tft-action-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  padding: 5px 8px;
+.tw-footer-text {
   font-size: 11px;
-  font-weight: 600;
-  border: 1px solid #e2e8f0;
-  border-radius: 4px;
-  cursor: pointer;
-  background: #fff;
-  color: #334155;
-  transition: background 0.1s, border-color 0.1s;
-}
-.tft-action-btn.dark {
-  background: #1e293b;
-  border-color: #334155;
-  color: #cbd5e1;
-}
-.tft-action-btn:hover:not(:disabled) {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-}
-.tft-action-btn.dark:hover:not(:disabled) {
-  background: #334155;
-  border-color: #475569;
-}
-.tft-action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.tft-prepare-btn {
-  background: #0284c7;
-  border-color: #0284c7;
-  color: #fff;
-}
-.tft-prepare-btn.dark {
-  background: #0369a1;
-  border-color: #0369a1;
-  color: #fff;
-}
-.tft-prepare-btn:hover:not(:disabled) {
-  background: #0369a1;
-  border-color: #0369a1;
-}
-.tft-prepare-btn.dark:hover:not(:disabled) {
-  background: #075985;
-  border-color: #075985;
-}
-
-.tft-btn-spinner {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid rgba(255, 255, 255, 0.4);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: tft-spin 0.6s linear infinite;
-  flex-shrink: 0;
-}
-
-/* Preprocess result */
-.tft-preprocess-result {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  font-size: 10px;
-  line-height: 1.4;
-  color: #16a34a;
-  padding: 4px 6px;
-  background: #f0fdf4;
-  border-radius: 4px;
-  border: 1px solid #bbf7d0;
-}
-.tft-preprocess-result.dark {
-  background: #14532d;
-  border-color: #166534;
-  color: #4ade80;
-}
-.tft-preprocess-result svg {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.tft-content {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.tft-status {
-  padding: 1rem;
+  color: #94a3b8;
   text-align: center;
-  font-size: 12px;
-  color: #94a3b8;
-  line-height: 1.5;
-}
-.tft-error {
-  color: #ef4444;
-}
-
-.tft-tree {
-  padding: 4px 0;
-}
-
-/* Row styles */
-.tft-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
-  font-size: 12px;
-  cursor: default;
-  color: #334155;
-}
-.tft-row.dark {
-  color: #cbd5e1;
-}
-.tft-row:hover {
-  background: #f1f5f9;
-}
-.tft-row.dark:hover {
-  background: #1e293b;
-}
-.tft-row.selected {
-  background: #eff6ff;
-}
-.tft-row.dark.selected {
-  background: #1e3a5f;
-}
-
-.tft-arrow {
-  display: inline-flex;
-  width: 14px;
-  height: 14px;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  cursor: pointer;
-  font-size: 10px;
-  color: #94a3b8;
-  transition: transform 0.1s;
-}
-.tft-arrow::before {
-  content: '\25B6'; /* right triangle */
-}
-.tft-arrow.open {
-  transform: rotate(90deg);
-}
-.tft-arrow.empty {
-  visibility: hidden;
-}
-.tft-arrow-spacer {
-  display: inline-block;
-  width: 14px;
-  flex-shrink: 0;
-}
-
-.tft-checkbox {
-  width: 13px;
-  height: 13px;
-  flex-shrink: 0;
-  cursor: pointer;
-  accent-color: #0284c7;
-}
-
-.tft-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.tft-label.dir {
-  font-weight: 500;
-}
-
-.tft-ext {
-  font-size: 10px;
-  color: #94a3b8;
-  flex-shrink: 0;
-  font-family: monospace;
-}
-
-.tft-size {
-  font-size: 10px;
-  color: #94a3b8;
-  flex-shrink: 0;
-  margin-left: auto;
-  padding-left: 4px;
-}
-
-.tft-spinner {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid #94a3b8;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: tft-spin 0.6s linear infinite;
-  flex-shrink: 0;
-}
-@keyframes tft-spin {
-  to { transform: rotate(360deg); }
 }
 </style>
