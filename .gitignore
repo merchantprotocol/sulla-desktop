@@ -26,3 +26,4 @@ justfile
 .env
 log/*
 llm/
+training/__pycache__/validate_training_data.cpython-313.pyc

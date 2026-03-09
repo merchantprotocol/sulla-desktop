@@ -37,7 +37,10 @@ export default defineComponent({
     let userScrolledUp = false;
 
     async function pollLog() {
-      if (!props.logFilename) return;
+      if (!props.logFilename) {
+        console.warn('[TrainingLogViewer] pollLog skipped: no logFilename prop');
+        return;
+      }
       try {
         const content = await ipcRenderer.invoke('training-log-read', props.logFilename);
         if (content !== logContent.value) {
@@ -47,12 +50,15 @@ export default defineComponent({
             scrollToBottom();
           }
         }
-      } catch { /* file may not exist yet */ }
+      } catch (err) {
+        console.warn('[TrainingLogViewer] training-log-read failed:', err);
+      }
 
       try {
         const status = await ipcRenderer.invoke('training-status');
         running.value = status.running;
         if (!status.running) {
+          console.log('[TrainingLogViewer] training completed, doing final read');
           // Final read
           try {
             logContent.value = await ipcRenderer.invoke('training-log-read', props.logFilename);

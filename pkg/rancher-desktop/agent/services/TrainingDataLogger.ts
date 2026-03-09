@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { resolveSullaTrainingDir } from '../utils/sullaPaths';
+import { resolveSullaConversationsDir } from '../utils/sullaPaths';
 
 // ── Types ──
 
@@ -45,7 +45,7 @@ class TrainingDataLoggerImpl {
   private activeSessions: Map<string, TrainingSession> = new Map();
 
   constructor() {
-    this.dir = resolveSullaTrainingDir();
+    this.dir = resolveSullaConversationsDir();
   }
 
   private ensureDir(): void {

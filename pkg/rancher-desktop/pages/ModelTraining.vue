@@ -254,6 +254,9 @@ export default defineComponent({
         const result = await ipcRenderer.invoke('training-status');
         this.isRunning = result.running;
         if (this.isRunning) {
+          if (result.logFilename) {
+            this.activeLogFile = result.logFilename;
+          }
           this.currentNav = 'active-run';
           this.startLogPolling();
         }
@@ -293,8 +296,23 @@ export default defineComponent({
 
     startLogPolling() {
       this.stopLogPolling();
+      console.log('[ModelTraining] startLogPolling, activeLogFile:', this.activeLogFile);
       this.logPollTimer = setInterval(async() => {
         if (!this.activeLogFile) {
+          console.warn('[ModelTraining] poll skipped: no activeLogFile');
+          // Try to recover the log filename from status
+          try {
+            const status = await ipcRenderer.invoke('training-status');
+            if (status.logFilename) {
+              console.log('[ModelTraining] recovered logFilename from status:', status.logFilename);
+              this.activeLogFile = status.logFilename;
+            }
+            if (!status.running) {
+              console.log('[ModelTraining] training no longer running, stopping poll');
+              this.isRunning = false;
+              this.stopLogPolling();
+            }
+          } catch { /* ok */ }
           return;
         }
         try {

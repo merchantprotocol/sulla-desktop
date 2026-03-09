@@ -336,13 +336,14 @@ export default defineComponent({
 
     onMounted(async () => {
       ipcRenderer.on('training-run-progress' as any, handleRunProgress);
-      // Check if training is already running
+      // Restore progress state if training is already running (e.g. after page navigation)
       try {
         const status = await ipcRenderer.invoke('training-status');
         if (status.running) {
           trainingNow.value = true;
-          trainingPhase.value = 'Training in progress...';
-          trainingProgress.value = 50;
+          trainingPhase.value = status.phase || 'Training in progress...';
+          trainingProgress.value = status.progress || 0;
+          if (status.logFilename) activeLogFilename.value = status.logFilename;
         }
       } catch { /* ok */ }
       await Promise.all([loadSchedule(), loadHistory(), loadConfigs()]);

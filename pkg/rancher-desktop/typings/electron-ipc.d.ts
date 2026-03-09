@@ -204,7 +204,7 @@ export interface IpcMainInvokeEvents {
   'training-install-status': () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string; requiredBytes: number; availableBytes: number };
   'training-install':        () => { logFilename: string };
   'training-run':          (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
-  'training-status':       () => { running: boolean };
+  'training-status':       () => { running: boolean; logFilename: string };
   'training-docs-config-exists': () => boolean;
   'training-history':      () => Array<{ filename: string; size: number; createdAt: string; modifiedAt: string; model?: string; durationMs?: number; conversationsProcessed?: number; status: 'completed' | 'running' | 'failed' }>;
   'training-log-read':     (filename: string) => string;

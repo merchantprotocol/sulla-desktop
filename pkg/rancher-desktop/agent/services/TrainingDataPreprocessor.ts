@@ -1,42 +1,52 @@
 /**
- * TrainingDataPreprocessor — converts TrainingDataLogger session files into
- * the feedback_queue format expected by train_nightly.py.
+ * TrainingDataPreprocessor — converts conversation session files into
+ * the training JSONL format expected by train_nightly.py.
  *
- * TrainingDataLogger writes one message per line to ~/sulla/training/[sessionId].jsonl.
- * train_nightly.py expects {"messages": [...]} per line in llm/feedback_queue/.
+ * TrainingDataLogger writes one message per line to ~/sulla/conversations/[sessionId].jsonl.
+ * train_nightly.py expects {"messages": [...]} per line in ~/sulla/training/.
  *
- * This module reads each session file, groups its individual message lines into
- * a single {"messages": [...]} conversation object, writes them to the feedback_queue,
- * and moves processed session files to a processed/ subdirectory.
+ * This module reads each session file from ~/sulla/conversations/, groups its
+ * individual message lines into a single {"messages": [...]} conversation object,
+ * writes them to ~/sulla/training/, and moves processed session files to
+ * ~/sulla/conversations/processed/.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { resolveSullaTrainingDir } from '../utils/sullaPaths';
+import { resolveSullaConversationsDir, resolveSullaTrainingDir } from '../utils/sullaPaths';
 
-/**
- * Resolve the feedback_queue directory under the app's userData/llm/ path.
- */
-function getFeedbackQueueDir(): string {
-  try {
-    const { app } = require('electron');
-    return path.join(app.getPath('userData'), 'llm', 'feedback_queue');
-  } catch {
-    return path.join(process.cwd(), 'llm', 'feedback_queue');
-  }
-}
+/** Valid message roles for SFT training (OpenAI chat format). */
+const VALID_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 
 /**
  * Clean a raw TrainingMessage for SFT training.
  * Keeps role, content, tool_calls, tool_call_id.
  * Strips internal metadata (reasoning, nodeId, __toolRuns, etc.).
+ * Returns null if the message has an invalid role.
  */
-function cleanMessage(msg: Record<string, unknown>): Record<string, unknown> {
-  const clean: Record<string, unknown> = { role: msg.role };
+function cleanMessage(msg: Record<string, unknown>): Record<string, unknown> | null {
+  const role = msg.role as string;
+
+  // Skip messages with invalid roles (e.g. 'function', custom roles)
+  if (!role || !VALID_ROLES.has(role)) {
+    return null;
+  }
+
+  const clean: Record<string, unknown> = { role };
 
   if (msg.content !== undefined && msg.content !== null) {
-    clean.content = msg.content;
+    // Ensure content is a string (some providers return arrays)
+    if (typeof msg.content === 'string') {
+      clean.content = msg.content;
+    } else if (Array.isArray(msg.content)) {
+      const textParts = (msg.content as any[])
+        .filter((p: any) => typeof p === 'string' || p?.type === 'text')
+        .map((p: any) => typeof p === 'string' ? p : p?.text ?? '');
+      clean.content = textParts.join('\n');
+    } else {
+      clean.content = String(msg.content);
+    }
   }
   if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
     clean.tool_calls = msg.tool_calls;
@@ -49,7 +59,7 @@ function cleanMessage(msg: Record<string, unknown>): Record<string, unknown> {
 }
 
 export interface PreprocessResult {
-  /** Number of conversations written to the feedback queue */
+  /** Number of conversations written to training dir */
   conversations: number;
   /** Number of session files processed (including skipped) */
   filesProcessed: number;
@@ -58,7 +68,11 @@ export interface PreprocessResult {
 }
 
 /**
- * Preprocess TrainingDataLogger session files into feedback_queue format.
+ * Preprocess conversation session files into training JSONL format.
+ *
+ * Reads:  ~/sulla/conversations/*.jsonl
+ * Writes: ~/sulla/training/sessions-preprocessed-YYYY-MM-DD.jsonl
+ * Moves:  processed files to ~/sulla/conversations/processed/
  *
  * @param logPath  Optional path to a log file for progress messages.
  * @returns Summary of what was preprocessed.
@@ -66,16 +80,16 @@ export interface PreprocessResult {
 export function preprocessTrainingData(logPath?: string): PreprocessResult {
   const result: PreprocessResult = { conversations: 0, filesProcessed: 0, filesSkipped: 0 };
 
-  const sullaTrainingDir = resolveSullaTrainingDir();
-  if (!fs.existsSync(sullaTrainingDir)) return result;
+  const conversationsDir = resolveSullaConversationsDir();
+  if (!fs.existsSync(conversationsDir)) return result;
 
-  const feedbackQueueDir = getFeedbackQueueDir();
-  const processedDir = path.join(sullaTrainingDir, 'processed');
-  fs.mkdirSync(feedbackQueueDir, { recursive: true });
+  const trainingDir = resolveSullaTrainingDir();
+  const processedDir = path.join(conversationsDir, 'processed');
+  fs.mkdirSync(trainingDir, { recursive: true });
   fs.mkdirSync(processedDir, { recursive: true });
 
-  // Find .jsonl session files in the training dir root (not in processed/)
-  const sessionFiles = fs.readdirSync(sullaTrainingDir)
+  // Find .jsonl session files in the conversations dir root (not in processed/)
+  const sessionFiles = fs.readdirSync(conversationsDir)
     .filter(f => f.endsWith('.jsonl'));
 
   if (sessionFiles.length === 0) return result;
@@ -86,13 +100,15 @@ export function preprocessTrainingData(logPath?: string): PreprocessResult {
     }
   };
 
+  log(`[preprocess] Found ${sessionFiles.length} conversation file(s) in ${conversationsDir}`);
+
   const outputFile = path.join(
-    feedbackQueueDir,
+    trainingDir,
     `sessions-preprocessed-${ new Date().toISOString().slice(0, 10) }.jsonl`,
   );
 
   for (const filename of sessionFiles) {
-    const filePath = path.join(sullaTrainingDir, filename);
+    const filePath = path.join(conversationsDir, filename);
     result.filesProcessed++;
 
     let content: string;
@@ -132,13 +148,20 @@ export function preprocessTrainingData(logPath?: string): PreprocessResult {
       continue;
     }
 
-    // Clean messages and write as {"messages": [...]}
-    const cleanMessages = messages.map(cleanMessage);
+    // Clean messages (filter out nulls from invalid roles) and write as {"messages": [...]}
+    const cleanMessages = messages.map(cleanMessage).filter((m): m is Record<string, unknown> => m !== null);
+    if (cleanMessages.length === 0) {
+      log(`[preprocess] ${ filename }: all messages filtered out after cleaning, skipping`);
+      moveToProcessed(filePath, processedDir, filename);
+      result.filesSkipped++;
+      continue;
+    }
     const entry = JSON.stringify({ messages: cleanMessages });
 
     try {
       fs.appendFileSync(outputFile, entry + '\n', 'utf-8');
       result.conversations++;
+      log(`[preprocess] ${ filename }: ${messages.length} messages → training`);
     } catch (err) {
       log(`[preprocess] Failed to write entry for ${ filename }: ${ err }`);
       continue;
