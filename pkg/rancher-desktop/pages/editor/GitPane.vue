@@ -473,6 +473,7 @@ interface TreeNode {
 }
 
 function buildTree(entries: GitStatusEntry[]): TreeNode[] {
+  console.log('[GitPane] buildTree input entries:', JSON.stringify(entries));
   const root: Record<string, any> = {};
 
   for (const entry of entries) {
@@ -571,9 +572,11 @@ function statusClass(code: string): string {
 
 async function discoverAndRefresh() {
   if (!props.rootPath) return;
+  console.log('[GitPane] discoverAndRefresh rootPath:', props.rootPath);
   loading.value = true;
   try {
     const discovered: Array<{ root: string; name: string }> = await ipcRenderer.invoke('git-discover-repos', props.rootPath);
+    console.log('[GitPane] discovered repos:', JSON.stringify(discovered, null, 2));
 
     // Preserve existing UI state (open/closed) for repos we already know about
     const existingMap = new Map(repoStates.value.map(r => [r.root, r]));
@@ -605,11 +608,13 @@ async function discoverAndRefresh() {
 }
 
 async function refreshRepo(repo: RepoState) {
+  console.log('[GitPane] refreshRepo:', repo.name, repo.root);
   try {
     const [br, entries] = await Promise.all([
       ipcRenderer.invoke('git-branch', repo.root),
       ipcRenderer.invoke('git-status-full', repo.root),
     ]);
+    console.log('[GitPane] refreshRepo result for', repo.name, '- branch:', br, 'entries:', JSON.stringify(entries, null, 2));
     repo.branch = br;
     repo.entries = entries;
   } catch (err) {
@@ -689,6 +694,7 @@ onMounted(() => document.addEventListener('click', onDocumentClick));
 onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick));
 
 function openFile(repo: RepoState, file: string, staged = false) {
+  console.log('[GitPane] openFile:', { repoRoot: repo.root, file, staged });
   // Open diff view for changed files by default
   emit('open-diff', repo.root, file, staged);
 }

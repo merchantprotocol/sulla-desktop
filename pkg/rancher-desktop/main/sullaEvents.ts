@@ -179,15 +179,24 @@ export function initSullaEvents(): void {
   ipcMainProxy.handle('git-status-full', async (_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
-      const output = execSync('git status --porcelain', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      const output = execSync('git status --porcelain -uall', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      console.log('[git-status-full] raw output for', dirPath, ':\n', JSON.stringify(output));
       const lines = output.split('\n').filter((line: string) => line.trim());
-      return lines.map((line: string) => {
+      console.log('[git-status-full] parsed lines count:', lines.length);
+      const entries = lines.map((line: string) => {
         const index = line[0];
         const worktree = line[1];
-        const file = line.slice(3);
+        let file = line.slice(3);
+        // Strip trailing slash from directory entries
+        if (file.endsWith('/')) {
+          file = file.slice(0, -1);
+        }
+        console.log('[git-status-full] entry:', JSON.stringify({ index, worktree, file, rawLine: line }));
         return { index, worktree, file };
       });
-    } catch {
+      return entries;
+    } catch (err: any) {
+      console.error('[git-status-full] error for', dirPath, ':', err.message);
       return [];
     }
   });
@@ -344,9 +353,10 @@ export function initSullaEvents(): void {
   });
 
   ipcMainProxy.handle('filesystem-read-dir', async(_event: unknown, dirPath: string) => {
+    console.log('[filesystem-read-dir] reading:', dirPath);
     const resolved = assertInsideSullaHome(dirPath);
     const entries = fs.readdirSync(resolved, { withFileTypes: true });
-    return entries
+    const result = entries
       .map((e) => {
         const fullPath = path.join(resolved, e.name);
         const isDir = e.isDirectory();
@@ -366,6 +376,8 @@ export function initSullaEvents(): void {
         if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
+    console.log('[filesystem-read-dir] returned', result.length, 'entries for', dirPath, ':', result.map(e => `${e.isDir ? 'D' : 'F'} ${e.name}`).join(', '));
+    return result;
   });
 
   ipcMainProxy.handle('filesystem-read-file', async(_event: unknown, filePath: string) => {
@@ -373,6 +385,9 @@ export function initSullaEvents(): void {
     const resolved = assertInsideSullaHome(filePath);
     console.log('Resolved path:', resolved);
     const stat = fs.statSync(resolved);
+    if (stat.isDirectory()) {
+      throw new Error('Cannot read a directory as a file');
+    }
     if (stat.size > 5 * 1024 * 1024) {
       throw new Error('File too large to open (>5MB)');
     }

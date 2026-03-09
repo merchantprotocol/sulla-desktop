@@ -121,7 +121,6 @@ class WebSocketConnection {
 
         if (msg.id) this.ack(msg.id);
 
-        console.log(`[WS ${this.config.channel}] Received: type="${msg.type}", handlers=${this.messageHandlers.size}`);
         this.messageHandlers.forEach(h => {
           try { h(msg); } catch (e) { console.error('[WS handler error]', e); }
         });

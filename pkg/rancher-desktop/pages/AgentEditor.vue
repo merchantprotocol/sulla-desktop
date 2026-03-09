@@ -1858,12 +1858,26 @@ export default defineComponent({
       try {
         // For staged files: compare HEAD vs staged (index) version
         // For unstaged files: compare HEAD vs working copy
-        const [modifiedContent, originalContent] = await Promise.all([
-          staged
-            ? ipcRenderer.invoke('git-show-staged', repoRoot, file)
-            : ipcRenderer.invoke('filesystem-read-file', fullPath),
-          ipcRenderer.invoke('git-show-head', repoRoot, file),
-        ]);
+        let modifiedContent: string;
+        let originalContent: string;
+
+        if (staged) {
+          [modifiedContent, originalContent] = await Promise.all([
+            ipcRenderer.invoke('git-show-staged', repoRoot, file),
+            ipcRenderer.invoke('git-show-head', repoRoot, file),
+          ]);
+        } else {
+          // Get HEAD version first (always safe)
+          originalContent = await ipcRenderer.invoke('git-show-head', repoRoot, file) || '';
+          // Try to read the working copy; deleted files won't exist on disk
+          try {
+            modifiedContent = await ipcRenderer.invoke('filesystem-read-file', fullPath) || '';
+          } catch {
+            // File was deleted in worktree — show empty content against HEAD
+            modifiedContent = '';
+          }
+        }
+
         tab.content = modifiedContent || '';
         tab.originalContent = originalContent || '';
       } catch (err: any) {

@@ -122,22 +122,26 @@ export default defineComponent({
       loading.value = true;
       try {
         rootPath.value = await ipcRenderer.invoke('filesystem-get-root');
+        console.log('[FileTree] loadRoot rootPath:', rootPath.value);
         const result = await ipcRenderer.invoke('filesystem-read-dir', rootPath.value);
+        console.log('[FileTree] loadRoot entries:', result.length, result.map((e: FileEntry) => `${e.isDir ? 'D' : 'F'} ${e.name} (ext: ${e.ext})`));
         entries.value = result;
       } catch (err) {
-        console.error('Failed to load root:', err);
+        console.error('[FileTree] Failed to load root:', err);
       } finally {
         loading.value = false;
       }
     }
 
     async function loadChildren(dirPath: string) {
+      console.log('[FileTree] loadChildren:', dirPath);
       loadingDirs.value.add(dirPath);
       try {
         const result = await ipcRenderer.invoke('filesystem-read-dir', dirPath);
+        console.log('[FileTree] loadChildren result for', dirPath, ':', result.length, 'entries:', result.map((e: FileEntry) => `${e.isDir ? 'D' : 'F'} ${e.name}`));
         childrenMap.value = { ...childrenMap.value, [dirPath]: result };
       } catch (err) {
-        console.error('Failed to load dir:', dirPath, err);
+        console.error('[FileTree] Failed to load dir:', dirPath, err);
       } finally {
         loadingDirs.value.delete(dirPath);
       }

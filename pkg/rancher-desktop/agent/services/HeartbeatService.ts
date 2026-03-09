@@ -109,7 +109,6 @@ export class HeartbeatService {
   private async checkAndMaybeTrigger(): Promise<void> {
     try {
       const enabled = await SullaSettingsModel.get('heartbeatEnabled', false);
-      console.log(`[HeartbeatService] heartbeatEnabled = ${JSON.stringify(enabled)} (type: ${typeof enabled})`);
       if (!enabled) {
         this.totalSkips++;
         this.recordEvent('heartbeat_skipped', 'Heartbeat disabled in settings');
