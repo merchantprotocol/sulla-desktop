@@ -151,7 +151,7 @@
           <!-- Monitor dashboard (replaces editor area when monitor mode is active) -->
           <MonitorDashboard v-if="monitorMode" ref="monitorDashboardRef" :is-dark="isDark" :active-section="monitorSection" @refresh="monitorDashboardRef?.refreshAll?.()" @open-detail="openMonitorDetail" />
           <!-- Training full-screen (replaces everything when training mode is active) -->
-          <TrainingPane ref="trainingPaneRef" v-if="trainingMode" :is-dark="isDark" :current-step="trainingStep" @env-ready="leftPaneVisible = true" @step-change="trainingStep = $event" @content-scale="trainingContentScale = $event" />
+          <TrainingPane ref="trainingPaneRef" v-if="trainingMode" :is-dark="isDark" :current-step="trainingStep" @env-ready="leftPaneVisible = true" @step-change="trainingStep = $event" @content-scale="trainingContentScale = $event" @open-training-log="openTrainingLog" />
           <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
           <WorkflowEditor v-if="workflowMode" ref="workflowEditorRef" :is-dark="isDark" :workflow-data="activeWorkflowData" @node-selected="onWorkflowNodeSelected" @workflow-changed="onWorkflowChanged" />
           <!-- Workflow save toolbar -->
@@ -436,6 +436,31 @@
                   </svg>
                 </button>
               </div>
+              <!-- Training log tab -->
+              <div
+                v-if="trainingLogFilename"
+                class="terminal-tab"
+                :class="{ active: bottomPaneTab === 'training', dark: isDark }"
+                @click="bottomPaneTab = 'training'"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                <span>Training Log</span>
+                <button
+                  class="terminal-tab-close"
+                  :class="{ dark: isDark }"
+                  @click.stop="trainingLogFilename = ''; bottomPaneTab = 'terminal'"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+              </div>
               <button
                 class="terminal-tab-add"
                 :class="{ dark: isDark }"
@@ -477,6 +502,11 @@
               >
                 <ApiTestPanel :is-dark="isDark" :initial-slug="atab.slug" />
               </div>
+            </div>
+
+            <!-- Training Log -->
+            <div v-show="bottomPaneTab === 'training'" class="terminal-content">
+              <TrainingLogViewer v-if="trainingLogFilename" :is-dark="isDark" :log-filename="trainingLogFilename" />
             </div>
 
             <!-- Monitor Detail Panels -->
@@ -685,6 +715,7 @@ import WorkflowPane from './editor/WorkflowPane.vue';
 import TrainingPane from './editor/TrainingPane.vue';
 import TrainingFileTreePane from './editor/TrainingFileTreePane.vue';
 import TrainingHelpPane from './editor/TrainingHelpPane.vue';
+import TrainingLogViewer from './editor/TrainingLogViewer.vue';
 import MonitorPane from './editor/MonitorPane.vue';
 import MonitorDashboard from './editor/MonitorDashboard.vue';
 import MonitorDetailPanel from './editor/MonitorDetailPanel.vue';
@@ -888,13 +919,20 @@ export default defineComponent({
     const centerPaneVisible = ref(true);
     const rightPaneVisible = ref(true);
     const bottomPaneVisible = ref(true);
-    const bottomPaneTab = ref<'terminal' | 'api' | 'monitor'>('terminal');
+    const bottomPaneTab = ref<'terminal' | 'api' | 'monitor' | 'training'>('terminal');
+    const trainingLogFilename = ref('');
     const apiTabs = ref<Array<{ id: string; slug: string }>>([]);
     const monitorTabs = ref<Array<{ id: string; type: 'ws' | 'service' | 'agent' | 'error'; tabId: string; label: string; errorData?: any }>>([]);
     const activeMonitorTab = ref('');
     let monitorTabCounter = 0;
     const activeApiTab = ref('');
     let apiTabCounter = 0;
+
+    function openTrainingLog(logFilename: string) {
+      trainingLogFilename.value = logFilename;
+      bottomPaneVisible.value = true;
+      bottomPaneTab.value = 'training';
+    }
 
     function openApiTest(slug: string) {
       // Check if a tab for this slug already exists
@@ -2327,6 +2365,8 @@ export default defineComponent({
       activeApiTab,
       openApiTest,
       closeApiTab,
+      trainingLogFilename,
+      openTrainingLog,
       monitorTabs,
       activeMonitorTab,
       openMonitorDetail,

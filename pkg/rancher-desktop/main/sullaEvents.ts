@@ -1457,30 +1457,55 @@ export function initSullaEvents(): void {
    * a LoRA training run using the default model and best-practice defaults.
    */
   ipcMainProxy.handle('training-train-conversations-now', async() => {
+    const log = (msg: string, logPath?: string) => {
+      const line = `[TrainConvNow] ${msg}`;
+      console.log(line);
+      if (logPath) {
+        try { fs.appendFileSync(logPath, line + '\n', 'utf-8'); } catch { /* ok */ }
+      }
+    };
+
+    log('Handler invoked');
+
     if (isTrainingLocked()) {
+      log('BLOCKED: training lock is held');
       throw new Error('A training run is already in progress');
     }
 
     // 1. Preprocess any unconverted session files
+    log('Step 1: Preprocessing session files...');
     const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
     const preprocessResult = preprocessTrainingData();
-    console.log(`[Sulla] Preprocessed ${preprocessResult.conversations} conversation(s) before immediate training`);
+    log(`Step 1 done: ${preprocessResult.conversations} conversation(s) from ${preprocessResult.filesProcessed} file(s), ${preprocessResult.filesSkipped} skipped`);
 
     // 2. Get default model
+    log('Step 2: Loading model config...');
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
     const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
+    log(`Step 2 done: modelKey="${modelKey}"`);
 
     // 3. Validate model and training env
-    const { GGUF_MODELS, getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
+    log('Step 3: Validating model and training env...');
+    const { GGUF_MODELS, getLlamaCppService, getTrainingScriptsDir } = await import('@pkg/agent/services/LlamaCppService');
     const entry = GGUF_MODELS[modelKey];
+    log(`Step 3a: GGUF_MODELS[${modelKey}] = ${JSON.stringify({ trainingRepo: entry?.trainingRepo, hasEntry: !!entry })}`);
     if (!entry?.trainingRepo) {
+      log(`ABORT: Model ${modelKey} has no training repo configured`);
       throw new Error(`Model ${modelKey} has no training repo configured`);
     }
 
     const service = getLlamaCppService();
-    if (!service.getTrainingPython()) {
+    const python = service.getTrainingPython();
+    log(`Step 3b: trainingPython = "${python || 'NOT FOUND'}"`);
+    if (!python) {
+      log('ABORT: Training environment not installed');
       throw new Error('Training environment not installed');
     }
+
+    const scriptsDir = getTrainingScriptsDir();
+    log(`Step 3c: scriptsDir="${scriptsDir}"`);
+    log(`Step 3d: train_nightly.py exists = ${fs.existsSync(path.join(scriptsDir, 'train_nightly.py'))}`);
+    log(`Step 3e: documents_processor.py exists = ${fs.existsSync(path.join(scriptsDir, 'documents_processor.py'))}`);
 
     // 4. Create log file
     const logsDir = getTrainingLogsDir();
@@ -1488,34 +1513,76 @@ export function initSullaEvents(): void {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const logFilename = `training-${timestamp}.log`;
     const logPath = path.join(logsDir, logFilename);
-    fs.writeFileSync(logPath, `=== Train on Conversations (Manual) ===\nStarted: ${new Date().toISOString()}\nModel: ${modelKey}\nConversations preprocessed: ${preprocessResult.conversations}\n\n`, 'utf-8');
+    const startHeader = [
+      '=== Train on Conversations (Manual) ===',
+      `Started: ${new Date().toISOString()}`,
+      `Model: ${modelKey} (repo: ${entry.trainingRepo})`,
+      `Python: ${python}`,
+      `Scripts dir: ${scriptsDir}`,
+      `Conversations preprocessed: ${preprocessResult.conversations}`,
+      `Files processed: ${preprocessResult.filesProcessed}, skipped: ${preprocessResult.filesSkipped}`,
+      '',
+    ].join('\n');
+    fs.writeFileSync(logPath, startHeader, 'utf-8');
+    log(`Step 4 done: logFile="${logPath}"`);
 
     // 5. Run training asynchronously
     acquireTrainingLock();
+    log('Training lock acquired', logPath);
+
+    const sendProgress = (phase: string, progress: number) => {
+      log(`Progress: ${phase} (${progress}%)`, logPath);
+      try {
+        window.send('training-run-progress' as any, { phase, progress, logFilename });
+      } catch (err) {
+        log(`WARNING: Failed to send progress event: ${err}`, logPath);
+      }
+    };
+
+    sendProgress('Preprocessing conversations', 10);
+
     (async () => {
       try {
-        // Also drain the document queue if anything is pending
+        // Drain document queue
         try {
+          sendProgress('Checking document queue', 15);
           const { processQueue, getQueueLength } = await import('@pkg/agent/services/TrainingQueueWorker');
           const pending = await getQueueLength();
+          log(`Document queue: ${pending} pending job(s)`, logPath);
           if (pending > 0) {
-            console.log(`[Sulla] Processing ${pending} queued doc job(s)`);
+            sendProgress(`Processing ${pending} queued doc job(s)`, 20);
             await processQueue();
+            log('Document queue drained', logPath);
+          } else {
+            log('Document queue empty, skipping', logPath);
           }
-        } catch { /* continue */ }
+        } catch (qErr) {
+          log(`WARNING: Document queue processing failed: ${qErr}`, logPath);
+        }
 
-        // Run full nightly training (handles LoRA + GGUF export)
+        // Run full nightly training
+        sendProgress('Starting LoRA training pipeline', 30);
+        log(`Calling runFullNightlyTraining("${modelKey}", "${logPath}")...`, logPath);
+
+        const trainingStart = Date.now();
         await service.runFullNightlyTraining(modelKey, logPath);
-        fs.appendFileSync(logPath, `\n=== Completed: ${new Date().toISOString()} ===\n`, 'utf-8');
-        console.log('[Sulla] Immediate conversation training complete');
-      } catch (err) {
-        console.error('[Sulla] Immediate conversation training failed:', err);
-        fs.appendFileSync(logPath, `\n=== FAILED: ${err} ===\n`, 'utf-8');
+        const trainingDuration = Date.now() - trainingStart;
+
+        log(`runFullNightlyTraining completed in ${trainingDuration}ms`, logPath);
+        fs.appendFileSync(logPath, `\n=== Completed: ${new Date().toISOString()} (${Math.round(trainingDuration / 1000)}s) ===\n`, 'utf-8');
+        sendProgress('Complete', 100);
+      } catch (err: any) {
+        const errMsg = err?.stack || err?.message || String(err);
+        log(`TRAINING FAILED: ${errMsg}`, logPath);
+        fs.appendFileSync(logPath, `\n=== FAILED ===\n${errMsg}\n`, 'utf-8');
+        sendProgress('Failed', 100);
       } finally {
         releaseTrainingLock();
+        log('Training lock released', logPath);
       }
     })();
 
+    log(`Returning logFilename="${logFilename}" (training running in background)`);
     return { logFilename, logPath };
   });
 

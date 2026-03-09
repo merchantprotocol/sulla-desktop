@@ -76,18 +76,34 @@
 
       <!-- Quick action -->
       <div class="td-action-bar" :class="{ dark: isDark }">
-        <button
-          class="td-btn-primary"
-          :disabled="trainingNow || !autoTrainEnabled"
-          @click="trainConversationsNow"
-        >
-          <span v-if="trainingNow" class="td-btn-spinner" />
-          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-          {{ trainingNow ? 'Training...' : 'Train on Conversations Now' }}
-        </button>
-        <p class="td-action-hint" v-if="!autoTrainEnabled">Enable automatic training above to use this.</p>
+        <div class="td-action-row">
+          <button
+            class="td-btn-primary"
+            :disabled="trainingNow || !autoTrainEnabled"
+            @click="trainConversationsNow"
+          >
+            <span v-if="trainingNow" class="td-btn-spinner" />
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            {{ trainingNow ? 'Training...' : 'Train on Conversations Now' }}
+          </button>
+          <p class="td-action-hint" v-if="!autoTrainEnabled">Enable automatic training above to use this.</p>
+        </div>
+        <!-- Progress bar -->
+        <div v-if="trainingNow || trainingProgress > 0" class="td-progress-wrap" :class="{ dark: isDark }">
+          <div class="td-progress-bar">
+            <div
+              class="td-progress-fill"
+              :class="{ complete: trainingProgress >= 100 }"
+              :style="{ width: trainingProgress + '%' }"
+            />
+          </div>
+          <div class="td-progress-info">
+            <span class="td-progress-phase">{{ trainingPhase }}</span>
+            <span class="td-progress-pct">{{ Math.round(trainingProgress) }}%</span>
+          </div>
+        </div>
       </div>
 
       <!-- Scheduled training configs -->
@@ -132,7 +148,8 @@
           <div
             v-for="run in runs"
             :key="run.filename"
-            class="td-run" :class="{ dark: isDark }"
+            class="td-run clickable" :class="{ dark: isDark }"
+            @click="openRunLog(run)"
           >
             <div class="td-run-status">
               <span class="td-status-dot" :class="run.status" />
@@ -158,7 +175,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, onMounted } from 'vue';
+import { defineComponent, ref, computed, onMounted, onBeforeUnmount } from 'vue';
 
 const { ipcRenderer } = require('electron');
 
@@ -179,13 +196,18 @@ export default defineComponent({
     isDark: { type: Boolean, default: false },
   },
 
-  setup() {
+  emits: ['open-training-log'],
+
+  setup(_props, { emit }) {
     const autoTrainEnabled = ref(false);
     const scheduleHour = ref<number | null>(null);
     const scheduleMinute = ref<number | null>(null);
     const runs = ref<TrainingRun[]>([]);
     const loading = ref(true);
     const trainingNow = ref(false);
+    const trainingPhase = ref('');
+    const trainingProgress = ref(0);
+    const activeLogFilename = ref('');
     const scheduledConfigs = ref<any[]>([]);
 
     const lastRun = computed(() => {
@@ -258,6 +280,10 @@ export default defineComponent({
       return `${hr}h ${remMin}m`;
     }
 
+    function openRunLog(run: TrainingRun) {
+      emit('open-training-log', run.filename);
+    }
+
     async function loadConfigs() {
       try {
         scheduledConfigs.value = await ipcRenderer.invoke('training-scheduled-configs-list');
@@ -275,20 +301,55 @@ export default defineComponent({
       }
     }
 
+    function handleRunProgress(_event: any, data: { phase: string; progress: number; logFilename: string }) {
+      trainingPhase.value = data.phase;
+      trainingProgress.value = data.progress;
+      if (data.progress >= 100) {
+        setTimeout(async () => {
+          trainingNow.value = false;
+          await loadHistory();
+          setTimeout(() => {
+            trainingPhase.value = '';
+            trainingProgress.value = 0;
+          }, 3000);
+        }, 500);
+      }
+    }
+
     async function trainConversationsNow() {
       trainingNow.value = true;
+      trainingPhase.value = 'Starting...';
+      trainingProgress.value = 0;
       try {
-        await ipcRenderer.invoke('training-train-conversations-now');
-        await loadHistory();
+        const result = await ipcRenderer.invoke('training-train-conversations-now');
+        if (result?.logFilename) {
+          activeLogFilename.value = result.logFilename;
+          emit('open-training-log', result.logFilename);
+        }
       } catch (err) {
         console.error('[TrainingDashboard] Train conversations failed:', err);
-      } finally {
         trainingNow.value = false;
+        trainingPhase.value = '';
+        trainingProgress.value = 0;
       }
     }
 
     onMounted(async () => {
+      ipcRenderer.on('training-run-progress' as any, handleRunProgress);
+      // Check if training is already running
+      try {
+        const status = await ipcRenderer.invoke('training-status');
+        if (status.running) {
+          trainingNow.value = true;
+          trainingPhase.value = 'Training in progress...';
+          trainingProgress.value = 50;
+        }
+      } catch { /* ok */ }
       await Promise.all([loadSchedule(), loadHistory(), loadConfigs()]);
+    });
+
+    onBeforeUnmount(() => {
+      ipcRenderer.removeListener('training-run-progress' as any, handleRunProgress);
     });
 
     return {
@@ -299,9 +360,13 @@ export default defineComponent({
       loading,
       lastRun,
       trainingNow,
+      trainingPhase,
+      trainingProgress,
+      activeLogFilename,
       scheduledConfigs,
       toggleAutoTrain,
       trainConversationsNow,
+      openRunLog,
       loadConfigs,
       removeConfig,
       formatTime,
@@ -657,9 +722,59 @@ export default defineComponent({
 .td-action-bar {
   margin-bottom: 24px;
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.td-action-row {
+  display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+/* Progress bar */
+.td-progress-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.td-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+.dark .td-progress-bar {
+  background: #334155;
+}
+.td-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #3b82f6;
+  transition: width 0.4s ease;
+}
+.td-progress-fill.complete {
+  background: #22c55e;
+}
+.td-progress-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.6875rem;
+  color: #64748b;
+}
+.dark .td-progress-info {
+  color: #94a3b8;
+}
+.td-progress-phase {
+  font-weight: 600;
+}
+.td-progress-pct {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Clickable runs */
+.td-run.clickable {
+  cursor: pointer;
 }
 .td-btn-primary {
   display: inline-flex;

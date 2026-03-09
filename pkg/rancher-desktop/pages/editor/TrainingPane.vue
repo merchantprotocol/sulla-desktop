@@ -96,7 +96,7 @@
     <div v-else class="tp-wizard">
 
       <!-- ─── DASHBOARD ─── -->
-      <TrainingDashboard v-if="currentStep === -1" :is-dark="isDark" />
+      <TrainingDashboard v-if="currentStep === -1" :is-dark="isDark" @open-training-log="$emit('open-training-log', $event)" />
 
       <!-- ─── STEP 1: Document Selection ─── -->
       <div v-if="currentStep === 0" class="tp-step tp-step-select">
@@ -833,7 +833,7 @@ export default defineComponent({
     currentStep: { type: Number, default: 0 },
   },
 
-  emits: ['close', 'env-ready', 'step-change', 'content-scale'],
+  emits: ['close', 'env-ready', 'step-change', 'content-scale', 'open-training-log'],
 
   setup(props, { emit }) {
     // ─── Install state ───
