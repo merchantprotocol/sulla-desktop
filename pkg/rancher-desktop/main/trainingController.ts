@@ -70,6 +70,9 @@ const console = Logging.background;
 /** Reference to the currently-running training child process, for cleanup/kill. */
 let activeTrainingProcess: ReturnType<typeof import('child_process').spawn> | null = null;
 
+/** Reference to a caffeinate process keeping the Mac awake during training. */
+let caffeinateProcess: ReturnType<typeof import('child_process').spawn> | null = null;
+
 /** In-memory flag — faster than checking the lock file on every call. */
 let isTrainingRunning = false;
 
@@ -92,18 +95,20 @@ function getTrainingLockFile(): string {
   }
 }
 
-/** Write a lock file and set the in-memory flag. */
+/** Write a lock file, set the in-memory flag, and prevent sleep. */
 export function acquireTrainingLock(logFilename?: string): void {
   const lockFile = getTrainingLockFile();
   fs.mkdirSync(path.dirname(lockFile), { recursive: true });
   fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), logFilename: logFilename || '' }), 'utf-8');
   isTrainingRunning = true;
+  startCaffeinate();
 }
 
-/** Remove the lock file and clear the in-memory flag. */
+/** Remove the lock file, clear the in-memory flag, and release sleep prevention. */
 export function releaseTrainingLock(): void {
   isTrainingRunning = false;
   lastProgressUpdate = null;
+  stopCaffeinate();
   try { fs.unlinkSync(getTrainingLockFile()); } catch { /* already gone */ }
 }
 
@@ -124,6 +129,75 @@ export function isTrainingLocked(): boolean {
     // PID is dead — stale lock
     try { fs.unlinkSync(lockFile); } catch { /* ignore */ }
     return false;
+  }
+}
+
+// ─── Sleep prevention (macOS) ─────────────────────────────────────────
+//
+// caffeinate -i -s prevents idle sleep (-i) and system sleep (-s) while
+// the training process is running. The caffeinate process is killed when
+// training finishes or fails.
+//
+// pmset schedule wake is used to wake the Mac before the scheduled
+// nightly training time so training can actually start.
+
+/** Start caffeinate to prevent sleep during training. macOS only. */
+function startCaffeinate(): void {
+  if (process.platform !== 'darwin') return;
+  if (caffeinateProcess) return; // already running
+  try {
+    const { spawn: spawnProc } = require('child_process');
+    const proc = spawnProc('caffeinate', ['-i', '-s'], {
+      stdio: 'ignore',
+      detached: true,
+    });
+
+    proc.unref();
+    caffeinateProcess = proc;
+    console.log(`[Training] caffeinate started (PID ${proc.pid}) — preventing sleep during training`);
+  } catch (err) {
+    console.error('[Training] Failed to start caffeinate:', err);
+  }
+}
+
+/** Stop caffeinate when training is done. */
+function stopCaffeinate(): void {
+  if (!caffeinateProcess) return;
+  try {
+    caffeinateProcess.kill();
+    console.log('[Training] caffeinate stopped — sleep prevention released');
+  } catch { /* already dead */ }
+  caffeinateProcess = null;
+}
+
+/**
+ * Schedule a macOS wake event using `pmset schedule wake`.
+ * This ensures the Mac wakes from sleep before the nightly training time.
+ * Schedules the wake 2 minutes before the training time to allow the
+ * system to fully wake before the setTimeout fires.
+ *
+ * Requires admin privileges — fails silently if not available.
+ */
+function scheduleWake(hour: number, minute: number): void {
+  if (process.platform !== 'darwin') return;
+  try {
+    const now = new Date();
+    const wake = new Date(now);
+    wake.setHours(hour, minute, 0, 0);
+    // Wake 2 minutes early so the system is ready
+    wake.setMinutes(wake.getMinutes() - 2);
+    if (wake <= now) wake.setDate(wake.getDate() + 1);
+
+    // pmset expects: "MM/dd/yyyy HH:mm:ss"
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const dateStr = `${pad(wake.getMonth() + 1)}/${pad(wake.getDate())}/${wake.getFullYear()} ${pad(wake.getHours())}:${pad(wake.getMinutes())}:00`;
+
+    const { execSync } = require('child_process');
+    execSync(`pmset schedule wake "${dateStr}"`, { stdio: 'pipe' });
+    console.log(`[Training] Scheduled macOS wake for ${dateStr}`);
+  } catch (err) {
+    // pmset requires root — non-fatal if it fails
+    console.log(`[Training] Could not schedule wake (pmset may need sudo): ${err}`);
   }
 }
 
@@ -689,38 +763,42 @@ export async function trainConversationsNow(): Promise<{ logFilename: string; lo
 
 // ─── Schedule ────────────────────────────────────────────────────────
 
-/** Timer handle for the next scheduled nightly training run. */
-let nightlyTimer: ReturnType<typeof setTimeout> | null = null;
+/** node-schedule job for nightly training. */
+let nightlyJob: import('node-schedule').Job | null = null;
 
-/** Interval handle for auto-preprocessing every hour. */
-let autoPreprocessInterval: ReturnType<typeof setInterval> | null = null;
+/** node-schedule job for hourly auto-preprocessing. */
+let preprocessJob: import('node-schedule').Job | null = null;
 
 /**
- * Schedule (or cancel) the next nightly training run.
- * Runs trainConversationsNow() at the specified hour:minute local time.
- * Reschedules itself for the next day after each run.
+ * Schedule (or cancel) the next nightly training run using node-schedule.
+ * Unlike setTimeout, node-schedule uses cron rules that survive long delays
+ * and don't drift or get garbage-collected.
  */
 export function rescheduleNightlyTraining(enabled: boolean, hour: number, minute: number): void {
-  if (nightlyTimer) { clearTimeout(nightlyTimer); nightlyTimer = null; }
+  if (nightlyJob) { nightlyJob.cancel(); nightlyJob = null; }
   if (!enabled) return;
 
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(hour, minute, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
+  const schedule = require('node-schedule') as typeof import('node-schedule');
 
-  const delayMs = next.getTime() - now.getTime();
-  console.log(`[Training] Next nightly run scheduled for ${next.toISOString()} (in ${Math.round(delayMs / 60000)}min)`);
+  // Cron rule: run every day at hour:minute
+  const rule = new schedule.RecurrenceRule();
+  rule.hour = hour;
+  rule.minute = minute;
+  rule.second = 0;
 
-  nightlyTimer = setTimeout(async () => {
+  console.log(`[Training] Nightly training scheduled via node-schedule at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} daily`);
+
+  // Schedule a macOS wake event so the Mac wakes from sleep before training
+  scheduleWake(hour, minute);
+
+  nightlyJob = schedule.scheduleJob(rule, async () => {
+    console.log('[Training] node-schedule fired nightly training job');
     try {
       await trainConversationsNow();
     } catch (err) {
       console.error('[Training] Nightly training failed:', err);
     }
-    rescheduleNightlyTraining(true, hour, minute);
-  }, delayMs);
-  nightlyTimer.unref();
+  });
 }
 
 /**
@@ -729,9 +807,16 @@ export function rescheduleNightlyTraining(enabled: boolean, hour: number, minute
  * so data is ready when the nightly training job runs.
  */
 export function startAutoPreprocessing(): void {
-  if (autoPreprocessInterval) return;
-  console.log('[Training] Starting auto-preprocessing (1hr interval)');
-  autoPreprocessInterval = setInterval(async () => {
+  if (preprocessJob) return;
+
+  const schedule = require('node-schedule') as typeof import('node-schedule');
+  console.log('[Training] Starting auto-preprocessing (hourly via node-schedule)');
+
+  // Cron rule: run at minute 0 of every hour
+  const rule = new schedule.RecurrenceRule();
+  rule.minute = 0;
+
+  preprocessJob = schedule.scheduleJob(rule, async () => {
     try {
       const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
       const result = preprocessTrainingData();
@@ -741,15 +826,14 @@ export function startAutoPreprocessing(): void {
     } catch (err) {
       console.error('[Training] Auto-preprocessing failed:', err);
     }
-  }, 60 * 60 * 1000);
-  autoPreprocessInterval.unref();
+  });
 }
 
-/** Stop the hourly auto-preprocessing interval. */
+/** Stop the hourly auto-preprocessing job. */
 export function stopAutoPreprocessing(): void {
-  if (autoPreprocessInterval) {
-    clearInterval(autoPreprocessInterval);
-    autoPreprocessInterval = null;
+  if (preprocessJob) {
+    preprocessJob.cancel();
+    preprocessJob = null;
     console.log('[Training] Stopped auto-preprocessing');
   }
 }
