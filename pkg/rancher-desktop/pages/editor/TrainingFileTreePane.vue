@@ -3,19 +3,6 @@
     <div class="tft-header" :class="{ dark: isDark }">
       <span class="tft-header-title">Training Sources</span>
       <div class="tft-header-actions">
-        <button
-          class="tft-header-btn"
-          :class="{ dark: isDark }"
-          title="Save selections"
-          :disabled="saving"
-          @click="saveDocsConfig"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-            <polyline points="17 21 17 13 7 13 7 21"/>
-            <polyline points="7 3 7 8 15 8"/>
-          </svg>
-        </button>
         <button class="tft-header-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="18" y1="6" x2="6" y2="18"/>
@@ -25,18 +12,45 @@
       </div>
     </div>
 
-    <!-- Action bar (fixed, outside scrollable content) -->
+    <!-- Selection count -->
     <div class="tft-action-bar" :class="{ dark: isDark }">
-      <div class="tft-action-top">
-        <span class="tft-selection-count">{{ selectedFolders.length + selectedFiles.length }} selected</span>
-        <span v-if="configDirty" class="tft-dirty-dot" title="Unsaved changes" />
-      </div>
+      <span class="tft-selection-count">
+        {{ selectedFolders.length }} folder{{ selectedFolders.length !== 1 ? 's' : '' }},
+        {{ selectedFiles.length }} file{{ selectedFiles.length !== 1 ? 's' : '' }} selected
+      </span>
+    </div>
 
+    <!-- Scrollable tree content -->
+    <div class="tft-content">
+      <div v-if="treeLoading === '__root__'" class="tft-status">Loading…</div>
+      <div v-else-if="loadError" class="tft-status tft-error">{{ loadError }}</div>
+      <div v-else-if="treeRoot.length === 0" class="tft-status">No training sources found.<br>Create skills, workflows, or projects in ~/sulla/ to get started.</div>
+      <div v-else class="tft-tree">
+        <template v-for="node in treeRoot" :key="node.path">
+          <TreeNode
+            :node="node"
+            :depth="0"
+            :is-dark="isDark"
+            :expanded-dirs="expandedDirs"
+            :tree-children="treeChildren"
+            :tree-loading="treeLoading"
+            :selected-folders="selectedFolders"
+            :selected-files="selectedFiles"
+            @toggle-dir="toggleDir"
+            @toggle-folder="toggleSelectFolder"
+            @toggle-file="toggleSelectFile"
+          />
+        </template>
+      </div>
+    </div>
+
+    <!-- Action buttons (pinned to bottom) -->
+    <div class="tft-action-buttons" :class="{ dark: isDark }">
       <!-- Save button -->
       <button
         class="tft-action-btn tft-save-btn"
         :class="{ dark: isDark }"
-        :disabled="!configDirty || saving"
+        :disabled="(selectedFolders.length === 0 && selectedFiles.length === 0) || saving"
         @click="saveDocsConfig"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -74,43 +88,13 @@
         <span v-if="preprocessResult.filesSkipped > 0">({{ preprocessResult.filesSkipped }} skipped)</span>
       </div>
     </div>
-
-    <!-- Scrollable tree content -->
-    <div class="tft-content">
-      <!-- Loading -->
-      <div v-if="treeLoading" class="tft-status">Loading…</div>
-
-      <!-- Error -->
-      <div v-else-if="loadError" class="tft-status tft-error">{{ loadError }}</div>
-
-      <!-- Empty -->
-      <div v-else-if="treeRoot.length === 0" class="tft-status">No training sources found.<br>Create skills, workflows, or projects in ~/sulla/ to get started.</div>
-
-      <!-- File tree -->
-      <div v-else class="tft-tree">
-        <template v-for="node in treeRoot" :key="node.path">
-          <TreeNode
-            :node="node"
-            :depth="0"
-            :is-dark="isDark"
-            :expanded-dirs="expandedDirs"
-            :tree-children="treeChildren"
-            :tree-loading="treeLoading"
-            :selected-folders="selectedFolders"
-            :selected-files="selectedFiles"
-            @toggle-dir="toggleDir"
-            @toggle-folder="toggleSelectFolder"
-            @toggle-file="toggleSelectFile"
-          />
-        </template>
-      </div>
-    </div>
   </div>
 </template>
 
 <script lang="ts">
 import { defineComponent, ref, onMounted } from 'vue';
 import { ipcRenderer } from 'electron';
+import TreeNode from './TreeNode.vue';
 
 interface TreeEntry {
   path: string;
@@ -128,76 +112,6 @@ interface PreprocessResult {
   filesSkipped: number;
 }
 
-/**
- * Recursive tree node component (defined inline to avoid a separate file).
- */
-const TreeNode = defineComponent({
-  name: 'TreeNode',
-  props: {
-    node:            { type: Object as () => TreeEntry, required: true },
-    depth:           { type: Number, default: 0 },
-    isDark:          { type: Boolean, default: false },
-    expandedDirs:    { type: Object as () => Set<string>, required: true },
-    treeChildren:    { type: Object as () => Record<string, TreeEntry[]>, required: true },
-    treeLoading:     { type: String, default: '' },
-    selectedFolders: { type: Array as () => string[], required: true },
-    selectedFiles:   { type: Array as () => string[], required: true },
-  },
-  emits: ['toggle-dir', 'toggle-folder', 'toggle-file'],
-  template: `
-    <div class="tft-node">
-      <div
-        class="tft-row"
-        :class="{ dark: isDark, selected: isSelected }"
-        :style="{ paddingLeft: (depth * 14 + 4) + 'px' }"
-      >
-        <span
-          v-if="node.isDir"
-          class="tft-arrow"
-          :class="{ open: expandedDirs.has(node.path), empty: !node.hasChildren }"
-          @click="$emit('toggle-dir', node.path)"
-        />
-        <span v-else class="tft-arrow-spacer" />
-        <input
-          type="checkbox"
-          class="tft-checkbox"
-          :checked="isSelected"
-          @change="node.isDir ? $emit('toggle-folder', node.path) : $emit('toggle-file', node.path)"
-        >
-        <span
-          class="tft-label"
-          :class="{ dir: node.isDir }"
-          @click="node.isDir ? $emit('toggle-dir', node.path) : $emit('toggle-file', node.path)"
-        >{{ node.name }}</span>
-        <span v-if="treeLoading === node.path" class="tft-spinner" />
-      </div>
-      <div v-if="node.isDir && expandedDirs.has(node.path) && treeChildren[node.path]" class="tft-children">
-        <TreeNode
-          v-for="child in treeChildren[node.path]"
-          :key="child.path"
-          :node="child"
-          :depth="depth + 1"
-          :is-dark="isDark"
-          :expanded-dirs="expandedDirs"
-          :tree-children="treeChildren"
-          :tree-loading="treeLoading"
-          :selected-folders="selectedFolders"
-          :selected-files="selectedFiles"
-          @toggle-dir="$emit('toggle-dir', $event)"
-          @toggle-folder="$emit('toggle-folder', $event)"
-          @toggle-file="$emit('toggle-file', $event)"
-        />
-      </div>
-    </div>
-  `,
-  computed: {
-    isSelected(): boolean {
-      if (this.node.isDir) return this.selectedFolders.includes(this.node.path);
-      return this.selectedFiles.includes(this.node.path);
-    },
-  },
-});
-
 export default defineComponent({
   name: 'TrainingFileTreePane',
   components: { TreeNode },
@@ -213,29 +127,31 @@ export default defineComponent({
     const treeChildren = ref<Record<string, TreeEntry[]>>({});
     const expandedDirs = ref<Set<string>>(new Set());
     const treeLoading = ref('');
+    const loadError = ref('');
+
     const selectedFolders = ref<string[]>([]);
     const selectedFiles = ref<string[]>([]);
     const saving = ref(false);
-    const configDirty = ref(false);
     const preprocessing = ref(false);
     const preprocessResult = ref<PreprocessResult | null>(null);
-    const loadError = ref('');
 
     async function loadTreeDir(dirPath?: string) {
       const key = dirPath || '__root__';
       treeLoading.value = key;
       loadError.value = '';
+      console.log('[TFT] loadTreeDir called, dirPath=', dirPath, 'key=', key);
       try {
         const entries: TreeEntry[] = dirPath
           ? await ipcRenderer.invoke('training-content-tree', dirPath)
           : await ipcRenderer.invoke('training-content-tree');
+        console.log('[TFT] IPC training-content-tree returned', entries.length, 'entries', dirPath ? `for ${dirPath}` : '(root)', entries);
         if (!dirPath) {
           treeRoot.value = entries;
         } else {
           treeChildren.value = { ...treeChildren.value, [dirPath]: entries };
         }
       } catch (err: any) {
-        console.error('Failed to list training content:', dirPath, err);
+        console.error('[TFT] FAILED to list training content:', dirPath, err);
         if (!dirPath) {
           loadError.value = err?.message || 'Failed to load training sources. Try restarting the app.';
         }
@@ -245,6 +161,7 @@ export default defineComponent({
     }
 
     async function toggleDir(dirPath: string) {
+      console.log('[TFT] toggleDir', dirPath);
       if (expandedDirs.value.has(dirPath)) {
         expandedDirs.value.delete(dirPath);
         expandedDirs.value = new Set(expandedDirs.value);
@@ -264,7 +181,6 @@ export default defineComponent({
       } else {
         selectedFolders.value.push(folderPath);
       }
-      configDirty.value = true;
       preprocessResult.value = null;
     }
 
@@ -275,7 +191,6 @@ export default defineComponent({
       } else {
         selectedFiles.value.push(filePath);
       }
-      configDirty.value = true;
       preprocessResult.value = null;
     }
 
@@ -288,10 +203,9 @@ export default defineComponent({
           [...selectedFiles.value],
           [],
         );
-        configDirty.value = false;
         emit('config-saved');
       } catch (err) {
-        console.error('Failed to save docs config:', err);
+        console.error('[TFT] FAILED to save docs config:', err);
       } finally {
         saving.value = false;
       }
@@ -302,38 +216,28 @@ export default defineComponent({
       preprocessResult.value = null;
 
       try {
-        // Save config first if dirty
-        if (configDirty.value) {
-          await ipcRenderer.invoke(
-            'training-docs-config-save',
-            [...selectedFolders.value],
-            [...selectedFiles.value],
-            [],
-          );
-          configDirty.value = false;
-        }
-
-        // Run preprocessing
-        const result: PreprocessResult = await ipcRenderer.invoke('training-preprocess');
-        preprocessResult.value = result;
+        const result = await ipcRenderer.invoke(
+          'training-prepare-docs',
+          [...selectedFolders.value],
+          [...selectedFiles.value],
+        );
+        preprocessResult.value = {
+          conversations: 0,
+          filesProcessed: result.filesProcessed,
+          filesSkipped: 0,
+        };
         emit('files-preprocessed');
       } catch (err) {
-        console.error('Preprocessing failed:', err);
+        console.error('[TFT] Document preparation failed:', err);
       } finally {
         preprocessing.value = false;
       }
     }
 
     onMounted(async () => {
-      // Load existing config (remembered selections)
-      try {
-        const config = await ipcRenderer.invoke('training-docs-config-load');
-        selectedFolders.value = config.folders || [];
-        selectedFiles.value = config.files || [];
-      } catch { /* ignore */ }
-
-      // Load top-level Sulla content categories (skills, workflows, agents, etc.)
+      console.log('[TFT] onMounted — loading ~/sulla/ tree');
       await loadTreeDir();
+      console.log('[TFT] onMounted complete. treeRoot.length=', treeRoot.value.length);
     });
 
     return {
@@ -341,14 +245,13 @@ export default defineComponent({
       treeChildren,
       expandedDirs,
       treeLoading,
+      loadError,
+      toggleDir,
       selectedFolders,
       selectedFiles,
       saving,
-      configDirty,
       preprocessing,
       preprocessResult,
-      loadError,
-      toggleDir,
       toggleSelectFolder,
       toggleSelectFile,
       saveDocsConfig,
@@ -358,7 +261,7 @@ export default defineComponent({
 });
 </script>
 
-<style scoped>
+<style>
 .tft-pane {
   display: flex;
   flex-direction: column;
@@ -435,12 +338,17 @@ export default defineComponent({
   font-size: 11px;
   color: #64748b;
 }
-.tft-dirty-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #f59e0b;
+
+.tft-action-buttons {
+  padding: 8px;
+  border-top: 1px solid #e5e7eb;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tft-action-buttons.dark {
+  border-top-color: #334155;
 }
 
 .tft-action-btn {
@@ -619,6 +527,21 @@ export default defineComponent({
 }
 .tft-label.dir {
   font-weight: 500;
+}
+
+.tft-ext {
+  font-size: 10px;
+  color: #94a3b8;
+  flex-shrink: 0;
+  font-family: monospace;
+}
+
+.tft-size {
+  font-size: 10px;
+  color: #94a3b8;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 4px;
 }
 
 .tft-spinner {

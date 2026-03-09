@@ -922,11 +922,13 @@ export function initSullaEvents(): void {
 
   /** List immediate children (dirs + compatible files) of any directory. */
   ipcMainProxy.handle('training-docs-list-dir', async(_event: unknown, dirPath: string) => {
+    console.log('[Sulla:IPC] training-docs-list-dir called, dirPath=', dirPath);
     const exts = new Set(SUPPORTED_FILE_TYPES);
     const results: Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }> = [];
 
     try {
       const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      console.log('[Sulla:IPC] training-docs-list-dir read', entries.length, 'raw entries from', dirPath);
       for (const entry of entries) {
         if (entry.name.startsWith('.')) continue;
         const fullPath = path.join(dirPath, entry.name);
@@ -949,7 +951,7 @@ export function initSullaEvents(): void {
         }
       }
     } catch (err) {
-      console.error('[Sulla] Failed to list directory:', dirPath, err);
+      console.error('[Sulla:IPC] FAILED to list directory:', dirPath, err);
     }
 
     // Dirs first, then files, both alphabetical
@@ -957,6 +959,7 @@ export function initSullaEvents(): void {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
+    console.log('[Sulla:IPC] training-docs-list-dir returning', results.length, 'entries (dirs:', results.filter(r => r.isDir).length, ', files:', results.filter(r => !r.isDir).length, ') for', dirPath);
     return results;
   });
 
@@ -967,39 +970,22 @@ export function initSullaEvents(): void {
    */
   ipcMainProxy.handle('training-content-tree', async(_event: unknown, dirPath?: string) => {
     const sullaHome = getSullaHomeDir();
+    console.log('[Sulla:IPC] training-content-tree called, dirPath=', dirPath, 'sullaHome=', sullaHome);
     type TreeEntry = { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string };
     const results: TreeEntry[] = [];
 
+    const targetDir: string = dirPath || require('os').homedir();
     if (!dirPath) {
-      // Return top-level Sulla content categories
-      const categories: Array<{ name: string; dir: string }> = [
-        { name: 'Skills', dir: 'skills' },
-        { name: 'Workflows', dir: 'workflows' },
-        { name: 'Agents', dir: 'agents' },
-        { name: 'Projects', dir: 'projects' },
-        { name: 'Integrations', dir: 'integrations' },
-        { name: 'Training Data', dir: 'training' },
-      ];
-      for (const cat of categories) {
-        const catPath = path.join(sullaHome, cat.dir);
-        let hasChildren = false;
-        try {
-          const children = fs.readdirSync(catPath, { withFileTypes: true });
-          hasChildren = children.some(c => !c.name.startsWith('.'));
-        } catch { /* dir may not exist yet */ }
-        results.push({
-          path: catPath, name: cat.name, isDir: true, hasChildren, size: 0, ext: '', category: cat.dir,
-        });
-      }
-      return results;
+      console.log('[Sulla:IPC] training-content-tree listing home dir:', targetDir);
     }
 
     // List children of the given directory (all files, not filtered by extension)
     try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      const entries = fs.readdirSync(targetDir, { withFileTypes: true });
+      console.log('[Sulla:IPC] training-content-tree listing', targetDir, '→', entries.length, 'raw entries');
       for (const entry of entries) {
         if (entry.name.startsWith('.')) continue;
-        const fullPath = path.join(dirPath, entry.name);
+        const fullPath = path.join(targetDir, entry.name);
 
         if (entry.isDirectory()) {
           let hasChildren = false;
@@ -1017,13 +1003,14 @@ export function initSullaEvents(): void {
         }
       }
     } catch (err) {
-      console.error('[Sulla] Failed to list training content dir:', dirPath, err);
+      console.error('[Sulla:IPC] FAILED to list training content dir:', targetDir, err);
     }
 
     results.sort((a, b) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
+    console.log('[Sulla:IPC] training-content-tree returning', results.length, 'entries for', targetDir);
     return results;
   });
 
@@ -1140,42 +1127,60 @@ export function initSullaEvents(): void {
   });
 
   /**
-   * List all training data JSONL session files with their processed/unprocessed status.
+   * List all training data JSONL files with line counts (examples) and source type.
+   * Scans both ~/sulla/training/ (session data) and llm/training/ (document knowledge).
    */
   ipcMainProxy.handle('training-data-files', async() => {
-    const results: Array<{ filename: string; path: string; size: number; modifiedAt: string; status: 'unprocessed' | 'processed' }> = [];
+    const results: Array<{ filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }> = [];
+
+    function countLines(filePath: string): number {
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        return content.split('\n').filter(l => l.trim().length > 0).length;
+      } catch { return 0; }
+    }
 
     try {
       const { resolveSullaTrainingDir } = await import('@pkg/agent/utils/sullaPaths');
-      const fs = await import('fs');
       const pathMod = await import('path');
       const dir = resolveSullaTrainingDir();
 
       if (fs.existsSync(dir)) {
-        // Unprocessed files (root level)
+        // Unprocessed session files (root level)
         for (const name of fs.readdirSync(dir)) {
           if (!name.endsWith('.jsonl')) continue;
           try {
             const fullPath = pathMod.join(dir, name);
             const stat = fs.statSync(fullPath);
-
-            results.push({ filename: name, path: fullPath, size: stat.size, modifiedAt: stat.mtime.toISOString(), status: 'unprocessed' });
+            results.push({ filename: name, path: fullPath, size: stat.size, modifiedAt: stat.mtime.toISOString(), examples: countLines(fullPath), source: 'sessions' });
           } catch { /* skip */ }
         }
 
-        // Processed files
+        // Processed session files
         const processedDir = pathMod.join(dir, 'processed');
-
         if (fs.existsSync(processedDir)) {
           for (const name of fs.readdirSync(processedDir)) {
             if (!name.endsWith('.jsonl')) continue;
             try {
               const fullPath = pathMod.join(processedDir, name);
               const stat = fs.statSync(fullPath);
-
-              results.push({ filename: name, path: fullPath, size: stat.size, modifiedAt: stat.mtime.toISOString(), status: 'processed' });
+              results.push({ filename: name, path: fullPath, size: stat.size, modifiedAt: stat.mtime.toISOString(), examples: countLines(fullPath), source: 'processed' });
             } catch { /* skip */ }
           }
+        }
+      }
+
+      // Document knowledge JSONL from llm/training/
+      const { app } = require('electron');
+      const llmTrainingDir = pathMod.join(app.getPath('userData'), 'llm', 'training');
+      if (fs.existsSync(llmTrainingDir)) {
+        for (const name of fs.readdirSync(llmTrainingDir)) {
+          if (!name.endsWith('.jsonl')) continue;
+          try {
+            const fullPath = pathMod.join(llmTrainingDir, name);
+            const stat = fs.statSync(fullPath);
+            results.push({ filename: name, path: fullPath, size: stat.size, modifiedAt: stat.mtime.toISOString(), examples: countLines(fullPath), source: 'documents' });
+          } catch { /* skip */ }
         }
       }
     } catch { /* skip */ }
@@ -1195,6 +1200,132 @@ export function initSullaEvents(): void {
     const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
 
     return preprocessTrainingData();
+  });
+
+  /**
+   * Prepare selected documents for training:
+   * 1. Save the documents_config.json from the provided selections
+   * 2. Run documents_processor.py, streaming per-file progress via
+   *    'training-prepare-progress' events to all windows.
+   *
+   * Progress event shape:
+   *   { phase: 'saving'|'processing'|'done'|'error', file?: string, pairs?: number, total?: number, processed?: number, message?: string }
+   */
+  ipcMainProxy.handle('training-prepare-docs', async(_event: unknown, folders: string[], files: string[]) => {
+    // Phase 1: save config
+    window.send('training-prepare-progress' as any, { phase: 'saving', message: 'Saving selections…' });
+
+    const configPath = getDocsConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({
+      folders,
+      files,
+      file_types: SUPPORTED_FILE_TYPES,
+    }, null, 2), 'utf-8');
+
+    // Phase 2: run documents_processor.py
+    const { getLlamaCppService, getTrainingScriptsDir } = await import('@pkg/agent/services/LlamaCppService');
+    const service = getLlamaCppService();
+    const python = service.getTrainingPython();
+
+    if (!python) {
+      window.send('training-prepare-progress' as any, { phase: 'error', message: 'Training environment not installed. Install it first from the Training panel.' });
+      throw new Error('Training environment not installed');
+    }
+
+    const { app } = require('electron');
+    const llmRoot = path.join(app.getPath('userData'), 'llm');
+    const scriptsDir = getTrainingScriptsDir();
+    const docScript = path.join(scriptsDir, 'documents_processor.py');
+
+    window.send('training-prepare-progress' as any, { phase: 'processing', message: 'Processing documents…', processed: 0, total: 0 });
+
+    return new Promise((resolve, reject) => {
+      const proc = require('child_process').spawn(python, [docScript, '--llm-root', llmRoot], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env:   { ...process.env },
+      });
+
+      let processed = 0;
+      let totalPairs = 0;
+      let stdoutBuf = '';
+
+      proc.stdout?.on('data', (chunk: Buffer) => {
+        stdoutBuf += chunk.toString();
+        const lines = stdoutBuf.split('\n');
+        stdoutBuf = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          // Parse [OK] lines: "  [OK] Processed new/changed: filename.md (5 pairs)"
+          const okMatch = trimmed.match(/\[OK\]\s+Processed.*?:\s+(.+?)\s+\((\d+)\s+pairs?\)/);
+          if (okMatch) {
+            processed++;
+            const pairs = parseInt(okMatch[2], 10);
+            totalPairs += pairs;
+            window.send('training-prepare-progress' as any, {
+              phase:     'file-ok',
+              file:      okMatch[1],
+              pairs,
+              processed,
+              total:     totalPairs,
+              message:   `Processed ${okMatch[1]}`,
+            });
+          }
+          // Parse [SKIP] lines
+          const skipMatch = trimmed.match(/\[SKIP\]\s+(.*)/);
+          if (skipMatch) {
+            window.send('training-prepare-progress' as any, {
+              phase:   'file-skip',
+              file:    skipMatch[1],
+              message: `Skipped: ${skipMatch[1]}`,
+              processed,
+              total:   totalPairs,
+            });
+          }
+          // Parse summary line: "[documents_processor] Processed N files, M new pairs."
+          const summaryMatch = trimmed.match(/\[documents_processor\]\s+Processed\s+(\d+)\s+files?,\s+(\d+)\s+new\s+pairs?/);
+          if (summaryMatch) {
+            processed = parseInt(summaryMatch[1], 10);
+            totalPairs = parseInt(summaryMatch[2], 10);
+          }
+          // "No new or changed documents found."
+          if (trimmed.includes('No new or changed documents')) {
+            window.send('training-prepare-progress' as any, {
+              phase:   'processing',
+              message: 'All documents already up to date',
+              processed: 0,
+              total:   0,
+            });
+          }
+        }
+      });
+
+      proc.stderr?.on('data', (chunk: Buffer) => {
+        console.error('[documents_processor stderr]', chunk.toString());
+      });
+
+      proc.on('close', (code: number | null) => {
+        if (code === 0) {
+          window.send('training-prepare-progress' as any, {
+            phase:     'done',
+            message:   processed > 0 ? `Done — ${processed} file(s), ${totalPairs} training pair(s) generated` : 'Done — all documents already up to date',
+            processed,
+            total:     totalPairs,
+          });
+          resolve({ filesProcessed: processed, pairsGenerated: totalPairs });
+        } else {
+          const msg = `Document processing exited with code ${code}`;
+          window.send('training-prepare-progress' as any, { phase: 'error', message: msg });
+          reject(new Error(msg));
+        }
+      });
+
+      proc.on('error', (err: Error) => {
+        window.send('training-prepare-progress' as any, { phase: 'error', message: err.message });
+        reject(err);
+      });
+    });
   });
 
   /**

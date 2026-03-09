@@ -216,8 +216,9 @@ export interface IpcMainInvokeEvents {
   'training-docs-config-save':  (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
   'training-content-tree':      (dirPath?: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string }>;
   'editor-footer-stats':        () => { availableBytes: number; unprocessedTrainingBytes: number };
-  'training-data-files':        () => Array<{ filename: string; path: string; size: number; modifiedAt: string; status: 'unprocessed' | 'processed' }>;
+  'training-data-files':        () => Array<{ filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }>;
   'training-preprocess':        () => { conversations: number; filesProcessed: number; filesSkipped: number };
+  'training-prepare-docs':      (folders: string[], files: string[]) => { filesProcessed: number; pairsGenerated: number };
   // #endregion
 
   // #region QMD Search

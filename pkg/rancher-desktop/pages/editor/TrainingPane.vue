@@ -94,22 +94,43 @@
 
     <!-- Post-install: dashboard + file table -->
     <div v-else class="tp-dashboard">
+      <!-- Training data scale indicator -->
+      <div class="tp-scale" :class="{ dark: isDark }">
+        <div class="tp-scale-header">
+          <span class="tp-scale-label">Training Data Scale</span>
+          <span class="tp-scale-badge" :class="dataScale">{{ dataScaleLabel }}</span>
+        </div>
+        <div class="tp-scale-bar">
+          <div class="tp-scale-fill" :class="dataScale" :style="{ width: dataScalePct + '%' }" />
+          <div class="tp-scale-marks">
+            <span class="tp-scale-mark" :style="{ left: '0%' }">0</span>
+            <span class="tp-scale-mark" :style="{ left: '10%' }">100</span>
+            <span class="tp-scale-mark" :style="{ left: '50%' }">500</span>
+            <span class="tp-scale-mark" :style="{ left: '100%' }">1000+</span>
+          </div>
+        </div>
+        <div class="tp-scale-detail">
+          {{ totalExamples }} training examples across {{ dataFiles.length }} file{{ dataFiles.length !== 1 ? 's' : '' }}
+          ({{ formatBytes(totalDataSize) }})
+        </div>
+      </div>
+
       <!-- Stats cards row -->
       <div class="tp-cards">
         <div class="tp-card" :class="{ dark: isDark }">
-          <div class="tp-card-label">Unprocessed Files</div>
-          <div class="tp-card-value">{{ unprocessedFiles.length }}</div>
-          <div class="tp-card-sub">{{ formatBytes(unprocessedTotalSize) }}</div>
+          <div class="tp-card-label">Total Examples</div>
+          <div class="tp-card-value">{{ totalExamples }}</div>
+          <div class="tp-card-sub">{{ dataScaleLabel }} for LoRA</div>
         </div>
         <div class="tp-card" :class="{ dark: isDark }">
-          <div class="tp-card-label">Processed Files</div>
-          <div class="tp-card-value">{{ processedFiles.length }}</div>
-          <div class="tp-card-sub">{{ formatBytes(processedTotalSize) }}</div>
+          <div class="tp-card-label">Document Knowledge</div>
+          <div class="tp-card-value">{{ docExamples }}</div>
+          <div class="tp-card-sub">{{ docFiles.length }} file{{ docFiles.length !== 1 ? 's' : '' }}</div>
         </div>
         <div class="tp-card" :class="{ dark: isDark }">
-          <div class="tp-card-label">Total Sessions</div>
-          <div class="tp-card-value">{{ dataFiles.length }}</div>
-          <div class="tp-card-sub">{{ formatBytes(unprocessedTotalSize + processedTotalSize) }} total</div>
+          <div class="tp-card-label">Session Data</div>
+          <div class="tp-card-value">{{ sessionExamples }}</div>
+          <div class="tp-card-sub">{{ sessionFiles.length }} file{{ sessionFiles.length !== 1 ? 's' : '' }}</div>
         </div>
         <div class="tp-card" :class="{ dark: isDark }">
           <div class="tp-card-label">Available Disk</div>
@@ -136,7 +157,7 @@
         </button>
       </div>
 
-      <!-- File table -->
+      <!-- JSONL file table -->
       <div class="tp-table-wrapper">
         <div v-if="dataFilesLoading" class="tp-table-status">Loading training data…</div>
         <div v-else-if="dataFiles.length === 0" class="tp-table-empty">
@@ -144,14 +165,15 @@
             <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
             <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
           </svg>
-          <p>No training session files yet</p>
+          <p>No training data yet</p>
           <p class="tp-table-empty-hint">Select files in the sidebar and prepare them for training</p>
         </div>
         <table v-else class="tp-table" :class="{ dark: isDark }">
           <thead>
             <tr>
               <th @click="sortBy('filename')">File <span v-if="sortKey === 'filename'" class="tp-sort-arrow">{{ sortDir === 'asc' ? '\u25B2' : '\u25BC' }}</span></th>
-              <th @click="sortBy('status')">Status <span v-if="sortKey === 'status'" class="tp-sort-arrow">{{ sortDir === 'asc' ? '\u25B2' : '\u25BC' }}</span></th>
+              <th @click="sortBy('examples')">Examples <span v-if="sortKey === 'examples'" class="tp-sort-arrow">{{ sortDir === 'asc' ? '\u25B2' : '\u25BC' }}</span></th>
+              <th @click="sortBy('source')">Source <span v-if="sortKey === 'source'" class="tp-sort-arrow">{{ sortDir === 'asc' ? '\u25B2' : '\u25BC' }}</span></th>
               <th @click="sortBy('size')">Size <span v-if="sortKey === 'size'" class="tp-sort-arrow">{{ sortDir === 'asc' ? '\u25B2' : '\u25BC' }}</span></th>
               <th @click="sortBy('modifiedAt')">Modified <span v-if="sortKey === 'modifiedAt'" class="tp-sort-arrow">{{ sortDir === 'asc' ? '\u25B2' : '\u25BC' }}</span></th>
             </tr>
@@ -159,8 +181,9 @@
           <tbody>
             <tr v-for="f in sortedDataFiles" :key="f.path">
               <td class="tp-cell-file" :title="f.path">{{ f.filename }}</td>
+              <td class="tp-cell-examples">{{ f.examples }}</td>
               <td>
-                <span class="tp-badge" :class="f.status">{{ f.status === 'processed' ? 'Processed' : 'Unprocessed' }}</span>
+                <span class="tp-badge" :class="f.source">{{ sourceLabel(f.source) }}</span>
               </td>
               <td class="tp-cell-size">{{ formatBytes(f.size) }}</td>
               <td class="tp-cell-date">{{ formatDate(f.modifiedAt) }}</td>
@@ -213,17 +236,41 @@ export default defineComponent({
       path: string;
       size: number;
       modifiedAt: string;
-      status: 'unprocessed' | 'processed';
+      examples: number;
+      source: 'sessions' | 'documents' | 'processed';
     }
     const dataFiles = ref<DataFile[]>([]);
     const dataFilesLoading = ref(false);
-    const sortKey = ref<'filename' | 'status' | 'size' | 'modifiedAt'>('modifiedAt');
+    const sortKey = ref<'filename' | 'examples' | 'source' | 'size' | 'modifiedAt'>('modifiedAt');
     const sortDir = ref<'asc' | 'desc'>('desc');
 
-    const unprocessedFiles = computed(() => dataFiles.value.filter(f => f.status === 'unprocessed'));
-    const processedFiles = computed(() => dataFiles.value.filter(f => f.status === 'processed'));
-    const unprocessedTotalSize = computed(() => unprocessedFiles.value.reduce((s, f) => s + f.size, 0));
-    const processedTotalSize = computed(() => processedFiles.value.reduce((s, f) => s + f.size, 0));
+    const docFiles = computed(() => dataFiles.value.filter(f => f.source === 'documents'));
+    const sessionFiles = computed(() => dataFiles.value.filter(f => f.source === 'sessions' || f.source === 'processed'));
+    const totalExamples = computed(() => dataFiles.value.reduce((s, f) => s + f.examples, 0));
+    const docExamples = computed(() => docFiles.value.reduce((s, f) => s + f.examples, 0));
+    const sessionExamples = computed(() => sessionFiles.value.reduce((s, f) => s + f.examples, 0));
+    const totalDataSize = computed(() => dataFiles.value.reduce((s, f) => s + f.size, 0));
+
+    // Training data quality scale: <50 poor, 50-200 fair, 200-500 good, 500+ great
+    const dataScale = computed(() => {
+      const n = totalExamples.value;
+      if (n < 50) return 'poor';
+      if (n < 200) return 'fair';
+      if (n < 500) return 'good';
+      return 'great';
+    });
+    const dataScaleLabel = computed(() => {
+      const labels: Record<string, string> = { poor: 'Poor', fair: 'Fair', good: 'Good', great: 'Great' };
+      return labels[dataScale.value];
+    });
+    const dataScalePct = computed(() => {
+      const n = totalExamples.value;
+      if (n >= 1000) return 100;
+      // Non-linear scale: 0-100 maps to 0-10%, 100-500 maps to 10-50%, 500-1000 maps to 50-100%
+      if (n <= 100) return (n / 100) * 10;
+      if (n <= 500) return 10 + ((n - 100) / 400) * 40;
+      return 50 + ((n - 500) / 500) * 50;
+    });
 
     const sortedDataFiles = computed(() => {
       const key = sortKey.value;
@@ -235,13 +282,18 @@ export default defineComponent({
       });
     });
 
-    function sortBy(key: 'filename' | 'status' | 'size' | 'modifiedAt') {
+    function sortBy(key: 'filename' | 'examples' | 'source' | 'size' | 'modifiedAt') {
       if (sortKey.value === key) {
         sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
       } else {
         sortKey.value = key;
-        sortDir.value = key === 'modifiedAt' || key === 'size' ? 'desc' : 'asc';
+        sortDir.value = key === 'modifiedAt' || key === 'size' || key === 'examples' ? 'desc' : 'asc';
       }
+    }
+
+    function sourceLabel(source: string): string {
+      const labels: Record<string, string> = { documents: 'Documents', sessions: 'Sessions', processed: 'Processed' };
+      return labels[source] || source;
     }
 
     function formatDate(iso: string): string {
@@ -256,6 +308,55 @@ export default defineComponent({
         console.error('Failed to load training data files:', err);
       } finally {
         dataFilesLoading.value = false;
+      }
+    }
+
+    // Document processing queue
+    interface DocQueueItem {
+      file: string;
+      status: 'queued' | 'processing' | 'ready' | 'skipped';
+      pairs: number;
+    }
+    const docQueue = ref<DocQueueItem[]>([]);
+    const docProcessingActive = ref(false);
+
+    function handleDocProgress(_event: any, data: any) {
+      if (data.phase === 'saving') {
+        docProcessingActive.value = true;
+        docQueue.value = [];
+      } else if (data.phase === 'processing') {
+        // A file is being processed - add or update it
+        const file = data.file || '';
+        const existing = docQueue.value.find(i => i.file === file);
+        if (existing) {
+          existing.status = 'processing';
+        } else {
+          docQueue.value.push({ file, status: 'processing', pairs: 0 });
+        }
+      } else if (data.phase === 'file-ok') {
+        const file = data.file || '';
+        const existing = docQueue.value.find(i => i.file === file);
+        if (existing) {
+          existing.status = 'ready';
+          existing.pairs = data.pairs || 0;
+        } else {
+          docQueue.value.push({ file, status: 'ready', pairs: data.pairs || 0 });
+        }
+        loadDataFiles();
+      } else if (data.phase === 'file-skip') {
+        const file = data.file || '';
+        const existing = docQueue.value.find(i => i.file === file);
+        if (existing) {
+          existing.status = 'skipped';
+        } else {
+          docQueue.value.push({ file, status: 'skipped', pairs: 0 });
+        }
+      } else if (data.phase === 'done') {
+        docProcessingActive.value = false;
+        loadDataFiles();
+      } else if (data.phase === 'error') {
+        docProcessingActive.value = false;
+        console.error('[TrainingPane] Document processing error:', data.message);
       }
     }
 
@@ -382,11 +483,13 @@ export default defineComponent({
     onMounted(async () => {
       await checkInstallStatus();
       ipcRenderer.on('training-install-progress' as any, handleInstallProgress);
+      ipcRenderer.on('training-prepare-progress' as any, handleDocProgress);
     });
 
     onBeforeUnmount(() => {
       stopInstallLogPolling();
       ipcRenderer.removeListener('training-install-progress' as any, handleInstallProgress);
+      ipcRenderer.removeListener('training-prepare-progress' as any, handleDocProgress);
     });
 
     return {
@@ -410,16 +513,24 @@ export default defineComponent({
       formatBytes,
       dataFiles,
       dataFilesLoading,
-      unprocessedFiles,
-      processedFiles,
-      unprocessedTotalSize,
-      processedTotalSize,
+      docFiles,
+      sessionFiles,
+      totalExamples,
+      docExamples,
+      sessionExamples,
+      totalDataSize,
+      dataScale,
+      dataScaleLabel,
+      dataScalePct,
       sortedDataFiles,
       sortKey,
       sortDir,
       sortBy,
+      sourceLabel,
       formatDate,
       loadDataFiles,
+      docQueue,
+      docProcessingActive,
     };
   },
 });
@@ -882,7 +993,7 @@ export default defineComponent({
   color: #94a3b8;
 }
 
-/* Status badge */
+/* Source badge */
 .tp-badge {
   display: inline-block;
   padding: 1px 8px;
@@ -890,11 +1001,19 @@ export default defineComponent({
   font-size: 0.6875rem;
   font-weight: 600;
 }
-.tp-badge.unprocessed {
+.tp-badge.documents {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.dark .tp-badge.documents {
+  background: #1e3a5f;
+  color: #60a5fa;
+}
+.tp-badge.sessions {
   background: #fef3c7;
   color: #92400e;
 }
-.dark .tp-badge.unprocessed {
+.dark .tp-badge.sessions {
   background: #78350f;
   color: #fcd34d;
 }
@@ -905,5 +1024,265 @@ export default defineComponent({
 .dark .tp-badge.processed {
   background: #14532d;
   color: #4ade80;
+}
+
+.tp-cell-examples {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* Training data scale indicator */
+.tp-scale {
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+}
+.tp-scale.dark {
+  background: #1e293b;
+  border-color: #334155;
+}
+.tp-scale-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.tp-scale-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+.dark .tp-scale-label {
+  color: #94a3b8;
+}
+.tp-scale-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+.tp-scale-badge.poor {
+  background: #fef2f2;
+  color: #dc2626;
+}
+.dark .tp-scale-badge.poor {
+  background: #450a0a;
+  color: #fca5a5;
+}
+.tp-scale-badge.fair {
+  background: #fef3c7;
+  color: #d97706;
+}
+.dark .tp-scale-badge.fair {
+  background: #78350f;
+  color: #fcd34d;
+}
+.tp-scale-badge.good {
+  background: #dbeafe;
+  color: #2563eb;
+}
+.dark .tp-scale-badge.good {
+  background: #1e3a5f;
+  color: #60a5fa;
+}
+.tp-scale-badge.great {
+  background: #dcfce7;
+  color: #16a34a;
+}
+.dark .tp-scale-badge.great {
+  background: #14532d;
+  color: #4ade80;
+}
+.tp-scale-bar {
+  position: relative;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 9999px;
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+}
+.dark .tp-scale-bar {
+  background: #334155;
+}
+.tp-scale-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.4s ease;
+}
+.tp-scale-fill.poor {
+  background: #ef4444;
+}
+.tp-scale-fill.fair {
+  background: #f59e0b;
+}
+.tp-scale-fill.good {
+  background: #3b82f6;
+}
+.tp-scale-fill.great {
+  background: #22c55e;
+}
+.tp-scale-marks {
+  position: absolute;
+  top: 12px;
+  left: 0;
+  right: 0;
+}
+.tp-scale-mark {
+  position: absolute;
+  font-size: 0.625rem;
+  color: #94a3b8;
+  transform: translateX(-50%);
+}
+.tp-scale-detail {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+.dark .tp-scale-detail {
+  color: #94a3b8;
+}
+
+/* Document processing queue */
+.tp-doc-queue {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  overflow: hidden;
+}
+.tp-doc-queue.dark {
+  background: #1e293b;
+  border-color: #334155;
+}
+.tp-doc-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+.tp-doc-queue.dark .tp-doc-queue-header {
+  border-bottom-color: #334155;
+}
+.tp-doc-queue-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+.dark .tp-doc-queue-title {
+  color: #94a3b8;
+}
+.tp-doc-queue-status {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #0284c7;
+}
+.tp-doc-queue-status.done {
+  color: #16a34a;
+}
+.tp-doc-queue-list {
+  max-height: 16rem;
+  overflow-y: auto;
+}
+.tp-doc-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.tp-doc-item.dark {
+  border-bottom-color: #1e293b;
+}
+.tp-doc-item:last-child {
+  border-bottom: none;
+}
+.tp-doc-status-icon {
+  display: flex;
+  align-items: center;
+  width: 14px;
+  flex-shrink: 0;
+}
+.tp-doc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+.tp-doc-dot.queued {
+  background: #fbbf24;
+}
+.tp-doc-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid #0284c7;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: tp-doc-spin 0.6s linear infinite;
+}
+@keyframes tp-doc-spin {
+  to { transform: rotate(360deg); }
+}
+.tp-doc-filename {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+  color: #334155;
+}
+.dark .tp-doc-filename {
+  color: #cbd5e1;
+}
+.tp-doc-pairs {
+  font-size: 0.6875rem;
+  color: #64748b;
+  flex-shrink: 0;
+}
+.tp-doc-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.tp-doc-badge.queued {
+  background: #fef3c7;
+  color: #92400e;
+}
+.dark .tp-doc-badge.queued {
+  background: #78350f;
+  color: #fcd34d;
+}
+.tp-doc-badge.processing {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.dark .tp-doc-badge.processing {
+  background: #1e3a5f;
+  color: #60a5fa;
+}
+.tp-doc-badge.ready {
+  background: #dcfce7;
+  color: #166534;
+}
+.dark .tp-doc-badge.ready {
+  background: #14532d;
+  color: #4ade80;
+}
+.tp-doc-badge.skipped {
+  background: #f1f5f9;
+  color: #64748b;
+}
+.dark .tp-doc-badge.skipped {
+  background: #334155;
+  color: #94a3b8;
 }
 </style>
