@@ -761,19 +761,64 @@ export function initSullaEvents(): void {
     return files.map(filename => {
       const filePath = path.join(logsDir, filename);
       const stat = fs.statSync(filePath);
-      // Parse timestamp from filename: training-2026-03-04T06-00-00-000Z.log
-      const tsMatch = filename.match(/^training-(.+)\.log$/);
-      const timestamp = tsMatch ? tsMatch[1].replace(/-/g, (m, offset) => {
-        // Restore ISO format: first 3 dashes are date separators, then T, then colons and dots
-        if (offset < 10) return offset === 4 || offset === 7 ? '-' : m;
-        return m;
-      }) : '';
+
+      // Parse log content for details
+      let model: string | undefined;
+      let durationMs: number | undefined;
+      let conversationsProcessed: number | undefined;
+      let status: 'completed' | 'running' | 'failed' = 'running';
+
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+
+        // Parse model from header: "Model: qwen3.5-9b"
+        const modelMatch = content.match(/Model:\s+(.+)/);
+        if (modelMatch) model = modelMatch[1].trim();
+
+        // Check completion status
+        if (content.includes('=== Completed:')) {
+          status = 'completed';
+          // Parse start/end times for duration
+          const startMatch = content.match(/Started:\s+(.+)/);
+          const endMatch = content.match(/=== Completed:\s+(.+?)\s*===/);
+          if (startMatch && endMatch) {
+            const startTime = new Date(startMatch[1].trim()).getTime();
+            const endTime = new Date(endMatch[1].trim()).getTime();
+            if (!isNaN(startTime) && !isNaN(endTime)) {
+              durationMs = endTime - startTime;
+            }
+          }
+        } else if (content.includes('Error') || content.includes('FAILED') || content.includes('error')) {
+          // Check if the file hasn't been modified in over 3 hours (likely failed)
+          const ageMs = Date.now() - stat.mtime.getTime();
+          if (ageMs > 3 * 60 * 60 * 1000) {
+            status = 'failed';
+          }
+        }
+
+        // Count conversations processed: look for feedback/session file lines
+        const convMatches = content.match(/conversations?-\d{4}-\d{2}-\d{2}\.jsonl/g);
+        if (convMatches) {
+          conversationsProcessed = convMatches.length;
+        }
+        // Also check for explicit count in log
+        const countMatch = content.match(/(\d+)\s+conversation/i);
+        if (countMatch) {
+          conversationsProcessed = parseInt(countMatch[1], 10);
+        }
+      } catch {
+        // Can't read log — leave defaults
+      }
 
       return {
         filename,
         size:      stat.size,
         createdAt: stat.birthtime.toISOString(),
         modifiedAt: stat.mtime.toISOString(),
+        model,
+        durationMs,
+        conversationsProcessed,
+        status,
       };
     });
   });
@@ -834,13 +879,18 @@ export function initSullaEvents(): void {
     await SullaSettingsModel.set('trainingScheduleHour', opts.hour, 'number');
     await SullaSettingsModel.set('trainingScheduleMinute', opts.minute, 'number');
 
-    // Reschedule the timer
+    // Reschedule the timer and auto-preprocessing
     rescheduleNightlyTraining(opts.enabled, opts.hour, opts.minute);
+    if (opts.enabled) {
+      startAutoPreprocessing();
+    } else {
+      stopAutoPreprocessing();
+    }
 
     return { ok: true };
   });
 
-  // On startup, load the schedule and arm the timer
+  // On startup, load the schedule and arm the timer + auto-preprocessing
   (async() => {
     try {
       const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
@@ -849,6 +899,7 @@ export function initSullaEvents(): void {
       const minute = await SullaSettingsModel.get('trainingScheduleMinute', 0);
       if (enabled) {
         rescheduleNightlyTraining(true, hour, minute);
+        startAutoPreprocessing();
       }
     } catch {
       // Settings DB may not be ready yet — that's okay
@@ -1211,7 +1262,7 @@ export function initSullaEvents(): void {
    * Progress event shape:
    *   { phase: 'saving'|'processing'|'done'|'error', file?: string, pairs?: number, total?: number, processed?: number, message?: string }
    */
-  ipcMainProxy.handle('training-prepare-docs', async(_event: unknown, folders: string[], files: string[]) => {
+  ipcMainProxy.handle('training-prepare-docs', async(_event: unknown, folders: string[], files: string[], options?: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => {
     // Phase 1: save config
     window.send('training-prepare-progress' as any, { phase: 'saving', message: 'Saving selections…' });
 
@@ -1238,12 +1289,41 @@ export function initSullaEvents(): void {
     const scriptsDir = getTrainingScriptsDir();
     const docScript = path.join(scriptsDir, 'documents_processor.py');
 
+    // Build CLI args — pass prompt, model, provider, output if provided
+    const scriptArgs = [docScript, '--llm-root', llmRoot];
+    if (options?.prompt) {
+      scriptArgs.push('--prompt', options.prompt);
+    }
+    if (options?.modelId) {
+      scriptArgs.push('--model', options.modelId);
+    }
+    if (options?.modelProvider) {
+      scriptArgs.push('--provider', options.modelProvider);
+    }
+    if (options?.outputFilename) {
+      scriptArgs.push('--output', options.outputFilename);
+    }
+
+    // Resolve API key for remote providers
+    const env: Record<string, string> = { ...process.env } as Record<string, string>;
+    if (options?.modelProvider && options.modelProvider !== 'local') {
+      try {
+        const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+        const apiKey = await SullaSettingsModel.get(`${options.modelProvider.toLowerCase()}ApiKey`, '');
+        if (apiKey) {
+          env.LLM_API_KEY = apiKey;
+        }
+      } catch {
+        // Settings not ready — continue without key
+      }
+    }
+
     window.send('training-prepare-progress' as any, { phase: 'processing', message: 'Processing documents…', processed: 0, total: 0 });
 
     return new Promise((resolve, reject) => {
-      const proc = require('child_process').spawn(python, [docScript, '--llm-root', llmRoot], {
+      const proc = require('child_process').spawn(python, scriptArgs, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env:   { ...process.env },
+        env,
       });
 
       let processed = 0;
@@ -1326,6 +1406,206 @@ export function initSullaEvents(): void {
         reject(err);
       });
     });
+  });
+
+  // ─── Training Queue IPC ───
+
+  /**
+   * Add files to the training document processing queue.
+   * Each entry includes the file path, prompt, LLM model, provider, and output filename.
+   */
+  ipcMainProxy.handle('training-queue-add', async(_event: unknown, entries: Array<{ filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }>) => {
+    const { enqueueTrainingFiles } = await import('@pkg/agent/services/TrainingQueueWorker');
+    const queueEntries = entries.map(e => ({
+      ...e,
+      queuedAt: new Date().toISOString(),
+    }));
+    const queued = await enqueueTrainingFiles(queueEntries);
+    return { queued };
+  });
+
+  /**
+   * Immediately start processing the queue.
+   */
+  ipcMainProxy.handle('training-queue-process-now', async() => {
+    const { processQueue, isQueueProcessing } = await import('@pkg/agent/services/TrainingQueueWorker');
+    if (isQueueProcessing()) {
+      return { ok: false };
+    }
+    // Run in background — don't block IPC
+    processQueue((event) => {
+      window.send('training-prepare-progress' as any, event);
+    }).catch(err => console.error('[TrainingQueueWorker] Error:', err));
+    return { ok: true };
+  });
+
+  /**
+   * Get current queue status (pending count + processing state).
+   */
+  ipcMainProxy.handle('training-queue-status', async() => {
+    const { getQueueLength, isQueueProcessing } = await import('@pkg/agent/services/TrainingQueueWorker');
+    return {
+      pending:    await getQueueLength(),
+      processing: isQueueProcessing(),
+    };
+  });
+
+  // ─── Train on Conversations Now ───
+
+  /**
+   * Preprocess all pending session files then immediately trigger
+   * a LoRA training run using the default model and best-practice defaults.
+   */
+  ipcMainProxy.handle('training-train-conversations-now', async() => {
+    if (isTrainingLocked()) {
+      throw new Error('A training run is already in progress');
+    }
+
+    // 1. Preprocess any unconverted session files
+    const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
+    const preprocessResult = preprocessTrainingData();
+    console.log(`[Sulla] Preprocessed ${preprocessResult.conversations} conversation(s) before immediate training`);
+
+    // 2. Get default model
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
+
+    // 3. Validate model and training env
+    const { GGUF_MODELS, getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
+    const entry = GGUF_MODELS[modelKey];
+    if (!entry?.trainingRepo) {
+      throw new Error(`Model ${modelKey} has no training repo configured`);
+    }
+
+    const service = getLlamaCppService();
+    if (!service.getTrainingPython()) {
+      throw new Error('Training environment not installed');
+    }
+
+    // 4. Create log file
+    const logsDir = getTrainingLogsDir();
+    fs.mkdirSync(logsDir, { recursive: true });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const logFilename = `training-${timestamp}.log`;
+    const logPath = path.join(logsDir, logFilename);
+    fs.writeFileSync(logPath, `=== Train on Conversations (Manual) ===\nStarted: ${new Date().toISOString()}\nModel: ${modelKey}\nConversations preprocessed: ${preprocessResult.conversations}\n\n`, 'utf-8');
+
+    // 5. Run training asynchronously
+    acquireTrainingLock();
+    (async () => {
+      try {
+        // Also drain the document queue if anything is pending
+        try {
+          const { processQueue, getQueueLength } = await import('@pkg/agent/services/TrainingQueueWorker');
+          const pending = await getQueueLength();
+          if (pending > 0) {
+            console.log(`[Sulla] Processing ${pending} queued doc job(s)`);
+            await processQueue();
+          }
+        } catch { /* continue */ }
+
+        // Run full nightly training (handles LoRA + GGUF export)
+        await service.runFullNightlyTraining(modelKey, logPath);
+        fs.appendFileSync(logPath, `\n=== Completed: ${new Date().toISOString()} ===\n`, 'utf-8');
+        console.log('[Sulla] Immediate conversation training complete');
+      } catch (err) {
+        console.error('[Sulla] Immediate conversation training failed:', err);
+        fs.appendFileSync(logPath, `\n=== FAILED: ${err} ===\n`, 'utf-8');
+      } finally {
+        releaseTrainingLock();
+      }
+    })();
+
+    return { logFilename, logPath };
+  });
+
+  // ─── Scheduled Training Configs ───
+
+  const SCHEDULED_CONFIGS_KEY = 'training:scheduled_configs';
+
+  /**
+   * List all scheduled training configs.
+   */
+  ipcMainProxy.handle('training-scheduled-configs-list', async() => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const raw = await SullaSettingsModel.get(SCHEDULED_CONFIGS_KEY, '[]');
+    try {
+      return typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+    } catch {
+      return [];
+    }
+  });
+
+  /**
+   * Add a scheduled training config.
+   */
+  ipcMainProxy.handle('training-scheduled-configs-add', async(_event: unknown, config: { name: string; source: string; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const raw = await SullaSettingsModel.get(SCHEDULED_CONFIGS_KEY, '[]');
+    let configs: any[];
+    try {
+      configs = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+    } catch {
+      configs = [];
+    }
+
+    const id = `cfg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    configs.push({ ...config, id, createdAt: new Date().toISOString() });
+    await SullaSettingsModel.set(SCHEDULED_CONFIGS_KEY, JSON.stringify(configs), 'string');
+    return { id };
+  });
+
+  /**
+   * Remove a scheduled training config by id.
+   */
+  ipcMainProxy.handle('training-scheduled-configs-remove', async(_event: unknown, id: string) => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const raw = await SullaSettingsModel.get(SCHEDULED_CONFIGS_KEY, '[]');
+    let configs: any[];
+    try {
+      configs = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+    } catch {
+      configs = [];
+    }
+
+    configs = configs.filter((c: any) => c.id !== id);
+    await SullaSettingsModel.set(SCHEDULED_CONFIGS_KEY, JSON.stringify(configs), 'string');
+    return { ok: true };
+  });
+
+  // ─── Wizard Settings Persistence ───
+
+  /**
+   * Save wizard settings for a specific wizard (create or train).
+   * Stores each key under 'training:wizard:<wizard>:<key>' in SullaSettingsModel.
+   */
+  ipcMainProxy.handle('training-wizard-settings-save', async(_event: unknown, wizard: 'create' | 'train', settings: Record<string, unknown>) => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const prefix = `training:wizard:${wizard}`;
+    for (const [key, value] of Object.entries(settings)) {
+      const cast = Array.isArray(value) ? 'json' : typeof value === 'object' && value !== null ? 'json' : typeof value as string;
+      await SullaSettingsModel.set(`${prefix}:${key}`, value, cast);
+    }
+    return { ok: true };
+  });
+
+  /**
+   * Load wizard settings for a specific wizard.
+   */
+  ipcMainProxy.handle('training-wizard-settings-load', async(_event: unknown, wizard: 'create' | 'train') => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const prefix = `training:wizard:${wizard}`;
+    try {
+      const all = await SullaSettingsModel.getByPattern(`${prefix}:*`);
+      const result: Record<string, unknown> = {};
+      for (const [fullKey, value] of Object.entries(all)) {
+        const shortKey = fullKey.replace(`${prefix}:`, '');
+        result[shortKey] = value;
+      }
+      return result;
+    } catch {
+      return {};
+    }
   });
 
   /**
@@ -1669,6 +1949,45 @@ export function initSullaEvents(): void {
 let nightlyTrainingTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
+ * Periodic interval that preprocesses training session files
+ * (~/sulla/training/*.jsonl → combined {"messages":[...]} format)
+ * while auto-training is enabled. Runs every hour.
+ */
+let autoPreprocessInterval: ReturnType<typeof setInterval> | null = null;
+const AUTO_PREPROCESS_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+function startAutoPreprocessing(): void {
+  if (autoPreprocessInterval) return; // already running
+
+  // Run once immediately
+  runPreprocessing();
+
+  autoPreprocessInterval = setInterval(runPreprocessing, AUTO_PREPROCESS_INTERVAL_MS);
+  autoPreprocessInterval.unref(); // don't keep app alive for this
+  console.log('[Sulla] Auto-preprocessing started (every 1 hour)');
+}
+
+function stopAutoPreprocessing(): void {
+  if (autoPreprocessInterval) {
+    clearInterval(autoPreprocessInterval);
+    autoPreprocessInterval = null;
+    console.log('[Sulla] Auto-preprocessing stopped');
+  }
+}
+
+async function runPreprocessing(): Promise<void> {
+  try {
+    const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
+    const result = preprocessTrainingData();
+    if (result.conversations > 0) {
+      console.log(`[Sulla] Auto-preprocessed ${result.conversations} conversation(s) from ${result.filesProcessed} session file(s)`);
+    }
+  } catch (err) {
+    console.error('[Sulla] Auto-preprocessing failed:', err);
+  }
+}
+
+/**
  * Schedule (or cancel) the next nightly training run.
  */
 function rescheduleNightlyTraining(enabled: boolean, hour: number, minute: number): void {
@@ -1703,6 +2022,19 @@ function rescheduleNightlyTraining(enabled: boolean, hour: number, minute: numbe
 
     acquireTrainingLock();
     try {
+      // Step 1: Process any queued document-to-training-data jobs first
+      try {
+        const { processQueue, getQueueLength } = await import('@pkg/agent/services/TrainingQueueWorker');
+        const pending = await getQueueLength();
+        if (pending > 0) {
+          console.log(`[Sulla] Processing ${pending} queued training data job(s) before nightly training`);
+          await processQueue();
+        }
+      } catch (queueErr) {
+        console.error('[Sulla] Queue processing failed during nightly run:', queueErr);
+      }
+
+      // Step 2: Run the full nightly training (LoRA fine-tune)
       const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
       const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
       const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');

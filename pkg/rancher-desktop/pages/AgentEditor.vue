@@ -1108,7 +1108,7 @@ export default defineComponent({
     const integrationsMode = ref(false);
     const workflowMode = ref(false);
     const trainingMode = ref(false);
-    const trainingStep = ref(0);
+    const trainingStep = ref(-1);
     const trainingContentScale = ref({ size: 0, scale: 'poor', label: 'Not enough', pct: 0 });
     const rightPaneTab = ref<'chat' | 'help'>('chat');
     const monitorMode = ref(false);
@@ -1380,6 +1380,7 @@ export default defineComponent({
       if (!trainingMode.value) {
         clearModes();
         trainingMode.value = true;
+        trainingStep.value = -1;
         savedBottomPaneVisible = bottomPaneVisible.value;
         savedRightPaneVisible = rightPaneVisible.value;
         leftPaneVisible.value = true;

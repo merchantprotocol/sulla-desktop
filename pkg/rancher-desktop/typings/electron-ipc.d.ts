@@ -206,7 +206,7 @@ export interface IpcMainInvokeEvents {
   'training-run':          (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
   'training-status':       () => { running: boolean };
   'training-docs-config-exists': () => boolean;
-  'training-history':      () => Array<{ filename: string; size: number; createdAt: string; modifiedAt: string }>;
+  'training-history':      () => Array<{ filename: string; size: number; createdAt: string; modifiedAt: string; model?: string; durationMs?: number; conversationsProcessed?: number; status: 'completed' | 'running' | 'failed' }>;
   'training-log-read':     (filename: string) => string;
   'training-schedule-get': () => { enabled: boolean; hour: number; minute: number };
   'training-schedule-set': (opts: { enabled: boolean; hour: number; minute: number }) => { ok: boolean };
@@ -218,7 +218,16 @@ export interface IpcMainInvokeEvents {
   'editor-footer-stats':        () => { availableBytes: number; unprocessedTrainingBytes: number };
   'training-data-files':        () => Array<{ filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }>;
   'training-preprocess':        () => { conversations: number; filesProcessed: number; filesSkipped: number };
-  'training-prepare-docs':      (folders: string[], files: string[]) => { filesProcessed: number; pairsGenerated: number };
+  'training-prepare-docs':      (folders: string[], files: string[], options: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => { filesProcessed: number; pairsGenerated: number };
+  'training-queue-add':         (entries: Array<{ filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }>) => { queued: number };
+  'training-queue-process-now': () => { ok: boolean };
+  'training-queue-status':      () => { pending: number; processing: boolean };
+  'training-train-conversations-now': () => { logFilename: string; logPath: string };
+  'training-scheduled-configs-list': () => Array<{ id: string; name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; createdAt: string; files?: string[] }>;
+  'training-scheduled-configs-add': (config: { name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => { id: string };
+  'training-scheduled-configs-remove': (id: string) => { ok: boolean };
+  'training-wizard-settings-save': (wizard: 'create' | 'train', settings: Record<string, unknown>) => { ok: boolean };
+  'training-wizard-settings-load': (wizard: 'create' | 'train') => Record<string, unknown>;
   // #endregion
 
   // #region QMD Search

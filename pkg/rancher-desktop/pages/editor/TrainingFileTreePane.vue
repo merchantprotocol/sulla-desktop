@@ -13,8 +13,23 @@
     </div>
 
     <div class="tw-steps">
+      <!-- ─── Dashboard link ─── -->
+      <div
+        class="tw-dashboard-link"
+        :class="{ dark: isDark, active: currentStep === -1 }"
+        @click="goToStep(-1)"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7"/>
+          <rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/>
+        </svg>
+        <span>Dashboard</span>
+      </div>
+
       <!-- ─── Wizard 1: Create Training Data ─── -->
-      <div class="tw-section-title" :class="{ dark: isDark, active: currentStep <= 2 }">Create Training Data</div>
+      <div class="tw-section-title" :class="{ dark: isDark, active: currentStep >= 0 && currentStep <= 2 }">Create Training Data</div>
       <div
         v-for="(step, idx) in dataSteps"
         :key="'d-' + idx"
@@ -70,7 +85,10 @@
 
     <!-- Bottom info -->
     <div class="tw-footer" :class="{ dark: isDark }">
-      <div class="tw-footer-text" v-if="currentStep <= 2">
+      <div class="tw-footer-text" v-if="currentStep === -1">
+        Dashboard
+      </div>
+      <div class="tw-footer-text" v-else-if="currentStep <= 2">
         Create Data — Step {{ currentStep + 1 }} of 3
       </div>
       <div class="tw-footer-text" v-else>
@@ -131,8 +149,8 @@ export default defineComponent({
 
     function goToStep(idx: number) {
       if (idx === props.currentStep) return;
-      // First step of each wizard is always accessible
-      if (idx === 0 || idx === 3 || idx < props.currentStep) {
+      // Dashboard is always accessible, first step of each wizard is always accessible
+      if (idx === -1 || idx === 0 || idx === 3 || idx < props.currentStep) {
         emit('step-change', idx);
       }
     }
@@ -364,5 +382,39 @@ export default defineComponent({
   font-size: 11px;
   color: #94a3b8;
   text-align: center;
+}
+
+/* Dashboard link */
+.tw-dashboard-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  border-bottom: 1px solid #e5e7eb;
+}
+.tw-dashboard-link.dark {
+  color: #cbd5e1;
+  border-bottom-color: #334155;
+}
+.tw-dashboard-link:hover {
+  background: #f1f5f9;
+}
+.tw-dashboard-link.dark:hover {
+  background: #1e293b;
+}
+.tw-dashboard-link.active {
+  background: #eff6ff;
+  color: #0284c7;
+}
+.tw-dashboard-link.active.dark {
+  background: #1e293b;
+  color: #38bdf8;
 }
 </style>

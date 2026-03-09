@@ -95,6 +95,9 @@
     <!-- ==================== WIZARD STEPS ==================== -->
     <div v-else class="tp-wizard">
 
+      <!-- ─── DASHBOARD ─── -->
+      <TrainingDashboard v-if="currentStep === -1" :is-dark="isDark" />
+
       <!-- ─── STEP 1: Document Selection ─── -->
       <div v-if="currentStep === 0" class="tp-step tp-step-select">
         <!-- Left: File tree + continue button -->
@@ -402,17 +405,36 @@
               </svg>
               Back
             </button>
+            <template v-if="!preprocessDone && !scheduledForNightly">
+              <button
+                class="tp-btn-secondary"
+                :disabled="preprocessing || !processLlm || (selectedFolders.length === 0 && selectedFiles.length === 0)"
+                @click="enqueueAndSchedule"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                Schedule Nightly Training
+              </button>
+              <button
+                class="tp-btn-primary"
+                :disabled="preprocessing || !processLlm || (selectedFolders.length === 0 && selectedFiles.length === 0)"
+                @click="enqueueAndProcess"
+              >
+                <span v-if="preprocessing" class="tp-btn-spinner" />
+                {{ preprocessing ? 'Processing…' : 'Manually Process Now' }}
+              </button>
+            </template>
+            <div v-else-if="scheduledForNightly && !preprocessDone" class="tp-scheduled-badge" :class="{ dark: isDark }">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              Queued for nightly training
+            </div>
             <button
-              v-if="!preprocessDone"
-              class="tp-btn-primary"
-              :disabled="preprocessing || !processLlm || (selectedFolders.length === 0 && selectedFiles.length === 0)"
-              @click="prepareForTraining"
-            >
-              <span v-if="preprocessing" class="tp-btn-spinner" />
-              {{ preprocessing ? 'Processing…' : 'Start Processing' }}
-            </button>
-            <button
-              v-else
+              v-if="preprocessDone"
               class="tp-btn-primary"
               :disabled="totalExamples === 0"
               @click="$emit('step-change', 3)"
@@ -790,6 +812,7 @@
 import { defineComponent, ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { ipcRenderer } from 'electron';
 import TreeNode from './TreeNode.vue';
+import TrainingDashboard from './TrainingDashboard.vue';
 
 interface TreeEntry {
   path: string;
@@ -803,7 +826,7 @@ interface TreeEntry {
 
 export default defineComponent({
   name: 'TrainingPane',
-  components: { TreeNode },
+  components: { TreeNode, TrainingDashboard },
 
   props: {
     isDark:      { type: Boolean, default: false },
@@ -1164,12 +1187,14 @@ export default defineComponent({
       }
     }
 
-    // ─── Estimates (placeholder calculations) ───
-    // These are rough estimates — not wired to real token counting yet
+    // ─── Estimates (based on selected content size) ───
+    // ~4 chars per token, ~1500 tokens per chunk → ~6000 chars per chunk
+    const CHARS_PER_CHUNK = 6000;
     const estChunks = computed(() => {
-      const items = selectedFolders.value.length + selectedFiles.value.length;
-      // Rough estimate: ~5 chunks per item on average
-      return Math.max(1, items * 5);
+      const bytes = selectedContentSize.value;
+      if (bytes === 0) return 0;
+      // Approximate: 1 byte ≈ 1 char for text files
+      return Math.max(1, Math.ceil(bytes / CHARS_PER_CHUNK));
     });
 
     const estTokens = computed(() => {
@@ -1329,6 +1354,12 @@ export default defineComponent({
           'training-prepare-docs',
           [...selectedFolders.value],
           [...selectedFiles.value],
+          {
+            prompt:         customPrompt.value,
+            modelId:        processLlm.value,
+            modelProvider:  processLlmProvider.value,
+            outputFilename: outputFilenameClean.value,
+          },
         );
         await loadDataFiles();
         preprocessDone.value = true;
@@ -1353,10 +1384,14 @@ export default defineComponent({
 
     // ─── IPC event handlers ───
     function handleDocProgress(_event: any, data: any) {
-      if (data.phase === 'file-ok') {
+      if (data.phase === 'file-ok' || data.phase === 'queue-file-ok') {
         loadDataFiles();
-      } else if (data.phase === 'done') {
+      } else if (data.phase === 'done' || data.phase === 'queue-done') {
+        preprocessing.value = false;
+        preprocessDone.value = true;
         loadDataFiles();
+      } else if (data.phase === 'error' || data.phase === 'queue-file-error') {
+        preprocessing.value = false;
       }
     }
 
@@ -1482,10 +1517,131 @@ export default defineComponent({
       }
     }
 
+    // ─── Settings persistence ───
+    async function saveCreateWizardSettings() {
+      try {
+        await ipcRenderer.invoke('training-wizard-settings-save', 'create', {
+          selectedFolders:    selectedFolders.value,
+          selectedFiles:      selectedFiles.value,
+          selectedTemplate:   selectedTemplate.value,
+          customPrompt:       customPrompt.value,
+          processLlm:         processLlm.value,
+          processLlmProvider: processLlmProvider.value,
+          outputFilename:     outputFilename.value,
+        });
+      } catch {
+        // Settings DB may not be ready
+      }
+    }
+
+    async function saveTrainWizardSettings() {
+      try {
+        await ipcRenderer.invoke('training-wizard-settings-save', 'train', {
+          selectedDataFiles: selectedDataFiles.value,
+          selectedModel:     selectedModel.value,
+          trainEpochs:       trainEpochs.value,
+          trainLearningRate: trainLearningRate.value,
+          trainLoraRank:     trainLoraRank.value,
+          trainEvalSplit:    trainEvalSplit.value,
+        });
+      } catch {
+        // Settings DB may not be ready
+      }
+    }
+
+    async function restoreSettings() {
+      try {
+        const create = await ipcRenderer.invoke('training-wizard-settings-load', 'create') as Record<string, any>;
+        if (create.selectedFolders?.length)    selectedFolders.value = create.selectedFolders;
+        if (create.selectedFiles?.length)      selectedFiles.value = create.selectedFiles;
+        if (create.selectedTemplate)           selectedTemplate.value = create.selectedTemplate;
+        if (create.customPrompt)               customPrompt.value = create.customPrompt;
+        if (create.processLlm)                 processLlm.value = create.processLlm;
+        if (create.processLlmProvider)         processLlmProvider.value = create.processLlmProvider;
+        if (create.outputFilename)             outputFilename.value = create.outputFilename;
+
+        const train = await ipcRenderer.invoke('training-wizard-settings-load', 'train') as Record<string, any>;
+        if (train.selectedDataFiles?.length)   selectedDataFiles.value = train.selectedDataFiles;
+        if (train.selectedModel)               selectedModel.value = train.selectedModel;
+        if (train.trainEpochs != null)         trainEpochs.value = train.trainEpochs;
+        if (train.trainLearningRate)           trainLearningRate.value = train.trainLearningRate;
+        if (train.trainLoraRank != null)       trainLoraRank.value = train.trainLoraRank;
+        if (train.trainEvalSplit != null)      trainEvalSplit.value = train.trainEvalSplit;
+      } catch {
+        // Settings not available yet — use defaults
+      }
+    }
+
+    // Auto-save Create wizard settings when key values change
+    watch([selectedFolders, selectedFiles, selectedTemplate, customPrompt, processLlm, processLlmProvider, outputFilename], saveCreateWizardSettings, { deep: true });
+    // Auto-save Train wizard settings when key values change
+    watch([selectedDataFiles, selectedModel, trainEpochs, trainLearningRate, trainLoraRank, trainEvalSplit], saveTrainWizardSettings, { deep: true });
+
+    // ─── Queue operations ───
+    async function enqueueAndProcess() {
+      const filePaths = [...selectedFolders.value, ...selectedFiles.value];
+      if (filePaths.length === 0) return;
+
+      const entries = filePaths.map(fp => ({
+        filePath:       fp,
+        prompt:         customPrompt.value,
+        modelId:        processLlm.value,
+        modelProvider:  processLlmProvider.value,
+        outputFilename: outputFilenameClean.value,
+      }));
+
+      preprocessing.value = true;
+      preprocessDone.value = false;
+      try {
+        await ipcRenderer.invoke('training-queue-add', entries);
+        await ipcRenderer.invoke('training-queue-process-now');
+      } catch (err) {
+        console.error('[TrainingPane] Queue processing failed:', err);
+        preprocessing.value = false;
+      }
+    }
+
+    async function enqueueAndSchedule() {
+      const filePaths = [...selectedFolders.value, ...selectedFiles.value];
+      if (filePaths.length === 0) return;
+
+      const entries = filePaths.map(fp => ({
+        filePath:       fp,
+        prompt:         customPrompt.value,
+        modelId:        processLlm.value,
+        modelProvider:  processLlmProvider.value,
+        outputFilename: outputFilenameClean.value,
+      }));
+
+      try {
+        await ipcRenderer.invoke('training-queue-add', entries);
+        // Ensure nightly schedule is enabled
+        const schedule = await ipcRenderer.invoke('training-schedule-get');
+        if (!schedule.enabled) {
+          await ipcRenderer.invoke('training-schedule-set', { enabled: true, hour: schedule.hour, minute: schedule.minute });
+        }
+        // Save as a scheduled config visible on the dashboard
+        await ipcRenderer.invoke('training-scheduled-configs-add', {
+          name:           outputFilenameClean.value || 'Training Config',
+          source:         'documents',
+          modelKey:       processLlm.value,
+          prompt:         customPrompt.value,
+          outputFilename: outputFilenameClean.value,
+          files:          filePaths,
+        });
+        scheduledForNightly.value = true;
+      } catch (err) {
+        console.error('[TrainingPane] Schedule failed:', err);
+      }
+    }
+
+    const scheduledForNightly = ref(false);
+
     onMounted(async() => {
       await checkInstallStatus();
       loadDownloadedModels();
       loadLlmModels();
+      await restoreSettings();
       ipcRenderer.on('training-install-progress' as any, handleInstallProgress);
       ipcRenderer.on('training-prepare-progress' as any, handleDocProgress);
     });
@@ -1529,6 +1685,9 @@ export default defineComponent({
       toggleSelectFolder,
       toggleSelectFile,
       prepareForTraining,
+      enqueueAndProcess,
+      enqueueAndSchedule,
+      scheduledForNightly,
       // Data review (Step 2)
       dataFiles,
       dataFilesLoading,
@@ -1933,6 +2092,22 @@ export default defineComponent({
 .tp-btn-secondary:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.tp-scheduled-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  border-radius: 6px;
+  background: #dcfce7;
+  color: #16a34a;
+}
+.tp-scheduled-badge.dark {
+  background: #14532d;
+  color: #86efac;
 }
 
 .tp-btn-back {

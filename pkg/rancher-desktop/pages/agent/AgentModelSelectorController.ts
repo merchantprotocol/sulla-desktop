@@ -5,6 +5,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { integrations } from '@pkg/agent/integrations/catalog';
+import { LOCAL_MODELS } from '@pkg/shared/localModels';
 
 export interface ModelOption {
   providerId: string;
@@ -23,7 +24,7 @@ export interface ProviderGroup {
   models: ModelOption[];
 }
 
-const EXCLUDED_INTEGRATION_IDS = ['activepieces', 'composio'];
+const EXCLUDED_INTEGRATION_IDS = ['activepieces', 'composio', 'ollama'];
 
 export class AgentModelSelectorController {
   readonly showModelMenu = ref(false);
@@ -191,8 +192,7 @@ export class AgentModelSelectorController {
   }
 
   /**
-   * Build provider groups from all connected AI Infrastructure integrations.
-   * Each group lazily fetches its model list via IntegrationService.getSelectOptions().
+   * Build provider groups from local GGUF models + connected AI Infrastructure integrations.
    */
   private async refreshProviderGroups(): Promise<void> {
     this.loadingProviders.value = true;
@@ -201,17 +201,42 @@ export class AgentModelSelectorController {
       const integrationService = getIntegrationService();
       const groups: ProviderGroup[] = [];
 
+      // ── Local GGUF models (llama.cpp) ──
+      const isLocalActive = this.activePrimaryProvider.value === 'ollama';
+      let currentLocalModel = '';
+
+      try {
+        currentLocalModel = await SullaSettingsModel.get('sullaModel', '');
+      } catch { /* ignore */ }
+
+      const localGroup: ProviderGroup = {
+        providerId:       'ollama',
+        providerName:     'Local Models',
+        isActiveProvider: isLocalActive,
+        loading:          false,
+        models:           LOCAL_MODELS.map((m) => ({
+          providerId:       'ollama',
+          providerName:     'Local Models',
+          modelId:          m.name,
+          modelLabel:       `${ m.displayName } (${ m.size })`,
+          isActiveProvider: isLocalActive,
+          isActiveModel:    isLocalActive && m.name === currentLocalModel,
+        })),
+      };
+
+      groups.push(localGroup);
+
+      // ── Remote providers from integrations ──
       for (const integration of Object.values(integrations)) {
         if (integration.category !== 'AI Infrastructure') continue;
         if (EXCLUDED_INTEGRATION_IDS.includes(integration.id)) continue;
 
         const connected = await integrationService.isAnyAccountConnected(integration.id);
 
-        if (!connected && integration.id !== 'ollama') continue;
+        if (!connected) continue;
 
         const isActive = this.activePrimaryProvider.value === integration.id;
 
-        // Read the currently saved model for this provider
         let currentModel = '';
 
         try {
