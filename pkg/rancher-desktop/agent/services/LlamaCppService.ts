@@ -917,8 +917,14 @@ export class LlamaCppService {
     /**
      * Spawn a process and stream its output to a log file in real-time.
      * Resolves on exit code 0, rejects otherwise.
+     *
+     * @param cmd       Command to execute
+     * @param args      Command arguments
+     * @param logPath   Log file path for streaming output
+     * @param timeout   Timeout in ms
+     * @param onStdout  Optional callback invoked with each stdout line (for progress parsing)
      */
-    private spawnWithLog(cmd: string, args: string[], logPath?: string, timeout?: number): Promise<void> {
+    private spawnWithLog(cmd: string, args: string[], logPath?: string, timeout?: number, onStdout?: (line: string) => void): Promise<void> {
         return new Promise((resolve, reject) => {
             const { spawn: spawnProc } = require('child_process');
             const proc = spawnProc(cmd, args, {
@@ -946,10 +952,21 @@ export class LlamaCppService {
             }
 
             let stderrBuf = '';
+            let stdoutLineBuf = '';
             proc.stdout?.on('data', (chunk: Buffer) => {
                 const text = chunk.toString();
                 console.log(text.trimEnd());
                 if (logPath) fs.appendFileSync(logPath, text, 'utf-8');
+
+                // Parse lines and invoke callback for progress tracking
+                if (onStdout) {
+                    stdoutLineBuf += text;
+                    const lines = stdoutLineBuf.split('\n');
+                    stdoutLineBuf = lines.pop() || '';
+                    for (const line of lines) {
+                        onStdout(line);
+                    }
+                }
             });
             proc.stderr?.on('data', (chunk: Buffer) => {
                 const text = chunk.toString();
@@ -1086,7 +1103,19 @@ export class LlamaCppService {
      *
      * Call this from a scheduler (launchd / cron / Task Scheduler).
      */
-    async runFullNightlyTraining(modelKey: string, logPath?: string): Promise<void> {
+    /**
+     * Run the full nightly training pipeline:
+     *   1. Process documents (incremental scan → QA pairs via documents_processor.py)
+     *   2. Run train_nightly.py (training data + replay buffer → LoRA → GGUF)
+     *
+     * Called by trainingController.trainConversationsNow() for "Train Now",
+     * and can also be called from a scheduler (launchd / cron).
+     *
+     * @param modelKey     Key in GGUF_MODELS (e.g. 'qwen3.5-0.8b')
+     * @param logPath      Path to the training log file for streaming output
+     * @param onStdout     Optional callback invoked with each stdout line (for progress parsing)
+     */
+    async runFullNightlyTraining(modelKey: string, logPath?: string, onStdout?: (line: string) => void): Promise<void> {
         const entry = GGUF_MODELS[modelKey];
         if (!entry?.trainingRepo) {
             throw new Error(`${LOG_PREFIX} Model ${modelKey} has no training repo`);
@@ -1097,17 +1126,29 @@ export class LlamaCppService {
             throw new Error(`${LOG_PREFIX} Training venv not installed`);
         }
 
-        // 1. Process documents
+        // 1. Process documents (non-fatal — training can proceed without new docs)
         try {
             await this.processDocuments(logPath);
         } catch (err) {
             console.error(`${LOG_PREFIX} Document processing failed (continuing with training):`, err);
         }
 
-        // 2. Run training
+        // 2. Run train_nightly.py with --training-dir pointing to ~/sulla/training/
         const script = path.join(getTrainingScriptsDir(), 'train_nightly.py');
-        console.log(`${LOG_PREFIX} Running nightly training with model ${entry.trainingRepo}...`);
-        await this.spawnWithLog(python, [script, '--model', entry.trainingRepo, '--llm-root', getLlmRoot()], logPath, 7_200_000);
+        const { resolveSullaTrainingDir } = await import('../utils/sullaPaths');
+        const trainingDir = resolveSullaTrainingDir();
+        const llmRoot = getLlmRoot();
+        const trainArgs = [script, '--model', entry.trainingRepo, '--llm-root', llmRoot, '--training-dir', trainingDir];
+
+        console.log(`${LOG_PREFIX} Running nightly training:`);
+        console.log(`${LOG_PREFIX}   python: ${python}`);
+        console.log(`${LOG_PREFIX}   script: ${script}`);
+        console.log(`${LOG_PREFIX}   model: ${entry.trainingRepo}`);
+        console.log(`${LOG_PREFIX}   llm-root: ${llmRoot}`);
+        console.log(`${LOG_PREFIX}   training-dir: ${trainingDir}`);
+        console.log(`${LOG_PREFIX}   command: ${python} ${trainArgs.join(' ')}`);
+
+        await this.spawnWithLog(python, trainArgs, logPath, 7_200_000, onStdout);
         console.log(`${LOG_PREFIX} Nightly training complete`);
     }
 

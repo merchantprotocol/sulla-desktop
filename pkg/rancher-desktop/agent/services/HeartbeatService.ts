@@ -2,6 +2,39 @@
 
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
+// ── Event History Types ──
+
+export type HeartbeatEventType =
+  | 'scheduler_started'
+  | 'scheduler_check'
+  | 'heartbeat_skipped'
+  | 'heartbeat_triggered'
+  | 'heartbeat_completed'
+  | 'heartbeat_error'
+  | 'heartbeat_already_running';
+
+export interface HeartbeatEvent {
+  ts: number;
+  type: HeartbeatEventType;
+  message: string;
+  durationMs?: number;
+  error?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface HeartbeatStatus {
+  initialized: boolean;
+  isExecuting: boolean;
+  lastTriggerMs: number;
+  schedulerRunning: boolean;
+  totalTriggers: number;
+  totalErrors: number;
+  totalSkips: number;
+  uptimeMs: number;
+}
+
+const MAX_EVENT_HISTORY = 200;
+
 let heartbeatServiceInstance: HeartbeatService | null = null;
 
 export function getHeartbeatService(): HeartbeatService {
@@ -17,11 +50,47 @@ export class HeartbeatService {
   private isExecuting = false;
   private lastTriggerMs = 0; // simple in-memory last-run tracker
 
+  // ── Event history ring buffer ──
+  private eventHistory: HeartbeatEvent[] = [];
+  private totalTriggers = 0;
+  private totalErrors = 0;
+  private totalSkips = 0;
+  private startedAtMs = 0;
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
     console.log('[HeartbeatService] Initializing scheduler...');
     this.initialized = true;
+    this.startedAtMs = Date.now();
+    this.recordEvent('scheduler_started', 'Heartbeat scheduler initialized');
     this.startScheduler();
+  }
+
+  // ── Public status API ──
+
+  getStatus(): HeartbeatStatus {
+    return {
+      initialized:      this.initialized,
+      isExecuting:      this.isExecuting,
+      lastTriggerMs:    this.lastTriggerMs,
+      schedulerRunning: this.schedulerId !== null,
+      totalTriggers:    this.totalTriggers,
+      totalErrors:      this.totalErrors,
+      totalSkips:       this.totalSkips,
+      uptimeMs:         this.startedAtMs > 0 ? Date.now() - this.startedAtMs : 0,
+    };
+  }
+
+  getHistory(limit = 50): HeartbeatEvent[] {
+    return this.eventHistory.slice(-limit);
+  }
+
+  private recordEvent(type: HeartbeatEventType, message: string, extra?: Partial<HeartbeatEvent>): void {
+    const event: HeartbeatEvent = { ts: Date.now(), type, message, ...extra };
+    this.eventHistory.push(event);
+    if (this.eventHistory.length > MAX_EVENT_HISTORY) {
+      this.eventHistory = this.eventHistory.slice(-MAX_EVENT_HISTORY);
+    }
   }
 
   private startScheduler(): void {
@@ -40,18 +109,28 @@ export class HeartbeatService {
   private async checkAndMaybeTrigger(): Promise<void> {
     try {
       const enabled = await SullaSettingsModel.get('heartbeatEnabled', false);
-      console.log(`[HeartbeatService] heartbeatEnabled = ${JSON.stringify(enabled)} (type: ${typeof enabled})`);
-      if (!enabled) return;
+      if (!enabled) {
+        this.totalSkips++;
+        this.recordEvent('heartbeat_skipped', 'Heartbeat disabled in settings');
+        return;
+      }
 
       const delayMin = Math.max(1, await SullaSettingsModel.get('heartbeatDelayMinutes', 30));
       const delayMs  = delayMin * 60_000;
 
       if (Date.now() - this.lastTriggerMs >= delayMs) {
         console.log(`[HeartbeatService] ⏰ Heartbeat due (${delayMin} min) — triggering`);
+        this.recordEvent('scheduler_check', `Heartbeat due (${delayMin}min interval) — triggering`);
         await this.triggerHeartbeat();
         this.lastTriggerMs = Date.now();
+      } else {
+        const remainingMs = delayMs - (Date.now() - this.lastTriggerMs);
+        this.recordEvent('scheduler_check', `Next heartbeat in ${Math.ceil(remainingMs / 60000)}min`);
       }
     } catch (err) {
+      this.totalErrors++;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.recordEvent('heartbeat_error', `Scheduler check failed: ${msg}`, { error: msg });
       console.error('[HeartbeatService] Scheduler check failed:', err);
     }
   }
@@ -59,36 +138,54 @@ export class HeartbeatService {
   private async triggerHeartbeat(): Promise<void> {
     if (this.isExecuting) {
       console.log('[HeartbeatService] Already executing — skip');
+      this.totalSkips++;
+      this.recordEvent('heartbeat_already_running', 'Heartbeat already executing — skipped');
       return;
     }
 
     this.isExecuting = true;
+    this.totalTriggers++;
+    const triggerStart = Date.now();
+    this.recordEvent('heartbeat_triggered', 'Heartbeat execution started');
 
     try {
-      const basePrompt  = await SullaSettingsModel.get('heartbeatPrompt', '');
-      const providerSetting = await SullaSettingsModel.get('heartbeatProvider', 'default');
-
+      const basePrompt = await SullaSettingsModel.get('heartbeatPrompt', '');
       const fullPrompt = this.buildHeartbeatPrompt(basePrompt);
 
-      console.log(`[HeartbeatService] Building heartbeat prompt (provider=${providerSetting})`);
+      console.log('[HeartbeatService] Dispatching to HeartbeatGraph via GraphRegistry');
 
-      const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
-      const registry = getWorkflowRegistry();
+      const { GraphRegistry } = await import('./GraphRegistry');
+      const { graph, state } = await GraphRegistry.getOrCreateOverlordGraph('heartbeat', fullPrompt);
 
-      console.log('[HeartbeatService] Dispatching to WorkflowRegistry — triggerType="heartbeat", originChannel="heartbeat"');
+      // Reset for fresh run
+      state.metadata.consecutiveSameNode = 0;
+      state.metadata.iterations = 0;
+      state.metadata.cycleComplete = false;
+      state.metadata.waitingForUser = false;
+      (state.metadata as any).heartbeatCycleCount = 0;
+      (state.metadata as any).heartbeatStatus = 'idle';
 
-      const result = await registry.dispatch({
-        triggerType: 'heartbeat',
-        message: fullPrompt,
-        originChannel: 'heartbeat',
+      // Inject the prompt as a fresh user message
+      state.messages = [{
+        role: 'user',
+        content: fullPrompt,
+        metadata: { source: 'heartbeat' },
+      }];
+
+      await graph.execute(state, 'input_handler');
+      const durationMs = Date.now() - triggerStart;
+      const cycleCount = (state.metadata as any).heartbeatCycleCount || 0;
+      const status = (state.metadata as any).heartbeatStatus || 'unknown';
+      this.recordEvent('heartbeat_completed', `Completed in ${Math.round(durationMs / 1000)}s — ${cycleCount} cycles, status: ${status}`, {
+        durationMs,
+        meta: { cycleCount, status, focus: (state.metadata as any).currentFocus || '' },
       });
-
-      if (result) {
-        console.log(`[HeartbeatService] Heartbeat dispatched to workflow "${result.workflowName}" (${result.workflowId})`);
-      } else {
-        console.log('[HeartbeatService] No heartbeat workflow matched — no action taken');
-      }
+      console.log('[HeartbeatService] Heartbeat graph execution completed');
     } catch (err) {
+      this.totalErrors++;
+      const durationMs = Date.now() - triggerStart;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.recordEvent('heartbeat_error', `Execution failed after ${Math.round(durationMs / 1000)}s: ${msg}`, { durationMs, error: msg });
       console.error('[HeartbeatService] Heartbeat execution failed:', err);
     } finally {
       this.isExecuting = false;

@@ -119,9 +119,9 @@ console.log('[window/index] URLs configured:', { webRoot, mainUrl, dockerDashboa
 export function openMain() {
   console.log('[openMain] Called. mainUrl:', mainUrl, 'webRoot:', webRoot);
 
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  const { height } = screen.getPrimaryDisplay().workAreaSize;
 
-  const defaultWidth = Math.min(Math.trunc(width * 0.8), 1280);
+  const defaultWidth = 769;
   const defaultHeight = Math.min(Math.trunc(height * 0.8), 900); // 720 (692)
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);

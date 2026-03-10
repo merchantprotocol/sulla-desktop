@@ -80,6 +80,7 @@ export class AgentPersonaService {
   readonly activeAssets: PersonaSidebarAsset[] = reactive([]);
 
   graphRunning = ref(false);
+  waitingForUser = ref(false);
   stopReason = ref<string | null>(null);
 
 
@@ -116,7 +117,7 @@ export class AgentPersonaService {
     this.wsService = getWebSocketClientService();
   }
 
-  constructor(registry: AgentPersonaRegistry, agentData?: AgentRegistryEntry) {
+  constructor(registry: AgentPersonaRegistry, agentData?: AgentRegistryEntry, requestedAgentId?: string) {
     this.registry = registry;
 
     if (agentData) {
@@ -130,6 +131,10 @@ export class AgentPersonaService {
         temperature: agentData.temperature ?? 0.7,
         totalTokensUsed: agentData.totalTokensUsed ?? 0,
       });
+    } else if (requestedAgentId) {
+      // No registry entry exists — use the requested ID so we connect on the right channel
+      this.state.agentId = requestedAgentId;
+      this.state.agentName = requestedAgentId;
     }
 
     // Connect immediately — this is the core fix
@@ -418,16 +423,18 @@ export class AgentPersonaService {
   }
 
   // Kept old signature for compatibility, but agentId is now ignored (service owns its channel)
-  async addUserMessage(_agentId: string, content: string): Promise<boolean> {
-    return this._addUserMessage(content);
+  async addUserMessage(_agentId: string, content: string, metadata?: Record<string, unknown>): Promise<boolean> {
+    return this._addUserMessage(content, metadata);
   }
 
   // Internal clean version
-  private async _addUserMessage(content: string): Promise<boolean> {
+  private async _addUserMessage(content: string, extraMetadata?: Record<string, unknown>): Promise<boolean> {
     if (!content.trim()) return false;
 
     const id = this.state.agentId;
+    console.log(`[AgentPersonaService] _addUserMessage() — channel="${id}", threadId="${this.state.threadId || '(none)'}", content="${content.slice(0, 80)}"`);
     this.stopReason.value = null;
+    this.waitingForUser.value = false;
 
     this.messages.push({
       id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -440,17 +447,20 @@ export class AgentPersonaService {
 
     let delivered: boolean;
     try {
+      console.log(`[AgentPersonaService] _addUserMessage() — sending via WebSocket to channel="${id}"...`);
       delivered = await this.wsService.send(id, {
         type: 'user_message',
-        data: { role: 'user', content, threadId: this.state.threadId },
+        data: { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata },
         timestamp: Date.now(),
       });
-    } catch {
+      console.log(`[AgentPersonaService] _addUserMessage() — WebSocket send result: delivered=${delivered}`);
+    } catch (err) {
+      console.error(`[AgentPersonaService] _addUserMessage() — WebSocket send THREW:`, err);
       delivered = false;
     }
 
     if (!delivered) {
-      console.warn(`[AgentPersonaService] Message delivery failed for ${id}`);
+      console.warn(`[AgentPersonaService] Message delivery FAILED for channel="${id}" — connection may be down`);
       this.registry.setLoading(id, false);
       this.graphRunning.value = false;
       this.messages.push({
@@ -478,11 +488,13 @@ export class AgentPersonaService {
   clearThreadId(): void {
     this.state.threadId = undefined;
     this.lastSentN8nLiveEventsEnabled = null;
+    this.waitingForUser.value = false;
   }
 
   async emitContinueRun(): Promise<boolean> {
     const id = this.state.agentId;
     this.stopReason.value = null;
+    this.waitingForUser.value = false;
     this.graphRunning.value = true;
     this.registry.setLoading(id, true);
 
@@ -550,6 +562,7 @@ export class AgentPersonaService {
         this.wsUnsub.delete(agentId);
       }
     }
+    this.waitingForUser.value = false;
   }
 
   private handleWebSocketMessage(agentId: string, msg: WebSocketMessage): void {
@@ -571,6 +584,8 @@ export class AgentPersonaService {
         }
 
         if (typeof msg.data === 'string') {
+          // Skip raw tool_use JSON that leaked from the LLM response
+          if (msg.data.trimStart().startsWith('{"type":"tool_use"')) return;
           const message: ChatMessage = {
             id: `${Date.now()}_ws_${msg.type}`,
             channelId: agentId,
@@ -582,10 +597,14 @@ export class AgentPersonaService {
         }
 
         const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+        // Skip tool_use objects that leaked from the LLM response
+        if (data?.type === 'tool_use') return;
         const content = data?.content !== undefined ? String(data.content) : '';
         if (!content.trim()) {
           return;
         }
+        // Skip if content is raw tool_use JSON
+        if (content.trimStart().startsWith('{"type":"tool_use"')) return;
 
         const roleRaw = data?.role !== undefined ? String(data.role) : (msg.type === 'system_message' ? 'system' : 'assistant');
         const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
@@ -740,8 +759,10 @@ export class AgentPersonaService {
         const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
         if (data === 'graph_execution_complete' || data?.content === 'graph_execution_complete') {
           const reason = data?.stopReason || null;
-          console.log('[AgentPersonaModel] Graph execution complete, stopReason:', reason);
+          const waiting = !!(data?.waitingForUser);
+          console.log('[AgentPersonaModel] Graph execution complete, stopReason:', reason, 'waitingForUser:', waiting);
           this.graphRunning.value = false;
+          this.waitingForUser.value = waiting;
           this.stopReason.value = reason;
           this.registry.setLoading(agentId, false);
         }
@@ -771,6 +792,12 @@ export class AgentPersonaService {
         }
         return;
       }
+      case 'ack':
+      case 'ping':
+      case 'pong':
+      case 'subscribe':
+        // Silent — these are protocol-level messages, not content
+        return;
       default:
         console.log('[AgentPersonaModel] Unhandled message type:', msg.type);
     }

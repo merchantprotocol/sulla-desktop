@@ -114,10 +114,9 @@ export default defineComponent({
     }
 
     function fileBadgeClass(entry?: GitStatusEntry): string {
-      if (!entry) return 'untracked';
+      if (!entry) return 'added';
       if (props.badgeType === 'staged') return 'staged';
-      if (props.badgeType === 'untracked') return 'untracked';
-      // worktree status
+      if (props.badgeType === 'untracked') return 'added';
       switch (entry.worktree) {
         case 'M': return 'modified';
         case 'D': return 'deleted';
@@ -128,9 +127,9 @@ export default defineComponent({
     }
 
     function fileBadgeText(entry?: GitStatusEntry): string {
-      if (!entry) return '?';
+      if (!entry) return 'A';
       if (props.badgeType === 'staged') return entry.index;
-      if (props.badgeType === 'untracked') return '?';
+      if (props.badgeType === 'untracked') return 'A';
       return entry.worktree;
     }
 

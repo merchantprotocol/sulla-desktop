@@ -29,6 +29,12 @@ export interface AgentNodeConfig {
   additionalPrompt: string;
   /** Template string for the user message sent to this agent. Supports {{variable}} syntax. */
   userMessage: string;
+  /** Prompt shown to the orchestrator before the agent executes. Describes what this step should accomplish. */
+  beforePrompt: string;
+  /** Criteria the orchestrator uses to validate the agent's output after execution. */
+  successCriteria: string;
+  /** Custom completion contract appended to the agent prompt. Overrides the default HAND_BACK format when provided. */
+  completionContract: string;
 }
 
 export interface ToolCallNodeConfig {
@@ -40,6 +46,8 @@ export interface ToolCallNodeConfig {
   accountId: string;
   /** Default parameter values — keys are param names, values support {{variable}} syntax */
   defaults: Record<string, string>;
+  /** Description shown to the orchestrator before the call executes, for parameter validation. */
+  preCallDescription: string;
 }
 
 export interface RouterNodeConfig {
@@ -60,6 +68,8 @@ export interface WaitNodeConfig {
 export interface LoopNodeConfig {
   maxIterations: number;
   condition: string;
+  /** How to evaluate the stop condition: 'template' for {{variable}} matching, 'llm' for orchestrator evaluation */
+  conditionMode: 'template' | 'llm';
 }
 
 export interface ParallelNodeConfig {
@@ -98,6 +108,13 @@ export type WorkflowNodeStatus =
   | 'skipped'
   | 'waiting';
 
+export interface NodeThinkingMessage {
+  content: string;
+  role: 'assistant' | 'system';
+  kind: string;
+  timestamp: string;
+}
+
 export interface WorkflowNodeExecutionState {
   status: WorkflowNodeStatus;
   threadId?: string;
@@ -105,6 +122,8 @@ export interface WorkflowNodeExecutionState {
   error?: string;
   startedAt?: string;
   completedAt?: string;
+  /** Accumulated thinking/conversation messages from the running agent */
+  thinkingMessages?: NodeThinkingMessage[];
 }
 
 // ── Node data (stored in vue-flow node.data) ──

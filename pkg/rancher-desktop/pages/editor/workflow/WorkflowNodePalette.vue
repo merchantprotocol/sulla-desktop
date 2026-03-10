@@ -37,7 +37,7 @@ defineProps<{
   isDark: boolean;
 }>();
 
-const sullaIconUrl = new URL('../../../../../resources/icons/sulla-node-icon.png', import.meta.url).href;
+const sullaIconUrl = new URL('../../../../../resources/icons/robot-512-nobg.png', import.meta.url).href;
 
 function onDragStart(event: DragEvent, subtype: WorkflowNodeSubtype, category: WorkflowNodeCategory) {
   if (!event.dataTransfer) return;

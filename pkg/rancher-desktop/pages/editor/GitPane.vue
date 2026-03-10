@@ -275,10 +275,10 @@
                   :key="'u-' + repo.root + f.file"
                   class="git-file-row"
                   :class="{ dark: isDark }"
-                  @click="openFile(repo, f.file)"
+                  @click="openFileRaw(repo, f.file)"
                   @contextmenu.prevent="showFileContextMenu($event, repo, f.file, false)"
                 >
-                  <span class="git-status-badge untracked">?</span>
+                  <span class="git-status-badge added">A</span>
                   <span class="git-file-name">{{ basename(f.file) }}</span>
                   <span class="git-file-path">{{ dirname(f.file) }}</span>
                   <button class="git-file-action" :class="{ dark: isDark }" title="Stage" @click.stop="stage(repo, f.file)">
@@ -299,7 +299,7 @@
                   action-type="stage"
                   :depth="0"
                   :is-dark="isDark"
-                  @open-file="openFile(repo, $event)"
+                  @open-file="openFileRaw(repo, $event)"
                   @stage="stage(repo, $event)"
                   @unstage="unstage(repo, $event)"
                   @contextmenu="(ev: MouseEvent, file: string) => showFileContextMenu(ev, repo, file, false)"
@@ -571,9 +571,11 @@ function statusClass(code: string): string {
 
 async function discoverAndRefresh() {
   if (!props.rootPath) return;
+  console.log('[GitPane] discoverAndRefresh rootPath:', props.rootPath);
   loading.value = true;
   try {
     const discovered: Array<{ root: string; name: string }> = await ipcRenderer.invoke('git-discover-repos', props.rootPath);
+    console.log('[GitPane] discovered repos:', JSON.stringify(discovered, null, 2));
 
     // Preserve existing UI state (open/closed) for repos we already know about
     const existingMap = new Map(repoStates.value.map(r => [r.root, r]));
@@ -605,11 +607,13 @@ async function discoverAndRefresh() {
 }
 
 async function refreshRepo(repo: RepoState) {
+  console.log('[GitPane] refreshRepo:', repo.name, repo.root);
   try {
     const [br, entries] = await Promise.all([
       ipcRenderer.invoke('git-branch', repo.root),
       ipcRenderer.invoke('git-status-full', repo.root),
     ]);
+    console.log('[GitPane] refreshRepo result for', repo.name, '- branch:', br, 'entries:', JSON.stringify(entries, null, 2));
     repo.branch = br;
     repo.entries = entries;
   } catch (err) {
@@ -689,6 +693,7 @@ onMounted(() => document.addEventListener('click', onDocumentClick));
 onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick));
 
 function openFile(repo: RepoState, file: string, staged = false) {
+  console.log('[GitPane] openFile:', { repoRoot: repo.root, file, staged });
   // Open diff view for changed files by default
   emit('open-diff', repo.root, file, staged);
 }
@@ -1232,6 +1237,12 @@ onMounted(() => discoverAndRefresh());
   font-size: 13px;
   cursor: pointer;
   color: #333;
+  height:22px;
+}
+button.git-tree-dir {
+  min-height:22px;
+  line-height:22px;
+  height:22px;
 }
 
 .git-file-row:hover {

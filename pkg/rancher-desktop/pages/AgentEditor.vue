@@ -1,5 +1,5 @@
 <template>
-  <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
+  <div class="font-sans page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentFilesystem" />
     <EditorHeader
       :is-dark="isDark"
@@ -12,7 +12,7 @@
       @toggle-right-pane="rightPaneVisible = !rightPaneVisible"
     />
 
-    <div class="flex h-full min-h-0 overflow-hidden">
+    <div class="flex flex-1 min-h-0 overflow-hidden">
         <div class="main-content">
         <!-- Icon Panel -->
         <IconPanel
@@ -24,6 +24,8 @@
           :agent-mode="agentMode"
           :integrations-mode="integrationsMode"
           :workflow-mode="workflowMode"
+          :training-mode="trainingMode"
+          :monitor-mode="monitorMode"
           @toggle-file-tree="toggleFileTree"
           @toggle-search="toggleSearch"
           @toggle-git="toggleGit"
@@ -31,6 +33,8 @@
           @toggle-integrations="toggleIntegrations"
           @toggle-agent="toggleAgent"
           @toggle-workflow="toggleWorkflow"
+          @toggle-training="toggleTraining"
+          @toggle-monitor="toggleMonitor"
         />
         </div>
 
@@ -102,10 +106,29 @@
               @workflow-deleted="onWorkflowDeleted"
             />
 
+            <!-- Training file tree -->
+            <TrainingFileTreePane
+              v-show="trainingMode"
+              :is-dark="isDark"
+              :current-step="trainingStep"
+              @close="leftPaneVisible = false"
+              @step-change="trainingStep = $event"
+            />
+
+            <!-- Monitor pane -->
+            <MonitorPane
+              v-show="monitorMode"
+              :is-dark="isDark"
+              :active-section="monitorSection"
+              @close="toggleMonitor"
+              @section-change="monitorSection = $event"
+              @refresh="monitorDashboardRef?.refreshAll?.()"
+            />
+
             <!-- File tree -->
             <FileTreeSidebar
               ref="fileTreeRef"
-              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode"
+              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode && !monitorMode"
               :root-path="rootPath"
               :highlight-path="highlightPath"
               :is-dark="isDark"
@@ -125,6 +148,10 @@
 
         <!-- Right content: Editor area -->
         <div class="editor-panel" v-show="centerPaneVisible" :class="{ dark: isDark }">
+          <!-- Monitor dashboard (replaces editor area when monitor mode is active) -->
+          <MonitorDashboard v-if="monitorMode" ref="monitorDashboardRef" :is-dark="isDark" :active-section="monitorSection" @refresh="monitorDashboardRef?.refreshAll?.()" @open-detail="openMonitorDetail" />
+          <!-- Training full-screen (replaces everything when training mode is active) -->
+          <TrainingPane ref="trainingPaneRef" v-if="trainingMode" :is-dark="isDark" :current-step="trainingStep" @env-ready="leftPaneVisible = true" @step-change="trainingStep = $event" @content-scale="trainingContentScale = $event" @open-training-log="openTrainingLog" />
           <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
           <WorkflowEditor v-if="workflowMode" ref="workflowEditorRef" :is-dark="isDark" :workflow-data="activeWorkflowData" @node-selected="onWorkflowNodeSelected" @workflow-changed="onWorkflowChanged" />
           <!-- Workflow save toolbar -->
@@ -169,10 +196,9 @@
             </button>
             <div class="workflow-save-divider" :class="{ dark: isDark }"></div>
             <button
-              v-if="!workflowExecutionId"
               class="workflow-run-btn"
               :class="{ dark: isDark }"
-              title="Run workflow"
+              title="Run workflow (opens chat)"
               @click="runWorkflow"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -180,22 +206,10 @@
               </svg>
               Run
             </button>
-            <button
-              v-else
-              class="workflow-stop-btn"
-              :class="{ dark: isDark }"
-              title="Stop workflow"
-              @click="stopWorkflow"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="6" width="12" height="12" rx="1"/>
-              </svg>
-              Stop
-            </button>
           </div>
 
           <!-- Top editor area -->
-          <div class="editor-top" v-show="!workflowMode">
+          <div class="editor-top" v-show="!workflowMode && !trainingMode && !monitorMode">
             <!-- Tab bar (always visible) -->
             <div class="tab-bar" :class="{ dark: isDark, empty: openTabs.length === 0 }">
               <div class="tab-bar-tabs">
@@ -399,6 +413,54 @@
                   </svg>
                 </button>
               </div>
+              <!-- Monitor detail tabs -->
+              <div
+                v-for="mtab in monitorTabs"
+                :key="mtab.id"
+                class="terminal-tab"
+                :class="{ active: bottomPaneTab === 'monitor' && activeMonitorTab === mtab.id, dark: isDark }"
+                @click="bottomPaneTab = 'monitor'; activeMonitorTab = mtab.id"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                </svg>
+                <span>{{ mtab.label }}</span>
+                <button
+                  class="terminal-tab-close"
+                  :class="{ dark: isDark }"
+                  @click.stop="closeMonitorTab(mtab.id)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+              </div>
+              <!-- Training log tab -->
+              <div
+                v-if="trainingLogFilename"
+                class="terminal-tab"
+                :class="{ active: bottomPaneTab === 'training', dark: isDark }"
+                @click="bottomPaneTab = 'training'"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                <span>Training Log</span>
+                <button
+                  class="terminal-tab-close"
+                  :class="{ dark: isDark }"
+                  @click.stop="trainingLogFilename = ''; bottomPaneTab = 'terminal'"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+              </div>
               <button
                 class="terminal-tab-add"
                 :class="{ dark: isDark }"
@@ -439,6 +501,23 @@
                 style="height: 100%"
               >
                 <ApiTestPanel :is-dark="isDark" :initial-slug="atab.slug" />
+              </div>
+            </div>
+
+            <!-- Training Log -->
+            <div v-show="bottomPaneTab === 'training'" class="terminal-content">
+              <TrainingLogViewer v-if="trainingLogFilename" :is-dark="isDark" :log-filename="trainingLogFilename" />
+            </div>
+
+            <!-- Monitor Detail Panels -->
+            <div v-show="bottomPaneTab === 'monitor'" class="terminal-content">
+              <div
+                v-for="mtab in monitorTabs"
+                :key="mtab.id"
+                v-show="activeMonitorTab === mtab.id"
+                style="height: 100%"
+              >
+                <MonitorDetailPanel :is-dark="isDark" :tab-type="mtab.type" :tab-id="mtab.tabId" :error-data="mtab.errorData" />
               </div>
             </div>
           </div>
@@ -507,6 +586,44 @@
             @update-trigger="() => {}"
             @update-node-config="onWorkflowNodeConfigUpdate"
           />
+          <!-- Training mode: tabbed right pane (Chat / Help) -->
+          <template v-else-if="trainingMode">
+            <div class="rp-tabs" :class="{ dark: isDark }">
+              <button
+                class="rp-tab"
+                :class="{ active: rightPaneTab === 'chat', dark: isDark }"
+                @click="rightPaneTab = 'chat'"
+              >Chat</button>
+              <button
+                class="rp-tab"
+                :class="{ active: rightPaneTab === 'help', dark: isDark }"
+                @click="rightPaneTab = 'help'"
+              >Help</button>
+            </div>
+            <EditorChat
+              v-show="rightPaneTab === 'chat'"
+              :is-dark="isDark"
+              :messages="chatMessages"
+              :query="chatQuery"
+              :loading="chatLoading"
+              :graph-running="chatGraphRunning"
+              :waiting-for-user="chatWaitingForUser"
+              :model-selector="modelSelector"
+              :agent-registry="agentRegistry"
+              :hide-agent-selector="false"
+              :total-tokens-used="chatTotalTokensUsed"
+              @update:query="chatUpdateQuery"
+              @send="chatSend()"
+              @stop="chatStop()"
+              @close="rightPaneVisible = false"
+            />
+            <TrainingHelpPane
+              v-show="rightPaneTab === 'help'"
+              :is-dark="isDark"
+              :current-step="trainingStep"
+              :content-scale="trainingContentScale"
+            />
+          </template>
           <!-- Chat (default / workflow mode) -->
           <EditorChat
             v-else
@@ -514,19 +631,49 @@
             :messages="chatMessages"
             :query="chatQuery"
             :loading="chatLoading"
-            :graph-running="chatGraphRunning || !!workflowExecutionId"
+            :graph-running="chatGraphRunning"
+            :waiting-for-user="chatWaitingForUser"
             :model-selector="modelSelector"
             :agent-registry="agentRegistry"
-            :hide-agent-selector="workflowChatMode"
+            :hide-agent-selector="!agentMode && !workflowMode"
             :total-tokens-used="chatTotalTokensUsed"
             @update:query="chatUpdateQuery"
-            @send="workflowChatMode ? workflowChatSend() : chatSend()"
-            @stop="workflowExecutionId ? stopWorkflow() : chatStop()"
+            @send="chatSend()"
+            @stop="chatStop()"
             @close="rightPaneVisible = false"
           />
         </div>
       </div>
+
+      <!-- Editor Status Bar Footer -->
+      <footer class="editor-footer" :class="{ dark: isDark }">
+        <div class="editor-footer-left">
+          <span class="footer-item" :title="`${formatBytes(footerStats.availableBytes)} free on disk`">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M16 2v20"/><path d="M2 12h14"/></svg>
+            {{ formatBytes(footerStats.availableBytes) }} free
+          </span>
+          <span class="footer-item" :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
+          </span>
+          <span v-if="activeTab" class="footer-item footer-lang">{{ extToLanguage(activeTab.ext) }}</span>
+        </div>
+        <div class="editor-footer-right">
+          <span v-if="backendProgressDesc" class="footer-item footer-progress-text">
+            {{ backendProgressDesc }}
+          </span>
+          <span v-if="backendProgressActive" class="footer-progress-bar-wrapper">
+            <span
+              class="footer-progress-bar-fill"
+              :class="{ indeterminate: backendProgressPct < 0 }"
+              :style="backendProgressPct >= 0 ? { width: backendProgressPct + '%' } : {}"
+            />
+          </span>
+          <span class="footer-item footer-state" :class="backendStateClass">{{ backendStateLabel }}</span>
+        </div>
+      </footer>
     </div>
+
 
   <!-- Tab Context Menu -->
   <TabContextMenu
@@ -565,6 +712,13 @@ import IntegrationsPane from './editor/IntegrationsPane.vue';
 import ApiTestPanel from './editor/ApiTestPanel.vue';
 import AgentFormTab from './editor/AgentFormTab.vue';
 import WorkflowPane from './editor/WorkflowPane.vue';
+import TrainingPane from './editor/TrainingPane.vue';
+import TrainingFileTreePane from './editor/TrainingFileTreePane.vue';
+import TrainingHelpPane from './editor/TrainingHelpPane.vue';
+import TrainingLogViewer from './editor/TrainingLogViewer.vue';
+import MonitorPane from './editor/MonitorPane.vue';
+import MonitorDashboard from './editor/MonitorDashboard.vue';
+import MonitorDetailPanel from './editor/MonitorDetailPanel.vue';
 import WorkflowEditor from './editor/WorkflowEditor.vue';
 import WorkflowNodePanel from './editor/WorkflowNodePanel.vue';
 import WebViewTab from './editor/WebViewTab.vue';
@@ -623,6 +777,21 @@ function resolveEditorType(_ext: string): NonNullable<TabState['editorType']> {
   return 'code';
 }
 
+const EXT_LANG_MAP: Record<string, string> = {
+  '.ts': 'TypeScript', '.tsx': 'TypeScript React', '.js': 'JavaScript', '.jsx': 'JavaScript React',
+  '.vue': 'Vue', '.json': 'JSON', '.md': 'Markdown', '.markdown': 'Markdown', '.mdx': 'MDX',
+  '.py': 'Python', '.yaml': 'YAML', '.yml': 'YAML', '.sh': 'Shell', '.bash': 'Bash',
+  '.css': 'CSS', '.scss': 'SCSS', '.less': 'Less', '.html': 'HTML', '.xml': 'XML',
+  '.go': 'Go', '.rs': 'Rust', '.java': 'Java', '.rb': 'Ruby', '.php': 'PHP',
+  '.c': 'C', '.cpp': 'C++', '.h': 'C Header', '.swift': 'Swift', '.kt': 'Kotlin',
+  '.sql': 'SQL', '.graphql': 'GraphQL', '.proto': 'Protobuf', '.toml': 'TOML',
+  '.env': 'Environment', '.dockerfile': 'Dockerfile', '.txt': 'Plain Text',
+};
+
+function extToLanguage(ext: string): string {
+  return EXT_LANG_MAP[ext.toLowerCase()] || ext.replace('.', '').toUpperCase() || 'Plain Text';
+}
+
 export default defineComponent({
   name: 'AgentFilesystem',
 
@@ -642,10 +811,16 @@ export default defineComponent({
     ApiTestPanel,
     AgentFormTab,
     WorkflowPane,
+    TrainingPane,
     WorkflowEditor,
     WorkflowNodePanel,
     EditorChat,
     DiffEditor,
+    TrainingFileTreePane,
+    TrainingHelpPane,
+    MonitorPane,
+    MonitorDashboard,
+    MonitorDetailPanel,
   },
 
   setup(props, { emit }) {
@@ -653,16 +828,111 @@ export default defineComponent({
     const THEME_STORAGE_KEY = 'agentTheme';
     const sullaMutedIconUrl = new URL('../../../resources/icons/sulla-muted-icon.png', import.meta.url).toString();
     const rootPath = ref('');
+
+    // Footer stats: disk space + unprocessed training data
+    const footerStats = reactive({ availableBytes: 0, unprocessedTrainingBytes: 0 });
+    let footerStatsTimer: ReturnType<typeof setInterval> | undefined;
+
+    // Backend state tracking for footer
+    const backendState = ref('STOPPED');
+    const backendProgressDesc = ref('');
+    const backendProgressCurrent = ref(0);
+    const backendProgressMax = ref(0);
+
+    const STATE_LABELS: Record<string, string> = {
+      STOPPED:  'Stopped',
+      STARTING: 'Starting…',
+      STARTED:  'Running',
+      STOPPING: 'Shutting down…',
+      ERROR:    'Error',
+      DISABLED: 'Disabled',
+    };
+
+    const backendStateLabel = computed(() => STATE_LABELS[backendState.value] || backendState.value);
+    const backendStateClass = computed(() => {
+      const s = backendState.value;
+
+      if (s === 'STARTED' || s === 'DISABLED') return 'state-ok';
+      if (s === 'ERROR') return 'state-error';
+      if (s === 'STARTING' || s === 'STOPPING') return 'state-busy';
+
+      return 'state-stopped';
+    });
+
+    /** Whether the footer progress bar should be visible */
+    const backendProgressActive = computed(() => {
+      if (backendProgressMax.value <= 0) {
+        // Indeterminate — show when we have a description (something is happening)
+        return !!backendProgressDesc.value;
+      }
+      return backendProgressCurrent.value < backendProgressMax.value;
+    });
+
+    /** Progress bar percentage (0-100), or -1 for indeterminate */
+    const backendProgressPct = computed(() => {
+      if (backendProgressMax.value <= 0) return -1;
+      return Math.round((backendProgressCurrent.value / backendProgressMax.value) * 100);
+    });
+
+    function onK8sCheckState(_event: any, state: string) {
+      backendState.value = state;
+    }
+    function onK8sProgress(_event: any, progress: any) {
+      if (progress?.description) {
+        backendProgressDesc.value = progress.description;
+      }
+      if (typeof progress?.current === 'number') {
+        backendProgressCurrent.value = progress.current;
+      }
+      if (typeof progress?.max === 'number') {
+        backendProgressMax.value = progress.max;
+      }
+      // Clear when progress completes
+      if (progress?.current >= progress?.max && progress?.max > 0) {
+        backendProgressDesc.value = '';
+        backendProgressCurrent.value = 0;
+        backendProgressMax.value = 0;
+      }
+    }
+
+    function formatBytes(bytes: number): string {
+      if (bytes === 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
+      const val = bytes / (1024 ** i);
+
+      return `${ val < 10 ? val.toFixed(1) : Math.round(val) } ${ units[i] }`;
+    }
+
+    async function refreshFooterStats() {
+      try {
+        const stats = await ipcRenderer.invoke('editor-footer-stats');
+
+        footerStats.availableBytes = stats.availableBytes;
+        footerStats.unprocessedTrainingBytes = stats.unprocessedTrainingBytes;
+      } catch { /* ignore */ }
+    }
+
     const openTabs = ref<TabState[]>([]);
     const activeTabKey = ref('');
     const leftPaneVisible = ref(true);
     const centerPaneVisible = ref(true);
     const rightPaneVisible = ref(true);
     const bottomPaneVisible = ref(true);
-    const bottomPaneTab = ref<'terminal' | 'api'>('terminal');
+    const bottomPaneTab = ref<'terminal' | 'api' | 'monitor' | 'training'>('terminal');
+    const trainingLogFilename = ref('');
     const apiTabs = ref<Array<{ id: string; slug: string }>>([]);
+    const monitorTabs = ref<Array<{ id: string; type: 'ws' | 'service' | 'agent' | 'error'; tabId: string; label: string; errorData?: any }>>([]);
+    const activeMonitorTab = ref('');
+    let monitorTabCounter = 0;
     const activeApiTab = ref('');
     let apiTabCounter = 0;
+
+    function openTrainingLog(logFilename: string) {
+      trainingLogFilename.value = logFilename;
+      bottomPaneVisible.value = true;
+      bottomPaneTab.value = 'training';
+    }
 
     function openApiTest(slug: string) {
       // Check if a tab for this slug already exists
@@ -694,16 +964,84 @@ export default defineComponent({
     const chatQuery = editorChat.query;
     const chatLoading = editorChat.loading;
     const chatGraphRunning = editorChat.graphRunning;
+    const chatWaitingForUser = editorChat.waitingForUser;
     const chatSend = () => editorChat.send();
     const chatStop = () => editorChat.stop();
     const chatUpdateQuery = (val: string) => { editorChat.query.value = val; };
+
+    // Listen for workflow playbook events and update the canvas
+    editorChat.onWorkflowEvent((event) => {
+      if (!workflowEditorRef.value) return;
+
+      const nodeId = event.nodeId;
+      switch (event.type) {
+        case 'workflow_started':
+          // Reset canvas for fresh execution — de-animate all edges so they light up as traversed
+          workflowEditorRef.value.clearAllExecution();
+          break;
+        case 'node_started':
+          if (nodeId) {
+            workflowEditorRef.value.updateNodeExecution(nodeId, {
+              status: 'running',
+              startedAt: event.timestamp,
+            });
+          }
+          break;
+        case 'node_completed':
+          if (nodeId) {
+            workflowEditorRef.value.updateNodeExecution(nodeId, {
+              status: 'completed',
+              output: event.output,
+              threadId: event.threadId,
+              completedAt: event.timestamp,
+            });
+          }
+          break;
+        case 'node_failed':
+          if (nodeId) {
+            workflowEditorRef.value.updateNodeExecution(nodeId, {
+              status: 'failed',
+              error: event.error,
+              completedAt: event.timestamp,
+            });
+          }
+          break;
+        case 'node_thinking':
+          if (nodeId && event.content) {
+            workflowEditorRef.value.pushNodeThinking(nodeId, {
+              content: event.content,
+              role: event.role || 'assistant',
+              kind: event.kind || 'progress',
+              timestamp: event.timestamp,
+            });
+          }
+          break;
+        case 'edge_activated':
+          // Animate the edge connecting two nodes during workflow traversal
+          if (event.sourceId && event.targetId) {
+            workflowEditorRef.value.setEdgeAnimated(event.sourceId, event.targetId, true);
+          }
+          break;
+        case 'workflow_completed':
+        case 'workflow_failed':
+        case 'workflow_aborted':
+          // Canvas nodes already show their individual states — nothing extra needed
+          break;
+      }
+    });
 
     // Channels owned by BackendGraphWebSocketService in the main process.
     // The editor must NOT create a FrontendGraphWebSocketService for these.
     const BACKEND_CHANNELS = new Set(['sulla-desktop', 'heartbeat']);
 
-    // When the active agent changes, create or switch the graph WS to the new channel.
+    // When the active agent changes, reset the conversation and switch channels.
     watch(() => agentRegistry.state.activeAgentId, (newAgentId) => {
+      // Sync into EditorChatInterface so the backend uses this agent
+      editorChat.activeAgentId.value = newAgentId || null;
+
+      // Fresh conversation — clear old messages and threadId
+      editorChat.resetConversation();
+
       if (BACKEND_CHANNELS.has(newAgentId)) {
         return;
       }
@@ -783,13 +1121,13 @@ export default defineComponent({
       if (!resizeTarget) return;
       if (resizeTarget === 'bottom') {
         const delta = resizeStartPos - e.clientY;
-        bottomPaneHeight.value = Math.max(100, Math.min(600, resizeStartSize + delta));
+        bottomPaneHeight.value = Math.max(100, resizeStartSize + delta);
       } else if (resizeTarget === 'left') {
         const delta = e.clientX - resizeStartPos;
         leftPaneWidth.value = Math.max(150, Math.min(600, resizeStartSize + delta));
       } else {
         const delta = resizeStartPos - e.clientX;
-        rightPaneWidth.value = Math.max(150, Math.min(600, resizeStartSize + delta));
+        rightPaneWidth.value = Math.max(150, resizeStartSize + delta);
       }
     }
 
@@ -807,15 +1145,20 @@ export default defineComponent({
     const agentMode = ref(false);
     const integrationsMode = ref(false);
     const workflowMode = ref(false);
+    const trainingMode = ref(false);
+    const trainingStep = ref(-1);
+    const trainingContentScale = ref({ size: 0, scale: 'poor', label: 'Not enough', pct: 0 });
+    const rightPaneTab = ref<'chat' | 'help'>('chat');
+    const monitorMode = ref(false);
+    const monitorSection = ref('health');
+    const monitorDashboardRef = ref<any>(null);
+    const trainingPaneRef = ref<InstanceType<typeof TrainingPane> | null>(null);
     const selectedWorkflowNode = ref<{ id: string; label: string; type?: string; data?: any } | null>(null);
     const workflowEditorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null);
     const workflowPaneRef = ref<InstanceType<typeof WorkflowPane> | null>(null);
     const activeWorkflowData = ref<any>(null);
     const workflowSaveStatus = ref<'idle' | 'unsaved' | 'saving' | 'saved'>('idle');
     const workflowSettingsOpen = ref(false);
-    const workflowExecutionId = ref<string | null>(null);
-    const workflowChatMode = ref(false);
-    let workflowExecUnsubscribe: (() => void) | null = null;
     let workflowSaveTimer: ReturnType<typeof setTimeout> | null = null;
     let workflowSavedResetTimer: ReturnType<typeof setTimeout> | null = null;
     const searchQuery = ref('');
@@ -875,11 +1218,55 @@ export default defineComponent({
       }
     }
 
+    function openMonitorDetail(type: 'ws' | 'service' | 'agent' | 'error', id: string, label: string, errorData?: any) {
+      // Check if a tab for this id already exists
+      const existing = monitorTabs.value.find(t => t.type === type && t.tabId === id);
+      if (existing) {
+        activeMonitorTab.value = existing.id;
+        bottomPaneVisible.value = true;
+        bottomPaneTab.value = 'monitor';
+        return;
+      }
+      monitorTabCounter++;
+      const newTab = { id: `mon-${monitorTabCounter}`, type, tabId: id, label, errorData };
+      monitorTabs.value.push(newTab);
+      activeMonitorTab.value = newTab.id;
+      bottomPaneVisible.value = true;
+      bottomPaneTab.value = 'monitor';
+    }
+
+    function closeMonitorTab(tabId: string) {
+      const index = monitorTabs.value.findIndex(t => t.id === tabId);
+      if (index === -1) return;
+      const wasActive = activeMonitorTab.value === tabId;
+      monitorTabs.value.splice(index, 1);
+      if (wasActive) {
+        if (monitorTabs.value.length > 0) {
+          activeMonitorTab.value = monitorTabs.value[monitorTabs.value.length - 1].id;
+        } else {
+          activeMonitorTab.value = '';
+          bottomPaneTab.value = 'terminal';
+        }
+      }
+    }
+
     function switchTerminalTab(tabId: string) {
       activeTerminalTab.value = tabId;
     }
 
     onMounted(async () => {
+      // Start footer stats polling (every 30s)
+      refreshFooterStats();
+      footerStatsTimer = setInterval(refreshFooterStats, 30_000);
+
+      // Listen for backend state and progress
+      ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
+      ipcRenderer.on('k8s-progress' as any, onK8sProgress);
+      // Fetch initial progress
+      ipcRenderer.invoke('k8s-progress').then((p: any) => {
+        if (p?.description) backendProgressDesc.value = p.description;
+      }).catch(() => {});
+
       const stored = localStorage.getItem(THEME_STORAGE_KEY);
 
       if (stored === 'dark') {
@@ -906,10 +1293,14 @@ export default defineComponent({
     let savedRightPaneVisible = false;
 
     function clearModes() {
-      // Restore panes if leaving workflow mode
-      if (workflowMode.value) {
+      // Restore panes if leaving workflow, training, or monitor mode
+      if (workflowMode.value || trainingMode.value || monitorMode.value) {
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
+      }
+      // Clear chat when leaving agent mode so stale agent messages don't persist
+      if (agentMode.value) {
+        editorChat.resetConversation();
       }
       searchMode.value = false;
       gitMode.value = false;
@@ -917,13 +1308,15 @@ export default defineComponent({
       agentMode.value = false;
       integrationsMode.value = false;
       workflowMode.value = false;
+      trainingMode.value = false;
+      monitorMode.value = false;
     }
 
     function toggleFileTree() {
       if (!leftPaneVisible.value) {
         leftPaneVisible.value = true;
         clearModes();
-      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || integrationsMode.value || workflowMode.value) {
+      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || integrationsMode.value || workflowMode.value || trainingMode.value || monitorMode.value) {
         clearModes();
       } else {
         leftPaneVisible.value = false;
@@ -974,9 +1367,11 @@ export default defineComponent({
         leftPaneVisible.value = true;
         clearModes();
         agentMode.value = true;
+        editorChat.resetConversation();
       } else if (!agentMode.value) {
         clearModes();
         agentMode.value = true;
+        editorChat.resetConversation();
       } else {
         leftPaneVisible.value = false;
       }
@@ -1014,6 +1409,42 @@ export default defineComponent({
       } else {
         leftPaneVisible.value = false;
         workflowMode.value = false;
+        bottomPaneVisible.value = savedBottomPaneVisible;
+        rightPaneVisible.value = savedRightPaneVisible;
+      }
+    }
+
+    function toggleTraining() {
+      if (!trainingMode.value) {
+        clearModes();
+        trainingMode.value = true;
+        trainingStep.value = -1;
+        savedBottomPaneVisible = bottomPaneVisible.value;
+        savedRightPaneVisible = rightPaneVisible.value;
+        leftPaneVisible.value = true;
+        bottomPaneVisible.value = false;
+        rightPaneVisible.value = true;
+        rightPaneTab.value = 'help';
+      } else {
+        trainingMode.value = false;
+        leftPaneVisible.value = true;
+        bottomPaneVisible.value = savedBottomPaneVisible;
+        rightPaneVisible.value = savedRightPaneVisible;
+      }
+    }
+
+    function toggleMonitor() {
+      if (!monitorMode.value) {
+        clearModes();
+        monitorMode.value = true;
+        savedBottomPaneVisible = bottomPaneVisible.value;
+        savedRightPaneVisible = rightPaneVisible.value;
+        leftPaneVisible.value = true;
+        bottomPaneVisible.value = false;
+        rightPaneVisible.value = false;
+      } else {
+        monitorMode.value = false;
+        leftPaneVisible.value = true;
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
       }
@@ -1178,227 +1609,19 @@ export default defineComponent({
     async function runWorkflow() {
       if (!activeWorkflowData.value) return;
 
-      // If already in workflow chat mode, just ensure the pane is visible
-      if (workflowChatMode.value) {
-        rightPaneVisible.value = true;
-        return;
-      }
-
       // Save first to ensure latest version is on disk
       saveWorkflowNow();
 
-      // Open the chat pane so the user can send a message to trigger the workflow
+      // Scope the chat to this workflow so the agent only sees it
+      editorChat.activeWorkflowId.value = activeWorkflowData.value.id;
+
+      // Open the chat pane so the user can talk to the agent
       selectedWorkflowNode.value = null;
       workflowSettingsOpen.value = false;
-      workflowChatMode.value = true;
       rightPaneVisible.value = true;
 
       // Clear previous execution state from nodes
       workflowEditorRef.value?.clearAllExecution();
-    }
-
-    /**
-     * Called when the user sends a message in chat while in workflow mode.
-     * Dispatches the message to the active workflow via the registry.
-     */
-    async function workflowChatSend() {
-      if (!activeWorkflowData.value || !chatQuery.value.trim()) return;
-
-      const message = chatQuery.value.trim();
-      chatUpdateQuery('');
-
-      // Add the user message to chat
-      chatMessages.value = [
-        ...chatMessages.value,
-        {
-          id:        `wf-user-${Date.now()}`,
-          channelId: 'workflow',
-          role:      'user' as const,
-          content:   message,
-        },
-      ];
-
-      try {
-        const { executionId } = await ipcRenderer.invoke(
-          'workflow-execute',
-          activeWorkflowData.value.id,
-          message,
-        );
-        workflowExecutionId.value = executionId;
-
-        // Subscribe to execution events via IPC
-        const handler = (_ev: any, event: any) => {
-          handleWorkflowExecutionEvent(event);
-        };
-        ipcRenderer.on(`workflow-execution-event-${executionId}`, handler);
-        workflowExecUnsubscribe = () => {
-          ipcRenderer.removeListener(`workflow-execution-event-${executionId}`, handler);
-        };
-
-        // Add a system message showing execution started
-        chatMessages.value = [
-          ...chatMessages.value,
-          {
-            id:        `wf-sys-${Date.now()}`,
-            channelId: 'workflow',
-            role:      'system' as const,
-            content:   `Workflow "${activeWorkflowData.value.name}" started...`,
-          },
-        ];
-
-        startExecutionPolling(executionId);
-      } catch (err: any) {
-        console.error('Failed to execute workflow:', err);
-        chatMessages.value = [
-          ...chatMessages.value,
-          {
-            id:        `wf-err-${Date.now()}`,
-            channelId: 'workflow',
-            role:      'error' as const,
-            content:   `Failed to start workflow: ${err.message}`,
-          },
-        ];
-      }
-    }
-
-    function stopWorkflow() {
-      if (!workflowExecutionId.value) return;
-      ipcRenderer.invoke('workflow-execution-abort', workflowExecutionId.value).catch(() => {});
-      cleanupExecution();
-    }
-
-    function cleanupExecution() {
-      if (workflowExecUnsubscribe) {
-        workflowExecUnsubscribe();
-        workflowExecUnsubscribe = null;
-      }
-      workflowExecutionId.value = null;
-    }
-
-    let executionPollTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function startExecutionPolling(executionId: string) {
-      if (executionPollTimer) clearTimeout(executionPollTimer);
-
-      const poll = async() => {
-        if (workflowExecutionId.value !== executionId) return;
-        try {
-          const status = await ipcRenderer.invoke('workflow-execution-status', executionId);
-          if (status && (status.status === 'completed' || status.status === 'failed' || status.status === 'aborted')) {
-            // Execution finished — keep the visual state but allow re-run
-            workflowExecutionId.value = null;
-            if (workflowExecUnsubscribe) {
-              workflowExecUnsubscribe();
-              workflowExecUnsubscribe = null;
-            }
-            return;
-          }
-        } catch { /* ignore */ }
-        executionPollTimer = setTimeout(poll, 1000);
-      };
-      executionPollTimer = setTimeout(poll, 1000);
-    }
-
-    function handleWorkflowExecutionEvent(event: any) {
-      if (!event || !workflowEditorRef.value) return;
-
-      const nodeId = event.nodeId;
-
-      switch (event.type) {
-        case 'node_started':
-          workflowEditorRef.value.updateNodeExecution(nodeId, {
-            status:    'running',
-            startedAt: event.timestamp,
-          });
-          break;
-
-        case 'node_completed':
-          workflowEditorRef.value.updateNodeExecution(nodeId, {
-            status:      'completed',
-            threadId:    event.threadId,
-            output:      event.output,
-            completedAt: event.timestamp,
-          });
-          // Push output to chat if in workflow chat mode
-          if (workflowChatMode.value && event.output) {
-            const outputStr = typeof event.output === 'string' ? event.output : JSON.stringify(event.output);
-            if (outputStr && outputStr !== '{}' && outputStr !== 'null') {
-              chatMessages.value = [
-                ...chatMessages.value,
-                {
-                  id:        `wf-node-${Date.now()}-${nodeId}`,
-                  channelId: 'workflow',
-                  role:      'assistant' as const,
-                  content:   `**${event.nodeLabel || nodeId}:** ${outputStr}`,
-                },
-              ];
-            }
-          }
-          break;
-
-        case 'node_failed':
-          workflowEditorRef.value.updateNodeExecution(nodeId, {
-            status:      'failed',
-            error:       event.error,
-            completedAt: event.timestamp,
-          });
-          if (workflowChatMode.value && event.error) {
-            chatMessages.value = [
-              ...chatMessages.value,
-              {
-                id:        `wf-err-${Date.now()}-${nodeId}`,
-                channelId: 'workflow',
-                role:      'error' as const,
-                content:   `**${event.nodeLabel || nodeId}** failed: ${event.error}`,
-              },
-            ];
-          }
-          break;
-
-        case 'node_skipped':
-          workflowEditorRef.value.updateNodeExecution(nodeId, { status: 'skipped' });
-          break;
-
-        case 'node_waiting':
-          workflowEditorRef.value.updateNodeExecution(nodeId, {
-            status: 'waiting',
-            output: event.output,
-          });
-          break;
-
-        case 'workflow_completed':
-          workflowExecutionId.value = null;
-          if (workflowExecUnsubscribe) { workflowExecUnsubscribe(); workflowExecUnsubscribe = null; }
-          if (workflowChatMode.value) {
-            chatMessages.value = [
-              ...chatMessages.value,
-              { id: `wf-done-${Date.now()}`, channelId: 'workflow', role: 'system' as const, content: 'Workflow completed.' },
-            ];
-          }
-          break;
-
-        case 'workflow_failed':
-          workflowExecutionId.value = null;
-          if (workflowExecUnsubscribe) { workflowExecUnsubscribe(); workflowExecUnsubscribe = null; }
-          if (workflowChatMode.value) {
-            chatMessages.value = [
-              ...chatMessages.value,
-              { id: `wf-fail-${Date.now()}`, channelId: 'workflow', role: 'error' as const, content: `Workflow failed: ${event.error || 'Unknown error'}` },
-            ];
-          }
-          break;
-
-        case 'workflow_aborted':
-          workflowExecutionId.value = null;
-          if (workflowExecUnsubscribe) { workflowExecUnsubscribe(); workflowExecUnsubscribe = null; }
-          if (workflowChatMode.value) {
-            chatMessages.value = [
-              ...chatMessages.value,
-              { id: `wf-abort-${Date.now()}`, channelId: 'workflow', role: 'system' as const, content: 'Workflow aborted.' },
-            ];
-          }
-          break;
-      }
     }
 
     async function onWorkflowActivated(workflowId: string) {
@@ -1417,15 +1640,13 @@ export default defineComponent({
     }
 
     function onWorkflowClosed(_workflowId: string) {
-      if (workflowExecutionId.value) {
-        stopWorkflow();
-      }
       activeWorkflowData.value = null;
       selectedWorkflowNode.value = null;
       workflowSettingsOpen.value = false;
-      workflowChatMode.value = false;
       workflowSaveStatus.value = 'idle';
       rightPaneVisible.value = false;
+      // Clear workflow scope so the agent goes back to normal
+      editorChat.activeWorkflowId.value = null;
     }
 
     async function onWorkflowCreated(workflowId: string, workflowName: string) {
@@ -1637,12 +1858,26 @@ export default defineComponent({
       try {
         // For staged files: compare HEAD vs staged (index) version
         // For unstaged files: compare HEAD vs working copy
-        const [modifiedContent, originalContent] = await Promise.all([
-          staged
-            ? ipcRenderer.invoke('git-show-staged', repoRoot, file)
-            : ipcRenderer.invoke('filesystem-read-file', fullPath),
-          ipcRenderer.invoke('git-show-head', repoRoot, file),
-        ]);
+        let modifiedContent: string;
+        let originalContent: string;
+
+        if (staged) {
+          [modifiedContent, originalContent] = await Promise.all([
+            ipcRenderer.invoke('git-show-staged', repoRoot, file),
+            ipcRenderer.invoke('git-show-head', repoRoot, file),
+          ]);
+        } else {
+          // Get HEAD version first (always safe)
+          originalContent = await ipcRenderer.invoke('git-show-head', repoRoot, file) || '';
+          // Try to read the working copy; deleted files won't exist on disk
+          try {
+            modifiedContent = await ipcRenderer.invoke('filesystem-read-file', fullPath) || '';
+          } catch {
+            // File was deleted in worktree — show empty content against HEAD
+            modifiedContent = '';
+          }
+        }
+
         tab.content = modifiedContent || '';
         tab.originalContent = originalContent || '';
       } catch (err: any) {
@@ -2062,6 +2297,11 @@ export default defineComponent({
       editorChat.dispose();
       editorGraphWs?.dispose();
       modelSelector.dispose();
+      if (footerStatsTimer) {
+        clearInterval(footerStatsTimer);
+      }
+      ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);
+      ipcRenderer.removeListener('k8s-progress' as any, onK8sProgress);
     });
 
     return {
@@ -2071,6 +2311,7 @@ export default defineComponent({
       chatQuery,
       chatLoading,
       chatGraphRunning,
+      chatWaitingForUser,
       chatSend,
       chatStop,
       chatUpdateQuery,
@@ -2087,6 +2328,15 @@ export default defineComponent({
       integrationsMode,
       toggleIntegrations,
       workflowMode,
+      trainingMode,
+      trainingStep,
+      trainingContentScale,
+      rightPaneTab,
+      toggleTraining,
+      monitorMode,
+      monitorSection,
+      monitorDashboardRef,
+      toggleMonitor,
       selectedWorkflowNode,
       selectedNodeUpstream,
       workflowEditorRef,
@@ -2110,11 +2360,7 @@ export default defineComponent({
       onWorkflowDeleted,
       deleteActiveWorkflow,
       workflowPaneRef,
-      workflowExecutionId,
-      workflowChatMode,
       runWorkflow,
-      stopWorkflow,
-      workflowChatSend,
       toggleAgent,
       toggleWorkflow,
       openContainerPort,
@@ -2133,6 +2379,12 @@ export default defineComponent({
       activeApiTab,
       openApiTest,
       closeApiTab,
+      trainingLogFilename,
+      openTrainingLog,
+      monitorTabs,
+      activeMonitorTab,
+      openMonitorDetail,
+      closeMonitorTab,
       leftPaneWidth,
       rightPaneWidth,
       bottomPaneHeight,
@@ -2181,20 +2433,167 @@ export default defineComponent({
       injectMenu,
       onEditorContextMenu,
       doInjectVariable,
+      extToLanguage,
+      footerStats,
+      formatBytes,
+      trainingPaneRef,
+      backendState,
+      backendProgressDesc,
+      backendProgressActive,
+      backendProgressPct,
+      backendStateLabel,
+      backendStateClass,
     };
   },
 });
 </script>
 
+<style>
+/* Unscoped: ensure html/body/#app don't add extra height */
+html, body, #app {
+  height: 100vh !important;
+  max-height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+</style>
+
 <style scoped>
 .page-root {
   background: #ffffff;
   color: #0d0d0d;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .page-root.dark {
   background: #0f172a;
   color: #fafafa;
+}
+
+/* Editor Status Bar Footer */
+.editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 22px;
+  min-height: 22px;
+  max-height: 22px;
+  padding: 0 10px;
+  font-size: 11px;
+  background: #f3f4f6;
+  border-top: 1px solid #e5e7eb;
+  color: #6b7280;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.editor-footer.dark {
+  background: #1b1c21;
+  border-top-color: #4a4b52;
+  color: #9ca3af;
+}
+
+.editor-footer-left,
+.editor-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.footer-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.footer-item svg {
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.footer-lang {
+  padding: 0 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.editor-footer.dark .footer-lang {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.footer-progress-text {
+  font-size: 10px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #94a3b8;
+}
+
+.footer-state {
+  padding: 0 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 10px;
+}
+.footer-state.state-ok {
+  color: #16a34a;
+}
+.editor-footer.dark .footer-state.state-ok {
+  color: #4ade80;
+}
+.footer-state.state-error {
+  color: #dc2626;
+}
+.editor-footer.dark .footer-state.state-error {
+  color: #f87171;
+}
+.footer-state.state-busy {
+  color: #d97706;
+}
+.editor-footer.dark .footer-state.state-busy {
+  color: #fbbf24;
+}
+.footer-state.state-stopped {
+  color: #94a3b8;
+}
+
+/* Footer progress bar */
+.footer-progress-bar-wrapper {
+  display: inline-flex;
+  align-items: center;
+  width: 80px;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.editor-footer.dark .footer-progress-bar-wrapper {
+  background: rgba(255, 255, 255, 0.12);
+}
+.footer-progress-bar-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.footer-progress-bar-fill.indeterminate {
+  width: 40% !important;
+  animation: footer-progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes footer-progress-slide {
+  0%   { margin-left: 0; }
+  50%  { margin-left: 60%; }
+  100% { margin-left: 0; }
 }
 
 .editor-panel {
@@ -2245,12 +2644,56 @@ export default defineComponent({
   border-right: 1px solid #cbd5e1;
   overflow: hidden;
   background: #f8fafc;
+  display: flex;
+  flex-direction: column;
 }
 
 .right-pane.dark {
   border-left-color: #3c3c3c;
   border-right-color: #3c3c3c;
   background: #1e293b;
+}
+
+/* Right pane tabs (training mode) */
+.rp-tabs {
+  display: flex;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.rp-tabs.dark {
+  border-bottom-color: #334155;
+}
+.rp-tab {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: #64748b;
+  transition: all 0.15s;
+}
+.rp-tab:hover {
+  color: #334155;
+  background: #f1f5f9;
+}
+.rp-tab.dark {
+  color: #64748b;
+}
+.rp-tab.dark:hover {
+  color: #e2e8f0;
+  background: #1e293b;
+}
+.rp-tab.active {
+  color: #0284c7;
+  border-bottom-color: #0284c7;
+}
+.rp-tab.active.dark {
+  color: #38bdf8;
+  border-bottom-color: #38bdf8;
 }
 
 .empty-state {
@@ -2616,15 +3059,9 @@ export default defineComponent({
   color: #64748b;
 }
 
-<style scoped>
-.page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
 .main-content {
   display: flex;
-  height: 100%;
+  flex-shrink: 0;
 }
 
 /* Resize handles */
@@ -2694,6 +3131,12 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   border-right: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+
+.left-pane.dark {
+  background: #1e293b;
+  border-right-color: #334155;
 }
 
 .file-tree-wrapper {

@@ -134,6 +134,8 @@ export interface IpcMainInvokeEvents {
   'start-sulla-custom-env':    () => void;
   'sulla-restart-ollama':      () => void;
   'app-quit':                  () => void;
+  'sulla-settings-get':        (property: string, defaultValue?: any) => any;
+  'sulla-settings-set':        (property: string, value: any) => void;
   // #endregion
 
   // #region Filesystem
@@ -199,12 +201,12 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Training
-  'training-install-status': () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string };
+  'training-install-status': () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string; requiredBytes: number; availableBytes: number };
   'training-install':        () => { logFilename: string };
   'training-run':          (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
-  'training-status':       () => { running: boolean };
+  'training-status':       () => { running: boolean; logFilename: string };
   'training-docs-config-exists': () => boolean;
-  'training-history':      () => Array<{ filename: string; size: number; createdAt: string; modifiedAt: string }>;
+  'training-history':      () => Array<{ filename: string; size: number; createdAt: string; modifiedAt: string; model?: string; durationMs?: number; conversationsProcessed?: number; status: 'completed' | 'running' | 'failed' }>;
   'training-log-read':     (filename: string) => string;
   'training-schedule-get': () => { enabled: boolean; hour: number; minute: number };
   'training-schedule-set': (opts: { enabled: boolean; hour: number; minute: number }) => { ok: boolean };
@@ -212,6 +214,20 @@ export interface IpcMainInvokeEvents {
   'training-docs-config-load':  () => { folders: string[]; files: string[]; fileTypes: string[] };
   'training-docs-list-dir':     (dirPath: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }>;
   'training-docs-config-save':  (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
+  'training-content-tree':      (dirPath?: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string }>;
+  'editor-footer-stats':        () => { availableBytes: number; unprocessedTrainingBytes: number };
+  'training-data-files':        () => Array<{ filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }>;
+  'training-preprocess':        () => { conversations: number; filesProcessed: number; filesSkipped: number };
+  'training-prepare-docs':      (folders: string[], files: string[], options: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => { filesProcessed: number; pairsGenerated: number };
+  'training-queue-add':         (entries: Array<{ filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }>) => { queued: number };
+  'training-queue-process-now': () => { ok: boolean };
+  'training-queue-status':      () => { pending: number; processing: boolean };
+  'training-train-conversations-now': () => { logFilename: string; logPath: string };
+  'training-scheduled-configs-list': () => Array<{ id: string; name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; createdAt: string; files?: string[] }>;
+  'training-scheduled-configs-add': (config: { name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => { id: string };
+  'training-scheduled-configs-remove': (id: string) => { ok: boolean };
+  'training-wizard-settings-save': (wizard: 'create' | 'train', settings: Record<string, unknown>) => { ok: boolean };
+  'training-wizard-settings-load': (wizard: 'create' | 'train') => Record<string, unknown>;
   // #endregion
 
   // #region QMD Search
@@ -260,6 +276,23 @@ export interface IpcMainInvokeEvents {
   'show-snapshots-confirm-dialog':  (options: { window: Partial<Electron.MessageBoxOptions>, format: SnapshotDialog }) => any;
   'show-snapshots-blocking-dialog': (options: { window: Partial<Electron.MessageBoxOptions>, format: SnapshotDialog }) => any;
   'snapshot-cancel': () => void;
+  // #endregion
+
+  // #region Debug & Monitoring
+  'debug-heartbeat-status':    () => { initialized: boolean; isExecuting: boolean; lastTriggerMs: number; schedulerRunning: boolean; totalTriggers: number; totalErrors: number; totalSkips: number; uptimeMs: number };
+  'debug-heartbeat-history':   (limit?: number) => Array<{ ts: number; type: string; message: string; durationMs?: number; error?: string; meta?: Record<string, unknown> }>;
+  'debug-heartbeat-schedule':  () => { enabled: boolean; delayMinutes: number; nextTriggerMs: number };
+  'debug-conversations-list':  () => Array<{ id: string; type: string; name: string; startedAt: string; completedAt?: string; status?: string; error?: string; channel?: string }>;
+  'debug-conversation-events': (conversationId: string) => Array<{ ts: string; type: string; [key: string]: unknown }>;
+  'debug-health-check':        () => Record<string, { name: string; ok: boolean; port?: number; error?: string }>;
+  'debug-active-agents':       () => Array<{ agentId: string; name: string; role: string; channel: string; type: string; status: string; startedAt: number; lastActiveAt: number; description: string; statusNote?: string }>;
+  'debug-errors':              (limit?: number) => Array<{ conversationId: string; type: string; name: string; startedAt: string; error: string; channel?: string }>;
+  'debug-ws-stats':            () => Record<string, { connected: boolean; reconnectAttempts: number; pendingMessages: number; subscribedChannels: string[] }>;
+  'debug-ws-tap':              (enabled: boolean) => { ok: boolean; error?: string };
+  'debug-ws-messages':         (connectionId?: string, limit?: number) => Array<{ connectionId: string; direction: 'in' | 'out'; message: any; ts: number }>;
+  'debug-service-detail':      (serviceKey: string) => any;
+  'debug-live-start':          () => { ok: boolean; error?: string };
+  'debug-live-stop':           () => { ok: boolean; error?: string };
   // #endregion
 
   // #region Config API (integration YAML -> live API calls)

@@ -31,14 +31,14 @@ export const GraphRegistry = {
    * Create a brand new graph + state (always fresh threadId).
    * Use when user explicitly wants "New Conversation".
    */
-  createNew: async function(wsChannel: string): Promise<{
+  createNew: async function(wsChannel: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }): Promise<{
     graph: Graph<any>;
     state: BaseThreadState;
     threadId: string;
   }> {
     const threadId = nextThreadId();
     const graph = createAgentGraph();
-    const state = await buildAgentState(wsChannel, threadId);
+    const state = await buildAgentState(wsChannel, threadId, options);
 
     registry.set(threadId, { graph, state });
     return { graph, state, threadId };
@@ -64,33 +64,38 @@ export const GraphRegistry = {
 
   /**
    * Get or create AgentGraph — the standard graph for all tasks.
+   * @param options Optional graph options that configure prompt directives, tool blocking, etc.
    */
-  getOrCreate: async function(wsChannel: string, threadId: string): Promise<{
+  getOrCreate: async function(wsChannel: string, threadId: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }): Promise<{
     graph: Graph<AgentGraphState>;
     state: AgentGraphState;
   }> {
     if (registry.has(threadId)) {
+      console.log(`[GraphRegistry] getOrCreate() — cache HIT for threadId="${threadId}"`);
       return Promise.resolve(registry.get(threadId)!);
     }
 
+    console.log(`[GraphRegistry] getOrCreate() — cache MISS, creating new graph for agentId="${wsChannel}", threadId="${threadId}"`);
     const graph = createAgentGraph();
-    const state = await buildAgentState(wsChannel, threadId);
+    console.log(`[GraphRegistry] getOrCreate() — agent graph created, building state...`);
+    const state = await buildAgentState(wsChannel, threadId, options);
+    console.log(`[GraphRegistry] getOrCreate() — state built: model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}, agentName="${state.metadata.agent?.name || '(none)'}"`);
 
     registry.set(threadId, { graph, state });
     return { graph, state };
   },
 
   // Aliases — all point to AgentGraph now
-  getOrCreateSkillGraph: async function(wsChannel: string, threadId: string) {
-    return this.getOrCreate(wsChannel, threadId);
+  getOrCreateSkillGraph: async function(wsChannel: string, threadId: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }) {
+    return this.getOrCreate(wsChannel, threadId, options);
   },
 
-  getOrCreateAgentGraph: async function(wsChannel: string, threadId: string) {
-    return this.getOrCreate(wsChannel, threadId);
+  getOrCreateAgentGraph: async function(wsChannel: string, threadId: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }) {
+    return this.getOrCreate(wsChannel, threadId, options);
   },
 
-  getOrCreateGeneralGraph: async function(wsChannel: string, threadId: string) {
-    return this.getOrCreate(wsChannel, threadId);
+  getOrCreateGeneralGraph: async function(wsChannel: string, threadId: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }) {
+    return this.getOrCreate(wsChannel, threadId, options);
   },
 
   delete(threadId: string): void {
@@ -133,6 +138,63 @@ export const GraphRegistry = {
     return updatedCount;
   }
 };
+
+const DEFAULT_AGENT_FALLBACK = 'chat-controller';
+
+/**
+ * Resolve the default agent ID from settings, falling back to 'chat-controller'.
+ */
+export async function getDefaultAgentId(): Promise<string> {
+  console.log(`[GraphRegistry] getDefaultAgentId() — resolving...`);
+  const id = await SullaSettingsModel.get('defaultAgentId', '');
+  if (id) {
+    console.log(`[GraphRegistry] getDefaultAgentId() — found setting: "${id}"`);
+    return id;
+  }
+
+  // If no setting yet, check if chat-controller exists
+  const agentDir = path.join(resolveSullaAgentsDir(), DEFAULT_AGENT_FALLBACK);
+  if (fs.existsSync(agentDir)) {
+    console.log(`[GraphRegistry] getDefaultAgentId() — no setting, using fallback dir: "${DEFAULT_AGENT_FALLBACK}"`);
+    return DEFAULT_AGENT_FALLBACK;
+  }
+
+  // Last resort: pick the first agent directory that exists
+  const agentsRoot = resolveSullaAgentsDir();
+  console.log(`[GraphRegistry] getDefaultAgentId() — scanning agents root: "${agentsRoot}"`);
+  if (fs.existsSync(agentsRoot)) {
+    const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
+    const firstAgent = entries.find(e => e.isDirectory());
+    if (firstAgent) {
+      console.log(`[GraphRegistry] getDefaultAgentId() — picked first agent dir: "${firstAgent.name}"`);
+      return firstAgent.name;
+    }
+  }
+
+  console.log(`[GraphRegistry] getDefaultAgentId() — no agents found, hard fallback: "${DEFAULT_AGENT_FALLBACK}"`);
+  return DEFAULT_AGENT_FALLBACK;
+}
+
+/**
+ * Resolve the agent ID for a specific trigger type.
+ * Checks triggerAgentMap first, then falls back to getDefaultAgentId().
+ */
+export async function getAgentIdForTrigger(triggerType: string): Promise<string> {
+  console.log(`[GraphRegistry] getAgentIdForTrigger("${triggerType}") — resolving...`);
+  const triggerMap = await SullaSettingsModel.get('triggerAgentMap', {} as Record<string, string>);
+  console.log(`[GraphRegistry] getAgentIdForTrigger() — triggerMap:`, JSON.stringify(triggerMap));
+  const assigned = triggerMap[triggerType];
+  if (assigned) {
+    const agentDir = path.join(resolveSullaAgentsDir(), assigned);
+    const exists = fs.existsSync(agentDir);
+    console.log(`[GraphRegistry] getAgentIdForTrigger() — trigger "${triggerType}" mapped to "${assigned}", dir exists=${exists}`);
+    if (exists) return assigned;
+    console.warn(`[GraphRegistry] getAgentIdForTrigger() — agent dir not found for "${assigned}", falling back to default`);
+  } else {
+    console.log(`[GraphRegistry] getAgentIdForTrigger() — no mapping for "${triggerType}", falling back to default`);
+  }
+  return getDefaultAgentId();
+}
 
 let threadCounter = 0;
 let messageCounter = 0;
@@ -225,6 +287,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
 
       // Environmental context (loaded each cycle by HeartbeatNode)
       agentsContext: '',
+      isSubAgent: false,
     },
   };
 
@@ -232,7 +295,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
 }
 
 
-async function buildAgentState(wsChannel: string, threadId?: string): Promise<AgentGraphState> {
+async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }): Promise<AgentGraphState> {
   const id = threadId ?? nextThreadId();
 
   console.log(`[GraphRegistry] buildAgentState() — wsChannel="${wsChannel}", threadId="${id}"`);
@@ -255,6 +318,7 @@ async function buildAgentState(wsChannel: string, threadId?: string): Promise<Ag
 
       cycleComplete: false,
       waitingForUser: false,
+      isSubAgent: false,
 
       llmModel,
       llmLocal,
@@ -278,6 +342,11 @@ async function buildAgentState(wsChannel: string, threadId?: string): Promise<Ag
       finalState: 'running',
       n8nLiveEventsEnabled: false,
       returnTo: null,
+
+      conversationId: id,
+
+      isTrustedUser: graphOpts?.isTrustedUser ?? 'trusted',
+      userVisibleBrowser: graphOpts?.userVisibleBrowser ?? true,
 
       agent: agentConfig,
       agentLoopCount: 0
@@ -318,11 +387,10 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
     // Compile all .md files into a single prompt (no variable substitution)
     const entries = fs.readdirSync(agentDir, { withFileTypes: true });
     const mdFiles = entries
-      .filter(e => e.isFile() && e.name.endsWith('.md'))
+      .filter(e => e.isFile() && e.name.endsWith('.md') && e.name !== 'environment.md')
       .sort((a, b) => {
-        // soul.md first, environment.md second, then alphabetical
-        const order = (name: string) =>
-          name === 'soul.md' ? 0 : name === 'environment.md' ? 1 : 2;
+        // soul.md first, then alphabetical
+        const order = (name: string) => name === 'soul.md' ? 0 : 1;
         return order(a.name) - order(b.name) || a.name.localeCompare(b.name);
       });
 

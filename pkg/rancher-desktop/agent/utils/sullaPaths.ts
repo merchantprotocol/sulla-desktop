@@ -78,6 +78,14 @@ export function resolveSullaIntegrationsDir(): string {
   return path.join(resolveSullaHomeDir(), 'integrations');
 }
 
+export function resolveSullaTrainingDir(): string {
+  return path.join(resolveSullaHomeDir(), 'training');
+}
+
+export function resolveSullaLogsDir(): string {
+  return path.join(resolveSullaHomeDir(), 'logs');
+}
+
 export function resolveSullaConversationsDir(): string {
   const envPath = String(process.env[SULLA_CONVERSATIONS_DIR_ENV] || '').trim();
   if (envPath) {
@@ -96,9 +104,14 @@ const BOOTSTRAP_REPOS: { dir: () => string; repo: string }[] = [
 
 export async function bootstrapSullaHome(): Promise<void> {
   const home = resolveSullaHomeDir();
+  const logsDir = resolveSullaLogsDir();
+
+  const trainingDir = resolveSullaTrainingDir();
   const conversationsDir = resolveSullaConversationsDir();
 
   fs.mkdirSync(home, { recursive: true });
+  fs.mkdirSync(logsDir, { recursive: true });
+  fs.mkdirSync(trainingDir, { recursive: true });
   fs.mkdirSync(conversationsDir, { recursive: true });
 
   for (const { dir, repo } of BOOTSTRAP_REPOS) {

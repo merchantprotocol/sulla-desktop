@@ -1,6 +1,5 @@
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type LLMServiceConfig, FinishReason } from './BaseLanguageModel';
 import { getOllamaService } from './OllamaService';
-import { writeLLMConversationEvent } from './LLMConversationFileLogger';
 
 /**
  * OpenAI-compatible remote LLM provider base class.
@@ -56,23 +55,13 @@ export class OpenAICompatibleService extends BaseLanguageModel {
 
     for (let attempt = 0; attempt <= this.retryCount; attempt++) {
       try {
-        if (options?.signal?.aborted) throw new Error('Aborted');
+        if (options?.signal?.aborted) throw new DOMException('Operation aborted', 'AbortError');
 
         if (attempt > 0) {
           console.log(`[${this.constructor.name}] Retry ${attempt}/${this.retryCount} after ${Math.pow(2, attempt-1)}s backoff`);
           await new Promise(r => setTimeout(r, Math.pow(2, attempt - 1) * 1000));
+          if (options?.signal?.aborted) throw new DOMException('Aborted during retry backoff', 'AbortError');
         }
-
-        writeLLMConversationEvent({
-          direction: 'request',
-          provider: this.config.id,
-          model: options.model ?? this.model,
-          endpoint: this.chatEndpoint,
-          nodeName,
-          conversationId,
-          attempt,
-          payload: body,
-        });
 
         const payload = this.buildFetchOptions(body, options?.signal);
         const res = await fetch(url, payload);
@@ -86,31 +75,11 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         }
 
         const rawResponse = await res.json();
-        writeLLMConversationEvent({
-          direction: 'response',
-          provider: this.config.id,
-          model: options.model ?? this.model,
-          endpoint: this.chatEndpoint,
-          nodeName,
-          conversationId,
-          attempt,
-          payload: rawResponse,
-        });
 
         return rawResponse;
       } catch (err) {
         lastError = err;
         console.log(`[${this.constructor.name}] Error on attempt ${attempt}:`, err);
-        writeLLMConversationEvent({
-          direction: 'error',
-          provider: this.config.id,
-          model: options.model ?? this.model,
-          endpoint: this.chatEndpoint,
-          nodeName,
-          conversationId,
-          attempt,
-          payload: err instanceof Error ? { message: err.message, stack: err.stack } : err,
-        });
 
         // Do not retry non-rate-limit 4xx client errors
         if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {

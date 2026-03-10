@@ -136,8 +136,28 @@ export class HeartbeatNode extends BaseNode {
 
 
     // Map agent status to heartbeat status
-    if (agentStatus === 'done' || agentStatus === 'blocked') {
-      state.metadata.heartbeatStatus = agentStatus as 'done' | 'blocked';
+    if (agentStatus === 'done') {
+      state.metadata.heartbeatStatus = 'done';
+    } else if (agentStatus === 'blocked') {
+      // Sub-agent is blocked — inject the blocker context into the heartbeat
+      // conversation so the orchestrator can decide what to do next cycle
+      const blockerReason = agentMeta.blocker_reason || 'Unknown blocker';
+      const unblockReqs = agentMeta.unblock_requirements || '';
+      console.log(`[HeartbeatNode] Sub-agent blocked — reason: ${blockerReason}, requirements: ${unblockReqs}`);
+
+      state.messages.push({
+        role: 'system',
+        content: [
+          `[Sub-agent blocked]`,
+          `Blocker: ${blockerReason}`,
+          unblockReqs ? `Requirements to unblock: ${unblockReqs}` : '',
+          `Decide whether to resolve this yourself, escalate to the user via send_channel_message, or move on to other work.`,
+        ].filter(Boolean).join('\n'),
+      } as ChatMessage);
+
+      // Don't end the heartbeat — let it continue to the next cycle
+      // so the orchestrator can act on the blocker
+      state.metadata.heartbeatStatus = 'running';
     } else {
       state.metadata.heartbeatStatus = 'running';
     }
@@ -304,6 +324,7 @@ If this is your first heartbeat and no projects exist, your first task should be
 
         cycleComplete: false,
         waitingForUser: false,
+        isSubAgent: true,
 
         llmModel: parentState.metadata.llmModel,
         llmLocal: parentState.metadata.llmLocal,

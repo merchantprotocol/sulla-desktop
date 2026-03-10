@@ -64,40 +64,15 @@ export class AbortService {
    */
   pauseForUserInput(reason: string = 'Cycle complete - waiting for user input'): void {
     console.log(`[AbortService] Pausing for user: ${reason}`);
-    
-    // Optional: you can emit a special message here if you want
-    // this.emitPauseMessage?.(reason); // if you add a callback
-
-    this.abort(); // This will trigger throwIfAborted in the graph
+    this.abort();
   }
-}
-
-/**
- * Portable function to check if abort signal was received.
- * Can be called from anywhere in the codebase.
- * 
- * @param signal AbortSignal to check (optional, defaults to checking if any signal is aborted)
- * @returns true if abort was triggered, false otherwise
- */
-export function abortIfSignalReceived(signal?: AbortSignal): boolean {
-  // If no signal provided, check if we can detect any abort
-  if (!signal) {
-    return false;
-  }
-  
-  if (signal.aborted) {
-    console.log('[AbortService] Abort signal received - operation should stop');
-    return true;
-  }
-  
-  return false;
 }
 
 /**
  * Portable function to check abort signal and throw AbortError if triggered.
  * Use this to immediately stop execution when abort is detected.
  * 
- * @param stateOrSignal State object (with metadata.__abort) or AbortSignal to check
+ * @param stateOrSignal State object (with metadata.options.abort) or AbortSignal to check
  * @param message Optional error message
  * @throws AbortError if signal was aborted
  */

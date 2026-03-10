@@ -1,6 +1,5 @@
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse } from './BaseLanguageModel';
-import { writeLLMConversationEvent } from './LLMConversationFileLogger';
 import { getIntegrationService } from '../services/IntegrationService';
 import { getLlamaCppService } from '../services/LlamaCppService';
 
@@ -68,17 +67,6 @@ export class OllamaService extends BaseLanguageModel {
    */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
     const body = this.buildRequestBody(messages, options);
-    const conversationId = typeof options?.conversationId === 'string' ? options.conversationId : undefined;
-    const nodeName = typeof options?.nodeName === 'string' ? options.nodeName : undefined;
-    writeLLMConversationEvent({
-      direction: 'request',
-      provider: 'llama-cpp',
-      model: options.model ?? this.model,
-      endpoint: '/v1/chat/completions',
-      nodeName,
-      conversationId,
-      payload: body,
-    });
     console.log('[OllamaService] Sending request to llama-server:', JSON.stringify(body).slice(0, 500));
 
     const res = await fetch(`${this.baseUrl}/v1/chat/completions`, this.buildFetchOptions(body, options.signal));
@@ -93,31 +81,9 @@ export class OllamaService extends BaseLanguageModel {
 
     try {
       const parsed = JSON.parse(responseText);
-      writeLLMConversationEvent({
-        direction: 'response',
-        provider: 'llama-cpp',
-        model: options.model ?? this.model,
-        endpoint: '/v1/chat/completions',
-        nodeName,
-        conversationId,
-        payload: parsed,
-      });
 
       return parsed;
     } catch (e) {
-      writeLLMConversationEvent({
-        direction: 'error',
-        provider: 'llama-cpp',
-        model: options.model ?? this.model,
-        endpoint: '/v1/chat/completions',
-        nodeName,
-        conversationId,
-        payload: {
-          message: 'Failed to parse llama-server response as JSON',
-          rawResponse: responseText,
-          error: e instanceof Error ? e.message : String(e),
-        },
-      });
       throw new Error(`Failed to parse llama-server response as JSON: ${e}`);
     }
   }

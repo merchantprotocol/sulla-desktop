@@ -18,17 +18,41 @@
         <p class="chat-empty-text">Ask anything about your code</p>
       </div>
 
+      <!-- Spacer pushes messages to bottom when few messages -->
+      <div v-if="messages.length > 0" class="chat-messages-spacer"></div>
+
       <div v-for="msg in messages" :key="msg.id" class="chat-message" :class="[msg.role]">
         <!-- User bubble -->
         <div v-if="msg.role === 'user'" class="bubble user-bubble" :class="{ dark: isDark }">
           <div class="bubble-content">{{ msg.content }}</div>
         </div>
 
-        <!-- Tool card -->
+        <!-- Tool card (expandable) -->
         <div v-else-if="msg.kind === 'tool' && msg.toolCard" class="bubble tool-bubble" :class="{ dark: isDark }">
-          <div class="tool-header">
-            <span class="tool-name">{{ msg.toolCard.toolName }}</span>
-            <span class="tool-status" :class="msg.toolCard.status">{{ msg.toolCard.status }}</span>
+          <button class="tool-header" @click="toggleToolCard(msg.id)">
+            <div class="tool-header-left">
+              <span class="tool-name">{{ msg.toolCard.toolName }}</span>
+              <span class="tool-status" :class="msg.toolCard.status">{{ msg.toolCard.status }}</span>
+            </div>
+            <svg
+              width="12" height="12" viewBox="0 0 15 15" fill="none"
+              class="tool-chevron" :class="{ expanded: expandedToolCards.has(msg.id) }"
+            >
+              <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+            </svg>
+          </button>
+          <div v-show="expandedToolCards.has(msg.id)" class="tool-details">
+            <div v-if="msg.toolCard.args && Object.keys(msg.toolCard.args).length > 0" class="tool-detail-section">
+              <div class="tool-detail-label">Arguments</div>
+              <pre class="tool-detail-pre" :class="{ dark: isDark }"><code>{{ JSON.stringify(msg.toolCard.args, null, 2) }}</code></pre>
+            </div>
+            <div v-if="msg.toolCard.result !== undefined" class="tool-detail-section">
+              <div class="tool-detail-label">Result</div>
+              <pre class="tool-detail-pre" :class="{ dark: isDark }"><code>{{ typeof msg.toolCard.result === 'string' ? msg.toolCard.result : JSON.stringify(msg.toolCard.result, null, 2) }}</code></pre>
+            </div>
+            <div v-if="msg.toolCard.error" class="tool-detail-error">
+              Error: {{ msg.toolCard.error }}
+            </div>
           </div>
         </div>
 
@@ -48,6 +72,12 @@
         <div class="bubble assistant-bubble loading-bubble" :class="{ dark: isDark }">
           <span class="loading-dots">Thinking<span class="dot-anim">...</span></span>
         </div>
+      </div>
+
+      <!-- Waiting for user indicator -->
+      <div v-if="waitingForUser && !loading && !graphRunning" class="waiting-for-user" :class="{ dark: isDark }">
+        <span class="waiting-dot"></span>
+        <span class="waiting-text">Waiting for your response</span>
       </div>
     </div>
 
@@ -197,7 +227,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue';
+import { ref, reactive, watch, nextTick, computed } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import type { ChatMessage } from '@pkg/agent';
@@ -210,6 +240,7 @@ const props = defineProps<{
   query: string;
   loading: boolean;
   graphRunning: boolean;
+  waitingForUser?: boolean;
   modelSelector?: AgentModelSelectorController;
   agentRegistry?: AgentPersonaRegistry;
   totalTokensUsed?: number;
@@ -217,6 +248,15 @@ const props = defineProps<{
 }>();
 
 const showAgentMenu = ref(false);
+const expandedToolCards = reactive(new Set<string>());
+
+function toggleToolCard(messageId: string) {
+  if (expandedToolCards.has(messageId)) {
+    expandedToolCards.delete(messageId);
+  } else {
+    expandedToolCards.add(messageId);
+  }
+}
 
 const activeAgentName = computed(() => props.agentRegistry?.activeAgent.value?.agentName || 'Agent');
 const visibleAgents = computed(() => props.agentRegistry?.visibleAgents.value || []);
@@ -357,12 +397,16 @@ watch(() => props.messages.length, () => scrollToBottom());
 
 .chat-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 12px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 10px;
+}
+
+.chat-messages-spacer {
+  flex: 1;
 }
 
 .chat-messages.dark::-webkit-scrollbar {
@@ -456,7 +500,79 @@ watch(() => props.messages.length, () => scrollToBottom());
 .tool-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font-size: inherit;
+}
+
+.tool-header-left {
+  display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.tool-chevron {
+  color: #94a3b8;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.tool-chevron.expanded {
+  transform: rotate(180deg);
+}
+
+.tool-details {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.dark .tool-details {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.tool-detail-section {
+  margin-bottom: 6px;
+}
+
+.tool-detail-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 3px;
+}
+
+.dark .tool-detail-label {
+  color: #94a3b8;
+}
+
+.tool-detail-pre {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 11px;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.tool-detail-pre.dark {
+  background: #0f172a;
+}
+
+.tool-detail-error {
+  font-size: 11px;
+  color: #ef4444;
 }
 
 .tool-name {
@@ -554,6 +670,41 @@ watch(() => props.messages.length, () => scrollToBottom());
 
 .dot-anim {
   animation: dotPulse 1.2s ease-in-out infinite;
+}
+
+.waiting-for-user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+}
+
+.waiting-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: waitingPulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.waiting-text {
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.waiting-for-user.dark .waiting-dot {
+  background: #fbbf24;
+}
+
+.waiting-for-user.dark .waiting-text {
+  color: #64748b;
+}
+
+@keyframes waitingPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 
 .chat-composer-wrapper {

@@ -314,16 +314,25 @@ export class WebSocketClientService {
 
     conn = new WebSocketConnection({ url, channel: connectionId });
     this.connections.set(connectionId, conn);
+    // Attach debug tap handler
+    conn.onMessage((msg) => this.logMessage(connectionId, 'in', msg));
     conn.connect();
     return true;
   }
 
   async send(connectionId: string, message: unknown): Promise<boolean> {
+    const msgType = (message as any)?.type || '(unknown)';
+    console.log(`[WSService] send() — channel="${connectionId}", type="${msgType}"`);
+
     let conn = this.connections.get(connectionId);
     if (!conn || !conn.isConnected()) {
+      console.log(`[WSService] send() — channel="${connectionId}" not connected, connecting...`);
       this.connect(connectionId);
       conn = this.connections.get(connectionId);
-      if (!conn) return false;
+      if (!conn) {
+        console.error(`[WSService] send() — failed to create connection for "${connectionId}"`);
+        return false;
+      }
 
       // Wait for connection to establish
       let attempts = 0;
@@ -333,20 +342,20 @@ export class WebSocketClientService {
         attempts++;
       }
       if (!conn.isConnected()) {
-        console.error(`Failed to establish WebSocket connection for ${connectionId}`);
+        console.error(`[WSService] send() — connection timeout for "${connectionId}" after ${attempts * 100}ms`);
         return false;
       }
+      console.log(`[WSService] send() — channel="${connectionId}" connected after ${attempts * 100}ms`);
     }
 
     try {
       if (typeof message === 'object' && message && 'type' in message) {
+        this.logMessage(connectionId, 'out', message as WebSocketMessage);
         return await conn.send(message as any);
       } else {
-        return await conn.send({
-          type: 'message',
-          data: message,
-          id: generateUUID()
-        });
+        const outMsg = { type: 'message', data: message, id: generateUUID(), timestamp: Date.now() };
+        this.logMessage(connectionId, 'out', outMsg);
+        return await conn.send(outMsg as any);
       }
     } catch (err) {
       console.error(`[WS ${connectionId}] Send failed:`, (err as Error).message);
@@ -374,6 +383,42 @@ export class WebSocketClientService {
 
   getPendingCount(connectionId: string): number {
     return this.connections.get(connectionId)?.pending.size ?? 0;
+  }
+
+  /** Ring buffer of recent messages across all connections for debug tap */
+  private messageLog: Array<{ connectionId: string; direction: 'in' | 'out'; message: WebSocketMessage; ts: number }> = [];
+  private static MAX_MESSAGE_LOG = 500;
+  private tapping = false;
+
+  /** Enable/disable message logging for debug UI */
+  setTapping(enabled: boolean): void { this.tapping = enabled; if (!enabled) this.messageLog = []; }
+
+  /** Record a message to the debug ring buffer */
+  private logMessage(connectionId: string, direction: 'in' | 'out', message: WebSocketMessage): void {
+    if (!this.tapping) return;
+    this.messageLog.push({ connectionId, direction, message, ts: Date.now() });
+    if (this.messageLog.length > WebSocketClientService.MAX_MESSAGE_LOG) {
+      this.messageLog = this.messageLog.slice(-WebSocketClientService.MAX_MESSAGE_LOG);
+    }
+  }
+
+  /** Get recent messages for a connection (or all if connectionId is empty) */
+  getRecentMessages(connectionId?: string, limit = 100): Array<{ connectionId: string; direction: 'in' | 'out'; message: WebSocketMessage; ts: number }> {
+    const msgs = connectionId ? this.messageLog.filter(m => m.connectionId === connectionId) : this.messageLog;
+    return msgs.slice(-limit);
+  }
+
+  getConnectionStats(): Record<string, { connected: boolean; reconnectAttempts: number; pendingMessages: number; subscribedChannels: string[] }> {
+    const stats: Record<string, { connected: boolean; reconnectAttempts: number; pendingMessages: number; subscribedChannels: string[] }> = {};
+    for (const [id, conn] of this.connections) {
+      stats[id] = {
+        connected:         conn.isConnected(),
+        reconnectAttempts: conn.reconnectAttempts,
+        pendingMessages:   conn.pending.size,
+        subscribedChannels: Array.from(conn.subscribed),
+      };
+    }
+    return stats;
   }
 }
 

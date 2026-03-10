@@ -6,67 +6,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
-import * as window from '@pkg/window';
 import Logging from '@pkg/utils/logging';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
+import { initSullaDebugEvents } from './sullaDebugEvents';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
-
-/** Directory where training run logs are stored */
-function getTrainingLogsDir(): string {
-  try {
-    const { app } = require('electron');
-    return path.join(app.getPath('userData'), 'llm', 'training', 'logs');
-  } catch {
-    return path.join(process.cwd(), 'llm', 'training', 'logs');
-  }
-}
-
-/** Active training child process (only one at a time) */
-let activeTrainingProcess: ReturnType<typeof import('child_process').spawn> | null = null;
-let isTrainingRunning = false;
-
-/** Lock file path for cross-restart training protection */
-function getTrainingLockFile(): string {
-  try {
-    const { app } = require('electron');
-    return path.join(app.getPath('userData'), 'llm', 'training', '.training.lock');
-  } catch {
-    return path.join(process.cwd(), 'llm', 'training', '.training.lock');
-  }
-}
-
-/** Write a lock file with PID so stale locks can be detected */
-function acquireTrainingLock(): void {
-  const lockFile = getTrainingLockFile();
-  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
-  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), 'utf-8');
-  isTrainingRunning = true;
-}
-
-/** Remove the lock file */
-function releaseTrainingLock(): void {
-  isTrainingRunning = false;
-  try { fs.unlinkSync(getTrainingLockFile()); } catch { /* already gone */ }
-}
-
-/** Check if training is actually running (handles stale locks from crashed processes) */
-function isTrainingLocked(): boolean {
-  if (isTrainingRunning) return true;
-  const lockFile = getTrainingLockFile();
-  if (!fs.existsSync(lockFile)) return false;
-  try {
-    const lock = JSON.parse(fs.readFileSync(lockFile, 'utf-8'));
-    // Check if the PID that wrote the lock is still alive
-    process.kill(lock.pid, 0); // signal 0 = existence check, no actual signal sent
-    return true; // process is still alive
-  } catch {
-    // PID is dead or lock file is corrupt — stale lock, clean it up
-    try { fs.unlinkSync(lockFile); } catch { /* ignore */ }
-    return false;
-  }
-}
 
 /** Resolve the absolute sulla home directory */
 function getSullaHomeDir(): string {
@@ -91,6 +36,22 @@ function assertInsideSullaHome(targetPath: string): string {
  * Initialize Sulla-specific IPC handlers.
  */
 export function initSullaEvents(): void {
+
+  // ─────────────────────────────────────────────────────────────
+  // Settings handlers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('sulla-settings-get', async (_event: unknown, property: string, defaultValue: any = null) => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+
+    return SullaSettingsModel.get(property, defaultValue);
+  });
+
+  ipcMainProxy.handle('sulla-settings-set', async (_event: unknown, property: string, value: any) => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+
+    await SullaSettingsModel.set(property, value);
+  });
 
   // ─────────────────────────────────────────────────────────────
   // Filesystem handlers
@@ -218,15 +179,24 @@ export function initSullaEvents(): void {
   ipcMainProxy.handle('git-status-full', async (_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
-      const output = execSync('git status --porcelain', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      const output = execSync('git status --porcelain -uall', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      console.log('[git-status-full] raw output for', dirPath, ':\n', JSON.stringify(output));
       const lines = output.split('\n').filter((line: string) => line.trim());
-      return lines.map((line: string) => {
+      console.log('[git-status-full] parsed lines count:', lines.length);
+      const entries = lines.map((line: string) => {
         const index = line[0];
         const worktree = line[1];
-        const file = line.slice(3);
+        let file = line.slice(3);
+        // Strip trailing slash from directory entries
+        if (file.endsWith('/')) {
+          file = file.slice(0, -1);
+        }
+        console.log('[git-status-full] entry:', JSON.stringify({ index, worktree, file, rawLine: line }));
         return { index, worktree, file };
       });
-    } catch {
+      return entries;
+    } catch (err: any) {
+      console.error('[git-status-full] error for', dirPath, ':', err.message);
       return [];
     }
   });
@@ -383,9 +353,10 @@ export function initSullaEvents(): void {
   });
 
   ipcMainProxy.handle('filesystem-read-dir', async(_event: unknown, dirPath: string) => {
+    console.log('[filesystem-read-dir] reading:', dirPath);
     const resolved = assertInsideSullaHome(dirPath);
     const entries = fs.readdirSync(resolved, { withFileTypes: true });
-    return entries
+    const result = entries
       .map((e) => {
         const fullPath = path.join(resolved, e.name);
         const isDir = e.isDirectory();
@@ -405,6 +376,8 @@ export function initSullaEvents(): void {
         if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
+    console.log('[filesystem-read-dir] returned', result.length, 'entries for', dirPath, ':', result.map(e => `${e.isDir ? 'D' : 'F'} ${e.name}`).join(', '));
+    return result;
   });
 
   ipcMainProxy.handle('filesystem-read-file', async(_event: unknown, filePath: string) => {
@@ -412,6 +385,9 @@ export function initSullaEvents(): void {
     const resolved = assertInsideSullaHome(filePath);
     console.log('Resolved path:', resolved);
     const stat = fs.statSync(resolved);
+    if (stat.isDirectory()) {
+      throw new Error('Cannot read a directory as a file');
+    }
     if (stat.size > 5 * 1024 * 1024) {
       throw new Error('File too large to open (>5MB)');
     }
@@ -544,289 +520,43 @@ export function initSullaEvents(): void {
     return target;
   });
 
-  /**
-   * Run training manually. Spawns the training pipeline as a child process,
-   * captures stdout/stderr to a timestamped log file, and returns the log filename.
-   */
   ipcMainProxy.handle('training-run', async(_event: unknown, modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => {
-    if (isTrainingLocked()) {
-      throw new Error('A training run is already in progress');
-    }
-
-    const { getLlamaCppService, GGUF_MODELS, getTrainingScriptsDir } = await import('@pkg/agent/services/LlamaCppService');
-    const service = getLlamaCppService();
-
-    const entry = GGUF_MODELS[modelKey];
-    if (!entry?.trainingRepo) {
-      throw new Error(`Model ${modelKey} has no training repo configured`);
-    }
-
-    // Create log file immediately so the UI can start tailing
-    const { app } = require('electron');
-    const llmRoot = path.join(app.getPath('userData'), 'llm');
-    const logsDir = getTrainingLogsDir();
-    fs.mkdirSync(logsDir, { recursive: true });
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const logFilename = `training-${timestamp}.log`;
-    const logPath = path.join(logsDir, logFilename);
-
-    // Build enabled-sources summary
-    const enabledSources: string[] = [];
-    if (sources.documentProcessing) enabledSources.push('Document Processing');
-    if (sources.loraTraining) enabledSources.push('LoRA Training');
-    if (sources.skills) enabledSources.push('Skills');
-
-    // Write initial log header
-    const header = [
-      `=== Sulla Training Run ===`,
-      `Started: ${new Date().toISOString()}`,
-      `Model: ${modelKey} (${entry.trainingRepo})`,
-      `Sources: ${enabledSources.join(', ') || 'none'}`,
-      `LLM Root: ${llmRoot}`,
-      ``,
-      `--- Preparing Training Environment ---`,
-      ``,
-    ].join('\n');
-    fs.writeFileSync(logPath, header, 'utf-8');
-
-    // Mark training as active for status polling (disk lock + in-memory flag)
-    acquireTrainingLock();
-
-    // Fire-and-forget — the UI will poll the log file
-    const runAll = async() => {
-      try {
-        // Training environment must already be installed via the
-        // "Install Training Environment" button in the Model Training window.
-        const python = service.getTrainingPython();
-        if (!python) {
-          fs.appendFileSync(logPath, `\n[ERROR] Training environment not installed. Open the Model Training window and click "Install Training Environment" first.\n`, 'utf-8');
-          return;
-        }
-
-        fs.appendFileSync(logPath, `\nPython: ${python}\n`, 'utf-8');
-
-        const scriptsDir = getTrainingScriptsDir();
-        const trainScript = path.join(scriptsDir, 'train_nightly.py');
-        const docScript = path.join(scriptsDir, 'documents_processor.py');
-
-        // Run a child-process phase, piping output to log
-        const runPhase = (label: string, script: string, args: string[], timeoutMs: number = 7_200_000): Promise<void> => {
-          return new Promise((resolve, reject) => {
-            fs.appendFileSync(logPath, `\n--- ${label} ---\n\n`, 'utf-8');
-            const proc = require('child_process').spawn(python, [script, ...args], {
-              stdio: ['ignore', 'pipe', 'pipe'],
-              env:   { ...process.env },
-              detached: process.platform !== 'win32', // create process group for clean kill
-            });
-            activeTrainingProcess = proc;
-            let settled = false;
-
-            // Timeout guard: kill entire process group if phase hangs
-            const timer = setTimeout(() => {
-              if (settled) return;
-              settled = true;
-              fs.appendFileSync(logPath, `\n[${label}] TIMEOUT: exceeded ${Math.round(timeoutMs / 60000)} minutes, killing process\n`, 'utf-8');
-              try {
-                if (process.platform === 'win32') {
-                  require('child_process').execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'pipe' });
-                } else if (proc.pid) {
-                  process.kill(-proc.pid, 'SIGKILL'); // kill process group
-                }
-              } catch { /* already dead */ }
-              activeTrainingProcess = null;
-              reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 60000)} minutes`));
-            }, timeoutMs);
-
-            proc.stdout?.on('data', (chunk: Buffer) => {
-              fs.appendFileSync(logPath, chunk);
-            });
-            proc.stderr?.on('data', (chunk: Buffer) => {
-              fs.appendFileSync(logPath, chunk);
-            });
-            proc.on('close', (code: number | null) => {
-              clearTimeout(timer);
-              if (settled) return;
-              settled = true;
-              activeTrainingProcess = null;
-              if (code === 0) {
-                fs.appendFileSync(logPath, `\n[${label}] Completed successfully (exit code 0)\n`, 'utf-8');
-                resolve();
-              } else {
-                fs.appendFileSync(logPath, `\n[${label}] Failed with exit code ${code}\n`, 'utf-8');
-                reject(new Error(`${label} failed with exit code ${code}`));
-              }
-            });
-            proc.on('error', (err: Error) => {
-              clearTimeout(timer);
-              if (settled) return;
-              settled = true;
-              activeTrainingProcess = null;
-              fs.appendFileSync(logPath, `\n[${label}] Process error: ${err.message}\n`, 'utf-8');
-              reject(err);
-            });
-          });
-        };
-
-        // Phase 1: Document Processing (only if selected)
-        if (sources.documentProcessing) {
-          try {
-            await runPhase('Documents Processing', docScript, ['--llm-root', llmRoot], 600_000);
-          } catch {
-            fs.appendFileSync(logPath, `\nDocument processing failed, continuing...\n`, 'utf-8');
-          }
-        } else {
-          fs.appendFileSync(logPath, `\n[Skipped] Document Processing (not selected)\n`, 'utf-8');
-        }
-
-        // Phase 2: LoRA Training (only if selected)
-        if (sources.loraTraining) {
-          try {
-            await runPhase('LoRA Training', trainScript, ['--model', entry.trainingRepo!, '--llm-root', llmRoot], 7_200_000);
-          } catch {
-            // Error already logged to file
-          }
-        } else {
-          fs.appendFileSync(logPath, `\n[Skipped] LoRA Training (not selected)\n`, 'utf-8');
-        }
-
-        // Phase 3: Skills (placeholder — not yet implemented)
-        if (sources.skills) {
-          fs.appendFileSync(logPath, `\n--- Skills Training ---\n\n`, 'utf-8');
-          fs.appendFileSync(logPath, `[Skills] Skills-based training is not yet implemented. This phase was skipped.\n`, 'utf-8');
-        } else {
-          fs.appendFileSync(logPath, `\n[Skipped] Skills Training (not selected)\n`, 'utf-8');
-        }
-      } catch (err) {
-        fs.appendFileSync(logPath, `\n[ERROR] ${err}\n`, 'utf-8');
-      } finally {
-        releaseTrainingLock();
-        fs.appendFileSync(logPath, `\n=== Training Run Finished: ${new Date().toISOString()} ===\n`, 'utf-8');
-      }
-    };
-
-    runAll().catch(() => { releaseTrainingLock(); });
-
-    return { logFilename, logPath };
+    const tc = await import('./trainingController');
+    return tc.runTraining(modelKey, sources);
   });
 
-  /**
-   * Check if a training run is currently in progress.
-   */
   ipcMainProxy.handle('training-status', async() => {
-    return { running: isTrainingLocked() };
+    const tc = await import('./trainingController');
+    return tc.getTrainingStatus();
   });
 
-  /**
-   * Get the list of training run logs (newest first).
-   */
   ipcMainProxy.handle('training-history', async() => {
-    const logsDir = getTrainingLogsDir();
-    if (!fs.existsSync(logsDir)) {
-      return [];
-    }
-
-    const files = fs.readdirSync(logsDir)
-      .filter(f => f.startsWith('training-') && f.endsWith('.log'))
-      .sort()
-      .reverse();
-
-    return files.map(filename => {
-      const filePath = path.join(logsDir, filename);
-      const stat = fs.statSync(filePath);
-      // Parse timestamp from filename: training-2026-03-04T06-00-00-000Z.log
-      const tsMatch = filename.match(/^training-(.+)\.log$/);
-      const timestamp = tsMatch ? tsMatch[1].replace(/-/g, (m, offset) => {
-        // Restore ISO format: first 3 dashes are date separators, then T, then colons and dots
-        if (offset < 10) return offset === 4 || offset === 7 ? '-' : m;
-        return m;
-      }) : '';
-
-      return {
-        filename,
-        size:      stat.size,
-        createdAt: stat.birthtime.toISOString(),
-        modifiedAt: stat.mtime.toISOString(),
-      };
-    });
+    const tc = await import('./trainingController');
+    return tc.getTrainingHistory();
   });
 
-  /**
-   * Read the contents of a training log file.
-   */
   ipcMainProxy.handle('training-log-read', async(_event: unknown, filename: string) => {
-    // Prevent path traversal
-    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      throw new Error('Invalid filename');
-    }
-    const logsDir = getTrainingLogsDir();
-    const filePath = path.join(logsDir, filename);
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`Log file not found: ${filename}`);
-    }
-    return fs.readFileSync(filePath, 'utf-8');
+    const tc = await import('./trainingController');
+    return tc.readTrainingLog(filename);
   });
 
-  /**
-   * Save/load the training schedule setting.
-   */
   ipcMainProxy.handle('training-schedule-get', async() => {
-    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-    const enabled = await SullaSettingsModel.get('trainingScheduleEnabled', false);
-    const hour = await SullaSettingsModel.get('trainingScheduleHour', 2);
-    const minute = await SullaSettingsModel.get('trainingScheduleMinute', 0);
-    return { enabled, hour, minute };
+    const tc = await import('./trainingController');
+    return tc.getSchedule();
   });
 
-  /**
-   * Return downloaded GGUF models that have an associated training repo.
-   * Only these can be fine-tuned. The key is the GGUF model key (used by
-   * training-run), trainingRepo is the Unsloth HF repo for display.
-   */
   ipcMainProxy.handle('training-models-downloaded', async() => {
-    const { GGUF_MODELS, getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
-    const svc = getLlamaCppService();
-    const results: Array<{ key: string; displayName: string; trainingRepo: string }> = [];
-
-    for (const [key, entry] of Object.entries(GGUF_MODELS)) {
-      if (entry.trainingRepo && svc.getModelPath(key)) {
-        results.push({
-          key,
-          displayName: entry.displayName,
-          trainingRepo: entry.trainingRepo,
-        });
-      }
-    }
-
-    return results;
+    const tc = await import('./trainingController');
+    return tc.getDownloadedTrainingModels();
   });
 
   ipcMainProxy.handle('training-schedule-set', async(_event: unknown, opts: { enabled: boolean; hour: number; minute: number }) => {
-    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-    await SullaSettingsModel.set('trainingScheduleEnabled', opts.enabled, 'boolean');
-    await SullaSettingsModel.set('trainingScheduleHour', opts.hour, 'number');
-    await SullaSettingsModel.set('trainingScheduleMinute', opts.minute, 'number');
-
-    // Reschedule the timer
-    rescheduleNightlyTraining(opts.enabled, opts.hour, opts.minute);
-
-    return { ok: true };
+    const tc = await import('./trainingController');
+    return tc.setSchedule(opts);
   });
 
-  // On startup, load the schedule and arm the timer
-  (async() => {
-    try {
-      const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-      const enabled = await SullaSettingsModel.get('trainingScheduleEnabled', false);
-      const hour = await SullaSettingsModel.get('trainingScheduleHour', 2);
-      const minute = await SullaSettingsModel.get('trainingScheduleMinute', 0);
-      if (enabled) {
-        rescheduleNightlyTraining(true, hour, minute);
-      }
-    } catch {
-      // Settings DB may not be ready yet — that's okay
-    }
-  })();
+  // On startup, load the schedule and arm the timer + auto-preprocessing
+  import('./trainingController').then(tc => tc.initScheduleOnStartup()).catch(() => {});
 
   /**
    * Check which LOCAL_MODELS keys have their GGUF file downloaded on disk.
@@ -858,220 +588,153 @@ export function initSullaEvents(): void {
 
   // ── Document Processing Config ──────────────────────────────────────
 
-  /** Path to documents_config.json inside the training directory */
-  function getDocsConfigPath(): string {
-    try {
-      const { app } = require('electron');
-      return path.join(app.getPath('userData'), 'llm', 'training', 'documents_config.json');
-    } catch {
-      return path.join(process.cwd(), 'llm', 'training', 'documents_config.json');
-    }
-  }
-
-  const SUPPORTED_FILE_TYPES = ['.txt', '.md', '.pdf', '.docx'];
-
-  /** Check whether documents_config.json exists (used to gate the checkbox). */
   ipcMainProxy.handle('training-docs-config-exists', async() => {
-    return fs.existsSync(getDocsConfigPath());
+    const tc = await import('./trainingController');
+    return tc.docsConfigExists();
   });
 
-  /** Load the existing documents_config.json (or return defaults). */
   ipcMainProxy.handle('training-docs-config-load', async() => {
-    const configPath = getDocsConfigPath();
-    if (fs.existsSync(configPath)) {
-      try {
-        const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        return {
-          folders:   Array.isArray(raw.folders) ? raw.folders as string[] : [],
-          files:     Array.isArray(raw.files) ? raw.files as string[] : [],
-          fileTypes: Array.isArray(raw.file_types) ? raw.file_types as string[] : SUPPORTED_FILE_TYPES,
-        };
-      } catch {
-        // Corrupted file — return defaults
-      }
-    }
-    return { folders: [], files: [], fileTypes: SUPPORTED_FILE_TYPES };
+    const tc = await import('./trainingController');
+    return tc.docsConfigLoad();
   });
 
-  /** List immediate children (dirs + compatible files) of any directory. */
   ipcMainProxy.handle('training-docs-list-dir', async(_event: unknown, dirPath: string) => {
-    const exts = new Set(SUPPORTED_FILE_TYPES);
-    const results: Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }> = [];
-
-    try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name.startsWith('.')) continue;
-        const fullPath = path.join(dirPath, entry.name);
-
-        if (entry.isDirectory()) {
-          let hasChildren = false;
-          try {
-            const children = fs.readdirSync(fullPath, { withFileTypes: true });
-            hasChildren = children.some(c => !c.name.startsWith('.') && (c.isDirectory() || (c.isFile() && exts.has(path.extname(c.name).toLowerCase()))));
-          } catch { /* permission denied */ }
-          results.push({ path: fullPath, name: entry.name, isDir: true, hasChildren, size: 0, ext: '' });
-        } else if (entry.isFile()) {
-          const ext = path.extname(entry.name).toLowerCase();
-          if (exts.has(ext)) {
-            try {
-              const stat = fs.statSync(fullPath);
-              results.push({ path: fullPath, name: entry.name, isDir: false, hasChildren: false, size: stat.size, ext });
-            } catch { /* skip unreadable */ }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('[Sulla] Failed to list directory:', dirPath, err);
-    }
-
-    // Dirs first, then files, both alphabetical
-    results.sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    return results;
+    const tc = await import('./trainingController');
+    return tc.docsListDir(dirPath);
   });
 
-  /** Save the documents_config.json with the user's chosen folders, files, and file types. */
+  ipcMainProxy.handle('training-content-tree', async(_event: unknown, dirPath?: string) => {
+    const tc = await import('./trainingController');
+    return tc.contentTree(dirPath);
+  });
+
   ipcMainProxy.handle('training-docs-config-save', async(_event: unknown, folders: string[], files: string[], fileTypes: string[]) => {
-    const configPath = getDocsConfigPath();
-    // Ensure the training directory exists
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    const config = {
-      folders,
-      files,
-      file_types: fileTypes && fileTypes.length > 0 ? fileTypes : SUPPORTED_FILE_TYPES,
-    };
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-    console.log(`[Sulla] Saved documents_config.json with ${folders.length} folders, ${files.length} files`);
-    return { ok: true };
+    const tc = await import('./trainingController');
+    return tc.docsConfigSave(folders, files, fileTypes);
   });
 
   // ── Training Environment Installation ────────────────────────────
 
-  /** Track whether the training environment is currently being installed */
-  let isTrainingInstalling = false;
-  let trainingInstallError = '';
-
-  /**
-   * Check if the training environment is fully installed:
-   * - Python venv exists with required packages
-   * - Training model is downloaded
-   * Returns { installed, installing, error, modelKey }
-   */
   ipcMainProxy.handle('training-install-status', async() => {
-    const { getLlamaCppService, GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-    const service = getLlamaCppService();
-    const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
-
-    const entry = GGUF_MODELS[modelKey];
-    const hasPython = service.getTrainingPython() !== null;
-    const hasModel = entry?.trainingRepo ? service.getTrainingModelPath(modelKey) !== null : false;
-    const installed = hasPython && hasModel;
-
-    return {
-      installed,
-      installing:  isTrainingInstalling,
-      error:       trainingInstallError,
-      modelKey,
-      displayName: entry?.displayName ?? modelKey,
-      trainingRepo: entry?.trainingRepo ?? '',
-    };
+    const tc = await import('./trainingController');
+    return tc.getFullInstallStatus();
   });
 
   /**
-   * Run the full training environment installation:
-   * 1. Create Python venv + install all deps (pip)
-   * 2. Download the training model from HuggingFace
-   *
-   * Sends 'training-install-progress' events to all windows with:
-   *   { phase, description, current, max, fileName?, bytesReceived?, bytesTotal? }
+   * Lightweight stats for the editor footer:
+   * - availableBytes: free disk space on the userData volume
+   * - unprocessedTrainingBytes: total size of unprocessed .jsonl session files
    */
-  ipcMainProxy.handle('training-install', async() => {
-    if (isTrainingInstalling) {
-      throw new Error('Training environment installation is already in progress');
+  ipcMainProxy.handle('editor-footer-stats', async() => {
+    let availableBytes = 0;
+
+    try {
+      const { statfsSync } = await import('fs');
+      const { app } = await import('electron');
+      const stats = statfsSync(app.getPath('userData'));
+
+      availableBytes = stats.bavail * stats.bsize;
+    } catch {
+      availableBytes = 0;
     }
 
-    const { getLlamaCppService, GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-    const service = getLlamaCppService();
-    const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
+    let unprocessedTrainingBytes = 0;
 
-    const entry = GGUF_MODELS[modelKey];
-    if (!entry?.trainingRepo) {
-      throw new Error(`Model ${modelKey} has no training repo configured`);
-    }
+    try {
+      const { resolveSullaTrainingDir } = await import('@pkg/agent/utils/sullaPaths');
+      const fs = await import('fs');
+      const path = await import('path');
+      const dir = resolveSullaTrainingDir();
 
-    isTrainingInstalling = true;
-    trainingInstallError = '';
+      if (fs.existsSync(dir)) {
+        const entries = fs.readdirSync(dir);
 
-    const sendProgress = (data: {
-      phase: string;
-      description: string;
-      current: number;
-      max: number;
-      fileName?: string;
-      bytesReceived?: number;
-      bytesTotal?: number;
-    }) => {
-      window.send('training-install-progress' as any, data);
-    };
+        for (const name of entries) {
+          if (name.endsWith('.jsonl')) {
+            try {
+              const stat = fs.statSync(path.join(dir, name));
 
-    // Create log file
-    const logsDir = getTrainingLogsDir();
-    fs.mkdirSync(logsDir, { recursive: true });
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const logFilename = `install-${timestamp}.log`;
-    const logPath = path.join(logsDir, logFilename);
-    fs.writeFileSync(logPath, `=== Training Environment Install ===\nStarted: ${new Date().toISOString()}\nModel: ${modelKey} (${entry.trainingRepo})\n\n`, 'utf-8');
-
-    // Fire-and-forget: run the install in the background.
-    // Progress is streamed via 'training-install-progress' events.
-    // Return the log filename immediately so the UI can start tailing.
-    const runInstall = async() => {
-      try {
-        // Phase 1: Install Python deps
-        sendProgress({ phase: 'deps', description: 'Installing Python dependencies...', current: 0, max: 100 });
-
-        await service.installTrainingDeps(logPath, (description, current, max) => {
-          sendProgress({ phase: 'deps', description, current, max });
-        });
-
-        // Phase 2: Write default documents config
-        service['writeDocumentsConfig']();
-
-        // Phase 3: Download training model
-        sendProgress({ phase: 'model', description: `Downloading training model ${entry.trainingRepo}...`, current: 0, max: 100 });
-
-        await service.downloadTrainingModel(modelKey, logPath, (fileIndex, fileCount, fileName, bytesReceived, bytesTotal) => {
-          const overallPct = Math.round(((fileIndex + bytesReceived / bytesTotal) / fileCount) * 100);
-          sendProgress({
-            phase:         'model',
-            description:   `Downloading ${fileName} (${fileIndex + 1}/${fileCount})`,
-            current:       overallPct,
-            max:           100,
-            fileName,
-            bytesReceived,
-            bytesTotal,
-          });
-        });
-
-        sendProgress({ phase: 'done', description: 'Training environment installed successfully', current: 100, max: 100 });
-        fs.appendFileSync(logPath, `\n=== Install Complete: ${new Date().toISOString()} ===\n`, 'utf-8');
-      } catch (err: any) {
-        trainingInstallError = err?.message || String(err);
-        fs.appendFileSync(logPath, `\n[ERROR] ${trainingInstallError}\n`, 'utf-8');
-        sendProgress({ phase: 'error', description: trainingInstallError, current: 0, max: 100 });
-      } finally {
-        isTrainingInstalling = false;
+              unprocessedTrainingBytes += stat.size;
+            } catch { /* skip */ }
+          }
+        }
       }
-    };
+    } catch { /* skip */ }
 
-    runInstall().catch(() => { isTrainingInstalling = false; });
+    return { availableBytes, unprocessedTrainingBytes };
+  });
 
-    return { logFilename };
+  ipcMainProxy.handle('training-data-files', async() => {
+    const tc = await import('./trainingController');
+    return tc.listTrainingDataFiles();
+  });
+
+  ipcMainProxy.handle('training-preprocess', async() => {
+    const tc = await import('./trainingController');
+    return tc.preprocessNow();
+  });
+
+  ipcMainProxy.handle('training-prepare-docs', async(_event: unknown, folders: string[], files: string[], options?: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => {
+    const tc = await import('./trainingController');
+    return tc.prepareDocs(folders, files, options);
+  });
+
+  // ─── Training Queue IPC ───
+
+  ipcMainProxy.handle('training-queue-add', async(_event: unknown, entries: Array<{ filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }>) => {
+    const tc = await import('./trainingController');
+    return tc.addToQueue(entries);
+  });
+
+  ipcMainProxy.handle('training-queue-process-now', async() => {
+    const tc = await import('./trainingController');
+    return tc.processQueueNow();
+  });
+
+  ipcMainProxy.handle('training-queue-status', async() => {
+    const tc = await import('./trainingController');
+    return tc.getQueueStatus();
+  });
+
+  // ─── Train on Conversations Now ───
+
+  ipcMainProxy.handle('training-train-conversations-now', async() => {
+    const tc = await import('./trainingController');
+    return tc.trainConversationsNow();
+  });
+
+  // ─── Scheduled Training Configs ───
+
+  ipcMainProxy.handle('training-scheduled-configs-list', async() => {
+    const tc = await import('./trainingController');
+    return tc.listScheduledConfigs();
+  });
+
+  ipcMainProxy.handle('training-scheduled-configs-add', async(_event: unknown, config: { name: string; source: string; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => {
+    const tc = await import('./trainingController');
+    return tc.addScheduledConfig(config);
+  });
+
+  ipcMainProxy.handle('training-scheduled-configs-remove', async(_event: unknown, id: string) => {
+    const tc = await import('./trainingController');
+    return tc.removeScheduledConfig(id);
+  });
+
+  // ─── Wizard Settings Persistence ───
+
+  ipcMainProxy.handle('training-wizard-settings-save', async(_event: unknown, wizard: 'create' | 'train', settings: Record<string, unknown>) => {
+    const tc = await import('./trainingController');
+    return tc.saveWizardSettings(wizard, settings);
+  });
+
+  ipcMainProxy.handle('training-wizard-settings-load', async(_event: unknown, wizard: 'create' | 'train') => {
+    const tc = await import('./trainingController');
+    return tc.loadWizardSettings(wizard);
+  });
+
+  ipcMainProxy.handle('training-install', async() => {
+    const tc = await import('./trainingController');
+    return tc.installTrainingEnv();
   });
 
   // ─────────────────────────────────────────────────────────────
@@ -1253,6 +916,7 @@ export function initSullaEvents(): void {
   });
 
   initSullaWorkflowEvents();
+  initSullaDebugEvents();
 
   // ── Integration Config API (YAML-defined integrations) ──────────
 
@@ -1317,70 +981,5 @@ export function initSullaEvents(): void {
   console.log('[Sulla] IPC event handlers initialized');
 }
 
-/** Timer handle for the nightly training schedule */
-let nightlyTrainingTimer: ReturnType<typeof setTimeout> | null = null;
-
-/**
- * Schedule (or cancel) the next nightly training run.
- */
-function rescheduleNightlyTraining(enabled: boolean, hour: number, minute: number): void {
-  if (nightlyTrainingTimer) {
-    clearTimeout(nightlyTrainingTimer);
-    nightlyTrainingTimer = null;
-  }
-
-  if (!enabled) {
-    console.log('[Sulla] Nightly training schedule disabled');
-    return;
-  }
-
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(hour, minute, 0, 0);
-  if (next <= now) {
-    next.setDate(next.getDate() + 1);
-  }
-
-  const delayMs = next.getTime() - now.getTime();
-  console.log(`[Sulla] Next nightly training scheduled for ${next.toISOString()} (in ${Math.round(delayMs / 60000)} min)`);
-
-  nightlyTrainingTimer = setTimeout(async() => {
-    console.log('[Sulla] Nightly training timer fired');
-
-    if (isTrainingLocked()) {
-      console.log('[Sulla] Skipping nightly training — another training run is already in progress');
-      rescheduleNightlyTraining(true, hour, minute);
-      return;
-    }
-
-    acquireTrainingLock();
-    try {
-      const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
-      const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-      const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
-      const service = getLlamaCppService();
-
-      // Create log file for nightly run
-      const fs = require('fs');
-      const logsDir = getTrainingLogsDir();
-      fs.mkdirSync(logsDir, { recursive: true });
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const logFilename = `training-${timestamp}.log`;
-      const logPath = path.join(logsDir, logFilename);
-      fs.writeFileSync(logPath, `=== Nightly Training Run (Scheduled) ===\nStarted: ${new Date().toISOString()}\nModel: ${modelKey}\n\n`, 'utf-8');
-
-      await service.runFullNightlyTraining(modelKey, logPath);
-      fs.appendFileSync(logPath, `\n=== Completed: ${new Date().toISOString()} ===\n`, 'utf-8');
-    } catch (err) {
-      console.error('[Sulla] Nightly training failed:', err);
-    } finally {
-      releaseTrainingLock();
-    }
-
-    // Re-arm for the next day
-    rescheduleNightlyTraining(true, hour, minute);
-  }, delayMs);
-
-  // Don't keep the app alive just for this timer
-  nightlyTrainingTimer.unref();
-}
+// Nightly training schedule, auto-preprocessing, and related timers
+// have been moved to trainingController.ts

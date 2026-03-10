@@ -1,18 +1,19 @@
-export { WorkflowExecutor } from './WorkflowExecutor';
-export type { WorkflowExecutorOptions } from './WorkflowExecutor';
 export { WorkflowRegistry, getWorkflowRegistry } from './WorkflowRegistry';
 export type { WorkflowDispatchOptions, WorkflowDispatchResult } from './WorkflowRegistry';
-export { getNodeHandler, registerNodeHandler } from './nodeHandlers';
+export {
+  createPlaybookState,
+  processNextStep,
+  resolveDecision,
+  completeSubAgent,
+  abortPlaybook,
+  DEFAULT_HANDBACK_CONTRACT,
+} from './WorkflowPlaybook';
+export type { PlaybookStepResult } from './WorkflowPlaybook';
 export type {
-  WorkflowExecutionContext,
+  WorkflowPlaybookState,
+  WorkflowPlaybookStatus,
+  PlaybookNodeOutput,
+  WorkflowNodeStatus,
   WorkflowExecutionEvent,
   WorkflowExecutionEventType,
-  WorkflowNodeExecutionState,
-  WorkflowNodeStatus,
-  WorkflowRunState,
-  WorkflowRunStatus,
-  NodeOutput,
-  NodeHandler,
-  NodeHandlerArgs,
-  NodeHandlerResult,
 } from './types';

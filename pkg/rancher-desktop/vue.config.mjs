@@ -5,6 +5,34 @@ import webpack from 'webpack';
 
 const rootDir = path.resolve(import.meta.dirname, '..', '..');
 
+/**
+ * Exclude Monaco worker entries from a splitChunks cache group while
+ * preserving its original `chunks` semantics ("initial", "async", "all", or function).
+ *
+ * WARNING: Do NOT replace group.chunks with a bare function like:
+ *   group.chunks = (chunk) => !chunk.name?.endsWith('.worker');
+ * That silently drops the original "initial"/"async"/"all" constraint and BREAKS
+ * CSS extraction for non-editor pages (vendor/package CSS disappears).
+ */
+function excludeWorkers(originalChunks) {
+  return (chunk) => {
+    if (chunk.name?.endsWith('.worker')) {
+      return false;
+    }
+    if (originalChunks === 'initial') {
+      return chunk.canBeInitial();
+    }
+    if (originalChunks === 'async') {
+      return !chunk.canBeInitial();
+    }
+    if (typeof originalChunks === 'function') {
+      return originalChunks(chunk);
+    }
+    // 'all' or undefined — include everything (except workers, filtered above)
+    return true;
+  };
+}
+
 export default {
   publicPath:          '/',
   outputDir:           path.resolve(rootDir, 'dist', 'app'),
@@ -60,10 +88,23 @@ export default {
 
       return options;
     });
+
+    // Monaco editor worker bundles
+    const workerEntries = {
+      'editor.worker': 'monaco-editor/esm/vs/editor/editor.worker.js',
+      'json.worker':   'monaco-editor/esm/vs/language/json/json.worker.js',
+      'css.worker':    'monaco-editor/esm/vs/language/css/css.worker.js',
+      'html.worker':   'monaco-editor/esm/vs/language/html/html.worker.js',
+      'ts.worker':     'monaco-editor/esm/vs/language/typescript/ts.worker.js',
+    };
+    for (const [name, entry] of Object.entries(workerEntries)) {
+      config.entry(name).add(entry);
+    }
+
   },
 
-  configureWebpack: {
-    externals: {
+  configureWebpack: (config) => {
+    config.externals = {
       'puppeteer-extra-plugin': 'commonjs puppeteer-extra-plugin',
       'puppeteer-extra':        'commonjs puppeteer-extra',
       'puppeteer':              'commonjs puppeteer',
@@ -71,6 +112,30 @@ export default {
       '@composio/core':         'commonjs @composio/core',
       '@composio/client':       'commonjs @composio/client',
       '@reflink/reflink':       'commonjs @reflink/reflink',
+    };
+
+    // Workers run in a web-worker context where `global` is not defined.
+    // `self` is the universal global for both browser and web-worker scopes.
+    config.output.globalObject = 'self';
+
+    // Worker bundles need stable filenames (no hash) so getWorkerUrl can reference them
+    const origFilename = config.output.filename;
+    config.output.filename = (pathData) => {
+      if (pathData.chunk?.name?.endsWith('.worker')) {
+        return `${pathData.chunk.name}.bundle.js`;
+      }
+      return typeof origFilename === 'function' ? origFilename(pathData) : origFilename;
+    };
+
+    // Workers are standalone scripts — they cannot load shared chunks.
+    // See excludeWorkers() for why we must preserve the original chunks value.
+    const splitChunks = config.optimization.splitChunks;
+    if (splitChunks && typeof splitChunks === 'object') {
+      for (const group of Object.values(splitChunks.cacheGroups || {})) {
+        if (typeof group === 'object') {
+          group.chunks = excludeWorkers(group.chunks);
+        }
+      }
     }
   },
   

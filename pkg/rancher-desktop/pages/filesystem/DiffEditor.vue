@@ -30,8 +30,8 @@ export default defineComponent({
   name: 'DiffEditor',
 
   props: {
-    content:         { type: String, default: '' },   // modified (current working copy)
-    originalContent: { type: String, default: '' },   // original (HEAD version)
+    content:         { type: String, default: '' },
+    originalContent: { type: String, default: '' },
     filePath:        { type: String, default: '' },
     fileExt:         { type: String, default: '' },
     isDark:          { type: Boolean, default: false },
@@ -51,24 +51,34 @@ export default defineComponent({
 
       const language = getLanguage(props.fileExt);
 
+      console.log('[DiffEditor] creating diff editor', {
+        originalLen: props.originalContent?.length,
+        modifiedLen: props.content?.length,
+        language,
+        isDark:      props.isDark,
+      });
+
       originalModel = monaco.editor.createModel(props.originalContent || '', language);
       modifiedModel = monaco.editor.createModel(props.content || '', language);
 
-      // Set theme before creating the editor
       monaco.editor.setTheme(props.isDark ? 'vs-dark' : 'vs');
 
       diffEditor = monaco.editor.createDiffEditor(containerRef.value, {
-        automaticLayout:     true,
-        readOnly:            props.readOnly,
-        originalEditable:    false,
-        renderSideBySide:    true,
-        minimap:             { enabled: false },
-        scrollBeyondLastLine: false,
-        fontSize:            13,
-        lineNumbers:         'on',
+        automaticLayout:      true,
+        readOnly:             props.readOnly,
+        originalEditable:     false,
+        renderSideBySide:     true,
+        renderIndicators:     true,
+        renderMarginRevertIcon: false,
+        renderOverviewRuler:  true,
+        minimap:              { enabled: false },
         renderLineHighlight: 'line',
-        padding:             { top: 8 },
-        hover:               { enabled: false },
+        scrollBeyondLastLine: false,
+        fontSize:             13,
+        lineNumbers:          'on',
+        padding:              { top: 8 },
+        hover:                { enabled: false },
+        diffAlgorithm:        'advanced',
       });
 
       diffEditor.setModel({
@@ -76,7 +86,12 @@ export default defineComponent({
         modified: modifiedModel,
       });
 
-      // Listen for changes in the modified editor
+      // Log when diff computation completes
+      diffEditor.onDidUpdateDiff(() => {
+        const changes = diffEditor!.getLineChanges();
+        console.log('[DiffEditor] onDidUpdateDiff - line changes:', changes?.length ?? 0, changes);
+      });
+
       modifiedModel.onDidChangeContent(() => {
         emit('dirty');
       });
@@ -131,9 +146,11 @@ export default defineComponent({
 });
 </script>
 
-<style scoped>
+<style>
 .diff-editor-container {
   width: 100%;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 </style>

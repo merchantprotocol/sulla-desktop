@@ -44,13 +44,6 @@ export class ChatCompletionsServer {
     }
 
     try {
-      // Try workflow dispatch first
-      const handled = await this.tryWorkflowDispatch(content);
-      if (handled) {
-        console.log('[ChatCompletionsAPI] Tasker message handled by workflow');
-        return;
-      }
-
       const responseText = await this.processUserInputDirect([
         {
           id: nextMessageId(),
@@ -165,6 +158,18 @@ export class ChatCompletionsServer {
       await this.handleModerations(req, res);
     });
 
+    // ── Integration API endpoints ────────────────────────────────────
+
+    // List all integrations and their endpoints
+    this.app.get('/v1/integrations', async (req: Request, res: Response) => {
+      await this.handleListIntegrations(req, res);
+    });
+
+    // Call an integration endpoint with specific account credentials
+    this.app.post('/v1/integrations/:accountId/:slug/:endpoint/call', async (req: Request, res: Response) => {
+      await this.handleIntegrationCall(req, res);
+    });
+
     // Catch-all for unknown routes
     this.app.use((req: Request, res: Response) => {
       res.status(404).json({
@@ -183,7 +188,7 @@ export class ChatCompletionsServer {
     try {
       console.log('[ChatCompletionsAPI] Incoming request body:', JSON.stringify(req.body, null, 2));
 
-      const { messages, model = 'sulla', temperature = 0.7, max_tokens, stream = false } = req.body;
+      const { messages, model = 'sulla', temperature = 0.7, max_tokens, stream = false, thread_id } = req.body;
 
       // Validate request
       if (!messages || !Array.isArray(messages)) {
@@ -215,27 +220,9 @@ export class ChatCompletionsServer {
 
       console.log(`[ChatCompletionsAPI] Processing message: ${userText.substring(0, 100)}...`);
 
-      // Try workflow dispatch first
-      const workflowResult = await this.tryWorkflowDispatch(userText);
-      if (workflowResult) {
-        console.log('[ChatCompletionsAPI] Request handled by workflow');
-        const wfResponse = {
-          id: `chatcmpl-${Date.now()}`,
-          object: 'chat.completion',
-          created: Math.floor(Date.now() / 1000),
-          model,
-          choices: [{
-            index: 0,
-            message: { role: 'assistant', content: `Workflow "${workflowResult}" dispatched.` },
-            finish_reason: 'stop',
-          }],
-          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        };
-        return res.json(wfResponse);
-      }
-
       // Process the user input directly — model param is the agent ID
-      const responseContent = await this.processUserInputDirect(messages, model);
+      const resolvedThreadId = thread_id || nextThreadId();
+      const responseContent = await this.processUserInputDirect(messages, model, resolvedThreadId);
 
       // Return the response in OpenAI format
       const response = {
@@ -243,6 +230,7 @@ export class ChatCompletionsServer {
         object: 'chat.completion',
         created: Math.floor(Date.now() / 1000),
         model: model,
+        thread_id: resolvedThreadId,
         choices: [{
           index: 0,
           message: {
@@ -258,8 +246,8 @@ export class ChatCompletionsServer {
         }
       };
 
-      console.log('[ChatCompletionsAPI] Outgoing response:', JSON.stringify(response, null, 2));
-      console.log(`[ChatCompletionsAPI] Response sent`);
+      console.log(`[ChatCompletionsAPI] Response sent (thread=${resolvedThreadId})`);
+
       res.json(response);
 
     } catch (error) {
@@ -277,11 +265,14 @@ export class ChatCompletionsServer {
    * Process user input directly, without any UI interaction.
    * The agentId is used as the wsChannel so the graph loads that agent's prompts.
    */
-  private async processUserInputDirect(messages: any, agentId: string = WS_CHANNEL): Promise<string> {
-    const threadId = nextThreadId();
+  private async processUserInputDirect(messages: any, agentId: string = WS_CHANNEL, threadId?: string): Promise<string> {
+    threadId = threadId || nextThreadId();
 
     // Get or create persistent AgentGraph for this thread
-    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId);
+    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId, {
+      userVisibleBrowser: false,
+      isTrustedUser: 'untrusted',
+    });
 
     try {
       state.metadata.wsChannel = agentId;
@@ -304,28 +295,28 @@ export class ChatCompletionsServer {
       // Execute on the persistent AgentGraph starting from input_handler
       await graph.execute(state, 'input_handler');
 
-      // Extract response: check agent metadata first, then fall back to latest assistant message
+      // Extract the final response text
       const agentMeta = (state.metadata as any).agent;
-      if (agentMeta?.response?.trim()) return agentMeta.response.trim();
-      if (agentMeta?.status_report?.trim()) return agentMeta.status_report.trim();
+      const responseText =
+        agentMeta?.response?.trim()
+        || agentMeta?.status_report?.trim()
+        || state.metadata.finalSummary?.trim()
+        || (() => {
+          const msg = [...state.messages].reverse().find((m: any) => m.role === 'assistant');
+          if (!msg?.content) return '';
+          return typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+        })()
+        || '';
 
-      const finalSummary = state.metadata.finalSummary?.trim();
-      if (finalSummary) return finalSummary;
-
-      const latestAssistant = [...state.messages].reverse().find((msg: any) => msg.role === 'assistant');
-      if (latestAssistant?.content) {
-        return typeof latestAssistant.content === 'string'
-          ? latestAssistant.content
-          : JSON.stringify(latestAssistant.content);
-      }
-
-      return '';
+      return responseText;
 
     } catch (err: any) {
       console.error('[ChatCompletionsAPI] Error processing user input:', err);
       return `Error: ${err.message || String(err)}`;
     } finally {
-      // Reset here — after graph run completes
+      // Park the graph so it won't re-enter on its own
+      state.metadata.waitingForUser = true;
+      state.metadata.cycleComplete = true;
       state.metadata.consecutiveSameNode = 0;
       state.metadata.iterations = 0;
     }
@@ -561,15 +552,88 @@ export class ChatCompletionsServer {
     }
   }
 
-  private async tryWorkflowDispatch(message: string): Promise<string | null> {
+  // ── Integration API handlers ──────────────────────────────────────
+
+  private async handleListIntegrations(_req: Request, res: Response) {
     try {
-      const { getWorkflowRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
-      const registry = getWorkflowRegistry();
-      const result = await registry.dispatch({ triggerType: 'chat-completions', message });
-      return result?.workflowName ?? null;
-    } catch (err) {
-      console.warn('[ChatCompletionsAPI] Workflow dispatch failed, falling back:', err);
-      return null;
+      const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+      const loader = getIntegrationConfigLoader();
+      const slugs = loader.getAvailableIntegrations();
+
+      const integrations = slugs.map((slug) => {
+        const client = loader.getClient(slug);
+        if (!client) return null;
+
+        const endpoints = client.endpointNames.map((name) => {
+          const ep = client.getEndpoint(name);
+          if (!ep) return null;
+          return {
+            name:        ep.endpoint.name,
+            method:      ep.endpoint.method,
+            path:        ep.endpoint.path,
+            description: ep.endpoint.description,
+            auth:        ep.endpoint.auth,
+            queryParams: ep.query_params
+              ? Object.entries(ep.query_params).map(([k, v]) => ({ name: k, ...v }))
+              : [],
+            pathParams: ep.path_params
+              ? Object.entries(ep.path_params).map(([k, v]) => ({ name: k, ...v }))
+              : [],
+          };
+        }).filter(Boolean);
+
+        return {
+          slug,
+          name: client.name,
+          endpoints,
+        };
+      }).filter(Boolean);
+
+      res.json({ success: true, integrations });
+    } catch (error: any) {
+      console.error('[ChatCompletionsAPI] Error listing integrations:', error);
+      res.status(500).json({ success: false, error: error.message || 'Failed to list integrations' });
+    }
+  }
+
+  private async handleIntegrationCall(req: Request, res: Response) {
+    const accountId = String(req.params.accountId);
+    const slug = String(req.params.slug);
+    const endpoint = String(req.params.endpoint);
+
+    try {
+      const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+      const loader = getIntegrationConfigLoader();
+      const client = loader.getClient(slug);
+
+      if (!client) {
+        const available = loader.getAvailableIntegrations();
+        return res.status(404).json({
+          success: false,
+          error:   `Integration "${slug}" not found. Available: ${available.join(', ')}`,
+        });
+      }
+
+      const epConfig = client.getEndpoint(endpoint);
+      if (!epConfig) {
+        return res.status(404).json({
+          success: false,
+          error:   `Endpoint "${endpoint}" not found. Available: ${client.endpointNames.join(', ')}`,
+        });
+      }
+
+      const { params = {}, body, raw } = req.body || {};
+
+      const result = await client.call(endpoint, params, {
+        accountId,
+        body,
+        raw: !!raw,
+      });
+
+      res.json({ success: true, result: JSON.parse(JSON.stringify(result)) });
+    } catch (error: any) {
+      console.error(`[ChatCompletionsAPI] Integration call failed (${slug}/${endpoint}):`, error);
+      res.status(500).json({ success: false, error: error.message || 'Integration call failed' });
     }
   }
 

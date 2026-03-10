@@ -181,7 +181,10 @@ export class SlackClient {
   }
 
   private async executeAgentGraphForSlack(content: string, threadId: string): Promise<string> {
-    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(SLACK_GRAPH_CHANNEL, threadId) as {
+    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(SLACK_GRAPH_CHANNEL, threadId, {
+      userVisibleBrowser: false,
+      isTrustedUser: 'verify',
+    }) as {
       graph: any;
       state: AgentGraphState;
     };
@@ -229,18 +232,6 @@ export class SlackClient {
     }
   }
 
-  private async tryWorkflowDispatch(message: string): Promise<boolean> {
-    try {
-      const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
-      const registry = getWorkflowRegistry();
-      const result = await registry.dispatch({ triggerType: 'chat-app', message });
-      return result !== null;
-    } catch (err) {
-      console.warn('[SlackClient] Workflow dispatch failed, falling back:', err);
-      return false;
-    }
-  }
-
   private async handleAppMention(event: any): Promise<void> {
     const mentionText = String(event?.text || '').trim();
     const messageId = generateUUID();
@@ -259,13 +250,6 @@ ${incomingMessage}`.trim();
       slackThreadTs: event?.thread_ts || event?.ts,
       preview: mentionText.slice(0, 80),
     });
-
-    // Try workflow dispatch first
-    const handled = await this.tryWorkflowDispatch(fullMessage);
-    if (handled) {
-      console.log('[SlackClient] app_mention handled by workflow', { messageId });
-      return;
-    }
 
     const responseText = await this.executeAgentGraphForSlack(fullMessage, this.buildSlackThreadGraphId(event));
     if (!responseText.trim()) {
@@ -340,13 +324,6 @@ ${incomingMessage}`.trim();
       const facts = extractMessageFacts(args);
       const factsText = facts.map(fact => `- ${fact}`).join('\n');
       const fullMessage = `${factsText}\n\n${incomingMessage}`;
-
-      // Try workflow dispatch first
-      const handled = await this.tryWorkflowDispatch(fullMessage);
-      if (handled) {
-        console.log('[SlackClient] Message handled by workflow');
-        return;
-      }
 
       WS_SERVICE.send(SLACK_GRAPH_CHANNEL, {
         type: 'user_message',

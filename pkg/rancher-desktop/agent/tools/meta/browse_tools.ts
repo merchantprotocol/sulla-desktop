@@ -43,7 +43,19 @@ export class BrowseToolsWorker extends BaseTool {
     const allowedCategories = Array.isArray(accessPolicy.allowedCategories) ? new Set(accessPolicy.allowedCategories) : null;
     const allowedToolNames = Array.isArray(accessPolicy.allowedToolNames) ? new Set(accessPolicy.allowedToolNames) : null;
 
+    // Block browser/playwright tools when caller has no visible browser
+    const noBrowser = (this.state?.metadata as any)?.userVisibleBrowser === false;
+    const browserTools = noBrowser ? new Set([
+      'manage_active_asset', 'click_element', 'get_form_values',
+      'get_page_snapshot', 'get_page_text', 'scroll_to_element',
+      'set_field', 'wait_for_element',
+    ]) : null;
+
     const filteredTools = tools.filter((tool: any) => {
+      if (browserTools && browserTools.has(tool.name)) {
+        return false;
+      }
+
       if (allowedCategories && !allowedCategories.has(tool.metadata?.category || tool.category)) {
         return false;
       }

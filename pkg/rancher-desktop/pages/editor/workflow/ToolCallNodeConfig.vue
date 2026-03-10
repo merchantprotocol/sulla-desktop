@@ -82,6 +82,19 @@
       </div>
     </div>
 
+    <!-- Pre-call description -->
+    <div class="node-field">
+      <label class="node-field-label" :class="{ dark: isDark }">Pre-Call Description</label>
+      <textarea
+        class="node-field-input node-field-textarea"
+        :class="{ dark: isDark }"
+        rows="3"
+        placeholder="Describe the purpose of this call for the orchestrator to validate parameters..."
+        :value="config.preCallDescription || ''"
+        @input="onPreCallDescriptionChange"
+      ></textarea>
+    </div>
+
     <!-- Help -->
     <div class="node-field help-section" :class="{ dark: isDark }">
       <p class="help-title" :class="{ dark: isDark }">How tool calls work</p>
@@ -92,6 +105,8 @@
       </p>
       <p class="help-text" :class="{ dark: isDark }">
         The <strong>Connection</strong> determines which saved credentials are used for authentication.
+        Use <strong>Pre-Call Description</strong> to tell the orchestrator what this call should accomplish
+        so it can validate the parameters before execution.
       </p>
     </div>
 
@@ -290,6 +305,14 @@ function onEndpointChange(event: Event) {
   });
 }
 
+function onPreCallDescriptionChange(event: Event) {
+  const el = event.target as HTMLTextAreaElement;
+  emit('update-config', props.nodeId, {
+    ...props.config,
+    preCallDescription: el.value,
+  });
+}
+
 function onAccountChange(event: Event) {
   const el = event.target as HTMLSelectElement;
   emit('update-config', props.nodeId, {
@@ -383,6 +406,12 @@ function insertVariable(varName: string) {
   color: #e2e8f0;
 }
 .node-field-input.dark:focus { border-color: #6366f1; }
+
+.node-field-textarea {
+  resize: vertical;
+  font-family: inherit;
+  min-height: 60px;
+}
 
 .param-row {
   margin-bottom: 10px;

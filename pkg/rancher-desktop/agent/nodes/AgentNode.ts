@@ -1,6 +1,7 @@
 import { BaseNode } from './BaseNode';
 import type { NodeRunPolicy } from './BaseNode';
 import type { BaseThreadState, NodeResult } from './Graph';
+import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
 
 // ============================================================================
@@ -140,6 +141,21 @@ export class AgentNode extends BaseNode {
       includeMemory: false,
     });
 
+    // Training data: capture the full assembled system prompt (once per session)
+    const trainingConvId = (state.metadata as any).conversationId;
+    if (trainingConvId) {
+      try {
+        const { getTrainingDataLogger } = await import('../services/TrainingDataLogger');
+        const tl = getTrainingDataLogger();
+        if (tl.hasSession(trainingConvId)) {
+          const existing = tl.getSessionMessages(trainingConvId);
+          if (!existing || !existing.some(m => m.role === 'system')) {
+            tl.logSystemPrompt(trainingConvId, enrichedPrompt);
+          }
+        }
+      } catch { /* best-effort */ }
+    }
+
     // ----------------------------------------------------------------
     // 2. EXECUTE — LLM reads conversation, calls tools, responds
     // ----------------------------------------------------------------
@@ -148,6 +164,10 @@ export class AgentNode extends BaseNode {
       .finally(() => {
         disposeLiveDomStream();
       });
+
+    // If aborted while the LLM was responding, stop immediately —
+    // don't process the result or let the graph loop back.
+    throwIfAborted(state, 'Agent execution aborted after LLM response');
 
     const agentResultText = typeof agentResult === 'string' ? agentResult : '';
     const agentOutcome = this.extractAgentOutcome(agentResultText);
@@ -171,6 +191,26 @@ export class AgentNode extends BaseNode {
       response: agentOutcome.status === 'done' ? agentResultText : null,
       updatedAt: Date.now(),
     };
+
+    // When the agent reports done or blocked, mark the cycle as complete
+    // so the graph loop doesn't restart when the response is processed.
+    if (agentOutcome.status === 'done') {
+      state.metadata.cycleComplete = true;
+    }
+
+    // When the agent is blocked, decide how to pause based on context:
+    // - Primary agent (direct user conversation): wait for user input
+    // - Sub-agent (heartbeat/workflow): bubble blocker to orchestrator
+    if (agentOutcome.status === 'blocked') {
+      state.metadata.cycleComplete = true;
+      if (state.metadata.isSubAgent) {
+        // Sub-agent: don't wait for user — the orchestrator will read
+        // blocker_reason / unblock_requirements from agent metadata
+        console.log(`[AgentNode] Sub-agent blocked — deferring to orchestrator. Reason: ${agentOutcome.blockerReason}`);
+      } else {
+        state.metadata.waitingForUser = true;
+      }
+    }
 
     if (statusNote) {
       await this.updateAgentStatusNote(state, statusNote);
@@ -243,6 +283,8 @@ export class AgentNode extends BaseNode {
 
       return chatResult || null;
     } catch (error) {
+      // Re-throw abort errors so they propagate to the graph loop
+      if ((error as any)?.name === 'AbortError') throw error;
       console.error('[AgentNode] Execution failed:', error);
       return null;
     }
@@ -436,11 +478,18 @@ export class AgentNode extends BaseNode {
     }
 
     if (outcome.status === 'blocked') {
-      const parts = [outcome.blockerReason, outcome.unblockRequirements]
+      // Preserve any prose the agent wrote before the AGENT_BLOCKED wrapper —
+      // this is the agent's explanation or question to the user, critical for
+      // training data and user context.
+      const parts = [
+        proseWithoutWrappers,
+        outcome.blockerReason,
+        outcome.unblockRequirements,
+      ]
         .filter((part): part is string => Boolean(part && part.trim()))
         .map(part => part.trim());
       if (parts.length > 0) {
-        return parts.join('\n');
+        return parts.join('\n\n');
       }
       return 'Blocked.';
     }
