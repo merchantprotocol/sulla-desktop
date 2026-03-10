@@ -275,10 +275,10 @@
                   :key="'u-' + repo.root + f.file"
                   class="git-file-row"
                   :class="{ dark: isDark }"
-                  @click="openFile(repo, f.file)"
+                  @click="openFileRaw(repo, f.file)"
                   @contextmenu.prevent="showFileContextMenu($event, repo, f.file, false)"
                 >
-                  <span class="git-status-badge untracked">?</span>
+                  <span class="git-status-badge added">A</span>
                   <span class="git-file-name">{{ basename(f.file) }}</span>
                   <span class="git-file-path">{{ dirname(f.file) }}</span>
                   <button class="git-file-action" :class="{ dark: isDark }" title="Stage" @click.stop="stage(repo, f.file)">
@@ -299,7 +299,7 @@
                   action-type="stage"
                   :depth="0"
                   :is-dark="isDark"
-                  @open-file="openFile(repo, $event)"
+                  @open-file="openFileRaw(repo, $event)"
                   @stage="stage(repo, $event)"
                   @unstage="unstage(repo, $event)"
                   @contextmenu="(ev: MouseEvent, file: string) => showFileContextMenu(ev, repo, file, false)"
@@ -473,7 +473,6 @@ interface TreeNode {
 }
 
 function buildTree(entries: GitStatusEntry[]): TreeNode[] {
-  console.log('[GitPane] buildTree input entries:', JSON.stringify(entries));
   const root: Record<string, any> = {};
 
   for (const entry of entries) {
@@ -1238,6 +1237,12 @@ onMounted(() => discoverAndRefresh());
   font-size: 13px;
   cursor: pointer;
   color: #333;
+  height:22px;
+}
+button.git-tree-dir {
+  min-height:22px;
+  line-height:22px;
+  height:22px;
 }
 
 .git-file-row:hover {
