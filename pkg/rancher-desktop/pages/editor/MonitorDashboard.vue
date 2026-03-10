@@ -7,6 +7,38 @@
         <button class="refresh-btn" @click="$emit('refresh')">Refresh</button>
       </div>
 
+      <!-- Active Agents -->
+      <div class="panel">
+        <h3 class="panel-title">Active Agents</h3>
+        <div v-if="activeAgents.length === 0" class="empty-msg">No agents registered</div>
+        <div v-else class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Channel</th>
+                <th>Status</th>
+                <th>Current Work</th>
+                <th>Last Active</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="agent in activeAgents" :key="agent.agentId" class="clickable" @click="emit('open-detail', 'agent', agent.agentId, agent.name || agent.agentId)">
+                <td class="cell-name">{{ agent.name || agent.agentId }}</td>
+                <td class="cell-mono">{{ agent.channel }}</td>
+                <td>
+                  <span class="status-badge" :class="agent.status === 'running' ? 'badge-ok' : agent.status === 'idle' ? 'badge-neutral' : 'badge-err'">
+                    {{ agent.status }}
+                  </span>
+                </td>
+                <td class="cell-detail">{{ agent.statusNote || '-' }}</td>
+                <td class="cell-detail">{{ formatAge(agent.lastActiveAt) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Service Health Cards -->
       <div class="card-grid">
         <div
@@ -47,38 +79,6 @@
               <span v-if="stat.pendingMessages > 0" class="text-info">{{ stat.pendingMessages }} pending</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      <!-- Active Agents -->
-      <div class="panel">
-        <h3 class="panel-title">Active Agents</h3>
-        <div v-if="activeAgents.length === 0" class="empty-msg">No agents registered</div>
-        <div v-else class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Agent</th>
-                <th>Channel</th>
-                <th>Status</th>
-                <th>Current Work</th>
-                <th>Last Active</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="agent in activeAgents" :key="agent.agentId" class="clickable" @click="emit('open-detail', 'agent', agent.agentId, agent.name || agent.agentId)">
-                <td class="cell-name">{{ agent.name || agent.agentId }}</td>
-                <td class="cell-mono">{{ agent.channel }}</td>
-                <td>
-                  <span class="status-badge" :class="agent.status === 'running' ? 'badge-ok' : agent.status === 'idle' ? 'badge-neutral' : 'badge-err'">
-                    {{ agent.status }}
-                  </span>
-                </td>
-                <td class="cell-detail">{{ agent.statusNote || '-' }}</td>
-                <td class="cell-detail">{{ formatAge(agent.lastActiveAt) }}</td>
-              </tr>
-            </tbody>
-          </table>
         </div>
       </div>
     </div>
