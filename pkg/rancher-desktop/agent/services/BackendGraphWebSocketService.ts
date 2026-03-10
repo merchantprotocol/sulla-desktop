@@ -179,8 +179,12 @@ export class BackendGraphWebSocketService {
     const isNewThread = !threadIdFromMsg;
     const threadId = threadIdFromMsg || nextThreadId();
 
+    let state: AgentGraphState | undefined;
+
     try {
-      const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
+      const result = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
+      const graph = result.graph;
+      state = result.state;
 
       // Notify frontend of the threadId so it can maintain the conversation
       if (isNewThread) {
@@ -232,9 +236,11 @@ export class BackendGraphWebSocketService {
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
       await graph.execute(state, startNode);
     } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        // Cleanly aborted by user — nothing to report
-      } else {
+      if (err?.name === 'AbortError' && state) {
+        // Cleanly aborted by user — mark cycle complete so graph won't restart
+        state.metadata.cycleComplete = true;
+        state.metadata.waitingForUser = true;
+      } else if (err?.name !== 'AbortError') {
         console.error(`[BackendGraphWS] Agent execution FAILED on ${channelId}:`, err);
         this.emitMessage(channelId, 'assistant_message', {
           content: `Agent error: ${err.message || String(err)}`,

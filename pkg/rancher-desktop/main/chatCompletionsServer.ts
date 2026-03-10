@@ -291,31 +291,35 @@ export class ChatCompletionsServer {
       state.metadata.cycleComplete = false;
       state.metadata.waitingForUser = false;
 
+      // Single-response mode: agent runs normally (tools, multiple turns),
+      // but we only return the final response to the HTTP caller.
+      (state.metadata as any).singleResponse = true;
+
       // Execute on the persistent AgentGraph starting from input_handler
       await graph.execute(state, 'input_handler');
 
-      // Extract response: check agent metadata first, then fall back to latest assistant message
+      // Extract the final response text
       const agentMeta = (state.metadata as any).agent;
-      if (agentMeta?.response?.trim()) return agentMeta.response.trim();
-      if (agentMeta?.status_report?.trim()) return agentMeta.status_report.trim();
+      const responseText =
+        agentMeta?.response?.trim()
+        || agentMeta?.status_report?.trim()
+        || state.metadata.finalSummary?.trim()
+        || (() => {
+          const msg = [...state.messages].reverse().find((m: any) => m.role === 'assistant');
+          if (!msg?.content) return '';
+          return typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+        })()
+        || '';
 
-      const finalSummary = state.metadata.finalSummary?.trim();
-      if (finalSummary) return finalSummary;
-
-      const latestAssistant = [...state.messages].reverse().find((msg: any) => msg.role === 'assistant');
-      if (latestAssistant?.content) {
-        return typeof latestAssistant.content === 'string'
-          ? latestAssistant.content
-          : JSON.stringify(latestAssistant.content);
-      }
-
-      return '';
+      return responseText;
 
     } catch (err: any) {
       console.error('[ChatCompletionsAPI] Error processing user input:', err);
       return `Error: ${err.message || String(err)}`;
     } finally {
-      // Reset here — after graph run completes
+      // Park the graph so it won't re-enter on its own
+      state.metadata.waitingForUser = true;
+      state.metadata.cycleComplete = true;
       state.metadata.consecutiveSameNode = 0;
       state.metadata.iterations = 0;
     }

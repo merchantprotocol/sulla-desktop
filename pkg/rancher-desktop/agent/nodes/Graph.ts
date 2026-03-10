@@ -416,6 +416,10 @@ export class Graph<TState = BaseThreadState> {
         
         throwIfAborted(state, 'Graph execution aborted');
 
+        if ((state as any).metadata.cycleComplete) {
+          break;
+        }
+
         if ((state as any).metadata.waitingForUser && (state as any).metadata.currentNodeId === 'input_handler') {
           break;
         }
@@ -461,7 +465,8 @@ export class Graph<TState = BaseThreadState> {
       }
     } catch (error: any) {
       if (error?.name === 'AbortError') {
-        (state as any).metadata.waitingForUser = false;
+        (state as any).metadata.waitingForUser = true;
+        (state as any).metadata.cycleComplete = true;
         if (convId) {
           getConversationLogger().logGraphCompleted(convId, 'aborted');
           if (!isReentry) getTrainingDataLogger().endSession(convId);

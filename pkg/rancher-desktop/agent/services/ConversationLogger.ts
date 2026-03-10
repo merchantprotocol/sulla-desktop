@@ -1,7 +1,7 @@
 /**
  * ConversationLogger — unified conversation logging for debugging and training.
  *
- * Writes structured JSONL logs to ~/sulla/conversations/:
+ * Writes structured JSONL logs to ~/sulla/logs/:
  *   - index.jsonl: conversation metadata and parent-child relationships
  *   - conv-{id}.jsonl: per-conversation event stream
  *
@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { resolveSullaConversationsDir } from '../utils/sullaPaths';
+import { resolveSullaLogsDir } from '../utils/sullaPaths';
 
 // ── Types ──
 
@@ -48,10 +48,10 @@ class ConversationLoggerImpl {
   private dir: string;
   private indexPath: string;
   /** Set to true to disable all logging. */
-  private disabled = true;
+  private disabled = false;
 
   constructor() {
-    this.dir = resolveSullaConversationsDir();
+    this.dir = resolveSullaLogsDir();
     this.indexPath = path.join(this.dir, 'index.jsonl');
   }
 

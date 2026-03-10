@@ -199,6 +199,8 @@ export class FrontendGraphWebSocketService {
       await graph.execute(state, startNode);
     } catch (err: any) {
       if (err.name === 'AbortError') {
+        state.metadata.cycleComplete = true;
+        state.metadata.waitingForUser = true;
         this.emitSystemMessage('Execution stopped.');
       } else {
         console.error('[FrontendGraphWS] Error:', err?.message);
@@ -246,6 +248,8 @@ export class FrontendGraphWebSocketService {
       await graph.execute(state, 'agent');
     } catch (err: any) {
       if (err.name === 'AbortError') {
+        state.metadata.cycleComplete = true;
+        state.metadata.waitingForUser = true;
         this.emitSystemMessage('Execution stopped.');
       } else {
         console.error('[FrontendGraphWS] Continue error:', err?.message);

@@ -108,8 +108,8 @@ export function initSullaDebugEvents(): void {
 
   ipcMainProxy.handle('debug-conversations-list', async () => {
     try {
-      const { resolveSullaConversationsDir } = await import('@pkg/agent/utils/sullaPaths');
-      const dir = resolveSullaConversationsDir();
+      const { resolveSullaLogsDir } = await import('@pkg/agent/utils/sullaPaths');
+      const dir = resolveSullaLogsDir();
       const indexPath = path.join(dir, 'index.jsonl');
       const entries = readJsonlFile(indexPath, 1000) as any[];
 
@@ -136,8 +136,8 @@ export function initSullaDebugEvents(): void {
 
   ipcMainProxy.handle('debug-conversation-events', async (_event: unknown, conversationId: string) => {
     try {
-      const { resolveSullaConversationsDir } = await import('@pkg/agent/utils/sullaPaths');
-      const dir = resolveSullaConversationsDir();
+      const { resolveSullaLogsDir } = await import('@pkg/agent/utils/sullaPaths');
+      const dir = resolveSullaLogsDir();
       const safe = conversationId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
       const filePath = path.join(dir, `conv-${safe}.jsonl`);
       return readJsonlFile(filePath, 500) as Array<{ ts: string; type: string; [key: string]: unknown }>;
@@ -209,8 +209,8 @@ export function initSullaDebugEvents(): void {
 
   ipcMainProxy.handle('debug-errors', async (_event: unknown, limit?: number) => {
     try {
-      const { resolveSullaConversationsDir } = await import('@pkg/agent/utils/sullaPaths');
-      const dir = resolveSullaConversationsDir();
+      const { resolveSullaLogsDir } = await import('@pkg/agent/utils/sullaPaths');
+      const dir = resolveSullaLogsDir();
       const indexPath = path.join(dir, 'index.jsonl');
       const entries = readJsonlFile(indexPath, 1000) as any[];
 
