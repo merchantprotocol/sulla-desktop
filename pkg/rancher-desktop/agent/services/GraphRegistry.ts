@@ -31,14 +31,14 @@ export const GraphRegistry = {
    * Create a brand new graph + state (always fresh threadId).
    * Use when user explicitly wants "New Conversation".
    */
-  createNew: async function(wsChannel: string): Promise<{
+  createNew: async function(wsChannel: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }): Promise<{
     graph: Graph<any>;
     state: BaseThreadState;
     threadId: string;
   }> {
     const threadId = nextThreadId();
     const graph = createAgentGraph();
-    const state = await buildAgentState(wsChannel, threadId);
+    const state = await buildAgentState(wsChannel, threadId, options);
 
     registry.set(threadId, { graph, state });
     return { graph, state, threadId };
@@ -64,8 +64,9 @@ export const GraphRegistry = {
 
   /**
    * Get or create AgentGraph — the standard graph for all tasks.
+   * @param options Optional graph options that configure prompt directives, tool blocking, etc.
    */
-  getOrCreate: async function(wsChannel: string, threadId: string): Promise<{
+  getOrCreate: async function(wsChannel: string, threadId: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }): Promise<{
     graph: Graph<AgentGraphState>;
     state: AgentGraphState;
   }> {
@@ -77,7 +78,7 @@ export const GraphRegistry = {
     console.log(`[GraphRegistry] getOrCreate() — cache MISS, creating new graph for agentId="${wsChannel}", threadId="${threadId}"`);
     const graph = createAgentGraph();
     console.log(`[GraphRegistry] getOrCreate() — agent graph created, building state...`);
-    const state = await buildAgentState(wsChannel, threadId);
+    const state = await buildAgentState(wsChannel, threadId, options);
     console.log(`[GraphRegistry] getOrCreate() — state built: model="${state.metadata.llmModel}", local=${state.metadata.llmLocal}, agentName="${state.metadata.agent?.name || '(none)'}"`);
 
     registry.set(threadId, { graph, state });
@@ -85,16 +86,16 @@ export const GraphRegistry = {
   },
 
   // Aliases — all point to AgentGraph now
-  getOrCreateSkillGraph: async function(wsChannel: string, threadId: string) {
-    return this.getOrCreate(wsChannel, threadId);
+  getOrCreateSkillGraph: async function(wsChannel: string, threadId: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }) {
+    return this.getOrCreate(wsChannel, threadId, options);
   },
 
-  getOrCreateAgentGraph: async function(wsChannel: string, threadId: string) {
-    return this.getOrCreate(wsChannel, threadId);
+  getOrCreateAgentGraph: async function(wsChannel: string, threadId: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }) {
+    return this.getOrCreate(wsChannel, threadId, options);
   },
 
-  getOrCreateGeneralGraph: async function(wsChannel: string, threadId: string) {
-    return this.getOrCreate(wsChannel, threadId);
+  getOrCreateGeneralGraph: async function(wsChannel: string, threadId: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }) {
+    return this.getOrCreate(wsChannel, threadId, options);
   },
 
   delete(threadId: string): void {
@@ -294,7 +295,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
 }
 
 
-async function buildAgentState(wsChannel: string, threadId?: string): Promise<AgentGraphState> {
+async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }): Promise<AgentGraphState> {
   const id = threadId ?? nextThreadId();
 
   console.log(`[GraphRegistry] buildAgentState() — wsChannel="${wsChannel}", threadId="${id}"`);
@@ -343,6 +344,9 @@ async function buildAgentState(wsChannel: string, threadId?: string): Promise<Ag
       returnTo: null,
 
       conversationId: id,
+
+      isTrustedUser: graphOpts?.isTrustedUser ?? 'trusted',
+      userVisibleBrowser: graphOpts?.userVisibleBrowser ?? true,
 
       agent: agentConfig,
       agentLoopCount: 0

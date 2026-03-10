@@ -1,9 +1,9 @@
 /**
- * ConversationLogger — unified conversation logging for debugging and training.
+ * ConversationLogger — unified conversation logging for debugging.
  *
- * Writes structured JSONL logs to ~/sulla/logs/:
- *   - index.jsonl: conversation metadata and parent-child relationships
- *   - conv-{id}.jsonl: per-conversation event stream
+ * Writes human-readable .log files to ~/sulla/logs/:
+ *   - index.log: conversation metadata and parent-child relationships
+ *   - {channel}_{threadId}.log: per-conversation event stream
  *
  * Conversation types:
  *   - "workflow": workflow execution (node events, timing, errors)
@@ -43,11 +43,190 @@ export interface ConversationEvent {
   [key: string]: unknown;
 }
 
+// ── Formatting helpers ──
+
+const SEPARATOR = '════════════════════════════════════════════════════════════════';
+const THIN_SEP  = '────────────────────────────────────────────────────────────────';
+
+function formatMeta(meta: ConversationMeta | (Partial<ConversationMeta> & { id: string; _update?: boolean })): string {
+  const lines: string[] = [];
+  lines.push(SEPARATOR);
+  const isUpdate = '_update' in meta && (meta as any)._update;
+  lines.push(`[${meta.startedAt || new Date().toISOString()}] CONVERSATION ${isUpdate ? 'UPDATE' : 'START'}`);
+  lines.push(SEPARATOR);
+  lines.push(`ID:       ${meta.id}`);
+  if (meta.type)       lines.push(`Type:     ${meta.type}`);
+  if (meta.name)       lines.push(`Name:     ${meta.name}`);
+  if (meta.channel)    lines.push(`Channel:  ${meta.channel}`);
+  if (meta.parentId)   lines.push(`Parent:   ${meta.parentId}`);
+  if (meta.workflowId) lines.push(`Workflow: ${meta.workflowId}`);
+  if (meta.agentId)    lines.push(`Agent:    ${meta.agentId}`);
+  if (meta.status)     lines.push(`Status:   ${meta.status}`);
+  if (meta.completedAt) lines.push(`Completed: ${meta.completedAt}`);
+  if (meta.error)      lines.push(`Error:    ${meta.error}`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+function formatEvent(event: ConversationEvent): string {
+  const { ts, type, ...rest } = event;
+
+  switch (type) {
+    case 'llm_call':
+      return formatLLMCall(ts, rest);
+    case 'message':
+      return formatMessage(ts, rest);
+    case 'tool_call':
+      return formatToolCall(ts, rest);
+    case 'workflow_started':
+    case 'workflow_completed':
+    case 'graph_started':
+    case 'graph_completed':
+      return formatLifecycleEvent(ts, type, rest);
+    default:
+      return formatGenericEvent(ts, type, rest);
+  }
+}
+
+function formatLLMCall(ts: string, data: Record<string, unknown>): string {
+  const lines: string[] = [];
+  const direction = String(data.direction || 'unknown').toUpperCase();
+  lines.push(SEPARATOR);
+  lines.push(`[${ts}] LLM ${direction}`);
+  lines.push(SEPARATOR);
+
+  if (direction === 'REQUEST') {
+    if (data.model)    lines.push(`Model:    ${data.model}`);
+    if (data.provider)  lines.push(`Provider: ${data.provider}`);
+    if (data.nodeName) lines.push(`Node:     ${data.nodeName}`);
+    if (data.maxTokens) lines.push(`Max Tokens: ${data.maxTokens}`);
+    if (data.temperature !== undefined) lines.push(`Temperature: ${data.temperature}`);
+    if (data.format)   lines.push(`Format:   ${data.format}`);
+
+    // Tools summary
+    if (Array.isArray(data.tools) && data.tools.length > 0) {
+      const toolNames = data.tools.map((t: any) => t?.function?.name || t?.name || 'unknown');
+      lines.push(`Tools:    [${toolNames.join(', ')}]`);
+    }
+
+    // Full messages array
+    if (Array.isArray(data.messages)) {
+      lines.push('');
+      lines.push('Messages:');
+      for (const msg of data.messages as any[]) {
+        lines.push(THIN_SEP);
+        lines.push(`  [${msg.role}]${msg.name ? ` (${msg.name})` : ''}`);
+        const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2);
+        lines.push(indent(content, 4));
+      }
+    }
+  } else if (direction === 'RESPONSE') {
+    if (data.model)          lines.push(`Model:         ${data.model}`);
+    if (data.finishReason)   lines.push(`Finish Reason: ${data.finishReason}`);
+    if (data.tokensUsed)     lines.push(`Tokens Used:   ${data.tokensUsed}`);
+    if (data.promptTokens)   lines.push(`  Prompt:      ${data.promptTokens}`);
+    if (data.completionTokens) lines.push(`  Completion:  ${data.completionTokens}`);
+    if (data.timeSpent)      lines.push(`Time:          ${data.timeSpent}ms`);
+
+    if (data.content !== undefined) {
+      lines.push('');
+      lines.push('Content:');
+      lines.push(indent(String(data.content), 2));
+    }
+
+    if (data.reasoning) {
+      lines.push('');
+      lines.push('Reasoning:');
+      lines.push(indent(String(data.reasoning), 2));
+    }
+
+    if (Array.isArray(data.toolCalls) && data.toolCalls.length > 0) {
+      lines.push('');
+      lines.push('Tool Calls:');
+      for (const tc of data.toolCalls as any[]) {
+        lines.push(`  - ${tc.name}(${JSON.stringify(tc.args, null, 2)})`);
+      }
+    }
+
+    if (data.error) {
+      lines.push('');
+      lines.push(`ERROR: ${data.error}`);
+    }
+  } else {
+    // Unknown direction — dump everything
+    for (const [k, v] of Object.entries(data)) {
+      if (k === 'direction') continue;
+      lines.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v, null, 2)}`);
+    }
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+function formatMessage(ts: string, data: Record<string, unknown>): string {
+  const lines: string[] = [];
+  lines.push(THIN_SEP);
+  lines.push(`[${ts}] MESSAGE [${data.role}]`);
+  lines.push(THIN_SEP);
+  lines.push(String(data.content));
+  lines.push('');
+  return lines.join('\n');
+}
+
+function formatToolCall(ts: string, data: Record<string, unknown>): string {
+  const lines: string[] = [];
+  lines.push(THIN_SEP);
+  lines.push(`[${ts}] TOOL CALL: ${data.toolName}`);
+  lines.push(THIN_SEP);
+  lines.push(`Args: ${typeof data.args === 'string' ? data.args : JSON.stringify(data.args, null, 2)}`);
+  if (data.result !== undefined) {
+    lines.push(`Result: ${typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2)}`);
+  }
+  if (data.error) {
+    lines.push(`Error: ${data.error}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+function formatLifecycleEvent(ts: string, type: string, data: Record<string, unknown>): string {
+  const lines: string[] = [];
+  const label = type.replace(/_/g, ' ').toUpperCase();
+  lines.push(SEPARATOR);
+  lines.push(`[${ts}] ${label}`);
+  lines.push(SEPARATOR);
+  for (const [k, v] of Object.entries(data)) {
+    lines.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v, null, 2)}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+function formatGenericEvent(ts: string, type: string, data: Record<string, unknown>): string {
+  const lines: string[] = [];
+  lines.push(THIN_SEP);
+  lines.push(`[${ts}] ${type.toUpperCase()}`);
+  lines.push(THIN_SEP);
+  for (const [k, v] of Object.entries(data)) {
+    lines.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v, null, 2)}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+function indent(text: string, spaces: number): string {
+  const pad = ' '.repeat(spaces);
+  return text.split('\n').map(line => pad + line).join('\n');
+}
+
 // ── Logger ──
 
 class ConversationLoggerImpl extends EventEmitter {
   private dir: string;
   private indexPath: string;
+  /** Maps conversationId → resolved log file path (set on start). */
+  private filePaths = new Map<string, string>();
   /** Set to true to disable all logging. */
   private disabled = false;
 
@@ -55,7 +234,7 @@ class ConversationLoggerImpl extends EventEmitter {
     super();
     this.setMaxListeners(20);
     this.dir = resolveSullaLogsDir();
-    this.indexPath = path.join(this.dir, 'index.jsonl');
+    this.indexPath = path.join(this.dir, 'index.log');
   }
 
   private ensureDir(): void {
@@ -63,9 +242,27 @@ class ConversationLoggerImpl extends EventEmitter {
     fs.mkdirSync(this.dir, { recursive: true });
   }
 
-  private eventFilePath(conversationId: string): string {
-    const safe = conversationId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
-    return path.join(this.dir, `conv-${safe}.jsonl`);
+  /**
+   * Build a log file path from channel + conversationId.
+   * Produces filenames like: slack-direct_thread123.log
+   * Falls back to conv_{conversationId}.log when no channel is known.
+   */
+  private resolveFilePath(conversationId: string, channel?: string): string {
+    // Check if we already resolved a path for this conversation
+    const cached = this.filePaths.get(conversationId);
+    if (cached) return cached;
+
+    const safeId = conversationId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+    let filename: string;
+    if (channel) {
+      const safeChannel = channel.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100);
+      filename = `${safeChannel}_${safeId}.log`;
+    } else {
+      filename = `conv_${safeId}.log`;
+    }
+    const filePath = path.join(this.dir, filename);
+    this.filePaths.set(conversationId, filePath);
+    return filePath;
   }
 
   /**
@@ -75,7 +272,9 @@ class ConversationLoggerImpl extends EventEmitter {
     if (this.disabled) return;
     try {
       this.ensureDir();
-      fs.appendFileSync(this.indexPath, JSON.stringify(meta) + '\n', 'utf-8');
+      // Resolve and cache the file path using channel from meta
+      this.resolveFilePath(meta.id, meta.channel);
+      fs.appendFileSync(this.indexPath, formatMeta(meta), 'utf-8');
       this.emit('conversation', { kind: 'start', meta });
     } catch (err) {
       console.error('[ConversationLogger] Failed to write index entry:', err);
@@ -84,13 +283,12 @@ class ConversationLoggerImpl extends EventEmitter {
 
   /**
    * Update a conversation's index entry (e.g. on completion).
-   * Appends a new line with the same id — readers use the last entry per id.
    */
   update(meta: Partial<ConversationMeta> & { id: string }): void {
     if (this.disabled) return;
     try {
       this.ensureDir();
-      fs.appendFileSync(this.indexPath, JSON.stringify({ ...meta, _update: true }) + '\n', 'utf-8');
+      fs.appendFileSync(this.indexPath, formatMeta(meta as any), 'utf-8');
       this.emit('conversation', { kind: 'update', meta });
     } catch (err) {
       console.error('[ConversationLogger] Failed to update index:', err);
@@ -104,8 +302,8 @@ class ConversationLoggerImpl extends EventEmitter {
     if (this.disabled) return;
     try {
       this.ensureDir();
-      const filePath = this.eventFilePath(conversationId);
-      fs.appendFileSync(filePath, JSON.stringify(event) + '\n', 'utf-8');
+      const filePath = this.resolveFilePath(conversationId);
+      fs.appendFileSync(filePath, formatEvent(event), 'utf-8');
       this.emit('event', { conversationId, event });
     } catch (err) {
       console.error('[ConversationLogger] Failed to write event:', err);
@@ -189,7 +387,7 @@ class ConversationLoggerImpl extends EventEmitter {
       ts:   new Date().toISOString(),
       type: 'message',
       role,
-      content: content.length > 10000 ? content.slice(0, 10000) + '...' : content,
+      content,
     });
   }
 
@@ -198,8 +396,8 @@ class ConversationLoggerImpl extends EventEmitter {
       ts:       new Date().toISOString(),
       type:     'tool_call',
       toolName,
-      args:     truncate(args),
-      ...(result !== undefined ? { result: truncate(result) } : {}),
+      args,
+      ...(result !== undefined ? { result } : {}),
     });
   }
 
@@ -211,19 +409,6 @@ class ConversationLoggerImpl extends EventEmitter {
       ...data,
     });
   }
-}
-
-function truncate(value: unknown, maxLen = 2000): unknown {
-  if (typeof value === 'string' && value.length > maxLen) {
-    return value.slice(0, maxLen) + '...';
-  }
-  if (typeof value === 'object' && value !== null) {
-    const str = JSON.stringify(value);
-    if (str.length > maxLen) {
-      return JSON.parse(str.slice(0, maxLen - 20) + '..."truncated":true}');
-    }
-  }
-  return value;
 }
 
 // ── Singleton ──

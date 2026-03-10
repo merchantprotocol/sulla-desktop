@@ -181,7 +181,10 @@ export class SlackClient {
   }
 
   private async executeAgentGraphForSlack(content: string, threadId: string): Promise<string> {
-    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(SLACK_GRAPH_CHANNEL, threadId) as {
+    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(SLACK_GRAPH_CHANNEL, threadId, {
+      userVisibleBrowser: false,
+      isTrustedUser: 'verify',
+    }) as {
       graph: any;
       state: AgentGraphState;
     };

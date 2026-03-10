@@ -12,6 +12,7 @@ import { InputHandlerNode } from './InputHandlerNode';
 import { AgentNode } from './AgentNode';
 import { HeartbeatNode, type HeartbeatThreadState } from './HeartbeatNode';
 import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
+
 import {
   processNextStep,
   resolveDecision,
@@ -197,6 +198,11 @@ export interface BaseThreadState {
 
     /** When set, workflow tools (list/execute) are scoped to only this workflow */
     scopedWorkflowId?: string;
+
+    /** Trust level of the caller */
+    isTrustedUser?: 'trusted' | 'untrusted' | 'verify';
+    /** Whether the user can see browser panels in the UI */
+    userVisibleBrowser?: boolean;
 
     /** Active workflow playbook — when set, the agent orchestrates this workflow */
     activeWorkflow?: WorkflowPlaybookState;
@@ -516,7 +522,7 @@ export class Graph<TState = BaseThreadState> {
       const connId = (state as any).metadata.wsChannel || 'heartbeat';
       ws.send(connId, {
         type: 'transfer_data',
-        data: { role: 'system', content: 'graph_execution_complete', stopReason, waitingForUser },
+        data: { role: 'system', content: 'graph_execution_complete', stopReason, waitingForUser, thread_id: (state as any).metadata.threadId },
       });
       // Clear stopReason after sending
       (state as any).metadata.stopReason = null;
@@ -1088,7 +1094,7 @@ export class Graph<TState = BaseThreadState> {
       const channel = (state as any).metadata?.wsChannel || 'workbench';
       ws.send(channel, {
         type: 'workflow_execution_event',
-        data: { type, timestamp: new Date().toISOString(), ...data },
+        data: { type, thread_id: (state as any).metadata?.threadId, timestamp: new Date().toISOString(), ...data },
         timestamp: Date.now(),
       });
     } catch { /* best-effort */ }

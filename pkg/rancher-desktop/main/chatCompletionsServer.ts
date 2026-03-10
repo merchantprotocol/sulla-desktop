@@ -221,8 +221,7 @@ export class ChatCompletionsServer {
       console.log(`[ChatCompletionsAPI] Processing message: ${userText.substring(0, 100)}...`);
 
       // Process the user input directly — model param is the agent ID
-      const headerThreadId = req.headers['x-thread-id'] as string | undefined;
-      const resolvedThreadId = headerThreadId || thread_id || nextThreadId();
+      const resolvedThreadId = thread_id || nextThreadId();
       const responseContent = await this.processUserInputDirect(messages, model, resolvedThreadId);
 
       // Return the response in OpenAI format
@@ -247,9 +246,8 @@ export class ChatCompletionsServer {
         }
       };
 
-      console.log('[ChatCompletionsAPI] Outgoing response:', JSON.stringify(response, null, 2));
-      console.log(`[ChatCompletionsAPI] Response sent`);
-      res.setHeader('X-Thread-ID', resolvedThreadId);
+      console.log(`[ChatCompletionsAPI] Response sent (thread=${resolvedThreadId})`);
+
       res.json(response);
 
     } catch (error) {
@@ -271,7 +269,10 @@ export class ChatCompletionsServer {
     threadId = threadId || nextThreadId();
 
     // Get or create persistent AgentGraph for this thread
-    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId);
+    const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId, {
+      userVisibleBrowser: false,
+      isTrustedUser: 'untrusted',
+    });
 
     try {
       state.metadata.wsChannel = agentId;
@@ -290,10 +291,6 @@ export class ChatCompletionsServer {
       // Reset pause flags when real user input comes in
       state.metadata.cycleComplete = false;
       state.metadata.waitingForUser = false;
-
-      // Single-response mode: agent runs normally (tools, multiple turns),
-      // but we only return the final response to the HTTP caller.
-      (state.metadata as any).singleResponse = true;
 
       // Execute on the persistent AgentGraph starting from input_handler
       await graph.execute(state, 'input_handler');

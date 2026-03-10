@@ -193,10 +193,28 @@ export abstract class BaseLanguageModel {
     } = {}
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
+    const convId = options.conversationId;
 
     try {
       // Use provided model or fallback to default
       const effectiveModel = options.model ?? this.model;
+
+      // Log the outgoing request
+      if (convId) {
+        try {
+          const { getConversationLogger } = require('../services/ConversationLogger');
+          getConversationLogger().logLLMCall(convId, 'request', {
+            model:       effectiveModel,
+            provider:    this.getProviderName(),
+            nodeName:    options.nodeName,
+            maxTokens:   options.maxTokens,
+            temperature: options.temperature,
+            format:      options.format,
+            tools:       options.tools,
+            messages,
+          });
+        } catch { /* best-effort */ }
+      }
 
       const rawResponse = await this.sendRawRequest(messages, {
         ...options,
@@ -205,6 +223,16 @@ export abstract class BaseLanguageModel {
       });
 
       if (!rawResponse) {
+        // Log null response
+        if (convId) {
+          try {
+            const { getConversationLogger } = require('../services/ConversationLogger');
+            getConversationLogger().logLLMCall(convId, 'response', {
+              model: effectiveModel,
+              error: 'No response from provider',
+            });
+          } catch { /* best-effort */ }
+        }
         return null;
       }
 
@@ -214,8 +242,36 @@ export abstract class BaseLanguageModel {
       normalized.metadata.time_spent = Math.round(performance.now() - startTime);
       normalized.metadata.model = effectiveModel;
 
+      // Log the response
+      if (convId) {
+        try {
+          const { getConversationLogger } = require('../services/ConversationLogger');
+          getConversationLogger().logLLMCall(convId, 'response', {
+            model:            effectiveModel,
+            content:          normalized.content,
+            finishReason:     normalized.metadata.finish_reason,
+            tokensUsed:       normalized.metadata.tokens_used,
+            promptTokens:     normalized.metadata.prompt_tokens,
+            completionTokens: normalized.metadata.completion_tokens,
+            timeSpent:        normalized.metadata.time_spent,
+            reasoning:        normalized.metadata.reasoning,
+            toolCalls:        normalized.metadata.tool_calls,
+          });
+        } catch { /* best-effort */ }
+      }
+
       return normalized;
     } catch (error) {
+      // Log the error
+      if (convId) {
+        try {
+          const { getConversationLogger } = require('../services/ConversationLogger');
+          getConversationLogger().logLLMCall(convId, 'response', {
+            model: options.model ?? this.model,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } catch { /* best-effort */ }
+      }
       console.error(`[${this.getProviderName()}] Chat failed:`, error);
       return null;
     }
