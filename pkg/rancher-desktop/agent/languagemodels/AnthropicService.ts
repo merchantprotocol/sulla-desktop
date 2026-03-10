@@ -1,6 +1,5 @@
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type LLMServiceConfig } from './BaseLanguageModel';
 import { getOllamaService } from './OllamaService';
-import { writeLLMConversationEvent } from './LLMConversationFileLogger';
 import { getIntegrationService } from '../services/IntegrationService';
 
 /**
@@ -70,17 +69,6 @@ export class AnthropicService extends BaseLanguageModel {
           if (options?.signal?.aborted) throw new DOMException('Aborted during retry backoff', 'AbortError');
         }
 
-        writeLLMConversationEvent({
-          direction: 'request',
-          provider: 'anthropic',
-          model: options.model ?? this.model,
-          endpoint,
-          nodeName,
-          conversationId,
-          attempt,
-          payload: body,
-        });
-
         const fetchOpts = this.buildFetchOptions(body, options?.signal);
         const res = await fetch(url, fetchOpts);
 
@@ -93,31 +81,11 @@ export class AnthropicService extends BaseLanguageModel {
         }
 
         const rawResponse = await res.json();
-        writeLLMConversationEvent({
-          direction: 'response',
-          provider: 'anthropic',
-          model: options.model ?? this.model,
-          endpoint,
-          nodeName,
-          conversationId,
-          attempt,
-          payload: rawResponse,
-        });
 
         return rawResponse;
       } catch (err) {
         lastError = err;
         console.log(`[AnthropicService] Error on attempt ${attempt}:`, err);
-        writeLLMConversationEvent({
-          direction: 'error',
-          provider: 'anthropic',
-          model: options.model ?? this.model,
-          endpoint,
-          nodeName,
-          conversationId,
-          attempt,
-          payload: err instanceof Error ? { message: err.message, stack: err.stack } : err,
-        });
 
         if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
           break;
