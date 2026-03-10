@@ -188,7 +188,7 @@ export class ChatCompletionsServer {
     try {
       console.log('[ChatCompletionsAPI] Incoming request body:', JSON.stringify(req.body, null, 2));
 
-      const { messages, model = 'sulla', temperature = 0.7, max_tokens, stream = false } = req.body;
+      const { messages, model = 'sulla', temperature = 0.7, max_tokens, stream = false, thread_id } = req.body;
 
       // Validate request
       if (!messages || !Array.isArray(messages)) {
@@ -221,7 +221,9 @@ export class ChatCompletionsServer {
       console.log(`[ChatCompletionsAPI] Processing message: ${userText.substring(0, 100)}...`);
 
       // Process the user input directly — model param is the agent ID
-      const responseContent = await this.processUserInputDirect(messages, model);
+      const headerThreadId = req.headers['x-thread-id'] as string | undefined;
+      const resolvedThreadId = headerThreadId || thread_id || nextThreadId();
+      const responseContent = await this.processUserInputDirect(messages, model, resolvedThreadId);
 
       // Return the response in OpenAI format
       const response = {
@@ -229,6 +231,7 @@ export class ChatCompletionsServer {
         object: 'chat.completion',
         created: Math.floor(Date.now() / 1000),
         model: model,
+        thread_id: resolvedThreadId,
         choices: [{
           index: 0,
           message: {
@@ -246,6 +249,7 @@ export class ChatCompletionsServer {
 
       console.log('[ChatCompletionsAPI] Outgoing response:', JSON.stringify(response, null, 2));
       console.log(`[ChatCompletionsAPI] Response sent`);
+      res.setHeader('X-Thread-ID', resolvedThreadId);
       res.json(response);
 
     } catch (error) {
@@ -263,8 +267,8 @@ export class ChatCompletionsServer {
    * Process user input directly, without any UI interaction.
    * The agentId is used as the wsChannel so the graph loads that agent's prompts.
    */
-  private async processUserInputDirect(messages: any, agentId: string = WS_CHANNEL): Promise<string> {
-    const threadId = nextThreadId();
+  private async processUserInputDirect(messages: any, agentId: string = WS_CHANNEL, threadId?: string): Promise<string> {
+    threadId = threadId || nextThreadId();
 
     // Get or create persistent AgentGraph for this thread
     const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId);
