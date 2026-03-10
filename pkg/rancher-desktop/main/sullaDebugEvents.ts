@@ -331,5 +331,65 @@ export function initSullaDebugEvents(): void {
     }
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // Live conversation stream (push events to renderer via IPC)
+  // ─────────────────────────────────────────────────────────────
+
+  let liveConvListener: ((...args: any[]) => void) | null = null;
+  let liveEventListener: ((...args: any[]) => void) | null = null;
+
+  ipcMainProxy.handle('debug-live-start', async (event: any) => {
+    try {
+      const { getConversationLogger } = await import('@pkg/agent/services/ConversationLogger');
+      const logger = getConversationLogger();
+      const sender = event.sender;
+
+      // Clean up any existing listeners
+      if (liveConvListener) logger.removeListener('conversation', liveConvListener);
+      if (liveEventListener) logger.removeListener('event', liveEventListener);
+
+      liveConvListener = (data: any) => {
+        try {
+          if (!sender.isDestroyed()) {
+            sender.send('debug-live-conversation', data);
+          }
+        } catch { /* renderer gone */ }
+      };
+
+      liveEventListener = (data: any) => {
+        try {
+          if (!sender.isDestroyed()) {
+            sender.send('debug-live-event', data);
+          }
+        } catch { /* renderer gone */ }
+      };
+
+      logger.on('conversation', liveConvListener);
+      logger.on('event', liveEventListener);
+
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMainProxy.handle('debug-live-stop', async () => {
+    try {
+      const { getConversationLogger } = await import('@pkg/agent/services/ConversationLogger');
+      const logger = getConversationLogger();
+      if (liveConvListener) {
+        logger.removeListener('conversation', liveConvListener);
+        liveConvListener = null;
+      }
+      if (liveEventListener) {
+        logger.removeListener('event', liveEventListener);
+        liveEventListener = null;
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   console.log('[SullaDebugEvents] Debug IPC handlers registered');
 }

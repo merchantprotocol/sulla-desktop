@@ -13,6 +13,7 @@
  * conversation references its child graph conversations via parentId.
  */
 
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -44,13 +45,15 @@ export interface ConversationEvent {
 
 // ── Logger ──
 
-class ConversationLoggerImpl {
+class ConversationLoggerImpl extends EventEmitter {
   private dir: string;
   private indexPath: string;
   /** Set to true to disable all logging. */
   private disabled = false;
 
   constructor() {
+    super();
+    this.setMaxListeners(20);
     this.dir = resolveSullaLogsDir();
     this.indexPath = path.join(this.dir, 'index.jsonl');
   }
@@ -73,6 +76,7 @@ class ConversationLoggerImpl {
     try {
       this.ensureDir();
       fs.appendFileSync(this.indexPath, JSON.stringify(meta) + '\n', 'utf-8');
+      this.emit('conversation', { kind: 'start', meta });
     } catch (err) {
       console.error('[ConversationLogger] Failed to write index entry:', err);
     }
@@ -87,6 +91,7 @@ class ConversationLoggerImpl {
     try {
       this.ensureDir();
       fs.appendFileSync(this.indexPath, JSON.stringify({ ...meta, _update: true }) + '\n', 'utf-8');
+      this.emit('conversation', { kind: 'update', meta });
     } catch (err) {
       console.error('[ConversationLogger] Failed to update index:', err);
     }
@@ -101,6 +106,7 @@ class ConversationLoggerImpl {
       this.ensureDir();
       const filePath = this.eventFilePath(conversationId);
       fs.appendFileSync(filePath, JSON.stringify(event) + '\n', 'utf-8');
+      this.emit('event', { conversationId, event });
     } catch (err) {
       console.error('[ConversationLogger] Failed to write event:', err);
     }

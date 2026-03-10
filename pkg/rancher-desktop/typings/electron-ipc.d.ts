@@ -291,6 +291,8 @@ export interface IpcMainInvokeEvents {
   'debug-ws-tap':              (enabled: boolean) => { ok: boolean; error?: string };
   'debug-ws-messages':         (connectionId?: string, limit?: number) => Array<{ connectionId: string; direction: 'in' | 'out'; message: any; ts: number }>;
   'debug-service-detail':      (serviceKey: string) => any;
+  'debug-live-start':          () => { ok: boolean; error?: string };
+  'debug-live-stop':           () => { ok: boolean; error?: string };
   // #endregion
 
   // #region Config API (integration YAML -> live API calls)

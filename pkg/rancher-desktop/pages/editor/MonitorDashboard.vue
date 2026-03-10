@@ -209,6 +209,177 @@
       </div>
     </div>
 
+    <!-- Live Conversations Section -->
+    <div v-if="activeSection === 'live'" class="dashboard-content live-layout">
+      <div class="dashboard-header">
+        <h2 class="dashboard-title">Live Conversations</h2>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <span v-if="livePolling" class="live-indicator">
+            <span class="live-dot"></span> LIVE
+          </span>
+          <button class="refresh-btn" @click="fetchConversations">Refresh</button>
+        </div>
+      </div>
+
+      <div class="live-split">
+        <!-- Session List (left) -->
+        <div class="live-sessions">
+          <div class="live-sessions-header">
+            <span class="live-sessions-title">Sessions</span>
+            <span class="live-sessions-count">{{ activeConversations.length }} active</span>
+          </div>
+          <div v-if="liveConversations.length === 0" class="empty-msg" style="padding: 16px;">No conversations</div>
+          <div
+            v-for="conv in liveConversations"
+            :key="conv.id"
+            class="live-session-item"
+            :class="{ selected: liveSelectedConv === conv.id, running: conv.status === 'running' }"
+            @click="selectLiveConversation(conv.id)"
+          >
+            <div class="live-session-top">
+              <span class="live-session-status">
+                <span class="live-status-dot" :class="conv.status === 'running' ? 'dot-running' : conv.status === 'completed' ? 'dot-ok' : 'dot-err'"></span>
+              </span>
+              <span class="live-session-name">{{ conv.name || conv.id.slice(0, 16) }}</span>
+            </div>
+            <div class="live-session-meta">
+              <span v-if="conv.channel" class="live-session-channel">{{ conv.channel }}</span>
+              <span v-if="conv.agentId" class="live-session-agent">{{ conv.agentId }}</span>
+              <span class="live-session-time">{{ formatTimestamp(conv.startedAt) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Thread View (right) -->
+        <div class="live-thread">
+          <div v-if="!liveSelectedConv" class="live-thread-empty">
+            <p class="empty-msg">Select a conversation to watch</p>
+          </div>
+          <template v-else>
+            <div class="live-thread-header">
+              <div class="live-thread-info">
+                <span class="live-thread-name">{{ liveSelectedConvMeta?.name || liveSelectedConv?.slice(0, 20) }}</span>
+                <span v-if="liveSelectedConvMeta" class="live-thread-detail">
+                  {{ liveSelectedConvMeta.channel || '' }} · {{ liveSelectedConvMeta.agentId || '' }}
+                </span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span
+                  v-if="liveSelectedConvMeta"
+                  class="status-badge"
+                  :class="liveSelectedConvMeta.status === 'running' ? 'badge-info' : liveSelectedConvMeta.status === 'completed' ? 'badge-ok' : 'badge-err'"
+                >
+                  {{ liveSelectedConvMeta.status }}
+                </span>
+              </div>
+            </div>
+            <div ref="liveThreadScroll" class="live-thread-messages">
+              <div v-if="liveEventsLoading && liveThreadEvents.length === 0" class="empty-msg" style="padding: 20px;">Loading...</div>
+              <div v-else-if="liveThreadEvents.length === 0" class="empty-msg" style="padding: 20px;">No events yet</div>
+              <template v-else>
+                <div class="live-thread-spacer"></div>
+                <template v-for="(evt, i) in liveThreadEvents" :key="i">
+                  <!-- User message -->
+                  <div v-if="evt.type === 'message' && evt.role === 'user'" class="live-msg live-msg-user">
+                    <div class="live-bubble live-bubble-user">
+                      <div class="live-bubble-content">{{ evt.content }}</div>
+                    </div>
+                    <div class="live-msg-time">{{ formatTimestamp(evt.ts) }}</div>
+                  </div>
+
+                  <!-- Assistant message -->
+                  <div v-else-if="evt.type === 'message' && evt.role === 'assistant'" class="live-msg live-msg-assistant">
+                    <div class="live-bubble live-bubble-assistant">
+                      <div class="live-bubble-content prose-content" v-html="renderMarkdown(String(evt.content || ''))"></div>
+                    </div>
+                    <div class="live-msg-time">{{ formatTimestamp(evt.ts) }}</div>
+                  </div>
+
+                  <!-- System message -->
+                  <div v-else-if="evt.type === 'message' && evt.role === 'system'" class="live-msg live-msg-system">
+                    <div class="live-bubble live-bubble-system">
+                      <div class="live-bubble-content">{{ truncateText(String(evt.content || ''), 500) }}</div>
+                    </div>
+                    <div class="live-msg-time">{{ formatTimestamp(evt.ts) }}</div>
+                  </div>
+
+                  <!-- Tool call -->
+                  <div v-else-if="evt.type === 'tool_call'" class="live-msg live-msg-tool">
+                    <div class="live-bubble live-bubble-tool" @click="toggleLiveToolCard(i)">
+                      <div class="live-tool-header">
+                        <span class="live-tool-icon">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                        </span>
+                        <span class="live-tool-name">{{ evt.toolName }}</span>
+                        <span
+                          v-if="evt.result && typeof evt.result === 'object' && (evt.result as any).error"
+                          class="live-tool-status-badge badge-err"
+                        >error</span>
+                        <span v-else class="live-tool-status-badge badge-ok">ok</span>
+                        <svg
+                          width="10" height="10" viewBox="0 0 15 15" fill="currentColor"
+                          class="live-tool-chevron" :class="{ expanded: liveExpandedTools.has(i) }"
+                        >
+                          <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill-rule="evenodd" clip-rule="evenodd"/>
+                        </svg>
+                      </div>
+                      <div v-if="liveExpandedTools.has(i)" class="live-tool-details">
+                        <div v-if="evt.args" class="live-tool-section">
+                          <div class="live-tool-label">Args</div>
+                          <pre class="live-tool-pre"><code>{{ typeof evt.args === 'string' ? evt.args : JSON.stringify(evt.args, null, 2) }}</code></pre>
+                        </div>
+                        <div v-if="evt.result !== undefined" class="live-tool-section">
+                          <div class="live-tool-label">Result</div>
+                          <pre class="live-tool-pre"><code>{{ typeof evt.result === 'string' ? evt.result : JSON.stringify(evt.result, null, 2) }}</code></pre>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="live-msg-time">{{ formatTimestamp(evt.ts) }}</div>
+                  </div>
+
+                  <!-- LLM call (thinking) -->
+                  <div v-else-if="evt.type === 'llm_call'" class="live-msg live-msg-thinking">
+                    <div class="live-bubble live-bubble-thinking">
+                      <span class="live-thinking-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                      </span>
+                      <span class="live-thinking-text">
+                        {{ evt.direction === 'request' ? 'Thinking...' : 'Response received' }}
+                        <span v-if="evt.model" class="live-thinking-model">{{ evt.model }}</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- Node events -->
+                  <div v-else-if="evt.type === 'node_event'" class="live-msg live-msg-node">
+                    <div class="live-bubble live-bubble-node">
+                      <span class="live-node-label">{{ evt.nodeLabel || evt.nodeId || 'node' }}</span>
+                      <span v-if="evt.data" class="live-node-data">{{ truncateText(JSON.stringify(evt.data), 200) }}</span>
+                    </div>
+                  </div>
+
+                  <!-- Graph lifecycle events -->
+                  <div v-else-if="evt.type && (evt.type.includes('started') || evt.type.includes('completed'))" class="live-msg live-msg-lifecycle">
+                    <div class="live-lifecycle-badge" :class="evt.type.includes('completed') ? 'lifecycle-completed' : 'lifecycle-started'">
+                      {{ evt.type.replace(/_/g, ' ') }}
+                      <span v-if="(evt as any).durationMs" class="live-lifecycle-dur">{{ formatDuration((evt as any).durationMs) }}</span>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Thinking indicator for running conversations -->
+                <div v-if="liveSelectedConvMeta?.status === 'running' && isLiveThinking" class="live-msg live-msg-assistant">
+                  <div class="live-bubble live-bubble-thinking-active">
+                    <span class="live-thinking-anim">Sulla is thinking<span class="dot-anim">...</span></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
     <!-- Conversations Section -->
     <div v-if="activeSection === 'conversations'" class="dashboard-content">
       <div class="dashboard-header">
@@ -343,7 +514,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
 
 const { ipcRenderer } = window.require('electron');
 
@@ -378,6 +551,121 @@ const convThreadFilter = ref('');
 const expandedConv = ref<string | null>(null);
 const convEvents = ref<any[]>([]);
 const convEventsLoading = ref(false);
+
+// ── Live conversation spy state ──
+const liveSelectedConv = ref<string | null>(null);
+const liveThreadEvents = ref<any[]>([]);
+const liveEventsLoading = ref(false);
+const livePolling = ref(false);
+const liveExpandedTools = reactive(new Set<number>());
+const liveThreadScroll = ref<HTMLElement>();
+let liveStreamActive = false;
+
+const activeConversations = computed(() => conversations.value.filter(c => c.status === 'running'));
+const liveConversations = computed(() => {
+  // Show running first, then recent completed/failed
+  const running = conversations.value.filter(c => c.status === 'running');
+  const others = conversations.value.filter(c => c.status !== 'running').slice(0, 30);
+  return [...running, ...others];
+});
+
+const liveSelectedConvMeta = computed(() => {
+  if (!liveSelectedConv.value) return null;
+  return conversations.value.find(c => c.id === liveSelectedConv.value) || null;
+});
+
+const isLiveThinking = computed(() => {
+  if (liveThreadEvents.value.length === 0) return false;
+  const last = liveThreadEvents.value[liveThreadEvents.value.length - 1];
+  return last.type === 'llm_call' && last.direction === 'request';
+});
+
+function renderMarkdown(content: string): string {
+  const raw = typeof content === 'string' ? content : String(content || '');
+  const html = (marked(raw) as string) || '';
+  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+}
+
+function toggleLiveToolCard(index: number) {
+  if (liveExpandedTools.has(index)) {
+    liveExpandedTools.delete(index);
+  } else {
+    liveExpandedTools.add(index);
+  }
+}
+
+function scrollLiveToBottom() {
+  nextTick(() => {
+    if (liveThreadScroll.value) {
+      liveThreadScroll.value.scrollTop = liveThreadScroll.value.scrollHeight;
+    }
+  });
+}
+
+// IPC push handlers for real-time events
+function onLiveConversation(_ipcEvent: any, data: any) {
+  if (!data) return;
+  if (data.kind === 'start' && data.meta) {
+    // New conversation appeared — add to list if not already present
+    const existing = conversations.value.find(c => c.id === data.meta.id);
+    if (!existing) {
+      conversations.value.unshift(data.meta);
+    }
+  } else if (data.kind === 'update' && data.meta) {
+    // Conversation updated (completed, error, etc.)
+    const idx = conversations.value.findIndex(c => c.id === data.meta.id);
+    if (idx >= 0) {
+      conversations.value[idx] = { ...conversations.value[idx], ...data.meta };
+    }
+  }
+}
+
+function onLiveEvent(_ipcEvent: any, data: any) {
+  if (!data || !data.conversationId || !data.event) return;
+  // Only append to the thread we're currently watching
+  if (data.conversationId === liveSelectedConv.value) {
+    liveThreadEvents.value.push(data.event);
+    scrollLiveToBottom();
+  }
+}
+
+async function startLiveStream() {
+  if (liveStreamActive) return;
+  liveStreamActive = true;
+  livePolling.value = true;
+  ipcRenderer.on('debug-live-conversation', onLiveConversation);
+  ipcRenderer.on('debug-live-event', onLiveEvent);
+  await ipcRenderer.invoke('debug-live-start');
+}
+
+async function stopLiveStream() {
+  if (!liveStreamActive) return;
+  liveStreamActive = false;
+  livePolling.value = false;
+  ipcRenderer.removeListener('debug-live-conversation', onLiveConversation);
+  ipcRenderer.removeListener('debug-live-event', onLiveEvent);
+  try {
+    await ipcRenderer.invoke('debug-live-stop');
+  } catch { /* ignore */ }
+}
+
+async function selectLiveConversation(id: string) {
+  liveSelectedConv.value = id;
+  liveExpandedTools.clear();
+  // Load existing events for this conversation (historical)
+  liveEventsLoading.value = true;
+  try {
+    const events = await ipcRenderer.invoke('debug-conversation-events', id);
+    liveThreadEvents.value = events || [];
+    scrollLiveToBottom();
+  } catch {
+    liveThreadEvents.value = [];
+  } finally {
+    liveEventsLoading.value = false;
+  }
+  // Start streaming new events in real-time
+  await startLiveStream();
+}
 
 const uniqueWorkflows = computed(() => {
   const names = new Set<string>();
@@ -513,11 +801,22 @@ defineExpose({ refreshAll });
 
 // Auto-refresh
 let timer: ReturnType<typeof setInterval> | null = null;
-onMounted(() => { refreshAll(); timer = setInterval(refreshAll, 15000); });
-onUnmounted(() => { if (timer) clearInterval(timer); });
+onMounted(() => {
+  refreshAll();
+  timer = setInterval(refreshAll, 15000);
+  if (props.activeSection === 'live') startLiveStream();
+});
+onUnmounted(() => { if (timer) clearInterval(timer); stopLiveStream(); });
 
-// Refresh when section changes
-watch(() => props.activeSection, () => refreshAll());
+// Refresh when section changes; start/stop live stream
+watch(() => props.activeSection, (section) => {
+  refreshAll();
+  if (section === 'live') {
+    startLiveStream();
+  } else {
+    stopLiveStream();
+  }
+});
 
 // ── Formatting ──
 function formatTime(ts: number): string {
@@ -969,4 +1268,339 @@ function convEventBadgeClass(type: string): string {
 .clickable:hover { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3); }
 tr.clickable:hover { box-shadow: none; background: rgba(59, 130, 246, 0.06); }
 .dark tr.clickable:hover { background: rgba(59, 130, 246, 0.1); }
+
+/* ── Live Conversations ── */
+.live-layout { padding: 0 !important; display: flex; flex-direction: column; height: 100%; }
+.live-layout .dashboard-header { padding: 16px 24px 12px; flex-shrink: 0; }
+
+.live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ef4444;
+  letter-spacing: 0.5px;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: livePulse 1.5s ease-in-out infinite;
+}
+@keyframes livePulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
+}
+
+.live-split {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  border-top: 1px solid #e2e8f0;
+}
+.dark .live-split { border-color: #334155; }
+
+/* Sessions sidebar */
+.live-sessions {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dark .live-sessions { border-color: #334155; }
+
+.live-sessions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.dark .live-sessions-header { border-color: #334155; }
+.live-sessions-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; color: #64748b; }
+.dark .live-sessions-title { color: #94a3b8; }
+.live-sessions-count { font-size: 10px; color: #94a3b8; }
+
+.live-session-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid #f1f5f9;
+  transition: background 0.1s;
+}
+.live-session-item:hover { background: rgba(0, 0, 0, 0.03); }
+.dark .live-session-item { border-color: #1e293b; }
+.dark .live-session-item:hover { background: rgba(255, 255, 255, 0.03); }
+.live-session-item.selected { background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; }
+.dark .live-session-item.selected { background: rgba(59, 130, 246, 0.12); }
+.live-session-item.running { }
+
+.live-session-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.live-session-status { flex-shrink: 0; }
+.live-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot-running { background: #3b82f6; animation: livePulse 1.5s ease-in-out infinite; }
+.live-session-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dark .live-session-name { color: #f1f5f9; }
+
+.live-session-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  padding-left: 16px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+.live-session-channel { font-family: monospace; }
+.live-session-agent { font-family: monospace; }
+.live-session-time { margin-left: auto; }
+
+/* Thread view */
+.live-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.live-thread-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live-thread-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.dark .live-thread-header { border-color: #334155; }
+.live-thread-info { display: flex; flex-direction: column; gap: 2px; }
+.live-thread-name { font-size: 14px; font-weight: 600; color: #0f172a; }
+.dark .live-thread-name { color: #f1f5f9; }
+.live-thread-detail { font-size: 11px; color: #94a3b8; }
+
+.live-thread-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.live-thread-spacer { flex: 1; min-height: 0; }
+
+/* Message bubbles */
+.live-msg { display: flex; flex-direction: column; }
+.live-msg-time { font-size: 10px; color: #94a3b8; margin-top: 2px; padding: 0 4px; }
+
+.live-msg-user { align-items: flex-end; }
+.live-msg-assistant { align-items: flex-start; }
+.live-msg-system { align-items: center; }
+.live-msg-tool { align-items: flex-start; }
+.live-msg-thinking { align-items: center; }
+.live-msg-node { align-items: center; }
+.live-msg-lifecycle { align-items: center; }
+
+.live-bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.live-bubble-user {
+  background: #e0f2fe;
+  color: #0c4a6e;
+  border-bottom-right-radius: 4px;
+}
+.dark .live-bubble-user {
+  background: rgba(56, 189, 248, 0.15);
+  color: #e0f2fe;
+}
+
+.live-bubble-assistant {
+  background: #f1f5f9;
+  color: #334155;
+  border-bottom-left-radius: 4px;
+}
+.dark .live-bubble-assistant {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+}
+
+.live-bubble-system {
+  background: #fefce8;
+  color: #713f12;
+  font-size: 12px;
+  max-width: 90%;
+  border-radius: 8px;
+}
+.dark .live-bubble-system {
+  background: rgba(250, 204, 21, 0.1);
+  color: #fde68a;
+}
+
+.live-bubble-content { white-space: pre-wrap; }
+
+.live-bubble .prose-content { white-space: normal; }
+.live-bubble .prose-content :deep(p) { margin: 0 0 0.5em; }
+.live-bubble .prose-content :deep(p:last-child) { margin-bottom: 0; }
+.live-bubble .prose-content :deep(pre) {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 8px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 4px 0;
+}
+.dark .live-bubble .prose-content :deep(pre) { background: #0f172a; }
+.live-bubble .prose-content :deep(code) { font-size: 12px; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; }
+.live-bubble .prose-content :deep(code:not(pre code)) { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; }
+.dark .live-bubble .prose-content :deep(code:not(pre code)) { background: rgba(255,255,255,0.1); }
+
+/* Tool call bubble */
+.live-bubble-tool {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+  max-width: 90%;
+}
+.dark .live-bubble-tool {
+  background: #1e293b;
+  border-color: #334155;
+  color: #94a3b8;
+}
+.live-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.live-tool-icon { display: flex; color: #64748b; flex-shrink: 0; }
+.dark .live-tool-icon { color: #94a3b8; }
+.live-tool-name { font-family: monospace; font-size: 11px; font-weight: 500; }
+.live-tool-status-badge { font-size: 9px; padding: 1px 5px; border-radius: 6px; font-weight: 500; }
+.live-tool-chevron {
+  margin-left: auto;
+  color: #94a3b8;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.live-tool-chevron.expanded { transform: rotate(180deg); }
+
+.live-tool-details {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(0,0,0,0.06);
+}
+.dark .live-tool-details { border-top-color: rgba(255,255,255,0.08); }
+.live-tool-section { margin-bottom: 4px; }
+.live-tool-label { font-size: 10px; font-weight: 600; color: #64748b; margin-bottom: 2px; }
+.dark .live-tool-label { color: #94a3b8; }
+.live-tool-pre {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 11px;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.dark .live-tool-pre { background: #0f172a; }
+
+/* Thinking bubble */
+.live-bubble-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.live-thinking-icon { display: flex; color: #64748b; }
+.live-thinking-text { font-style: italic; }
+.live-thinking-model { font-family: monospace; font-size: 10px; color: #64748b; margin-left: 4px; }
+.dark .live-thinking-model { color: #475569; }
+
+.live-bubble-thinking-active {
+  background: rgba(59, 130, 246, 0.06);
+  color: #3b82f6;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+.dark .live-bubble-thinking-active {
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+}
+.live-thinking-anim { font-style: italic; }
+
+/* Node event */
+.live-bubble-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.live-node-label { font-family: monospace; font-weight: 500; color: #64748b; }
+.dark .live-node-label { color: #94a3b8; }
+.live-node-data { font-size: 10px; color: #94a3b8; }
+
+/* Lifecycle badge */
+.live-lifecycle-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 3px 10px;
+  border-radius: 10px;
+}
+.lifecycle-started { background: rgba(59, 130, 246, 0.08); color: #3b82f6; }
+.lifecycle-completed { background: rgba(34, 197, 94, 0.08); color: #22c55e; }
+.dark .lifecycle-started { background: rgba(59, 130, 246, 0.12); color: #60a5fa; }
+.dark .lifecycle-completed { background: rgba(34, 197, 94, 0.12); color: #4ade80; }
+.live-lifecycle-dur { font-family: monospace; font-size: 10px; }
 </style>
