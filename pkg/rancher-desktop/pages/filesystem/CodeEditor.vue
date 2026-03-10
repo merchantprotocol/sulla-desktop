@@ -6,33 +6,25 @@
 import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import * as monaco from 'monaco-editor';
 
-// Configure Monaco to work in Electron without web workers
+// Configure Monaco workers for Electron
+// See: https://github.com/microsoft/monaco-editor/blob/main/samples/electron-esm-webpack/index.js
 (self as any).MonacoEnvironment = {
-  getWorker(moduleId: string, label: string) {
-    // Return a mock worker that does nothing for all modules
-    return {
-      postMessage: () => {},
-      terminate: () => {},
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    };
+  getWorkerUrl(_moduleId: string, label: string) {
+    if (label === 'json') {
+      return './json.worker.bundle.js';
+    }
+    if (label === 'css' || label === 'scss' || label === 'less') {
+      return './css.worker.bundle.js';
+    }
+    if (label === 'html' || label === 'handlebars' || label === 'razor') {
+      return './html.worker.bundle.js';
+    }
+    if (label === 'typescript' || label === 'javascript') {
+      return './ts.worker.bundle.js';
+    }
+    return './editor.worker.bundle.js';
   },
 };
-
-// Completely disable web workers and language services that require them
-const monacoConfig: Record<string, { enableWorker: boolean }> = {
-  // Disable all language features that require web workers
-  'json': { enableWorker: false },
-  'css': { enableWorker: false },
-  'html': { enableWorker: false },
-  'typescript': { enableWorker: false },
-  'javascript': { enableWorker: false },
-};
-
-// Apply the configuration
-Object.keys(monacoConfig).forEach(lang => {
-  (monaco.languages as any).setLanguageConfiguration(lang, monacoConfig[lang]);
-});
 
 const EXT_LANGUAGE_MAP: Record<string, string> = {
   '.ts':         'typescript',
@@ -124,19 +116,6 @@ export default defineComponent({
       }
 
       try {
-        // Additional worker disabling right before editor creation
-        (self as any).MonacoEnvironment = {
-          getWorker(moduleId: string, label: string) {
-            return {
-              postMessage: () => {},
-              terminate: () => {},
-              addEventListener: () => {},
-              removeEventListener: () => {},
-              onmessage: null,
-            };
-          },
-        };
-
         const language = getLanguageFromFile(props.fileExt, props.filePath);
 
         console.log('CodeEditor: Creating editor with content length:', props.content?.length);
