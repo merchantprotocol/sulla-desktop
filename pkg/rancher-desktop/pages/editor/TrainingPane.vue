@@ -795,7 +795,7 @@
             </svg>
             Back
           </button>
-          <button class="tp-btn-primary tp-btn-train" :disabled="totalExamples === 0">
+          <button class="tp-btn-primary tp-btn-train" :disabled="totalExamples === 0" @click="startTraining">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3"/>
             </svg>
@@ -867,6 +867,7 @@ export default defineComponent({
     const selectedFolders = ref<string[]>([]);
     const selectedFiles = ref<string[]>([]);
     const preprocessing = ref(false);
+    const scheduledForNightly = ref(false);
 
     // ─── Training data state (Step 2) ───
     interface DataFile {
@@ -1635,9 +1636,18 @@ export default defineComponent({
       }
     }
 
-    const scheduledForNightly = ref(false);
+    async function startTraining() {
+      try {
+        const result = await ipcRenderer.invoke('training-train-conversations-now');
+        // Training started successfully - result contains log info
+        console.log('[TrainingPane] Training started:', result);
+      } catch (err) {
+        console.error('[TrainingPane] Failed to start training:', err);
+        // Could emit an error event or show a toast here
+      }
+    };
 
-    onMounted(async() => {
+    onMounted(async () => {
       await checkInstallStatus();
       loadDownloadedModels();
       loadLlmModels();
@@ -1753,6 +1763,7 @@ export default defineComponent({
       selectedDataScale,
       selectedDataScaleLabel,
       selectedDataScalePct,
+      startTraining,
     };
   },
 });
