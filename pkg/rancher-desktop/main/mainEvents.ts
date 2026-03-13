@@ -175,6 +175,12 @@ interface MainEventNames {
    * Quit the application.
    */
   'app-quit'(): void;
+
+  /**
+   * Emitted when the app is restarting (not fully quitting).
+   * Used to skip container/VM teardown during restart.
+   */
+  'restarting'(): void;
 }
 
 /**

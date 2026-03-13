@@ -39,7 +39,7 @@ import { Snapshots } from '@pkg/main/snapshots/snapshots';
 import { Snapshot, SnapshotDialog } from '@pkg/main/snapshots/types';
 import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
-import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
+import { hookSullaEnd, sullaEnd, onMainProxyLoad, markSullaRestarting } from '@pkg/sulla';
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { spawnFile } from '@pkg/utils/childProcess';
 import getCommandLineArgs from '@pkg/utils/commandLine';
@@ -706,6 +706,14 @@ function isK8sError(object: any): object is K8sError {
   return 'errCode' in object;
 }
 
+// When true, the app is restarting (not fully quitting) — skip container/VM teardown
+let isRestarting = false;
+
+mainEvents.on('restarting', () => {
+  isRestarting = true;
+  markSullaRestarting();
+});
+
 Electron.app.on('before-quit', async(event) => {
   if (gone) {
     mainEvents.emit('quit');
@@ -729,6 +737,15 @@ Electron.app.on('before-quit', async(event) => {
     ////////////////////////////////////////////////////////////////////////////////
     // SULLA DESKTOP - END
     ////////////////////////////////////////////////////////////////////////////////
+
+  if (isRestarting) {
+    // Restart: skip container/VM teardown so the app relaunches fast
+    console.log('[Restart] Skipping container/VM shutdown — restarting Electron only');
+    gone = true;
+    Electron.app.quit();
+
+    return;
+  }
 
   try {
     await mainEvents.tryInvoke('extensions/shutdown');

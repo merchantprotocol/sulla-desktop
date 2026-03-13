@@ -23,6 +23,13 @@ import * as fs from 'fs';
 /** Track whether Sulla services were actually started during this session. */
 let sullaDockerServicesStarted = false;
 
+/** When true, the app is restarting — skip Docker Compose teardown. */
+let sullaIsRestarting = false;
+
+export function markSullaRestarting(): void {
+  sullaIsRestarting = true;
+}
+
 export function markSullaDockerServicesStarted(): void {
   sullaDockerServicesStarted = true;
 }
@@ -75,6 +82,11 @@ const checkDockerMode = async () => {
  * Only runs if services were actually started this session AND Docker daemon is reachable.
  */
 const trySullaComposeDown = (): void => {
+  if (sullaIsRestarting) {
+    console.log('[Shutdown] Skipping compose down — app is restarting');
+
+    return;
+  }
   if (!sullaDockerServicesStarted) {
     return;
   }

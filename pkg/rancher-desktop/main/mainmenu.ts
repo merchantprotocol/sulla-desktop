@@ -60,6 +60,7 @@ function getApplicationMenu(): MenuItem[] {
 }
 
 function restartApplication(): void {
+  mainEvents.emit('restarting');
   Electron.app.relaunch();
   Electron.app.quit();
 }
