@@ -761,7 +761,16 @@ async function fetchWsMessages() {
 
 async function fetchConversations() {
   try {
-    conversations.value = await ipcRenderer.invoke('debug-conversations-list');
+    const fetched = await ipcRenderer.invoke('debug-conversations-list') as any[];
+    if (!fetched || fetched.length === 0) {
+      // Don't overwrite live-pushed conversations with empty results
+      return;
+    }
+    // Merge: fetched data is authoritative, but preserve any live-pushed
+    // conversations not yet persisted to the index file
+    const fetchedById = new Map(fetched.map((c: any) => [c.id, c]));
+    const livePushedOnly = conversations.value.filter(c => !fetchedById.has(c.id));
+    conversations.value = [...livePushedOnly, ...fetched];
   } catch (err) {
     console.error('[MonitorDashboard] Conversations fetch failed:', err);
   }

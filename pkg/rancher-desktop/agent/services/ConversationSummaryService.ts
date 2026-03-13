@@ -548,5 +548,18 @@ export class ConversationSummaryService {
         _conversationSummary: true, // Flag for identification
       }
     });
+
+    // Guard against consecutive assistant messages after unshift.
+    // If the first remaining message is also assistant-role, insert a
+    // synthetic user message to satisfy the alternating-role requirement.
+    if (state.messages.length >= 2
+        && state.messages[0]?.role === 'assistant'
+        && state.messages[1]?.role === 'assistant') {
+      state.messages.splice(1, 0, {
+        role:     'user',
+        content:  '(continued)',
+        metadata: { _synthetic: true, timestamp: Date.now() },
+      });
+    }
   }
 }

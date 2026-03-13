@@ -224,14 +224,20 @@ export class AgentNode extends BaseNode {
         state.messages = [];
       }
       const normalizedUserVisibleResult = userVisibleResultText.trim();
+      const stripWrapperXml = (text: string): string => text
+        .replace(AGENT_DONE_XML_REGEX, '')
+        .replace(AGENT_BLOCKED_XML_REGEX, '')
+        .replace(AGENT_CONTINUE_XML_REGEX, '')
+        .trim();
+
       const alreadyStored = state.messages.some((msg: any) => {
         if (msg.role !== 'assistant') return false;
-        // Match string content
-        if (typeof msg.content === 'string' && msg.content.trim() === normalizedUserVisibleResult) return true;
+        // Match string content (strip wrapper XML so raw responses match their stripped counterparts)
+        if (typeof msg.content === 'string' && stripWrapperXml(msg.content) === normalizedUserVisibleResult) return true;
         // Match text inside native content arrays (e.g. [{ type: 'text', text: '...' }, { type: 'tool_use', ... }])
         if (Array.isArray(msg.content)) {
           return msg.content.some((block: any) =>
-            block?.type === 'text' && typeof block.text === 'string' && block.text.trim() === normalizedUserVisibleResult,
+            block?.type === 'text' && typeof block.text === 'string' && stripWrapperXml(block.text) === normalizedUserVisibleResult,
           );
         }
         return false;
