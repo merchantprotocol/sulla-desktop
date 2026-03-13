@@ -2100,6 +2100,20 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * Handles preparation of compose file, deployment, health checks, and model pulling.
    */
   async sullaStepDockerEnvironment(): Promise<void> {
+    // Check if Sulla services are already running — skip redeploy on restart
+    const alreadyRunning = await this.areSullaServicesRunning();
+
+    if (alreadyRunning) {
+      console.log('[Sulla] Services already running — skipping Docker Compose redeploy');
+      this.progressTracker.numeric('Sulla services already running', 64, 100);
+      markSullaDockerServicesStarted();
+      instantiateSullaStart();
+      mainEvents.emit('sulla-first-run-complete');
+      this.progressTracker.numeric('Sulla deployment completed', 100, 100);
+
+      return;
+    }
+
     await this.progressTracker.action('Preparing Sulla Docker Compose file', 30, async () => {
       this.progressTracker.numeric('Preparing Sulla Docker Compose file', 5, 100);
       await this.prepareSullaComposeFile();
@@ -2123,6 +2137,36 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     mainEvents.emit('sulla-first-run-complete');
 
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
+  }
+
+  /**
+   * Check if all core Sulla Docker services are already running.
+   * Returns true if all required containers exist and are in "running" state.
+   */
+  private async areSullaServicesRunning(): Promise<boolean> {
+    const requiredServices = ['sulla_postgres', 'sulla_redis', 'sulla_n8n'];
+
+    try {
+      for (const service of requiredServices) {
+        const status = await this.execCommand(
+          { capture: true, root: true },
+          'docker', 'ps', '--filter', `name=${service}`, '--filter', 'status=running', '--format', '{{.Names}}',
+        );
+
+        if (!status.trim().includes(service)) {
+          console.log(`[Sulla] Service ${service} not running — will redeploy`);
+
+          return false;
+        }
+      }
+      console.log('[Sulla] All core services already running');
+
+      return true;
+    } catch (err) {
+      console.log('[Sulla] Failed to check service status, will redeploy:', err);
+
+      return false;
+    }
   }
 
   /**

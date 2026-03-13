@@ -7,9 +7,12 @@ import { State } from '@pkg/backend/k8s';
 import { Settings } from '@pkg/config/settings';
 import mainEvents from '@pkg/main/mainEvents';
 import paths from '@pkg/utils/paths';
+import Logging from '@pkg/utils/logging';
 import { openDockerDashboard, openLanguageModelSettings, openModelTraining, openMain, openEditor } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
+
+const console = Logging.mainmenu;
 
 // State for dynamic menu updates
 let kubernetesState: State = State.STOPPED;
@@ -60,7 +63,9 @@ function getApplicationMenu(): MenuItem[] {
 }
 
 function restartApplication(): void {
+  console.log('[Shutdown] restartApplication() called — emitting "restarting" event');
   mainEvents.emit('restarting');
+  console.log('[Shutdown] "restarting" event emitted, calling app.relaunch() + app.quit()');
   Electron.app.relaunch();
   Electron.app.quit();
 }

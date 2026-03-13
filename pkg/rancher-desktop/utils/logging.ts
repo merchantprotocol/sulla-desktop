@@ -68,7 +68,7 @@ export class Log {
    * are readable).
    * @note This is only used during E2E tests where we do a factory reset.
    */
-  protected reopen(mode = 'w') {
+  protected reopen(mode = 'a') {
     if ((process.env.RD_TEST ?? '').includes('e2e')) {
       // If we're running E2E tests, we may need to create the log directory.
       // We don't do this normally because it's synchronous and slow.
@@ -80,6 +80,9 @@ export class Log {
       this.stream.on('open', resolve);
     });
     delete this._fdStream;
+
+    // Write a session separator so log sessions are distinguishable
+    this.realStream.write(`\n${'='.repeat(80)}\n=== SESSION START: ${new Date().toISOString()} (PID ${process.pid}) ===\n${'='.repeat(80)}\n`);
 
     // If we're running unit tests, output to the console rather than file.
     // However, _don't_ do so for end-to-end tests in Playwright.
@@ -189,10 +192,18 @@ export default new Proxy<Module>({}, {
 });
 
 /**
- * Delete any existing log files from the logging directory, with the exception
- * of those that are already in use by Rancher Desktop. Should only be run once
- * we are certain that this is the only instance of Rancher Desktop running on
- * the system, so that logs from another instance are not deleted.
+ * Max size per log file in bytes before trimming (500KB).
+ * On startup, if a log file exceeds this, only the last MAX_LOG_SIZE bytes are kept.
+ */
+const MAX_LOG_SIZE = 500 * 1024;
+
+/**
+ * Clean up the logging directory on startup:
+ * - Delete log files for topics that are not currently in use
+ * - Trim active log files that exceed MAX_LOG_SIZE (keep the tail)
+ *
+ * Should only be run once we are certain that this is the only instance
+ * of Rancher Desktop running on the system.
  */
 export function clearLoggingDirectory(): void {
   if ((process.env.RD_TEST ?? '').includes('e2e') || process.type !== 'browser') {
@@ -204,14 +215,34 @@ export function clearLoggingDirectory(): void {
   for (const entry of entries) {
     if (entry.isFile() && entry.name.endsWith('.log')) {
       const topic = path.basename(entry.name, '.log');
+      const fullPath = path.join(paths.logs, entry.name);
 
       if (!logs.has(topic)) {
-        const fullPath = path.join(paths.logs, entry.name);
-
+        // Topic not in use — delete the stale log file
         try {
           fs.unlinkSync(fullPath);
         } catch (ex: any) {
           console.log(`Failed to delete log file ${ fullPath }: ${ ex }`);
+        }
+      } else {
+        // Topic is active — trim if too large
+        try {
+          const stat = fs.statSync(fullPath);
+
+          if (stat.size > MAX_LOG_SIZE) {
+            const buf = Buffer.alloc(MAX_LOG_SIZE);
+            const fd = fs.openSync(fullPath, 'r');
+
+            fs.readSync(fd, buf, 0, MAX_LOG_SIZE, stat.size - MAX_LOG_SIZE);
+            fs.closeSync(fd);
+            // Find the first newline to avoid partial lines
+            const firstNewline = buf.indexOf('\n');
+            const trimmed = firstNewline >= 0 ? buf.subarray(firstNewline + 1) : buf;
+
+            fs.writeFileSync(fullPath, trimmed);
+          }
+        } catch {
+          // If trimming fails, leave the file as-is
         }
       }
     }
