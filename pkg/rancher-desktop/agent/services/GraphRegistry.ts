@@ -408,6 +408,7 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
       type:        parsed.type || 'worker',
       skills:      parsed.skills || [],
       tools:       parsed.tools || [],
+      integrations: parsed.integrations || [],
       prompt:      sections.length > 0 ? sections.join('\n\n') : undefined,
     };
   } catch (err) {

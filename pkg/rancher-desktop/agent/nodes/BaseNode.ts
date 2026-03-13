@@ -120,6 +120,105 @@ async function getSoulPrompt(): Promise<string> {
 }
 
 /**
+ * Build a filtered integrations index for the agent's prompt context.
+ * Shows only integrations the agent is allowed to use, with their config paths,
+ * descriptions, categories, and available endpoints.
+ *
+ * @param allowedIntegrations - slugs from agent.yaml integrations field.
+ *   Empty array = no integrations. ["*"] = all integrations.
+ */
+async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<string> {
+  if (!allowedIntegrations || allowedIntegrations.length === 0) {
+    return '_No integrations configured for this agent._';
+  }
+
+  const allowAll = allowedIntegrations.includes('*');
+
+  try {
+    // Get catalog metadata (descriptions, categories)
+    const { integrations: catalog } = await import('../integrations/catalog');
+
+    // Get configApi loader (endpoints, config file paths)
+    const { getIntegrationConfigLoader } = await import('../integrations/configApi');
+    const loader = getIntegrationConfigLoader();
+    const availableSlugs = loader.getAvailableIntegrations();
+
+    // Get connection status
+    const { getIntegrationService } = await import('../services/IntegrationService');
+    const service = getIntegrationService();
+    await service.initialize();
+
+    // Build the combined set of slugs to show
+    const allSlugs = new Set([
+      ...Object.keys(catalog),
+      ...availableSlugs,
+    ]);
+
+    // Filter by allowlist
+    const filteredSlugs = [...allSlugs].filter(slug =>
+      allowAll || allowedIntegrations.includes(slug),
+    ).sort();
+
+    if (filteredSlugs.length === 0) {
+      return '_No matching integrations found._';
+    }
+
+    // Group by category
+    const byCategory = new Map<string, string[]>();
+    const lines: string[] = [];
+
+    for (const slug of filteredSlugs) {
+      const catalogEntry = catalog[slug];
+      const client = loader.getClient(slug);
+      const status = await service.getConnectionStatus(slug);
+
+      const name = catalogEntry?.name || client?.name || slug;
+      const description = catalogEntry?.description || '';
+      const category = catalogEntry?.category || 'Uncategorized';
+      const connected = status.connected ? 'Connected' : 'Not connected';
+
+      // Build endpoints list from configApi
+      let endpointsList = '';
+      if (client) {
+        const epNames = client.endpointNames;
+        if (epNames.length > 0) {
+          const epDescriptions = epNames.map((epName: string) => {
+            const ep = client.getEndpoint(epName);
+            const desc = ep?.endpoint?.description ? ` — ${ep.endpoint.description}` : '';
+            const method = ep?.endpoint?.method || 'GET';
+            return `    - \`${epName}\` (${method})${desc}`;
+          });
+          endpointsList = '\n' + epDescriptions.join('\n');
+        }
+      }
+
+      // Config path
+      const integration = loader.getIntegration(slug);
+      const configPath = integration?.dir ? `\`${integration.dir}/\`` : `\`~/sulla/integrations/${slug}/\``;
+
+      const line = `- **${name}** (\`${slug}\`) [${connected}] — ${description || 'No description'}\n  Config: ${configPath}${endpointsList}`;
+
+      if (!byCategory.has(category)) {
+        byCategory.set(category, []);
+      }
+      byCategory.get(category)!.push(line);
+    }
+
+    // Format by category
+    for (const [category, entries] of [...byCategory.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      lines.push(`#### ${category}`);
+      lines.push(...entries);
+      lines.push('');
+    }
+
+    return lines.join('\n');
+  } catch (err) {
+    console.error('[BaseNode] Failed to build integrations index:', err);
+    return '_Integrations index unavailable._';
+  }
+}
+
+/**
  * Build the template variable map used to substitute {{...}} placeholders
  * in agent prompt files and the environment prompt.
  */
@@ -352,7 +451,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         // Resolve the agent ID and config from graph state
         const agentId = String(state.metadata.wsChannel || '').trim();
         const agentMeta = (state.metadata as any).agent as {
-            name?: string; prompt?: string; tools?: string[];
+            name?: string; prompt?: string; tools?: string[]; integrations?: string[];
         } | undefined;
 
         // Use pre-compiled prompt from state if available, otherwise fall back to filesystem
@@ -376,6 +475,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                     .map(({ category, description }: { category: string; description: string }) => `- ${category}: ${description}`)
                     .join('\n');
             }
+
+            // Build filtered integrations index for agent prompt
+            promptVars['{{integrations_index}}'] = await buildIntegrationsIndex(agentMeta.integrations);
 
             const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
             const identityPrefix = primaryUserName.trim()
@@ -438,6 +540,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
         // Populate {{available_workflows}} based on trigger type and optional scope
         vars['{{available_workflows}}'] = await this.buildWorkflowIndex(state);
+
+        // Populate {{integrations_index}} filtered by agent's allowed integrations
+        vars['{{integrations_index}}'] = await buildIntegrationsIndex(agentMeta?.integrations);
 
         let AwarenessMessage = applyTemplateVars(ENVIRONMENT_PROMPT, vars);
 

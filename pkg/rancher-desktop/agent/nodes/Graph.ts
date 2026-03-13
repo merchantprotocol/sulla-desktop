@@ -222,6 +222,7 @@ export interface AgentGraphState extends BaseThreadState {
       type?: string;
       skills?: string[];
       tools?: string[];         // allowlist of tool names
+      integrations?: string[];  // allowlist of integration slugs (empty = none, ["*"] = all)
       prompt?: string;          // compiled .md files, no variable substitution
 
       // Execution outcomes (set during runtime)
