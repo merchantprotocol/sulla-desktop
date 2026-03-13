@@ -795,11 +795,14 @@
             </svg>
             Back
           </button>
-          <button class="tp-btn-primary tp-btn-train" :disabled="totalExamples === 0" @click="startTraining">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <button class="tp-btn-primary tp-btn-train" :disabled="totalExamples === 0 || trainingLoading" @click="startTraining">
+            <svg v-if="!trainingLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3"/>
             </svg>
-            Start Training
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+            </svg>
+            {{ trainingLoading ? 'Starting Training...' : 'Start Training' }}
           </button>
         </div>
       </div>
@@ -868,6 +871,7 @@ export default defineComponent({
     const selectedFiles = ref<string[]>([]);
     const preprocessing = ref(false);
     const scheduledForNightly = ref(false);
+    const trainingLoading = ref(false);
 
     // ─── Training data state (Step 2) ───
     interface DataFile {
@@ -1637,13 +1641,22 @@ export default defineComponent({
     }
 
     async function startTraining() {
+      trainingLoading.value = true;
       try {
         const result = await ipcRenderer.invoke('training-train-conversations-now');
         // Training started successfully - result contains log info
         console.log('[TrainingPane] Training started:', result);
+        // Navigate to Training Dashboard by triggering click event
+        const dashboardLink = document.querySelector('.tw-dashboard-link') as HTMLElement;
+        if (dashboardLink) {
+          const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+          dashboardLink.dispatchEvent(clickEvent);
+        }
       } catch (err) {
         console.error('[TrainingPane] Failed to start training:', err);
         // Could emit an error event or show a toast here
+      } finally {
+        trainingLoading.value = false;
       }
     };
 
@@ -1755,6 +1768,7 @@ export default defineComponent({
       preprocessDone,
       outputFilename,
       outputFilenameClean,
+      trainingLoading,
       // Step 3 (Train Wizard): Data file selection
       selectedDataFiles,
       toggleDataFile,
