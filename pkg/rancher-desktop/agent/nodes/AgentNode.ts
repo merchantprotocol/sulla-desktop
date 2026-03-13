@@ -291,8 +291,37 @@ export class AgentNode extends BaseNode {
     } catch (error) {
       // Re-throw abort errors so they propagate to the graph loop
       if ((error as any)?.name === 'AbortError') throw error;
-      console.error('[AgentNode] Execution failed:', error);
-      return null;
+
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[AgentNode] Execution failed:', errorMsg);
+
+      // Surface the error to the user instead of silently dying
+      const userMessage = `⚠️ I encountered an error and couldn't complete the request: ${errorMsg}. Please try again or switch to a different model.`;
+
+      // Push error as assistant message so user sees it in the chat
+      state.messages.push({
+        role: 'assistant',
+        content: userMessage,
+        metadata: {
+          nodeId: this.id,
+          nodeName: this.name,
+          kind: 'agent_error',
+          timestamp: Date.now(),
+        },
+      } as ChatMessage);
+
+      // Send error via WebSocket so user sees it immediately
+      await this.wsChatMessage(state, userMessage, 'assistant');
+
+      // Mark as blocked so graph takes the clean exit path (not the ambiguous in_progress path)
+      (state.metadata as any).agent = {
+        ...((state.metadata as any).agent || {}),
+        status: 'blocked',
+        blocker_reason: errorMsg,
+        updatedAt: Date.now(),
+      };
+
+      return userMessage;
     }
   }
 

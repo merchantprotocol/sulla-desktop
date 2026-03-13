@@ -1616,6 +1616,18 @@ export function createAgentGraph(): Graph<AgentGraphState> {
     }
 
     if (agentStatus !== 'continue' && !hadToolCalls) {
+      // If status is in_progress (fallback from empty LLM response) with no tool calls,
+      // something went wrong — ensure the user sees feedback instead of silent death
+      if (agentStatus === 'in_progress' || !agentStatus) {
+        console.error(`[AgentGraph] Agent ended with ambiguous status '${agentStatus}' and no tool calls — possible silent failure`);
+        if (!state.messages.some((m: any) => m.metadata?.kind === 'agent_error')) {
+          state.messages.push({
+            role: 'assistant',
+            content: 'Something went wrong and I was unable to complete the request. This may be due to context length limitations with the current model. Please try again or consider switching to a model with a larger context window.',
+            metadata: { kind: 'agent_error', timestamp: Date.now() },
+          } as any);
+        }
+      }
       console.log(`[AgentGraph] Agent status '${agentStatus || 'unknown'}' is not CONTINUE - ending`);
       return 'end';
     }

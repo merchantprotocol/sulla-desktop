@@ -27,6 +27,10 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     this.config = config;
   }
 
+  override getContextWindow(): number {
+    return 128_000;
+  }
+
   /**
    * Set number of retries on rate-limit/server errors.
    */

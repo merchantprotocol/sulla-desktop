@@ -173,6 +173,15 @@ export abstract class BaseLanguageModel {
   }
 
   /**
+   * Returns the context window size (in tokens) for the current model.
+   * Override in subclasses to return provider-specific values.
+   * Used by BaseNode to dynamically compute message budgets.
+   */
+  getContextWindow(): number {
+    return 128_000; // Safe default for most cloud models
+  }
+
+  /**
    * Pull a model from the service (only available for local services like Ollama)
    */
   pullModel(modelName: string, onProgress?: (status: string) => void): Promise<boolean> {
@@ -619,7 +628,8 @@ export interface ILLMService {
   initialize(): Promise<boolean>;
   isAvailable(): boolean;
   getModel(): string;
-  chat(messages: ChatMessage[], options?: { 
+  getContextWindow(): number;
+  chat(messages: ChatMessage[], options?: {
     model?: string;
     maxTokens?: number;
     format?: 'json' | undefined;

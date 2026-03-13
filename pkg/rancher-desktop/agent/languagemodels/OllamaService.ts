@@ -106,6 +106,10 @@ export class OllamaService extends BaseLanguageModel {
     }
   }
 
+  override getContextWindow(): number {
+    return this.getContextLimit();
+  }
+
   /**
    * Build the request body in OpenAI /v1/chat/completions format.
    * Trims oldest non-system messages to stay within the llama-server context limit.

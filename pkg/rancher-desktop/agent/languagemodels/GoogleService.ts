@@ -16,6 +16,10 @@ export class GoogleService extends BaseLanguageModel {
   protected declare config: LLMServiceConfig;
   private retryCount = 3;
 
+  override getContextWindow(): number {
+    return 1_000_000;
+  }
+
   /**
    * Create from IntegrationService credentials (active account).
    */

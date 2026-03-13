@@ -728,16 +728,23 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
      * the oldest messages into observational memory, then trims observations.
      */
     protected async ensureMessageBudget(state: BaseThreadState): Promise<void> {
+        // Resolve current LLM to get its context window — adapts if model changes mid-conversation
+        const llm = await getPrimaryService();
+        const contextWindowTokens = llm.getContextWindow();
+
+        // Reserve 20% for response, 10% safety margin => 70% for input
+        const inputBudgetTokens = Math.floor(contextWindowTokens * 0.70);
+        // Convert tokens to chars (4 chars/token heuristic)
+        const HARD_CHAR_BUDGET = inputBudgetTokens * 4;
+        // Scale soft threshold: small models need earlier summarization
+        // At 4K ctx -> ~5 msgs, at 128K -> 20 msgs, at 200K -> ~31 msgs (capped at 25)
+        const SOFT_MESSAGE_THRESHOLD = Math.max(5, Math.min(25, Math.floor(contextWindowTokens / 6400)));
+
         const messageCount = state.messages.length;
         const charWeight = state.messages.reduce((sum, m) => {
             const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
             return sum + content.length;
         }, 0);
-
-        // Hard character budget: ~384k chars ≈ 96k tokens at 4 chars/token
-        const HARD_CHAR_BUDGET = 384_000;
-        // Soft message count threshold — triggers LLM summarization
-        const SOFT_MESSAGE_THRESHOLD = 20;
 
         if (messageCount <= SOFT_MESSAGE_THRESHOLD && charWeight <= HARD_CHAR_BUDGET) {
             return;
@@ -745,12 +752,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
         // If over hard char budget, do a fast synchronous trim first (no LLM)
         if (charWeight > HARD_CHAR_BUDGET) {
+            console.log(`[${this.name}] ensureMessageBudget: ctx=${contextWindowTokens} tokens, budget=${Math.round(HARD_CHAR_BUDGET / 1000)}k chars, actual=${Math.round(charWeight / 1000)}k chars — fast trimming`);
             this.fastTrimByWeight(state, HARD_CHAR_BUDGET);
         }
 
         // Then run the LLM-backed summarization to compress further
         if (state.messages.length > SOFT_MESSAGE_THRESHOLD) {
-            console.log(`[${this.name}] ensureMessageBudget: ${messageCount} messages, ${Math.round(charWeight / 1000)}k chars — running summarization`);
+            console.log(`[${this.name}] ensureMessageBudget: ${messageCount} messages (threshold=${SOFT_MESSAGE_THRESHOLD}), ctx=${contextWindowTokens} tokens — running summarization`);
             await ConversationSummaryService.summarizeNow(state);
             ObservationalSummaryService.triggerBackgroundTrimming(state);
         }
@@ -885,6 +893,41 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const callToolAccessPolicy = this.buildToolAccessPolicyForCall(options);
         const messages = [...nodeRunContext.messages];
 
+        // Pre-flight context check: trim messages to fit the active model's context window
+        const contextWindow = this.llm.getContextWindow();
+        const responseReserve = Math.floor(contextWindow * 0.20);
+        const inputBudgetTokens = contextWindow - responseReserve;
+        const estimateTokens = (text: string) => Math.ceil((text?.length ?? 0) / 4);
+
+        let totalTokens = messages.reduce((sum, m) => {
+            const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+            return sum + estimateTokens(content);
+        }, 0);
+
+        if (totalTokens > inputBudgetTokens) {
+            console.warn(`[${this.name}] Pre-flight trim: ~${totalTokens} tokens exceeds ${inputBudgetTokens} budget (ctx=${contextWindow})`);
+            // Find protected indices: system messages + latest user message
+            const systemIndices = new Set<number>();
+            let latestUserIdx = -1;
+            for (let i = 0; i < messages.length; i++) {
+                if (messages[i].role === 'system') systemIndices.add(i);
+                if (messages[i].role === 'user') latestUserIdx = i;
+            }
+            // Drop from oldest non-protected until under budget
+            let i = 0;
+            while (totalTokens > inputBudgetTokens && i < messages.length) {
+                if (!systemIndices.has(i) && i !== latestUserIdx) {
+                    const content = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content);
+                    totalTokens -= estimateTokens(content);
+                    messages.splice(i, 1);
+                    if (latestUserIdx > i) latestUserIdx--;
+                } else {
+                    i++;
+                }
+            }
+            console.log(`[${this.name}] Pre-flight trim complete: ${messages.length} messages, ~${totalTokens} tokens`);
+        }
+
         // Check for abort before making LLM calls
         throwIfAborted(state, 'Chat operation aborted');
         
@@ -952,7 +995,27 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                 nodeName,
             });
 
-            if (!reply) throw new Error('No response from primary LLM');
+            // Detect empty response (no content AND no tool calls) and retry once with reduced context
+            if (reply && !reply.content?.trim() && !reply.metadata.tool_calls?.length) {
+                console.warn(`[${this.name}] Empty response from LLM (finish_reason=${reply.metadata.finish_reason}, model=${this.llm.getModel()}). Retrying with reduced context.`);
+                const systemMsgs = messages.filter(m => m.role === 'system');
+                const recentMsgs = messages.filter(m => m.role !== 'system').slice(-3);
+                const reducedMessages = [...systemMsgs, ...recentMsgs];
+
+                reply = await this.llm.chat(reducedMessages, {
+                    maxTokens: options.maxTokens,
+                    format: options.format,
+                    temperature: options.temperature,
+                    signal: state.metadata?.options?.abort?.signal,
+                    tools: llmTools,
+                    conversationId,
+                    nodeName,
+                });
+            }
+
+            if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) {
+                throw new Error(`LLM returned empty response after retry (model=${this.llm.getModel()}, provider=${this.llm.getProviderName()})`);
+            }
 
             // Extract and dispatch thinking content before appending the response
             this.extractAndDispatchThinking(state, reply);

@@ -18,6 +18,10 @@ export class AnthropicService extends BaseLanguageModel {
   protected declare config: LLMServiceConfig;
   private retryCount = 3;
 
+  override getContextWindow(): number {
+    return 200_000;
+  }
+
   /**
    * Create from IntegrationService credentials (active account).
    */
