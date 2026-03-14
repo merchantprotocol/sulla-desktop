@@ -102,7 +102,7 @@ export class Tray {
           label: 'Discussions',
           icon:  path.join(paths.resources, 'icons', 'messages-circle-16.png'),
           click() {
-            void Electron.shell.openExternal('https://github.com/sulla-ai/sulla-desktop/discussions');
+            void Electron.shell.openExternal('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },
@@ -111,7 +111,7 @@ export class Tray {
           label: 'Issues',
           icon:  path.join(paths.resources, 'icons', 'issue-opened-16.png'),
           click() {
-            void Electron.shell.openExternal('https://github.com/sulla-ai/sulla-desktop/issues');
+            void Electron.shell.openExternal('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },

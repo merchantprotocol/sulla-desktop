@@ -2,7 +2,7 @@
   <div class="min-h-screen text-sm font-sans page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentIntegrationDetail" />
     <div class="flex min-h-screen flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" :current-theme="currentTheme" :available-themes="availableThemes" :set-theme="setTheme" :theme-groups="themeGroups" />
 
       <div class="flex-1 overflow-auto">
         <div class="mx-auto max-w-6xl px-4 py-8">
@@ -578,9 +578,9 @@ import { formatFuzzyTime } from '@pkg/utils/dateFormat';
 import type { IntegrationAccount } from '@pkg/agent/services/IntegrationService';
 import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useTheme } from '@pkg/composables/useTheme';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const route = useRoute();
 const router = useRouter();
 const integrationService = getIntegrationService();
@@ -651,11 +651,6 @@ const previousImage = () => {
       ? integration.value.media.length - 1 
       : currentImageIndex.value - 1;
   }
-};
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
 };
 
 const refreshAccounts = async () => {
@@ -973,13 +968,6 @@ const handleConnect = async () => {
 };
 
 onMounted(async () => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
-
   // Initialize integration service
   await integrationService.initialize();
 

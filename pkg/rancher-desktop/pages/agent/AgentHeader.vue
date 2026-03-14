@@ -102,20 +102,41 @@
         </button>
       </div>
       <div class="relative z-10" data-headlessui-state="">
-        <label class="sr-only" for="headlessui-listbox-button-_r_a_" id="headlessui-label-_r_9_" data-headlessui-state="">Theme</label>
+        <label class="sr-only">Theme</label>
         <button
           class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset"
           type="button"
-          :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
-          @click="toggleTheme"
+          aria-label="Select theme"
+          @click="dropdownOpen = !dropdownOpen"
         >
           <svg v-if="isDark" aria-hidden="true" viewBox="0 0 16 16" class="h-4 w-4 fill-sky-400">
-            <path fill-rule="evenodd" clip-rule="evenodd" d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 1 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z" />
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1Z" />
           </svg>
           <svg v-else aria-hidden="true" viewBox="0 0 16 16" class="h-4 w-4 fill-sky-400">
-            <path fill-rule="evenodd" clip-rule="evenodd" d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1 1 1 0 0 1 1-1Z" />
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 1 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z" />
           </svg>
         </button>
+        <div v-if="dropdownOpen" class="absolute right-0 top-full mt-2 w-44 rounded-lg bg-white p-1 shadow-lg ring-1 ring-slate-900/10 dark:bg-slate-800 dark:ring-white/10">
+          <div v-for="group in themeGroups" :key="group.scheme" class="theme-group">
+            <div class="px-2 py-1 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+              {{ group.label }}
+            </div>
+            <button
+              v-for="theme in group.themes"
+              :key="theme.id"
+              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors"
+              :class="currentTheme === theme.id
+                ? 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-400'
+                : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700'"
+              @click="setTheme(theme.id); dropdownOpen = false"
+            >
+              <span class="h-3.5 w-3.5 rounded-full border-2"
+                :class="currentTheme === theme.id ? 'border-sky-500 bg-sky-500' : 'border-slate-300 dark:border-slate-600'"
+              ></span>
+              {{ theme.mode === 'light' ? 'Light' : 'Dark' }}
+            </button>
+          </div>
+        </div>
       </div>
       <a class="group" aria-label="GitHub" href="https://github.com/sulla-ai/sulla-desktop">
         <svg aria-hidden="true" viewBox="0 0 16 16" class="h-6 w-6 fill-slate-400 group-hover:fill-slate-500 dark:group-hover:fill-slate-300">
@@ -197,16 +218,33 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { getExtensionService } from '@pkg/agent';
+import type { ThemeName, ThemeOption, ThemeGroup } from '@pkg/composables/useTheme';
 
 const extensionService = getExtensionService();
 
 defineProps<{
   isDark: boolean;
+  currentTheme: ThemeName;
+  availableThemes: ThemeOption[];
+  themeGroups: ThemeGroup[];
+  setTheme: (theme: ThemeName) => void;
   toggleTheme: () => void;
 }>();
+
+const dropdownOpen = ref(false);
+
+const closeDropdown = (e: MouseEvent) => {
+  const target = e.target as HTMLElement;
+  if (!target.closest('.relative.z-10')) {
+    dropdownOpen.value = false;
+  }
+};
+
+onMounted(() => document.addEventListener('click', closeDropdown));
+onUnmounted(() => document.removeEventListener('click', closeDropdown));
 
 defineEmits<{
   'toggle-left-pane': [];

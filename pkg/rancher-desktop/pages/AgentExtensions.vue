@@ -2,7 +2,7 @@
   <div class="min-h-screen text-sm font-sans page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentExtensions" />
     <div class="flex min-h-screen flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" :current-theme="currentTheme" :available-themes="availableThemes" :set-theme="setTheme" :theme-groups="themeGroups" />
 
       <div class="flex w-full flex-col">
         <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
@@ -425,10 +425,10 @@ import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import type { MarketplaceEntry, InstalledExtension } from '@pkg/agent/services/ExtensionService';
 
+import { useTheme } from '@pkg/composables/useTheme';
 import { computed, onMounted, ref, reactive } from 'vue';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const extensionService = getExtensionService();
 
 const search = ref('');
@@ -660,19 +660,7 @@ async function upgradeInstalled(ext: InstalledExtension) {
   await refreshData();
 }
 
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-};
-
 onMounted(async () => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
-
   try {
     await extensionService.initialize();
     await refreshData();

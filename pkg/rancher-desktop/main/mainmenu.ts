@@ -221,13 +221,13 @@ function getHelpMenu(isMac: boolean): MenuItem {
     {
       label: 'File a &Bug',
       click() {
-        shell.openExternal('https://github.com/sulla-ai/sulla-desktop/issues');
+        shell.openExternal('https://sulladesktop.com/support');
       },
     },
     {
       label: '&Project Page',
       click() {
-        shell.openExternal('https://github.com/sulla-ai/sulla-desktop');
+        shell.openExternal('https://sulladesktop.com');
       },
     },
     {

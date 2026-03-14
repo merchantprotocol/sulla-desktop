@@ -5,8 +5,16 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/sulla-ai/sulla-desktop/main/install.sh | bash
 #
+# Install nightly (latest from main, may be unstable):
+#   curl -fsSL https://raw.githubusercontent.com/sulla-ai/sulla-desktop/main/install.sh | bash -s -- --nightly
+#
 # Or if you already cloned the repo:
 #   bash install.sh
+#   bash install.sh --nightly
+#
+# Options:
+#   --nightly   Install from the latest main branch instead of the latest release.
+#               Use this if you want bleeding-edge features (may be unstable).
 #
 # Idempotent — safe to run multiple times.
 # Supports macOS (arm64/x86_64), Linux (apt/dnf/pacman), and Windows (Git Bash / MSYS2).
@@ -18,10 +26,13 @@ set -euo pipefail
 # Config
 # ---------------------------------------------------------------------------
 REPO_URL="https://github.com/sulla-ai/sulla-desktop.git"
+REPO_OWNER="sulla-ai"
+REPO_NAME="sulla-desktop"
 REPO_DIR="sulla-desktop"
 NODE_VERSION="22.22.0"
 GO_VERSION="1.24.2"
 MIN_DISK_GB=10  # minimum free disk space in GB
+USE_NIGHTLY=false  # set to true with --nightly flag
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -435,6 +446,38 @@ check_python() {
 }
 
 # ---------------------------------------------------------------------------
+# Resolve the target version (latest release tag, or main for nightly)
+# ---------------------------------------------------------------------------
+resolve_version() {
+  if [ "$USE_NIGHTLY" = true ]; then
+    INSTALL_REF="main"
+    info "Nightly mode — will install from main branch"
+    return
+  fi
+
+  info "Checking for latest release..."
+  local api_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
+  local release_json
+  release_json="$(curl -fsSL "$api_url" 2>/dev/null)" || {
+    warn "Could not fetch latest release from GitHub API."
+    warn "Falling back to main branch."
+    INSTALL_REF="main"
+    return
+  }
+
+  # Extract tag_name from JSON without jq (portable)
+  INSTALL_REF="$(echo "$release_json" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+
+  if [ -z "$INSTALL_REF" ]; then
+    warn "No releases found — falling back to main branch."
+    INSTALL_REF="main"
+    return
+  fi
+
+  ok "Latest release: $INSTALL_REF"
+}
+
+# ---------------------------------------------------------------------------
 # Clone / update repo
 # ---------------------------------------------------------------------------
 ensure_repo() {
@@ -442,6 +485,7 @@ ensure_repo() {
   if [ -f "package.json" ] && grep -q '"sulla-desktop"' package.json 2>/dev/null; then
     REPO_DIR="$(pwd)"
     ok "Already inside sulla-desktop repo"
+    checkout_version
     return
   fi
 
@@ -452,19 +496,7 @@ ensure_repo() {
     # Repo dir exists with a valid .git — just update
     info "Updating existing repo at $target ..."
     cd "$target"
-    # Stash any local changes before pulling to prevent ff-only failures
-    local stashed=false
-    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-      warn "Local changes detected — stashing before update..."
-      git stash --include-untracked 2>/dev/null && stashed=true
-    fi
-    git pull --ff-only || {
-      warn "git pull --ff-only failed — trying rebase..."
-      git pull --rebase || warn "git pull failed — continuing with existing code"
-    }
-    if [ "$stashed" = true ]; then
-      git stash pop 2>/dev/null || warn "Could not restore stashed changes (may need manual 'git stash pop')"
-    fi
+    git fetch --tags --force 2>/dev/null || warn "git fetch failed — continuing with existing code"
     REPO_DIR="$(pwd)"
   elif [ -d "$target" ]; then
     # Dir exists but is not a valid git repo (partial clone) — remove and re-clone
@@ -479,7 +511,45 @@ ensure_repo() {
     cd "$target"
     REPO_DIR="$(pwd)"
   fi
-  ok "Repo ready at $REPO_DIR"
+
+  checkout_version
+  ok "Repo ready at $REPO_DIR ($INSTALL_REF)"
+}
+
+# ---------------------------------------------------------------------------
+# Checkout the resolved version (release tag or main)
+# ---------------------------------------------------------------------------
+checkout_version() {
+  if [ "$INSTALL_REF" = "main" ]; then
+    # Nightly: stay on main, pull latest
+    git checkout main 2>/dev/null || true
+    local stashed=false
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+      warn "Local changes detected — stashing before update..."
+      git stash --include-untracked 2>/dev/null && stashed=true
+    fi
+    git pull --ff-only || {
+      warn "git pull --ff-only failed — trying rebase..."
+      git pull --rebase || warn "git pull failed — continuing with existing code"
+    }
+    if [ "$stashed" = true ]; then
+      git stash pop 2>/dev/null || warn "Could not restore stashed changes (may need manual 'git stash pop')"
+    fi
+  else
+    # Release: checkout the tag (detached HEAD is fine for end users)
+    local current_tag
+    current_tag="$(git describe --tags --exact-match 2>/dev/null || true)"
+    if [ "$current_tag" = "$INSTALL_REF" ]; then
+      ok "Already on $INSTALL_REF"
+      return
+    fi
+    info "Checking out release $INSTALL_REF ..."
+    git checkout "$INSTALL_REF" 2>/dev/null || {
+      warn "Could not checkout $INSTALL_REF — trying to fetch it..."
+      git fetch origin "refs/tags/$INSTALL_REF:refs/tags/$INSTALL_REF" 2>/dev/null || true
+      git checkout "$INSTALL_REF" || fail "Failed to checkout release $INSTALL_REF"
+    }
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -646,6 +716,20 @@ launch_app() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  # Parse flags
+  for arg in "$@"; do
+    case "$arg" in
+      --nightly) USE_NIGHTLY=true ;;
+      --help|-h)
+        echo "Usage: install.sh [--nightly]"
+        echo ""
+        echo "  --nightly   Install from the latest main branch (may be unstable)"
+        echo "              Default: installs the latest stable release"
+        exit 0
+        ;;
+    esac
+  done
+
   echo ""
   echo "╔══════════════════════════════════════════════════════════════╗"
   echo "║            Sulla Desktop — Installer                       ║"
@@ -669,6 +753,10 @@ main() {
   ensure_build_tools
   ensure_go
   check_python
+  echo ""
+
+  info "Resolving target version..."
+  resolve_version
   echo ""
 
   info "Setting up repository..."

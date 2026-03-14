@@ -162,7 +162,8 @@ export default defineComponent({
       localModelDownloading:    null as string | null,
       localModelError:          '' as string,
       loadingLocalModels:       false,
-    };
+
+};
   },
 
   computed: {
@@ -275,6 +276,7 @@ export default defineComponent({
     this.localTimeoutSeconds = await SullaSettingsModel.get('localTimeoutSeconds', 120);
     this.localRetryCount = await SullaSettingsModel.get('localRetryCount', 2);
     this.heartbeatEnabled = await SullaSettingsModel.get('heartbeatEnabled', true);
+
     // Load model from database
     this.activeModel = await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
     this.pendingModel = this.activeModel;
@@ -2588,5 +2590,6 @@ export default defineComponent({
     margin-top: 0.5rem;
   }
 }
+
 
 </style>

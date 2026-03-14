@@ -1,7 +1,7 @@
 <template>
   <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentFilesystem" />
-    <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" @toggle-left-pane="leftPaneVisible = !leftPaneVisible" @toggle-center-pane="centerPaneVisible = !centerPaneVisible" @toggle-right-pane="rightPaneVisible = !rightPaneVisible" />
+    <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" :current-theme="currentTheme" :available-themes="availableThemes" :set-theme="setTheme" :theme-groups="themeGroups" @toggle-left-pane="leftPaneVisible = !leftPaneVisible" @toggle-center-pane="centerPaneVisible = !centerPaneVisible" @toggle-right-pane="rightPaneVisible = !rightPaneVisible" />
 
     <div class="flex flex-1 min-h-0 overflow-hidden">
         <!-- Left sidebar: File tree -->
@@ -200,6 +200,7 @@ import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeU
 import { ipcRenderer } from 'electron';
 
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 import AgentHeader from './agent/AgentHeader.vue';
 import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
 import CodeEditor from './filesystem/CodeEditor.vue';
@@ -258,31 +259,13 @@ export default defineComponent({
   },
 
   setup(props, { emit }) {
-    const isDark = ref(false);
-    const THEME_STORAGE_KEY = 'agentTheme';
+    const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
     const rootPath = ref('');
     const openTabs = ref<TabState[]>([]);
     const activeTabKey = ref('');
     const leftPaneVisible = ref(true);
     const centerPaneVisible = ref(true);
     const rightPaneVisible = ref(true);
-
-    onMounted(async () => {
-      const stored = localStorage.getItem(THEME_STORAGE_KEY);
-
-      if (stored === 'dark') {
-        isDark.value = true;
-      } else if (stored === 'light') {
-        isDark.value = false;
-      } else {
-        isDark.value = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
-      }
-    });
-
-    function toggleTheme() {
-      isDark.value = !isDark.value;
-      localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-    }
 
     async function loadRootPath() {
       try {
@@ -498,6 +481,10 @@ export default defineComponent({
     return {
       isDark,
       toggleTheme,
+      currentTheme,
+      setTheme,
+      availableThemes,
+      themeGroups,
       openTabs,
       activeTabKey,
       activeTab,

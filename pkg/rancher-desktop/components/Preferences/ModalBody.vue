@@ -3,6 +3,7 @@
 import { defineComponent } from 'vue';
 import { mapState } from 'vuex';
 
+import PreferencesBodyAppearance from '@pkg/components/Preferences/BodyAppearance.vue';
 import PreferencesBodyApplication from '@pkg/components/Preferences/BodyApplication.vue';
 import PreferencesBodyContainerEngine from '@pkg/components/Preferences/BodyContainerEngine.vue';
 import PreferencesBodyKubernetes from '@pkg/components/Preferences/BodyKubernetes.vue';
@@ -16,6 +17,7 @@ import type { PropType } from 'vue';
 export default defineComponent({
   name:       'preferences-body',
   components: {
+    PreferencesBodyAppearance,
     PreferencesBodyApplication,
     PreferencesBodyVirtualMachine,
     PreferencesBodyWsl,

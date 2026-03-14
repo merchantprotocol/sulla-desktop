@@ -4,6 +4,10 @@
     <EditorHeader
       :is-dark="isDark"
       :toggle-theme="toggleTheme"
+      :current-theme="currentTheme"
+      :available-themes="availableThemes"
+      :set-theme="setTheme"
+      :theme-groups="themeGroups"
       :left-pane-visible="leftPaneVisible"
       :bottom-pane-visible="bottomPaneVisible"
       :right-pane-visible="rightPaneVisible"
@@ -696,6 +700,7 @@
 import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, watch, type Component } from 'vue';
 import { ipcRenderer } from 'electron';
 
+import { useTheme } from '@pkg/composables/useTheme';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import EditorHeader from './editor/EditorHeader.vue';
 import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
@@ -824,8 +829,7 @@ export default defineComponent({
   },
 
   setup(props, { emit }) {
-    const isDark = ref(false);
-    const THEME_STORAGE_KEY = 'agentTheme';
+    const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
     const sullaMutedIconUrl = new URL('../../../resources/icons/sulla-muted-icon.png', import.meta.url).toString();
     const rootPath = ref('');
 
@@ -1267,26 +1271,11 @@ export default defineComponent({
         if (p?.description) backendProgressDesc.value = p.description;
       }).catch(() => {});
 
-      const stored = localStorage.getItem(THEME_STORAGE_KEY);
-
-      if (stored === 'dark') {
-        isDark.value = true;
-      } else if (stored === 'light') {
-        isDark.value = false;
-      } else {
-        isDark.value = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
-      }
-
       await modelSelector.start();
       window.addEventListener('keydown', onKeyDown);
       document.addEventListener('mousedown', onEditorMenuOutsideClick);
       document.addEventListener('click', onInjectMenuOutsideClick);
     });
-
-    function toggleTheme() {
-      isDark.value = !isDark.value;
-      localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-    }
 
     // Saved pane states to restore when exiting workflow mode
     let savedBottomPaneVisible = false;
@@ -2306,6 +2295,10 @@ export default defineComponent({
 
     return {
       isDark,
+      currentTheme,
+      setTheme,
+      availableThemes,
+      themeGroups,
       sullaMutedIconUrl,
       chatMessages,
       chatQuery,

@@ -2,7 +2,7 @@
   <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentCalendar" />
     <div class="flex flex-1 min-h-0 flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" :current-theme="currentTheme" :available-themes="availableThemes" :set-theme="setTheme" :theme-groups="themeGroups" />
 
       <div class="flex items-center justify-end px-4 py-3">
         <button
@@ -269,6 +269,7 @@
 <script setup lang="ts">
 import AgentHeader from './agent/AgentHeader.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 import { onMounted, ref, watch } from 'vue';
 import { ScheduleXCalendar } from '@schedule-x/vue';
 import { createCalendar, createViewMonthGrid, createViewMonthAgenda, createViewWeek, createViewDay } from '@schedule-x/calendar';
@@ -277,8 +278,7 @@ import '@schedule-x/theme-default/dist/index.css';
 import 'temporal-polyfill/global';
 import { CalendarEvent } from '@pkg/agent/database/models/CalendarEvent'; // new model
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const showAddEventModal = ref(false);
 const newEventTitle = ref('');
 const newEventDate = ref('');
@@ -310,12 +310,6 @@ const editEventEndTime = ref('');
 const editEventDescription = ref('');
 const editEventLocation = ref('');
 const savingEditEvent = ref(false);
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-  calendar.setTheme(isDark.value ? 'dark' : 'light');
-};
 
 const eventsService = createEventsServicePlugin();
 
@@ -451,14 +445,11 @@ const loadEvents = async () => {
   }
 };
 
-onMounted(async () => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
+watch(isDark, (dark) => {
+  calendar.setTheme(dark ? 'dark' : 'light');
+});
 
+onMounted(async () => {
   calendar.setTheme(isDark.value ? 'dark' : 'light');
 
   await loadEvents();

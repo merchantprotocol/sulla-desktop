@@ -61,10 +61,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, provide, onMounted, computed } from 'vue';
+import { ref, provide, computed } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { defaultSettings, Settings } from '@pkg/config/settings';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 
 import FirstRunResources from './FirstRunResources.vue';
 import FirstRunWelcome from './FirstRunWelcome.vue';
@@ -76,14 +77,7 @@ import { StartupProgressController } from './agent/StartupProgressController';
 
 import SimpleHeader from './agent/SimpleHeader.vue';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-
-const isDark = ref(false);
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-};
+const { isDark, toggleTheme } = useTheme();
 
 const currentStep = ref(0);
 const stepNames = ['Resources', 'Account', 'Remote Model', 'Waiting'];
@@ -113,15 +107,6 @@ const progressPercent = computed(() => {
   const percent = (startupController.state.progressCurrent.value / Math.max(startupController.state.progressMax.value, 1)) * 100;
   console.log('[FirstRun] progressPercent computed:', percent, 'current:', startupController.state.progressCurrent.value, 'max:', startupController.state.progressMax.value);
   return percent;
-});
-
-onMounted(() => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
 });
 
 provide('settings', settings);

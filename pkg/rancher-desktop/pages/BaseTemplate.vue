@@ -43,29 +43,11 @@ entry/index.ts dynamically determines the layout based on the current route's co
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue';
 import SimpleHeader from './agent/SimpleHeader.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 import './assets/theme.css';
 
-const isDark = ref(false);
-const THEME_STORAGE_KEY = 'agentTheme';
-
-onMounted(async () => {
-  const stored = localStorage.getItem(THEME_STORAGE_KEY);
-
-  if (stored === 'dark') {
-    isDark.value = true;
-  } else if (stored === 'light') {
-    isDark.value = false;
-  } else {
-    isDark.value = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
-  }
-});
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-};
+const { isDark, toggleTheme } = useTheme();
 </script>
 
 <style lang="scss">

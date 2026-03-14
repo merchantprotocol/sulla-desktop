@@ -38,9 +38,9 @@ import { onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getExtensionService, LocalExtensionMetadata } from '@pkg/agent';
 import { hexEncode } from '@pkg/utils/string-encode';
+import { useTheme } from '@pkg/composables/useTheme';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme } = useTheme();
 const route = useRoute();
 const router = useRouter();
 
@@ -50,11 +50,6 @@ const extensionIcon = ref<string>('');
 const extensionDisplayMode = ref<'embedded' | 'iframe'>('iframe');
 const extensionContentUrl = ref<string>('');
 const extensionContentHtml = ref<string>('');
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-};
 
 const onIframeLoad = () => {
   const iframe = document.querySelector('iframe') as HTMLIFrameElement;
@@ -71,13 +66,6 @@ watch(isDark, (newVal) => {
 });
 
 onMounted(async () => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
-
   const name = route.params.name as string;
   const path = (route.params.path as string[]).join('/');
   const metadata = extensionService.getExtensionMetadata(name) ?? null;

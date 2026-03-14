@@ -3,7 +3,7 @@
     <PostHogTracker page-name="Agent" />
     <div class="flex h-screen flex-col">
 
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" :current-theme="currentTheme" :available-themes="availableThemes" :set-theme="setTheme" :theme-groups="themeGroups" />
 
     <!-- Loading overlay while system boots -->
     <StartupOverlay
@@ -213,6 +213,7 @@ import { marked } from 'marked';
 import { AgentSettingsController } from './agent/AgentSettingsController';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
+import { useTheme } from '@pkg/composables/useTheme';
 import { getN8nVueBridgeService } from '@pkg/agent/services/N8nVueBridgeService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
@@ -255,8 +256,7 @@ const renderMarkdown = (markdown: string): string => {
   });
 };
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const syncN8nInterfaceTheme = (): void => {
   const n8nVueBridgeService = getN8nVueBridgeService();
   if (isDark.value) {
@@ -447,16 +447,6 @@ onMounted(async () => {
   presenceTracker.setActiveChannel('sulla-desktop');
   presenceTracker.start();
 
-  const stored = localStorage.getItem(THEME_STORAGE_KEY);
-
-  if (stored === 'dark') {
-    isDark.value = true;
-  } else if (stored === 'light') {
-    isDark.value = false;
-  } else {
-    isDark.value = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
-  }
-
   // Listen for model changes from other windows
   ipcRenderer.on('model-changed', handleModelChanged);
 
@@ -494,11 +484,6 @@ const handlePrimaryAction = () => {
     return;
   }
   // Voice mode is a UI affordance for now; actual voice wiring can be added later.
-};
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
 };
 
 watch(isDark, () => {
