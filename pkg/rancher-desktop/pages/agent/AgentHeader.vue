@@ -1,5 +1,5 @@
 <template>
-  <header class="sticky top-0 z-50 flex flex-none flex-wrap items-center justify-between bg-white px-4 py-5 shadow-md shadow-slate-900/5 transition duration-500 sm:px-6 lg:px-8 dark:shadow-none dark:bg-slate-900/95 dark:backdrop-blur-sm dark:[@supports(backdrop-filter:blur(0))]:bg-slate-900/75">
+  <header class="sticky top-0 z-50 flex flex-none flex-wrap items-center justify-between bg-page px-4 py-5 shadow-md transition duration-500 backdrop-blur-sm sm:px-6 lg:px-8">
     <div class="mr-6 flex lg:hidden">
       <button type="button" class="relative" aria-label="Open navigation" @click="toggleMobileMenu">
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" class="h-6 w-6 stroke-slate-500">
@@ -26,28 +26,28 @@
         <router-link
           to="/Chat"
           class="text-sm font-semibold"
-          :class="route.path === '/Chat' ? 'text-[#0d0d0d] dark:text-white' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] dark:text-white/60 dark:hover:text-white'"
+          :class="route.path === '/Chat' ? 'text-content' : 'text-content-secondary hover:text-content'"
         >
           Chat
         </router-link>
         <router-link
           to="/Calendar"
           class="text-sm font-semibold"
-          :class="route.path === '/Calendar' ? 'text-[#0d0d0d] dark:text-white' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] dark:text-white/60 dark:hover:text-white'"
+          :class="route.path === '/Calendar' ? 'text-content' : 'text-content-secondary hover:text-content'"
         >
           Calendar
         </router-link>
         <router-link
           to="/Integrations"
           class="text-sm font-semibold"
-          :class="route.path === '/Integrations' ? 'text-[#0d0d0d] dark:text-white' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] dark:text-white/60 dark:hover:text-white'"
+          :class="route.path === '/Integrations' ? 'text-content' : 'text-content-secondary hover:text-content'"
         >
           Integrations
         </router-link>
         <router-link
           to="/Extensions"
           class="text-sm font-semibold"
-          :class="route.path === '/Extensions' ? 'text-[#0d0d0d] dark:text-white' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] dark:text-white/60 dark:hover:text-white'"
+          :class="route.path === '/Extensions' ? 'text-content' : 'text-content-secondary hover:text-content'"
         >
           Extensions
         </router-link>
@@ -56,7 +56,7 @@
           :key="item.link"
           :to="item.link"
           class="text-sm font-semibold"
-          :class="route.path === item.link ? 'text-[#0d0d0d] dark:text-white' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] dark:text-white/60 dark:hover:text-white'"
+          :class="route.path === item.link ? 'text-content' : 'text-content-secondary hover:text-content'"
         >
           {{ item.title }}
         </router-link>
@@ -65,7 +65,7 @@
     <div class="relative flex basis-0 justify-end gap-6 sm:gap-8">
       <div v-if="route.path === '/Filesystem'" class="flex gap-2">
         <button
-          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset"
+          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5"
           type="button"
           aria-label="Toggle left pane"
           @click="$emit('toggle-left-pane')"
@@ -78,7 +78,7 @@
           </svg>
         </button>
         <button
-          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset"
+          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5"
           type="button"
           aria-label="Toggle center pane"
           @click="$emit('toggle-center-pane')"
@@ -89,7 +89,7 @@
           </svg>
         </button>
         <button
-          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset"
+          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5"
           type="button"
           aria-label="Toggle right pane"
           @click="$emit('toggle-right-pane')"
@@ -101,45 +101,24 @@
           </svg>
         </button>
       </div>
-      <div class="relative z-10" data-headlessui-state="">
+      <div class="relative z-10">
         <label class="sr-only">Theme</label>
         <button
-          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset"
+          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5"
           type="button"
-          aria-label="Select theme"
-          @click="dropdownOpen = !dropdownOpen"
+          :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
+          @click="toggleTheme"
         >
           <svg v-if="isDark" aria-hidden="true" viewBox="0 0 16 16" class="h-4 w-4 fill-sky-400">
-            <path fill-rule="evenodd" clip-rule="evenodd" d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1Z" />
-          </svg>
-          <svg v-else aria-hidden="true" viewBox="0 0 16 16" class="h-4 w-4 fill-sky-400">
             <path fill-rule="evenodd" clip-rule="evenodd" d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 1 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z" />
           </svg>
+          <svg v-else aria-hidden="true" viewBox="0 0 16 16" class="h-4 w-4 fill-sky-400">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1Z" />
+          </svg>
         </button>
-        <div v-if="dropdownOpen" class="absolute right-0 top-full mt-2 w-44 rounded-lg bg-white p-1 shadow-lg ring-1 ring-slate-900/10 dark:bg-slate-800 dark:ring-white/10">
-          <div v-for="group in themeGroups" :key="group.scheme" class="theme-group">
-            <div class="px-2 py-1 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-              {{ group.label }}
-            </div>
-            <button
-              v-for="theme in group.themes"
-              :key="theme.id"
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors"
-              :class="currentTheme === theme.id
-                ? 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-400'
-                : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700'"
-              @click="setTheme(theme.id); dropdownOpen = false"
-            >
-              <span class="h-3.5 w-3.5 rounded-full border-2"
-                :class="currentTheme === theme.id ? 'border-sky-500 bg-sky-500' : 'border-slate-300 dark:border-slate-600'"
-              ></span>
-              {{ theme.mode === 'light' ? 'Light' : 'Dark' }}
-            </button>
-          </div>
-        </div>
       </div>
       <a class="group" aria-label="GitHub" href="https://github.com/sulla-ai/sulla-desktop">
-        <svg aria-hidden="true" viewBox="0 0 16 16" class="h-6 w-6 fill-slate-400 group-hover:fill-slate-500 dark:group-hover:fill-slate-300">
+        <svg aria-hidden="true" viewBox="0 0 16 16" class="h-6 w-6 fill-content-muted group-hover:fill-content-secondary">
           <path d="M8 0C3.58 0 0 3.58 0 8C0 11.54 2.29 14.53 5.47 15.59C5.87 15.66 6.02 15.42 6.02 15.21C6.02 15.02 6.01 14.39 6.01 13.72C4 14.09 3.48 13.23 3.32 12.78C3.23 12.55 2.84 11.84 2.5 11.65C2.22 11.5 1.82 11.13 2.49 11.12C3.12 11.11 3.57 11.7 3.72 11.94C4.44 13.15 5.59 12.81 6.05 12.6C6.12 12.08 6.33 11.73 6.56 11.53C4.78 11.33 2.92 10.64 2.92 7.58C2.92 6.71 3.23 5.99 3.74 5.43C3.66 5.23 3.38 4.41 3.82 3.31C3.82 3.31 4.49 3.1 6.02 4.13C6.66 3.95 7.34 3.86 8.02 3.86C8.7 3.86 9.38 3.95 10.02 4.13C11.55 3.09 12.22 3.31 12.22 3.31C12.66 4.41 12.38 5.23 12.3 5.43C12.81 5.99 13.12 6.7 13.12 7.58C13.12 10.65 11.25 11.33 9.47 11.53C9.76 11.78 10.01 12.26 10.01 13.01C10.01 14.08 10 14.94 10 15.21C10 15.42 10.15 15.67 10.55 15.59C13.71 14.53 16 11.53 16 8C16 3.58 12.42 0 8 0Z"></path>
         </svg>
       </a>
@@ -149,8 +128,8 @@
   <!-- Mobile Menu Overlay -->
   <div v-if="isMobileMenuOpen" class="fixed inset-0 z-40 lg:hidden">
     <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300" @click="toggleMobileMenu"></div>
-    <div class="fixed top-0 left-0 right-0 bg-white dark:bg-slate-900 shadow-lg transform transition-transform duration-300 ease-in-out">
-      <div class="flex items-center justify-between px-4 py-5 border-b border-slate-200 dark:border-slate-700">
+    <div class="fixed top-0 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out">
+      <div class="flex items-center justify-between px-4 py-5 border-b border-edge">
         <a aria-label="Home page" href="#/" class="flex items-center" @click="toggleMobileMenu">
           <img
             :src="logoLightUrl"
@@ -173,7 +152,7 @@
         <router-link
           to="/Chat"
           class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
-          :class="route.path === '/Chat' ? 'text-[#0d0d0d] bg-slate-100 dark:text-white dark:bg-slate-800' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] hover:bg-slate-50 dark:text-white/60 dark:hover:text-white dark:hover:bg-slate-800'"
+          :class="route.path === '/Chat' ? 'text-content bg-surface' : 'text-content-secondary hover:text-content hover:bg-surface'"
           @click="toggleMobileMenu"
         >
           Chat
@@ -181,7 +160,7 @@
         <router-link
           to="/Calendar"
           class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
-          :class="route.path === '/Calendar' ? 'text-[#0d0d0d] bg-slate-100 dark:text-white dark:bg-slate-800' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] hover:bg-slate-50 dark:text-white/60 dark:hover:text-white dark:hover:bg-slate-800'"
+          :class="route.path === '/Calendar' ? 'text-content bg-surface' : 'text-content-secondary hover:text-content hover:bg-surface'"
           @click="toggleMobileMenu"
         >
           Calendar
@@ -189,7 +168,7 @@
         <router-link
           to="/Integrations"
           class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
-          :class="route.path === '/Integrations' ? 'text-[#0d0d0d] bg-slate-100 dark:text-white dark:bg-slate-800' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] hover:bg-slate-50 dark:text-white/60 dark:hover:text-white dark:hover:bg-slate-800'"
+          :class="route.path === '/Integrations' ? 'text-content bg-surface' : 'text-content-secondary hover:text-content hover:bg-surface'"
           @click="toggleMobileMenu"
         >
           Integrations
@@ -197,7 +176,7 @@
         <router-link
           to="/Extensions"
           class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
-          :class="route.path === '/Extensions' ? 'text-[#0d0d0d] bg-slate-100 dark:text-white dark:bg-slate-800' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] hover:bg-slate-50 dark:text-white/60 dark:hover:text-white dark:hover:bg-slate-800'"
+          :class="route.path === '/Extensions' ? 'text-content bg-surface' : 'text-content-secondary hover:text-content hover:bg-surface'"
           @click="toggleMobileMenu"
         >
           Extensions
@@ -207,7 +186,7 @@
           :key="item.link"
           :to="item.link"
           class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
-          :class="route.path === item.link ? 'text-[#0d0d0d] bg-slate-100 dark:text-white dark:bg-slate-800' : 'text-[#0d0d0d]/60 hover:text-[#0d0d0d] hover:bg-slate-50 dark:text-white/60 dark:hover:text-white dark:hover:bg-slate-800'"
+          :class="route.path === item.link ? 'text-content bg-surface' : 'text-content-secondary hover:text-content hover:bg-surface'"
           @click="toggleMobileMenu"
         >
           {{ item.title }}
@@ -218,33 +197,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { getExtensionService } from '@pkg/agent';
-import type { ThemeName, ThemeOption, ThemeGroup } from '@pkg/composables/useTheme';
 
 const extensionService = getExtensionService();
 
 defineProps<{
   isDark: boolean;
-  currentTheme: ThemeName;
-  availableThemes: ThemeOption[];
-  themeGroups: ThemeGroup[];
-  setTheme: (theme: ThemeName) => void;
   toggleTheme: () => void;
 }>();
-
-const dropdownOpen = ref(false);
-
-const closeDropdown = (e: MouseEvent) => {
-  const target = e.target as HTMLElement;
-  if (!target.closest('.relative.z-10')) {
-    dropdownOpen.value = false;
-  }
-};
-
-onMounted(() => document.addEventListener('click', closeDropdown));
-onUnmounted(() => document.removeEventListener('click', closeDropdown));
 
 defineEmits<{
   'toggle-left-pane': [];

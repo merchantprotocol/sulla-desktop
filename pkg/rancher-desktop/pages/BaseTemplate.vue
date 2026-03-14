@@ -13,7 +13,7 @@ entry/index.ts dynamically determines the layout based on the current route's co
       <div ref="chatScrollContainer" id="chat-scroll-container" class="flex min-h-0 flex-1 overflow-y-auto">
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
           <div class="relative mx-auto flex w-full max-w-8xl flex-1 justify-center sm:px-2 lg:px-8 xl:px-12">
-            <div class="hidden lg:relative lg:block lg:flex-none lg:w-72 xl:w-80 bg-slate-50 dark:bg-slate-800/30">
+            <div class="hidden lg:relative lg:block lg:flex-none lg:w-72 xl:w-80 bg-surface">
               <div class="sticky top-[15px] pt-[15px] h-[calc(100vh-5rem-15px)] w-full overflow-x-hidden overflow-y-auto">
 
                 <!-- sidebar slot -->
@@ -58,12 +58,7 @@ html {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 </style>

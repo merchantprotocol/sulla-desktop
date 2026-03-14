@@ -2,7 +2,7 @@
   <div class="min-h-screen text-sm font-sans page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentExtensions" />
     <div class="flex min-h-screen flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" :current-theme="currentTheme" :available-themes="availableThemes" :set-theme="setTheme" :theme-groups="themeGroups" />
+      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
 
       <div class="flex w-full flex-col">
         <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">

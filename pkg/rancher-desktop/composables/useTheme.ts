@@ -1,9 +1,9 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
-export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark';
+export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark';
 
-export type ThemeScheme = 'default' | 'ocean' | 'nord';
+export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol';
 
 export interface ThemeOption {
   id: ThemeName;
@@ -26,12 +26,14 @@ export const availableThemes: ThemeOption[] = [
   { id: 'ocean-dark', scheme: 'ocean', mode: 'dark', label: 'Ocean Dark', isDark: true },
   { id: 'nord-light', scheme: 'nord', mode: 'light', label: 'Nord Light', isDark: false },
   { id: 'nord-dark', scheme: 'nord', mode: 'dark', label: 'Nord Dark', isDark: true },
+  { id: 'protocol-dark', scheme: 'protocol', mode: 'dark', label: 'Protocol Dark', isDark: true },
 ];
 
 export const themeGroups: ThemeGroup[] = [
   { scheme: 'default', label: 'Default', themes: availableThemes.filter(t => t.scheme === 'default') },
   { scheme: 'ocean', label: 'Ocean', themes: availableThemes.filter(t => t.scheme === 'ocean') },
   { scheme: 'nord', label: 'Nord', themes: availableThemes.filter(t => t.scheme === 'nord') },
+  { scheme: 'protocol', label: 'Protocol', themes: availableThemes.filter(t => t.scheme === 'protocol') },
 ];
 
 const validThemeIds = new Set<string>(availableThemes.map(t => t.id));
@@ -40,8 +42,9 @@ const validThemeIds = new Set<string>(availableThemes.map(t => t.id));
 const legacyThemeMap: Record<string, ThemeName> = {
   light:  'default-light',
   dark:   'default-dark',
-  ocean:  'ocean-dark',
-  nord:   'nord-dark',
+  ocean:    'ocean-dark',
+  nord:     'nord-dark',
+  protocol: 'protocol-dark',
 };
 
 function isValidTheme(value: unknown): value is ThemeName {
@@ -123,18 +126,40 @@ export function useTheme() {
     return themeInfo?.isDark ?? false;
   });
 
+  const currentScheme = computed<ThemeScheme>(() => {
+    const themeInfo = availableThemes.find(t => t.id === currentTheme.value);
+    return themeInfo?.scheme ?? 'default';
+  });
+
   function setTheme(theme: ThemeName): void {
     currentTheme.value = theme;
     persistTheme(theme);
   }
 
+  /** Switch scheme, preserving the current light/dark mode when possible. */
+  function setScheme(scheme: ThemeScheme): void {
+    const current = availableThemes.find(t => t.id === currentTheme.value);
+    const preferredMode = current?.mode ?? 'dark';
+    // Try to find the variant matching the current mode, fall back to any variant
+    const match = availableThemes.find(t => t.scheme === scheme && t.mode === preferredMode)
+      ?? availableThemes.find(t => t.scheme === scheme);
+    if (match) {
+      setTheme(match.id);
+    }
+  }
+
+  /** Toggle between light and dark mode within the current scheme. */
   function toggleTheme(): void {
     const current = availableThemes.find(t => t.id === currentTheme.value);
-    if (current) {
-      const newMode = current.mode === 'dark' ? 'light' : 'dark';
-      setTheme(`${current.scheme}-${newMode}` as ThemeName);
-    } else {
+    if (!current) {
       setTheme('default-light');
+      return;
+    }
+    const newMode = current.mode === 'dark' ? 'light' : 'dark';
+    const target = availableThemes.find(t => t.scheme === current.scheme && t.mode === newMode);
+    // If the opposite mode doesn't exist for this scheme (e.g. Protocol has no light), stay put
+    if (target) {
+      setTheme(target.id);
     }
   }
 
@@ -170,8 +195,10 @@ export function useTheme() {
 
   return {
     currentTheme,
+    currentScheme,
     isDark,
     setTheme,
+    setScheme,
     toggleTheme,
     availableThemes,
     themeGroups,

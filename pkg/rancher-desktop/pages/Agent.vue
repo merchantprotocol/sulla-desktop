@@ -3,7 +3,7 @@
     <PostHogTracker page-name="Agent" />
     <div class="flex h-screen flex-col">
 
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" :current-theme="currentTheme" :available-themes="availableThemes" :set-theme="setTheme" :theme-groups="themeGroups" />
+      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
 
     <!-- Loading overlay while system boots -->
     <StartupOverlay
@@ -28,8 +28,8 @@
                 class="mb-8"
               >
                 <div v-if="m.role === 'user'" class="flex justify-end">
-                  <div class="max-w-[min(760px,92%)] rounded-3xl p-6 bg-sky-50 dark:bg-slate-800/60 dark:ring-1 dark:ring-slate-300/10">
-                    <div class="whitespace-pre-wrap text-sky-900 dark:text-slate-100">{{ m.content }}</div>
+                  <div class="max-w-[min(760px,92%)] rounded-3xl p-6 bg-surface-alt ring-1 ring-edge-subtle">
+                    <div class="whitespace-pre-wrap text-content">{{ m.content }}</div>
                   </div>
                 </div>
 
@@ -114,7 +114,7 @@
 
                 <div v-else-if="m.kind === 'thinking'" class="thinking-bubble max-w-[min(760px,92%)]">
                   <div class="thinking-bubble-inner">
-                    <div class="thinking-bubble-content text-xs text-slate-400 dark:text-slate-500 italic" v-html="renderMarkdown(m.content)" />
+                    <div class="thinking-bubble-content text-xs text-content-muted italic" v-html="renderMarkdown(m.content)" />
                   </div>
                 </div>
 
@@ -125,7 +125,7 @@
                       :alt="m.image.alt || ''"
                       class="block h-auto max-w-full rounded-xl border border-black/10 dark:border-white/10"
                     >
-                    <div v-if="m.image.alt" class="text-xs text-[#0d0d0d]/60 dark:text-white/60">
+                    <div v-if="m.image.alt" class="text-xs text-content-secondary">
                       {{ m.image.alt }}
                     </div>
                   </div>
@@ -136,7 +136,7 @@
                 v-if="loading"
                 class="mb-3 flex justify-start"
               >
-                <div class="relative max-w-[min(760px,92%)] whitespace-pre-wrap rounded-xl px-4 py-3 text-sm leading-6 text-neutral-900 dark:text-neutral-100">
+                <div class="relative max-w-[min(760px,92%)] whitespace-pre-wrap rounded-xl px-4 py-3 text-sm leading-6 text-content">
                   <div class="absolute -inset-px rounded-xl border-2 border-transparent [background:linear-gradient(var(--quick-links-hover-bg,var(--color-sky-50)),var(--quick-links-hover-bg,var(--color-sky-50)))_padding-box,linear-gradient(to_top,var(--color-indigo-400),var(--color-cyan-400),var(--color-sky-500))_border-box] dark:[--quick-links-hover-bg:var(--color-slate-800)]"></div>
                   <div class="relative">Thinking...</div>
                 </div>
@@ -144,7 +144,7 @@
               <div v-if="showContinueButton" class="flex justify-end mb-3">
                 <button
                   type="button"
-                  class="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-neutral-800 active:bg-neutral-700 transition-colors"
+                  class="rounded-lg bg-content px-4 py-2 text-sm font-medium text-page shadow-sm hover:bg-surface-hover transition-colors"
                   @click="continueRun"
                 >
                   Continue
@@ -155,7 +155,7 @@
         </div>
 
           <div
-            :class="hasMessages ? 'fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white/80 pt-6 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80' : 'flex flex-1 items-center justify-center bg-white dark:bg-slate-900'"
+            :class="hasMessages ? 'fixed bottom-0 left-0 right-0 z-40 border-t border-edge bg-page/80 pt-6 backdrop-blur' : 'flex flex-1 items-center justify-center bg-page'"
           >
             <div v-if="hasMessages" class="relative mx-auto flex w-full max-w-8xl justify-center sm:px-2 lg:px-8 xl:px-12">
               <div class="max-w-2xl min-w-0 flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16">
@@ -494,42 +494,37 @@ watch(isDark, () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
-}
-
-/* Match knowledgebase dark-mode scrollbar styling in chat interface */
-.dark #chat-scroll-container::-webkit-scrollbar,
-.dark #chat-scroll-container *::-webkit-scrollbar {
+/* Scrollbar styling for chat interface */
+#chat-scroll-container::-webkit-scrollbar,
+#chat-scroll-container *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
-.dark #chat-scroll-container::-webkit-scrollbar-track,
-.dark #chat-scroll-container *::-webkit-scrollbar-track {
-  background: #1e293b;
+#chat-scroll-container::-webkit-scrollbar-track,
+#chat-scroll-container *::-webkit-scrollbar-track {
+  background: var(--bg-surface);
   border-radius: 4px;
 }
 
-.dark #chat-scroll-container::-webkit-scrollbar-thumb,
-.dark #chat-scroll-container *::-webkit-scrollbar-thumb {
-  background: #475569;
+#chat-scroll-container::-webkit-scrollbar-thumb,
+#chat-scroll-container *::-webkit-scrollbar-thumb {
+  background: var(--bg-surface-hover);
   border-radius: 4px;
 }
 
-.dark #chat-scroll-container::-webkit-scrollbar-thumb:hover,
-.dark #chat-scroll-container *::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+#chat-scroll-container::-webkit-scrollbar-thumb:hover,
+#chat-scroll-container *::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
 }
 
-.dark #chat-scroll-container::-webkit-scrollbar-corner,
-.dark #chat-scroll-container *::-webkit-scrollbar-corner {
-  background: #1e293b;
+#chat-scroll-container::-webkit-scrollbar-corner,
+#chat-scroll-container *::-webkit-scrollbar-corner {
+  background: var(--bg-surface);
 }
 
 /* Thinking bubble — no padding, no bg, no borders, gradient fade top/bottom, max 100px */
@@ -562,20 +557,12 @@ watch(isDark, () => {
 
 .thinking-bubble::before {
   top: 0;
-  background: linear-gradient(to bottom, rgb(255 255 255 / 0.9), transparent);
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg-page) 90%, transparent), transparent);
 }
 
 .thinking-bubble::after {
   bottom: 0;
-  background: linear-gradient(to top, rgb(255 255 255 / 0.9), transparent);
-}
-
-.dark .thinking-bubble::before {
-  background: linear-gradient(to bottom, rgb(15 23 42 / 0.9), transparent);
-}
-
-.dark .thinking-bubble::after {
-  background: linear-gradient(to top, rgb(15 23 42 / 0.9), transparent);
+  background: linear-gradient(to top, color-mix(in srgb, var(--bg-page) 90%, transparent), transparent);
 }
 
 .thinking-bubble-content :deep(p) {
@@ -590,28 +577,19 @@ watch(isDark, () => {
   padding: 8px 12px;
   margin: 6px 0;
   border-radius: 10px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-}
-
-.dark .prose :deep(.sulla-audio-player) {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
 }
 
 .prose :deep(.sulla-audio-label) {
   font-size: 13px;
   font-weight: 500;
-  color: #334155;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 180px;
   flex-shrink: 0;
-}
-
-.dark .prose :deep(.sulla-audio-label) {
-  color: #cbd5e1;
 }
 
 .prose :deep(.sulla-audio-player audio) {
@@ -626,16 +604,12 @@ watch(isDark, () => {
 
 /* ── Claude Code-style tool card ── */
 .tool-card-cc {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--bg-page);
   overflow: hidden;
   font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
   font-size: 13px;
-}
-.dark .tool-card-cc {
-  background: #1e293b;
-  border-color: #334155;
 }
 
 .tool-card-cc-header {
@@ -648,11 +622,8 @@ watch(isDark, () => {
   border: none;
   cursor: pointer;
   font: inherit;
-  color: #1e293b;
+  color: var(--text-primary);
   text-align: left;
-}
-.dark .tool-card-cc-header {
-  color: #e2e8f0;
 }
 
 .tool-card-cc-dot {
@@ -661,9 +632,9 @@ watch(isDark, () => {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.tool-card-cc-dot.running { background: #f59e0b; animation: dotPulse 1.5s ease-in-out infinite; }
-.tool-card-cc-dot.success { background: #22c55e; }
-.tool-card-cc-dot.failed  { background: #ef4444; }
+.tool-card-cc-dot.running { background: var(--status-warning); animation: dotPulse 1.5s ease-in-out infinite; }
+.tool-card-cc-dot.success { background: var(--status-success); }
+.tool-card-cc-dot.failed  { background: var(--status-error); }
 
 @keyframes dotPulse {
   0%, 100% { opacity: 0.5; }
@@ -673,28 +644,22 @@ watch(isDark, () => {
 .tool-card-cc-name {
   font-weight: 700;
   font-size: 13px;
-  color: #0f172a;
-}
-.dark .tool-card-cc-name {
-  color: #f1f5f9;
+  color: var(--text-primary);
 }
 
 .tool-card-cc-desc {
   font-weight: 400;
   font-size: 13px;
-  color: #64748b;
+  color: var(--text-secondary);
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dark .tool-card-cc-desc {
-  color: #94a3b8;
-}
 
 .tool-card-cc-chevron {
-  color: #94a3b8;
+  color: var(--text-muted);
   transition: transform 0.15s ease;
   flex-shrink: 0;
   margin-left: auto;
@@ -714,30 +679,24 @@ watch(isDark, () => {
 .tool-card-cc-cmd-label {
   font-size: 10px;
   font-weight: 700;
-  color: #94a3b8;
+  color: var(--text-muted);
   text-transform: uppercase;
   flex-shrink: 0;
   min-width: 24px;
 }
 
 .tool-card-cc-cmd-text {
-  color: #334155;
+  color: var(--text-secondary);
   word-break: break-all;
   white-space: pre-wrap;
 }
-.dark .tool-card-cc-cmd-text {
-  color: #cbd5e1;
-}
 
-.tool-card-cc-exit.success { color: #22c55e; }
-.tool-card-cc-exit.failed  { color: #ef4444; }
+.tool-card-cc-exit.success { color: var(--status-success); }
+.tool-card-cc-exit.failed  { color: var(--status-error); }
 
 .tool-card-cc-body {
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-default);
   margin: 6px 0 0;
-}
-.dark .tool-card-cc-body {
-  border-top-color: #334155;
 }
 
 .tool-card-cc-output {
@@ -747,7 +706,7 @@ watch(isDark, () => {
   margin: 0;
   padding: 0;
   background: none;
-  color: #334155;
+  color: var(--text-secondary);
   font-size: 12px;
   font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
   white-space: pre-wrap;
@@ -755,14 +714,11 @@ watch(isDark, () => {
   max-height: 300px;
   overflow-y: auto;
 }
-.dark .tool-card-cc-output pre {
-  color: #cbd5e1;
-}
 
 .tool-card-cc-section-label {
   font-size: 10px;
   font-weight: 700;
-  color: #94a3b8;
+  color: var(--text-muted);
   text-transform: uppercase;
   margin-bottom: 4px;
 }
@@ -770,6 +726,6 @@ watch(isDark, () => {
 .tool-card-cc-error {
   padding: 8px 12px;
   font-size: 12px;
-  color: #ef4444;
+  color: var(--status-error);
 }
 </style>

@@ -1,7 +1,7 @@
 <template>
   <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentFilesystem" />
-    <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" :current-theme="currentTheme" :available-themes="availableThemes" :set-theme="setTheme" :theme-groups="themeGroups" @toggle-left-pane="leftPaneVisible = !leftPaneVisible" @toggle-center-pane="centerPaneVisible = !centerPaneVisible" @toggle-right-pane="rightPaneVisible = !rightPaneVisible" />
+    <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" @toggle-left-pane="leftPaneVisible = !leftPaneVisible" @toggle-center-pane="centerPaneVisible = !centerPaneVisible" @toggle-right-pane="rightPaneVisible = !rightPaneVisible" />
 
     <div class="flex flex-1 min-h-0 overflow-hidden">
         <!-- Left sidebar: File tree -->

@@ -340,3 +340,58 @@
   --terminal-selection-bg: rgba(136, 192, 208, 0.3);
   --terminal-selection-fg: #eceff4;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Protocol Dark theme — Merchant Protocol noir with steel blue       */
+/* ------------------------------------------------------------------ */
+.theme-protocol-dark {
+  /* Backgrounds — noir terminal palette */
+  --bg-page: #0d1117;
+  --bg-surface: #161b22;
+  --bg-surface-alt: #1c2128;
+  --bg-surface-hover: #21262d;
+  --bg-header: rgba(13, 17, 23, 0.85);
+  --bg-input: #161b22;
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  /* Text */
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --text-link: #6ab0cc;
+  --text-on-accent: #ffffff;
+
+  /* Borders */
+  --border-default: #30363d;
+  --border-strong: #484f58;
+  --border-subtle: #21262d;
+
+  /* Accent — steel blue */
+  --accent-primary: #5096b3;
+  --accent-primary-hover: #6ab0cc;
+  --accent-bg: rgba(80, 150, 179, 0.1);
+
+  /* Status */
+  --status-success: #3fb950;
+  --status-warning: #e3b341;
+  --status-error: #f85149;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --ring-color: rgba(80, 150, 179, 0.5);
+
+  /* Editor */
+  --editor-bg: #1a1e24;
+  --editor-border: #30363d;
+  --editor-btn-color: #8b949e;
+  --editor-btn-hover: rgba(255, 255, 255, 0.06);
+  --editor-separator: #30363d;
+
+  /* Terminal */
+  --terminal-bg: #161b22;
+  --terminal-fg: #e6edf3;
+  --terminal-cursor: #6ab0cc;
+  --terminal-selection-bg: rgba(80, 150, 179, 0.3);
+  --terminal-selection-fg: #ffffff;
+}

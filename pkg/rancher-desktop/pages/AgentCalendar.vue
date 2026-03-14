@@ -2,7 +2,7 @@
   <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
     <PostHogTracker page-name="AgentCalendar" />
     <div class="flex flex-1 min-h-0 flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" :current-theme="currentTheme" :available-themes="availableThemes" :set-theme="setTheme" :theme-groups="themeGroups" />
+      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
 
       <div class="flex items-center justify-end px-4 py-3">
         <button

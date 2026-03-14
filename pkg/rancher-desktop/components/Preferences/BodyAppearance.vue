@@ -2,6 +2,7 @@
 import { defineComponent } from 'vue';
 
 import { availableThemes, themeGroups } from '@pkg/composables/useTheme';
+import type { ThemeScheme } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const THEME_STORAGE_KEY = 'agentTheme';
@@ -11,9 +12,14 @@ export default defineComponent({
   data() {
     return {
       selectedTheme:  localStorage.getItem(THEME_STORAGE_KEY) || 'default-light',
-      availableThemes,
       themeGroups,
     };
+  },
+  computed: {
+    selectedScheme(): ThemeScheme {
+      const theme = availableThemes.find(t => t.id === this.selectedTheme);
+      return theme?.scheme ?? 'default';
+    },
   },
   mounted() {
     window.addEventListener('storage', this.onStorageChange);
@@ -27,16 +33,26 @@ export default defineComponent({
         this.selectedTheme = e.newValue;
       }
     },
-    setTheme(themeId: string) {
-      this.selectedTheme = themeId;
-      localStorage.setItem(THEME_STORAGE_KEY, themeId);
-      window.dispatchEvent(new StorageEvent('storage', {
-        key:      THEME_STORAGE_KEY,
-        newValue: themeId,
-      }));
-      // Enable the Apply button so the user can close with Apply
-      this.$store.dispatch('preferences/setCanApply', true);
-      ipcRenderer.send('preferences-set-dirty', true);
+    selectScheme(scheme: ThemeScheme) {
+      // Find the current mode from the active theme
+      const current = availableThemes.find(t => t.id === this.selectedTheme);
+      const preferredMode = current?.mode ?? 'dark';
+      // Pick the variant matching the current mode, or fall back to any variant
+      const match = availableThemes.find(t => t.scheme === scheme && t.mode === preferredMode)
+        ?? availableThemes.find(t => t.scheme === scheme);
+      if (match) {
+        this.selectedTheme = match.id;
+        localStorage.setItem(THEME_STORAGE_KEY, match.id);
+        window.dispatchEvent(new StorageEvent('storage', {
+          key:      THEME_STORAGE_KEY,
+          newValue: match.id,
+        }));
+        this.$store.dispatch('preferences/setCanApply', true);
+        ipcRenderer.send('preferences-set-dirty', true);
+      }
+    },
+    hasBothModes(group: typeof themeGroups[number]): boolean {
+      return group.themes.some(t => t.mode === 'light') && group.themes.some(t => t.mode === 'dark');
     },
   },
 });
@@ -46,28 +62,31 @@ export default defineComponent({
   <div class="appearance-content">
     <h3>Theme</h3>
     <p class="description">
-      Choose a visual theme for Sulla Desktop. Your selection applies across all windows.
+      Choose a visual theme for Sulla Desktop. Use the sun/moon button in the header to switch between light and dark mode.
     </p>
 
-    <div class="theme-groups">
-      <div v-for="group in themeGroups" :key="group.scheme" class="theme-group">
-        <div class="theme-group-label">{{ group.label }}</div>
-        <div class="theme-variants">
-          <button
-            v-for="theme in group.themes"
-            :key="theme.id"
-            class="theme-card"
-            :class="{ active: selectedTheme === theme.id }"
-            @click="setTheme(theme.id)"
-          >
-            <div class="theme-preview" :class="'preview-' + theme.id" />
-            <div class="theme-card-label">
-              <span class="theme-card-dot" :class="{ active: selectedTheme === theme.id }" />
-              {{ theme.mode === 'light' ? 'Light' : 'Dark' }}
-            </div>
-          </button>
+    <div class="theme-list">
+      <button
+        v-for="group in themeGroups"
+        :key="group.scheme"
+        class="theme-card"
+        :class="{ active: selectedScheme === group.scheme }"
+        @click="selectScheme(group.scheme)"
+      >
+        <div class="theme-preview" :class="hasBothModes(group) ? 'split' : ''">
+          <template v-if="hasBothModes(group)">
+            <div class="preview-half" :class="'preview-' + group.scheme + '-light'" />
+            <div class="preview-half" :class="'preview-' + group.scheme + '-dark'" />
+          </template>
+          <template v-else>
+            <div class="preview-full" :class="'preview-' + group.themes[0].id" />
+          </template>
         </div>
-      </div>
+        <div class="theme-card-label">
+          <span class="theme-card-dot" :class="{ active: selectedScheme === group.scheme }" />
+          {{ group.label }}
+        </div>
+      </button>
     </div>
   </div>
 </template>
@@ -89,38 +108,18 @@ export default defineComponent({
   }
 }
 
-.theme-groups {
+.theme-list {
   display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.theme-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.theme-group-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-secondary, #64748b);
-}
-
-.theme-variants {
-  display: flex;
-  flex-direction: row;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
 .theme-card {
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-width: 140px;
   max-width: 200px;
+  flex: 1;
   border: 2px solid var(--border-default, #e2e8f0);
   border-radius: 8px;
   overflow: hidden;
@@ -143,6 +142,21 @@ export default defineComponent({
 .theme-preview {
   height: 80px;
   border-bottom: 1px solid var(--border-default, #e2e8f0);
+  overflow: hidden;
+
+  &.split {
+    display: flex;
+  }
+}
+
+.preview-half {
+  flex: 1;
+  height: 100%;
+}
+
+.preview-full {
+  width: 100%;
+  height: 100%;
 }
 
 .preview-default-light {
@@ -167,6 +181,10 @@ export default defineComponent({
 
 .preview-nord-dark {
   background: linear-gradient(135deg, #2e3440 0%, #3b4252 50%, #434c5e 100%);
+}
+
+.preview-protocol-dark {
+  background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #5096b3 100%);
 }
 
 .theme-card-label {
