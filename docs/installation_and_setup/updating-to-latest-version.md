@@ -33,7 +33,7 @@ Keep auto updates enabled so you are notified quickly when new releases are avai
 
 ## Under the hood
 
-Sulla Desktop update delivery is based on the Electron auto-update flow used in the Rancher Desktop foundation.
+Sulla Desktop update delivery is based on the Electron auto-update flow.
 
 This provides a standard desktop experience for checking, notifying, downloading, and applying updates.
 

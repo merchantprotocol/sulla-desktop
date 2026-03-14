@@ -31,11 +31,11 @@ A **project** is the object in which you do everything in OBS.
 Everything falls under projects: repositories, packages, services;
 all of these things must belong to a project. Projects may have
 subprojects, which are themselves full projects. You have to be an
-OBS admin to create a root-level project, so our project (`Rancher`)
+OBS admin to create a root-level project, so our project (`Sulla`)
 was created as a subproject of the `isv` root project. Projects are
 referred to as each of their parent projects plus their name, all
 separated by colons. So to refer to our top-level project, you use
-the name `isv:Rancher`.
+the name `isv:Sulla`.
 
 A **repository** is configured on a project. The best way to think of
 repositories is in the context of package managers: they are a remote

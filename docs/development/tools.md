@@ -48,7 +48,8 @@ tools/
 | `bridge` | Frontend communication | Message bridge with UI |
 | `calendar` | Calendar events | Event management |
 | `extensions` | Extension marketplace | Browse, install, uninstall extensions |
-| `browser` | Web browsing | URL fetching |
+| `browser` | *(deprecated — no tools)* | — |
+| `workflow` | Workflow execution & recovery | `execute_workflow`, `restart_from_checkpoint` |
 | `rdctl` | Sulla/rdctl commands | Desktop management |
 | `lima` | Lima VM | VM instance management |
 

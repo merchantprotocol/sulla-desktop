@@ -19,7 +19,7 @@ In general, the process involves:
     yarn sign path/to/archive.zip
     ```
 
-4. Look in `dist/` for the signed files (`Rancher.Desktop.Setup.msi`, etc.).
+4. Look in `dist/` for the signed files (`Sulla.Desktop.Setup.msi`, etc.).
 
 ## Windows
 
@@ -36,10 +36,10 @@ following command in PowerShell:
 ```powershell
 New-SelfSignedCertificate `
     -Type Custom `
-    -Subject "CN=Rancher-Sandbox, C=CA" `
+    -Subject "CN=Sulla-Desktop, C=CA" `
     -KeyUsage DigitalSignature `
     -CertStoreLocation Cert:\CurrentUser\My `
-    -FriendlyName "Rancher-Sandbox Code Signing" `
+    -FriendlyName "Sulla-Desktop Code Signing" `
     -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
 ```
 
@@ -63,7 +63,7 @@ must search the output for your signing certificate and locate the
 ### Verifying the Signed Product
 
 In explorer, right-click on the final `.exe` file, choose `Properties`, `Digital Signatures`,
-and verify that `Suse LLC` is listed in the Signature List.
+and verify that `Sulla AI` is listed in the Signature List.
 
 ## macOS
 
@@ -115,8 +115,8 @@ For notarization, the following environment variables are also needed:
     3. Create one (with a label of your choice) and copy the resulting password.
 - `AC_TEAMID`
   - This is the Apple Team ID.  This is the _Organizational Unit (OU)_ field of
-    the subject of your signing certificate; for Rancher Desktop / SUSE, this is
-    `2Q6FHJR3H3`. <!-- spellcheck-ignore-line -->
+    the subject of your signing certificate; for Sulla Desktop, this should
+    match your Apple Developer Team ID.
     (This value can be extracted from the published application.)
 
 ### Performing signing
