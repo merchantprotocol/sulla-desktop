@@ -12,19 +12,21 @@
   --fs-code:     13px;
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Roboto Mono', monospace;
 
-  /* Backgrounds — noir terminal palette */
-  --bg-page: #0d1117;
-  --bg-surface: #0d1117;
-  --bg-surface-alt: #161b22;
-  --bg-surface-hover: #1c2128;
+  /* Backgrounds — noir terminal palette (design guide gray ramp) */
+  --bg-page: #0d1117;            /* Level 0 — deepest page background */
+  --bg-surface: #161b22;         /* Level 100 — cards, panels, sidebar */
+  --bg-surface-alt: #1c2128;     /* Level 200 — nested panels, terminal bars */
+  --bg-surface-hover: #21262d;   /* Level 300 — hover, active, elevated */
+  --bg-elevated: #21262d;        /* Level 300 — modals, dropdowns, popovers */
   --bg-header: rgba(13, 17, 23, 0.85);
-  --bg-input: #161b22;
+  --bg-input: #0d1117;           /* Level 0 — recessed inputs, inset feel */
   --bg-overlay: rgba(0, 0, 0, 0.7);
 
-  /* Text */
-  --text-primary: #e6edf3;
-  --text-secondary: #8b949e;
-  --text-muted: #8b949e;
+  /* Text — design guide gray ramp hierarchy */
+  --text-primary: #e6edf3;       /* Level 900 — headings, key values */
+  --text-secondary: #b1bac4;     /* Level 800 — body text */
+  --text-muted: #8b949e;         /* Level 700 — captions, labels */
+  --text-dim: #6e7681;           /* Level 600 — disabled, tertiary */
   --text-link: #5096b3;
   --text-on-accent: #ffffff;
   --text-success: #3fb950;
@@ -39,12 +41,13 @@
 
   /* Semantic Backgrounds */
   --bg-primary: #0d1117;
-  --bg-hover: rgba(255, 255, 255, 0.04);
-  --bg-success: rgba(63, 185, 80, 0.12);
-  --bg-error: rgba(248, 81, 73, 0.12);
-  --bg-warning: rgba(227, 179, 65, 0.12);
-  --bg-info: rgba(88, 166, 255, 0.12);
-  --bg-accent: rgba(188, 140, 255, 0.12);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.12);
+  --bg-success: rgba(63, 185, 80, 0.18);
+  --bg-error: rgba(248, 81, 73, 0.18);
+  --bg-warning: rgba(227, 179, 65, 0.18);
+  --bg-info: rgba(88, 166, 255, 0.18);
+  --bg-accent: rgba(188, 140, 255, 0.18);
 
   /* Accent — steel blue (buttons, links, indicators only) */
   --accent-primary: #5096b3;
@@ -70,16 +73,17 @@
   --status-warning: #e3b341;
   --status-error: #f85149;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  /* Shadows — inset top-edge highlight for depth on dark backgrounds */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
   --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --ring-color: rgba(80, 150, 179, 0.5);
 
   /* Editor */
   --editor-bg: #0d1117;
   --editor-border: #30363d;
   --editor-btn-color: #8b949e;
-  --editor-btn-hover: rgba(255, 255, 255, 0.06);
+  --editor-btn-hover: rgba(255, 255, 255, 0.10);
   --editor-separator: #30363d;
 
   /* Terminal */
@@ -196,10 +200,10 @@
 
 /* ── Header: noir nav with backdrop blur ── */
 .theme-protocol-dark header {
-  background: #161b22 !important;
+  background: #161b22 !important;  /* Level 100 — elevated from Level 0 page */
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border-default);
-  box-shadow: none !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 .theme-protocol-dark header nav a {
@@ -220,7 +224,7 @@
 
 /* ── Page background with subtle grid lines ── */
 .theme-protocol-dark .page-root {
-  background: #161b22;
+  background: #0d1117;           /* Level 0 — deepest, so cards at Level 100 stand out */
   color: #e6edf3;
   background-image:
     linear-gradient(rgba(80, 150, 179, 0.02) 1px, transparent 1px),
@@ -466,13 +470,14 @@
 
 /* ── Tool cards: terminal aesthetic ── */
 .theme-protocol-dark .tool-card-cc {
-  background: #161b22;
+  background: #161b22;             /* Level 100 — visible on Level 0 page */
   border-color: var(--border-default);
   font-family: var(--font-mono);
+  box-shadow: var(--shadow-sm);
 }
 
 .theme-protocol-dark .tool-card-cc-header:hover {
-  background: rgba(80, 150, 179, 0.04);
+  background: rgba(80, 150, 179, 0.08);
 }
 
 .theme-protocol-dark .tool-card-cc-name {
@@ -645,7 +650,7 @@
 /* Page root background override (scoped styles use #0f172a) */
 .theme-protocol-dark .page-root,
 .theme-protocol-dark .page-root.dark {
-  background: #161b22 !important;
+  background: #0d1117 !important;  /* Level 0 — deepest, cards/panels at Level 100 pop */
   color: #e6edf3 !important;
 }
 
@@ -929,7 +934,7 @@
 
 /* Hero section background with gradient fade to page bg */
 .theme-protocol-dark .bg-slate-900 {
-  background: linear-gradient(to bottom, #0d1117 60%, #161b22 100%) !important;
+  background: #0d1117 !important;
 }
 
 /* Hero title gradient: steel blue instead of indigo */
@@ -1080,7 +1085,7 @@
 /* ── Editor page root background ── */
 .theme-protocol-dark .page-root,
 .theme-protocol-dark .page-root.dark {
-  background: #161b22 !important;
+  background: #0d1117 !important;  /* Level 0 — deepest background */
   color: #e6edf3 !important;
 }
 
@@ -1498,4 +1503,41 @@
 
 .theme-protocol-dark .add-terminal-btn:hover {
   background: #5096b3 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Visual Depth — shadows & borders for element separation
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Stat cards: subtle shadow for depth against Level 0 page */
+.theme-protocol-dark .stat-card {
+  box-shadow: var(--shadow-sm);
+}
+
+/* Panels: subtle shadow for depth */
+.theme-protocol-dark .panel {
+  box-shadow: var(--shadow-sm);
+}
+
+/* Conversation cards: shadow for depth */
+.theme-protocol-dark .conv-card {
+  box-shadow: var(--shadow-sm);
+}
+
+/* Sidebar active state: steel blue left border + tinted background */
+.theme-protocol-dark .icon-panel .icon-btn.active {
+  border-left: 2px solid #5096b3 !important;
+}
+
+/* Cards on hover: lift with stronger border */
+.theme-protocol-dark .stat-card:hover,
+.theme-protocol-dark .panel:hover,
+.theme-protocol-dark .conv-card:hover {
+  border-color: var(--border-strong) !important;
+  box-shadow: var(--shadow-md);
+}
+
+/* Live bubbles & user messages: ensure visible against page bg */
+.theme-protocol-dark .live-bubble {
+  box-shadow: var(--shadow-sm);
 }
