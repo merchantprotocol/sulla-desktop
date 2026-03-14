@@ -675,6 +675,8 @@ export class AgentPersonaService {
           
           if (toolRunId) {
             const messageId = `${Date.now()}_tool_${toolRunId}`;
+            // Extract description from args if provided (e.g. exec tool sends description of what command does)
+            const description = typeof args?.description === 'string' ? args.description : undefined;
             const message: ChatMessage = {
               id: messageId,
               channelId: agentId,
@@ -684,6 +686,7 @@ export class AgentPersonaService {
               toolCard: {
                 toolRunId,
                 toolName,
+                description,
                 status: 'running',
                 args,
               },

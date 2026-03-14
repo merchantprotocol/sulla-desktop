@@ -599,6 +599,17 @@ export abstract class BaseLanguageModel {
       .trim();
   }
 
+  /**
+   * Combine an optional caller-provided AbortSignal with a timeout signal.
+   * Returns a single signal that fires on whichever triggers first.
+   */
+  protected combinedSignal(signal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined {
+    if (!timeoutMs || timeoutMs <= 0) return signal;
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    if (!signal) return timeoutSignal;
+    return AbortSignal.any([signal, timeoutSignal]);
+  }
+
   // Optional: helper for building fetch options (auth, timeout, etc.)
   protected buildFetchOptions(body: any, signal?: AbortSignal): RequestInit {
     const headers: Record<string, string> = {

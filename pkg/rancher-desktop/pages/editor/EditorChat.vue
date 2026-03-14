@@ -27,31 +27,41 @@
           <div class="bubble-content">{{ msg.content }}</div>
         </div>
 
-        <!-- Tool card (expandable) -->
-        <div v-else-if="msg.kind === 'tool' && msg.toolCard" class="bubble tool-bubble" :class="{ dark: isDark }">
-          <button class="tool-header" @click="toggleToolCard(msg.id)">
-            <div class="tool-header-left">
-              <span class="tool-name">{{ msg.toolCard.toolName }}</span>
-              <span class="tool-status" :class="msg.toolCard.status">{{ msg.toolCard.status }}</span>
-            </div>
+        <!-- Tool card (expandable, Claude Code style) -->
+        <div v-else-if="msg.kind === 'tool' && msg.toolCard" class="tool-card-cc" :class="{ dark: isDark, expanded: expandedToolCards.has(msg.id) }">
+          <button class="tool-card-cc-header" @click="toggleToolCard(msg.id)">
+            <span class="tool-card-cc-dot" :class="msg.toolCard.status"></span>
+            <span class="tool-card-cc-name">{{ toolCardLabel(msg.toolCard) }}</span>
+            <span v-if="msg.toolCard.description" class="tool-card-cc-desc">{{ msg.toolCard.description }}</span>
             <svg
               width="12" height="12" viewBox="0 0 15 15" fill="none"
-              class="tool-chevron" :class="{ expanded: expandedToolCards.has(msg.id) }"
+              class="tool-card-cc-chevron" :class="{ open: expandedToolCards.has(msg.id) }"
             >
               <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
             </svg>
           </button>
-          <div v-show="expandedToolCards.has(msg.id)" class="tool-details">
-            <div v-if="msg.toolCard.args && Object.keys(msg.toolCard.args).length > 0" class="tool-detail-section">
-              <div class="tool-detail-label">Arguments</div>
-              <pre class="tool-detail-pre" :class="{ dark: isDark }"><code>{{ JSON.stringify(msg.toolCard.args, null, 2) }}</code></pre>
+          <div v-if="toolCardCommand(msg.toolCard)" class="tool-card-cc-cmd">
+            <span class="tool-card-cc-cmd-label">IN</span>
+            <code class="tool-card-cc-cmd-text">{{ toolCardCommand(msg.toolCard) }}</code>
+          </div>
+          <div v-if="msg.toolCard.status !== 'running' && toolCardCommand(msg.toolCard)" class="tool-card-cc-cmd">
+            <span class="tool-card-cc-cmd-label">OUT</span>
+            <code class="tool-card-cc-cmd-text tool-card-cc-exit" :class="msg.toolCard.status">{{ msg.toolCard.status === 'success' ? '0' : '1' }}</code>
+          </div>
+          <div v-show="expandedToolCards.has(msg.id)" class="tool-card-cc-body">
+            <div v-if="toolCardOutput(msg.toolCard)" class="tool-card-cc-output">
+              <pre>{{ toolCardOutput(msg.toolCard) }}</pre>
             </div>
-            <div v-if="msg.toolCard.result !== undefined" class="tool-detail-section">
-              <div class="tool-detail-label">Result</div>
-              <pre class="tool-detail-pre" :class="{ dark: isDark }"><code>{{ typeof msg.toolCard.result === 'string' ? msg.toolCard.result : JSON.stringify(msg.toolCard.result, null, 2) }}</code></pre>
+            <div v-if="!toolCardCommand(msg.toolCard) && msg.toolCard.args && Object.keys(msg.toolCard.args).length > 0" class="tool-card-cc-output">
+              <div class="tool-card-cc-section-label">Arguments</div>
+              <pre>{{ JSON.stringify(msg.toolCard.args, null, 2) }}</pre>
             </div>
-            <div v-if="msg.toolCard.error" class="tool-detail-error">
-              Error: {{ msg.toolCard.error }}
+            <div v-if="!toolCardCommand(msg.toolCard) && msg.toolCard.result !== undefined" class="tool-card-cc-output">
+              <div class="tool-card-cc-section-label">Result</div>
+              <pre>{{ typeof msg.toolCard.result === 'string' ? msg.toolCard.result : JSON.stringify(msg.toolCard.result, null, 2) }}</pre>
+            </div>
+            <div v-if="msg.toolCard.error" class="tool-card-cc-error">
+              {{ msg.toolCard.error }}
             </div>
           </div>
         </div>
@@ -256,6 +266,27 @@ function toggleToolCard(messageId: string) {
   } else {
     expandedToolCards.add(messageId);
   }
+}
+
+const EXEC_TOOL_NAMES = new Set(['exec', 'exec_command', 'shell', 'bash', 'run_command']);
+
+function toolCardLabel(toolCard: { toolName: string }): string {
+  return EXEC_TOOL_NAMES.has(toolCard.toolName) ? 'Bash' : toolCard.toolName;
+}
+
+function toolCardCommand(toolCard: { toolName: string; args?: Record<string, unknown> }): string | null {
+  if (!EXEC_TOOL_NAMES.has(toolCard.toolName)) return null;
+  const cmd = toolCard.args?.command ?? toolCard.args?.cmd;
+  return typeof cmd === 'string' ? cmd : null;
+}
+
+function toolCardOutput(toolCard: { toolName: string; result?: unknown }): string | null {
+  if (!toolCard.result) return null;
+  const r = toolCard.result as any;
+  if (typeof r.responseString === 'string' && r.responseString.trim()) return r.responseString;
+  if (typeof r.result === 'string' && r.result.trim()) return r.result;
+  if (typeof r === 'string' && r.trim()) return r;
+  return null;
 }
 
 const activeAgentName = computed(() => props.agentRegistry?.activeAgent.value?.agentName || 'Agent');
@@ -484,116 +515,155 @@ watch(() => props.messages.length, () => scrollToBottom());
   color: #e2e8f0;
 }
 
-.tool-bubble {
-  background: #f8fafc;
+
+/* ── Claude Code-style tool card ── */
+.tool-card-cc {
   border: 1px solid #e2e8f0;
-  color: #475569;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
   font-size: 12px;
 }
-
-.tool-bubble.dark {
+.tool-card-cc.dark {
   background: #1e293b;
   border-color: #334155;
+}
+
+.tool-card-cc-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: #1e293b;
+  text-align: left;
+}
+.dark .tool-card-cc-header {
+  color: #e2e8f0;
+}
+
+.tool-card-cc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tool-card-cc-dot.running { background: #f59e0b; animation: ccDotPulse 1.5s ease-in-out infinite; }
+.tool-card-cc-dot.success { background: #22c55e; }
+.tool-card-cc-dot.failed  { background: #ef4444; }
+
+@keyframes ccDotPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.tool-card-cc-name {
+  font-weight: 700;
+  font-size: 12px;
+  color: #0f172a;
+}
+.dark .tool-card-cc-name {
+  color: #f1f5f9;
+}
+
+.tool-card-cc-desc {
+  font-weight: 400;
+  font-size: 12px;
+  color: #64748b;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dark .tool-card-cc-desc {
   color: #94a3b8;
 }
 
-.tool-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  color: inherit;
-  font-size: inherit;
-}
-
-.tool-header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.tool-chevron {
+.tool-card-cc-chevron {
   color: #94a3b8;
   transition: transform 0.15s ease;
   flex-shrink: 0;
+  margin-left: auto;
 }
-
-.tool-chevron.expanded {
+.tool-card-cc-chevron.open {
   transform: rotate(180deg);
 }
 
-.tool-details {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
+.tool-card-cc-cmd {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 10px 2px 16px;
+  font-size: 11px;
 }
 
-.dark .tool-details {
-  border-top-color: rgba(255, 255, 255, 0.08);
-}
-
-.tool-detail-section {
-  margin-bottom: 6px;
-}
-
-.tool-detail-label {
-  font-size: 10px;
-  font-weight: 600;
-  color: #64748b;
-  margin-bottom: 3px;
-}
-
-.dark .tool-detail-label {
+.tool-card-cc-cmd-label {
+  font-size: 9px;
+  font-weight: 700;
   color: #94a3b8;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  min-width: 20px;
 }
 
-.tool-detail-pre {
+.tool-card-cc-cmd-text {
+  color: #334155;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.dark .tool-card-cc-cmd-text {
+  color: #cbd5e1;
+}
+
+.tool-card-cc-exit.success { color: #22c55e; }
+.tool-card-cc-exit.failed  { color: #ef4444; }
+
+.tool-card-cc-body {
+  border-top: 1px solid #e2e8f0;
+  margin: 4px 0 0;
+}
+.dark .tool-card-cc-body {
+  border-top-color: #334155;
+}
+
+.tool-card-cc-output {
+  padding: 6px 10px;
+}
+.tool-card-cc-output pre {
   margin: 0;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: #1e293b;
-  color: #94a3b8;
+  padding: 0;
+  background: none;
+  color: #334155;
   font-size: 11px;
   font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-  overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 200px;
   overflow-y: auto;
 }
-
-.tool-detail-pre.dark {
-  background: #0f172a;
+.dark .tool-card-cc-output pre {
+  color: #cbd5e1;
 }
 
-.tool-detail-error {
+.tool-card-cc-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+
+.tool-card-cc-error {
+  padding: 6px 10px;
   font-size: 11px;
   color: #ef4444;
 }
-
-.tool-name {
-  font-family: monospace;
-  font-size: 11px;
-}
-
-.tool-status {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-weight: 500;
-}
-
-.tool-status.running { background: #fef3c7; color: #92400e; }
-.tool-status.success { background: #d1fae5; color: #065f46; }
-.tool-status.failed  { background: #fee2e2; color: #991b1b; }
-
-.dark .tool-status.running { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
-.dark .tool-status.success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
-.dark .tool-status.failed  { background: rgba(239, 68, 68, 0.15); color: #f87171; }
 
 .thinking-bubble {
   background: transparent;

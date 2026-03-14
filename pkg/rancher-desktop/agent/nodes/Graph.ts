@@ -1616,10 +1616,25 @@ export function createAgentGraph(): Graph<AgentGraphState> {
     }
 
     if (agentStatus !== 'continue' && !hadToolCalls) {
-      // If status is in_progress (fallback from empty LLM response) with no tool calls,
-      // something went wrong — ensure the user sees feedback instead of silent death
       if (agentStatus === 'in_progress' || !agentStatus) {
-        console.error(`[AgentGraph] Agent ended with ambiguous status '${agentStatus}' and no tool calls — possible silent failure`);
+        // The LLM responded without a wrapper (AGENT_DONE/BLOCKED/CONTINUE).
+        // Retry once with a nudge before giving up.
+        const alreadyNudged = !!(state.metadata as any)._wrapperNudgeSent;
+
+        if (!alreadyNudged) {
+          console.warn(`[AgentGraph] Agent returned '${agentStatus}' with no tool calls — sending wrapper nudge and retrying`);
+          (state.metadata as any)._wrapperNudgeSent = true;
+          state.messages.push({
+            role: 'system',
+            content: 'Your previous response was missing the required completion wrapper. You MUST end your response with exactly one of: <AGENT_DONE>, <AGENT_BLOCKED>, or <AGENT_CONTINUE>. Please respond to the user\'s last message and include the appropriate wrapper.',
+            metadata: { kind: 'wrapper_nudge', timestamp: Date.now() },
+          } as any);
+          return 'agent';
+        }
+
+        // Already nudged once — give up and show error
+        console.error(`[AgentGraph] Agent still returned '${agentStatus}' after wrapper nudge — ending`);
+        (state.metadata as any)._wrapperNudgeSent = false; // reset for next user message
         if (!state.messages.some((m: any) => m.metadata?.kind === 'agent_error')) {
           state.messages.push({
             role: 'assistant',
@@ -1631,6 +1646,9 @@ export function createAgentGraph(): Graph<AgentGraphState> {
       console.log(`[AgentGraph] Agent status '${agentStatus || 'unknown'}' is not CONTINUE - ending`);
       return 'end';
     }
+
+    // Clear nudge flag on successful wrapper usage
+    (state.metadata as any)._wrapperNudgeSent = false;
 
     // Track loop count for diagnostics
     const currentLoopCount = (state.metadata as any).agentLoopCount || 0;
