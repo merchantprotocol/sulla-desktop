@@ -137,7 +137,7 @@ export function openMain() {
       // macOS: hide native title bar, keep traffic lights overlaid on content
       ...(os.platform() === 'darwin' ? {
         titleBarStyle:        'hiddenInset',
-        trafficLightPosition: { x: 16, y: 10 },
+        trafficLightPosition: { x: 16, y: 16 },
       } : {}),
       webPreferences: {
         devTools:         !app.isPackaged,

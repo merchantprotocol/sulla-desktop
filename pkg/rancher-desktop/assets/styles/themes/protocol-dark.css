@@ -607,3 +607,438 @@
   background: #161b22;
   border-color: #30363d;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   Calendar Page — Protocol Dark overrides
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Page root background override (scoped styles use #0f172a) */
+.theme-protocol-dark .page-root,
+.theme-protocol-dark .page-root.dark {
+  background: #161b22 !important;
+  color: #e6edf3 !important;
+}
+
+/* "Add Event" button: steel blue instead of indigo */
+.theme-protocol-dark .bg-indigo-600 {
+  background: #4485a0 !important;
+}
+
+.theme-protocol-dark .bg-indigo-600:hover,
+.theme-protocol-dark .hover\:bg-indigo-700:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
+}
+
+/* Focus rings: steel blue instead of indigo */
+.theme-protocol-dark .focus\:border-indigo-500:focus {
+  border-color: #5096b3 !important;
+}
+
+.theme-protocol-dark .focus\:ring-indigo-500:focus {
+  --tw-ring-color: rgba(80, 150, 179, 0.4) !important;
+}
+
+/* ── Modals: terminal aesthetic ── */
+.theme-protocol-dark .dark\:bg-neutral-900 {
+  background: #0d1117 !important;
+}
+
+.theme-protocol-dark .dark\:bg-neutral-800 {
+  background: #161b22 !important;
+}
+
+.theme-protocol-dark .dark\:border-white\/10 {
+  border-color: #30363d !important;
+}
+
+.theme-protocol-dark .dark\:text-white {
+  color: #e6edf3 !important;
+}
+
+.theme-protocol-dark .dark\:text-neutral-300 {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .dark\:text-neutral-400 {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .dark\:text-neutral-500 {
+  color: #484f58 !important;
+}
+
+.theme-protocol-dark .dark\:hover\:bg-neutral-700:hover {
+  background: #21262d !important;
+}
+
+.theme-protocol-dark .dark\:hover\:bg-neutral-800:hover {
+  background: #161b22 !important;
+}
+
+.theme-protocol-dark .dark\:hover\:text-neutral-300:hover {
+  color: #8b949e !important;
+}
+
+/* Delete button in edit modal */
+.theme-protocol-dark .dark\:border-red-900 {
+  border-color: rgba(248, 81, 73, 0.3) !important;
+}
+
+.theme-protocol-dark .dark\:bg-red-950 {
+  background: rgba(248, 81, 73, 0.08) !important;
+}
+
+.theme-protocol-dark .dark\:text-red-400 {
+  color: #f85149 !important;
+}
+
+.theme-protocol-dark .dark\:hover\:bg-red-900:hover {
+  background: rgba(248, 81, 73, 0.15) !important;
+}
+
+/* Modal inputs: terminal font */
+.theme-protocol-dark .fixed.inset-0.z-50 input,
+.theme-protocol-dark .fixed.inset-0.z-50 textarea {
+  font-family: 'JetBrains Mono', monospace !important;
+  background: #161b22 !important;
+  color: #e6edf3 !important;
+  border-color: #30363d !important;
+}
+
+.theme-protocol-dark .fixed.inset-0.z-50 input:focus,
+.theme-protocol-dark .fixed.inset-0.z-50 textarea:focus {
+  border-color: #5096b3 !important;
+  box-shadow: 0 0 10px rgba(80, 150, 179, 0.15);
+}
+
+.theme-protocol-dark .fixed.inset-0.z-50 label {
+  font-family: 'JetBrains Mono', monospace;
+  color: #8b949e !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.7rem !important;
+}
+
+.theme-protocol-dark .fixed.inset-0.z-50 h2 {
+  font-family: 'JetBrains Mono', monospace;
+  color: #5096b3 !important;
+  letter-spacing: 0.05em;
+}
+
+/* Modal container: terminal style */
+.theme-protocol-dark .fixed.inset-0.z-50 > .rounded-2xl {
+  background: #0d1117 !important;
+  border: 1px solid #30363d !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(80, 150, 179, 0.05) !important;
+}
+
+/* ── ScheduleX CSS variable overrides: kill purple, use steel blue ── */
+.theme-protocol-dark .sx__calendar-wrapper {
+  --sx-color-primary: #5096b3 !important;
+  --sx-color-on-primary: #fff !important;
+  --sx-color-primary-container: rgba(80, 150, 179, 0.15) !important;
+  --sx-color-on-primary-container: #e6edf3 !important;
+  --sx-color-secondary: #8b949e !important;
+  --sx-color-on-secondary: #fff !important;
+  --sx-color-secondary-container: #21262d !important;
+  --sx-color-on-secondary-container: #e6edf3 !important;
+  --sx-color-surface: #161b22 !important;
+  --sx-color-surface-dim: #0d1117 !important;
+  --sx-color-surface-bright: #21262d !important;
+  --sx-color-on-surface: #e6edf3 !important;
+  --sx-color-surface-container: #161b22 !important;
+  --sx-color-surface-container-low: #0d1117 !important;
+  --sx-color-surface-container-high: #21262d !important;
+  --sx-color-background: #161b22 !important;
+  --sx-color-on-background: #e6edf3 !important;
+  --sx-color-outline: #30363d !important;
+  --sx-color-outline-variant: #21262d !important;
+  --sx-color-surface-tint: #5096b3 !important;
+  --sx-color-neutral: #8b949e !important;
+  --sx-color-neutral-variant: #6e7681 !important;
+  --sx-internal-color-text: #e6edf3 !important;
+  --sx-internal-color-gray-ripple-background: #21262d !important;
+  --sx-internal-color-light-gray: #161b22 !important;
+}
+
+/* ── ScheduleX calendar widget: dark terminal look ── */
+.theme-protocol-dark .sx__calendar-wrapper,
+.theme-protocol-dark .sx__view-container,
+.theme-protocol-dark .sx__month-grid-wrapper,
+.theme-protocol-dark .sx__week-grid,
+.theme-protocol-dark .sx__day-grid {
+  background: #161b22 !important;
+  color: #e6edf3 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
+/* Calendar header/toolbar */
+.theme-protocol-dark .sx__calendar-header {
+  background: #161b22 !important;
+  border-color: #30363d !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
+.theme-protocol-dark .sx__calendar-header button {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .sx__calendar-header button:hover {
+  color: #e6edf3 !important;
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+.theme-protocol-dark .sx__calendar-header .sx__date-input {
+  color: #e6edf3 !important;
+}
+
+/* Calendar grid lines */
+.theme-protocol-dark .sx__month-grid-day,
+.theme-protocol-dark .sx__week-grid__day,
+.theme-protocol-dark .sx__day-grid__day {
+  border-color: #30363d !important;
+}
+
+.theme-protocol-dark .sx__month-grid-cell {
+  border-color: #21262d !important;
+}
+
+/* Day numbers */
+.theme-protocol-dark .sx__month-grid-day__header-date {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .sx__month-grid-day__header-date--is-today {
+  background: #4485a0 !important;
+  color: #fff !important;
+}
+
+/* Week/day time column */
+.theme-protocol-dark .sx__time-grid-hour {
+  border-color: #21262d !important;
+  color: #6e7681 !important;
+}
+
+/* Events in calendar */
+.theme-protocol-dark .sx__event {
+  background: rgba(80, 150, 179, 0.15) !important;
+  border-left: 3px solid #5096b3 !important;
+  color: #e6edf3 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 0.75rem !important;
+}
+
+.theme-protocol-dark .sx__event:hover {
+  background: rgba(80, 150, 179, 0.25) !important;
+}
+
+/* View switcher tabs */
+.theme-protocol-dark .sx__view-selection button {
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
+.theme-protocol-dark .sx__view-selection button.sx__view-selection-item--is-selected,
+.theme-protocol-dark .sx__view-selection button:hover {
+  color: #5096b3 !important;
+}
+
+/* Today button */
+.theme-protocol-dark .sx__today-button {
+  color: #5096b3 !important;
+  border-color: #30363d !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
+.theme-protocol-dark .sx__today-button:hover {
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+/* Forward/back navigation arrows */
+.theme-protocol-dark .sx__chevron-wrapper svg {
+  color: #8b949e !important;
+  fill: #8b949e !important;
+}
+
+/* Day names row */
+.theme-protocol-dark .sx__month-grid-day__header-day-name,
+.theme-protocol-dark .sx__week-grid__day-name {
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Month agenda items */
+.theme-protocol-dark .sx__month-agenda-day {
+  border-color: #21262d !important;
+}
+
+.theme-protocol-dark .sx__month-agenda-event {
+  background: rgba(80, 150, 179, 0.08) !important;
+  border-color: #30363d !important;
+  color: #e6edf3 !important;
+}
+
+/* Current time indicator */
+.theme-protocol-dark .sx__current-time-indicator {
+  background: #5096b3 !important;
+}
+
+/* Date picker inputs: match terminal */
+.theme-protocol-dark input[type="date"],
+.theme-protocol-dark input[type="time"] {
+  color-scheme: dark;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Integrations Page — Protocol Dark overrides
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Hero section background with gradient fade to page bg */
+.theme-protocol-dark .bg-slate-900 {
+  background: linear-gradient(to bottom, #0d1117 60%, #161b22 100%) !important;
+}
+
+/* Hero title gradient: steel blue instead of indigo */
+.theme-protocol-dark .from-indigo-200.via-sky-400.to-indigo-200,
+.theme-protocol-dark [class*="from-indigo-200"] {
+  background-image: linear-gradient(to right, #5096b3, #7ec8e3, #5096b3) !important;
+}
+
+/* Search input */
+.theme-protocol-dark .dark\:bg-slate-800\/75 {
+  background: #161b22 !important;
+}
+
+.theme-protocol-dark .dark\:ring-white\/5 {
+  --tw-ring-color: #30363d !important;
+}
+
+/* Category sidebar */
+.theme-protocol-dark .dark\:text-slate-500 {
+  color: #484f58 !important;
+}
+
+.theme-protocol-dark .dark\:text-slate-400 {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .dark\:text-slate-200 {
+  color: #e6edf3 !important;
+}
+
+.theme-protocol-dark .dark\:text-slate-300 {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .dark\:text-slate-100 {
+  color: #e6edf3 !important;
+}
+
+/* Active category: steel blue instead of sky */
+.theme-protocol-dark .dark\:bg-sky-400\/10 {
+  background: rgba(80, 150, 179, 0.1) !important;
+}
+
+.theme-protocol-dark .dark\:text-sky-400 {
+  color: #5096b3 !important;
+}
+
+/* Sidebar hover states */
+.theme-protocol-dark .dark\:hover\:bg-slate-800:hover {
+  background: #21262d !important;
+}
+
+.theme-protocol-dark .dark\:hover\:text-slate-200:hover {
+  color: #e6edf3 !important;
+}
+
+/* Integration cards */
+.theme-protocol-dark .dark\:bg-slate-800 {
+  background: #161b22 !important;
+}
+
+.theme-protocol-dark .dark\:border-gray-700 {
+  border-color: #30363d !important;
+}
+
+.theme-protocol-dark .dark\:hover\:border-gray-600:hover {
+  border-color: rgba(80, 150, 179, 0.25) !important;
+}
+
+/* Card icon container */
+.theme-protocol-dark .dark\:bg-slate-700 {
+  background: #21262d !important;
+}
+
+/* Category badge */
+.theme-protocol-dark .dark\:text-slate-200 {
+  color: #8b949e !important;
+}
+
+/* Connect/Manage buttons: steel blue */
+.theme-protocol-dark .bg-blue-600 {
+  background: #4485a0 !important;
+}
+
+.theme-protocol-dark .bg-blue-600:hover,
+.theme-protocol-dark .hover\:bg-blue-700:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 10px rgba(80, 150, 179, 0.2);
+}
+
+/* Beta badge */
+.theme-protocol-dark .bg-blue-500 {
+  background: #4485a0 !important;
+}
+
+/* Coming soon badge */
+.theme-protocol-dark .bg-gray-400 {
+  background: #484f58 !important;
+}
+
+.theme-protocol-dark .bg-gray-500 {
+  background: #484f58 !important;
+}
+
+.theme-protocol-dark .hover\:bg-gray-600:hover {
+  background: #6e7681 !important;
+}
+
+/* Disconnect/Manage (red) button */
+.theme-protocol-dark .bg-red-600 {
+  background: #da3633 !important;
+}
+
+.theme-protocol-dark .hover\:bg-red-700:hover {
+  background: #f85149 !important;
+}
+
+/* Mobile category select */
+.theme-protocol-dark .dark\:border-slate-700 {
+  border-color: #30363d !important;
+}
+
+/* Connected status dot */
+.theme-protocol-dark .bg-green-500 {
+  background: #3fb950 !important;
+}
+
+.theme-protocol-dark .bg-gray-300 {
+  background: #484f58 !important;
+}
+
+/* All text on integrations page: terminal font */
+.theme-protocol-dark .page-root h3,
+.theme-protocol-dark .page-root nav button,
+.theme-protocol-dark .page-root nav h3 {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Fill colors for search icon */
+.theme-protocol-dark .dark\:fill-slate-500 {
+  fill: #484f58 !important;
+}

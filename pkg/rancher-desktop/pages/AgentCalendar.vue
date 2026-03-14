@@ -644,17 +644,17 @@ const deleteEvent = async () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
+  background: var(--bg-page, #ffffff);
+  color: var(--text-primary, #0d0d0d);
 }
 
 .page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page, #0f172a);
+  color: var(--text-primary, #fafafa);
 }
 
 .page-root :deep(.sx__calendar-wrapper) {
-  background: #ffffff;
+  background: var(--bg-page, #ffffff);
 }
 
 .page-root.dark :deep(.sx__calendar-wrapper),
@@ -662,6 +662,6 @@ const deleteEvent = async () => {
 .page-root.dark :deep(.sx__month-grid-wrapper),
 .page-root.dark :deep(.sx__week-grid),
 .page-root.dark :deep(.sx__day-grid) {
-  background: #0f172a;
+  background: var(--bg-page, #0f172a);
 }
 </style>

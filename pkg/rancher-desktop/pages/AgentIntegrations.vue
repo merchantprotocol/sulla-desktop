@@ -498,13 +498,13 @@ onMounted(async () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
+  background: var(--bg-page, #ffffff);
+  color: var(--text-primary, #0d0d0d);
 }
 
 .page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page, #0f172a);
+  color: var(--text-primary, #fafafa);
 }
 
 /* Integration cards styles */
