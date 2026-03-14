@@ -371,7 +371,7 @@ export default defineComponent({
   color: #334155;
 }
 .dark .th-list code {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #e2e8f0;
 }
 .th-chips {
@@ -388,7 +388,7 @@ export default defineComponent({
   color: #64748b;
 }
 .dark .th-chip {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #94a3b8;
 }
 
@@ -401,8 +401,8 @@ export default defineComponent({
   border: 1px solid #e2e8f0;
 }
 .th-meter.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .th-meter-header {
   display: flex;
@@ -443,7 +443,7 @@ export default defineComponent({
   position: relative;
 }
 .th-meter-track.dark {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 .th-meter-fill {
   height: 100%;

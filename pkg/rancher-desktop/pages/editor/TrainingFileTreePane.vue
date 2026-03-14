@@ -177,7 +177,7 @@ export default defineComponent({
   flex-shrink: 0;
 }
 .tw-header.dark {
-  border-bottom-color: #334155;
+  border-bottom-color: var(--border-default, #334155);
 }
 .tw-header-title {
   font-size: 11px;
@@ -208,7 +208,7 @@ export default defineComponent({
   color: #0f172a;
 }
 .tw-header-btn.dark:hover {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   color: #e2e8f0;
 }
 
@@ -258,13 +258,13 @@ export default defineComponent({
   background: #f1f5f9;
 }
 .tw-step.clickable.dark:hover {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 .tw-step.active {
   background: #eff6ff;
 }
 .tw-step.active.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 
 /* Step indicator circle */
@@ -376,7 +376,7 @@ export default defineComponent({
   flex-shrink: 0;
 }
 .tw-footer.dark {
-  border-top-color: #334155;
+  border-top-color: var(--border-default, #334155);
 }
 .tw-footer-text {
   font-size: 11px;
@@ -401,20 +401,20 @@ export default defineComponent({
 }
 .tw-dashboard-link.dark {
   color: #cbd5e1;
-  border-bottom-color: #334155;
+  border-bottom-color: var(--border-default, #334155);
 }
 .tw-dashboard-link:hover {
   background: #f1f5f9;
 }
 .tw-dashboard-link.dark:hover {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 .tw-dashboard-link.active {
   background: #eff6ff;
   color: #0284c7;
 }
 .tw-dashboard-link.active.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   color: #38bdf8;
 }
 </style>

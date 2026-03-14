@@ -537,8 +537,8 @@ export default defineComponent({
 }
 
 .file-tree-panel.dark {
-  border-right-color: #3c3c3c;
-  background: #1e293b;
+  border-right-color: var(--border-default, #3c3c3c);
+  background: var(--bg-surface, #1e293b);
 }
 
 .editor-panel {
@@ -550,7 +550,7 @@ export default defineComponent({
 }
 
 .editor-panel.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 
 .editor-top {
@@ -571,8 +571,8 @@ export default defineComponent({
 }
 
 .editor-bottom.dark {
-  border-top-color: #3c3c3c;
-  background: #1e293b;
+  border-top-color: var(--border-default, #3c3c3c);
+  background: var(--bg-surface, #1e293b);
 }
 
 .right-pane {
@@ -586,8 +586,8 @@ export default defineComponent({
 }
 
 .right-pane.dark {
-  border-left-color: #3c3c3c;
-  background: #1e293b;
+  border-left-color: var(--border-default, #3c3c3c);
+  background: var(--bg-surface, #1e293b);
 }
 
 .empty-state {
@@ -662,8 +662,8 @@ export default defineComponent({
 }
 
 .tab-bar.dark {
-  background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  background: var(--bg-surface, #1e293b);
+  border-bottom-color: var(--border-default, #3c3c3c);
 }
 
 .tab {
@@ -687,7 +687,7 @@ export default defineComponent({
 
 .tab.dark {
   color: #999;
-  border-right-color: #3c3c3c;
+  border-right-color: var(--border-default, #3c3c3c);
   background: #2d2d2d;
 }
 

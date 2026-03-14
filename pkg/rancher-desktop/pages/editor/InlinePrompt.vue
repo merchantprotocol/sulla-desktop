@@ -89,7 +89,7 @@ defineExpose({ show });
 }
 
 .inline-prompt-dialog.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
@@ -155,7 +155,7 @@ defineExpose({ show });
 }
 
 .inline-prompt-btn.cancel.dark {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #94a3b8;
 }
 

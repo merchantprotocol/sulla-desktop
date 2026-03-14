@@ -302,7 +302,7 @@ export default defineComponent({
 }
 
 .docker-pane.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 
 .docker-header {
@@ -323,8 +323,8 @@ export default defineComponent({
 
 .docker-header.dark {
   color: #94a3b8;
-  background: #1e293b;
-  border-bottom-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-bottom-color: var(--border-default, #334155);
 }
 
 .docker-header-actions {
@@ -436,7 +436,7 @@ export default defineComponent({
 }
 
 .compose-group-count.dark {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #64748b;
 }
 
@@ -493,7 +493,7 @@ export default defineComponent({
 }
 
 .container-item.dark {
-  border-bottom-color: #1e293b;
+  border-bottom-color: var(--bg-surface, #1e293b);
 }
 
 .container-item.dark:hover {
@@ -559,7 +559,7 @@ export default defineComponent({
 }
 
 .port-link {
-  color: #0078d4;
+  color: var(--accent-primary, #0078d4);
   cursor: pointer;
   text-decoration: none;
 }
@@ -597,7 +597,7 @@ export default defineComponent({
 
 .action-btn.dark {
   border-color: #475569;
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #e2e8f0;
 }
 

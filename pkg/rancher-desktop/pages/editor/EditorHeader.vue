@@ -157,8 +157,8 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 }
 
 .editor-header-bar.dark {
-  background: #1e1e2e;
-  border-bottom-color: #334155;
+  background: var(--bg-surface, #1e1e2e);
+  border-bottom-color: var(--border-default, #334155);
 }
 
 .header-left {
@@ -222,7 +222,7 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 }
 
 .editor-header-bar.dark .header-separator {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 
 .theme-dropdown-wrap {
@@ -244,8 +244,8 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 }
 
 .theme-dropdown.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 
 .theme-option {
@@ -272,7 +272,7 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 }
 
 .theme-option.dark:hover {
-  background: #334155;
+  background: var(--bg-surface-hover, #334155);
 }
 
 .theme-option.active {
@@ -303,7 +303,7 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 }
 
 .theme-dropdown.dark .theme-group-section + .theme-group-section {
-  border-top-color: #334155;
+  border-top-color: var(--border-default, #334155);
 }
 
 .theme-group-label {

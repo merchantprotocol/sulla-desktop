@@ -145,7 +145,7 @@ const panelTitle = computed(() => {
 }
 
 .node-panel.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   color: #ccc;
 }
 
@@ -161,7 +161,7 @@ const panelTitle = computed(() => {
 }
 
 .node-panel-header.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   border-bottom-color: #3c3c3c;
 }
 

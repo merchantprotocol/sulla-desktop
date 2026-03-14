@@ -469,7 +469,7 @@ defineExpose({ refresh: loadAgents });
 }
 
 .agent-pane.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   color: #ccc;
 }
 
@@ -485,8 +485,8 @@ defineExpose({ refresh: loadAgents });
 }
 
 .agent-header.dark {
-  background: #1e293b;
-  border-bottom-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-bottom-color: var(--border-default, #334155);
 }
 
 .agent-header-title {
@@ -589,7 +589,7 @@ defineExpose({ refresh: loadAgents });
 }
 
 .agent-item.dark {
-  border-top-color: #334155;
+  border-top-color: var(--border-default, #334155);
 }
 
 .agent-item.dark.first {
@@ -677,8 +677,8 @@ defineExpose({ refresh: loadAgents });
 }
 
 .agent-dropdown.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
 }
 
@@ -742,7 +742,7 @@ defineExpose({ refresh: loadAgents });
 }
 
 .agent-confirm-dialog.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   color: #e2e8f0;
 }
 
@@ -778,7 +778,7 @@ defineExpose({ refresh: loadAgents });
 }
 
 .agent-confirm-btn.cancel.dark {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #e2e8f0;
 }
 

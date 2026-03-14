@@ -121,8 +121,8 @@ export default defineComponent({
 }
 
 .icon-panel.dark {
-  background: #1e293b;
-  border-right-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-right-color: var(--border-default, #334155);
 }
 
 .icon-btn {
@@ -147,7 +147,7 @@ export default defineComponent({
 
 .icon-btn.active {
   background: rgba(0, 0, 0, 0.1);
-  color: #0078d4;
+  color: var(--accent-primary, #0078d4);
 }
 
 .dark .icon-btn {
@@ -161,7 +161,7 @@ export default defineComponent({
 
 .dark .icon-btn.active {
   background: rgba(255, 255, 255, 0.1);
-  color: #0078d4;
+  color: var(--accent-primary, #0078d4);
 }
 
 .icon-btn svg {
@@ -176,7 +176,7 @@ export default defineComponent({
   top: 0;
   bottom: 0;
   width: 3px;
-  background: #0078d4;
+  background: var(--accent-primary, #0078d4);
   border-top-right-radius: 3px;
   border-bottom-right-radius: 3px;
 }

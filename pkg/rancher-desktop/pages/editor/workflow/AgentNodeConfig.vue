@@ -535,8 +535,8 @@ function insertVariable(varName: string) {
 }
 
 .var-menu.dark {
-  background: #1e293b;
-  border-color: #3c3c5c;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #3c3c5c);
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
 

@@ -140,7 +140,7 @@ export default defineComponent({
 }
 
 .search-container.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 
 .search-pane-header {
@@ -155,8 +155,8 @@ export default defineComponent({
 }
 
 .search-pane-header.dark {
-  background: #1e293b;
-  border-bottom-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-bottom-color: var(--border-default, #334155);
 }
 
 .search-pane-title {
@@ -211,7 +211,7 @@ export default defineComponent({
 
 .search-input-wrapper.dark {
   background: #0f172a;
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
 }
 
 .path-input-wrapper {
@@ -227,7 +227,7 @@ export default defineComponent({
 
 .path-input-wrapper.dark {
   background: #0f172a;
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
 }
 
 .search-container svg {
@@ -296,7 +296,7 @@ export default defineComponent({
 }
 
 .dark .spinner {
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
   border-top-color: #94a3b8;
 }
 
@@ -353,7 +353,7 @@ export default defineComponent({
 }
 
 .dark .result-icon {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #94a3b8;
 }
 
@@ -397,7 +397,7 @@ export default defineComponent({
 }
 
 .dark .result-line {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #94a3b8;
 }
 

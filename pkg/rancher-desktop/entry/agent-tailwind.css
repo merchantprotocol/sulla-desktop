@@ -30,7 +30,7 @@
   /* Accent */
   --color-accent: var(--accent-primary);
   --color-accent-hover: var(--accent-primary-hover);
-  --color-accent-bg: var(--accent-bg);
+
 
   /* Status */
   --color-success: var(--status-success);

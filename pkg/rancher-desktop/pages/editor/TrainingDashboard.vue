@@ -415,8 +415,8 @@ export default defineComponent({
   border: 1px solid #e2e8f0;
 }
 .td-notice.disabled.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .td-notice-content {
   display: flex;
@@ -538,8 +538,8 @@ export default defineComponent({
   border: 1px solid #e2e8f0;
 }
 .td-card.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .td-card-label {
   font-size: 0.6875rem;
@@ -594,8 +594,8 @@ export default defineComponent({
   border: 1px dashed #e2e8f0;
 }
 .td-empty.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 
 /* Runs list */
@@ -608,7 +608,7 @@ export default defineComponent({
   border: 1px solid #e2e8f0;
 }
 .dark .td-runs-list {
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
 }
 .td-run {
   display: flex;
@@ -625,13 +625,13 @@ export default defineComponent({
   background: #f8fafc;
 }
 .td-run.dark:hover {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 .td-run + .td-run {
   border-top: 1px solid #f1f5f9;
 }
 .dark .td-run + .td-run {
-  border-top-color: #1e293b;
+  border-top-color: var(--bg-surface, #1e293b);
 }
 
 .td-run-status {
@@ -746,7 +746,7 @@ export default defineComponent({
   overflow: hidden;
 }
 .dark .td-progress-bar {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 .td-progress-fill {
   height: 100%;
@@ -832,7 +832,7 @@ export default defineComponent({
   border: 1px solid #e2e8f0;
 }
 .dark .td-configs-list {
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
 }
 .td-config {
   display: flex;
@@ -849,7 +849,7 @@ export default defineComponent({
   border-top: 1px solid #f1f5f9;
 }
 .dark .td-config + .td-config {
-  border-top-color: #1e293b;
+  border-top-color: var(--bg-surface, #1e293b);
 }
 .td-config-details {
   flex: 1;

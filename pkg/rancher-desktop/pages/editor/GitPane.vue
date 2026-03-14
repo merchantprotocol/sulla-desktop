@@ -848,7 +848,7 @@ onMounted(() => discoverAndRefresh());
 }
 
 .git-pane.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 
 .git-header {
@@ -863,8 +863,8 @@ onMounted(() => discoverAndRefresh());
 }
 
 .git-header.dark {
-  background: #1e293b;
-  border-bottom-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-bottom-color: var(--border-default, #334155);
 }
 
 .git-header-title {
@@ -1055,8 +1055,8 @@ onMounted(() => discoverAndRefresh());
 }
 
 .git-repo-menu.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
@@ -1101,7 +1101,7 @@ onMounted(() => discoverAndRefresh());
 }
 
 .git-repo-menu-divider.dark {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 
 /* Repo content (indented) */
@@ -1140,7 +1140,7 @@ onMounted(() => discoverAndRefresh());
 
 .git-commit-input.dark {
   background: #0f172a;
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
   color: #e2e8f0;
 }
 
@@ -1363,7 +1363,7 @@ button.git-tree-dir {
 }
 
 .git-branch-modal.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
@@ -1391,7 +1391,7 @@ button.git-tree-dir {
 
 .git-branch-modal-input.dark {
   background: #0f172a;
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
   color: #e2e8f0;
 }
 
@@ -1491,8 +1491,8 @@ button.git-tree-dir {
 }
 
 .git-file-ctx-menu.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
@@ -1529,6 +1529,6 @@ button.git-tree-dir {
 }
 
 .git-file-ctx-divider.dark {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 </style>

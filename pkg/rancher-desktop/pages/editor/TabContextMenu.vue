@@ -188,8 +188,8 @@ export default defineComponent({
 }
 
 .tab-context-menu.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
@@ -226,7 +226,7 @@ export default defineComponent({
 }
 
 .tab-context-menu.dark .context-menu-sep {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 
 .tab-context-menu .context-menu-subheader {

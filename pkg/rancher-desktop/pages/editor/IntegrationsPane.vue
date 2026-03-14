@@ -343,7 +343,7 @@ export default defineComponent({
   border-bottom: 1px solid #e2e8f0;
   flex-shrink: 0;
 }
-.integrations-header.dark { border-bottom-color: #334155; }
+.integrations-header.dark { border-bottom-color: var(--border-default, #334155); }
 
 .integrations-header-title {
   font-size: 11px;
@@ -382,7 +382,7 @@ export default defineComponent({
   border-bottom: 1px solid #e2e8f0;
   flex-shrink: 0;
 }
-.integrations-git-bar.dark { color: #94a3b8; border-bottom-color: #334155; }
+.integrations-git-bar.dark { color: #94a3b8; border-bottom-color: var(--border-default, #334155); }
 .integrations-git-status { color: #f59e0b; font-size: 10px; }
 
 .integrations-content {
@@ -472,8 +472,8 @@ export default defineComponent({
   z-index: 10001;
 }
 .integrations-ctx-menu.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .integrations-ctx-item {
   display: flex;

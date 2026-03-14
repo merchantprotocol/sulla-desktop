@@ -120,7 +120,7 @@ export default defineComponent({
   background: #f1f5f9;
 }
 .tft-row.dark:hover {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 .tft-row.selected {
   background: #eff6ff;
@@ -194,7 +194,7 @@ export default defineComponent({
   margin-right: 4px;
 }
 .dark .tft-ext {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #94a3b8;
 }
 

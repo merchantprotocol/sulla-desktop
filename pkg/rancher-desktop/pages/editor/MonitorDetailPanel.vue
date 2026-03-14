@@ -347,7 +347,7 @@ function convLogClass(type: string): string {
   flex-shrink: 0;
   font-size: 12px;
 }
-.dark .detail-toolbar { border-color: #334155; }
+.dark .detail-toolbar { border-color: var(--border-default, #334155); }
 
 .detail-label { display: flex; align-items: center; gap: 4px; }
 .detail-label strong { color: #0f172a; }
@@ -373,7 +373,7 @@ function convLogClass(type: string): string {
   font-size: 11px;
 }
 .detail-btn:hover { background: rgba(0,0,0,0.05); }
-.dark .detail-btn { border-color: #334155; }
+.dark .detail-btn { border-color: var(--border-default, #334155); }
 .dark .detail-btn:hover { background: rgba(255,255,255,0.05); }
 
 .msg-count { margin-left: auto; font-size: 11px; color: #94a3b8; }
@@ -395,14 +395,14 @@ function convLogClass(type: string): string {
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
-.dark .msg-table th { background: #1e293b; border-color: #334155; color: #94a3b8; }
+.dark .msg-table th { background: var(--bg-surface, #1e293b); border-color: var(--border-default, #334155); color: #94a3b8; }
 
 .msg-row { cursor: pointer; }
 .msg-row:hover { background: rgba(0,0,0,0.02); }
 .dark .msg-row:hover { background: rgba(255,255,255,0.02); }
 
 .msg-row td { padding: 3px 8px; border-bottom: 1px solid #f1f5f9; }
-.dark .msg-row td { border-color: #1e293b; }
+.dark .msg-row td { border-color: var(--bg-surface, #1e293b); }
 
 .msg-in { }
 .msg-out { }
@@ -427,7 +427,7 @@ function convLogClass(type: string): string {
   border-top: 1px solid #e2e8f0;
   background: #f8fafc;
 }
-.dark .msg-detail { background: #1e293b; border-color: #334155; }
+.dark .msg-detail { background: var(--bg-surface, #1e293b); border-color: var(--border-default, #334155); }
 .msg-json {
   font-family: monospace;
   font-size: 11px;
@@ -441,7 +441,7 @@ function convLogClass(type: string): string {
 /* ── Key-value grid ── */
 .kv-grid { padding: 10px 12px; }
 .kv-row { display: flex; gap: 12px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid #f1f5f9; }
-.dark .kv-row { border-color: #1e293b; }
+.dark .kv-row { border-color: var(--bg-surface, #1e293b); }
 .kv-full { flex-direction: column; }
 .kv-key { width: 120px; flex-shrink: 0; font-weight: 500; color: #64748b; }
 .dark .kv-key { color: #94a3b8; }
@@ -450,7 +450,7 @@ function convLogClass(type: string): string {
 
 /* ── Event log ── */
 .event-log-header { padding: 8px 12px 4px; font-weight: 600; font-size: 12px; color: #0f172a; border-top: 1px solid #e2e8f0; }
-.dark .event-log-header { color: #f1f5f9; border-color: #334155; }
+.dark .event-log-header { color: #f1f5f9; border-color: var(--border-default, #334155); }
 
 .event-log { padding: 0 4px; }
 

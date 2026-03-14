@@ -298,7 +298,7 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .workflow-pane.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   color: #ccc;
 }
 
@@ -315,7 +315,7 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .workflow-tab-bar.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   border-bottom-color: #3c3c3c;
 }
 
@@ -574,8 +574,8 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .wf-context-menu.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
@@ -603,7 +603,7 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .wf-context-item.dark:hover {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 
 .wf-context-item.danger {

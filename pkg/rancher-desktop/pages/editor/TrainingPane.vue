@@ -1861,8 +1861,8 @@ export default defineComponent({
   text-align: left;
 }
 .dark .tp-disk-info {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-disk-info.insufficient {
   border-color: #fca5a5;
@@ -1961,7 +1961,7 @@ export default defineComponent({
   overflow: hidden;
 }
 .dark .tp-progress-track {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 .tp-progress-fill {
   height: 100%;
@@ -1987,8 +1987,8 @@ export default defineComponent({
   color: #475569;
 }
 .dark .tp-file-detail {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
   color: #94a3b8;
 }
 .tp-file-size {
@@ -2001,10 +2001,10 @@ export default defineComponent({
   overflow-y: auto;
   border: 1px solid #e2e8f0;
   border-radius: 0.5rem;
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 .dark .tp-log-box {
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
   background: #0f172a;
 }
 .tp-log-output {
@@ -2061,7 +2061,7 @@ export default defineComponent({
   gap: 12px;
 }
 .dark .tp-step-actions {
-  border-top-color: #334155;
+  border-top-color: var(--border-default, #334155);
 }
 
 .tp-btn-primary {
@@ -2097,13 +2097,13 @@ export default defineComponent({
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   background: #fff;
-  color: #334155;
+  color: var(--border-default, #334155);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 .tp-btn-secondary.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
   color: #cbd5e1;
 }
 .tp-btn-secondary:hover:not(:disabled) {
@@ -2111,7 +2111,7 @@ export default defineComponent({
   border-color: #cbd5e1;
 }
 .tp-btn-secondary.dark:hover:not(:disabled) {
-  background: #334155;
+  background: var(--border-default, #334155);
   border-color: #475569;
 }
 .tp-btn-secondary:disabled {
@@ -2155,14 +2155,14 @@ export default defineComponent({
 }
 .tp-btn-back.dark:hover {
   color: #e2e8f0;
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 
 .tp-btn-spinner {
   width: 12px;
   height: 12px;
   border: 2px solid rgba(51, 65, 85, 0.3);
-  border-top-color: #334155;
+  border-top-color: var(--border-default, #334155);
   border-radius: 50%;
   animation: tp-spin 0.6s linear infinite;
   flex-shrink: 0;
@@ -2188,13 +2188,13 @@ export default defineComponent({
   flex-shrink: 0;
 }
 .dark .tp-select-tree-header {
-  border-bottom-color: #334155;
+  border-bottom-color: var(--border-default, #334155);
 }
 .tp-select-tree-title {
   display: block;
   font-size: 12px;
   font-weight: 600;
-  color: #334155;
+  color: var(--border-default, #334155);
   margin-bottom: 2px;
 }
 .dark .tp-select-tree-title {
@@ -2233,7 +2233,7 @@ export default defineComponent({
   gap: 8px;
 }
 .tp-select-tree-actions.dark {
-  border-top-color: #334155;
+  border-top-color: var(--border-default, #334155);
 }
 .tp-btn-continue-sm {
   padding: 6px 14px;
@@ -2277,7 +2277,7 @@ export default defineComponent({
 .tp-info-subtitle {
   font-size: 0.8125rem;
   font-weight: 600;
-  color: #334155;
+  color: var(--border-default, #334155);
   margin: 0 0 8px 0;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -2302,9 +2302,9 @@ export default defineComponent({
   border: 1px solid #e2e8f0;
 }
 .dark .tp-info-chip {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   color: #94a3b8;
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
 }
 .tp-info-list {
   margin: 0;
@@ -2375,8 +2375,8 @@ export default defineComponent({
   margin-bottom: 16px;
 }
 .tp-scale.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-scale-header {
   display: flex;
@@ -2419,7 +2419,7 @@ export default defineComponent({
   margin-bottom: 1.25rem;
 }
 .dark .tp-scale-bar {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 .tp-scale-fill {
   height: 100%;
@@ -2468,8 +2468,8 @@ export default defineComponent({
   background: #f8fafc;
 }
 .tp-card.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-card-label {
   font-size: 0.6875rem;
@@ -2509,7 +2509,7 @@ export default defineComponent({
   border-bottom: 1px solid #e2e8f0;
 }
 .tp-table-header.dark {
-  border-bottom-color: #334155;
+  border-bottom-color: var(--border-default, #334155);
 }
 .tp-table-title {
   font-size: 0.6875rem;
@@ -2536,7 +2536,7 @@ export default defineComponent({
   color: #0f172a;
 }
 .tp-btn-refresh.dark:hover {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #e2e8f0;
 }
 
@@ -2584,7 +2584,7 @@ export default defineComponent({
 }
 .tp-table.dark thead th {
   color: #94a3b8;
-  border-bottom-color: #334155;
+  border-bottom-color: var(--border-default, #334155);
 }
 .tp-table thead th:hover { color: #0f172a; }
 .tp-table.dark thead th:hover { color: #e2e8f0; }
@@ -2596,13 +2596,13 @@ export default defineComponent({
   border-bottom: 1px solid #f1f5f9;
 }
 .tp-table.dark tbody tr {
-  border-bottom-color: #1e293b;
+  border-bottom-color: var(--bg-surface, #1e293b);
 }
 .tp-table tbody tr:hover { background: #f8fafc; }
-.tp-table.dark tbody tr:hover { background: #1e293b; }
+.tp-table.dark tbody tr:hover { background: var(--bg-surface, #1e293b); }
 .tp-table td {
   padding: 0.5rem 0.75rem;
-  color: #334155;
+  color: var(--border-default, #334155);
 }
 .tp-table.dark td {
   color: #cbd5e1;
@@ -2649,7 +2649,7 @@ export default defineComponent({
   overflow: hidden;
 }
 .dark .tp-datafiles-list {
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
 }
 .tp-datafiles-header {
   display: flex;
@@ -2661,8 +2661,8 @@ export default defineComponent({
   font-size: 12px;
 }
 .tp-datafiles-header.dark {
-  background: #1e293b;
-  border-bottom-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-bottom-color: var(--border-default, #334155);
 }
 .tp-datafiles-check-all {
   display: flex;
@@ -2670,7 +2670,7 @@ export default defineComponent({
   gap: 8px;
   cursor: pointer;
   font-weight: 600;
-  color: #334155;
+  color: var(--border-default, #334155);
 }
 .dark .tp-datafiles-check-all {
   color: #e2e8f0;
@@ -2695,10 +2695,10 @@ export default defineComponent({
   background: #f8fafc;
 }
 .tp-datafile-row.dark {
-  border-bottom-color: #1e293b;
+  border-bottom-color: var(--bg-surface, #1e293b);
 }
 .tp-datafile-row.dark:hover {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 .tp-datafile-row.selected {
   background: #eff6ff;
@@ -2775,8 +2775,8 @@ export default defineComponent({
   overflow: hidden;
 }
 .tp-train-summary.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-train-summary-row {
   display: flex;
@@ -2786,7 +2786,7 @@ export default defineComponent({
   border-bottom: 1px solid #e2e8f0;
 }
 .tp-train-summary.dark .tp-train-summary-row {
-  border-bottom-color: #334155;
+  border-bottom-color: var(--border-default, #334155);
 }
 .tp-train-summary-row:last-child {
   border-bottom: none;
@@ -2816,15 +2816,15 @@ export default defineComponent({
   margin-bottom: 20px;
 }
 .tp-train-config.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-config-title {
   font-size: 0.8125rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: #334155;
+  color: var(--border-default, #334155);
   margin: 0 0 16px 0;
 }
 .dark .tp-config-title {
@@ -2840,7 +2840,7 @@ export default defineComponent({
   display: block;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: #334155;
+  color: var(--border-default, #334155);
   margin-bottom: 4px;
 }
 .dark .tp-config-label {
@@ -2940,7 +2940,7 @@ export default defineComponent({
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: #334155;
+  color: var(--border-default, #334155);
   margin: 0 0 12px 0;
 }
 .dark .tp-section-title {
@@ -2978,8 +2978,8 @@ export default defineComponent({
   transition: border-color 0.15s, background 0.15s;
 }
 .tp-template-card.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-template-card:hover {
   border-color: #94a3b8;
@@ -3054,7 +3054,7 @@ export default defineComponent({
   font-size: 0.6875rem;
 }
 .dark .tp-prompt-hint code {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 
 /* ─── Step 3: Model selection ─── */
@@ -3092,7 +3092,7 @@ export default defineComponent({
   line-height: 1.5;
 }
 .tp-model-empty.dark {
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
 }
 .tp-model-list {
   display: flex;
@@ -3112,8 +3112,8 @@ export default defineComponent({
   width: 100%;
 }
 .tp-model-card.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-model-card:hover {
   border-color: #94a3b8;
@@ -3180,8 +3180,8 @@ export default defineComponent({
   overflow: hidden;
 }
 .tp-hf-section.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-hf-toggle {
   display: flex;
@@ -3194,7 +3194,7 @@ export default defineComponent({
   cursor: pointer;
   font-size: 0.875rem;
   font-weight: 600;
-  color: #334155;
+  color: var(--border-default, #334155);
   text-align: left;
 }
 .tp-hf-toggle:hover {
@@ -3204,7 +3204,7 @@ export default defineComponent({
   color: #e2e8f0;
 }
 .tp-hf-toggle.dark:hover {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 .tp-hf-toggle-icon {
   flex-shrink: 0;
@@ -3286,7 +3286,7 @@ export default defineComponent({
   font-size: 0.625rem;
 }
 .dark .tp-hf-examples code {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 
 /* Training config — single column stack */
@@ -3305,7 +3305,7 @@ export default defineComponent({
   color: #94a3b8;
 }
 .tp-config-doc strong {
-  color: #334155;
+  color: var(--border-default, #334155);
   font-weight: 600;
 }
 .dark .tp-config-doc strong {
@@ -3324,8 +3324,8 @@ export default defineComponent({
   background: #f8fafc;
 }
 .tp-explainer.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-explainer-steps {
   display: flex;
@@ -3337,7 +3337,7 @@ export default defineComponent({
   align-items: flex-start;
   gap: 10px;
   font-size: 0.8125rem;
-  color: #334155;
+  color: var(--border-default, #334155);
   line-height: 1.5;
 }
 .dark .tp-explainer-step {
@@ -3380,7 +3380,7 @@ export default defineComponent({
 }
 .tp-llm-group-label.dark {
   color: #94a3b8;
-  border-bottom-color: #334155;
+  border-bottom-color: var(--border-default, #334155);
 }
 .tp-llm-group-badge {
   display: inline-block;
@@ -3414,8 +3414,8 @@ export default defineComponent({
   width: 100%;
 }
 .tp-llm-card.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-llm-card:hover {
   border-color: #94a3b8;
@@ -3464,8 +3464,8 @@ export default defineComponent({
   background: #f8fafc;
 }
 .tp-estimate-card.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-estimate-label {
   font-size: 0.625rem;
@@ -3534,7 +3534,7 @@ export default defineComponent({
   font-weight: 600;
 }
 .dark .tp-output-ext {
-  background: #334155;
+  background: var(--border-default, #334155);
   border-color: #475569;
   color: #94a3b8;
 }
@@ -3548,8 +3548,8 @@ export default defineComponent({
   overflow: hidden;
 }
 .tp-process-summary.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-color: var(--border-default, #334155);
 }
 .tp-process-row {
   display: flex;
@@ -3559,7 +3559,7 @@ export default defineComponent({
   border-bottom: 1px solid #e2e8f0;
 }
 .tp-process-summary.dark .tp-process-row {
-  border-bottom-color: #334155;
+  border-bottom-color: var(--border-default, #334155);
 }
 .tp-process-row:last-child {
   border-bottom: none;
@@ -3656,6 +3656,6 @@ export default defineComponent({
   font-size: 0.875rem;
 }
 .dark .tp-iterate-placeholder {
-  border-color: #334155;
+  border-color: var(--border-default, #334155);
 }
 </style>

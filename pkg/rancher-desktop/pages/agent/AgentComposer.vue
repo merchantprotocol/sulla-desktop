@@ -18,6 +18,7 @@
           name="input"
           placeholder="What do you want to know?"
           class="my-2 h-6 max-h-[400px] min-w-0 flex-1 resize-none bg-transparent text-content text-base leading-6 outline-none placeholder:text-content-muted"
+          style="padding-left: 10px"
           :class="isComposerMultiline ? 'basis-full order-2' : 'order-2'"
           @input="updateComposerLayout"
           @keydown.enter.exact.prevent="emit('send')"

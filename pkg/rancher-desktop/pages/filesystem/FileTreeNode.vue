@@ -161,11 +161,11 @@ export default defineComponent({
 }
 
 .file-tree-row.is-selected {
-  background: rgba(0, 120, 212, 0.1);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.1));
 }
 
 :global(.dark) .file-tree-row.is-selected {
-  background: rgba(0, 120, 212, 0.3);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.3));
 }
 
 .file-tree-row.is-highlighted {
@@ -248,13 +248,13 @@ export default defineComponent({
 }
 
 .file-tree-row.drop-target {
-  background: rgba(0, 120, 212, 0.1);
-  outline: 1px dashed rgba(0, 120, 212, 0.4);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.1));
+  outline: 1px dashed var(--accent-primary, rgba(0, 120, 212, 0.4));
   outline-offset: -1px;
 }
 
 :global(.dark) .file-tree-row.drop-target {
-  background: rgba(0, 120, 212, 0.15);
-  outline-color: rgba(0, 120, 212, 0.5);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.15));
+  outline-color: var(--accent-primary, rgba(0, 120, 212, 0.5));
 }
 </style>

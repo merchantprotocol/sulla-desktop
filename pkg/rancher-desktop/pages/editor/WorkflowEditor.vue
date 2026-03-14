@@ -674,7 +674,7 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .workflow-editor.dark :deep(.vue-flow__minimap) {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 
 .workflow-editor.dark :deep(.vue-flow__minimap-mask) {
@@ -717,7 +717,7 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .node-context-menu.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   border-color: #3c3c5c;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
@@ -746,7 +746,7 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .context-menu-item.dark:hover {
-  background: #334155;
+  background: var(--border-default, #334155);
 }
 
 .context-menu-item.danger {
@@ -794,7 +794,7 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .delete-confirm-dialog.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
@@ -844,7 +844,7 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .delete-confirm-btn.cancel.dark {
-  background: #334155;
+  background: var(--border-default, #334155);
   color: #94a3b8;
 }
 

@@ -2464,7 +2464,7 @@ html, body, #app {
 }
 
 .page-root.dark {
-  background: #0f172a;
+  background: var(--editor-bg, #0f172a);
   color: #fafafa;
 }
 
@@ -2599,7 +2599,7 @@ html, body, #app {
 }
 
 .editor-panel.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 
 .editor-top {
@@ -2627,8 +2627,8 @@ html, body, #app {
 }
 
 .editor-bottom.dark {
-  border-top-color: #3c3c3c;
-  background: #1e293b;
+  border-top-color: var(--border-default, #3c3c3c);
+  background: var(--bg-surface, #1e293b);
 }
 
 .right-pane {
@@ -2643,8 +2643,8 @@ html, body, #app {
 
 .right-pane.dark {
   border-left-color: #3c3c3c;
-  border-right-color: #3c3c3c;
-  background: #1e293b;
+  border-right-color: var(--border-default, #3c3c3c);
+  background: var(--bg-surface, #1e293b);
 }
 
 /* Right pane tabs (training mode) */
@@ -2654,7 +2654,7 @@ html, body, #app {
   flex-shrink: 0;
 }
 .rp-tabs.dark {
-  border-bottom-color: #334155;
+  border-bottom-color: var(--border-default, #334155);
 }
 .rp-tab {
   flex: 1;
@@ -2678,7 +2678,7 @@ html, body, #app {
 }
 .rp-tab.dark:hover {
   color: #e2e8f0;
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 .rp-tab.active {
   color: #0284c7;
@@ -2736,14 +2736,14 @@ html, body, #app {
   width: 24px;
   height: 24px;
   border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: #0078d4;
+  border-top-color: var(--accent-primary, #0078d4);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
 
 .dark .loading-spinner {
   border-color: rgba(255, 255, 255, 0.1);
-  border-top-color: #0078d4;
+  border-top-color: var(--accent-primary, #0078d4);
 }
 
 @keyframes spin {
@@ -2771,12 +2771,12 @@ html, body, #app {
 }
 
 .tab-bar.empty.dark {
-  background: #0f172a;
+  background: var(--editor-bg, #0f172a);
 }
 
 .tab-bar.dark {
-  background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  background: var(--bg-surface, #1e293b);
+  border-bottom-color: var(--border-default, #3c3c3c);
 }
 
 .tab-bar-tabs {
@@ -2840,7 +2840,7 @@ html, body, #app {
 }
 
 .editor-dropdown.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   border-color: #3c3c3c;
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
@@ -2892,8 +2892,8 @@ html, body, #app {
 
 .tab.dark {
   color: #999;
-  border-right-color: #3c3c3c;
-  background: #2d2d2d;
+  border-right-color: var(--border-default, #3c3c3c);
+  background: var(--bg-surface-alt, #2d2d2d);
 }
 
 .tab.dark:hover {
@@ -2909,8 +2909,8 @@ html, body, #app {
 }
 
 .tab.active.dark {
-  background: #0f172a;
-  border-bottom-color: #0f172a;
+  background: var(--editor-bg, #0f172a);
+  border-bottom-color: var(--editor-bg, #0f172a);
   color: #ccc;
 }
 
@@ -2929,7 +2929,7 @@ html, body, #app {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #0078d4;
+  background: var(--accent-primary, #0078d4);
   flex-shrink: 0;
 }
 
@@ -2979,9 +2979,9 @@ html, body, #app {
 }
 
 .editor-header.dark {
-  background: #0f172a;
+  background: var(--editor-bg, #0f172a);
   color: #888;
-  border-bottom-color: #2d2d2d;
+  border-bottom-color: var(--border-default, #2d2d2d);
 }
 
 .save-button {
@@ -3014,7 +3014,7 @@ html, body, #app {
 
 .save-button.dark {
   color: #ffffff;
-  background: #0078d4;
+  background: var(--accent-primary, #0078d4);
 }
 
 .save-button.dark:hover:not(:disabled) {
@@ -3079,7 +3079,7 @@ html, body, #app {
 
 .resize-handle:hover,
 .resize-handle:active {
-  background: #0078d4;
+  background: var(--accent-primary, #0078d4);
   opacity: 0.5;
 }
 
@@ -3128,8 +3128,8 @@ html, body, #app {
 }
 
 .left-pane.dark {
-  background: #1e293b;
-  border-right-color: #334155;
+  background: var(--bg-surface, #1e293b);
+  border-right-color: var(--border-default, #334155);
 }
 
 .file-tree-wrapper {
@@ -3159,7 +3159,7 @@ html, body, #app {
 }
 
 .inject-menu.dark {
-  background: #2d2d2d;
+  background: var(--bg-surface-alt, #2d2d2d);
   border-color: #404040;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
@@ -3597,8 +3597,8 @@ html, body, #app {
 }
 
 .terminal-tabs-header.dark {
-  background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  background: var(--bg-surface, #1e293b);
+  border-bottom-color: var(--border-default, #3c3c3c);
 }
 
 .terminal-tabs {
@@ -3630,7 +3630,7 @@ html, body, #app {
 }
 
 .dark .terminal-tab {
-  background: #2d2d2d;
+  background: var(--bg-surface-alt, #2d2d2d);
   color: #999;
 }
 
@@ -3640,8 +3640,8 @@ html, body, #app {
 }
 
 .dark .terminal-tab.active {
-  background: #0f172a;
-  border-bottom-color: #0f172a;
+  background: var(--editor-bg, #0f172a);
+  border-bottom-color: var(--editor-bg, #0f172a);
   color: #ccc;
 }
 
@@ -3705,7 +3705,7 @@ html, body, #app {
   width: 28px;
   height: 28px;
   border: none;
-  background: #0078d4;
+  background: var(--accent-primary, #0078d4);
   color: white;
   border-radius: 4px;
   cursor: pointer;

@@ -4,18 +4,18 @@
 /* ------------------------------------------------------------------ */
 .theme-protocol-dark {
   /* Backgrounds — noir terminal palette */
-  --bg-page: #161b22;
-  --bg-surface: #161b22;
-  --bg-surface-alt: #1c2128;
-  --bg-surface-hover: #21262d;
+  --bg-page: #0d1117;
+  --bg-surface: #0d1117;
+  --bg-surface-alt: #161b22;
+  --bg-surface-hover: #1c2128;
   --bg-header: rgba(13, 17, 23, 0.85);
-  --bg-input: #161b22;
+  --bg-input: #0d1117;
   --bg-overlay: rgba(0, 0, 0, 0.7);
 
   /* Text */
   --text-primary: #e6edf3;
   --text-secondary: #8b949e;
-  --text-muted: #6e7681;
+  --text-muted: #8b949e;
   --text-link: #5096b3;
   --text-on-accent: #ffffff;
 
@@ -24,10 +24,9 @@
   --border-strong: #484f58;
   --border-subtle: #21262d;
 
-  /* Accent — steel blue */
+  /* Accent — steel blue (buttons, links, indicators only) */
   --accent-primary: #5096b3;
   --accent-primary-hover: #6ab0cc;
-  --accent-bg: rgba(80, 150, 179, 0.1);
 
   /* Glow system */
   --brand-glow: rgba(80, 150, 179, 0.4);
@@ -46,14 +45,14 @@
   --ring-color: rgba(80, 150, 179, 0.5);
 
   /* Editor */
-  --editor-bg: #1a1e24;
+  --editor-bg: #0d1117;
   --editor-border: #30363d;
   --editor-btn-color: #8b949e;
   --editor-btn-hover: rgba(255, 255, 255, 0.06);
   --editor-separator: #30363d;
 
   /* Terminal */
-  --terminal-bg: #161b22;
+  --terminal-bg: #0d1117;
   --terminal-fg: #e6edf3;
   --terminal-cursor: #5096b3;
   --terminal-selection-bg: rgba(80, 150, 179, 0.3);
@@ -66,7 +65,7 @@
 
   /* Scrollbar */
   --scrollbar-thumb: #4485a0;
-  --scrollbar-track: #161b22;
+  --scrollbar-track: #0d1117;
 }
 
 /* ================================================================== */
@@ -232,7 +231,7 @@
 }
 
 .theme-protocol-dark textarea::placeholder {
-  color: #6e7681 !important;
+  color: var(--text-secondary) !important;
   font-family: 'JetBrains Mono', 'Courier New', monospace !important;
 }
 
@@ -1041,4 +1040,431 @@
 /* Fill colors for search icon */
 .theme-protocol-dark .dark\:fill-slate-500 {
   fill: #484f58 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Editor Page (AgentEditor) — Protocol Dark overrides
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Editor page root background ── */
+.theme-protocol-dark .page-root,
+.theme-protocol-dark .page-root.dark {
+  background: #161b22 !important;
+  color: #e6edf3 !important;
+}
+
+/* ── Editor header bar (title bar) ── */
+.theme-protocol-dark .editor-header-bar,
+.theme-protocol-dark .editor-header-bar.dark {
+  background: #161b22 !important;
+  border-bottom-color: #30363d !important;
+}
+
+.theme-protocol-dark .editor-header-bar .header-btn,
+.theme-protocol-dark .editor-header-bar .header-btn.dark {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .editor-header-bar .header-btn:hover,
+.theme-protocol-dark .editor-header-bar .header-btn.dark:hover {
+  background: rgba(80, 150, 179, 0.08) !important;
+  color: #e6edf3 !important;
+}
+
+.theme-protocol-dark .editor-header-bar .header-separator,
+.theme-protocol-dark .editor-header-bar.dark .header-separator {
+  background: #30363d !important;
+}
+
+/* Theme dropdown in editor header */
+.theme-protocol-dark .theme-dropdown,
+.theme-protocol-dark .theme-dropdown.dark {
+  background: #0d1117 !important;
+  border-color: #30363d !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+.theme-protocol-dark .theme-option.dark {
+  color: #8b949e !important;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+.theme-protocol-dark .theme-option.dark:hover {
+  background: #21262d !important;
+  color: #e6edf3 !important;
+}
+
+.theme-protocol-dark .theme-option.active {
+  color: #5096b3 !important;
+}
+
+.theme-protocol-dark .theme-dot.active {
+  border-color: #5096b3 !important;
+  background: #5096b3 !important;
+}
+
+.theme-protocol-dark .theme-group-label.dark {
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-protocol-dark .theme-group-section + .theme-group-section {
+  border-top-color: #30363d !important;
+}
+
+/* ── Icon Panel (left sidebar) ── */
+.theme-protocol-dark .icon-panel,
+.theme-protocol-dark .icon-panel.dark {
+  background: #161b22 !important;
+  border-right-color: #30363d !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn,
+.theme-protocol-dark .icon-panel.dark .icon-btn {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn:hover,
+.theme-protocol-dark .icon-panel.dark .icon-btn:hover {
+  background: rgba(80, 150, 179, 0.06) !important;
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn.active,
+.theme-protocol-dark .icon-panel.dark .icon-btn.active {
+  background: rgba(80, 150, 179, 0.1) !important;
+  color: #5096b3 !important;
+}
+
+/* Active indicator bar: steel blue */
+.theme-protocol-dark .icon-panel .icon-btn.active::after {
+  background: #5096b3 !important;
+}
+
+/* Agent icon (robot logo) in icon panel — recolor green to steel blue */
+.theme-protocol-dark .icon-panel .icon-logo,
+.theme-protocol-dark .icon-panel.dark .icon-logo {
+  filter: brightness(0) saturate(100%) invert(55%) sepia(30%) saturate(500%) hue-rotate(160deg) brightness(95%) contrast(90%) !important;
+  opacity: 0.6 !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn:hover .icon-logo {
+  opacity: 0.8 !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn.active .icon-logo {
+  opacity: 1 !important;
+  filter: brightness(0) saturate(100%) invert(55%) sepia(40%) saturate(600%) hue-rotate(160deg) brightness(100%) contrast(90%) !important;
+}
+
+/* ── Left pane (file tree, git, docker, etc.) ── */
+.theme-protocol-dark .left-pane,
+.theme-protocol-dark .left-pane.dark {
+  background: #161b22 !important;
+  border-right-color: #30363d !important;
+}
+
+/* ── Editor panel (center area) ── */
+.theme-protocol-dark .editor-panel,
+.theme-protocol-dark .editor-panel.dark {
+  background: #0d1117 !important;
+}
+
+/* ── Tab bar ── */
+.theme-protocol-dark .tab-bar,
+.theme-protocol-dark .tab-bar.dark {
+  background: #161b22 !important;
+  border-bottom-color: #30363d !important;
+}
+
+.theme-protocol-dark .tab-bar.empty,
+.theme-protocol-dark .tab-bar.empty.dark {
+  background: #0d1117 !important;
+}
+
+/* Inactive tabs */
+.theme-protocol-dark .tab,
+.theme-protocol-dark .tab.dark {
+  background: #161b22 !important;
+  color: #6e7681 !important;
+  border-right-color: #30363d !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 12px !important;
+}
+
+.theme-protocol-dark .tab:hover,
+.theme-protocol-dark .tab.dark:hover {
+  background: #21262d !important;
+  color: #8b949e !important;
+}
+
+/* Active tab */
+.theme-protocol-dark .tab.active,
+.theme-protocol-dark .tab.active.dark {
+  background: #0d1117 !important;
+  color: #e6edf3 !important;
+  border-bottom-color: #0d1117 !important;
+}
+
+/* Tab actions */
+.theme-protocol-dark .tab-bar-action-btn,
+.theme-protocol-dark .tab-bar-action-btn.dark {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .tab-bar-action-btn:hover,
+.theme-protocol-dark .tab-bar-action-btn.dark:hover {
+  background: rgba(80, 150, 179, 0.08) !important;
+  color: #8b949e !important;
+}
+
+/* Tab dirty dot: steel blue */
+.theme-protocol-dark .tab-dirty-dot {
+  background: #5096b3 !important;
+}
+
+/* ── Editor breadcrumb header ── */
+.theme-protocol-dark .editor-header,
+.theme-protocol-dark .editor-header.dark {
+  background: #0d1117 !important;
+  border-bottom-color: #30363d !important;
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+/* ── Editor dropdown menu ── */
+.theme-protocol-dark .editor-dropdown,
+.theme-protocol-dark .editor-dropdown.dark {
+  background: #0d1117 !important;
+  border-color: #30363d !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+.theme-protocol-dark .editor-dropdown-item.dark {
+  color: #8b949e !important;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-protocol-dark .editor-dropdown-item.dark:hover {
+  background: #21262d !important;
+  color: #e6edf3 !important;
+}
+
+/* ── Empty state (no tabs open) — Sulla icon fix ── */
+.theme-protocol-dark .empty-state {
+  color: #6e7681 !important;
+}
+
+/* Recolor the green Sulla icon to steel blue */
+.theme-protocol-dark .empty-icon-img {
+  filter: brightness(0) saturate(100%) invert(55%) sepia(30%) saturate(500%) hue-rotate(160deg) brightness(95%) contrast(90%) !important;
+  opacity: 0.4;
+}
+
+.theme-protocol-dark .empty-text {
+  color: #8b949e !important;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-protocol-dark .empty-hint {
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+/* Loading spinner: steel blue */
+.theme-protocol-dark .loading-spinner {
+  border-color: rgba(80, 150, 179, 0.15) !important;
+  border-top-color: #5096b3 !important;
+}
+
+/* ── Bottom pane (terminal area) ── */
+.theme-protocol-dark .editor-bottom,
+.theme-protocol-dark .editor-bottom.dark {
+  background: #161b22 !important;
+  border-top-color: #30363d !important;
+}
+
+.theme-protocol-dark .terminal-tabs-header,
+.theme-protocol-dark .terminal-tabs-header.dark {
+  background: #161b22 !important;
+  border-bottom-color: #30363d !important;
+}
+
+.theme-protocol-dark .terminal-tab {
+  background: #161b22 !important;
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
+.theme-protocol-dark .terminal-tab:hover {
+  background: #21262d !important;
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .terminal-tab.active {
+  background: #0d1117 !important;
+  color: #e6edf3 !important;
+  border-bottom-color: #0d1117 !important;
+}
+
+/* ── Right pane ── */
+.theme-protocol-dark .right-pane,
+.theme-protocol-dark .right-pane.dark {
+  background: #161b22 !important;
+  border-left-color: #30363d !important;
+}
+
+/* Right pane tabs */
+.theme-protocol-dark .rp-tab-bar {
+  background: #161b22 !important;
+  border-bottom-color: #30363d !important;
+}
+
+.theme-protocol-dark .rp-tab,
+.theme-protocol-dark .rp-tab.dark {
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-protocol-dark .rp-tab.active,
+.theme-protocol-dark .rp-tab.active.dark {
+  color: #5096b3 !important;
+  border-bottom-color: #5096b3 !important;
+}
+
+/* ── Resize handles: steel blue ── */
+.theme-protocol-dark .resize-handle:hover,
+.theme-protocol-dark .resize-handle:active,
+.theme-protocol-dark .resize-handle.dark:hover,
+.theme-protocol-dark .resize-handle.dark:active {
+  background: #5096b3 !important;
+}
+
+/* ── Editor footer (status bar) ── */
+.theme-protocol-dark .editor-footer,
+.theme-protocol-dark .editor-footer.dark {
+  background: #0d1117 !important;
+  border-top-color: #30363d !important;
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-protocol-dark .editor-footer .footer-lang {
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+.theme-protocol-dark .editor-footer .footer-state.state-ok {
+  color: #3fb950 !important;
+}
+
+.theme-protocol-dark .editor-footer .footer-progress-bar-fill {
+  background: #5096b3 !important;
+}
+
+/* ── Save button: steel blue ── */
+.theme-protocol-dark .save-button,
+.theme-protocol-dark .save-button.dark {
+  background: #4485a0 !important;
+}
+
+.theme-protocol-dark .save-button:hover:not(:disabled),
+.theme-protocol-dark .save-button.dark:hover:not(:disabled) {
+  background: #5096b3 !important;
+  box-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+}
+
+.theme-protocol-dark .save-button:disabled,
+.theme-protocol-dark .save-button.dark:disabled {
+  background: #21262d !important;
+  color: #484f58 !important;
+}
+
+/* ── Workflow save bar ── */
+.theme-protocol-dark .workflow-save-bar,
+.theme-protocol-dark .workflow-save-bar.dark {
+  background: rgba(22, 27, 34, 0.9) !important;
+  border-color: #30363d !important;
+  backdrop-filter: blur(12px);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-protocol-dark .workflow-save-status.saving {
+  color: #5096b3 !important;
+}
+
+.theme-protocol-dark .workflow-save-status.saved {
+  color: #3fb950 !important;
+}
+
+.theme-protocol-dark .workflow-save-btn,
+.theme-protocol-dark .workflow-save-btn.dark {
+  background: #21262d !important;
+  border-color: #30363d !important;
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .workflow-save-btn:hover,
+.theme-protocol-dark .workflow-save-btn.dark:hover {
+  background: #30363d !important;
+  border-color: #5096b3 !important;
+  color: #5096b3 !important;
+}
+
+.theme-protocol-dark .workflow-save-divider,
+.theme-protocol-dark .workflow-save-divider.dark {
+  background: #30363d !important;
+}
+
+/* Workflow settings inputs */
+.theme-protocol-dark .workflow-settings-input,
+.theme-protocol-dark .workflow-settings-textarea,
+.theme-protocol-dark .workflow-settings-input.dark,
+.theme-protocol-dark .workflow-settings-textarea.dark {
+  background: #0d1117 !important;
+  border-color: #30363d !important;
+  color: #e6edf3 !important;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-protocol-dark .workflow-settings-input:focus,
+.theme-protocol-dark .workflow-settings-textarea:focus {
+  border-color: #5096b3 !important;
+  box-shadow: 0 0 10px rgba(80, 150, 179, 0.15) !important;
+}
+
+/* ── Inject variable context menu ── */
+.theme-protocol-dark .inject-menu,
+.theme-protocol-dark .inject-menu.dark {
+  background: #0d1117 !important;
+  border-color: #30363d !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-protocol-dark .inject-menu-item.dark:hover {
+  background: #21262d !important;
+}
+
+/* ── Pane close buttons ── */
+.theme-protocol-dark .pane-close-btn,
+.theme-protocol-dark .pane-close-btn.dark {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .pane-close-btn:hover,
+.theme-protocol-dark .pane-close-btn.dark:hover {
+  background: rgba(80, 150, 179, 0.08) !important;
+  color: #8b949e !important;
+}
+
+/* ── Add terminal button: steel blue ── */
+.theme-protocol-dark .add-terminal-btn {
+  background: #4485a0 !important;
+}
+
+.theme-protocol-dark .add-terminal-btn:hover {
+  background: #5096b3 !important;
 }

@@ -51,8 +51,14 @@ export default defineComponent({
     let socket: WebSocket | null = null;
     let resizeObserver: ResizeObserver | null = null;
 
+    const getCssVar = (varName: string, fallback: string): string => {
+      const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+
+      return value || fallback;
+    };
+
     const getTheme = () => ({
-      background: props.isDark ? '#1e293b' : '#f8fafc',
+      background: props.isDark ? getCssVar('--bg-surface', '#1e293b') : '#f8fafc',
       foreground: props.isDark ? '#ccc' : '#333',
       cursor: props.isDark ? '#ccc' : '#333',
       selectionBackground: props.isDark ? '#3b82f680' : '#3b82f640',

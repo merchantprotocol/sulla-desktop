@@ -141,6 +141,27 @@ const handleNextWelcome = async () => {
 
   console.log('[FirstRunWelcome] Settings committed successfully');
 
+  // Submit email subscription to worker if opted in
+  if (sullaSubscribeToUpdates.value && sullaEmail.value?.trim()) {
+    fetch('https://email-submission.jonathon-44b.workers.dev/', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        email:  sullaEmail.value.trim(),
+        name:   primaryUserName.value?.trim() || '',
+        source: 'sulla-desktop',
+      }),
+    }).then((res) => {
+      if (!res.ok) {
+        console.warn('[FirstRunWelcome] Subscription request failed:', res.status);
+      } else {
+        console.log('[FirstRunWelcome] Subscription submitted successfully');
+      }
+    }).catch((err) => {
+      console.warn('[FirstRunWelcome] Subscription request error:', err);
+    });
+  }
+
   // Check if ready to trigger custom environment
   if (await SullaSettingsModel.get('sullaEmail', false) &&
       await SullaSettingsModel.get('sullaPassword', false)) {

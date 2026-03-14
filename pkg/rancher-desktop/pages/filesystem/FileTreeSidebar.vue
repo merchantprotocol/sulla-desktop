@@ -552,7 +552,7 @@ export default defineComponent({
 }
 
 .file-tree-sidebar.dark {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
   color: #ccc;
 }
 
@@ -573,8 +573,8 @@ export default defineComponent({
 
 .dark .file-tree-header {
   color: #94a3b8;
-  background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  background: var(--bg-surface, #1e293b);
+  border-bottom-color: var(--border-default, #3c3c3c);
 }
 
 .file-tree-actions {
@@ -612,14 +612,14 @@ export default defineComponent({
 }
 
 .file-tree-scroll.drop-active {
-  background: rgba(0, 120, 212, 0.06);
-  outline: 2px dashed rgba(0, 120, 212, 0.3);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.06));
+  outline: 2px dashed var(--accent-primary, rgba(0, 120, 212, 0.3));
   outline-offset: -2px;
 }
 
 .dark .file-tree-scroll.drop-active {
-  background: rgba(0, 120, 212, 0.1);
-  outline-color: rgba(0, 120, 212, 0.4);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.1));
+  outline-color: var(--accent-primary, rgba(0, 120, 212, 0.4));
 }
 
 .file-tree-loading {
