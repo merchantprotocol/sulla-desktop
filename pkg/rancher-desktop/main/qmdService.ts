@@ -159,6 +159,12 @@ let _storeModule = null;
 let _collectionsModule = null;
 let _fastGlobModule = null;
 
+// Map from "collectionName/handleizedPath" to original relative file path.
+// Built during indexing, used during search to resolve real filesystem paths
+// since handelize() is lossy (dots→hyphens, uppercase→lowercase).
+const _realPathMap = new Map();
+
+
 async function getStoreModule() {
   if (!_storeModule) _storeModule = await import(qmdStorePath);
   return _storeModule;
@@ -223,6 +229,8 @@ async function handleIndex({ dirPath, glob }) {
   for (const relativeFile of files) {
     const filepath = path.resolve(resolvedDir, relativeFile);
     const normalizedPath = handelize(relativeFile);
+    // Store mapping so search can recover the real filesystem path
+    _realPathMap.set(colName + '/' + normalizedPath, relativeFile);
     let content;
     try { content = fs.readFileSync(filepath, 'utf-8'); } catch { continue; }
     if (!content.trim()) continue;
@@ -266,11 +274,16 @@ async function handleSearch({ query, dirPath, limit }) {
   try {
     const ftsResults = store.searchFTS(query, limit || 20, colName);
     for (const r of ftsResults) {
-      // r.filepath is a virtual path like "qmd://ColName/handlized/path.ext"
-      // Use the store's resolveVirtualPath to map it back to the real filesystem path
-      // via the collection's pwd, avoiding the doubled-path bug where the collection
-      // name (e.g. "Users_jonathonbyrdziak_sulla") was treated as a relative directory.
-      const absPath = store.resolveVirtualPath(r.filepath) || path.resolve(resolvedDir, r.displayPath || r.filepath);
+      // r.displayPath is "collectionName/handleizedPath" — use our map to
+      // recover the original relative path (handelize is lossy: dots→hyphens,
+      // uppercase→lowercase). Fall back to resolveVirtualPath if unmapped.
+      const realRelative = _realPathMap.get(r.displayPath);
+      let absPath;
+      if (realRelative) {
+        absPath = path.resolve(resolvedDir, realRelative);
+      } else {
+        absPath = store.resolveVirtualPath(r.filepath) || path.resolve(resolvedDir, r.displayPath || r.filepath);
+      }
       if (seenPaths.has(absPath)) continue;
       seenPaths.add(absPath);
       const snippet = quickSnippet(r.body, query);
