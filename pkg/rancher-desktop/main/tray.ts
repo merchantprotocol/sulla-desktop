@@ -12,6 +12,7 @@ import { VMBackend } from '@pkg/backend/backend';
 import { State } from '@pkg/backend/k8s';
 import * as kubeconfig from '@pkg/backend/kubeconfig';
 import { Settings } from '@pkg/config/settings';
+import { showErrorDialogWithReport } from '@pkg/main/errorReporter';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
@@ -220,8 +221,11 @@ export class Tray {
     try {
       this.updateContexts();
     } catch (err) {
-      Electron.dialog.showErrorBox('Error starting the app:',
-        `Error message: ${ err instanceof Error ? err.message : err }`);
+      showErrorDialogWithReport(
+        'Error starting the app',
+        `Error message: ${ err instanceof Error ? err.message : err }`,
+        'tray-updateContexts',
+      );
     }
 
     const contextMenu = Electron.Menu.buildFromTemplate(this.contextMenuItems);

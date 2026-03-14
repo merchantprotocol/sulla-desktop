@@ -39,6 +39,7 @@ import { Snapshots } from '@pkg/main/snapshots/snapshots';
 import { Snapshot, SnapshotDialog } from '@pkg/main/snapshots/types';
 import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
+import { submitErrorReport } from '@pkg/main/errorReporter';
 import { hookSullaEnd, sullaEnd, onMainProxyLoad, markSullaRestarting } from '@pkg/sulla';
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { spawnFile } from '@pkg/utils/childProcess';
@@ -142,7 +143,25 @@ process.on('unhandledRejection', (reason: any, promise: any) => {
     // Do nothing: a connection to the kubernetes server was broken
   } else {
     console.error('UnhandledRejectionWarning:', reason);
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+
+    submitErrorReport({
+      error_type:    err.name || 'unhandledRejection',
+      error_message: err.message,
+      stack_trace:   err.stack || '',
+      user_context:  'unhandledRejection in main process (background.ts)',
+    }).catch(() => {});
   }
+});
+
+process.on('uncaughtException', (err: Error) => {
+  console.error('UncaughtException:', err);
+  submitErrorReport({
+    error_type:    err.name || 'uncaughtException',
+    error_message: err.message,
+    stack_trace:   err.stack || '',
+    user_context:  'uncaughtException in main process (background.ts)',
+  }).catch(() => {});
 });
 
 Electron.app.on('second-instance', async() => {
@@ -841,6 +860,18 @@ ipcMainProxy.on('model-changed', (_event, data) => {
   Electron.BrowserWindow.getAllWindows().forEach((win) => {
     win.webContents.send('model-changed', data);
   });
+});
+
+// Error reporting — fire-and-forget from renderer
+ipcMainProxy.on('error-report/submit', (_event, report) => {
+  submitErrorReport(report).catch((err) => {
+    console.error('[ErrorReporter] Failed to submit:', err);
+  });
+});
+
+// Error reporting — invoke from renderer (awaitable)
+ipcMainProxy.handle('error-report/invoke' as any, async(_event: any, report: any) => {
+  return await submitErrorReport(report);
 });
 
 ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
