@@ -269,6 +269,7 @@
 <script setup lang="ts">
 import AgentHeader from './agent/AgentHeader.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 import { onMounted, ref, watch } from 'vue';
 import { ScheduleXCalendar } from '@schedule-x/vue';
 import { createCalendar, createViewMonthGrid, createViewMonthAgenda, createViewWeek, createViewDay } from '@schedule-x/calendar';
@@ -277,8 +278,7 @@ import '@schedule-x/theme-default/dist/index.css';
 import 'temporal-polyfill/global';
 import { CalendarEvent } from '@pkg/agent/database/models/CalendarEvent'; // new model
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const showAddEventModal = ref(false);
 const newEventTitle = ref('');
 const newEventDate = ref('');
@@ -310,12 +310,6 @@ const editEventEndTime = ref('');
 const editEventDescription = ref('');
 const editEventLocation = ref('');
 const savingEditEvent = ref(false);
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-  calendar.setTheme(isDark.value ? 'dark' : 'light');
-};
 
 const eventsService = createEventsServicePlugin();
 
@@ -451,14 +445,11 @@ const loadEvents = async () => {
   }
 };
 
-onMounted(async () => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
+watch(isDark, (dark) => {
+  calendar.setTheme(dark ? 'dark' : 'light');
+});
 
+onMounted(async () => {
   calendar.setTheme(isDark.value ? 'dark' : 'light');
 
   await loadEvents();
@@ -653,17 +644,17 @@ const deleteEvent = async () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
+  background: var(--bg-page, #ffffff);
+  color: var(--text-primary, #0d0d0d);
 }
 
 .page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page, #0f172a);
+  color: var(--text-primary, #fafafa);
 }
 
 .page-root :deep(.sx__calendar-wrapper) {
-  background: #ffffff;
+  background: var(--bg-page, #ffffff);
 }
 
 .page-root.dark :deep(.sx__calendar-wrapper),
@@ -671,6 +662,6 @@ const deleteEvent = async () => {
 .page-root.dark :deep(.sx__month-grid-wrapper),
 .page-root.dark :deep(.sx__week-grid),
 .page-root.dark :deep(.sx__day-grid) {
-  background: #0f172a;
+  background: var(--bg-page, #0f172a);
 }
 </style>

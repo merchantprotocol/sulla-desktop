@@ -39,7 +39,7 @@ export default defineComponent({
 
 <style lang="scss" scoped>
   .preferences-nav-item {
-    font-size: 1.125rem;
+    font-size: var(--fs-heading);
     line-height: 1.75rem;
     padding: 0.5rem 0.75rem;
     cursor: pointer;

@@ -175,21 +175,10 @@
 
 <script setup lang="ts">
 import AgentHeader from './agent/AgentHeader.vue';
-import { onMounted, ref } from 'vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-};
-
-onMounted(async () => {
-  const saved = localStorage.getItem(THEME_STORAGE_KEY);
-  isDark.value = saved === 'dark';
-});
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 
 const openN8N = () => {
   // Open N8N in external browser
@@ -207,12 +196,7 @@ const openN8N = () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 </style>

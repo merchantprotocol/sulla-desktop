@@ -1,0 +1,75 @@
+/* ------------------------------------------------------------------ */
+/*  Default Dark theme                                                */
+/* ------------------------------------------------------------------ */
+.theme-default-dark {
+  /* Backgrounds */
+  --bg-page: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-surface-alt: #334155;
+  --bg-surface-hover: #475569;
+  --bg-header: rgba(15, 23, 42, 0.95);
+  --bg-input: #243447;
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  /* Text */
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  --text-muted: #cbd5e1;
+  --text-link: #38bdf8;
+  --text-on-accent: #ffffff;
+  --text-success: #4ade80;
+  --text-error: #f87171;
+  --text-warning: #fbbf24;
+  --text-info: #38bdf8;
+
+  /* Borders */
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: #4b5563;
+  --border-subtle: #334155;
+
+  /* Semantic Backgrounds */
+  --bg-primary: #0f172a;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-success: rgba(74, 222, 128, 0.12);
+  --bg-error: rgba(248, 113, 113, 0.12);
+  --bg-warning: rgba(251, 191, 36, 0.12);
+  --bg-info: rgba(56, 189, 248, 0.12);
+  --bg-accent: rgba(167, 139, 250, 0.12);
+
+  /* Accent */
+  --accent-primary: #38bdf8;
+  --accent-primary-hover: #0ea5e9;
+  --text-accent: #a78bfa;
+
+  /* Semantic Borders */
+  --border-success: rgba(74, 222, 128, 0.4);
+  --border-error: rgba(248, 113, 113, 0.4);
+  --border-warning: rgba(251, 191, 36, 0.4);
+  --border-info: rgba(56, 189, 248, 0.4);
+  --border-accent: rgba(56, 189, 248, 0.5);
+  --border-focus: rgba(56, 189, 248, 0.5);
+
+  /* Status */
+  --status-success: #4ade80;
+  --status-warning: #fbbf24;
+  --status-error: #f87171;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --ring-color: rgba(56, 189, 248, 0.5);
+
+  /* Editor */
+  --editor-bg: #1e1e2e;
+  --editor-border: #334155;
+  --editor-btn-color: #94a3b8;
+  --editor-btn-hover: rgba(255, 255, 255, 0.08);
+  --editor-separator: #334155;
+
+  /* Terminal */
+  --terminal-bg: #1e293b;
+  --terminal-fg: #cccccc;
+  --terminal-cursor: #cccccc;
+  --terminal-selection-bg: rgba(59, 130, 246, 0.5);
+  --terminal-selection-fg: #ffffff;
+}

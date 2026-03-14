@@ -290,16 +290,11 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #f8fafc;
-  color: #333;
-  font-size: 13px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--fs-code);
   user-select: none;
   overflow: hidden;
-}
-
-.workflow-pane.dark {
-  background: #1e293b;
-  color: #ccc;
 }
 
 /* ── Tab bar ── */
@@ -308,15 +303,10 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
   align-items: center;
   height: 35px;
   flex-shrink: 0;
-  background: #f8fafc;
-  border-bottom: 1px solid #cbd5e1;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-strong);
   padding: 0 2px;
   gap: 1px;
-}
-
-.workflow-tab-bar.dark {
-  background: #1e293b;
-  border-bottom-color: #3c3c3c;
 }
 
 .workflow-tabs-scroll {
@@ -344,40 +334,32 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .workflow-tab:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--bg-hover);
 }
 
 .workflow-tab.active {
-  background: rgba(99, 102, 241, 0.1);
-}
-
-.workflow-tab.dark:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.workflow-tab.dark.active {
-  background: rgba(99, 102, 241, 0.15);
+  background: var(--bg-accent);
 }
 
 .workflow-tab-name {
-  font-size: 11px;
-  font-weight: 500;
-  color: #64748b;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .workflow-tab.active .workflow-tab-name {
-  color: #6366f1;
+  color: var(--text-info);
 }
 
 .workflow-tab.dark .workflow-tab-name {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .workflow-tab.dark.active .workflow-tab-name {
-  color: #818cf8;
+  color: var(--text-info);
 }
 
 .workflow-tab-close {
@@ -388,7 +370,7 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
   height: 16px;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   border-radius: 3px;
   cursor: pointer;
   padding: 0;
@@ -400,13 +382,8 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .workflow-tab-close:hover {
-  background: rgba(0, 0, 0, 0.1);
-  color: #475569;
-}
-
-.workflow-tab-close.dark:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #e2e8f0;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .workflow-tab-add,
@@ -418,7 +395,7 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
   height: 24px;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   border-radius: 4px;
   cursor: pointer;
   flex-shrink: 0;
@@ -426,27 +403,26 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 
 .workflow-tab-add:hover,
 .workflow-pane-close:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: #475569;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .workflow-tab-add.active {
-  color: #6366f1;
+  color: var(--text-info);
 }
 
 .workflow-tab-add.dark,
 .workflow-pane-close.dark {
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .workflow-tab-add.dark:hover,
 .workflow-pane-close.dark:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #94a3b8;
+  background: var(--bg-hover);
 }
 
 .workflow-tab-add.dark.active {
-  color: #818cf8;
+  color: var(--text-info);
 }
 
 /* ── Content ── */
@@ -470,42 +446,27 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: #fff;
+  background: var(--bg-surface);
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .picker-card:hover {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-}
-
-.picker-card.dark {
-  background: #2d2d44;
-  border-color: #3c3c5c;
-  color: #94a3b8;
-}
-
-.picker-card.dark:hover {
-  border-color: #4a4a6a;
-  background: #33334e;
+  border-color: var(--border-strong);
+  background: var(--bg-surface-alt);
 }
 
 .picker-card-create {
   border-style: dashed;
-  color: #6366f1;
-}
-
-.picker-card-create.dark {
-  color: #818cf8;
+  color: var(--text-info);
 }
 
 .picker-card-text {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
 }
 
 .picker-card-info {
@@ -517,25 +478,21 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .picker-card-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: #1e293b;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.picker-card.dark .picker-card-name {
-  color: #e2e8f0;
-}
-
 .picker-card-date {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
 }
 
 .picker-card.dark .picker-card-date {
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .picker-empty {
@@ -544,8 +501,8 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .picker-empty-text {
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-muted);
   margin: 0;
 }
 </style>
@@ -565,18 +522,12 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
   position: fixed;
   z-index: 9999;
   min-width: 140px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   padding: 4px;
-  font-size: 13px;
-}
-
-.wf-context-menu.dark {
-  background: #1e293b;
-  border-color: #334155;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  font-size: var(--fs-code);
 }
 
 .wf-context-item {
@@ -587,38 +538,22 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
   padding: 6px 10px;
   border: none;
   background: transparent;
-  color: #334155;
+  color: var(--text-secondary);
   border-radius: 4px;
   cursor: pointer;
   text-align: left;
-  font-size: 13px;
+  font-size: var(--fs-code);
 }
 
 .wf-context-item:hover {
-  background: #f1f5f9;
-}
-
-.wf-context-item.dark {
-  color: #e2e8f0;
-}
-
-.wf-context-item.dark:hover {
-  background: #334155;
+  background: var(--bg-surface-alt);
 }
 
 .wf-context-item.danger {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 .wf-context-item.danger:hover {
-  background: #fef2f2;
-}
-
-.wf-context-item.danger.dark {
-  color: #f87171;
-}
-
-.wf-context-item.danger.dark:hover {
-  background: #451a1a;
+  background: var(--bg-error);
 }
 </style>

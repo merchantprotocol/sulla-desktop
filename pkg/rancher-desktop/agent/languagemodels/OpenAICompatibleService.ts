@@ -19,7 +19,7 @@ import { getOllamaService } from './OllamaService';
 export class OpenAICompatibleService extends BaseLanguageModel {
   protected declare config: LLMServiceConfig;
   protected retryCount = 3;
-  protected defaultTimeoutMs = 60_000;
+  protected defaultTimeoutMs = 180_000;
   protected chatEndpoint = '/chat/completions';
 
   constructor(config: LLMServiceConfig) {
@@ -67,7 +67,8 @@ export class OpenAICompatibleService extends BaseLanguageModel {
           if (options?.signal?.aborted) throw new DOMException('Aborted during retry backoff', 'AbortError');
         }
 
-        const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
+        const timeoutMs = options?.timeoutSeconds ? options.timeoutSeconds * 1000 : this.defaultTimeoutMs;
+        const signal = this.combinedSignal(options?.signal, timeoutMs);
         const payload = this.buildFetchOptions(body, signal);
         const res = await fetch(url, payload);
 

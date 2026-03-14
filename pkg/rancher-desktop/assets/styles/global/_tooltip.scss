@@ -213,14 +213,14 @@
 
 //icon tooltip
 .icon-info.v-popper--has-tooltip {
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .tooltip-footer {
   top: 0;
-  font-size: 12px;
+  font-size: var(--fs-body-sm);
 
   .v-popper__inner {
-    font-size: 12px;
+    font-size: var(--fs-body-sm);
   }
 }

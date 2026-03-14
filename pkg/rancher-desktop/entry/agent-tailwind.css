@@ -1,6 +1,42 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
 @config "../../../tailwind.config.js";
 
 @import "tailwindcss";
+@import "../assets/styles/themes.css";
+
+@theme {
+  /* Backgrounds */
+  --color-page: var(--bg-page);
+  --color-surface: var(--bg-surface);
+  --color-surface-alt: var(--bg-surface-alt);
+  --color-surface-hover: var(--bg-surface-hover);
+  --color-header: var(--bg-header);
+  --color-input: var(--bg-input);
+  --color-overlay: var(--bg-overlay);
+
+  /* Text */
+  --color-content: var(--text-primary);
+  --color-content-secondary: var(--text-secondary);
+  --color-content-muted: var(--text-muted);
+  --color-content-link: var(--text-link);
+  --color-content-on-accent: var(--text-on-accent);
+
+  /* Borders */
+  --color-edge: var(--border-default);
+  --color-edge-strong: var(--border-strong);
+  --color-edge-subtle: var(--border-subtle);
+
+  /* Accent */
+  --color-accent: var(--accent-primary);
+  --color-accent-hover: var(--accent-primary-hover);
+
+
+  /* Status */
+  --color-success: var(--status-success);
+  --color-warning: var(--status-warning);
+  --color-error: var(--status-error);
+}
 
 @source "../pages/**/*.vue";
 @source "../components/**/*.{vue,ts,js}";

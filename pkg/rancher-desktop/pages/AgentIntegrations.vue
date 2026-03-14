@@ -212,11 +212,11 @@ import { integrations as fullCatalog } from '@pkg/agent/integrations/catalog';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { formatFuzzyTime } from '@pkg/utils/dateFormat';
+import { useTheme } from '@pkg/composables/useTheme';
 
 import { computed, onMounted, ref, watch } from 'vue';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const integrationService = getIntegrationService();
 
 /** Safely resolve an integration icon path — returns null if the asset doesn't exist */
@@ -441,11 +441,6 @@ watch(activeCategory, async (newCategory) => {
   }
 });
 
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-};
-
 const connectIntegration = async (id: string) => {
   try {
     await integrationService.setConnectionStatus(id, true);
@@ -479,13 +474,6 @@ const disconnectIntegration = async (id: string) => {
 };
 
 onMounted(async () => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
-
   // Build stable sidebar counts from the full catalog
   buildCategoryCounts();
 
@@ -510,13 +498,13 @@ onMounted(async () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
+  background: var(--bg-page, #ffffff);
+  color: var(--text-primary, #0d0d0d);
 }
 
 .page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page, #0f172a);
+  color: var(--text-primary, #fafafa);
 }
 
 /* Integration cards styles */

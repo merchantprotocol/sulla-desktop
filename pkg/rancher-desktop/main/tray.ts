@@ -12,6 +12,7 @@ import { VMBackend } from '@pkg/backend/backend';
 import { State } from '@pkg/backend/k8s';
 import * as kubeconfig from '@pkg/backend/kubeconfig';
 import { Settings } from '@pkg/config/settings';
+import { showErrorDialogWithReport } from '@pkg/main/errorReporter';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
@@ -102,7 +103,7 @@ export class Tray {
           label: 'Discussions',
           icon:  path.join(paths.resources, 'icons', 'messages-circle-16.png'),
           click() {
-            void Electron.shell.openExternal('https://github.com/sulla-ai/sulla-desktop/discussions');
+            void Electron.shell.openExternal('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },
@@ -111,7 +112,7 @@ export class Tray {
           label: 'Issues',
           icon:  path.join(paths.resources, 'icons', 'issue-opened-16.png'),
           click() {
-            void Electron.shell.openExternal('https://github.com/sulla-ai/sulla-desktop/issues');
+            void Electron.shell.openExternal('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },
@@ -220,8 +221,11 @@ export class Tray {
     try {
       this.updateContexts();
     } catch (err) {
-      Electron.dialog.showErrorBox('Error starting the app:',
-        `Error message: ${ err instanceof Error ? err.message : err }`);
+      showErrorDialogWithReport(
+        'Error starting the app',
+        `Error message: ${ err instanceof Error ? err.message : err }`,
+        'tray-updateContexts',
+      );
     }
 
     const contextMenu = Electron.Menu.buildFromTemplate(this.contextMenuItems);

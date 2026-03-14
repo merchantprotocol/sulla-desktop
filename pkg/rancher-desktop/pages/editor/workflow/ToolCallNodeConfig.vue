@@ -367,45 +367,35 @@ function insertVariable(varName: string) {
 
 .node-field {
   padding: 12px;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.toolcall-config.dark .node-field {
-  border-bottom-color: #3c3c5c;
+  border-bottom: 1px solid var(--bg-surface-hover);
 }
 
 .node-field-label {
   display: block;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-secondary);
   margin-bottom: 6px;
 }
-.node-field-label.dark { color: #94a3b8; }
+.node-field-label.dark { color: var(--text-muted); }
 
 .node-field-input {
   width: 100%;
   padding: 6px 8px;
-  font-size: 13px;
-  border: 1px solid #e2e8f0;
+  font-size: var(--fs-code);
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 4px;
-  background: #fff;
-  color: #1e293b;
+  background: var(--bg-surface);
+  color: var(--text-primary);
   outline: none;
   box-sizing: border-box;
 }
 .node-field-input:focus {
-  border-color: #6366f1;
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
 }
-.node-field-input.dark {
-  background: #2d2d44;
-  border-color: #3c3c5c;
-  color: #e2e8f0;
-}
-.node-field-input.dark:focus { border-color: #6366f1; }
 
 .node-field-textarea {
   resize: vertical;
@@ -416,10 +406,7 @@ function insertVariable(varName: string) {
 .param-row {
   margin-bottom: 10px;
   padding-bottom: 10px;
-  border-bottom: 1px solid #f1f5f9;
-}
-.toolcall-config.dark .param-row {
-  border-bottom-color: #2d2d44;
+  border-bottom: 1px solid var(--bg-surface-alt);
 }
 .param-row:last-child {
   margin-bottom: 0;
@@ -435,35 +422,34 @@ function insertVariable(varName: string) {
 }
 
 .param-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: #1e293b;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
 }
-.param-name.dark { color: #e2e8f0; }
 
 .param-required {
-  font-size: 9px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--text-error);
+  background: var(--bg-error);
   padding: 1px 4px;
   border-radius: 3px;
 }
 
 .param-type {
-  font-size: 10px;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
 }
-.param-type.dark { color: #64748b; }
+.param-type.dark { color: var(--text-secondary); }
 
 .param-desc {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin-bottom: 4px;
   line-height: 1.4;
 }
-.param-desc.dark { color: #64748b; }
+.param-desc.dark { color: var(--text-secondary); }
 
 .param-input-row {
   display: flex;
@@ -475,11 +461,11 @@ function insertVariable(varName: string) {
 }
 
 .param-enum {
-  font-size: 10px;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
   margin-top: 3px;
 }
-.param-enum.dark { color: #64748b; }
+.param-enum.dark { color: var(--text-secondary); }
 
 .var-insert-btn {
   display: flex;
@@ -487,55 +473,45 @@ function insertVariable(varName: string) {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 4px;
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 0;
   transition: all 0.15s;
 }
 .var-insert-btn:hover {
-  background: #e2e8f0;
-  color: #6366f1;
-  border-color: #6366f1;
-}
-.var-insert-btn.dark {
-  background: #2d2d44;
-  border-color: #3c3c5c;
-  color: #94a3b8;
-}
-.var-insert-btn.dark:hover {
-  background: #3c3c5c;
-  color: #818cf8;
-  border-color: #818cf8;
+  background: var(--bg-surface-hover);
+  color: var(--text-info);
+  border-color: var(--accent-primary);
 }
 
 .help-section { border-bottom: none; }
 
 .help-title {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-secondary);
   margin: 0 0 8px;
 }
-.help-title.dark { color: #94a3b8; }
+.help-title.dark { color: var(--text-muted); }
 
 .help-text {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin: 0 0 6px;
   line-height: 1.5;
 }
 .help-text:last-child { margin-bottom: 0; }
-.help-text.dark { color: #64748b; }
+.help-text.dark { color: var(--text-secondary); }
 .help-text code {
-  font-size: 10px;
+  font-size: var(--fs-caption);
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(99, 102, 241, 0.1);
-  color: #6366f1;
+  background: var(--bg-accent);
+  color: var(--text-info);
 }
 </style>

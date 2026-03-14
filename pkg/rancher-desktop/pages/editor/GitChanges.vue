@@ -52,12 +52,12 @@ export default defineComponent({
 
 .git-change {
   padding: 4px 0;
-  font-size: 13px;
-  color: #333;
+  font-size: var(--fs-code);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 :deep(.dark) .git-change {
-  color: #ccc;
+  color: var(--text-primary);
 }
 </style>

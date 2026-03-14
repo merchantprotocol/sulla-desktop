@@ -5,6 +5,7 @@
 <script lang="ts">
 import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import * as monaco from 'monaco-editor';
+import { applyMonacoTheme } from './monacoThemeBridge';
 
 // Configure Monaco workers for Electron
 // See: https://github.com/microsoft/monaco-editor/blob/main/samples/electron-esm-webpack/index.js
@@ -101,6 +102,7 @@ export default defineComponent({
     fileExt:  { type: String, default: '' },
     isDark:   { type: Boolean, default: false },
     readOnly: { type: Boolean, default: false },
+    line:     { type: Number, default: undefined },
   },
 
   emits: ['dirty'],
@@ -122,10 +124,13 @@ export default defineComponent({
         console.log('CodeEditor: Editor language:', language);
         console.log('CodeEditor: Initial content preview:', props.content?.substring(0, 100));
 
+        // Register the custom theme from CSS variables before creating the editor
+        applyMonacoTheme(props.isDark);
+
         editor = monaco.editor.create(containerRef.value, {
           value:       props.content || '',
           language,
-          theme:       props.isDark ? 'vs-dark' : 'vs',
+          theme:       'sulla-custom',
           readOnly:    props.readOnly,
           automaticLayout: true,
           minimap:     { enabled: true },
@@ -156,7 +161,9 @@ export default defineComponent({
               
               // Force Monaco to render the content
               editor.layout();
-              editor.revealLine(1);
+              const targetLine = props.line && props.line > 0 ? props.line : 1;
+              editor.revealLineInCenter(targetLine);
+              editor.setPosition({ lineNumber: targetLine, column: 1 });
               editor.focus();
               
               // Force a content refresh
@@ -199,8 +206,10 @@ export default defineComponent({
           
           // Force display update
           editor.layout();
-          editor.revealLine(1);
-          
+          const targetLine = props.line && props.line > 0 ? props.line : 1;
+          editor.revealLineInCenter(targetLine);
+          editor.setPosition({ lineNumber: targetLine, column: 1 });
+
           // Additional force - recreate model if needed
           setTimeout(() => {
             if (editor && model.getValue().length === 0 && props.content?.length > 0) {
@@ -208,7 +217,9 @@ export default defineComponent({
               const newModel = monaco.editor.createModel(props.content || '', language);
               editor.setModel(newModel);
               editor.layout();
-              editor.revealLine(1);
+              const tl = props.line && props.line > 0 ? props.line : 1;
+              editor.revealLineInCenter(tl);
+              editor.setPosition({ lineNumber: tl, column: 1 });
             }
           }, 100);
         } else {
@@ -226,9 +237,8 @@ export default defineComponent({
     }
 
     function updateTheme() {
-      if (editor) {
-        monaco.editor.setTheme(props.isDark ? 'vs-dark' : 'vs');
-      }
+      // Re-register the custom theme with fresh CSS variable values, then apply
+      applyMonacoTheme(props.isDark);
     }
 
     onMounted(createEditor);
@@ -237,6 +247,13 @@ export default defineComponent({
     watch(() => props.fileExt, updateContent);
     watch(() => props.isDark, updateTheme);
     watch(() => props.readOnly, updateReadOnly);
+    watch(() => props.line, (newLine) => {
+      if (editor && newLine && newLine > 0) {
+        editor.revealLineInCenter(newLine);
+        editor.setPosition({ lineNumber: newLine, column: 1 });
+        editor.focus();
+      }
+    });
 
     onBeforeUnmount(() => {
       if (editor) {

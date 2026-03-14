@@ -73,14 +73,14 @@
         :class="{ dark: isDark }"
         type="button"
         :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
-        :title="isDark ? 'Light mode' : 'Dark mode'"
+        :title="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
         @click="toggleTheme"
       >
         <svg v-if="isDark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path fill-rule="evenodd" clip-rule="evenodd" d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 1 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z"/>
+          <path fill-rule="evenodd" clip-rule="evenodd" d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1Z"/>
         </svg>
         <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path fill-rule="evenodd" clip-rule="evenodd" d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1Z"/>
+          <path fill-rule="evenodd" clip-rule="evenodd" d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 1 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z"/>
         </svg>
       </button>
     </div>
@@ -112,16 +112,11 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
   align-items: center;
   justify-content: space-between;
   height: 32px;
-  padding: 0 8px;
-  background: #f0f0f0;
-  border-bottom: 1px solid #cbd5e1;
+  padding: 0 8px 0 80px;
+  background: var(--bg-page);
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
   -webkit-app-region: drag;
-}
-
-.editor-header-bar.dark {
-  background: #1e1e2e;
-  border-bottom-color: #334155;
 }
 
 .header-left {
@@ -133,6 +128,7 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 .logo-link {
   display: flex;
   align-items: center;
+  cursor: pointer;
 }
 
 .logo {
@@ -160,31 +156,20 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
   border: none;
   border-radius: 3px;
   background: transparent;
-  color: #333;
+  color: var(--text-primary);
   cursor: pointer;
   transition: background 0.1s;
 }
 
 .header-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-}
-
-.header-btn.dark {
-  color: #94a3b8;
-}
-
-.header-btn.dark:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
 }
 
 .header-separator {
   width: 1px;
   height: 14px;
-  background: #ccc;
+  background: var(--bg-surface-hover);
   margin: 0 4px;
 }
 
-.editor-header-bar.dark .header-separator {
-  background: #334155;
-}
 </style>

@@ -107,7 +107,7 @@
   --input-label                : #{$lighter};
   --input-placeholder          : #{$disabled};
   --input-border               : var(--border);
-  --input-bg                   : var(--body-bg);
+  --input-bg                   : var(--bg-input, var(--body-bg));
   --input-bg-accent            : #{darken($dark, 3%)};
   --input-hover-bg             : var(--box-bg);
   --input-focus-bg             : var(--box-bg);

@@ -1,0 +1,18 @@
+/*
+ * Theme Index — imports all individual theme files.
+ *
+ * To create a new theme:
+ *   1. Create a new CSS file in the themes/ directory (e.g. themes/my-theme-dark.css)
+ *   2. Define a class (e.g. .theme-my-theme-dark) with all the CSS custom properties
+ *   3. Import it below
+ *   4. Register the theme in composables/useTheme.ts (availableThemes, themeGroups)
+ *   5. Add a preview swatch in components/Preferences/BodyAppearance.vue
+ */
+
+@import "./themes/default-light.css";
+@import "./themes/default-dark.css";
+@import "./themes/ocean-light.css";
+@import "./themes/ocean-dark.css";
+@import "./themes/nord-light.css";
+@import "./themes/nord-dark.css";
+@import "./themes/protocol-dark.css";

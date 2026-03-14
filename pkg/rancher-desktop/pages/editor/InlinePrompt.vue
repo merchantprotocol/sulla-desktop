@@ -78,7 +78,7 @@ defineExpose({ show });
 }
 
 .inline-prompt-dialog {
-  background: #fff;
+  background: var(--bg-surface);
   border-radius: 8px;
   padding: 16px;
   width: 320px;
@@ -88,46 +88,27 @@ defineExpose({ show });
   gap: 12px;
 }
 
-.inline-prompt-dialog.dark {
-  background: #1e293b;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-}
-
 .inline-prompt-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.inline-prompt-dialog.dark .inline-prompt-title {
-  color: #e2e8f0;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
 }
 
 .inline-prompt-input {
   width: 100%;
   padding: 8px 10px;
-  font-size: 13px;
-  border: 1px solid #e2e8f0;
+  font-size: var(--fs-code);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: #fff;
-  color: #1e293b;
+  background: var(--bg-input);
+  color: var(--text-primary);
   outline: none;
   box-sizing: border-box;
 }
 
 .inline-prompt-input:focus {
-  border-color: #6366f1;
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
-}
-
-.inline-prompt-input.dark {
-  background: #2d2d44;
-  border-color: #3c3c5c;
-  color: #e2e8f0;
-}
-
-.inline-prompt-input.dark:focus {
-  border-color: #6366f1;
 }
 
 .inline-prompt-actions {
@@ -138,46 +119,28 @@ defineExpose({ show });
 
 .inline-prompt-btn {
   padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   border: none;
   border-radius: 5px;
   cursor: pointer;
 }
 
 .inline-prompt-btn.cancel {
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
 }
 
 .inline-prompt-btn.cancel:hover {
-  background: #e2e8f0;
-}
-
-.inline-prompt-btn.cancel.dark {
-  background: #334155;
-  color: #94a3b8;
-}
-
-.inline-prompt-btn.cancel.dark:hover {
-  background: #475569;
+  background: var(--bg-surface-hover);
 }
 
 .inline-prompt-btn.confirm {
-  background: #6366f1;
-  color: #fff;
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
 }
 
 .inline-prompt-btn.confirm:hover {
-  background: #4f46e5;
-}
-
-.inline-prompt-btn.confirm.dark {
-  background: #6366f1;
-  color: #fff;
-}
-
-.inline-prompt-btn.confirm.dark:hover {
-  background: #4f46e5;
+  background: var(--accent-primary-hover);
 }
 </style>

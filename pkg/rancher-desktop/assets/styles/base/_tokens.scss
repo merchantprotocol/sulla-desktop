@@ -1,0 +1,104 @@
+// ============================================================================
+// Typography & Color Tokens
+// ============================================================================
+// Single source of truth for all font families, sizes, weights, letter-spacing,
+// and text colors used across the editor workbench.
+//
+// USAGE:
+//   font-family: var(--font-sans);
+//   font-size: var(--text-base);
+//   font-weight: var(--weight-semibold);
+//   letter-spacing: var(--tracking-wide);
+//   color: var(--text-primary);
+// ============================================================================
+
+:root {
+  // --------------------------------------------------------------------------
+  // Font Families
+  // --------------------------------------------------------------------------
+  --font-sans:    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:    'SF Mono', 'JetBrains Mono', 'Fira Code', 'Roboto Mono', monospace;
+
+  // --------------------------------------------------------------------------
+  // Font Sizes  (6 categories — semantic, not ordinal)
+  // --------------------------------------------------------------------------
+  --fs-display:  30px;  // app title, empty state headings — the big stuff
+  --fs-heading:  18px;  // all titles: page, section, modal, panel, card
+  --fs-body:     14px;  // body text, inputs, nav items, card content
+  --fs-body-sm:  12px;  // labels, table cells, descriptions, tabs, helpers, status bar
+  --fs-caption:  10px;  // badges, shortcuts, micro-labels, status dots
+  --fs-code:     var(--fs-body);  // monospace / terminal — same as body (14px)
+
+  // --------------------------------------------------------------------------
+  // Legacy Font-Size Aliases  (map old --text-* tokens to new --fs-* system)
+  // --------------------------------------------------------------------------
+  // These keep existing components working during migration.
+  // New code should use --fs-* tokens. Remove these once migration is complete.
+  --text-2xs:  var(--fs-caption);   // 10px → caption
+  --text-xs:   var(--fs-caption);   // 10px → caption
+  --text-sm:   var(--fs-body-sm);   // 12px → body-sm
+  --text-base: var(--fs-code);      // 13px → code
+  --text-md:   var(--fs-body);      // 14px → body
+  --text-lg:   var(--fs-body);      // 14px → body
+  --text-xl:   var(--fs-heading);   // 18px → heading
+  --text-2xl:  var(--fs-heading);   // 18px → heading
+  --text-3xl:  var(--fs-heading);   // 18px → heading
+
+  // --------------------------------------------------------------------------
+  // Font Weights  (4-step scale, replaces 7 ad-hoc values)
+  // --------------------------------------------------------------------------
+  --weight-normal:   400;  // body text, muted text
+  --weight-medium:   500;  // medium emphasis, nav items, badges
+  --weight-semibold: 600;  // section titles, labels, buttons
+  --weight-bold:     700;  // strong titles, required indicators
+
+  // --------------------------------------------------------------------------
+  // Letter Spacing  (2-step scale, replaces 7 ad-hoc values)
+  // --------------------------------------------------------------------------
+  --tracking-wide:   0.04em;  // uppercase labels, section titles
+  --tracking-wider:  0.08em;  // pane headers, protocol-style headers
+
+  // --------------------------------------------------------------------------
+  // Text Colors  (semantic tokens — values set per-theme in themes/*.css)
+  // --------------------------------------------------------------------------
+  // --text-primary:    set in theme files
+  // --text-secondary:  set in theme files
+  // --text-muted:      set in theme files
+  // --text-link:       set in theme files
+  // --text-on-accent:  set in theme files
+  // --text-success:    set in theme files
+  // --text-error:      set in theme files
+  // --text-warning:    set in theme files
+  // --text-info:       set in theme files
+  // --text-accent:     set in theme files
+
+  // --------------------------------------------------------------------------
+  // Semantic Backgrounds  (values set per-theme in themes/*.css)
+  // --------------------------------------------------------------------------
+  // --bg-primary:      page-level background (= --bg-page in most themes)
+  // --bg-hover:        subtle hover state overlay
+  // --bg-success:      success status background (badges, health indicators)
+  // --bg-error:        error status background
+  // --bg-warning:      warning status background
+  // --bg-info:         info status background
+  // --bg-accent:       accent/purple status background
+
+  // --------------------------------------------------------------------------
+  // Semantic Borders  (values set per-theme in themes/*.css)
+  // --------------------------------------------------------------------------
+  // --border-success:  success indicator border
+  // --border-error:    error indicator border
+  // --border-focus:    focus ring / highlight border
+
+  // --------------------------------------------------------------------------
+  // Legacy Aliases  (backward-compat with Rancher Desktop components)
+  // --------------------------------------------------------------------------
+  // Maps old Rancher Desktop variable names to the new unified tokens.
+  // These exist so existing Rancher components keep working without changes.
+  // New code should use the canonical token names above.
+  // --------------------------------------------------------------------------
+  --box-bg:            var(--bg-surface);
+  --border:            var(--border-default);
+  --border-radius:     4px;
+}

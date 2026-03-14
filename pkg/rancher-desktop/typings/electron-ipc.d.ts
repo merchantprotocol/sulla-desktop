@@ -111,6 +111,16 @@ export interface IpcMainEvents {
   // #region Agent Configuration
   'model-changed': (payload: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string }) => void;
   // #endregion
+
+  // #region Error Reporting
+  'error-report/submit': (report: {
+    error_type: string;
+    error_message: string;
+    stack_trace?: string;
+    user_context?: string;
+    notify_email?: string;
+  }) => void;
+  // #endregion
 }
 
 /**
@@ -129,6 +139,16 @@ export interface IpcMainInvokeEvents {
   'show-message-box-rd':       (options: Electron.MessageBoxOptions, modal?: boolean) => any;
   'api-get-credentials':       () => { user: string, password: string, port: number };
   'k8s-progress':              () => Readonly<{ current: number, max: number, description?: string, transitionTime?: Date }>;
+
+  // #region Error Reporting
+  'error-report/invoke': (report: {
+    error_type: string;
+    error_message: string;
+    stack_trace?: string;
+    user_context?: string;
+    notify_email?: string;
+  }) => { success: boolean; action?: string; issue_number?: number };
+  // #endregion
 
   // #region Sulla
   'start-sulla-custom-env':    () => void;

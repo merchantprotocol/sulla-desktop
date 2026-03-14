@@ -1266,14 +1266,14 @@ export default defineComponent({
   margin-bottom: 0.5rem;
 }
 .mt-install-desc {
-  font-size: var(--text-sm);
+  font-size: var(--fs-body-sm);
   line-height: 1.5;
   color: var(--color-slate-500);
 }
 .mt-btn-install {
   margin-top: 0.5rem;
   padding: 0.75rem 2rem;
-  font-size: var(--text-base);
+  font-size: var(--fs-code);
   font-weight: var(--font-weight-semibold);
   border: none;
   border-radius: var(--radius-lg);
@@ -1381,7 +1381,7 @@ export default defineComponent({
 /* Layout helpers that need scoped specificity */
 .mt-nav-item {
   padding: 0.5rem 1rem;
-  font-size: var(--text-sm);
+  font-size: var(--fs-body-sm);
   line-height: var(--text-sm--line-height);
   cursor: pointer;
   user-select: none;
@@ -1405,7 +1405,7 @@ export default defineComponent({
   width: 100%;
   max-width: 25rem;
   padding: 0.5rem 0.75rem;
-  font-size: var(--text-sm);
+  font-size: var(--fs-body-sm);
   line-height: var(--text-sm--line-height);
   border: 1px solid var(--color-slate-300);
   border-radius: var(--radius-md);
@@ -1425,7 +1425,7 @@ export default defineComponent({
 /* Text input */
 .mt-input {
   padding: 0.375rem 0.625rem;
-  font-size: var(--text-sm);
+  font-size: var(--fs-body-sm);
   border: 1px solid var(--color-slate-300);
   border-radius: var(--radius-md);
   background: var(--color-white);
@@ -1440,7 +1440,7 @@ export default defineComponent({
 /* Buttons */
 .mt-btn-primary {
   padding: 0.5rem 1rem;
-  font-size: var(--text-sm);
+  font-size: var(--fs-body-sm);
   font-weight: var(--font-weight-medium);
   border: none;
   border-radius: var(--radius-md);
@@ -1459,7 +1459,7 @@ export default defineComponent({
 
 .mt-btn-secondary {
   padding: 0.5rem 1rem;
-  font-size: var(--text-sm);
+  font-size: var(--fs-body-sm);
   font-weight: var(--font-weight-medium);
   border: 1px solid var(--color-slate-300);
   border-radius: var(--radius-md);
@@ -1522,7 +1522,7 @@ export default defineComponent({
   margin: 0;
   padding: 1rem;
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--fs-caption);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
@@ -1624,18 +1624,18 @@ export default defineComponent({
 }
 .mt-source-label {
   display: block;
-  font-size: var(--text-sm);
+  font-size: var(--fs-body-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-slate-800);
 }
 .mt-source-desc {
   margin-top: 0.125rem;
-  font-size: var(--text-xs);
+  font-size: var(--fs-caption);
   color: var(--color-slate-400);
 }
 .mt-source-note {
   margin-top: 0.125rem;
-  font-size: var(--text-xs);
+  font-size: var(--fs-caption);
   color: var(--color-amber-600);
   font-style: italic;
 }
@@ -1659,7 +1659,7 @@ export default defineComponent({
   align-items: center;
   gap: 0.375rem;
   padding: 0.25rem 0.75rem;
-  font-size: var(--text-sm);
+  font-size: var(--fs-body-sm);
   cursor: default;
   user-select: none;
   transition: background 0.1s;
@@ -1682,7 +1682,7 @@ export default defineComponent({
   height: 1rem;
   text-align: center;
   line-height: 1rem;
-  font-size: 0.625rem;
+  font-size: var(--fs-caption);
   color: var(--color-slate-400);
   cursor: pointer;
   transition: transform 0.15s;
@@ -1722,7 +1722,7 @@ export default defineComponent({
 .mt-tree-ext {
   flex-shrink: 0;
   padding: 0 0.25rem;
-  font-size: var(--text-xs);
+  font-size: var(--fs-caption);
   font-weight: var(--font-weight-medium);
   color: var(--color-sky-700);
   background: var(--color-sky-50);
@@ -1730,7 +1730,7 @@ export default defineComponent({
 }
 .mt-tree-size {
   flex-shrink: 0;
-  font-size: var(--text-xs);
+  font-size: var(--fs-caption);
   color: var(--color-slate-400);
 }
 .mt-tree-spinner {

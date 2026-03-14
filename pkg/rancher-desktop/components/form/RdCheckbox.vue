@@ -91,14 +91,14 @@ export default defineComponent({
 
 <style lang="scss" scoped>
 .checkbox :deep(.checkbox-outer-container-description) {
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
 }
 .tooltip-icon {
   margin-left: 0.25rem;
 }
 .checkbox-below {
   margin-left: 19px;
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
   &:empty {
     display: none;
   }

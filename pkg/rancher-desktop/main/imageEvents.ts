@@ -7,6 +7,7 @@ import path from 'path';
 import Electron from 'electron';
 
 import { ImageProcessor } from '@pkg/backend/images/imageProcessor';
+import { showErrorDialogWithReport } from '@pkg/main/errorReporter';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { isUnixError } from '@pkg/typings/unix.interface';
 import Logging from '@pkg/utils/logging';
@@ -63,10 +64,9 @@ export class ImageEventHandler {
         await this.imageProcessor.refreshImages();
         event.reply('images-process-ended', 0);
       } catch (err) {
-        await Electron.dialog.showMessageBox({
-          message: `Error trying to delete image ${ imageName } (${ imageID }):\n\n ${ isUnixError(err) ? err.stderr : '' } `,
-          type:    'error',
-        });
+        const errMsg = `Error trying to delete image ${ imageName } (${ imageID }):\n\n ${ isUnixError(err) ? err.stderr : '' } `;
+
+        await showErrorDialogWithReport('Image Delete Error', errMsg, `do-image-deletion: ${ imageName }`);
         event.reply('images-process-ended', 1);
       }
     });
@@ -79,10 +79,7 @@ export class ImageEventHandler {
         await this.imageProcessor.refreshImages();
         event.reply('images-process-ended', 0);
       } catch (err) {
-        await Electron.dialog.showMessageBox({
-          message: `Error trying to delete images ${ imageIDs }`,
-          type:    'error',
-        });
+        await showErrorDialogWithReport('Image Delete Error', `Error trying to delete images ${ imageIDs }`, 'do-image-deletion-batch');
         event.reply('images-process-ended', 1);
       }
     });
@@ -166,11 +163,8 @@ export class ImageEventHandler {
         if (isUnixError(err)) {
           code = err.code;
         }
-        Electron.dialog.showMessageBox({
-          message: `Error trying to scan ${ taggedImageName }:\n\n ${ isUnixError(err) ? err.stderr : '' } `,
-          type:    'error',
-        }).catch((err) => {
-          console.log('messageBox failure: ', err);
+        showErrorDialogWithReport('Image Scan Error', `Error trying to scan ${ taggedImageName }:\n\n ${ isUnixError(err) ? err.stderr : '' } `, `do-image-scan: ${ taggedImageName }`).catch((dialogErr) => {
+          console.log('error dialog failure: ', dialogErr);
         });
       }
       event.reply('images-process-ended', code);
@@ -186,11 +180,8 @@ export class ImageEventHandler {
         if (isUnixError(err)) {
           code = err.code;
         }
-        Electron.dialog.showMessageBox({
-          message: `Error trying to push ${ taggedImageName }:\n\n ${ isUnixError(err) ? err.stderr : '' } `,
-          type:    'error',
-        }).catch((err) => {
-          console.log('messageBox failure: ', err);
+        showErrorDialogWithReport('Image Push Error', `Error trying to push ${ taggedImageName }:\n\n ${ isUnixError(err) ? err.stderr : '' } `, `do-image-push: ${ taggedImageName }`).catch((dialogErr) => {
+          console.log('error dialog failure: ', dialogErr);
         });
       }
       event.reply('images-process-ended', code);

@@ -297,12 +297,8 @@ export default defineComponent({
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  font-size: 13px;
-  background: #f8fafc;
-}
-
-.docker-pane.dark {
-  background: #1e293b;
+  font-size: var(--fs-code);
+  background: var(--bg-surface);
 }
 
 .docker-header {
@@ -311,20 +307,14 @@ export default defineComponent({
   justify-content: space-between;
   padding: 0 8px 0 12px;
   height: 35px;
-  font-weight: 600;
-  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  font-size: var(--fs-body-sm);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #64748b;
-  background: #f8fafc;
-  border-bottom: 1px solid #cbd5e1;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-strong);
   flex-shrink: 0;
-}
-
-.docker-header.dark {
-  color: #94a3b8;
-  background: #1e293b;
-  border-bottom-color: #334155;
 }
 
 .docker-header-actions {
@@ -345,11 +335,7 @@ export default defineComponent({
 }
 
 .refresh-btn:hover {
-  background: rgba(0, 0, 0, 0.06);
-}
-
-.refresh-btn.dark:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
 }
 
 .refresh-btn:disabled {
@@ -359,13 +345,13 @@ export default defineComponent({
 
 .docker-status {
   padding: 16px 12px;
-  color: #94a3b8;
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--fs-code);
   text-align: center;
 }
 
 .docker-status.error {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 .container-list {
@@ -382,31 +368,22 @@ export default defineComponent({
   padding: 6px 12px;
   border: none;
   background: transparent;
-  color: #334155;
+  color: var(--text-secondary);
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
   text-align: left;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--bg-surface-alt);
 }
 
 .compose-group-header:hover {
-  background: rgba(0, 0, 0, 0.03);
-}
-
-.compose-group-header.dark {
-  color: #e2e8f0;
-  border-bottom-color: rgba(255, 255, 255, 0.04);
-}
-
-.compose-group-header.dark:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-hover);
 }
 
 .compose-chevron {
   flex-shrink: 0;
   transition: transform 0.15s ease;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .compose-chevron.expanded {
@@ -415,7 +392,7 @@ export default defineComponent({
 
 .compose-icon {
   flex-shrink: 0;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .compose-group-name {
@@ -427,61 +404,41 @@ export default defineComponent({
 }
 
 .compose-group-count {
-  font-size: 10px;
-  font-weight: 500;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-medium);
+  color: var(--text-muted);
   padding: 1px 5px;
   border-radius: 8px;
-  background: #f1f5f9;
-}
-
-.compose-group-count.dark {
-  background: #334155;
-  color: #64748b;
+  background: var(--bg-surface-alt);
 }
 
 .compose-group-status {
-  font-size: 10px;
-  font-weight: 500;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-medium);
   padding: 1px 6px;
   border-radius: 8px;
   flex-shrink: 0;
 }
 
 .compose-group-status.all-running {
-  background: #d1fae5;
-  color: #065f46;
+  background: var(--bg-success);
+  color: var(--status-success);
 }
 
 .compose-group-status.partial {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--bg-warning);
+  color: var(--status-warning);
 }
 
 .compose-group-status.all-stopped {
-  background: #f1f5f9;
-  color: #64748b;
-}
-
-.dark .compose-group-status.all-running {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
-}
-
-.dark .compose-group-status.partial {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fbbf24;
-}
-
-.dark .compose-group-status.all-stopped {
-  background: rgba(100, 116, 139, 0.15);
-  color: #94a3b8;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
 }
 
 .container-item {
   padding: 6px 12px;
   cursor: pointer;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--bg-surface-alt);
 }
 
 .container-item.indented {
@@ -489,15 +446,7 @@ export default defineComponent({
 }
 
 .container-item:hover {
-  background: rgba(0, 0, 0, 0.03);
-}
-
-.container-item.dark {
-  border-bottom-color: #1e293b;
-}
-
-.container-item.dark:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--bg-hover);
 }
 
 .container-row {
@@ -514,16 +463,16 @@ export default defineComponent({
 }
 
 .status-dot.running {
-  background: #22c55e;
+  background: var(--status-success);
 }
 
 .status-dot.stopped {
-  background: #94a3b8;
+  background: var(--text-muted);
 }
 
 .container-name {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -532,7 +481,7 @@ export default defineComponent({
 .container-details {
   margin-top: 6px;
   padding-left: 16px;
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
 }
 
 .detail-row {
@@ -543,7 +492,7 @@ export default defineComponent({
 }
 
 .detail-label {
-  color: #94a3b8;
+  color: var(--text-muted);
   min-width: 42px;
   flex-shrink: 0;
 }
@@ -559,7 +508,7 @@ export default defineComponent({
 }
 
 .port-link {
-  color: #0078d4;
+  color: var(--accent-primary, #0078d4);
   cursor: pointer;
   text-decoration: none;
 }
@@ -569,7 +518,7 @@ export default defineComponent({
 }
 
 .port-link.dark {
-  color: #60a5fa;
+  color: var(--text-info);
 }
 
 .detail-actions {
@@ -583,25 +532,15 @@ export default defineComponent({
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  font-size: 11px;
-  border: 1px solid #e2e8f0;
+  font-size: var(--fs-body-sm);
+  border: 1px solid var(--border-default);
   border-radius: 4px;
-  background: #f8fafc;
-  color: #334155;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
 .action-btn:hover {
-  background: #e2e8f0;
-}
-
-.action-btn.dark {
-  border-color: #475569;
-  background: #334155;
-  color: #e2e8f0;
-}
-
-.action-btn.dark:hover {
-  background: #475569;
+  background: var(--bg-surface-hover);
 }
 </style>

@@ -92,7 +92,7 @@
             <template v-if="!loading && activeTab === 'catalog'">
               <div
                 v-if="filteredCatalog.length === 0"
-                class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:text-white/60"
+                class="flex h-40 items-center justify-center text-sm text-content/60"
               >
                 No extensions found.
               </div>
@@ -241,7 +241,7 @@
             <template v-if="!loading && activeTab === 'installed'">
               <div
                 v-if="installedExtensions.length === 0"
-                class="flex h-40 flex-col items-center justify-center gap-3 text-sm text-[#0d0d0d]/60 dark:text-white/60"
+                class="flex h-40 flex-col items-center justify-center gap-3 text-sm text-content/60"
               >
                 <span>No extensions installed yet.</span>
                 <button
@@ -425,10 +425,10 @@ import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import type { MarketplaceEntry, InstalledExtension } from '@pkg/agent/services/ExtensionService';
 
+import { useTheme } from '@pkg/composables/useTheme';
 import { computed, onMounted, ref, reactive } from 'vue';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const extensionService = getExtensionService();
 
 const search = ref('');
@@ -660,19 +660,7 @@ async function upgradeInstalled(ext: InstalledExtension) {
   await refreshData();
 }
 
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-};
-
 onMounted(async () => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
-
   try {
     await extensionService.initialize();
     await refreshData();
@@ -686,13 +674,8 @@ onMounted(async () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 .line-clamp-2 {

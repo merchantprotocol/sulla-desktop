@@ -6,7 +6,7 @@
         <li>Project Discussions: <b>#sulla-desktop</b> in <a href="https://github.com/sulla-ai/sulla-desktop/discussions">Sulla Desktop</a> Github</li>
         <li class="project-links">
           <span>Project Links:</span>
-          <a href="https://github.com/sulla-ai/sulla-desktop">Homepage</a>
+          <a href="https://sulladesktop.com">Homepage</a>
           <a href="https://github.com/sulla-ai/sulla-desktop/issues">Issues</a>
         </li>
       </ul>

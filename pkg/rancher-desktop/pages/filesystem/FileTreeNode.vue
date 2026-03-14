@@ -153,29 +153,25 @@ export default defineComponent({
 }
 
 .file-tree-row:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:global(.dark) .file-tree-row:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
 }
 
 .file-tree-row.is-selected {
-  background: rgba(0, 120, 212, 0.1);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.1));
 }
 
 :global(.dark) .file-tree-row.is-selected {
-  background: rgba(0, 120, 212, 0.3);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.3));
 }
 
 .file-tree-row.is-highlighted {
-  background: rgba(255, 193, 7, 0.1);
-  border-left: 3px solid #ffc107;
+  background: var(--bg-surface, rgba(0, 120, 212, 0.1));
+  border-left: 3px solid var(--accent-primary, rgba(0, 120, 212, 0.4));
 }
 
 :global(.dark) .file-tree-row.is-highlighted {
-  background: rgba(255, 193, 7, 0.2);
-  border-left-color: #ffeb3b;
+  background: var(--bg-surface, rgba(0, 120, 212, 0.2));
+  border-left-color: var(--accent-primary, rgba(0, 120, 212, 0.5));
 }
 
 .chevron {
@@ -187,15 +183,11 @@ export default defineComponent({
   flex-shrink: 0;
   transition: transform 0.1s ease;
   transform: rotate(0deg);
-  color: #888;
+  color: var(--text-muted);
 }
 
 .chevron.expanded {
   transform: rotate(90deg);
-}
-
-:global(.dark) .chevron {
-  color: #aaa;
 }
 
 .chevron-spacer {
@@ -210,51 +202,36 @@ export default defineComponent({
   flex-shrink: 0;
   width: 16px;
   height: 16px;
-  color: #555;
-}
-
-:global(.dark) .node-icon {
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .icon-folder {
   color: inherit;
 }
 
-:global(.dark) .icon-folder {
-  color: #a4a6a9;
-}
-
 .icon-file {
-  color: #6b7280;
-}
-
-:global(.dark) .icon-file {
-  color: #cbd5e1;
+  color: var(--text-muted);
 }
 
 .node-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--fs-code);
   line-height: 22px;
 }
 
 .loading-text {
-  color: #999;
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--fs-body-sm);
   font-style: italic;
 }
 
 .file-tree-row.drop-target {
-  background: rgba(0, 120, 212, 0.1);
-  outline: 1px dashed rgba(0, 120, 212, 0.4);
-  outline-offset: -1px;
+  background: var(--bg-surface);
 }
 
 :global(.dark) .file-tree-row.drop-target {
-  background: rgba(0, 120, 212, 0.15);
-  outline-color: rgba(0, 120, 212, 0.5);
+  background: var(--bg-surface);
 }
 </style>

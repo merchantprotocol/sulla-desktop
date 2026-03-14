@@ -1,0 +1,1543 @@
+/* ------------------------------------------------------------------ */
+/*  Protocol Dark theme — Sulla Desktop noir terminal                  */
+/*  Brand color: Steel Blue #5096b3 (matching docs.sulladesktop.com)   */
+/* ------------------------------------------------------------------ */
+.theme-protocol-dark {
+  /* Typography tokens */
+  --fs-display:  30px;
+  --fs-heading:  18px;
+  --fs-body:     14px;
+  --fs-body-sm:  12px;
+  --fs-caption:  10px;
+  --fs-code:     13px;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Roboto Mono', monospace;
+
+  /* Backgrounds — noir terminal palette (design guide gray ramp) */
+  --bg-page: #0d1117;            /* Level 0 — deepest page background */
+  --bg-surface: #161b22;         /* Level 100 — cards, panels, sidebar */
+  --bg-surface-alt: #1c2128;     /* Level 200 — nested panels, terminal bars */
+  --bg-surface-hover: #21262d;   /* Level 300 — hover, active, elevated */
+  --bg-elevated: #21262d;        /* Level 300 — modals, dropdowns, popovers */
+  --bg-header: rgba(13, 17, 23, 0.85);
+  --bg-input: #0d1117;           /* Level 0 — recessed inputs, inset feel */
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  /* Text — design guide gray ramp hierarchy */
+  --text-primary: #e6edf3;       /* Level 900 — headings, key values */
+  --text-secondary: #b1bac4;     /* Level 800 — body text */
+  --text-muted: #8b949e;         /* Level 700 — captions, labels */
+  --text-dim: #6e7681;           /* Level 600 — disabled, tertiary */
+  --text-link: #5096b3;
+  --text-on-accent: #ffffff;
+  --text-success: #3fb950;
+  --text-error: #f85149;
+  --text-warning: #e3b341;
+  --text-info: #58a6ff;
+
+  /* Borders */
+  --border-default: #30363d;
+  --border-strong: #484f58;
+  --border-subtle: #21262d;
+
+  /* Semantic Backgrounds */
+  --bg-primary: #0d1117;
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.12);
+  --bg-success: rgba(63, 185, 80, 0.18);
+  --bg-error: rgba(248, 81, 73, 0.18);
+  --bg-warning: rgba(227, 179, 65, 0.18);
+  --bg-info: rgba(88, 166, 255, 0.18);
+  --bg-accent: rgba(188, 140, 255, 0.18);
+
+  /* Accent — steel blue (buttons, links, indicators only) */
+  --accent-primary: #5096b3;
+  --accent-primary-hover: #6ab0cc;
+  --text-accent: #bc8cff;
+
+  /* Semantic Borders */
+  --border-success: rgba(63, 185, 80, 0.4);
+  --border-error: rgba(248, 81, 73, 0.4);
+  --border-warning: rgba(227, 179, 65, 0.4);
+  --border-info: rgba(88, 166, 255, 0.4);
+  --border-accent: rgba(80, 150, 179, 0.5);
+  --border-focus: rgba(80, 150, 179, 0.5);
+
+  /* Glow system */
+  --brand-glow: rgba(80, 150, 179, 0.4);
+  --brand-glow-soft: rgba(80, 150, 179, 0.15);
+  --brand-glow-strong: rgba(80, 150, 179, 0.6);
+
+  /* Status */
+  --status-success: #3fb950;
+  --status-info: #58a6ff;
+  --status-warning: #e3b341;
+  --status-error: #f85149;
+
+  /* Shadows — inset top-edge highlight for depth on dark backgrounds */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --ring-color: rgba(80, 150, 179, 0.5);
+
+  /* Editor */
+  --editor-bg: #0d1117;
+  --editor-border: #30363d;
+  --editor-btn-color: #8b949e;
+  --editor-btn-hover: rgba(255, 255, 255, 0.10);
+  --editor-separator: #30363d;
+
+  /* Terminal */
+  --terminal-bg: #0d1117;
+  --terminal-fg: #e6edf3;
+  --terminal-cursor: #5096b3;
+  --terminal-selection-bg: rgba(80, 150, 179, 0.3);
+  --terminal-selection-fg: #ffffff;
+
+  /* Terminal traffic light dots */
+  --terminal-dot-red: #ff5f57;
+  --terminal-dot-yellow: #febc2e;
+  --terminal-dot-green: #28c840;
+
+  /* Scrollbar */
+  --scrollbar-thumb: #4485a0;
+  --scrollbar-track: #0d1117;
+}
+
+/* ================================================================== */
+/*  COMPONENT OVERRIDES — only active when .theme-protocol-dark       */
+/* ================================================================== */
+
+/* ── Global: Font smoothing & selection ── */
+.theme-protocol-dark {
+  -webkit-font-smoothing: antialiased;
+}
+
+.theme-protocol-dark ::selection {
+  background: rgba(80, 150, 179, 0.3);
+  color: #fff;
+}
+
+/* ── CRT Scanline Overlay — matches docs.sulladesktop.com ── */
+.theme-protocol-dark::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.08) 2px,
+    rgba(0, 0, 0, 0.08) 4px
+  );
+}
+
+/* ── Vignette — corner darkening matching docs site CRT overlay ── */
+.theme-protocol-dark::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background:
+    /* Top-left corner */
+    radial-gradient(ellipse at top left, rgba(0, 0, 0, 0.3) 0%, transparent 50%),
+    /* Top-right corner */
+    radial-gradient(ellipse at top right, rgba(0, 0, 0, 0.3) 0%, transparent 50%),
+    /* Bottom-left corner */
+    radial-gradient(ellipse at bottom left, rgba(0, 0, 0, 0.2) 0%, transparent 45%),
+    /* Bottom-right corner */
+    radial-gradient(ellipse at bottom right, rgba(0, 0, 0, 0.2) 0%, transparent 45%),
+    /* Overall vignette */
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.2) 100%);
+}
+
+/* ── Global scrollbar ── */
+.theme-protocol-dark ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.theme-protocol-dark ::-webkit-scrollbar-track {
+  background: #161b22;
+}
+
+.theme-protocol-dark ::-webkit-scrollbar-thumb {
+  background: #4485a0;
+  border-radius: 3px;
+}
+
+.theme-protocol-dark ::-webkit-scrollbar-thumb:hover {
+  background: #5096b3;
+}
+
+/* ── Title bar: draggable region for macOS hiddenInset ── */
+.theme-protocol-dark .app-titlebar {
+  -webkit-app-region: drag;
+}
+
+.theme-protocol-dark .app-titlebar a,
+.theme-protocol-dark .app-titlebar button,
+.theme-protocol-dark .app-titlebar nav {
+  -webkit-app-region: no-drag;
+}
+
+/* ── Ambient center glow (noir radial) ── */
+.theme-protocol-dark .page-root::before {
+  content: '';
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 800px;
+  height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(80, 150, 179, 0.06) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Header: noir nav with backdrop blur ── */
+.theme-protocol-dark header {
+  background: #161b22 !important;  /* Level 100 — elevated from Level 0 page */
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border-default);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.theme-protocol-dark header nav a {
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Hide light/dark toggle — protocol theme is dark-only */
+.theme-protocol-dark header .fill-sky-400 {
+  display: none !important;
+}
+
+.theme-protocol-dark header button[aria-label*="Switch to"] {
+  display: none !important;
+}
+
+/* ── Page background with subtle grid lines ── */
+.theme-protocol-dark .page-root {
+  background: #0d1117;           /* Level 0 — deepest, so cards at Level 100 stand out */
+  color: #e6edf3;
+  background-image:
+    linear-gradient(rgba(80, 150, 179, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(80, 150, 179, 0.02) 1px, transparent 1px);
+  background-size: 80px 80px;
+}
+
+/* ── Composer input: Terminal look ── */
+
+/* Replace blue gradient glow lines with steel blue */
+.theme-protocol-dark .bg-linear-to-r.from-sky-300\/0,
+.theme-protocol-dark .bg-linear-to-r.from-blue-400\/0,
+.theme-protocol-dark [class*="from-sky-300"],
+.theme-protocol-dark [class*="from-blue-400"] {
+  background-image: none !important;
+  background: linear-gradient(to right, transparent, #5096b3, transparent) !important;
+  opacity: 0.7;
+}
+
+/* Composer panel: terminal border with glow on focus */
+.theme-protocol-dark .bg-surface.ring-1.ring-edge {
+  background: #0d1117 !important;
+  border: 1px solid var(--border-default);
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.theme-protocol-dark .bg-surface.ring-1.ring-edge:focus-within {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 15px rgba(80, 150, 179, 0.2), 0 0 30px rgba(80, 150, 179, 0.1);
+}
+
+/* Textarea: monospace terminal font, white text, bright glowing cursor */
+.theme-protocol-dark textarea {
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body);
+  color: #e6edf3 !important;
+  caret-color: #7ec8e3;
+}
+
+.theme-protocol-dark textarea::placeholder {
+  color: var(--text-secondary) !important;
+  font-family: var(--font-mono) !important;
+}
+
+/* Send button: steel blue */
+.theme-protocol-dark .bg-content.text-page {
+  background: #4485a0 !important;
+  color: #fff !important;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.theme-protocol-dark .bg-content.text-page:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 15px rgba(80, 150, 179, 0.4);
+  transform: translateY(-1px);
+}
+
+/* ── User message bubbles: blue tinted with white text ── */
+.theme-protocol-dark .bg-surface-alt.ring-1.ring-edge-subtle {
+  background: rgba(80, 150, 179, 0.1) !important;
+  border: 1px solid var(--brand-glow-soft) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  --tw-ring-opacity: 0;
+  max-width: 80%;
+  margin-left: auto;
+  padding: 10px 16px !important;
+  overflow-wrap: break-word;
+}
+
+.theme-protocol-dark .bg-surface-alt.ring-1.ring-edge-subtle .text-content {
+  color: #e6edf3 !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body) !important;
+  font-weight: 400;
+  line-height: 24.48px !important;
+}
+
+/* ── Assistant messages: prose with steel blue accents ── */
+.theme-protocol-dark .prose {
+  color: rgb(139, 148, 158) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body) !important;
+  font-weight: 400;
+  line-height: 23.12px !important;
+}
+
+.theme-protocol-dark .prose h1,
+.theme-protocol-dark .prose h2,
+.theme-protocol-dark .prose h3,
+.theme-protocol-dark .prose h4 {
+  color: #e6edf3;
+}
+
+.theme-protocol-dark .prose a {
+  color: #5096b3 !important;
+  text-decoration: none;
+  transition: color 0.3s, text-shadow 0.3s;
+}
+
+.theme-protocol-dark .prose a:hover {
+  color: #e6edf3 !important;
+  text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+}
+
+.theme-protocol-dark .prose code {
+  background: rgba(80, 150, 179, 0.08);
+  color: #6ab0cc;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+  font-size: var(--fs-code);
+  font-family: var(--font-mono);
+}
+
+.theme-protocol-dark .prose pre {
+  background: #1a1e24;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 1.5rem 1.75rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+  line-height: 1.8;
+  color: #8b949e;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.theme-protocol-dark .prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+
+.theme-protocol-dark .prose strong {
+  color: #e6edf3;
+}
+
+.theme-protocol-dark .prose blockquote {
+  border-left: 3px solid var(--accent-primary);
+  padding: 1.5rem 0 1.5rem 1.5rem;
+  font-style: italic;
+  color: #8b949e;
+  box-shadow: -4px 0 20px rgba(80, 150, 179, 0.15);
+}
+
+.theme-protocol-dark .prose hr {
+  border-color: var(--border-default);
+}
+
+.theme-protocol-dark .prose table th {
+  background: #1c2128;
+  color: #5096b3;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  letter-spacing: 0.08em;
+  border-bottom: 2px solid var(--accent-primary);
+}
+
+.theme-protocol-dark .prose table td {
+  color: #8b949e;
+  border-color: var(--border-default);
+}
+
+.theme-protocol-dark .prose table tr:hover {
+  background: #161b22;
+}
+
+/* ── "Thinking..." indicator: subtle, no flashy gradient ── */
+.theme-protocol-dark [class*="border-indigo"],
+.theme-protocol-dark [class*="border-cyan"],
+.theme-protocol-dark [class*="border-sky"] {
+  border-color: var(--brand-glow-soft) !important;
+}
+
+.theme-protocol-dark [class*="color-indigo"],
+.theme-protocol-dark [class*="color-cyan"],
+.theme-protocol-dark [class*="color-sky"] {
+  --color-indigo-400: rgba(80, 150, 179, 0.3);
+  --color-cyan-400: rgba(80, 150, 179, 0.2);
+  --color-sky-500: rgba(80, 150, 179, 0.3);
+  --color-sky-50: #161b22;
+}
+
+/* Kill the flashy gradient border on "Thinking..." — replace with simple muted border */
+.theme-protocol-dark .absolute.-inset-px[style*="border-box"],
+.theme-protocol-dark [style*="linear-gradient"] .absolute.-inset-px {
+  background: none !important;
+  border: 1px solid var(--brand-glow-soft) !important;
+  border-radius: 12px;
+}
+
+/* The thinking text itself */
+.theme-protocol-dark .absolute.-inset-px + .relative {
+  color: #6e7681 !important;
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  font-style: italic;
+}
+
+/* Thinking bubble content: muted, subtle */
+.theme-protocol-dark .thinking-bubble {
+  opacity: 0.6;
+}
+
+.theme-protocol-dark .thinking-bubble-content {
+  color: #6e7681 !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body-sm) !important;
+}
+
+/* Override the Tailwind dark:prose-invert slate coloring */
+.theme-protocol-dark .dark\:text-slate-400 {
+  color: #8b949e !important;
+}
+
+/* ── Sulla assistant avatar & name ── */
+.theme-protocol-dark .sulla-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(80, 150, 179, 0.12);
+  border: 1px solid var(--brand-glow-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #5096b3;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  font-weight: 700;
+}
+
+.theme-protocol-dark .sulla-name {
+  color: #5096b3;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* ── Tool cards: terminal aesthetic ── */
+.theme-protocol-dark .tool-card-cc {
+  background: #161b22;             /* Level 100 — visible on Level 0 page */
+  border-color: var(--border-default);
+  font-family: var(--font-mono);
+  box-shadow: var(--shadow-sm);
+}
+
+.theme-protocol-dark .tool-card-cc-header:hover {
+  background: rgba(80, 150, 179, 0.08);
+}
+
+.theme-protocol-dark .tool-card-cc-name {
+  color: #5096b3;
+}
+
+/* IN label + command text: terminal green */
+.theme-protocol-dark .tool-card-cc-cmd:has(.tool-card-cc-cmd-text:not(.tool-card-cc-exit)) .tool-card-cc-cmd-label {
+  color: #3fb950;
+}
+
+.theme-protocol-dark .tool-card-cc-cmd-text:not(.tool-card-cc-exit) {
+  color: #3fb950;
+}
+
+/* OUT label + exit code: muted gray */
+.theme-protocol-dark .tool-card-cc-cmd:has(.tool-card-cc-exit) .tool-card-cc-cmd-label {
+  color: #6e7681;
+}
+
+.theme-protocol-dark .tool-card-cc-exit.success {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .tool-card-cc-exit.failed {
+  color: #f85149 !important;
+}
+
+.theme-protocol-dark .tool-card-cc-output pre {
+  color: #8b949e;
+}
+
+/* ── Channel messages: steel blue instead of indigo ── */
+.theme-protocol-dark [class*="border-indigo-200"],
+.theme-protocol-dark [class*="border-indigo-800"] {
+  border-color: var(--brand-glow-soft) !important;
+}
+
+.theme-protocol-dark [class*="bg-indigo-50"],
+.theme-protocol-dark [class*="bg-indigo-950"] {
+  background: rgba(80, 150, 179, 0.04) !important;
+}
+
+.theme-protocol-dark [class*="bg-indigo-100"],
+.theme-protocol-dark [class*="bg-indigo-900"] {
+  background: rgba(80, 150, 179, 0.12) !important;
+}
+
+.theme-protocol-dark [class*="text-indigo-700"],
+.theme-protocol-dark [class*="text-indigo-300"] {
+  color: #5096b3 !important;
+}
+
+/* ── "Primary" badge on model selector ── */
+.theme-protocol-dark .bg-sky-100,
+.theme-protocol-dark [class*="bg-sky-100"] {
+  background: rgba(80, 150, 179, 0.12) !important;
+}
+
+.theme-protocol-dark [class*="bg-sky-900"] {
+  background: rgba(80, 150, 179, 0.15) !important;
+}
+
+.theme-protocol-dark .text-sky-700,
+.theme-protocol-dark [class*="text-sky-700"] {
+  color: #4485a0 !important;
+}
+
+.theme-protocol-dark .text-sky-400,
+.theme-protocol-dark [class*="text-sky-400"] {
+  color: #5096b3 !important;
+}
+
+/* ── Composer bottom bar: edge-to-edge terminal input ── */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 {
+  background: #0d1117 !important;
+  backdrop-filter: none;
+  border-color: var(--border-default) !important;
+  padding-top: 0 !important;
+}
+
+/* Strip all wrapper padding/margins so input goes edge-to-edge */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 > div {
+  max-width: none !important;
+  padding: 0 !important;
+}
+
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 > div > div {
+  max-width: none !important;
+  padding: 0 !important;
+}
+
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 .pb-3 {
+  padding-bottom: 0 !important;
+}
+
+/* The composer form: full width, no margin */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 .group\/composer {
+  margin: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+/* The composer panel: flat, no rounded corners, no ring, edge-to-edge */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 .bg-surface.ring-1.ring-edge {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: #0d1117 !important;
+  --tw-ring-opacity: 0;
+}
+
+/* Remove the gradient glow lines inside the fixed bottom bar */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 [class*="from-sky-300"],
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 [class*="from-blue-400"] {
+  display: none !important;
+}
+
+/* ── Continue button ── */
+.theme-protocol-dark .bg-content.text-page.shadow-sm {
+  background: #4485a0 !important;
+  color: #fff !important;
+}
+
+.theme-protocol-dark .bg-content.text-page.shadow-sm:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
+}
+
+/* ── Links ── */
+.theme-protocol-dark a {
+  transition: color 0.3s, text-shadow 0.3s;
+}
+
+.theme-protocol-dark a:not([class]):hover {
+  text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+}
+
+/* ── Stroke colors: replace slate with muted gray ── */
+.theme-protocol-dark .stroke-slate-500 {
+  stroke: #6e7681;
+}
+
+/* ── Ring overrides for focus states ── */
+.theme-protocol-dark .ring-black\/5 {
+  --tw-ring-color: var(--brand-glow-soft);
+}
+
+.theme-protocol-dark .shadow-black\/5 {
+  --tw-shadow-color: rgba(0, 0, 0, 0.3);
+}
+
+/* ── Model selector menu ── */
+.theme-protocol-dark .agent-model-selector-menu {
+  background: #161b22;
+  border-color: var(--border-default);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(80, 150, 179, 0.05);
+}
+
+/* ── Audio player ── */
+.theme-protocol-dark .sulla-audio-player {
+  background: #161b22;
+  border-color: var(--border-default);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Calendar Page — Protocol Dark overrides
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Page root background override (scoped styles use #0f172a) */
+.theme-protocol-dark .page-root,
+.theme-protocol-dark .page-root.dark {
+  background: #0d1117 !important;  /* Level 0 — deepest, cards/panels at Level 100 pop */
+  color: #e6edf3 !important;
+}
+
+/* "Add Event" button: steel blue instead of indigo */
+.theme-protocol-dark .bg-indigo-600 {
+  background: #4485a0 !important;
+}
+
+.theme-protocol-dark .bg-indigo-600:hover,
+.theme-protocol-dark .hover\:bg-indigo-700:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
+}
+
+/* Focus rings: steel blue instead of indigo */
+.theme-protocol-dark .focus\:border-indigo-500:focus {
+  border-color: var(--accent-primary) !important;
+}
+
+.theme-protocol-dark .focus\:ring-indigo-500:focus {
+  --tw-ring-color: rgba(80, 150, 179, 0.4) !important;
+}
+
+/* ── Modals: terminal aesthetic ── */
+.theme-protocol-dark .dark\:bg-neutral-900 {
+  background: #0d1117 !important;
+}
+
+.theme-protocol-dark .dark\:bg-neutral-800 {
+  background: #161b22 !important;
+}
+
+.theme-protocol-dark .dark\:border-white\/10 {
+  border-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .dark\:text-white {
+  color: #e6edf3 !important;
+}
+
+.theme-protocol-dark .dark\:text-neutral-300 {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .dark\:text-neutral-400 {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .dark\:text-neutral-500 {
+  color: #484f58 !important;
+}
+
+.theme-protocol-dark .dark\:hover\:bg-neutral-700:hover {
+  background: #21262d !important;
+}
+
+.theme-protocol-dark .dark\:hover\:bg-neutral-800:hover {
+  background: #161b22 !important;
+}
+
+.theme-protocol-dark .dark\:hover\:text-neutral-300:hover {
+  color: #8b949e !important;
+}
+
+/* Delete button in edit modal */
+.theme-protocol-dark .dark\:border-red-900 {
+  border-color: var(--border-error) !important;
+}
+
+.theme-protocol-dark .dark\:bg-red-950 {
+  background: rgba(248, 81, 73, 0.08) !important;
+}
+
+.theme-protocol-dark .dark\:text-red-400 {
+  color: #f85149 !important;
+}
+
+.theme-protocol-dark .dark\:hover\:bg-red-900:hover {
+  background: rgba(248, 81, 73, 0.15) !important;
+}
+
+/* Modal inputs: terminal font */
+.theme-protocol-dark .fixed.inset-0.z-50 input,
+.theme-protocol-dark .fixed.inset-0.z-50 textarea {
+  font-family: var(--font-mono) !important;
+  background: #161b22 !important;
+  color: #e6edf3 !important;
+  border-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .fixed.inset-0.z-50 input:focus,
+.theme-protocol-dark .fixed.inset-0.z-50 textarea:focus {
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 10px var(--brand-glow-soft);
+}
+
+.theme-protocol-dark .fixed.inset-0.z-50 label {
+  font-family: var(--font-mono);
+  color: #8b949e !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: var(--fs-body-sm) !important;
+}
+
+.theme-protocol-dark .fixed.inset-0.z-50 h2 {
+  font-family: var(--font-mono);
+  color: #5096b3 !important;
+  letter-spacing: 0.05em;
+}
+
+/* Modal container: terminal style */
+.theme-protocol-dark .fixed.inset-0.z-50 > .rounded-2xl {
+  background: #0d1117 !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(80, 150, 179, 0.05) !important;
+}
+
+/* ── ScheduleX CSS variable overrides: kill purple, use steel blue ── */
+.theme-protocol-dark .sx__calendar-wrapper {
+  --sx-color-primary: #5096b3 !important;
+  --sx-color-on-primary: #fff !important;
+  --sx-color-primary-container: rgba(80, 150, 179, 0.15) !important;
+  --sx-color-on-primary-container: #e6edf3 !important;
+  --sx-color-secondary: #8b949e !important;
+  --sx-color-on-secondary: #fff !important;
+  --sx-color-secondary-container: #21262d !important;
+  --sx-color-on-secondary-container: #e6edf3 !important;
+  --sx-color-surface: #161b22 !important;
+  --sx-color-surface-dim: #0d1117 !important;
+  --sx-color-surface-bright: #21262d !important;
+  --sx-color-on-surface: #e6edf3 !important;
+  --sx-color-surface-container: #161b22 !important;
+  --sx-color-surface-container-low: #0d1117 !important;
+  --sx-color-surface-container-high: #21262d !important;
+  --sx-color-background: #161b22 !important;
+  --sx-color-on-background: #e6edf3 !important;
+  --sx-color-outline: var(--border-default) !important;
+  --sx-color-outline-variant: var(--border-subtle) !important;
+  --sx-color-surface-tint: #5096b3 !important;
+  --sx-color-neutral: #8b949e !important;
+  --sx-color-neutral-variant: #6e7681 !important;
+  --sx-internal-color-text: #e6edf3 !important;
+  --sx-internal-color-gray-ripple-background: #21262d !important;
+  --sx-internal-color-light-gray: #161b22 !important;
+}
+
+/* ── ScheduleX calendar widget: dark terminal look ── */
+.theme-protocol-dark .sx__calendar-wrapper,
+.theme-protocol-dark .sx__view-container,
+.theme-protocol-dark .sx__month-grid-wrapper,
+.theme-protocol-dark .sx__week-grid,
+.theme-protocol-dark .sx__day-grid {
+  background: #161b22 !important;
+  color: #e6edf3 !important;
+  font-family: var(--font-mono) !important;
+}
+
+/* Calendar header/toolbar */
+.theme-protocol-dark .sx__calendar-header {
+  background: #161b22 !important;
+  border-color: var(--border-default) !important;
+  font-family: var(--font-mono) !important;
+}
+
+.theme-protocol-dark .sx__calendar-header button {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .sx__calendar-header button:hover {
+  color: #e6edf3 !important;
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+.theme-protocol-dark .sx__calendar-header .sx__date-input {
+  color: #e6edf3 !important;
+}
+
+/* Calendar grid lines */
+.theme-protocol-dark .sx__month-grid-day,
+.theme-protocol-dark .sx__week-grid__day,
+.theme-protocol-dark .sx__day-grid__day {
+  border-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .sx__month-grid-cell {
+  border-color: var(--border-subtle) !important;
+}
+
+/* Day numbers */
+.theme-protocol-dark .sx__month-grid-day__header-date {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .sx__month-grid-day__header-date--is-today {
+  background: #4485a0 !important;
+  color: #fff !important;
+}
+
+/* Week/day time column */
+.theme-protocol-dark .sx__time-grid-hour {
+  border-color: var(--border-subtle) !important;
+  color: #6e7681 !important;
+}
+
+/* Events in calendar */
+.theme-protocol-dark .sx__event {
+  background: rgba(80, 150, 179, 0.15) !important;
+  border-left: 3px solid var(--accent-primary) !important;
+  color: #e6edf3 !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body-sm) !important;
+}
+
+.theme-protocol-dark .sx__event:hover {
+  background: rgba(80, 150, 179, 0.25) !important;
+}
+
+/* View switcher tabs */
+.theme-protocol-dark .sx__view-selection button {
+  color: #6e7681 !important;
+  font-family: var(--font-mono) !important;
+}
+
+.theme-protocol-dark .sx__view-selection button.sx__view-selection-item--is-selected,
+.theme-protocol-dark .sx__view-selection button:hover {
+  color: #5096b3 !important;
+}
+
+/* Today button */
+.theme-protocol-dark .sx__today-button {
+  color: #5096b3 !important;
+  border-color: var(--border-default) !important;
+  font-family: var(--font-mono) !important;
+}
+
+.theme-protocol-dark .sx__today-button:hover {
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+/* Forward/back navigation arrows */
+.theme-protocol-dark .sx__chevron-wrapper svg {
+  color: #8b949e !important;
+  fill: #8b949e !important;
+}
+
+/* Day names row */
+.theme-protocol-dark .sx__month-grid-day__header-day-name,
+.theme-protocol-dark .sx__week-grid__day-name {
+  color: #6e7681 !important;
+  font-family: var(--font-mono) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Month agenda items */
+.theme-protocol-dark .sx__month-agenda-day {
+  border-color: var(--border-subtle) !important;
+}
+
+.theme-protocol-dark .sx__month-agenda-event {
+  background: rgba(80, 150, 179, 0.08) !important;
+  border-color: var(--border-default) !important;
+  color: #e6edf3 !important;
+}
+
+/* Current time indicator */
+.theme-protocol-dark .sx__current-time-indicator {
+  background: #5096b3 !important;
+}
+
+/* Date picker inputs: match terminal */
+.theme-protocol-dark input[type="date"],
+.theme-protocol-dark input[type="time"] {
+  color-scheme: dark;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Integrations Page — Protocol Dark overrides
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Hero section background with gradient fade to page bg */
+.theme-protocol-dark .bg-slate-900 {
+  background: #0d1117 !important;
+}
+
+/* Hero title gradient: steel blue instead of indigo */
+.theme-protocol-dark .from-indigo-200.via-sky-400.to-indigo-200,
+.theme-protocol-dark [class*="from-indigo-200"] {
+  background-image: linear-gradient(to right, #5096b3, #7ec8e3, #5096b3) !important;
+}
+
+/* Search input */
+.theme-protocol-dark .dark\:bg-slate-800\/75 {
+  background: #161b22 !important;
+}
+
+.theme-protocol-dark .dark\:ring-white\/5 {
+  --tw-ring-color: var(--border-default) !important;
+}
+
+/* Category sidebar */
+.theme-protocol-dark .dark\:text-slate-500 {
+  color: #484f58 !important;
+}
+
+.theme-protocol-dark .dark\:text-slate-400 {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .dark\:text-slate-200 {
+  color: #e6edf3 !important;
+}
+
+.theme-protocol-dark .dark\:text-slate-300 {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .dark\:text-slate-100 {
+  color: #e6edf3 !important;
+}
+
+/* Active category: steel blue instead of sky */
+.theme-protocol-dark .dark\:bg-sky-400\/10 {
+  background: rgba(80, 150, 179, 0.1) !important;
+}
+
+.theme-protocol-dark .dark\:text-sky-400 {
+  color: #5096b3 !important;
+}
+
+/* Sidebar hover states */
+.theme-protocol-dark .dark\:hover\:bg-slate-800:hover {
+  background: #21262d !important;
+}
+
+.theme-protocol-dark .dark\:hover\:text-slate-200:hover {
+  color: #e6edf3 !important;
+}
+
+/* Integration cards */
+.theme-protocol-dark .dark\:bg-slate-800 {
+  background: #161b22 !important;
+}
+
+.theme-protocol-dark .dark\:border-gray-700 {
+  border-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .dark\:hover\:border-gray-600:hover {
+  border-color: var(--brand-glow-soft) !important;
+}
+
+/* Card icon container */
+.theme-protocol-dark .dark\:bg-slate-700 {
+  background: #21262d !important;
+}
+
+/* Category badge */
+.theme-protocol-dark .dark\:text-slate-200 {
+  color: #8b949e !important;
+}
+
+/* Connect/Manage buttons: steel blue */
+.theme-protocol-dark .bg-blue-600 {
+  background: #4485a0 !important;
+}
+
+.theme-protocol-dark .bg-blue-600:hover,
+.theme-protocol-dark .hover\:bg-blue-700:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 10px rgba(80, 150, 179, 0.2);
+}
+
+/* Beta badge */
+.theme-protocol-dark .bg-blue-500 {
+  background: #4485a0 !important;
+}
+
+/* Coming soon badge */
+.theme-protocol-dark .bg-gray-400 {
+  background: #484f58 !important;
+}
+
+.theme-protocol-dark .bg-gray-500 {
+  background: #484f58 !important;
+}
+
+.theme-protocol-dark .hover\:bg-gray-600:hover {
+  background: #6e7681 !important;
+}
+
+/* Disconnect/Manage (red) button */
+.theme-protocol-dark .bg-red-600 {
+  background: #da3633 !important;
+}
+
+.theme-protocol-dark .hover\:bg-red-700:hover {
+  background: #f85149 !important;
+}
+
+/* Mobile category select */
+.theme-protocol-dark .dark\:border-slate-700 {
+  border-color: var(--border-default) !important;
+}
+
+/* Connected status dot */
+.theme-protocol-dark .bg-green-500 {
+  background: #3fb950 !important;
+}
+
+.theme-protocol-dark .bg-gray-300 {
+  background: #484f58 !important;
+}
+
+/* All text on integrations page: terminal font */
+.theme-protocol-dark .page-root h3,
+.theme-protocol-dark .page-root nav button,
+.theme-protocol-dark .page-root nav h3 {
+  font-family: var(--font-mono);
+}
+
+/* Fill colors for search icon */
+.theme-protocol-dark .dark\:fill-slate-500 {
+  fill: #484f58 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Editor Page (AgentEditor) — Protocol Dark overrides
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Editor page root background ── */
+.theme-protocol-dark .page-root,
+.theme-protocol-dark .page-root.dark {
+  background: #0d1117 !important;  /* Level 0 — deepest background */
+  color: #e6edf3 !important;
+}
+
+/* ── Editor header bar (title bar) ── */
+.theme-protocol-dark .editor-header-bar,
+.theme-protocol-dark .editor-header-bar.dark {
+  background: #161b22 !important;
+  border-bottom-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .editor-header-bar .header-btn,
+.theme-protocol-dark .editor-header-bar .header-btn.dark {
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .editor-header-bar .header-btn:hover,
+.theme-protocol-dark .editor-header-bar .header-btn.dark:hover {
+  background: rgba(80, 150, 179, 0.08) !important;
+  color: #e6edf3 !important;
+}
+
+.theme-protocol-dark .editor-header-bar .header-separator,
+.theme-protocol-dark .editor-header-bar.dark .header-separator {
+  background: var(--border-default) !important;
+}
+
+/* Theme dropdown in editor header */
+.theme-protocol-dark .theme-dropdown,
+.theme-protocol-dark .theme-dropdown.dark {
+  background: #0d1117 !important;
+  border-color: var(--border-default) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+.theme-protocol-dark .theme-option.dark {
+  color: #8b949e !important;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+}
+
+.theme-protocol-dark .theme-option.dark:hover {
+  background: #21262d !important;
+  color: #e6edf3 !important;
+}
+
+.theme-protocol-dark .theme-option.active {
+  color: #5096b3 !important;
+}
+
+.theme-protocol-dark .theme-dot.active {
+  border-color: var(--accent-primary) !important;
+  background: var(--accent-primary) !important;
+}
+
+.theme-protocol-dark .theme-group-label.dark {
+  color: #6e7681 !important;
+  font-family: var(--font-mono);
+}
+
+.theme-protocol-dark .theme-group-section + .theme-group-section {
+  border-top-color: var(--border-default) !important;
+}
+
+/* ── Icon Panel (left sidebar) ── */
+.theme-protocol-dark .icon-panel,
+.theme-protocol-dark .icon-panel.dark {
+  background: #161b22 !important;
+  border-right-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn,
+.theme-protocol-dark .icon-panel.dark .icon-btn {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn:hover,
+.theme-protocol-dark .icon-panel.dark .icon-btn:hover {
+  background: rgba(80, 150, 179, 0.06) !important;
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn.active,
+.theme-protocol-dark .icon-panel.dark .icon-btn.active {
+  background: rgba(80, 150, 179, 0.1) !important;
+  color: #5096b3 !important;
+}
+
+/* Active indicator bar: steel blue */
+.theme-protocol-dark .icon-panel .icon-btn.active::after {
+  background: #5096b3 !important;
+}
+
+/* Agent icon (robot logo) in icon panel — recolor green to steel blue */
+.theme-protocol-dark .icon-panel .icon-logo,
+.theme-protocol-dark .icon-panel.dark .icon-logo {
+  filter: brightness(0) saturate(100%) invert(55%) sepia(30%) saturate(500%) hue-rotate(160deg) brightness(95%) contrast(90%) !important;
+  opacity: 0.6 !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn:hover .icon-logo {
+  opacity: 0.8 !important;
+}
+
+.theme-protocol-dark .icon-panel .icon-btn.active .icon-logo {
+  opacity: 1 !important;
+  filter: brightness(0) saturate(100%) invert(55%) sepia(40%) saturate(600%) hue-rotate(160deg) brightness(100%) contrast(90%) !important;
+}
+
+/* ── Left pane (file tree, git, docker, etc.) ── */
+.theme-protocol-dark .left-pane,
+.theme-protocol-dark .left-pane.dark {
+  background: #161b22 !important;
+  border-right-color: var(--border-default) !important;
+}
+
+/* ── Editor panel (center area) ── */
+.theme-protocol-dark .editor-panel,
+.theme-protocol-dark .editor-panel.dark {
+  background: var(--bg-primary);
+}
+
+/* ── Tab bar ── */
+.theme-protocol-dark .tab-bar,
+.theme-protocol-dark .tab-bar.dark {
+  background: #161b22 !important;
+  border-bottom-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .tab-bar.empty,
+.theme-protocol-dark .tab-bar.empty.dark {
+  background: #0d1117 !important;
+}
+
+/* Inactive tabs */
+.theme-protocol-dark .tab,
+.theme-protocol-dark .tab.dark {
+  background: #161b22 !important;
+  color: #6e7681 !important;
+  border-right-color: var(--border-default) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body-sm) !important;
+}
+
+.theme-protocol-dark .tab:hover,
+.theme-protocol-dark .tab.dark:hover {
+  background: #21262d !important;
+  color: #8b949e !important;
+}
+
+/* Active tab */
+.theme-protocol-dark .tab.active,
+.theme-protocol-dark .tab.active.dark {
+  background: #0d1117 !important;
+  color: #e6edf3 !important;
+  border-bottom-color: var(--bg-page) !important;
+}
+
+/* Tab actions */
+.theme-protocol-dark .tab-bar-action-btn,
+.theme-protocol-dark .tab-bar-action-btn.dark {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .tab-bar-action-btn:hover,
+.theme-protocol-dark .tab-bar-action-btn.dark:hover {
+  background: rgba(80, 150, 179, 0.08) !important;
+  color: #8b949e !important;
+}
+
+/* Tab dirty dot: steel blue */
+.theme-protocol-dark .tab-dirty-dot {
+  background: #5096b3 !important;
+}
+
+/* ── Editor breadcrumb header ── */
+.theme-protocol-dark .editor-header,
+.theme-protocol-dark .editor-header.dark {
+  background: #0d1117 !important;
+  border-bottom-color: var(--border-default) !important;
+  color: #6e7681 !important;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+}
+
+/* ── Editor dropdown menu ── */
+.theme-protocol-dark .editor-dropdown,
+.theme-protocol-dark .editor-dropdown.dark {
+  background: #0d1117 !important;
+  border-color: var(--border-default) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+.theme-protocol-dark .editor-dropdown-item.dark {
+  color: #8b949e !important;
+  font-family: var(--font-mono);
+}
+
+.theme-protocol-dark .editor-dropdown-item.dark:hover {
+  background: #21262d !important;
+  color: #e6edf3 !important;
+}
+
+/* ── Empty state (no tabs open) — Sulla icon fix ── */
+.theme-protocol-dark .empty-state {
+  color: #6e7681 !important;
+}
+
+/* Recolor the green Sulla icon to steel blue */
+.theme-protocol-dark .empty-icon-img {
+  filter: brightness(0) saturate(100%) invert(55%) sepia(30%) saturate(500%) hue-rotate(160deg) brightness(95%) contrast(90%) !important;
+  opacity: 0.4;
+}
+
+.theme-protocol-dark .empty-text {
+  color: #8b949e !important;
+  font-family: var(--font-mono);
+}
+
+.theme-protocol-dark .empty-hint {
+  color: #6e7681 !important;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+}
+
+/* Loading spinner: steel blue */
+.theme-protocol-dark .loading-spinner {
+  border-color: var(--brand-glow-soft) !important;
+  border-top-color: var(--accent-primary) !important;
+}
+
+/* ── Bottom pane (terminal area) ── */
+.theme-protocol-dark .editor-bottom,
+.theme-protocol-dark .editor-bottom.dark {
+  background: var(--bg-surface-alt) !important;
+  border-top-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .terminal-tabs-header,
+.theme-protocol-dark .terminal-tabs-header.dark {
+  background: var(--bg-surface-alt) !important;
+  border-bottom-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .terminal-tab {
+  background: var(--bg-surface-alt) !important;
+  color: var(--text-secondary) !important;
+  font-family: var(--font-mono) !important;
+}
+
+.theme-protocol-dark .terminal-tab:hover {
+  background: #21262d !important;
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .terminal-tab.active {
+  background: #0d1117 !important;
+  color: #e6edf3 !important;
+  border-bottom-color: var(--bg-page) !important;
+}
+
+/* ── Right pane ── */
+.theme-protocol-dark .right-pane,
+.theme-protocol-dark .right-pane.dark {
+  background: #161b22 !important;
+  border-left-color: var(--border-default) !important;
+}
+
+/* Right pane tabs */
+.theme-protocol-dark .rp-tab-bar {
+  background: #161b22 !important;
+  border-bottom-color: var(--border-default) !important;
+}
+
+.theme-protocol-dark .rp-tab,
+.theme-protocol-dark .rp-tab.dark {
+  color: #6e7681 !important;
+  font-family: var(--font-mono);
+}
+
+.theme-protocol-dark .rp-tab.active,
+.theme-protocol-dark .rp-tab.active.dark {
+  color: #5096b3 !important;
+  border-bottom-color: var(--accent-primary) !important;
+}
+
+/* ── Resize handles: steel blue ── */
+.theme-protocol-dark .resize-handle:hover,
+.theme-protocol-dark .resize-handle:active,
+.theme-protocol-dark .resize-handle.dark:hover,
+.theme-protocol-dark .resize-handle.dark:active {
+  background: #5096b3 !important;
+}
+
+/* ── Editor footer (status bar) ── */
+.theme-protocol-dark .editor-footer,
+.theme-protocol-dark .editor-footer.dark {
+  background: #0d1117 !important;
+  border-top-color: var(--border-default) !important;
+  color: #6e7681 !important;
+  font-family: var(--font-mono);
+}
+
+.theme-protocol-dark .editor-footer .footer-lang {
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+.theme-protocol-dark .editor-footer .footer-state.state-ok {
+  color: #3fb950 !important;
+}
+
+.theme-protocol-dark .editor-footer .footer-progress-bar-fill {
+  background: #5096b3 !important;
+}
+
+/* ── Save button: steel blue ── */
+.theme-protocol-dark .save-button,
+.theme-protocol-dark .save-button.dark {
+  background: #4485a0 !important;
+}
+
+.theme-protocol-dark .save-button:hover:not(:disabled),
+.theme-protocol-dark .save-button.dark:hover:not(:disabled) {
+  background: #5096b3 !important;
+  box-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+}
+
+.theme-protocol-dark .save-button:disabled,
+.theme-protocol-dark .save-button.dark:disabled {
+  background: #21262d !important;
+  color: #484f58 !important;
+}
+
+/* ── Workflow save bar ── */
+.theme-protocol-dark .workflow-save-bar,
+.theme-protocol-dark .workflow-save-bar.dark {
+  background: rgba(22, 27, 34, 0.9) !important;
+  border-color: var(--border-default) !important;
+  backdrop-filter: blur(12px);
+  font-family: var(--font-mono);
+}
+
+.theme-protocol-dark .workflow-save-status.saving {
+  color: #5096b3 !important;
+}
+
+.theme-protocol-dark .workflow-save-status.saved {
+  color: #3fb950 !important;
+}
+
+.theme-protocol-dark .workflow-save-btn,
+.theme-protocol-dark .workflow-save-btn.dark {
+  background: #21262d !important;
+  border-color: var(--border-default) !important;
+  color: #8b949e !important;
+}
+
+.theme-protocol-dark .workflow-save-btn:hover,
+.theme-protocol-dark .workflow-save-btn.dark:hover {
+  background: var(--border-default) !important;
+  border-color: var(--accent-primary) !important;
+  color: var(--accent-primary) !important;
+}
+
+.theme-protocol-dark .workflow-save-divider,
+.theme-protocol-dark .workflow-save-divider.dark {
+  background: var(--border-default) !important;
+}
+
+/* Workflow settings inputs */
+.theme-protocol-dark .workflow-settings-input,
+.theme-protocol-dark .workflow-settings-textarea,
+.theme-protocol-dark .workflow-settings-input.dark,
+.theme-protocol-dark .workflow-settings-textarea.dark {
+  background: #0d1117 !important;
+  border-color: var(--border-default) !important;
+  color: #e6edf3 !important;
+  font-family: var(--font-mono);
+}
+
+.theme-protocol-dark .workflow-settings-input:focus,
+.theme-protocol-dark .workflow-settings-textarea:focus {
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 10px var(--brand-glow-soft) !important;
+}
+
+/* ── Inject variable context menu ── */
+.theme-protocol-dark .inject-menu,
+.theme-protocol-dark .inject-menu.dark {
+  background: #0d1117 !important;
+  border-color: var(--border-default) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+  font-family: var(--font-mono);
+}
+
+.theme-protocol-dark .inject-menu-item.dark:hover {
+  background: #21262d !important;
+}
+
+/* ── Pane close buttons ── */
+.theme-protocol-dark .pane-close-btn,
+.theme-protocol-dark .pane-close-btn.dark {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .pane-close-btn:hover,
+.theme-protocol-dark .pane-close-btn.dark:hover {
+  background: rgba(80, 150, 179, 0.08) !important;
+  color: #8b949e !important;
+}
+
+/* ── Add terminal button: steel blue ── */
+.theme-protocol-dark .add-terminal-btn {
+  background: #4485a0 !important;
+}
+
+.theme-protocol-dark .add-terminal-btn:hover {
+  background: #5096b3 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Visual Depth — shadows & borders for element separation
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Stat cards: subtle shadow for depth against Level 0 page */
+.theme-protocol-dark .stat-card {
+  box-shadow: var(--shadow-sm);
+}
+
+/* Panels: subtle shadow for depth */
+.theme-protocol-dark .panel {
+  box-shadow: var(--shadow-sm);
+}
+
+/* Conversation cards: shadow for depth */
+.theme-protocol-dark .conv-card {
+  box-shadow: var(--shadow-sm);
+}
+
+/* Sidebar active state: steel blue left border + tinted background */
+.theme-protocol-dark .icon-panel .icon-btn.active {
+  border-left: 2px solid #5096b3 !important;
+}
+
+/* Cards on hover: lift with stronger border */
+.theme-protocol-dark .stat-card:hover,
+.theme-protocol-dark .panel:hover,
+.theme-protocol-dark .conv-card:hover {
+  border-color: var(--border-strong) !important;
+  box-shadow: var(--shadow-md);
+}
+
+/* Live bubbles & user messages: ensure visible against page bg */
+.theme-protocol-dark .live-bubble {
+  box-shadow: var(--shadow-sm);
+}

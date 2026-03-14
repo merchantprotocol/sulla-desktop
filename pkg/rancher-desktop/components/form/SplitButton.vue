@@ -206,7 +206,7 @@ export default defineComponent({
 
     &.role-secondary {
       .indicator {
-        border-left: 1px solid var(--primary);
+        border-left: 1px solid var(--border-accent);
       }
     }
   }

@@ -178,19 +178,13 @@ export default defineComponent({
   position: fixed;
   z-index: 9999;
   min-width: 180px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 6px;
   padding: 4px 0;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 13px;
-}
-
-.tab-context-menu.dark {
-  background: #1e293b;
-  border-color: #334155;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-code);
 }
 
 .tab-context-menu .context-menu-item {
@@ -201,53 +195,33 @@ export default defineComponent({
   padding: 6px 12px;
   border: none;
   background: none;
-  color: #333;
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
   line-height: 1;
 }
 
 .tab-context-menu .context-menu-item:hover {
-  background: #f1f5f9;
-}
-
-.tab-context-menu.dark .context-menu-item {
-  color: #e2e8f0;
-}
-
-.tab-context-menu.dark .context-menu-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
 }
 
 .tab-context-menu .context-menu-sep {
   height: 1px;
-  background: #e2e8f0;
+  background: var(--bg-surface-hover);
   margin: 4px 0;
-}
-
-.tab-context-menu.dark .context-menu-sep {
-  background: #334155;
 }
 
 .tab-context-menu .context-menu-subheader {
   padding: 8px 12px;
-  font-weight: bold;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.tab-context-menu.dark .context-menu-subheader {
-  color: #94a3b8;
+  font-weight: var(--weight-semibold);
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
 }
 
 .tab-context-menu .context-menu-shortcut {
   margin-left: auto;
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   padding-left: 16px;
-}
-
-.tab-context-menu.dark .context-menu-shortcut {
-  color: #64748b;
 }
 </style>

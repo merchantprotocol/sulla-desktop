@@ -578,9 +578,9 @@ import { formatFuzzyTime } from '@pkg/utils/dateFormat';
 import type { IntegrationAccount } from '@pkg/agent/services/IntegrationService';
 import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useTheme } from '@pkg/composables/useTheme';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const route = useRoute();
 const router = useRouter();
 const integrationService = getIntegrationService();
@@ -651,11 +651,6 @@ const previousImage = () => {
       ? integration.value.media.length - 1 
       : currentImageIndex.value - 1;
   }
-};
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
 };
 
 const refreshAccounts = async () => {
@@ -973,13 +968,6 @@ const handleConnect = async () => {
 };
 
 onMounted(async () => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
-
   // Initialize integration service
   await integrationService.initialize();
 
@@ -1021,13 +1009,8 @@ onMounted(async () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 /* Custom styles for integration detail page */

@@ -217,7 +217,7 @@ export default {
   }
 
   .text-xl {
-    font-size: 1.25rem;
+    font-size: var(--fs-heading);
     line-height: 1.75rem;
   }
 

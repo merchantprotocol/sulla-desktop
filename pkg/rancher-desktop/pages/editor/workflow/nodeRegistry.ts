@@ -26,7 +26,7 @@ const ICONS = {
 
   chatCompletions: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
 
-  agent: '', // Uses <img> with sulla-node-icon.png
+  agent: '', // Uses <img> with robot-512-nobg.png
 
   router: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 6a9 9 0 0 1 9 0"/><path d="M6 12a6 6 0 0 1 6 6"/></svg>',
 

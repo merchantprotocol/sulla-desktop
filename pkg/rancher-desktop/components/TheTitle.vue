@@ -112,7 +112,7 @@ export default defineComponent({
   .btn-back {
     height: 27px;
     font-weight: bolder;
-    font-size: 1.5em;
+    font-size: var(--fs-heading);
   }
 
   .btn-back:focus {
@@ -152,7 +152,7 @@ export default defineComponent({
     gap: 0.5rem;
 
     span {
-      font-size: 30px;
+      font-size: var(--fs-display);
       color: var(--primary);
     }
   }

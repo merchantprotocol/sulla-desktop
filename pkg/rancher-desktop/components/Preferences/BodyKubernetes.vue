@@ -206,7 +206,7 @@ export default defineComponent({
 
 <style lang="scss" scoped>
   .checkbox-title {
-    font-size: 1rem;
+    font-size: var(--fs-body);
     line-height: 1.5rem;
     padding-bottom: 0.5rem;
   }

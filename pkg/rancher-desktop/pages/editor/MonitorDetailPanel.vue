@@ -329,13 +329,9 @@ function convLogClass(type: string): string {
   height: 100%;
   display: flex;
   flex-direction: column;
-  font-size: 12px;
-  color: #334155;
-  background: #ffffff;
-}
-.monitor-detail.dark {
-  color: #cbd5e1;
-  background: #0f172a;
+  font-size: var(--fs-body-sm);
+  color: var(--text-primary);
+  background: var(--bg-page);
 }
 
 .detail-toolbar {
@@ -343,21 +339,19 @@ function convLogClass(type: string): string {
   align-items: center;
   gap: 10px;
   padding: 6px 12px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--bg-surface-hover);
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-body-sm);
 }
-.dark .detail-toolbar { border-color: #334155; }
 
 .detail-label { display: flex; align-items: center; gap: 4px; }
-.detail-label strong { color: #0f172a; }
-.dark .detail-label strong { color: #f1f5f9; }
+.detail-label strong { color: var(--text-primary); }
 
 .tap-toggle {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
   cursor: pointer;
   user-select: none;
 }
@@ -365,44 +359,39 @@ function convLogClass(type: string): string {
 
 .detail-btn {
   padding: 3px 10px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 4px;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
 }
-.detail-btn:hover { background: rgba(0,0,0,0.05); }
-.dark .detail-btn { border-color: #334155; }
-.dark .detail-btn:hover { background: rgba(255,255,255,0.05); }
+.detail-btn:hover { background: var(--bg-hover); }
 
-.msg-count { margin-left: auto; font-size: 11px; color: #94a3b8; }
+.msg-count { margin-left: auto; font-size: var(--fs-body-sm); color: var(--text-muted); }
 
 .detail-scroll { flex: 1; overflow-y: auto; }
 
 /* ── Message table ── */
-.msg-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.msg-table { width: 100%; border-collapse: collapse; font-size: var(--fs-body-sm); }
 .msg-table th {
   position: sticky;
   top: 0;
-  background: #f8fafc;
+  background: var(--bg-surface);
   text-align: left;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   padding: 4px 8px;
-  border-bottom: 1px solid #e2e8f0;
-  color: #64748b;
-  font-size: 10px;
+  border-bottom: 1px solid var(--bg-surface-hover);
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: var(--tracking-wide);
 }
-.dark .msg-table th { background: #1e293b; border-color: #334155; color: #94a3b8; }
 
 .msg-row { cursor: pointer; }
-.msg-row:hover { background: rgba(0,0,0,0.02); }
-.dark .msg-row:hover { background: rgba(255,255,255,0.02); }
+.msg-row:hover { background: var(--bg-hover); }
 
-.msg-row td { padding: 3px 8px; border-bottom: 1px solid #f1f5f9; }
-.dark .msg-row td { border-color: #1e293b; }
+.msg-row td { padding: 3px 8px; border-bottom: 1px solid var(--bg-surface-alt); }
 
 .msg-in { }
 .msg-out { }
@@ -412,25 +401,22 @@ function convLogClass(type: string): string {
 .col-type { width: 100px; }
 .col-channel { width: 100px; }
 
-.cell-time { font-family: monospace; color: #94a3b8; white-space: nowrap; }
-.cell-dir { font-size: 10px; font-weight: 600; }
-.dir-in { color: #3b82f6; }
-.dir-out { color: #22c55e; }
-.cell-type { font-weight: 500; }
-.cell-channel { font-family: monospace; color: #64748b; }
-.dark .cell-channel { color: #94a3b8; }
-.cell-data { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px; color: #64748b; }
-.dark .cell-data { color: #94a3b8; }
+.cell-time { font-family: var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+.cell-dir { font-size: var(--fs-caption); font-weight: var(--weight-semibold); }
+.dir-in { color: var(--text-info); }
+.dir-out { color: var(--text-success); }
+.cell-type { font-weight: var(--weight-medium); }
+.cell-channel { font-family: var(--font-mono); color: var(--text-secondary); }
+.cell-data { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px; color: var(--text-secondary); }
 
 .msg-detail {
   padding: 8px 12px;
-  border-top: 1px solid #e2e8f0;
-  background: #f8fafc;
+  border-top: 1px solid var(--bg-surface-hover);
+  background: var(--bg-surface);
 }
-.dark .msg-detail { background: #1e293b; border-color: #334155; }
 .msg-json {
-  font-family: monospace;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 200px;
@@ -440,17 +426,14 @@ function convLogClass(type: string): string {
 
 /* ── Key-value grid ── */
 .kv-grid { padding: 10px 12px; }
-.kv-row { display: flex; gap: 12px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid #f1f5f9; }
-.dark .kv-row { border-color: #1e293b; }
+.kv-row { display: flex; gap: 12px; padding: 4px 0; font-size: var(--fs-body-sm); border-bottom: 1px solid var(--bg-surface-alt); }
 .kv-full { flex-direction: column; }
-.kv-key { width: 120px; flex-shrink: 0; font-weight: 500; color: #64748b; }
-.dark .kv-key { color: #94a3b8; }
+.kv-key { width: 120px; flex-shrink: 0; font-weight: var(--weight-medium); color: var(--text-secondary); }
 .kv-val { flex: 1; }
-.kv-pre { font-family: monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all; margin: 4px 0 0; max-height: 200px; overflow-y: auto; }
+.kv-pre { font-family: var(--font-mono); font-size: var(--fs-body-sm); white-space: pre-wrap; word-break: break-all; margin: 4px 0 0; max-height: 200px; overflow-y: auto; }
 
 /* ── Event log ── */
-.event-log-header { padding: 8px 12px 4px; font-weight: 600; font-size: 12px; color: #0f172a; border-top: 1px solid #e2e8f0; }
-.dark .event-log-header { color: #f1f5f9; border-color: #334155; }
+.event-log-header { padding: 8px 12px 4px; font-weight: var(--weight-semibold); font-size: var(--fs-body-sm); color: var(--text-primary); border-top: 1px solid var(--bg-surface-hover); }
 
 .event-log { padding: 0 4px; }
 
@@ -459,32 +442,27 @@ function convLogClass(type: string): string {
   align-items: flex-start;
   gap: 8px;
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
   border-radius: 2px;
 }
 
-.line-err { background: rgba(239, 68, 68, 0.06); }
-.line-ok { background: rgba(34, 197, 94, 0.06); }
-.line-info { background: rgba(59, 130, 246, 0.06); }
-.line-warn { background: rgba(245, 158, 11, 0.06); }
-.dark .line-err { background: rgba(239, 68, 68, 0.1); }
-.dark .line-ok { background: rgba(34, 197, 94, 0.1); }
-.dark .line-info { background: rgba(59, 130, 246, 0.1); }
-.dark .line-warn { background: rgba(245, 158, 11, 0.1); }
+.line-err { background: var(--bg-error); }
+.line-ok { background: var(--bg-success); }
+.line-info { background: var(--bg-info); }
+.line-warn { background: var(--bg-warning); }
 
-.log-time { flex-shrink: 0; font-family: monospace; color: #94a3b8; width: 85px; }
-.log-type { flex-shrink: 0; font-weight: 500; width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-time { flex-shrink: 0; font-family: var(--font-mono); color: var(--text-muted); width: 85px; }
+.log-type { flex-shrink: 0; font-weight: var(--weight-medium); width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.log-dur { flex-shrink: 0; color: #94a3b8; }
-.log-err { color: #ef4444; }
+.log-dur { flex-shrink: 0; color: var(--text-muted); }
+.log-err { color: var(--text-error); }
 
-.service-info { font-family: monospace; font-size: 11px; padding: 12px; white-space: pre-wrap; word-break: break-all; margin: 0; }
-.empty-msg { padding: 16px; text-align: center; color: #94a3b8; }
+.service-info { font-family: var(--font-mono); font-size: var(--fs-body-sm); padding: 12px; white-space: pre-wrap; word-break: break-all; margin: 0; }
+.empty-msg { padding: 16px; text-align: center; color: var(--text-muted); }
 
 /* ── Text colors ── */
-.text-ok { color: #22c55e; }
-.text-err { color: #ef4444; }
-.text-info { color: #3b82f6; }
-.text-warn { color: #d97706; }
-.dark .text-warn { color: #fbbf24; }
+.text-ok { color: var(--text-success); }
+.text-err { color: var(--text-error); }
+.text-info { color: var(--text-info); }
+.text-warn { color: var(--text-warning); }
 </style>

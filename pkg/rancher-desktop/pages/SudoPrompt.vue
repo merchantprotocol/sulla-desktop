@@ -144,7 +144,7 @@ export default defineComponent({
   }
 
   code::-webkit-scrollbar-corner {
-    background: rgba(0,0,0,0.5);
+    background: var(--bg-overlay);
   }
 
   #suppress {

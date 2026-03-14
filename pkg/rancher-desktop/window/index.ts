@@ -134,6 +134,11 @@ export function openMain() {
       height:         defaultHeight,
       resizable:      !process.env.RD_MOCK_FOR_SCREENSHOTS, // remove window's shadows while taking screenshots
       icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      // macOS: hide native title bar, keep traffic lights overlaid on content
+      ...(os.platform() === 'darwin' ? {
+        titleBarStyle:        'hiddenInset',
+        trafficLightPosition: { x: 16, y: 16 },
+      } : {}),
       webPreferences: {
         devTools:         !app.isPackaged,
         nodeIntegration:  true,
@@ -332,6 +337,11 @@ export function openEditor() {
       height:         defaultHeight,
       resizable:      true,
       icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      // macOS: hide native title bar, keep traffic lights overlaid on content
+      ...(os.platform() === 'darwin' ? {
+        titleBarStyle:        'hiddenInset',
+        trafficLightPosition: { x: 16, y: 8 },
+      } : {}),
       webPreferences: {
         devTools:         !app.isPackaged,
         nodeIntegration:  true,

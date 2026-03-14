@@ -84,24 +84,22 @@ const navItems = [
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  font-size: 12px;
-  color: #334155;
+  font-size: var(--fs-body-sm);
+  color: var(--text-primary);
 }
-.monitor-nav.dark { color: #94a3b8; }
 
 .pane-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  color: #64748b;
-  border-bottom: 1px solid #e2e8f0;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
 }
-.dark .pane-header { border-color: #334155; color: #94a3b8; }
 
 .pane-close {
   background: none;
@@ -112,8 +110,7 @@ const navItems = [
   border-radius: 3px;
   display: flex;
 }
-.pane-close:hover { background: rgba(0,0,0,0.08); }
-.dark .pane-close:hover { background: rgba(255,255,255,0.08); }
+.pane-close:hover { background: var(--bg-hover); }
 
 .nav-items {
   flex: 1;
@@ -131,50 +128,42 @@ const navItems = [
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-code);
   text-align: left;
   transition: background 0.1s;
 }
-.nav-item:hover { background: rgba(0,0,0,0.05); }
-.dark .nav-item:hover { background: rgba(255,255,255,0.05); }
+.nav-item:hover { background: var(--bg-hover); }
 
 .nav-item.active {
-  background: rgba(0, 120, 212, 0.08);
-  color: #0078d4;
-  font-weight: 500;
-}
-.dark .nav-item.active {
-  background: rgba(0, 120, 212, 0.15);
-  color: #60a5fa;
+  background: var(--bg-info);
+  color: var(--accent-primary);
+  font-weight: var(--weight-medium);
 }
 
 .nav-label { flex: 1; }
 
 .nav-badge {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   padding: 1px 6px;
   border-radius: 8px;
 }
 
 .nav-footer {
   padding: 8px 10px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-default);
   flex-shrink: 0;
 }
-.dark .nav-footer { border-color: #334155; }
 
 .refresh-btn {
   width: 100%;
   padding: 6px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 4px;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
 }
-.refresh-btn:hover { background: rgba(0,0,0,0.05); }
-.dark .refresh-btn { border-color: #334155; }
-.dark .refresh-btn:hover { background: rgba(255,255,255,0.05); }
+.refresh-btn:hover { background: var(--bg-hover); }
 </style>

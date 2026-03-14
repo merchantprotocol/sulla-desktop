@@ -67,7 +67,7 @@ export default {
          position:  absolute;
          right: 30px;
          top: $input-padding-lg;
-         font-size: 20px;
+         font-size: var(--fs-heading);
          z-index: z-index(hoverOverContent);
 
      }
@@ -86,7 +86,7 @@ export default {
         }
     }
 
-    @mixin tooltipColors($color) {
+    @mixin tooltipColors($color, $borderColor) {
         .status-icon {
             color: $color;
         }
@@ -94,11 +94,11 @@ export default {
             .tooltip-inner {
                 color: var(--input-bg);
                 background: $color;
-                border-color: $color;
+                border-color: $borderColor;
             }
 
             .tooltip-arrow {
-                border-bottom-color: $color;
+                border-bottom-color: $borderColor;
                 &:after {
                     border: none;
                 }
@@ -107,15 +107,15 @@ export default {
     }
 
     &.error {
-        @include tooltipColors(var(--error));
+        @include tooltipColors(var(--error), var(--border-error));
     }
 
     &.warning {
-        @include tooltipColors(var(--warning));
+        @include tooltipColors(var(--warning), var(--border-warning));
     }
 
     &.success {
-        @include tooltipColors(var(--success));
+        @include tooltipColors(var(--success), var(--border-success));
     }
 }
 </style>

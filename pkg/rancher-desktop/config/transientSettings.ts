@@ -4,6 +4,7 @@ import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 
 export const navItemNames = [
   'Application',
+  'Appearance',
   'WSL',
   'Virtual Machine',
   'Container Engine',

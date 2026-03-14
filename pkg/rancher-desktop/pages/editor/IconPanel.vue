@@ -112,17 +112,12 @@ export default defineComponent({
 .icon-panel {
   width: 45px;
   flex-shrink: 0;
-  background: #f8fafc;
-  border-right: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--bg-surface-hover);
   display: flex;
   flex-direction: column;
   padding: 8px 0;
   gap: 9px;
-}
-
-.icon-panel.dark {
-  background: #1e293b;
-  border-right-color: #334155;
 }
 
 .icon-btn {
@@ -130,7 +125,7 @@ export default defineComponent({
   height: 45px;
   border: none;
   background: transparent;
-  color: #64748b;
+  color: var(--text-muted);
   border-radius: 0;
   cursor: pointer;
   display: flex;
@@ -141,27 +136,13 @@ export default defineComponent({
 }
 
 .icon-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: #334155;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .icon-btn.active {
-  background: rgba(0, 0, 0, 0.1);
-  color: #0078d4;
-}
-
-.dark .icon-btn {
-  color: #94a3b8;
-}
-
-.dark .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: #cbd5e1;
-}
-
-.dark .icon-btn.active {
-  background: rgba(255, 255, 255, 0.1);
-  color: #0078d4;
+  background: var(--bg-hover);
+  color: var(--accent-primary, #0078d4);
 }
 
 .icon-btn svg {
@@ -176,7 +157,7 @@ export default defineComponent({
   top: 0;
   bottom: 0;
   width: 3px;
-  background: #0078d4;
+  background: var(--accent-primary, #0078d4);
   border-top-right-radius: 3px;
   border-bottom-right-radius: 3px;
 }

@@ -1,0 +1,75 @@
+/* ------------------------------------------------------------------ */
+/*  Nord Light theme — based on Nord snow/frost colors                */
+/* ------------------------------------------------------------------ */
+.theme-nord-light {
+  /* Backgrounds */
+  --bg-page: #eceff4;
+  --bg-surface: #e5e9f0;
+  --bg-surface-alt: #d8dee9;
+  --bg-surface-hover: #c9d1e0;
+  --bg-header: #eceff4;
+  --bg-input: #ffffff;
+  --bg-overlay: rgba(0, 0, 0, 0.5);
+
+  /* Text */
+  --text-primary: #2e3440;
+  --text-secondary: #3b4252;
+  --text-muted: #4c566a;
+  --text-link: #5e81ac;
+  --text-on-accent: #eceff4;
+  --text-success: #a3be8c;
+  --text-error: #bf616a;
+  --text-warning: #ebcb8b;
+  --text-info: #5e81ac;
+
+  /* Borders */
+  --border-default: #d8dee9;
+  --border-strong: #c0c8d8;
+  --border-subtle: #e5e9f0;
+
+  /* Semantic Backgrounds */
+  --bg-primary: #eceff4;
+  --bg-hover: rgba(46, 52, 64, 0.05);
+  --bg-success: rgba(163, 190, 140, 0.15);
+  --bg-error: rgba(191, 97, 106, 0.12);
+  --bg-warning: rgba(235, 203, 139, 0.15);
+  --bg-info: rgba(94, 129, 172, 0.12);
+  --bg-accent: rgba(180, 142, 173, 0.12);
+
+  /* Accent */
+  --accent-primary: #88c0d0;
+  --accent-primary-hover: #81a1c1;
+  --text-accent: #b48ead;
+
+  /* Semantic Borders */
+  --border-success: rgba(163, 190, 140, 0.5);
+  --border-error: rgba(191, 97, 106, 0.5);
+  --border-warning: rgba(235, 203, 139, 0.5);
+  --border-info: rgba(136, 192, 208, 0.5);
+  --border-accent: rgba(136, 192, 208, 0.5);
+  --border-focus: rgba(136, 192, 208, 0.5);
+
+  /* Status */
+  --status-success: #a3be8c;
+  --status-warning: #ebcb8b;
+  --status-error: #bf616a;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(46, 52, 64, 0.06);
+  --shadow-md: 0 4px 6px -1px rgba(46, 52, 64, 0.1), 0 2px 4px -2px rgba(46, 52, 64, 0.08);
+  --ring-color: rgba(136, 192, 208, 0.5);
+
+  /* Editor */
+  --editor-bg: #e5e9f0;
+  --editor-border: #c0c8d8;
+  --editor-btn-color: #3b4252;
+  --editor-btn-hover: rgba(46, 52, 64, 0.08);
+  --editor-separator: #d8dee9;
+
+  /* Terminal */
+  --terminal-bg: #e5e9f0;
+  --terminal-fg: #2e3440;
+  --terminal-cursor: #5e81ac;
+  --terminal-selection-bg: rgba(136, 192, 208, 0.25);
+  --terminal-selection-fg: #2e3440;
+}

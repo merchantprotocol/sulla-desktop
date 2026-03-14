@@ -6,29 +6,19 @@
     @submit.prevent
   >
     <div
-      class="relative overflow-visible rounded-lg bg-white/95 shadow-sm ring-1 ring-slate-200 transition-shadow focus-within:ring-slate-300 dark:bg-slate-800/75 dark:ring-white/5 dark:ring-inset dark:focus-within:ring-white/20"
+      class="relative overflow-visible rounded-lg bg-surface shadow-sm ring-1 ring-edge transition-shadow focus-within:ring-edge-strong"
       :class="panelClass"
     >
       <div class="absolute -top-px right-11 left-20 h-[2px] bg-linear-to-r from-sky-300/0 via-sky-300/70 to-sky-300/0"></div>
       <div class="absolute right-20 -bottom-px left-11 h-[2px] bg-linear-to-r from-blue-400/0 via-blue-400 to-blue-400/0"></div>
       <div class="flex flex-wrap items-end gap-1 p-2">
-        <button
-          type="button"
-          class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#0d0d0d] transition-colors hover:bg-[#f0f0f0] disabled:opacity-60 dark:text-white dark:hover:bg-white/10"
-          aria-label="Attach"
-          :disabled="showOverlay"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />
-          </svg>
-        </button>
-
         <textarea
           ref="composerTextareaEl"
           v-model="queryValue"
           name="input"
           placeholder="What do you want to know?"
-          class="my-2 h-6 max-h-[400px] min-w-0 flex-1 resize-none bg-transparent text-[#0d0d0d] text-base leading-6 outline-none placeholder:text-[#9a9a9a] dark:text-white dark:placeholder:text-neutral-500"
+          class="my-2 h-6 max-h-[400px] min-w-0 flex-1 resize-none bg-transparent text-content text-base leading-6 outline-none placeholder:text-content-muted"
+          style="padding-left: 10px"
           :class="isComposerMultiline ? 'basis-full order-2' : 'order-2'"
           @input="updateComposerLayout"
           @keydown.enter.exact.prevent="emit('send')"
@@ -42,12 +32,12 @@
             <button
               type="button"
               :ref="modelSelector.buttonRef"
-              class="flex h-9 shrink-0 items-center gap-2 rounded-full px-2.5 text-[#0d0d0d] hover:bg-[#f0f0f0] disabled:opacity-60 dark:text-white dark:hover:bg-white/10"
+              class="flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2 text-content-muted hover:text-content-secondary hover:bg-surface-hover disabled:opacity-60"
               aria-label="Model select"
               :disabled="showOverlay"
               @click="handleModelSwitcherClick"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0" aria-hidden="true">
                 <path d="M12 8V4" />
                 <path d="M8 4h8" />
                 <rect x="6" y="8" width="12" height="10" rx="2" />
@@ -57,9 +47,9 @@
                 <path d="M14.5 12h.01" />
                 <path d="M10 15h4" />
               </svg>
-              <div class="flex items-center gap-1 overflow-hidden">
-                <span class="whitespace-nowrap font-semibold text-sm">{{ modelSelector.activeModelLabelValue }}</span>
-                <svg width="16" height="16" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" class="shrink-0" aria-hidden="true">
+              <div class="flex items-center gap-0.5 overflow-hidden">
+                <span class="whitespace-nowrap font-medium text-xs">{{ modelSelector.activeModelLabelValue }}</span>
+                <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" class="shrink-0" aria-hidden="true">
                   <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" />
                 </svg>
               </div>
@@ -67,15 +57,15 @@
 
             <div
               v-if="modelSelector.showModelMenuValue"
-              class="agent-model-selector-menu absolute bottom-12 right-0 z-[9999] w-80 max-h-96 overflow-y-auto overflow-x-hidden rounded-2xl border border-black/10 bg-white shadow-xl dark:border-white/10 dark:bg-slate-900"
+              class="agent-model-selector-menu absolute bottom-12 right-0 z-[9999] w-80 max-h-96 overflow-y-auto overflow-x-hidden rounded-2xl border border-edge bg-page shadow-xl"
             >
-              <div class="flex items-center justify-between px-3 py-2 sticky top-0 bg-white dark:bg-slate-900 z-10">
-                <div class="text-xs font-semibold tracking-wide text-[#0d0d0d]/60 dark:text-white/60">
+              <div class="flex items-center justify-between px-3 py-2 sticky top-0 bg-page z-10">
+                <div class="text-xs font-semibold tracking-wide text-content-secondary">
                   Models
                 </div>
                 <button
                   type="button"
-                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#0d0d0d]/60 hover:bg-[#f4f4f4] hover:text-[#0d0d0d] dark:text-white/60 dark:hover:bg-white/10 dark:hover:text-white"
+                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-content-secondary hover:bg-surface-hover hover:text-content"
                   @click="modelSelector.hideModelMenu"
                   aria-label="Close model selector"
                 >
@@ -85,19 +75,19 @@
                 </button>
               </div>
 
-              <div v-if="modelSelector.loadingProvidersValue" class="px-3 py-2 text-sm text-[#0d0d0d]/70 dark:text-white/70">
+              <div v-if="modelSelector.loadingProvidersValue" class="px-3 py-2 text-sm text-content-secondary">
                 Loading providers...
               </div>
 
-              <div v-if="modelSelector.providerGroupsValue.length === 0 && !modelSelector.loadingProvidersValue" class="px-3 py-2 text-sm text-[#0d0d0d]/70 dark:text-white/70">
+              <div v-if="modelSelector.providerGroupsValue.length === 0 && !modelSelector.loadingProvidersValue" class="px-3 py-2 text-sm text-content-secondary">
                 No providers connected
               </div>
 
               <template v-for="(group, gIdx) in modelSelector.providerGroupsValue" :key="group.providerId">
-                <div v-if="gIdx > 0" class="border-t border-black/10 dark:border-white/10" />
+                <div v-if="gIdx > 0" class="border-t border-edge" />
 
                 <div class="flex items-center gap-2 px-3 py-2">
-                  <div class="text-xs font-semibold tracking-wide text-[#0d0d0d]/60 dark:text-white/60">
+                  <div class="text-xs font-semibold tracking-wide text-content-secondary">
                     {{ group.providerName }}
                   </div>
                   <span
@@ -106,7 +96,7 @@
                   >Primary</span>
                 </div>
 
-                <div v-if="group.loading" class="px-3 py-1.5 text-xs text-[#0d0d0d]/50 dark:text-white/50">
+                <div v-if="group.loading" class="px-3 py-1.5 text-xs text-content-muted">
                   Loading models...
                 </div>
 
@@ -114,11 +104,11 @@
                   v-for="m in group.models"
                   :key="`${group.providerId}-${m.modelId}`"
                   type="button"
-                  class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-[#0d0d0d] hover:bg-[#f4f4f4] dark:text-white dark:hover:bg-white/10"
+                  class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-content hover:bg-surface-hover"
                   @click="modelSelector.selectModel(m)"
                 >
                   <span class="min-w-0 flex-1 truncate">{{ m.modelLabel }}</span>
-                  <span v-if="m.isActiveModel" class="shrink-0 text-xs font-semibold text-[#0d0d0d]/60 dark:text-white/60">Active</span>
+                  <span v-if="m.isActiveModel" class="shrink-0 text-xs font-semibold text-content-secondary">Active</span>
                 </button>
               </template>
             </div>
@@ -128,7 +118,7 @@
             <button
               v-if="queryValue.trim()"
               type="button"
-              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0d0d0d] text-white disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer dark:bg-white dark:text-[#0d0d0d]"
+              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-content text-page disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer"
               aria-label="Send"
               :disabled="showOverlay"
               @click="emit('send')"
@@ -154,7 +144,7 @@
             <button
               v-if="!queryValue.trim() && !graphRunning"
               type="button"
-              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0d0d0d] text-white disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer dark:bg-white dark:text-[#0d0d0d]"
+              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-content text-page disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer"
               aria-label="Voice"
               :disabled="showOverlay"
               @click="emit('primaryAction')"

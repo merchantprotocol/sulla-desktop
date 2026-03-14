@@ -495,14 +495,9 @@ async function save() {
   width: 100%;
   height: 100%;
   overflow-y: auto;
-  background: #ffffff;
-  color: #333;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-.agent-form.dark {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
 }
 
 .form-inner {
@@ -512,27 +507,23 @@ async function save() {
 }
 
 .form-title {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-semibold);
   margin: 0 0 24px 0;
 }
 
 .form-label {
   display: block;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.3px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
   margin: 16px 0 6px 0;
 }
 
-.agent-form.dark .form-label {
-  color: #94a3b8;
-}
-
 .required {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 .form-input,
@@ -541,11 +532,11 @@ async function save() {
   display: block;
   width: 100%;
   padding: 8px 12px;
-  font-size: 13px;
-  border: 1px solid #cbd5e1;
+  font-size: var(--fs-code);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: #fff;
-  color: #333;
+  background: var(--bg-input);
+  color: var(--text-primary);
   outline: none;
   box-sizing: border-box;
   font-family: inherit;
@@ -554,20 +545,12 @@ async function save() {
 .form-input:focus,
 .form-textarea:focus,
 .form-select:focus {
-  border-color: #0078d4;
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(0,120,212,0.15);
 }
 
-.form-input.dark,
-.form-textarea.dark,
-.form-select.dark {
-  background: #1e293b;
-  border-color: #334155;
-  color: #e2e8f0;
-}
-
 .form-input.error {
-  border-color: #ef4444;
+  border-color: var(--status-error);
 }
 
 .form-input.disabled {
@@ -585,14 +568,14 @@ async function save() {
 }
 
 .form-hint {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin: 4px 0 0 0;
 }
 
 .form-error {
-  font-size: 12px;
-  color: #ef4444;
+  font-size: var(--fs-code);
+  color: var(--text-error);
   margin: 4px 0 0 0;
 }
 
@@ -606,17 +589,17 @@ async function save() {
 
 .save-btn {
   padding: 8px 20px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   border: none;
   border-radius: 6px;
-  background: #0078d4;
-  color: #fff;
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
   cursor: pointer;
 }
 
 .save-btn:hover {
-  background: #006abc;
+  background: var(--accent-primary-hover);
 }
 
 .save-btn:disabled {
@@ -624,22 +607,10 @@ async function save() {
   cursor: not-allowed;
 }
 
-.save-btn.dark {
-  background: #0078d4;
-}
-
-.save-btn.dark:hover {
-  background: #1a8ae8;
-}
-
 .form-separator {
   border: none;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-default);
   margin: 24px 0 16px 0;
-}
-
-.form-separator.dark {
-  border-top-color: #334155;
 }
 
 .form-section-header {
@@ -650,8 +621,8 @@ async function save() {
 }
 
 .form-section-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--fs-body);
+  font-weight: var(--weight-semibold);
   margin: 0;
 }
 
@@ -662,27 +633,17 @@ async function save() {
 
 .bulk-btn {
   padding: 3px 8px;
-  font-size: 11px;
-  border: 1px solid #cbd5e1;
+  font-size: var(--fs-body-sm);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: transparent;
-  color: #64748b;
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
 .bulk-btn:hover {
-  background: rgba(0,0,0,0.04);
-  color: #333;
-}
-
-.bulk-btn.dark {
-  border-color: #334155;
-  color: #94a3b8;
-}
-
-.bulk-btn.dark:hover {
-  background: rgba(255,255,255,0.06);
-  color: #e2e8f0;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .tool-filter-bar {
@@ -694,28 +655,18 @@ async function save() {
 
 .tool-filter-select {
   padding: 4px 8px;
-  font-size: 12px;
-  border: 1px solid #cbd5e1;
+  font-size: var(--fs-code);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
-  background: #fff;
-  color: #333;
+  background: var(--bg-input);
+  color: var(--text-primary);
   outline: none;
   cursor: pointer;
 }
 
-.tool-filter-select.dark {
-  background: #1e293b;
-  border-color: #334155;
-  color: #e2e8f0;
-}
-
 .tool-filter-count {
-  font-size: 11px;
-  color: #94a3b8;
-}
-
-.tool-filter-count.dark {
-  color: #64748b;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
 }
 
 .skills-list {
@@ -731,15 +682,11 @@ async function save() {
   padding: 6px 8px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-code);
 }
 
 .skill-checkbox:hover {
-  background: rgba(0,0,0,0.04);
-}
-
-.skill-checkbox.dark:hover {
-  background: rgba(255,255,255,0.04);
+  background: var(--bg-hover);
 }
 
 .skill-checkbox input[type="checkbox"] {
@@ -767,18 +714,14 @@ async function save() {
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   border-radius: 4px;
   text-align: left;
 }
 
 .tool-category-header:hover {
-  background: rgba(0,0,0,0.04);
-}
-
-.tool-category-header.dark:hover {
-  background: rgba(255,255,255,0.04);
+  background: var(--bg-hover);
 }
 
 .tool-category-header input[type="checkbox"] {
@@ -800,8 +743,8 @@ async function save() {
 }
 
 .tool-category-count {
-  font-size: 10px;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
   margin-left: auto;
 }
 
@@ -816,15 +759,11 @@ async function save() {
   padding: 3px 8px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-code);
 }
 
 .tool-checkbox:hover {
-  background: rgba(0,0,0,0.04);
-}
-
-.tool-checkbox.dark:hover {
-  background: rgba(255,255,255,0.04);
+  background: var(--bg-hover);
 }
 
 .tool-checkbox input[type="checkbox"] {
@@ -834,11 +773,7 @@ async function save() {
 
 .tool-name {
   user-select: none;
-  color: #64748b;
-}
-
-.agent-form.dark .tool-name {
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .default-agent-toggle {
@@ -848,16 +783,12 @@ async function save() {
   padding: 8px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-code);
   margin: 8px 0 4px 0;
 }
 
 .default-agent-toggle:hover {
-  background: rgba(0,0,0,0.04);
-}
-
-.default-agent-toggle.dark:hover {
-  background: rgba(255,255,255,0.04);
+  background: var(--bg-hover);
 }
 
 .default-agent-toggle input[type="checkbox"] {
@@ -866,12 +797,12 @@ async function save() {
 }
 
 .toggle-label {
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   user-select: none;
 }
 
 .form-hint-warn {
-  color: #f59e0b;
+  color: var(--status-warning);
 }
 
 .trigger-list {
@@ -881,8 +812,8 @@ async function save() {
 }
 
 .trigger-current-agent {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin-left: auto;
 }
 </style>

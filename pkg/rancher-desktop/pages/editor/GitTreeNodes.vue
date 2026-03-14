@@ -147,22 +147,14 @@ export default defineComponent({
   padding: 2px 10px 2px 32px;
   border: none;
   background: transparent;
-  font-size: 13px;
-  color: #333;
+  font-size: var(--fs-code);
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
 }
 
 .git-tree-dir:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-.git-tree-dir.dark {
-  color: #e2e8f0;
-}
-
-.git-tree-dir.dark:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-hover);
 }
 
 .git-tree-dir svg {
@@ -175,7 +167,7 @@ export default defineComponent({
 }
 
 .git-tree-folder-icon {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .git-tree-dir-name {
@@ -190,21 +182,13 @@ export default defineComponent({
   align-items: center;
   gap: 6px;
   padding: 3px 10px 3px 32px;
-  font-size: 13px;
+  font-size: var(--fs-code);
   cursor: pointer;
-  color: #333;
+  color: var(--text-primary);
 }
 
 .git-file-row:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-.git-file-row.dark {
-  color: #e2e8f0;
-}
-
-.git-file-row.dark:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-hover);
 }
 
 .git-status-badge {
@@ -214,25 +198,18 @@ export default defineComponent({
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  font-family: monospace;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-bold);
+  font-family: var(--font-mono);
   border-radius: 3px;
 }
 
-.git-status-badge.staged   { color: #16a34a; background: rgba(22, 163, 74, 0.12); }
-.git-status-badge.modified { color: #d97706; background: rgba(217, 119, 6, 0.12); }
-.git-status-badge.deleted  { color: #dc2626; background: rgba(220, 38, 38, 0.12); }
-.git-status-badge.added    { color: #16a34a; background: rgba(22, 163, 74, 0.12); }
-.git-status-badge.renamed  { color: #2563eb; background: rgba(37, 99, 235, 0.12); }
-.git-status-badge.untracked { color: #64748b; background: rgba(100, 116, 139, 0.12); }
-
-.dark .git-status-badge.staged   { color: #34d399; background: rgba(16, 185, 129, 0.18); }
-.dark .git-status-badge.modified { color: #fbbf24; background: rgba(245, 158, 11, 0.18); }
-.dark .git-status-badge.deleted  { color: #f87171; background: rgba(239, 68, 68, 0.18); }
-.dark .git-status-badge.added    { color: #34d399; background: rgba(16, 185, 129, 0.18); }
-.dark .git-status-badge.renamed  { color: #60a5fa; background: rgba(59, 130, 246, 0.18); }
-.dark .git-status-badge.untracked { color: #94a3b8; background: rgba(148, 163, 184, 0.15); }
+.git-status-badge.staged   { color: var(--text-success); background: var(--bg-success); }
+.git-status-badge.modified { color: var(--text-warning); background: var(--bg-warning); }
+.git-status-badge.deleted  { color: var(--text-error); background: var(--bg-error); }
+.git-status-badge.added    { color: var(--text-success); background: var(--bg-success); }
+.git-status-badge.renamed  { color: var(--text-info); background: var(--bg-info); }
+.git-status-badge.untracked { color: var(--text-secondary); background: var(--bg-hover); }
 
 .git-file-name {
   flex-shrink: 0;
@@ -248,7 +225,7 @@ export default defineComponent({
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #64748b;
+  color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 0;
   opacity: 0;
@@ -261,14 +238,10 @@ export default defineComponent({
 }
 
 .git-file-action:hover {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--bg-hover);
 }
 
 .git-file-action.dark {
-  color: #94a3b8;
-}
-
-.git-file-action.dark:hover {
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
 }
 </style>

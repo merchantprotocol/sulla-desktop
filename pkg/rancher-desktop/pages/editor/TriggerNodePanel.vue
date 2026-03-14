@@ -78,16 +78,12 @@ function selectTrigger(id: string) {
 }
 
 .trigger-section-label {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
   margin-bottom: 8px;
-}
-
-.trigger-panel.dark .trigger-section-label {
-  color: #94a3b8;
 }
 
 .trigger-options {
@@ -101,9 +97,9 @@ function selectTrigger(id: string) {
   align-items: flex-start;
   gap: 10px;
   padding: 10px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 6px;
-  background: #fff;
+  background: var(--bg-surface);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s, background 0.15s;
@@ -111,29 +107,12 @@ function selectTrigger(id: string) {
 }
 
 .trigger-option:hover {
-  border-color: #cbd5e1;
-  background: #f8fafc;
+  background: var(--bg-surface-alt);
 }
 
 .trigger-option.active {
-  border-color: #6366f1;
-  background: rgba(99, 102, 241, 0.06);
-}
-
-.trigger-option.dark {
-  background: #2d2d44;
-  border-color: #3c3c5c;
-  color: #e2e8f0;
-}
-
-.trigger-option.dark:hover {
-  border-color: #4a4a6a;
-  background: #33334e;
-}
-
-.trigger-option.dark.active {
-  border-color: #6366f1;
-  background: rgba(99, 102, 241, 0.15);
+  border-color: var(--accent-primary);
+  background: var(--bg-accent);
 }
 
 .trigger-option-icon {
@@ -141,20 +120,13 @@ function selectTrigger(id: string) {
   width: 20px;
   height: 20px;
   margin-top: 1px;
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .trigger-option.active .trigger-option-icon {
-  color: #6366f1;
+  color: var(--accent-primary);
 }
 
-.trigger-option.dark .trigger-option-icon {
-  color: #94a3b8;
-}
-
-.trigger-option.dark.active .trigger-option-icon {
-  color: #818cf8;
-}
 
 .trigger-option-info {
   flex: 1;
@@ -162,24 +134,16 @@ function selectTrigger(id: string) {
 }
 
 .trigger-option-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: #1e293b;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
   line-height: 1.3;
-}
-
-.trigger-option.dark .trigger-option-name {
-  color: #e2e8f0;
 }
 
 .trigger-option-desc {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin-top: 2px;
   line-height: 1.3;
-}
-
-.trigger-option.dark .trigger-option-desc {
-  color: #64748b;
 }
 </style>

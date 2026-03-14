@@ -14,7 +14,7 @@ export default defineComponent({ name: 'preferences-header' });
 <style lang="scss" scoped>
   .preferences-header {
     height: 3rem;
-    font-size: 1.5rem;
+    font-size: var(--fs-heading);
     line-height: 2rem;
     display: flex;
     align-items: center;

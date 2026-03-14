@@ -19,6 +19,7 @@ import * as path from 'path';
 import { app } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
+import { submitErrorReport } from '@pkg/main/errorReporter';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
@@ -163,9 +164,18 @@ export async function instantiateSullaStart(): Promise<void> {
         process.on('unhandledRejection', (reason: any) => {
             if (reason?.code === '57P01') {
                 console.warn('[Unhandled] Ignored Postgres admin termination');
+
                 return;
             }
             console.error('[Unhandled Rejection]', reason);
+            const err = reason instanceof Error ? reason : new Error(String(reason));
+
+            submitErrorReport({
+              error_type:    err.name || 'unhandledRejection',
+              error_message: err.message,
+              stack_trace:   err.stack || '',
+              user_context:  'unhandledRejection in sulla.ts (Sulla services)',
+            }).catch(() => {});
         });
 
 
