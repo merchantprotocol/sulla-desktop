@@ -182,7 +182,7 @@ Resets the Kubernetes cluster.
 - `mode` (`"fast"` | `"wipe"`, default `"fast"`) -- `"fast"` resets the cluster; `"wipe"` removes all cluster data.
 
 **Response:**
-- `200` -- `"Rancher Desktop <mode> reset successful"`.
+- `200` -- `"Sulla Desktop <mode> reset successful"`.
 - `400` -- Error parsing request body.
 
 ---

@@ -30,8 +30,8 @@ jobs:
       if: runner.os == 'Windows'
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
-        name: Rancher Desktop Setup.msi
-        path: dist/Rancher.Desktop*.msi
+        name: Sulla Desktop Setup.msi
+        path: dist/Sulla.Desktop*.msi
         if-no-files-found: error
     - if: runner.os == 'Windows'
       run: cat dist/electron-builder.yaml
@@ -46,8 +46,8 @@ jobs:
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       if: matrix.platform == 'mac'
       with:
-        name: Rancher Desktop-mac.${{ matrix.arch }}.zip
-        path: dist/Rancher Desktop*.zip
+        name: Sulla Desktop-mac.${{ matrix.arch }}.zip
+        path: dist/Sulla-Desktop*.zip
         if-no-files-found: error
   release:
     runs-on: ubuntu-latest
@@ -68,19 +68,19 @@ jobs:
       id: msi
       uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
       with:
-        name: Rancher Desktop Setup.msi
+        name: Sulla Desktop Setup.msi
         path: RD_SETUP_MSI
     - name: Download mac x86_64 archive
       id: mac_x86_64
       uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
       with:
-        name: Rancher Desktop-mac.x86_64.zip
+        name: Sulla Desktop-mac.x86_64.zip
         path: MACX86_ZIP
     - name: Download mac aarch64 archive
       id: mac_aarch64
       uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
       with:
-        name: Rancher Desktop-mac.aarch64.zip
+        name: Sulla Desktop-mac.aarch64.zip
         path: MACARM_ZIP
     - name: Download build information
       id: info

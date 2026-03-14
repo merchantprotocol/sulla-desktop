@@ -10,7 +10,7 @@ forwarded into the Lima VM; lower ports run directly on the Electron host.
 | 3000  | ChatCompletionsServer      | HTTP     | 0.0.0.0      | OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`, `/v1/moderations`, `/v1/integrations`) | `pkg/rancher-desktop/main/chatCompletionsServer.ts`                         |
 | 6107  | HttpCommandServer          | HTTP     | 127.0.0.1    | Internal CLI/settings server -- settings CRUD, diagnostics, extensions, snapshots, backend state, port forwarding | `pkg/rancher-desktop/main/commandServer/httpCommandServer.ts`               |
 | 6108  | Terminal WebSocket Server  | WS       | 127.0.0.1    | PTY sessions inside the Lima VM via `limactl shell 0`; xterm frontend connects here | `pkg/rancher-desktop/main/terminalServer.ts`                                |
-| 6120  | Dashboard Server           | HTTP/WS  | 127.0.0.1    | Rancher Dashboard UI and K8s API proxy (proxies `/k8s`, `/api`, `/apis`, `/v1`, `/v3` to `127.0.0.1:9443`) | `pkg/rancher-desktop/main/dashboardServer/index.ts`                         |
+| 6120  | Dashboard Server           | HTTP/WS  | 127.0.0.1    | Sulla Dashboard UI and K8s API proxy (proxies `/k8s`, `/api`, `/apis`, `/v1`, `/v3` to `127.0.0.1:9443`) | `pkg/rancher-desktop/main/dashboardServer/index.ts`                         |
 | 30114 | llama-server               | HTTP     | 127.0.0.1    | Local LLM inference (llama.cpp); serves OpenAI-compatible `/v1/embeddings` and completions endpoints | `pkg/rancher-desktop/agent/services/LlamaCppService.ts`                     |
 | 30116 | PostgreSQL                 | TCP      | 127.0.0.1    | Persistent relational store (maps host 30116 to container 5432); used by n8n and general Sulla data | `pkg/rancher-desktop/assets/sulla-docker-compose.yaml` (service: `postgres`) |
 | 30117 | Redis                      | TCP      | 127.0.0.1    | In-memory cache and queue backend (maps host 30117 to container 6379); used by n8n Bull queue | `pkg/rancher-desktop/assets/sulla-docker-compose.yaml` (service: `redis`)   |
@@ -44,7 +44,7 @@ automatic retry while the VM is booting, and terminal resize events.
 
 ### 6120 -- Dashboard Server
 
-Serves the Rancher Dashboard static assets and proxies Kubernetes API requests
+Serves the Sulla Dashboard static assets and proxies Kubernetes API requests
 (`/k8s`, `/api`, `/apis`, `/v1`, `/v3`, etc.) to the cluster API at
 `https://127.0.0.1:9443`. Supports WebSocket upgrades for real-time cluster
 communication.

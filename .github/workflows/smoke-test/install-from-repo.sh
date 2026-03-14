@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-# This script is expected to run as root and install Rancher Desktop from the
-# repository obs://isv:Rancher:dev
+# This script is expected to run as root and install Sulla Desktop from the
+# repository obs://isv:Sulla:dev
 # Expected environment variables:
 #   RD_VERSION
-#      Rancher Desktop version; either major.minor (`1.20`) or the tag (`v1.20.0`).
+#      Sulla Desktop version; either major.minor (`1.0`) or the tag (`v1.0.0`).
 
 set -o errexit -o nounset
 
@@ -18,39 +18,39 @@ install_linux_debian() {
 
     apt-get update
     apt-get install -y gnupg
-    curl -s https://download.opensuse.org/repositories/isv:/Rancher:/dev/deb/Release.key \
+    curl -s https://download.opensuse.org/repositories/isv:/Sulla:/dev/deb/Release.key \
         | gpg --dearmor \
-        > "${keyLocation}/keyrings/isv-rancher-dev-archive-keyring.gpg"
-    echo "deb [signed-by=${keyLocation}/keyrings/isv-rancher-dev-archive-keyring.gpg] https://download.opensuse.org/repositories/isv:/Rancher:/dev/deb/ ./"\
-        > /etc/apt/sources.list.d/isv-rancher-dev.list
+        > "${keyLocation}/keyrings/isv-sulla-dev-archive-keyring.gpg"
+    echo "deb [signed-by=${keyLocation}/keyrings/isv-sulla-dev-archive-keyring.gpg] https://download.opensuse.org/repositories/isv:/Sulla:/dev/deb/ ./"\
+        > /etc/apt/sources.list.d/isv-sulla-dev.list
     apt-get update
-    version=$(apt-cache show --quiet rancher-desktop \
+    version=$(apt-cache show --quiet sulla-desktop \
         | awk -F': ' "/^Version: 0\.release${RD_VERSION//./\\.}\./ { print \$2 }")
     if [[ -z "${version}" ]]; then
-        echo "Could not find any versions of rancher-desktop" >&2
+        echo "Could not find any versions of sulla-desktop" >&2
         exit 1
     fi
-    apt-get install -y "rancher-desktop=${version}"
+    apt-get install -y "sulla-desktop=${version}"
 }
 
 # shellcheck disable=2329 # The function is invoked dynamically
 install_linux_opensuse() {
-    zypper --non-interactive addrepo https://download.opensuse.org/repositories/isv:/Rancher:/dev/rpm/isv:Rancher:dev.repo
+    zypper --non-interactive addrepo https://download.opensuse.org/repositories/isv:/Sulla:/dev/rpm/isv:Sulla:dev.repo
     zypper --non-interactive --gpg-auto-import-keys install libxml2-tools
     local version
-    version=$(zypper --xmlout --non-interactive search --details --match-exact rancher-desktop \
+    version=$(zypper --xmlout --non-interactive search --details --match-exact sulla-desktop \
         | xmllint --xpath "string(//solvable[@kind='package']/@edition[contains(., '0.release${RD_VERSION}.')])" -)
-    zypper --non-interactive install "rancher-desktop=${version}"
+    zypper --non-interactive install "sulla-desktop=${version}"
 }
 
 # shellcheck disable=2329 # The function is invoked dynamically
 install_linux_fedora() {
-    dnf config-manager addrepo --from-repofile=https://download.opensuse.org/repositories/isv:/Rancher:/dev/fedora/isv:Rancher:dev.repo
+    dnf config-manager addrepo --from-repofile=https://download.opensuse.org/repositories/isv:/Sulla:/dev/fedora/isv:Sulla:dev.repo
     local version
-    version=$(dnf --quiet info --showduplicates rancher-desktop.x86_64 \
+    version=$(dnf --quiet info --showduplicates sulla-desktop.x86_64 \
         | awk -F: "\$1 ~ /Version/ && \$2 ~ /0\.release${RD_VERSION//./\\.}/ { print \$2 }" \
         | tr -d '[:space:]')
-    dnf --assumeyes install "rancher-desktop-${version}"
+    dnf --assumeyes install "sulla-desktop-${version}"
 }
 
 main() {

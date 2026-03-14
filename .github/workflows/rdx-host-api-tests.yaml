@@ -1,4 +1,4 @@
-# This workflow builds the Rancher Desktop Extensions Host APIs testing image
+# This workflow builds the Sulla Desktop Extensions Host APIs testing image
 # and publishes it.
 
 name: RDX Host APIs Testing image
