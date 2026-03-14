@@ -677,7 +677,7 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 
 /* Dark theme overrides */
 .workflow-editor.dark :deep(.vue-flow) {
-  background: var(--bg-surface);
+  background: var(--bg-page);
 }
 
 .workflow-editor.dark :deep(.vue-flow__edge-path) {
