@@ -12,17 +12,6 @@
       <div class="absolute -top-px right-11 left-20 h-[2px] bg-linear-to-r from-sky-300/0 via-sky-300/70 to-sky-300/0"></div>
       <div class="absolute right-20 -bottom-px left-11 h-[2px] bg-linear-to-r from-blue-400/0 via-blue-400 to-blue-400/0"></div>
       <div class="flex flex-wrap items-end gap-1 p-2">
-        <button
-          type="button"
-          class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-content transition-colors hover:bg-surface-hover disabled:opacity-60"
-          aria-label="Attach"
-          :disabled="showOverlay"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />
-          </svg>
-        </button>
-
         <textarea
           ref="composerTextareaEl"
           v-model="queryValue"
@@ -42,12 +31,12 @@
             <button
               type="button"
               :ref="modelSelector.buttonRef"
-              class="flex h-9 shrink-0 items-center gap-2 rounded-full px-2.5 text-content hover:bg-surface-hover disabled:opacity-60"
+              class="flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2 text-content-muted hover:text-content-secondary hover:bg-surface-hover disabled:opacity-60"
               aria-label="Model select"
               :disabled="showOverlay"
               @click="handleModelSwitcherClick"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0" aria-hidden="true">
                 <path d="M12 8V4" />
                 <path d="M8 4h8" />
                 <rect x="6" y="8" width="12" height="10" rx="2" />
@@ -57,9 +46,9 @@
                 <path d="M14.5 12h.01" />
                 <path d="M10 15h4" />
               </svg>
-              <div class="flex items-center gap-1 overflow-hidden">
-                <span class="whitespace-nowrap font-semibold text-sm">{{ modelSelector.activeModelLabelValue }}</span>
-                <svg width="16" height="16" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" class="shrink-0" aria-hidden="true">
+              <div class="flex items-center gap-0.5 overflow-hidden">
+                <span class="whitespace-nowrap font-medium text-xs">{{ modelSelector.activeModelLabelValue }}</span>
+                <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" class="shrink-0" aria-hidden="true">
                   <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" />
                 </svg>
               </div>

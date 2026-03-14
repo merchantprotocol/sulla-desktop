@@ -1,0 +1,54 @@
+/* ------------------------------------------------------------------ */
+/*  Ocean Dark theme — blue-teal palette                              */
+/* ------------------------------------------------------------------ */
+.theme-ocean-dark {
+  /* Backgrounds */
+  --bg-page: #0a1929;
+  --bg-surface: #132f4c;
+  --bg-surface-alt: #1a3a5c;
+  --bg-surface-hover: #224870;
+  --bg-header: rgba(10, 25, 41, 0.95);
+  --bg-input: #132f4c;
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  /* Text */
+  --text-primary: #e3f2fd;
+  --text-secondary: #90caf9;
+  --text-muted: #64b5f6;
+  --text-link: #4fc3f7;
+  --text-on-accent: #ffffff;
+
+  /* Borders */
+  --border-default: rgba(144, 202, 249, 0.12);
+  --border-strong: rgba(144, 202, 249, 0.24);
+  --border-subtle: rgba(144, 202, 249, 0.06);
+
+  /* Accent */
+  --accent-primary: #4fc3f7;
+  --accent-primary-hover: #29b6f6;
+  --accent-bg: rgba(79, 195, 247, 0.1);
+
+  /* Status */
+  --status-success: #4ade80;
+  --status-warning: #fbbf24;
+  --status-error: #f87171;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --ring-color: rgba(79, 195, 247, 0.5);
+
+  /* Editor */
+  --editor-bg: #0d2137;
+  --editor-border: rgba(144, 202, 249, 0.12);
+  --editor-btn-color: #90caf9;
+  --editor-btn-hover: rgba(144, 202, 249, 0.08);
+  --editor-separator: rgba(144, 202, 249, 0.12);
+
+  /* Terminal */
+  --terminal-bg: #132f4c;
+  --terminal-fg: #b3e5fc;
+  --terminal-cursor: #4fc3f7;
+  --terminal-selection-bg: rgba(79, 195, 247, 0.3);
+  --terminal-selection-fg: #ffffff;
+}

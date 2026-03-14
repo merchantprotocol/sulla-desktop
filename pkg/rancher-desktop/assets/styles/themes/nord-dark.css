@@ -1,0 +1,54 @@
+/* ------------------------------------------------------------------ */
+/*  Nord Dark theme — based on the Nord color palette                 */
+/* ------------------------------------------------------------------ */
+.theme-nord-dark {
+  /* Backgrounds */
+  --bg-page: #2e3440;
+  --bg-surface: #3b4252;
+  --bg-surface-alt: #434c5e;
+  --bg-surface-hover: #4c566a;
+  --bg-header: rgba(46, 52, 64, 0.95);
+  --bg-input: #3b4252;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+
+  /* Text */
+  --text-primary: #eceff4;
+  --text-secondary: #d8dee9;
+  --text-muted: #a5b1c2;
+  --text-link: #88c0d0;
+  --text-on-accent: #2e3440;
+
+  /* Borders */
+  --border-default: rgba(216, 222, 233, 0.12);
+  --border-strong: rgba(216, 222, 233, 0.24);
+  --border-subtle: rgba(216, 222, 233, 0.06);
+
+  /* Accent */
+  --accent-primary: #88c0d0;
+  --accent-primary-hover: #81a1c1;
+  --accent-bg: rgba(136, 192, 208, 0.1);
+
+  /* Status */
+  --status-success: #a3be8c;
+  --status-warning: #ebcb8b;
+  --status-error: #bf616a;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --ring-color: rgba(136, 192, 208, 0.5);
+
+  /* Editor */
+  --editor-bg: #2e3440;
+  --editor-border: rgba(216, 222, 233, 0.12);
+  --editor-btn-color: #d8dee9;
+  --editor-btn-hover: rgba(216, 222, 233, 0.08);
+  --editor-separator: rgba(216, 222, 233, 0.12);
+
+  /* Terminal */
+  --terminal-bg: #3b4252;
+  --terminal-fg: #d8dee9;
+  --terminal-cursor: #88c0d0;
+  --terminal-selection-bg: rgba(136, 192, 208, 0.3);
+  --terminal-selection-fg: #eceff4;
+}

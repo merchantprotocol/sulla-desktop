@@ -3,9 +3,11 @@ import { defineComponent } from 'vue';
 
 import { availableThemes, themeGroups } from '@pkg/composables/useTheme';
 import type { ThemeScheme } from '@pkg/composables/useTheme';
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const THEME_STORAGE_KEY = 'agentTheme';
+const THEME_SETTING_KEY = 'theme';
 
 export default defineComponent({
   name: 'preferences-body-appearance',
@@ -43,6 +45,8 @@ export default defineComponent({
       if (match) {
         this.selectedTheme = match.id;
         localStorage.setItem(THEME_STORAGE_KEY, match.id);
+        // Persist to database so theme survives app reload
+        SullaSettingsModel.set(THEME_SETTING_KEY, match.id, 'string').catch(() => {});
         window.dispatchEvent(new StorageEvent('storage', {
           key:      THEME_STORAGE_KEY,
           newValue: match.id,

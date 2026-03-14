@@ -1,0 +1,609 @@
+/* ------------------------------------------------------------------ */
+/*  Protocol Dark theme — Sulla Desktop noir terminal                  */
+/*  Brand color: Steel Blue #5096b3 (matching docs.sulladesktop.com)   */
+/* ------------------------------------------------------------------ */
+.theme-protocol-dark {
+  /* Backgrounds — noir terminal palette */
+  --bg-page: #161b22;
+  --bg-surface: #161b22;
+  --bg-surface-alt: #1c2128;
+  --bg-surface-hover: #21262d;
+  --bg-header: rgba(13, 17, 23, 0.85);
+  --bg-input: #161b22;
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  /* Text */
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --text-link: #5096b3;
+  --text-on-accent: #ffffff;
+
+  /* Borders */
+  --border-default: #30363d;
+  --border-strong: #484f58;
+  --border-subtle: #21262d;
+
+  /* Accent — steel blue */
+  --accent-primary: #5096b3;
+  --accent-primary-hover: #6ab0cc;
+  --accent-bg: rgba(80, 150, 179, 0.1);
+
+  /* Glow system */
+  --brand-glow: rgba(80, 150, 179, 0.4);
+  --brand-glow-soft: rgba(80, 150, 179, 0.15);
+  --brand-glow-strong: rgba(80, 150, 179, 0.6);
+
+  /* Status */
+  --status-success: #3fb950;
+  --status-info: #58a6ff;
+  --status-warning: #e3b341;
+  --status-error: #f85149;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --ring-color: rgba(80, 150, 179, 0.5);
+
+  /* Editor */
+  --editor-bg: #1a1e24;
+  --editor-border: #30363d;
+  --editor-btn-color: #8b949e;
+  --editor-btn-hover: rgba(255, 255, 255, 0.06);
+  --editor-separator: #30363d;
+
+  /* Terminal */
+  --terminal-bg: #161b22;
+  --terminal-fg: #e6edf3;
+  --terminal-cursor: #5096b3;
+  --terminal-selection-bg: rgba(80, 150, 179, 0.3);
+  --terminal-selection-fg: #ffffff;
+
+  /* Terminal traffic light dots */
+  --terminal-dot-red: #ff5f57;
+  --terminal-dot-yellow: #febc2e;
+  --terminal-dot-green: #28c840;
+
+  /* Scrollbar */
+  --scrollbar-thumb: #4485a0;
+  --scrollbar-track: #161b22;
+}
+
+/* ================================================================== */
+/*  COMPONENT OVERRIDES — only active when .theme-protocol-dark       */
+/* ================================================================== */
+
+/* ── Global: Font smoothing & selection ── */
+.theme-protocol-dark {
+  -webkit-font-smoothing: antialiased;
+}
+
+.theme-protocol-dark ::selection {
+  background: rgba(80, 150, 179, 0.3);
+  color: #fff;
+}
+
+/* ── CRT Scanline Overlay — matches docs.sulladesktop.com ── */
+.theme-protocol-dark::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.08) 2px,
+    rgba(0, 0, 0, 0.08) 4px
+  );
+}
+
+/* ── Vignette — corner darkening matching docs site CRT overlay ── */
+.theme-protocol-dark::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background:
+    /* Top-left corner */
+    radial-gradient(ellipse at top left, rgba(0, 0, 0, 0.3) 0%, transparent 50%),
+    /* Top-right corner */
+    radial-gradient(ellipse at top right, rgba(0, 0, 0, 0.3) 0%, transparent 50%),
+    /* Bottom-left corner */
+    radial-gradient(ellipse at bottom left, rgba(0, 0, 0, 0.2) 0%, transparent 45%),
+    /* Bottom-right corner */
+    radial-gradient(ellipse at bottom right, rgba(0, 0, 0, 0.2) 0%, transparent 45%),
+    /* Overall vignette */
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.2) 100%);
+}
+
+/* ── Global scrollbar ── */
+.theme-protocol-dark ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.theme-protocol-dark ::-webkit-scrollbar-track {
+  background: #161b22;
+}
+
+.theme-protocol-dark ::-webkit-scrollbar-thumb {
+  background: #4485a0;
+  border-radius: 3px;
+}
+
+.theme-protocol-dark ::-webkit-scrollbar-thumb:hover {
+  background: #5096b3;
+}
+
+/* ── Title bar: draggable region for macOS hiddenInset ── */
+.theme-protocol-dark .app-titlebar {
+  -webkit-app-region: drag;
+}
+
+.theme-protocol-dark .app-titlebar a,
+.theme-protocol-dark .app-titlebar button,
+.theme-protocol-dark .app-titlebar nav {
+  -webkit-app-region: no-drag;
+}
+
+/* ── Ambient center glow (noir radial) ── */
+.theme-protocol-dark .page-root::before {
+  content: '';
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 800px;
+  height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(80, 150, 179, 0.06) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Header: noir nav with backdrop blur ── */
+.theme-protocol-dark header {
+  background: #161b22 !important;
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+  box-shadow: none !important;
+}
+
+.theme-protocol-dark header nav a {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Hide light/dark toggle — protocol theme is dark-only */
+.theme-protocol-dark header .fill-sky-400 {
+  display: none !important;
+}
+
+.theme-protocol-dark header button[aria-label*="Switch to"] {
+  display: none !important;
+}
+
+/* ── Page background with subtle grid lines ── */
+.theme-protocol-dark .page-root {
+  background: #161b22;
+  color: #e6edf3;
+  background-image:
+    linear-gradient(rgba(80, 150, 179, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(80, 150, 179, 0.02) 1px, transparent 1px);
+  background-size: 80px 80px;
+}
+
+/* ── Composer input: Terminal look ── */
+
+/* Replace blue gradient glow lines with steel blue */
+.theme-protocol-dark .bg-linear-to-r.from-sky-300\/0,
+.theme-protocol-dark .bg-linear-to-r.from-blue-400\/0,
+.theme-protocol-dark [class*="from-sky-300"],
+.theme-protocol-dark [class*="from-blue-400"] {
+  background-image: none !important;
+  background: linear-gradient(to right, transparent, #5096b3, transparent) !important;
+  opacity: 0.7;
+}
+
+/* Composer panel: terminal border with glow on focus */
+.theme-protocol-dark .bg-surface.ring-1.ring-edge {
+  background: #0d1117 !important;
+  border: 1px solid #30363d;
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.theme-protocol-dark .bg-surface.ring-1.ring-edge:focus-within {
+  border-color: #5096b3;
+  box-shadow: 0 0 15px rgba(80, 150, 179, 0.2), 0 0 30px rgba(80, 150, 179, 0.1);
+}
+
+/* Textarea: monospace terminal font, white text, bright glowing cursor */
+.theme-protocol-dark textarea {
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 13.6px;
+  color: #e6edf3 !important;
+  caret-color: #7ec8e3;
+}
+
+.theme-protocol-dark textarea::placeholder {
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', 'Courier New', monospace !important;
+}
+
+/* Send button: steel blue */
+.theme-protocol-dark .bg-content.text-page {
+  background: #4485a0 !important;
+  color: #fff !important;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.theme-protocol-dark .bg-content.text-page:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 15px rgba(80, 150, 179, 0.4);
+  transform: translateY(-1px);
+}
+
+/* ── User message bubbles: blue tinted with white text ── */
+.theme-protocol-dark .bg-surface-alt.ring-1.ring-edge-subtle {
+  background: rgba(80, 150, 179, 0.1) !important;
+  border: 1px solid rgba(80, 150, 179, 0.2) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  --tw-ring-opacity: 0;
+  max-width: 80%;
+  margin-left: auto;
+  padding: 10px 16px !important;
+  overflow-wrap: break-word;
+}
+
+.theme-protocol-dark .bg-surface-alt.ring-1.ring-edge-subtle .text-content {
+  color: #e6edf3 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 13.6px !important;
+  font-weight: 400;
+  line-height: 24.48px !important;
+}
+
+/* ── Assistant messages: prose with steel blue accents ── */
+.theme-protocol-dark .prose {
+  color: rgb(139, 148, 158) !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 13.6px !important;
+  font-weight: 400;
+  line-height: 23.12px !important;
+}
+
+.theme-protocol-dark .prose h1,
+.theme-protocol-dark .prose h2,
+.theme-protocol-dark .prose h3,
+.theme-protocol-dark .prose h4 {
+  color: #e6edf3;
+}
+
+.theme-protocol-dark .prose a {
+  color: #5096b3 !important;
+  text-decoration: none;
+  transition: color 0.3s, text-shadow 0.3s;
+}
+
+.theme-protocol-dark .prose a:hover {
+  color: #e6edf3 !important;
+  text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+}
+
+.theme-protocol-dark .prose code {
+  background: rgba(80, 150, 179, 0.08);
+  color: #6ab0cc;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.85em;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+}
+
+.theme-protocol-dark .prose pre {
+  background: #1a1e24;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 1.5rem 1.75rem;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.8;
+  color: #8b949e;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.theme-protocol-dark .prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+
+.theme-protocol-dark .prose strong {
+  color: #e6edf3;
+}
+
+.theme-protocol-dark .prose blockquote {
+  border-left: 3px solid #5096b3;
+  padding: 1.5rem 0 1.5rem 1.5rem;
+  font-style: italic;
+  color: #8b949e;
+  box-shadow: -4px 0 20px rgba(80, 150, 179, 0.15);
+}
+
+.theme-protocol-dark .prose hr {
+  border-color: #30363d;
+}
+
+.theme-protocol-dark .prose table th {
+  background: #1c2128;
+  color: #5096b3;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  border-bottom: 2px solid #4485a0;
+}
+
+.theme-protocol-dark .prose table td {
+  color: #8b949e;
+  border-color: #30363d;
+}
+
+.theme-protocol-dark .prose table tr:hover {
+  background: #161b22;
+}
+
+/* ── "Thinking..." indicator: subtle, no flashy gradient ── */
+.theme-protocol-dark [class*="border-indigo"],
+.theme-protocol-dark [class*="border-cyan"],
+.theme-protocol-dark [class*="border-sky"] {
+  border-color: rgba(80, 150, 179, 0.15) !important;
+}
+
+.theme-protocol-dark [class*="color-indigo"],
+.theme-protocol-dark [class*="color-cyan"],
+.theme-protocol-dark [class*="color-sky"] {
+  --color-indigo-400: rgba(80, 150, 179, 0.3);
+  --color-cyan-400: rgba(80, 150, 179, 0.2);
+  --color-sky-500: rgba(80, 150, 179, 0.3);
+  --color-sky-50: #161b22;
+}
+
+/* Kill the flashy gradient border on "Thinking..." — replace with simple muted border */
+.theme-protocol-dark .absolute.-inset-px[style*="border-box"],
+.theme-protocol-dark [style*="linear-gradient"] .absolute.-inset-px {
+  background: none !important;
+  border: 1px solid rgba(80, 150, 179, 0.15) !important;
+  border-radius: 12px;
+}
+
+/* The thinking text itself */
+.theme-protocol-dark .absolute.-inset-px + .relative {
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* Thinking bubble content: muted, subtle */
+.theme-protocol-dark .thinking-bubble {
+  opacity: 0.6;
+}
+
+.theme-protocol-dark .thinking-bubble-content {
+  color: #6e7681 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 12px !important;
+}
+
+/* Override the Tailwind dark:prose-invert slate coloring */
+.theme-protocol-dark .dark\:text-slate-400 {
+  color: #8b949e !important;
+}
+
+/* ── Sulla assistant avatar & name ── */
+.theme-protocol-dark .sulla-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(80, 150, 179, 0.12);
+  border: 1px solid rgba(80, 150, 179, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #5096b3;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.theme-protocol-dark .sulla-name {
+  color: #5096b3;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* ── Tool cards: terminal aesthetic ── */
+.theme-protocol-dark .tool-card-cc {
+  background: #161b22;
+  border-color: #30363d;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-protocol-dark .tool-card-cc-header:hover {
+  background: rgba(80, 150, 179, 0.04);
+}
+
+.theme-protocol-dark .tool-card-cc-name {
+  color: #5096b3;
+}
+
+/* IN label + command text: terminal green */
+.theme-protocol-dark .tool-card-cc-cmd:has(.tool-card-cc-cmd-text:not(.tool-card-cc-exit)) .tool-card-cc-cmd-label {
+  color: #3fb950;
+}
+
+.theme-protocol-dark .tool-card-cc-cmd-text:not(.tool-card-cc-exit) {
+  color: #3fb950;
+}
+
+/* OUT label + exit code: muted gray */
+.theme-protocol-dark .tool-card-cc-cmd:has(.tool-card-cc-exit) .tool-card-cc-cmd-label {
+  color: #6e7681;
+}
+
+.theme-protocol-dark .tool-card-cc-exit.success {
+  color: #6e7681 !important;
+}
+
+.theme-protocol-dark .tool-card-cc-exit.failed {
+  color: #f85149 !important;
+}
+
+.theme-protocol-dark .tool-card-cc-output pre {
+  color: #8b949e;
+}
+
+/* ── Channel messages: steel blue instead of indigo ── */
+.theme-protocol-dark [class*="border-indigo-200"],
+.theme-protocol-dark [class*="border-indigo-800"] {
+  border-color: rgba(80, 150, 179, 0.2) !important;
+}
+
+.theme-protocol-dark [class*="bg-indigo-50"],
+.theme-protocol-dark [class*="bg-indigo-950"] {
+  background: rgba(80, 150, 179, 0.04) !important;
+}
+
+.theme-protocol-dark [class*="bg-indigo-100"],
+.theme-protocol-dark [class*="bg-indigo-900"] {
+  background: rgba(80, 150, 179, 0.12) !important;
+}
+
+.theme-protocol-dark [class*="text-indigo-700"],
+.theme-protocol-dark [class*="text-indigo-300"] {
+  color: #5096b3 !important;
+}
+
+/* ── "Primary" badge on model selector ── */
+.theme-protocol-dark .bg-sky-100,
+.theme-protocol-dark [class*="bg-sky-100"] {
+  background: rgba(80, 150, 179, 0.12) !important;
+}
+
+.theme-protocol-dark [class*="bg-sky-900"] {
+  background: rgba(80, 150, 179, 0.15) !important;
+}
+
+.theme-protocol-dark .text-sky-700,
+.theme-protocol-dark [class*="text-sky-700"] {
+  color: #4485a0 !important;
+}
+
+.theme-protocol-dark .text-sky-400,
+.theme-protocol-dark [class*="text-sky-400"] {
+  color: #5096b3 !important;
+}
+
+/* ── Composer bottom bar: edge-to-edge terminal input ── */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 {
+  background: #0d1117 !important;
+  backdrop-filter: none;
+  border-color: #30363d !important;
+  padding-top: 0 !important;
+}
+
+/* Strip all wrapper padding/margins so input goes edge-to-edge */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 > div {
+  max-width: none !important;
+  padding: 0 !important;
+}
+
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 > div > div {
+  max-width: none !important;
+  padding: 0 !important;
+}
+
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 .pb-3 {
+  padding-bottom: 0 !important;
+}
+
+/* The composer form: full width, no margin */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 .group\/composer {
+  margin: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+/* The composer panel: flat, no rounded corners, no ring, edge-to-edge */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 .bg-surface.ring-1.ring-edge {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: #0d1117 !important;
+  --tw-ring-opacity: 0;
+}
+
+/* Remove the gradient glow lines inside the fixed bottom bar */
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 [class*="from-sky-300"],
+.theme-protocol-dark .border-t.border-edge.bg-page\/80 [class*="from-blue-400"] {
+  display: none !important;
+}
+
+/* ── Continue button ── */
+.theme-protocol-dark .bg-content.text-page.shadow-sm {
+  background: #4485a0 !important;
+  color: #fff !important;
+}
+
+.theme-protocol-dark .bg-content.text-page.shadow-sm:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
+}
+
+/* ── Links ── */
+.theme-protocol-dark a {
+  transition: color 0.3s, text-shadow 0.3s;
+}
+
+.theme-protocol-dark a:not([class]):hover {
+  text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+}
+
+/* ── Stroke colors: replace slate with muted gray ── */
+.theme-protocol-dark .stroke-slate-500 {
+  stroke: #6e7681;
+}
+
+/* ── Ring overrides for focus states ── */
+.theme-protocol-dark .ring-black\/5 {
+  --tw-ring-color: rgba(80, 150, 179, 0.15);
+}
+
+.theme-protocol-dark .shadow-black\/5 {
+  --tw-shadow-color: rgba(0, 0, 0, 0.3);
+}
+
+/* ── Model selector menu ── */
+.theme-protocol-dark .agent-model-selector-menu {
+  background: #161b22;
+  border-color: #30363d;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(80, 150, 179, 0.05);
+}
+
+/* ── Audio player ── */
+.theme-protocol-dark .sulla-audio-player {
+  background: #161b22;
+  border-color: #30363d;
+}

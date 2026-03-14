@@ -1,0 +1,55 @@
+/* ------------------------------------------------------------------ */
+/*  Default Light theme (default)                                     */
+/* ------------------------------------------------------------------ */
+:root,
+.theme-default-light {
+  /* Backgrounds */
+  --bg-page: #ffffff;
+  --bg-surface: #f8fafc;
+  --bg-surface-alt: #f1f5f9;
+  --bg-surface-hover: #e2e8f0;
+  --bg-header: #ffffff;
+  --bg-input: #ffffff;
+  --bg-overlay: rgba(0, 0, 0, 0.5);
+
+  /* Text */
+  --text-primary: #0d0d0d;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+  --text-link: #0284c7;
+  --text-on-accent: #ffffff;
+
+  /* Borders */
+  --border-default: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --border-subtle: #f1f5f9;
+
+  /* Accent */
+  --accent-primary: #0ea5e9;
+  --accent-primary-hover: #0284c7;
+  --accent-bg: rgba(14, 165, 233, 0.1);
+
+  /* Status */
+  --status-success: #22c55e;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --ring-color: rgba(14, 165, 233, 0.5);
+
+  /* Editor */
+  --editor-bg: #f0f0f0;
+  --editor-border: #cbd5e1;
+  --editor-btn-color: #333333;
+  --editor-btn-hover: rgba(0, 0, 0, 0.08);
+  --editor-separator: #cccccc;
+
+  /* Terminal */
+  --terminal-bg: #f8fafc;
+  --terminal-fg: #333333;
+  --terminal-cursor: #333333;
+  --terminal-selection-bg: rgba(59, 130, 246, 0.25);
+  --terminal-selection-fg: #000000;
+}
