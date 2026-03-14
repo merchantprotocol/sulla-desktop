@@ -708,7 +708,7 @@ watch(() => props.messages.length, () => scrollToBottom());
   align-items: flex-end;
   gap: 6px;
   padding: 8px;
-  background: var(--bg-surface);
+  background: var(--bg-input);
   border: 1px solid var(--border-default);
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);

@@ -124,6 +124,7 @@ function onDragStart(event: DragEvent, subtype: WorkflowNodeSubtype, category: W
   height: 24px;
   border-radius: 4px;
   object-fit: contain;
+  filter: grayscale(1) brightness(0.9);
 }
 
 .palette-icon-svg {

@@ -28,6 +28,17 @@
       <Background :variant="BackgroundVariant.Dots" :gap="16" :size="1" />
       <Controls />
       <MiniMap />
+
+      <!-- SVG gradient for edge lines -->
+      <svg width="0" height="0" style="position:absolute">
+        <defs>
+          <linearGradient id="edge-green-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="rgba(46, 160, 67, 0.6)" />
+            <stop offset="50%" stop-color="rgba(63, 185, 80, 0.9)" />
+            <stop offset="100%" stop-color="rgba(46, 160, 67, 0.6)" />
+          </linearGradient>
+        </defs>
+      </svg>
     </VueFlow>
 
     <!-- Node context menu -->
@@ -670,7 +681,15 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .workflow-editor.dark :deep(.vue-flow__edge-path) {
-  stroke: var(--accent-primary);
+  stroke: url(#edge-green-gradient);
+  stroke-width: 1.8px;
+  stroke-dasharray: 5 5;
+  animation: wf-dash 1s linear infinite;
+  filter: drop-shadow(0 0 3px rgba(46, 160, 67, 0.3));
+}
+
+@keyframes wf-dash {
+  to { stroke-dashoffset: -20; }
 }
 
 .workflow-editor.dark :deep(.vue-flow__minimap) {
@@ -700,8 +719,13 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
   background: var(--bg-surface-hover);
 }
 
+.workflow-editor.dark :deep(.vue-flow__background) {
+  mask-image: radial-gradient(ellipse at center, black 15%, transparent 65%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 15%, transparent 65%);
+}
+
 .workflow-editor.dark :deep(.vue-flow__background pattern circle) {
-  fill: var(--bg-surface-hover);
+  fill: hsl(0deg 0% 100% / 62%);
 }
 
 /* ── Context menu ── */

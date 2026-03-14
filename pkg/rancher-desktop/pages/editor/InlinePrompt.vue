@@ -100,7 +100,7 @@ defineExpose({ show });
   font-size: var(--fs-code);
   border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: var(--bg-surface);
+  background: var(--bg-input);
   color: var(--text-primary);
   outline: none;
   box-sizing: border-box;

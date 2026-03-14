@@ -213,20 +213,33 @@ const routeHandles = computed(() => {
 }
 
 .node-icon-box {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  border: 1px solid var(--border-default);
-  background: var(--bg-surface);
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border-strong);
+  background: #161b22;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  color: var(--text-secondary);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.workflow-custom-node:hover .node-icon-box {
+  transform: translateY(-2px);
+  border-color: var(--status-success);
+  box-shadow:
+    0 0 12px rgba(46, 160, 67, 0.4),
+    0 4px 20px rgba(46, 160, 67, 0.35),
+    0 8px 32px rgba(46, 160, 67, 0.15);
 }
 
 .workflow-custom-node.selected .node-icon-box {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+  border-color: var(--status-success);
+  box-shadow:
+    0 0 12px rgba(46, 160, 67, 0.4),
+    0 4px 20px rgba(46, 160, 67, 0.35),
+    0 8px 32px rgba(46, 160, 67, 0.15);
 }
 
 .node-icon-img {
@@ -234,6 +247,7 @@ const routeHandles = computed(() => {
   height: 24px;
   border-radius: 4px;
   object-fit: contain;
+  filter: grayscale(1) brightness(0.62);
 }
 
 .node-icon-svg {
@@ -248,18 +262,19 @@ const routeHandles = computed(() => {
 }
 
 .workflow-custom-node.selected .node-icon-svg {
-  color: var(--text-info);
+  color: var(--text-success);
 }
 
 .workflow-custom-node.dark.selected .node-icon-svg {
-  color: var(--text-info);
+  color: var(--text-success);
 }
 
 .node-label {
-  font-size: var(--fs-body-sm);
+  font-family: var(--font-mono), 'Courier New', monospace;
+  font-size: 9px;
   color: var(--text-secondary);
   text-align: center;
-  max-width: 80px;
+  max-width: 72px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -271,10 +286,10 @@ const routeHandles = computed(() => {
 }
 
 .node-handle {
-  width: 8px;
-  height: 8px;
-  background: var(--accent-primary);
-  border: 2px solid var(--bg-surface);
+  width: 7px;
+  height: 7px;
+  background: var(--status-success);
+  border: 1.5px solid var(--bg-page);
   border-radius: 50%;
 }
 
@@ -599,8 +614,8 @@ const routeHandles = computed(() => {
 /* ── Execution status styles ── */
 
 .workflow-custom-node.exec-running .node-icon-box {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+  border-color: var(--status-success);
+  box-shadow: 0 0 12px rgba(46, 160, 67, 0.4);
   animation: exec-pulse 1.5s ease-in-out infinite;
 }
 
@@ -629,8 +644,8 @@ const routeHandles = computed(() => {
 }
 
 @keyframes exec-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3); }
-  50%      { box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15); }
+  0%, 100% { box-shadow: 0 0 12px rgba(46, 160, 67, 0.4); }
+  50%      { box-shadow: 0 0 18px rgba(46, 160, 67, 0.25); }
 }
 
 .workflow-custom-node.exec-waiting .node-icon-box {

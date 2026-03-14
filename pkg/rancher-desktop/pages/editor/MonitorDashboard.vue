@@ -1157,7 +1157,7 @@ function convEventBadgeClass(type: string): string {
   font-size: var(--fs-code);
 }
 .filter-input::placeholder { color: var(--text-muted); }
-.dark .filter-input { border-color: var(--border-default); background: var(--bg-surface); color: var(--text-primary); }
+.dark .filter-input { border-color: var(--border-default); background: var(--bg-input); color: var(--text-primary); }
 .dark .filter-input::placeholder { color: var(--text-secondary); }
 .filter-input:focus { outline: none; border-color: var(--accent-primary); }
 
@@ -1169,7 +1169,7 @@ function convEventBadgeClass(type: string): string {
   color: var(--text-primary);
   font-size: var(--fs-code);
 }
-.dark .filter-select { border-color: var(--border-default); background: var(--bg-surface); color: var(--text-primary); }
+.dark .filter-select { border-color: var(--border-default); background: var(--bg-input); color: var(--text-primary); }
 
 .conv-list { display: flex; flex-direction: column; gap: 8px; }
 .conv-card {
