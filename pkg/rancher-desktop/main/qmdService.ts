@@ -266,16 +266,19 @@ async function handleSearch({ query, dirPath, limit }) {
   try {
     const ftsResults = store.searchFTS(query, limit || 20, colName);
     for (const r of ftsResults) {
-      const relPath = r.displayPath || r.filepath;
-      const absPath = path.resolve(resolvedDir, relPath);
+      // r.filepath is a virtual path like "qmd://ColName/handlized/path.ext"
+      // Use the store's resolveVirtualPath to map it back to the real filesystem path
+      // via the collection's pwd, avoiding the doubled-path bug where the collection
+      // name (e.g. "Users_jonathonbyrdziak_sulla") was treated as a relative directory.
+      const absPath = store.resolveVirtualPath(r.filepath) || path.resolve(resolvedDir, r.displayPath || r.filepath);
       if (seenPaths.has(absPath)) continue;
       seenPaths.add(absPath);
       const snippet = quickSnippet(r.body, query);
       results.push({
         path: absPath,
-        name: path.basename(relPath),
+        name: path.basename(absPath),
         line: snippet?.line ?? 0,
-        preview: snippet?.snippet ?? r.title ?? relPath,
+        preview: snippet?.snippet ?? r.title ?? absPath,
         score: r.score,
         source: 'fts',
       });

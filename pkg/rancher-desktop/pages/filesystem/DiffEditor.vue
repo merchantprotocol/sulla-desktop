@@ -5,6 +5,7 @@
 <script lang="ts">
 import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import * as monaco from 'monaco-editor';
+import { applyMonacoTheme } from './monacoThemeBridge';
 
 const EXT_LANGUAGE_MAP: Record<string, string> = {
   '.ts': 'typescript', '.tsx': 'typescript',
@@ -61,7 +62,8 @@ export default defineComponent({
       originalModel = monaco.editor.createModel(props.originalContent || '', language);
       modifiedModel = monaco.editor.createModel(props.content || '', language);
 
-      monaco.editor.setTheme(props.isDark ? 'vs-dark' : 'vs');
+      // Register the custom theme from CSS variables before creating the editor
+      applyMonacoTheme(props.isDark);
 
       diffEditor = monaco.editor.createDiffEditor(containerRef.value, {
         automaticLayout:      true,
@@ -112,7 +114,8 @@ export default defineComponent({
     }
 
     function updateTheme() {
-      monaco.editor.setTheme(props.isDark ? 'vs-dark' : 'vs');
+      // Re-register the custom theme with fresh CSS variable values, then apply
+      applyMonacoTheme(props.isDark);
     }
 
     onMounted(createEditor);

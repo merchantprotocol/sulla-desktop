@@ -91,7 +91,7 @@ export default defineComponent({
 
     legend {
       font-weight:bold;
-      font-size: 1rem;
+      font-size: var(--fs-body);
       color: inherit;
       line-height: 1.5rem;
       padding-bottom: 0.5rem;

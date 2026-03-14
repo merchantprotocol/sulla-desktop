@@ -58,7 +58,7 @@
     <div class="relative flex basis-0 justify-end items-center gap-4">
       <div v-if="route.path === '/Filesystem'" class="flex gap-2">
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
           type="button"
           aria-label="Toggle left pane"
           @click="$emit('toggle-left-pane')"
@@ -71,7 +71,7 @@
           </svg>
         </button>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
           type="button"
           aria-label="Toggle center pane"
           @click="$emit('toggle-center-pane')"
@@ -82,7 +82,7 @@
           </svg>
         </button>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
           type="button"
           aria-label="Toggle right pane"
           @click="$emit('toggle-right-pane')"
@@ -97,7 +97,7 @@
       <div class="relative z-10">
         <label class="sr-only">Theme</label>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
           type="button"
           :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
           @click="toggleTheme"
@@ -112,7 +112,7 @@
       </div>
       <!-- Hamburger menu: right side, visible on mobile -->
       <div class="flex lg:hidden">
-        <button type="button" class="relative" aria-label="Open navigation" @click="toggleMobileMenu">
+        <button type="button" class="relative cursor-pointer" aria-label="Open navigation" @click="toggleMobileMenu">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" class="h-5 w-5 stroke-slate-500">
             <path d="M4 7h16M4 12h16M4 17h16"></path>
           </svg>
@@ -123,10 +123,10 @@
 
   <!-- Mobile Menu Dropdown (appears below header) -->
   <div v-if="isMobileMenuOpen" class="fixed inset-0 z-40 lg:hidden">
-    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300" @click="toggleMobileMenu"></div>
+    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 cursor-pointer" @click="toggleMobileMenu"></div>
     <div class="fixed top-14 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
       <div class="flex justify-end px-4 py-2">
-        <button type="button" class="relative" aria-label="Close navigation" @click="toggleMobileMenu">
+        <button type="button" class="relative cursor-pointer" aria-label="Close navigation" @click="toggleMobileMenu">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" class="h-5 w-5 stroke-slate-500">
             <path d="M18 6L6 18M6 6l12 12"></path>
           </svg>

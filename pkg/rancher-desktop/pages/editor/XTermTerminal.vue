@@ -58,9 +58,9 @@ export default defineComponent({
     };
 
     const getTheme = () => ({
-      background: props.isDark ? getCssVar('--bg-surface', '#1e293b') : '#f8fafc',
-      foreground: props.isDark ? '#ccc' : '#333',
-      cursor: props.isDark ? '#ccc' : '#333',
+      background: getCssVar('--bg-surface', props.isDark ? '#1e293b' : '#f8fafc'),
+      foreground: getCssVar('--text-primary', props.isDark ? '#ccc' : '#333'),
+      cursor: getCssVar('--text-primary', props.isDark ? '#ccc' : '#333'),
       selectionBackground: props.isDark ? '#3b82f680' : '#3b82f640',
       selectionForeground: props.isDark ? '#ffffff' : '#000000',
     });

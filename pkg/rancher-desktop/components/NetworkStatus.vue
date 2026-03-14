@@ -88,7 +88,7 @@ export default defineComponent({
 <style scoped lang="scss">
 .networkStatusInfo {
   .icon-dot {
-    font-size: 8px;
+    font-size: var(--fs-caption);
     padding: 2px;
 
     &.online {

@@ -604,8 +604,8 @@ watch(isDark, () => {
 }
 
 .prose :deep(.sulla-audio-label) {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -630,8 +630,8 @@ watch(isDark, () => {
   border-radius: 8px;
   background: var(--bg-page);
   overflow: hidden;
-  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
 }
 
 .tool-card-cc-header {
@@ -664,14 +664,14 @@ watch(isDark, () => {
 }
 
 .tool-card-cc-name {
-  font-weight: 700;
-  font-size: 13px;
+  font-weight: var(--weight-bold);
+  font-size: var(--fs-code);
   color: var(--text-primary);
 }
 
 .tool-card-cc-desc {
-  font-weight: 400;
-  font-size: 13px;
+  font-weight: var(--weight-normal);
+  font-size: var(--fs-code);
   color: var(--text-secondary);
   flex: 1;
   min-width: 0;
@@ -695,12 +695,12 @@ watch(isDark, () => {
   align-items: baseline;
   gap: 10px;
   padding: 2px 12px 2px 20px;
-  font-size: 12px;
+  font-size: var(--fs-body-sm);
 }
 
 .tool-card-cc-cmd-label {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-bold);
   color: var(--text-muted);
   text-transform: uppercase;
   flex-shrink: 0;
@@ -729,8 +729,8 @@ watch(isDark, () => {
   padding: 0;
   background: none;
   color: var(--text-secondary);
-  font-size: 12px;
-  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: var(--fs-body-sm);
+  font-family: var(--font-mono);
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 300px;
@@ -738,8 +738,8 @@ watch(isDark, () => {
 }
 
 .tool-card-cc-section-label {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-bold);
   color: var(--text-muted);
   text-transform: uppercase;
   margin-bottom: 4px;
@@ -747,7 +747,7 @@ watch(isDark, () => {
 
 .tool-card-cc-error {
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: var(--fs-body-sm);
   color: var(--status-error);
 }
 </style>

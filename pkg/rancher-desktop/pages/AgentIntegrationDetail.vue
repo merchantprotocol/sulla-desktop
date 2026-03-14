@@ -1009,13 +1009,8 @@ onMounted(async () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 /* Custom styles for integration detail page */

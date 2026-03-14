@@ -93,6 +93,7 @@ export interface FileEntry {
   size: number;
   ext: string;
   editorType?: 'code';
+  line?: number;
 }
 
 export default defineComponent({
@@ -543,17 +544,12 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #f8fafc;
-  color: #333;
+  background: var(--bg-surface);
+  color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 13px;
+  font-size: var(--fs-code);
   user-select: none;
   overflow: hidden;
-}
-
-.file-tree-sidebar.dark {
-  background: var(--bg-surface, #1e293b);
-  color: #ccc;
 }
 
 .file-tree-header {
@@ -561,20 +557,14 @@ export default defineComponent({
   align-items: center;
   padding: 0 8px 0 12px;
   height: 35px;
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
   font-weight: 600;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: #64748b;
-  background: #f8fafc;
-  border-bottom: 1px solid #cbd5e1;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
-}
-
-.dark .file-tree-header {
-  color: #94a3b8;
-  background: var(--bg-surface, #1e293b);
-  border-bottom-color: var(--border-default, #3c3c3c);
 }
 
 .file-tree-actions {
@@ -594,21 +584,12 @@ export default defineComponent({
   background: none;
   border-radius: 4px;
   cursor: pointer;
-  color: #666;
+  color: var(--text-muted);
 }
 
 .action-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: #333;
-}
-
-.dark .action-btn {
-  color: #999;
-}
-
-.dark .action-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ccc;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .file-tree-scroll.drop-active {
@@ -624,8 +605,8 @@ export default defineComponent({
 
 .file-tree-loading {
   padding: 16px 12px;
-  color: #999;
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--fs-body-sm);
 }
 
 .file-tree-scroll {
@@ -644,11 +625,7 @@ export default defineComponent({
 }
 
 .file-tree-scroll::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--bg-hover);
   border-radius: 3px;
-}
-
-.dark .file-tree-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
 }
 </style>

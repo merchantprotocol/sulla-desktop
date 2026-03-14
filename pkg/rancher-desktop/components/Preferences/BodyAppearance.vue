@@ -101,13 +101,13 @@ export default defineComponent({
 
   h3 {
     margin: 0 0 0.25rem;
-    font-size: 1.1rem;
+    font-size: var(--fs-heading);
     font-weight: 600;
   }
 
   .description {
     color: var(--text-secondary, #64748b);
-    font-size: 0.875rem;
+    font-size: var(--fs-body);
     margin: 0 0 1rem;
   }
 }
@@ -196,7 +196,7 @@ export default defineComponent({
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--fs-code);
   color: var(--text-primary, #334155);
 }
 

@@ -1562,7 +1562,7 @@ export default {
       top: 38px;
       right: 0;
       width: 300px;
-      border: 1px solid var(--primary);
+      border: 1px solid var(--border-accent);
       background-color: var(--body-bg);
       padding: 20px;
       z-index: 2;
@@ -1609,7 +1609,7 @@ export default {
       height: 20px;
 
       &:nth-child(4n+1) {
-        border-color: var(--success);
+        border-color: var(--border-success);
 
         .bg {
           background-color: var(--success);
@@ -1617,7 +1617,7 @@ export default {
       }
 
       &:nth-child(4n+2) {
-        border-color: var(--warning);
+        border-color: var(--border-warning);
 
         .bg {
           background-color: var(--warning);
@@ -1625,7 +1625,7 @@ export default {
       }
 
       &:nth-child(4n+3) {
-        border-color: var(--info);
+        border-color: var(--border-info);
 
         .bg {
           background-color: var(--info);
@@ -1633,7 +1633,7 @@ export default {
       }
 
       &:nth-child(4n+4) {
-        border-color: var(--error);
+        border-color: var(--border-error);
 
         .bg {
           background-color: var(--error);
@@ -1652,10 +1652,10 @@ export default {
 
       .label {
         margin-right: 10px;
-        font-size: 11px;
+        font-size: var(--fs-body-sm);
       }
      .cross {
-        font-size: 12px;
+        font-size: var(--fs-body-sm);
         font-weight: bold;
         cursor: pointer;
       }
@@ -1701,7 +1701,7 @@ export default {
     justify-content: center;
     padding: 20px 0;
     > i {
-      font-size: 20px;
+      font-size: var(--fs-heading);
       height: 20px;
       margin-right: 5px;
       width: 20px;
@@ -1789,7 +1789,7 @@ export default {
         }
 
         &.state-description > td {
-          font-size: 13px;
+          font-size: var(--fs-code);
           padding-top: 0;
           overflow-wrap: anywhere;
         }

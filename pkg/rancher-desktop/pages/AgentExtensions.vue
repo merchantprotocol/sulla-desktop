@@ -92,7 +92,7 @@
             <template v-if="!loading && activeTab === 'catalog'">
               <div
                 v-if="filteredCatalog.length === 0"
-                class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:text-white/60"
+                class="flex h-40 items-center justify-center text-sm text-content/60"
               >
                 No extensions found.
               </div>
@@ -241,7 +241,7 @@
             <template v-if="!loading && activeTab === 'installed'">
               <div
                 v-if="installedExtensions.length === 0"
-                class="flex h-40 flex-col items-center justify-center gap-3 text-sm text-[#0d0d0d]/60 dark:text-white/60"
+                class="flex h-40 flex-col items-center justify-center gap-3 text-sm text-content/60"
               >
                 <span>No extensions installed yet.</span>
                 <button
@@ -674,13 +674,8 @@ onMounted(async () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 .line-clamp-2 {

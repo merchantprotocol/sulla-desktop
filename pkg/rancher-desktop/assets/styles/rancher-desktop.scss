@@ -2,7 +2,7 @@
 body {
   background-color: var(--body-bg);
   color: var(--body-text);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .labeled-input {

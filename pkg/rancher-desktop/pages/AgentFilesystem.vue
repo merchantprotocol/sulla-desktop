@@ -517,13 +517,8 @@ export default defineComponent({
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 .file-tree-panel {
@@ -531,14 +526,9 @@ export default defineComponent({
   min-width: 200px;
   max-width: 400px;
   flex-shrink: 0;
-  border-right: 1px solid #e2e8f0;
+  border-right: 1px solid var(--border-default);
   overflow: hidden;
-  background: #f8fafc;
-}
-
-.file-tree-panel.dark {
-  border-right-color: var(--border-default, #3c3c3c);
-  background: var(--bg-surface, #1e293b);
+  background: var(--bg-surface);
 }
 
 .editor-panel {
@@ -546,11 +536,7 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #ffffff;
-}
-
-.editor-panel.dark {
-  background: var(--bg-surface, #1e293b);
+  background: var(--bg-page);
 }
 
 .editor-top {
@@ -565,14 +551,9 @@ export default defineComponent({
   min-height: 150px;
   max-height: 300px;
   flex-shrink: 0;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-default);
   overflow: hidden;
-  background: #f8fafc;
-}
-
-.editor-bottom.dark {
-  border-top-color: var(--border-default, #3c3c3c);
-  background: var(--bg-surface, #1e293b);
+  background: var(--bg-surface);
 }
 
 .right-pane {
@@ -580,14 +561,9 @@ export default defineComponent({
   min-width: 200px;
   max-width: 400px;
   flex-shrink: 0;
-  border-left: 1px solid #e2e8f0;
+  border-left: 1px solid var(--border-default);
   overflow: hidden;
-  background: #f8fafc;
-}
-
-.right-pane.dark {
-  border-left-color: var(--border-default, #3c3c3c);
-  background: var(--bg-surface, #1e293b);
+  background: var(--bg-surface);
 }
 
 .empty-state {
@@ -597,7 +573,7 @@ export default defineComponent({
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: #999;
+  color: var(--text-muted);
 }
 
 .empty-icon {
@@ -609,36 +585,27 @@ export default defineComponent({
 }
 
 .empty-text {
-  font-size: 14px;
-  color: #666;
-}
-
-.dark .empty-text {
-  color: #888;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
 }
 
 .empty-hint {
-  font-size: 12px;
-  color: #999;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
 }
 
 .error-text {
-  font-size: 13px;
-  color: #e53e3e;
+  font-size: var(--fs-code);
+  color: var(--text-error);
 }
 
 .loading-spinner {
   width: 24px;
   height: 24px;
-  border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: #0078d4;
+  border: 2px solid var(--bg-hover);
+  border-top-color: var(--accent-primary);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
-}
-
-.dark .loading-spinner {
-  border-color: rgba(255, 255, 255, 0.1);
-  border-top-color: #0078d4;
 }
 
 @keyframes spin {
@@ -650,8 +617,8 @@ export default defineComponent({
   display: flex;
   align-items: stretch;
   height: 35px;
-  background: #f8fafc;
-  border-bottom: 1px solid #e0e0e0;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -661,20 +628,15 @@ export default defineComponent({
   height: 0;
 }
 
-.tab-bar.dark {
-  background: var(--bg-surface, #1e293b);
-  border-bottom-color: var(--border-default, #3c3c3c);
-}
-
 .tab {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 0 12px;
-  font-size: 13px;
-  color: #333;
-  border-right: 1px solid #e0e0e0;
-  background: #eef2f6;
+  font-size: var(--fs-code);
+  color: var(--text-primary);
+  border-right: 1px solid var(--border-default);
+  background: var(--bg-surface-hover);
   cursor: pointer;
   flex-shrink: 0;
   max-width: 200px;
@@ -682,31 +644,14 @@ export default defineComponent({
 }
 
 .tab:hover {
-  background: #e8ecf0;
-}
-
-.tab.dark {
-  color: #999;
-  border-right-color: var(--border-default, #3c3c3c);
-  background: #2d2d2d;
-}
-
-.tab.dark:hover {
-  background: #323232;
-  color: #ccc;
+  background: var(--bg-surface-hover);
 }
 
 .tab.active {
-  background: #ffffff;
-  color: #333;
-  border-bottom: 1px solid #ffffff;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--bg-page);
   margin-bottom: -1px;
-}
-
-.tab.active.dark {
-  background: #0f172a;
-  border-bottom-color: #0f172a;
-  color: #ccc;
 }
 
 .tab-icon {
@@ -724,7 +669,7 @@ export default defineComponent({
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #0078d4;
+  background: var(--accent-primary);
   flex-shrink: 0;
 }
 
@@ -735,8 +680,9 @@ export default defineComponent({
   width: 18px;
   height: 18px;
   border-radius: 3px;
-  color: #999;
+  color: var(--text-muted);
   margin-left: 2px;
+  cursor: pointer;
   flex-shrink: 0;
   opacity: 0;
   transition: opacity 0.1s;
@@ -753,11 +699,7 @@ export default defineComponent({
 .tab.active:hover .tab-close,
 .tab-close:hover {
   opacity: 1;
-  background: rgba(0, 0, 0, 0.1);
-}
-
-.dark .tab-close:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
 }
 
 /* Editor header (breadcrumb + save button) */
@@ -766,17 +708,11 @@ export default defineComponent({
   align-items: center;
   justify-content: space-between;
   padding: 4px 12px;
-  font-size: 12px;
-  color: #888;
-  background: #ffffff;
-  border-bottom: 1px solid #e8e8e8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
+  background: var(--bg-page);
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
-}
-
-.editor-header.dark {
-  background: #0f172a;
-  color: #888;
-  border-bottom-color: #2d2d2d;
 }
 
 .save-button {
@@ -784,10 +720,10 @@ export default defineComponent({
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  color: #ffffff;
-  background: #0078d4;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-on-accent);
+  background: var(--accent-primary);
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -795,35 +731,18 @@ export default defineComponent({
 }
 
 .save-button:hover:not(:disabled) {
-  background: #106ebe;
+  background: var(--accent-primary);
 }
 
 .save-button:active:not(:disabled) {
-  background: #005a9e;
+  background: var(--accent-primary-hover);
 }
 
 .save-button:disabled {
-  background: #cccccc;
+  background: var(--bg-surface-hover);
   cursor: not-allowed;
 }
 
-.save-button.dark {
-  color: #ffffff;
-  background: #0078d4;
-}
-
-.save-button.dark:hover:not(:disabled) {
-  background: #106ebe;
-}
-
-.save-button.dark:active:not(:disabled) {
-  background: #005a9e;
-}
-
-.save-button.dark:disabled {
-  background: #666666;
-  color: #cccccc;
-}
 
 .breadcrumb-segment {
   white-space: nowrap;
@@ -831,7 +750,7 @@ export default defineComponent({
 
 .breadcrumb-sep {
   margin: 0 4px;
-  color: #aaa;
+  color: var(--text-muted);
 }
 
 /* Tab Context Menu */
@@ -839,19 +758,13 @@ export default defineComponent({
   position: fixed;
   z-index: 9999;
   min-width: 180px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-page);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   padding: 4px 0;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 13px;
-}
-
-.tab-context-menu.dark {
-  background: #2d2d2d;
-  border-color: #404040;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-code);
 }
 
 .tab-context-menu .context-menu-item {
@@ -862,53 +775,33 @@ export default defineComponent({
   padding: 6px 12px;
   border: none;
   background: none;
-  color: #333;
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
   line-height: 1;
 }
 
 .tab-context-menu .context-menu-item:hover {
-  background: #f1f5f9;
-}
-
-.dark .tab-context-menu .context-menu-item {
-  color: #ccc;
-}
-
-.dark .tab-context-menu .context-menu-item:hover {
-  background: #383838;
+  background: var(--bg-surface-hover);
 }
 
 .tab-context-menu .context-menu-sep {
   height: 1px;
-  background: #e2e8f0;
+  background: var(--border-default);
   margin: 4px 0;
-}
-
-.dark .tab-context-menu .context-menu-sep {
-  background: #404040;
 }
 
 .tab-context-menu .context-menu-subheader {
   padding: 8px 12px;
-  font-weight: bold;
-  font-size: 12px;
-  color: #666;
-}
-
-.dark .tab-context-menu .context-menu-subheader {
-  color: #ccc;
+  font-weight: var(--weight-bold);
+  font-size: var(--fs-body-sm);
+  color: var(--text-secondary);
 }
 
 .tab-context-menu .context-menu-shortcut {
   margin-left: auto;
-  font-size: 11px;
-  color: #999;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   padding-left: 16px;
-}
-
-.dark .tab-context-menu .context-menu-shortcut {
-  color: #666;
 }
 </style>

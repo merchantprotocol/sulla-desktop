@@ -76,11 +76,11 @@ FORM {
     color: var(--input-label);
     display: inline-block;
     margin: $spacing 0 $spacing 0;
-    font-size: 12px;
+    font-size: var(--fs-body-sm);
 
     .radio-label,
     .checkbox-label {
-      font-size: 14px;
+      font-size: var(--fs-body);
     }
 
     &.radio, &.checkbox {
@@ -128,7 +128,7 @@ INPUT.inline-input {
 .input-title {
     clear: both;
     margin-left: 24px;
-    font-size: 12px;
+    font-size: var(--fs-body-sm);
 }
 
 .fixed select, .fixed.v-select, .fixed input:not(.vs__search){

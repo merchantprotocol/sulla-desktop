@@ -443,7 +443,7 @@ export default defineComponent({
   border: 1px solid var(--border);
   border-radius: var(--border-radius);
   font-family: monospace;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   overflow-x: auto;
 
   .breadcrumb-item {
@@ -510,7 +510,7 @@ export default defineComponent({
 }
 
 .file-icon {
-  font-size: 1rem;
+  font-size: var(--fs-body);
   color: var(--muted);
 
   .is-directory & {
@@ -520,7 +520,7 @@ export default defineComponent({
 
 .permissions {
   font-family: monospace;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   color: var(--muted);
 }
 

@@ -83,18 +83,6 @@
       </div>
     </div>
 
-    <!-- Bottom info -->
-    <div class="tw-footer" :class="{ dark: isDark }">
-      <div class="tw-footer-text" v-if="currentStep === -1">
-        Dashboard
-      </div>
-      <div class="tw-footer-text" v-else-if="currentStep <= 2">
-        Create Data — Step {{ currentStep + 1 }} of 3
-      </div>
-      <div class="tw-footer-text" v-else>
-        Train Model — Step {{ currentStep - 2 }} of 3
-      </div>
-    </div>
   </div>
 </template>
 
@@ -173,21 +161,15 @@ export default defineComponent({
   align-items: center;
   justify-content: space-between;
   padding: 6px 8px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
 }
-.tw-header.dark {
-  border-bottom-color: var(--border-default, #334155);
-}
 .tw-header-title {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #64748b;
-}
-.tw-header.dark .tw-header-title {
-  color: #94a3b8;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
 }
 .tw-header-actions {
   display: flex;
@@ -199,17 +181,13 @@ export default defineComponent({
   padding: 3px;
   border-radius: 4px;
   cursor: pointer;
-  color: #64748b;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
 }
 .tw-header-btn:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-.tw-header-btn.dark:hover {
-  background: var(--bg-surface, #1e293b);
-  color: #e2e8f0;
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
 }
 
 /* Steps */
@@ -224,23 +202,16 @@ export default defineComponent({
 
 /* Section titles */
 .tw-section-title {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #94a3b8;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-muted);
   padding: 4px 8px 8px;
 }
-.tw-section-title.dark {
-  color: #64748b;
-}
 .tw-section-title.active {
-  color: #0284c7;
+  color: var(--accent-primary);
 }
-.dark .tw-section-title.active {
-  color: #38bdf8;
-}
-
 .tw-step {
   position: relative;
   display: flex;
@@ -255,16 +226,10 @@ export default defineComponent({
   cursor: pointer;
 }
 .tw-step.clickable:hover {
-  background: #f1f5f9;
-}
-.tw-step.clickable.dark:hover {
-  background: var(--bg-surface, #1e293b);
+  background: var(--bg-surface-alt);
 }
 .tw-step.active {
-  background: #eff6ff;
-}
-.tw-step.active.dark {
-  background: var(--bg-surface, #1e293b);
+  background: var(--bg-info);
 }
 
 /* Step indicator circle */
@@ -275,40 +240,24 @@ export default defineComponent({
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-bold);
   flex-shrink: 0;
-  border: 2px solid #cbd5e1;
-  color: #94a3b8;
-  background: #fff;
+  border: 2px solid var(--border-strong);
+  color: var(--text-muted);
+  background: var(--bg-surface);
   transition: all 0.2s;
 }
-.dark .tw-step-indicator {
-  border-color: #475569;
-  color: #64748b;
-  background: #0f172a;
-}
 .tw-step-indicator.active {
-  border-color: #0284c7;
-  color: #0284c7;
-  background: #fff;
+  border-color: var(--border-accent);
+  color: var(--accent-primary);
+  background: var(--bg-surface);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
 }
-.dark .tw-step-indicator.active {
-  border-color: #38bdf8;
-  color: #38bdf8;
-  background: #0f172a;
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-}
 .tw-step-indicator.completed {
-  border-color: #16a34a;
-  background: #16a34a;
-  color: #fff;
-}
-.dark .tw-step-indicator.completed {
-  border-color: #22c55e;
-  background: #22c55e;
-  color: #fff;
+  border-color: var(--border-success);
+  background: var(--border-success);
+  color: var(--text-on-accent);
 }
 
 /* Step content */
@@ -318,35 +267,23 @@ export default defineComponent({
   padding-top: 2px;
 }
 .tw-step-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #334155;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
   line-height: 1.3;
 }
-.dark .tw-step-title {
-  color: #e2e8f0;
-}
 .tw-step.active .tw-step-title {
-  color: #0284c7;
-}
-.dark .tw-step.active .tw-step-title {
-  color: #38bdf8;
+  color: var(--accent-primary);
 }
 .tw-step.completed .tw-step-title {
-  color: #16a34a;
-}
-.dark .tw-step.completed .tw-step-title {
-  color: #4ade80;
+  color: var(--text-success);
 }
 
 .tw-step-desc {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   line-height: 1.4;
   margin-top: 2px;
-}
-.dark .tw-step-desc {
-  color: #64748b;
 }
 
 /* Connector line between steps */
@@ -356,33 +293,13 @@ export default defineComponent({
   bottom: -8px;
   width: 2px;
   height: 16px;
-  background: #cbd5e1;
+  background: var(--border-strong);
   z-index: 0;
 }
-.dark .tw-step-connector {
-  background: #475569;
-}
 .tw-step-connector.completed {
-  background: #16a34a;
-}
-.dark .tw-step-connector.completed {
-  background: #22c55e;
+  background: var(--border-success);
 }
 
-/* Footer */
-.tw-footer {
-  padding: 10px 12px;
-  border-top: 1px solid #e5e7eb;
-  flex-shrink: 0;
-}
-.tw-footer.dark {
-  border-top-color: var(--border-default, #334155);
-}
-.tw-footer-text {
-  font-size: 11px;
-  color: #94a3b8;
-  text-align: center;
-}
 
 /* Dashboard link */
 .tw-dashboard-link {
@@ -392,29 +309,18 @@ export default defineComponent({
   padding: 10px 12px;
   margin-bottom: 12px;
   border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #334155;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
-  border-bottom: 1px solid #e5e7eb;
-}
-.tw-dashboard-link.dark {
-  color: #cbd5e1;
-  border-bottom-color: var(--border-default, #334155);
+  border-bottom: 1px solid var(--border-default);
 }
 .tw-dashboard-link:hover {
-  background: #f1f5f9;
-}
-.tw-dashboard-link.dark:hover {
-  background: var(--bg-surface, #1e293b);
+  background: var(--bg-surface-alt);
 }
 .tw-dashboard-link.active {
-  background: #eff6ff;
-  color: #0284c7;
-}
-.tw-dashboard-link.active.dark {
-  background: var(--bg-surface, #1e293b);
-  color: #38bdf8;
+  background: var(--bg-info);
+  color: var(--accent-primary);
 }
 </style>

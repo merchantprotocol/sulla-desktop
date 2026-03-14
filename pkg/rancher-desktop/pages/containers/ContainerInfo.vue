@@ -312,7 +312,7 @@ onBeforeUnmount(() => {
   border-radius: var(--border-radius);
   background: var(--input-bg);
   color: var(--body-text);
-  font-size: 13px;
+  font-size: var(--fs-code);
   padding: 0 0.75rem;
   min-width: 200px;
   height: 32px;
@@ -359,7 +359,7 @@ onBeforeUnmount(() => {
   }
 
   .icon {
-    font-size: 12px;
+    font-size: var(--fs-body-sm);
   }
 }
 

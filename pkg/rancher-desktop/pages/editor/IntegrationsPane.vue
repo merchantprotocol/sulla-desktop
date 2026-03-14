@@ -332,7 +332,7 @@ export default defineComponent({
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--fs-code);
 }
 
 .integrations-header {
@@ -340,19 +340,17 @@ export default defineComponent({
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--bg-surface-hover);
   flex-shrink: 0;
 }
-.integrations-header.dark { border-bottom-color: var(--border-default, #334155); }
 
 .integrations-header-title {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #475569;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
 }
-.dark .integrations-header-title { color: #94a3b8; }
 
 .integrations-header-actions { display: flex; gap: 2px; }
 
@@ -361,29 +359,26 @@ export default defineComponent({
   height: 24px;
   border: none;
   background: transparent;
-  color: #64748b;
+  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 4px;
 }
-.integrations-header-btn:hover { background: rgba(0,0,0,0.06); color: #334155; }
-.integrations-header-btn.dark { color: #94a3b8; }
-.integrations-header-btn.dark:hover { background: rgba(255,255,255,0.06); color: #cbd5e1; }
+.integrations-header-btn:hover { background: var(--bg-hover); color: var(--text-secondary); }
 
 .integrations-git-bar {
   display: flex;
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
-  font-size: 11px;
-  color: #64748b;
-  border-bottom: 1px solid #e2e8f0;
+  font-size: var(--fs-body-sm);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--bg-surface-hover);
   flex-shrink: 0;
 }
-.integrations-git-bar.dark { color: #94a3b8; border-bottom-color: var(--border-default, #334155); }
-.integrations-git-status { color: #f59e0b; font-size: 10px; }
+.integrations-git-status { color: var(--text-warning); font-size: var(--fs-caption); }
 
 .integrations-content {
   flex: 1;
@@ -394,8 +389,8 @@ export default defineComponent({
 .integrations-status {
   padding: 16px;
   text-align: center;
-  color: #94a3b8;
-  font-size: 11px;
+  color: var(--text-muted);
+  font-size: var(--fs-body-sm);
 }
 
 .integrations-empty {
@@ -405,8 +400,8 @@ export default defineComponent({
   gap: 6px;
   padding: 32px 16px;
 }
-.integrations-empty-text { color: #94a3b8; font-size: 12px; margin: 0; }
-.integrations-empty-hint { color: #94a3b8; font-size: 11px; opacity: 0.7; margin: 0; }
+.integrations-empty-text { color: var(--text-muted); font-size: var(--fs-code); margin: 0; }
+.integrations-empty-hint { color: var(--text-muted); font-size: var(--fs-body-sm); opacity: 0.7; margin: 0; }
 
 .integrations-list { padding: 4px 0; }
 
@@ -418,15 +413,13 @@ export default defineComponent({
   padding: 3px 10px;
   border: none;
   background: transparent;
-  color: #334155;
+  color: var(--text-secondary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-code);
   text-align: left;
   line-height: 1.4;
 }
-.integrations-row:hover { background: rgba(0,0,0,0.04); }
-.integrations-row.dark { color: #cbd5e1; }
-.integrations-row.dark:hover { background: rgba(255,255,255,0.04); }
+.integrations-row:hover { background: var(--bg-hover); }
 
 .integrations-nested { padding-left: 28px; }
 
@@ -438,7 +431,7 @@ export default defineComponent({
   height: 20px;
   border: none;
   background: transparent;
-  color: #64748b;
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 2px;
   border-radius: 3px;
@@ -446,9 +439,9 @@ export default defineComponent({
   align-items: center;
   justify-content: center;
 }
-.integrations-api-btn:hover { background: rgba(59,130,246,0.15); color: #3b82f6; }
-.integrations-api-btn.dark { color: #94a3b8; }
-.integrations-api-btn.dark:hover { background: rgba(96,165,250,0.15); color: #60a5fa; }
+.integrations-api-btn:hover { background: rgba(59,130,246,0.15); color: var(--text-info); }
+.integrations-api-btn.dark { color: var(--text-muted); }
+.integrations-api-btn.dark:hover { background: rgba(96,165,250,0.15); color: var(--text-info); }
 .integrations-row:hover .integrations-api-btn { display: flex; }
 
 .integrations-subfiles { /* nesting container */ }
@@ -464,16 +457,12 @@ export default defineComponent({
 .integrations-ctx-menu {
   position: fixed;
   min-width: 160px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.12);
   padding: 4px 0;
   z-index: 10001;
-}
-.integrations-ctx-menu.dark {
-  background: var(--bg-surface, #1e293b);
-  border-color: var(--border-default, #334155);
 }
 .integrations-ctx-item {
   display: flex;
@@ -483,12 +472,10 @@ export default defineComponent({
   padding: 6px 12px;
   border: none;
   background: transparent;
-  color: #334155;
+  color: var(--text-primary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-body-sm);
   text-align: left;
 }
-.integrations-ctx-item:hover { background: rgba(0,0,0,0.06); }
-.integrations-ctx-item.dark { color: #cbd5e1; }
-.integrations-ctx-item.dark:hover { background: rgba(255,255,255,0.06); }
+.integrations-ctx-item:hover { background: var(--bg-hover); }
 </style>

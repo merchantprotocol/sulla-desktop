@@ -666,11 +666,11 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 
 /* Dark theme overrides */
 .workflow-editor.dark :deep(.vue-flow) {
-  background: #1a1a2e;
+  background: var(--bg-surface);
 }
 
 .workflow-editor.dark :deep(.vue-flow__edge-path) {
-  stroke: #6366f1;
+  stroke: var(--accent-primary);
 }
 
 .workflow-editor.dark :deep(.vue-flow__minimap) {
@@ -678,38 +678,38 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .workflow-editor.dark :deep(.vue-flow__minimap-mask) {
-  fill: rgba(99, 102, 241, 0.1);
+  fill: var(--bg-accent);
 }
 
 .workflow-editor.dark :deep(.vue-flow__minimap-node) {
-  fill: #4a4a6a;
+  fill: var(--bg-surface-hover);
 }
 
 .workflow-editor.dark :deep(.vue-flow__controls) {
-  background: #2d2d44;
-  border-color: #4a4a6a;
+  background: var(--bg-surface-alt);
+  border-color: var(--border-strong);
 }
 
 .workflow-editor.dark :deep(.vue-flow__controls-button) {
-  background: #2d2d44;
-  border-color: #4a4a6a;
-  fill: #e2e8f0;
+  background: var(--bg-surface-alt);
+  border-color: var(--border-strong);
+  fill: var(--text-muted);
 }
 
 .workflow-editor.dark :deep(.vue-flow__controls-button:hover) {
-  background: #3d3d5c;
+  background: var(--bg-surface-hover);
 }
 
 .workflow-editor.dark :deep(.vue-flow__background pattern circle) {
-  fill: #4a4a6a;
+  fill: var(--bg-surface-hover);
 }
 
 /* ── Context menu ── */
 .node-context-menu {
   position: fixed;
   z-index: 10001;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 8px;
   padding: 4px;
   min-width: 160px;
@@ -717,8 +717,6 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .node-context-menu.dark {
-  background: var(--bg-surface, #1e293b);
-  border-color: #3c3c5c;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
@@ -730,45 +728,29 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
   padding: 7px 10px;
   border: none;
   background: transparent;
-  color: #334155;
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: var(--fs-code);
   border-radius: 5px;
   cursor: pointer;
   text-align: left;
 }
 
 .context-menu-item:hover {
-  background: #f1f5f9;
-}
-
-.context-menu-item.dark {
-  color: #e2e8f0;
-}
-
-.context-menu-item.dark:hover {
-  background: var(--border-default, #334155);
+  background: var(--bg-surface-alt);
 }
 
 .context-menu-item.danger {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 .context-menu-item.danger:hover {
-  background: #fef2f2;
-}
-
-.context-menu-item.danger.dark:hover {
-  background: rgba(239, 68, 68, 0.15);
+  background: var(--bg-error);
 }
 
 .context-menu-divider {
   height: 1px;
-  background: #e2e8f0;
+  background: var(--bg-surface-hover);
   margin: 4px 6px;
-}
-
-.context-menu-divider.dark {
-  background: #3c3c5c;
 }
 
 /* ── Delete confirm dialog ── */
@@ -783,7 +765,7 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .delete-confirm-dialog {
-  background: #fff;
+  background: var(--bg-surface);
   border-radius: 8px;
   padding: 16px;
   width: 320px;
@@ -793,30 +775,17 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
   gap: 12px;
 }
 
-.delete-confirm-dialog.dark {
-  background: var(--bg-surface, #1e293b);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-}
-
 .delete-confirm-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.delete-confirm-dialog.dark .delete-confirm-title {
-  color: #e2e8f0;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
 }
 
 .delete-confirm-text {
-  font-size: 13px;
-  color: #475569;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
   margin: 0;
   line-height: 1.4;
-}
-
-.delete-confirm-text.dark {
-  color: #94a3b8;
 }
 
 .delete-confirm-actions {
@@ -827,37 +796,28 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 
 .delete-confirm-btn {
   padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   border: none;
   border-radius: 5px;
   cursor: pointer;
 }
 
 .delete-confirm-btn.cancel {
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
 }
 
 .delete-confirm-btn.cancel:hover {
-  background: #e2e8f0;
-}
-
-.delete-confirm-btn.cancel.dark {
-  background: var(--border-default, #334155);
-  color: #94a3b8;
-}
-
-.delete-confirm-btn.cancel.dark:hover {
-  background: #475569;
+  background: var(--bg-surface-hover);
 }
 
 .delete-confirm-btn.confirm {
-  background: #ef4444;
-  color: #fff;
+  background: var(--status-error);
+  color: var(--text-on-accent);
 }
 
 .delete-confirm-btn.confirm:hover {
-  background: #dc2626;
+  background: var(--status-error);
 }
 </style>

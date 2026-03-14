@@ -294,7 +294,7 @@ const handleNext = async () => {
   position: relative;
   width: 100%;
   height: 6px;
-  background: #ddd;
+  background: var(--bg-surface-hover);
   border-radius: 3px;
   cursor: pointer;
 }
@@ -303,14 +303,14 @@ const handleNext = async () => {
   position: relative;
   width: 100%;
   height: 100%;
-  background: #ddd;
+  background: var(--bg-surface-hover);
   border-radius: 3px;
 }
 
 .vue-slider :deep(.vue-slider-process) {
   position: absolute;
   height: 100%;
-  background: #007bff;
+  background: var(--accent-primary);
   border-radius: 3px;
   top: 0;
   left: 0;
@@ -321,11 +321,11 @@ const handleNext = async () => {
   top: -6px;
   width: 2px;
   height: 18px;
-  background: #999;
+  background: var(--text-muted);
 }
 
 .vue-slider :deep(.vue-slider-mark-step) {
-  background: #ccc;
+  background: var(--bg-surface-hover);
   opacity: 0.5;
 }
 
@@ -335,8 +335,8 @@ const handleNext = async () => {
   transform: translate(-50%, -50%);
   width: 20px;
   height: 20px;
-  background: #fff;
-  border: 2px solid #007bff;
+  background: var(--bg-surface);
+  border: 2px solid var(--accent-primary);
   border-radius: 50%;
   cursor: grab;
   box-shadow: 0 2px 4px rgba(0,0,0,0.2);
@@ -346,7 +346,7 @@ const handleNext = async () => {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: #007bff;
+  background: var(--accent-primary);
   cursor: grab;
 }
 
@@ -368,12 +368,8 @@ button:hover {
 }
 
 input:hover, select:hover {
-  border-color: #374151; /* darker gray border */
-  background-color: #f3f4f6; /* slightly darker background */
-}
-
-dark input:hover, .dark select:hover {
-  background-color: #4b5563 !important; /* darker background for dark mode */
+  border-color: var(--border-strong);
+  background-color: var(--bg-surface-alt);
 }
 
 /* Slide transition for accordion */

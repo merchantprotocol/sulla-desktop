@@ -117,13 +117,13 @@ export default defineComponent({
   }
 
   .message {
-    font-size: 1.5rem;
+    font-size: var(--fs-heading);
     line-height: 2rem;
     font-weight: 600;
   }
 
   .detail {
-    font-size: 1rem;
+    font-size: var(--fs-body);
     line-height: 1.5rem;
   }
 

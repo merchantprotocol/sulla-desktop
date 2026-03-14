@@ -203,19 +203,19 @@ export default {
 
       &-title {
         grid-area: title;
-        font-size: 1.2rem;
+        font-size: var(--fs-heading);
         font-weight: 600;
       }
 
       &-subtitle {
         grid-area: subtitle;
-        font-size: 0.8rem;
+        font-size: var(--fs-body-sm);
         font-weight: 400;
       }
 
       &-version {
         grid-area: version;
-        font-size: 0.8rem;
+        font-size: var(--fs-body-sm);
         font-weight: 400;
       }
 

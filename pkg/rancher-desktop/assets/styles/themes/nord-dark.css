@@ -17,16 +17,37 @@
   --text-muted: #a5b1c2;
   --text-link: #88c0d0;
   --text-on-accent: #2e3440;
+  --text-success: #a3be8c;
+  --text-error: #bf616a;
+  --text-warning: #ebcb8b;
+  --text-info: #88c0d0;
 
   /* Borders */
   --border-default: rgba(216, 222, 233, 0.12);
   --border-strong: rgba(216, 222, 233, 0.24);
   --border-subtle: rgba(216, 222, 233, 0.06);
 
+  /* Semantic Backgrounds */
+  --bg-primary: #2e3440;
+  --bg-hover: rgba(216, 222, 233, 0.06);
+  --bg-success: rgba(163, 190, 140, 0.15);
+  --bg-error: rgba(191, 97, 106, 0.15);
+  --bg-warning: rgba(235, 203, 139, 0.15);
+  --bg-info: rgba(136, 192, 208, 0.15);
+  --bg-accent: rgba(180, 142, 173, 0.15);
+
   /* Accent */
   --accent-primary: #88c0d0;
   --accent-primary-hover: #81a1c1;
+  --text-accent: #b48ead;
 
+  /* Semantic Borders */
+  --border-success: rgba(163, 190, 140, 0.4);
+  --border-error: rgba(191, 97, 106, 0.4);
+  --border-warning: rgba(235, 203, 139, 0.4);
+  --border-info: rgba(136, 192, 208, 0.4);
+  --border-accent: rgba(136, 192, 208, 0.5);
+  --border-focus: rgba(136, 192, 208, 0.5);
 
   /* Status */
   --status-success: #a3be8c;

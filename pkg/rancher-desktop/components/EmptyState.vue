@@ -73,12 +73,12 @@ export default defineComponent({
   }
 
   .empty-state-heading {
-    font-size: 1.875rem;
+    font-size: var(--fs-display);
     line-height: 2.25rem;
   }
 
   .empty-state-body {
-    font-size: 1rem;
+    font-size: var(--fs-body);
     line-height: 1.5rem;
     text-align: center;
   }

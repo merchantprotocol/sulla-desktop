@@ -354,11 +354,7 @@ button:hover {
 }
 
 input:hover, select:hover {
-  border-color: #374151; /* darker gray border */
-  background-color: #f3f4f6; /* slightly darker background */
-}
-
-.dark input:hover, .dark select:hover {
-  background-color: #4b5563 !important; /* darker background for dark mode */
+  border-color: var(--border-strong);
+  background-color: var(--bg-surface-alt);
 }
 </style>

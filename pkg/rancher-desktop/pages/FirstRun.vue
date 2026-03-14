@@ -146,13 +146,13 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 </script>
 <style lang="scss" scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
+  background: var(--bg-page);
+  color: var(--body-text);
 }
 
 .page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--body-text);
 }
 
 .button-area {
@@ -173,7 +173,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 .model-select {
   width: 100%;
   padding: 0.5rem;
-  font-size: 0.9rem;
+  font-size: var(--fs-body);
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--input-bg);
@@ -192,7 +192,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 
 .model-description {
   margin-top: 0.5rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-code);
   color: var(--muted);
   font-style: italic;
 }

@@ -207,11 +207,11 @@ export default {
   }
 
   textarea#imageManagerOutput.success {
-    border: 2px solid var(--success);
+    border: 2px solid var(--border-success);
   }
 
   textarea#imageManagerOutput.failure {
-    border: 2px solid var(--error);
+    border: 2px solid var(--border-error);
   }
 
   .actions {

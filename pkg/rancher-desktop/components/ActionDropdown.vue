@@ -117,7 +117,7 @@ export default {
   .btn-group-xs > .btn,
   .btn-xs .btn-label {
       padding: $xs-padding;
-      font-size: 13px;
+      font-size: var(--fs-code);
   }
 
   // this matches the top/bottom padding of the default button
@@ -247,7 +247,7 @@ export default {
 
   //header
   .user-info {
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-default);
     display: block;
   }
 }

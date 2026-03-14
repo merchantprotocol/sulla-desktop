@@ -100,7 +100,7 @@ $spacing-property-map: (
 }
 
 .text-small {
-  font-size: .8em;
+  font-size: var(--fs-body-sm);
 }
 
 .text-normal {
@@ -161,7 +161,7 @@ $spacing-property-map: (
 }
 
 .helper-text {
-  font-size: 12px;
+  font-size: var(--fs-body-sm);
   color: var(--secondary);
 }
 // Only display content to screen readers
@@ -252,5 +252,5 @@ $spacing-property-map: (
 
 .plus-more {
   color: var(  --input-placeholder );
-  font-size: 0.8em;
+  font-size: var(--fs-body-sm);
 }

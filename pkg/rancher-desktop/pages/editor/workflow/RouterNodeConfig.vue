@@ -117,42 +117,35 @@ function removeRoute(idx: number) {
 
 .node-field {
   padding: 12px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-default);
 }
-.router-config.dark .node-field { border-bottom-color: #3c3c5c; }
 
 .node-field-label {
   display: block;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-secondary);
   margin-bottom: 6px;
 }
-.node-field-label.dark { color: #94a3b8; }
+.node-field-label.dark { color: var(--text-muted); }
 
 .node-field-input {
   width: 100%;
   padding: 6px 8px;
-  font-size: 13px;
-  border: 1px solid #e2e8f0;
+  font-size: var(--fs-code);
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 4px;
-  background: #fff;
-  color: #1e293b;
+  background: var(--bg-surface);
+  color: var(--text-primary);
   outline: none;
   box-sizing: border-box;
 }
 .node-field-input:focus {
-  border-color: #6366f1;
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
 }
-.node-field-input.dark {
-  background: #2d2d44;
-  border-color: #3c3c5c;
-  color: #e2e8f0;
-}
-.node-field-input.dark:focus { border-color: #6366f1; }
 
 .node-field-textarea {
   resize: vertical;
@@ -167,14 +160,14 @@ function removeRoute(idx: number) {
 }
 
 .route-card {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.route-card.dark { border-color: #3c3c5c; }
+.route-card.dark { border-color: var(--border-strong); }
 
 .route-card-header {
   display: flex;
@@ -188,7 +181,7 @@ function removeRoute(idx: number) {
   resize: vertical;
   font-family: inherit;
   min-height: 40px;
-  font-size: 12px;
+  font-size: var(--fs-code);
 }
 
 .route-remove-btn {
@@ -199,59 +192,58 @@ function removeRoute(idx: number) {
   height: 24px;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   border-radius: 4px;
   cursor: pointer;
   flex-shrink: 0;
 }
-.route-remove-btn:hover { background: rgba(0,0,0,0.06); color: #ef4444; }
-.route-remove-btn.dark:hover { background: rgba(255,255,255,0.08); color: #f87171; }
+.route-remove-btn:hover { background: var(--bg-hover); color: var(--text-error); }
 
 .route-add-btn {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  border: 1px dashed #e2e8f0;
+  border: 1px dashed var(--border-default);
   border-radius: 4px;
   background: transparent;
-  color: #64748b;
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: var(--fs-code);
   cursor: pointer;
   margin-top: 4px;
 }
-.route-add-btn:hover { border-color: #6366f1; color: #6366f1; }
-.route-add-btn.dark { border-color: #3c3c5c; color: #94a3b8; }
-.route-add-btn.dark:hover { border-color: #6366f1; color: #818cf8; }
+.route-add-btn:hover { border-color: var(--accent-primary); color: var(--text-info); }
+.route-add-btn.dark { border-color: var(--border-strong); color: var(--text-muted); }
+.route-add-btn.dark:hover { border-color: var(--accent-primary); color: var(--text-info); }
 
 .field-hint {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin: 6px 0 0;
   line-height: 1.4;
 }
-.field-hint.dark { color: #64748b; }
+.field-hint.dark { color: var(--text-secondary); }
 
 .help-section {
   border-bottom: none;
 }
 
 .help-title {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-secondary);
   margin: 0 0 8px;
 }
-.help-title.dark { color: #94a3b8; }
+.help-title.dark { color: var(--text-muted); }
 
 .help-text {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin: 0 0 6px;
   line-height: 1.5;
 }
 .help-text:last-child { margin-bottom: 0; }
-.help-text.dark { color: #64748b; }
+.help-text.dark { color: var(--text-secondary); }
 </style>

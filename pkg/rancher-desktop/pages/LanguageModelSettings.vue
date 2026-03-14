@@ -1288,7 +1288,7 @@ export default defineComponent({
             v-if="availableProviders.length <= 1"
             style="margin-top: 1rem; padding: 1rem; border-radius: 8px; border: 1px solid var(--border, #e2e8f0); background: var(--surface-alt, #f8fafc);"
           >
-            <p style="font-size: 0.9rem; color: var(--muted);">
+            <p style="font-size: var(--fs-body); color: var(--muted);">
               Only Ollama (local) is available. To add remote providers, go to
               <strong>Integrations</strong> and configure an AI provider (e.g. Grok, OpenAI, Anthropic).
             </p>
@@ -1573,7 +1573,7 @@ export default defineComponent({
 
 .lm-header {
   height: 3rem;
-  font-size: 1.5rem;
+  font-size: var(--fs-heading);
   line-height: 2rem;
   display: flex;
   align-items: center;
@@ -1602,7 +1602,7 @@ export default defineComponent({
   flex-shrink: 0;
 
   .nav-item {
-    font-size: 1.125rem;
+    font-size: var(--fs-heading);
     line-height: 1.75rem;
     padding: 0.5rem 0.75rem;
     cursor: pointer;
@@ -1667,7 +1667,7 @@ export default defineComponent({
   border-bottom: 2px solid transparent;
   margin-bottom: -2px;
   cursor: pointer;
-  font-size: 0.95rem;
+  font-size: var(--fs-body);
   color: var(--muted);
   transition: all 0.2s;
   outline: none;
@@ -1725,19 +1725,19 @@ export default defineComponent({
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
   color: var(--error, #ef4444);
-  font-size: 0.9rem;
+  font-size: var(--fs-body);
 }
 
 .tab-content {
   h2 {
     margin: 0 0 0.5rem;
-    font-size: 1.1rem;
+    font-size: var(--fs-heading);
     font-weight: 500;
   }
 
   h3 {
     margin: 1.5rem 0 0.75rem;
-    font-size: 1rem;
+    font-size: var(--fs-body);
     font-weight: 500;
   }
 
@@ -1761,27 +1761,27 @@ export default defineComponent({
   .status-badge {
     padding: 0.25rem 0.75rem;
     border-radius: 9999px;
-    font-size: 0.85rem;
+    font-size: var(--fs-code);
     font-weight: 500;
 
     &.status-running {
-      background: rgba(34, 197, 94, 0.15);
-      color: #22c55e;
+      background: var(--bg-success);
+      color: var(--status-success);
     }
 
     &.status-stopped {
-      background: rgba(234, 179, 8, 0.15);
-      color: #eab308;
+      background: var(--bg-warning);
+      color: var(--status-warning);
     }
 
     &.status-error {
-      background: rgba(239, 68, 68, 0.15);
-      color: #ef4444;
+      background: var(--bg-error);
+      color: var(--status-error);
     }
 
     &.status-unknown {
-      background: rgba(156, 163, 175, 0.15);
-      color: #9ca3af;
+      background: var(--bg-hover);
+      color: var(--text-muted);
     }
   }
 }
@@ -1807,12 +1807,12 @@ export default defineComponent({
   }
 
   .metric-title {
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     color: var(--muted);
   }
 
   .metric-value {
-    font-size: 1.5rem;
+    font-size: var(--fs-heading);
     font-weight: 600;
     margin-bottom: 0.75rem;
   }
@@ -1830,16 +1830,16 @@ export default defineComponent({
     transition: width 0.3s ease;
 
     &.cpu-bar {
-      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      background: linear-gradient(90deg, var(--accent-primary), #8b5cf6);
     }
 
     &.memory-bar {
-      background: linear-gradient(90deg, #22c55e, #eab308);
+      background: linear-gradient(90deg, var(--status-success), var(--status-warning));
     }
   }
 
   .metric-subtext {
-    font-size: 0.8rem;
+    font-size: var(--fs-body-sm);
     color: var(--muted);
     margin-top: 0.5rem;
   }
@@ -1903,7 +1903,7 @@ export default defineComponent({
 
   .setting-description {
     color: var(--muted);
-    font-size: 0.875rem;
+    font-size: var(--fs-body);
     margin-top: 0.5rem;
     opacity: 0.6;
     margin-bottom: 0.5rem;
@@ -1937,7 +1937,7 @@ export default defineComponent({
 }
 
 .current-model {
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   color: var(--muted);
   margin-bottom: 0.5rem;
 
@@ -1950,7 +1950,7 @@ export default defineComponent({
   width: 100%;
   max-width: 400px;
   padding: 0.5rem;
-  font-size: 0.9rem;
+  font-size: var(--fs-body);
   border: 1px solid var(--input-border);
   border-radius: 4px;
   background: var(--input-bg);
@@ -1971,7 +1971,7 @@ export default defineComponent({
   width: 100%;
   max-width: 900px;
   padding: 0.75rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-code);
   line-height: 1.5;
   border: 1px solid var(--input-border);
   border-radius: 6px;
@@ -1996,7 +1996,7 @@ export default defineComponent({
 .text-input {
   flex: 1;
   padding: 0.5rem;
-  font-size: 0.9rem;
+  font-size: var(--fs-body);
   border: 1px solid var(--input-border);
   border-radius: 4px;
   background: var(--input-bg);
@@ -2025,7 +2025,7 @@ export default defineComponent({
   gap: 0.75rem;
 
   .toggle-label {
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     color: var(--body-text);
   }
 }
@@ -2084,7 +2084,7 @@ export default defineComponent({
   width: 100%;
   max-width: 600px;
   padding: 0.75rem;
-  font-size: 0.9rem;
+  font-size: var(--fs-body);
   border: 1px solid var(--input-border);
   border-radius: 4px;
   background: var(--input-bg);
@@ -2109,7 +2109,7 @@ export default defineComponent({
 }
 
 .model-status {
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   margin-bottom: 0.5rem;
 
   &.not-installed {
@@ -2145,7 +2145,7 @@ export default defineComponent({
 }
 
 .progress-text {
-  font-size: 0.75rem;
+  font-size: var(--fs-body-sm);
   color: var(--muted);
   margin-top: 0.25rem;
 }
@@ -2175,7 +2175,7 @@ export default defineComponent({
   align-items: center;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--input-border);
-  font-size: 0.85rem;
+  font-size: var(--fs-code);
 }
 
 .model-item:last-child {
@@ -2189,7 +2189,7 @@ export default defineComponent({
 
 .model-size {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: var(--fs-body-sm);
 }
 
 .key-models-status {
@@ -2208,7 +2208,7 @@ export default defineComponent({
 }
 
 .status-label {
-  font-size: 0.85rem;
+  font-size: var(--fs-code);
   color: var(--body-text);
   font-weight: 500;
   flex: 1;
@@ -2217,24 +2217,24 @@ export default defineComponent({
 .status-badge {
   padding: 0.25rem 0.5rem;
   border-radius: 12px;
-  font-size: 0.75rem;
+  font-size: var(--fs-body-sm);
   font-weight: 500;
   text-transform: uppercase;
 }
 
 .status-installed {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
+  background: var(--bg-success);
+  color: var(--status-success);
 }
 
 .status-missing {
-  background: rgba(234, 179, 8, 0.15);
-  color: #eab308;
+  background: var(--bg-warning);
+  color: var(--status-warning);
 }
 
 .status-failed {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: var(--bg-error);
+  color: var(--status-error);
 }
 
 .no-models-message {
@@ -2276,7 +2276,7 @@ export default defineComponent({
   th {
     font-weight: 500;
     color: var(--muted);
-    font-size: 0.875rem;
+    font-size: var(--fs-body);
   }
 
   .model-name {
@@ -2317,7 +2317,7 @@ export default defineComponent({
     }
 
     .page-type {
-      font-size: 0.75rem;
+      font-size: var(--fs-body-sm);
       color: var(--muted);
     }
 
@@ -2344,11 +2344,11 @@ export default defineComponent({
 
     h3 {
       margin: 0;
-      font-size: 1rem;
+      font-size: var(--fs-body);
     }
 
     .badge {
-      font-size: 0.75rem;
+      font-size: var(--fs-body-sm);
       padding: 0.25rem 0.5rem;
       background: var(--muted);
       color: var(--body-bg);
@@ -2399,13 +2399,13 @@ export default defineComponent({
 
     h3 {
       margin: 0;
-      font-size: 1rem;
+      font-size: var(--fs-body);
     }
   }
 
   p {
     color: var(--muted);
-    font-size: 0.875rem;
+    font-size: var(--fs-body);
     margin: 0 0 1rem;
   }
 
@@ -2416,23 +2416,23 @@ export default defineComponent({
 }
 
 .status-badge {
-  font-size: 0.75rem;
+  font-size: var(--fs-body-sm);
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
   text-transform: capitalize;
 
   &.running {
-    background: #22c55e;
+    background: var(--status-success);
     color: white;
   }
 
   &.stopped {
-    background: #ef4444;
+    background: var(--status-error);
     color: white;
   }
 
   &.error {
-    background: #f59e0b;
+    background: var(--status-warning);
     color: white;
   }
 
@@ -2454,7 +2454,7 @@ export default defineComponent({
   margin: 0;
   padding: 1rem;
   font-family: monospace;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -2471,7 +2471,7 @@ export default defineComponent({
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   transition: background 0.15s;
 
   &.role-primary {
@@ -2500,7 +2500,7 @@ export default defineComponent({
 
   &.btn-sm {
     padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
+    font-size: var(--fs-body-sm);
   }
 }
 // Local Models tab styles
@@ -2545,36 +2545,36 @@ export default defineComponent({
 
 .local-model-name {
   font-weight: 600;
-  font-size: 1rem;
+  font-size: var(--fs-body);
 }
 
 .local-model-badge {
-  font-size: 0.75rem;
+  font-size: var(--fs-body-sm);
   padding: 0.2rem 0.6rem;
   border-radius: 12px;
   font-weight: 500;
 
   &.badge-downloaded {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
+    background: var(--bg-success);
+    color: var(--status-success);
   }
 
   &.badge-not-downloaded {
-    background: rgba(156, 163, 175, 0.15);
-    color: #9ca3af;
+    background: var(--bg-hover);
+    color: var(--text-muted);
   }
 }
 
 .local-model-meta {
   display: flex;
   gap: 1rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-body-sm);
   color: var(--muted);
   margin-bottom: 0.35rem;
 }
 
 .local-model-desc {
-  font-size: 0.85rem;
+  font-size: var(--fs-code);
   color: var(--muted);
   margin: 0;
 }

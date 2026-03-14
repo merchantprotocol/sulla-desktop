@@ -216,21 +216,16 @@ const routeHandles = computed(() => {
   width: 40px;
   height: 40px;
   border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
   display: flex;
   align-items: center;
   justify-content: center;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.workflow-custom-node.dark .node-icon-box {
-  background: #2d2d44;
-  border-color: #4a4a6a;
-}
-
 .workflow-custom-node.selected .node-icon-box {
-  border-color: #6366f1;
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
 }
 
@@ -245,24 +240,24 @@ const routeHandles = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .workflow-custom-node.dark .node-icon-svg {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .workflow-custom-node.selected .node-icon-svg {
-  color: #6366f1;
+  color: var(--text-info);
 }
 
 .workflow-custom-node.dark.selected .node-icon-svg {
-  color: #818cf8;
+  color: var(--text-info);
 }
 
 .node-label {
-  font-size: 11px;
-  color: #475569;
+  font-size: var(--fs-body-sm);
+  color: var(--text-secondary);
   text-align: center;
   max-width: 80px;
   overflow: hidden;
@@ -272,19 +267,15 @@ const routeHandles = computed(() => {
 }
 
 .workflow-custom-node.dark .node-label {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .node-handle {
   width: 8px;
   height: 8px;
-  background: #6366f1;
-  border: 2px solid #fff;
+  background: var(--accent-primary);
+  border: 2px solid var(--bg-surface);
   border-radius: 50%;
-}
-
-.workflow-custom-node.dark .node-handle {
-  border-color: #1a1a2e;
 }
 
 .route-handles-bar {
@@ -307,9 +298,9 @@ const routeHandles = computed(() => {
 }
 
 .route-handle-label {
-  font-size: 8px;
-  font-weight: 500;
-  color: #475569;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
   white-space: nowrap;
   line-height: 1;
   text-align: center;
@@ -319,7 +310,7 @@ const routeHandles = computed(() => {
 }
 
 .route-handle-label.dark {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 /* ── Loop handle positioning ── */
@@ -375,24 +366,24 @@ const routeHandles = computed(() => {
 }
 
 .loop-handle-label {
-  font-size: 7px;
-  font-weight: 600;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
   white-space: nowrap;
   line-height: 1;
   pointer-events: none;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: var(--tracking-wide);
 }
 
 .loop-handle-label.dark {
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 /* In: label above the dot, raised 1.5x font height */
 .loop-label-in {
   margin-top: -11px;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 /* Back: adjust dot position */
@@ -406,7 +397,7 @@ const routeHandles = computed(() => {
 .loop-label-back {
   margin-top: 12px;
   margin-left: 0px;
-  color: #475569;
+  color: var(--text-secondary);
   text-transform: none;
 }
 
@@ -437,8 +428,8 @@ const routeHandles = computed(() => {
 }
 
 .thinking-bubble-collapsed {
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-default);
   border-radius: 12px 12px 12px 4px;
   padding: 4px 8px;
   display: flex;
@@ -454,8 +445,8 @@ const routeHandles = computed(() => {
 }
 
 .thinking-bubble.dark .thinking-bubble-collapsed {
-  background: #2d2d44;
-  border-color: #4a4a6a;
+  background: var(--bg-surface-alt);
+  border-color: var(--border-strong);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
@@ -469,7 +460,7 @@ const routeHandles = computed(() => {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #6366f1;
+  background: var(--accent-primary);
   animation: dot-bounce 1.4s ease-in-out infinite;
 }
 
@@ -496,8 +487,8 @@ const routeHandles = computed(() => {
 .thinking-bubble-expanded {
   width: 280px;
   max-height: 320px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
   display: flex;
@@ -507,8 +498,8 @@ const routeHandles = computed(() => {
 }
 
 .thinking-bubble.dark .thinking-bubble-expanded {
-  background: #1e1e32;
-  border-color: #4a4a6a;
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
@@ -517,20 +508,16 @@ const routeHandles = computed(() => {
   align-items: center;
   justify-content: space-between;
   padding: 6px 10px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
 }
 
-.thinking-bubble.dark .thinking-bubble-header {
-  border-bottom-color: #3a3a5a;
-}
-
 .thinking-bubble-title {
-  font-size: 8px;
-  font-weight: 600;
-  color: #6366f1;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--text-info);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--tracking-wider);
 }
 
 .thinking-bubble-close {
@@ -541,20 +528,15 @@ const routeHandles = computed(() => {
   height: 18px;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   border-radius: 4px;
   cursor: pointer;
   padding: 0;
 }
 
 .thinking-bubble-close:hover {
-  background: #f1f5f9;
-  color: #475569;
-}
-
-.thinking-bubble.dark .thinking-bubble-close:hover {
-  background: #2d2d44;
-  color: #e2e8f0;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
 }
 
 .thinking-bubble-messages {
@@ -579,7 +561,7 @@ const routeHandles = computed(() => {
 }
 
 .thinking-msg-content {
-  font-size: 9px;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   padding: 5px 8px;
   border-radius: 8px;
@@ -589,20 +571,15 @@ const routeHandles = computed(() => {
 }
 
 .thinking-msg.assistant .thinking-msg-content {
-  background: #f1f5f9;
-  color: #334155;
-}
-
-.thinking-bubble.dark .thinking-msg.assistant .thinking-msg-content {
-  background: #2d2d44;
-  color: #e2e8f0;
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
 }
 
 .thinking-msg.system .thinking-msg-content {
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-style: italic;
-  font-size: 8px;
+  font-size: var(--fs-caption);
 }
 
 /* Scrollbar styling */
@@ -615,34 +592,30 @@ const routeHandles = computed(() => {
 }
 
 .thinking-bubble-messages::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--bg-surface-hover);
   border-radius: 2px;
-}
-
-.thinking-bubble.dark .thinking-bubble-messages::-webkit-scrollbar-thumb {
-  background: #4a4a6a;
 }
 
 /* ── Execution status styles ── */
 
 .workflow-custom-node.exec-running .node-icon-box {
-  border-color: #6366f1;
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
   animation: exec-pulse 1.5s ease-in-out infinite;
 }
 
 .workflow-custom-node.exec-completed .node-icon-box {
-  border-color: #22c55e;
+  border-color: var(--status-success);
   box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
 }
 
 .workflow-custom-node.exec-failed .node-icon-box {
-  border-color: #ef4444;
+  border-color: var(--status-error);
   box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
 }
 
 .workflow-custom-node.exec-waiting .node-icon-box {
-  border-color: #f59e0b;
+  border-color: var(--status-warning);
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
   animation: exec-pulse 2s ease-in-out infinite;
 }
@@ -680,19 +653,19 @@ const routeHandles = computed(() => {
 }
 
 .node-exec-badge.running {
-  color: #6366f1;
+  color: var(--text-info);
 }
 
 .node-exec-badge.completed {
-  color: #22c55e;
+  color: var(--text-success);
 }
 
 .node-exec-badge.failed {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 .node-exec-badge.waiting {
-  color: #f59e0b;
+  color: var(--status-warning);
 }
 
 .exec-spinner {
