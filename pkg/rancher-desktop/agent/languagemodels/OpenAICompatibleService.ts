@@ -27,6 +27,10 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     this.config = config;
   }
 
+  override getContextWindow(): number {
+    return 128_000;
+  }
+
   /**
    * Set number of retries on rate-limit/server errors.
    */
@@ -63,7 +67,8 @@ export class OpenAICompatibleService extends BaseLanguageModel {
           if (options?.signal?.aborted) throw new DOMException('Aborted during retry backoff', 'AbortError');
         }
 
-        const payload = this.buildFetchOptions(body, options?.signal);
+        const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
+        const payload = this.buildFetchOptions(body, signal);
         const res = await fetch(url, payload);
 
         if (!res.ok) {

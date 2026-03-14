@@ -17,6 +17,11 @@ import { getIntegrationService } from '../services/IntegrationService';
 export class AnthropicService extends BaseLanguageModel {
   protected declare config: LLMServiceConfig;
   private retryCount = 3;
+  private defaultTimeoutMs = 60_000;
+
+  override getContextWindow(): number {
+    return 200_000;
+  }
 
   /**
    * Create from IntegrationService credentials (active account).
@@ -69,7 +74,8 @@ export class AnthropicService extends BaseLanguageModel {
           if (options?.signal?.aborted) throw new DOMException('Aborted during retry backoff', 'AbortError');
         }
 
-        const fetchOpts = this.buildFetchOptions(body, options?.signal);
+        const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
+        const fetchOpts = this.buildFetchOptions(body, signal);
         const res = await fetch(url, fetchOpts);
 
         if (!res.ok) {

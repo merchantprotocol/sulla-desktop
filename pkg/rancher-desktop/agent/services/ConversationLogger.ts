@@ -225,8 +225,11 @@ function indent(text: string, spaces: number): string {
 class ConversationLoggerImpl extends EventEmitter {
   private dir: string;
   private indexPath: string;
+  private indexJsonlPath: string;
   /** Maps conversationId → resolved log file path (set on start). */
   private filePaths = new Map<string, string>();
+  /** Maps conversationId → resolved JSONL file path (set on start). */
+  private jsonlPaths = new Map<string, string>();
   /** Set to true to disable all logging. */
   private disabled = false;
 
@@ -235,6 +238,7 @@ class ConversationLoggerImpl extends EventEmitter {
     this.setMaxListeners(20);
     this.dir = resolveSullaLogsDir();
     this.indexPath = path.join(this.dir, 'index.log');
+    this.indexJsonlPath = path.join(this.dir, 'index.jsonl');
   }
 
   private ensureDir(): void {
@@ -266,6 +270,20 @@ class ConversationLoggerImpl extends EventEmitter {
   }
 
   /**
+   * Build a JSONL file path for a conversation (machine-readable companion to .log).
+   * Always uses conv_{id}.jsonl for predictable lookup by the monitor.
+   */
+  private resolveJsonlPath(conversationId: string): string {
+    const cached = this.jsonlPaths.get(conversationId);
+    if (cached) return cached;
+
+    const safeId = conversationId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+    const filePath = path.join(this.dir, `conv_${safeId}.jsonl`);
+    this.jsonlPaths.set(conversationId, filePath);
+    return filePath;
+  }
+
+  /**
    * Start a new conversation — writes an entry to the index.
    */
   start(meta: ConversationMeta): void {
@@ -275,6 +293,8 @@ class ConversationLoggerImpl extends EventEmitter {
       // Resolve and cache the file path using channel from meta
       this.resolveFilePath(meta.id, meta.channel);
       fs.appendFileSync(this.indexPath, formatMeta(meta), 'utf-8');
+      // JSONL index for programmatic access (monitor dashboard)
+      fs.appendFileSync(this.indexJsonlPath, JSON.stringify(meta) + '\n', 'utf-8');
       this.emit('conversation', { kind: 'start', meta });
     } catch (err) {
       console.error('[ConversationLogger] Failed to write index entry:', err);
@@ -289,6 +309,8 @@ class ConversationLoggerImpl extends EventEmitter {
     try {
       this.ensureDir();
       fs.appendFileSync(this.indexPath, formatMeta(meta as any), 'utf-8');
+      // JSONL index update for programmatic access
+      fs.appendFileSync(this.indexJsonlPath, JSON.stringify({ ...meta, _update: true }) + '\n', 'utf-8');
       this.emit('conversation', { kind: 'update', meta });
     } catch (err) {
       console.error('[ConversationLogger] Failed to update index:', err);
@@ -304,6 +326,9 @@ class ConversationLoggerImpl extends EventEmitter {
       this.ensureDir();
       const filePath = this.resolveFilePath(conversationId);
       fs.appendFileSync(filePath, formatEvent(event), 'utf-8');
+      // JSONL per-conversation events for programmatic access
+      const jsonlPath = this.resolveJsonlPath(conversationId);
+      fs.appendFileSync(jsonlPath, JSON.stringify(event) + '\n', 'utf-8');
       this.emit('event', { conversationId, event });
     } catch (err) {
       console.error('[ConversationLogger] Failed to write event:', err);

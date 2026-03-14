@@ -69,7 +69,9 @@ export class OllamaService extends BaseLanguageModel {
     const body = this.buildRequestBody(messages, options);
     console.log('[OllamaService] Sending request to llama-server:', JSON.stringify(body).slice(0, 500));
 
-    const res = await fetch(`${this.baseUrl}/v1/chat/completions`, this.buildFetchOptions(body, options.signal));
+    const timeoutMs = this.localTimeoutSeconds * 1000;
+    const signal = this.combinedSignal(options.signal, timeoutMs);
+    const res = await fetch(`${this.baseUrl}/v1/chat/completions`, this.buildFetchOptions(body, signal));
     console.log('[OllamaService] Response from llama-server:', res.status);
 
     if (!res.ok) {
@@ -104,6 +106,10 @@ export class OllamaService extends BaseLanguageModel {
     } catch {
       return 4096;
     }
+  }
+
+  override getContextWindow(): number {
+    return this.getContextLimit();
   }
 
   /**

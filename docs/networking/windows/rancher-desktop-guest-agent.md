@@ -1,6 +1,6 @@
-# **[Rancher Desktop Guest Agent](../../../src/go/guestagent)**
+# **[Sulla Desktop Guest Agent](../../../src/go/guestagent)**
 
-The Rancher Desktop Guest Agent operates within the Rancher Desktop WSL distribution, particularly in an isolated namespace when the network tunnel is enabled. It facilitates interactions between various container engine APIs like Moby, containerd, and Kubernetes. The agent monitors container/service creation events from these APIs and, upon detecting ports needing exposure, forwards the port mappings to internal services accordingly. This ensures efficient and automated port forwarding management within the Rancher Desktop environment.
+The Sulla Desktop Guest Agent operates within the Sulla Desktop WSL distribution, particularly in an isolated namespace when the network tunnel is enabled. It facilitates interactions between various container engine APIs like Moby, containerd, and Kubernetes. The agent monitors container/service creation events from these APIs and, upon detecting ports needing exposure, forwards the port mappings to internal services accordingly. This ensures efficient and automated port forwarding management within the Sulla Desktop environment.
 
 ```mermaid
 flowchart  LR;
@@ -33,13 +33,13 @@ end
 
 -   **docker**: When this flag is enabled, port mapping via docker API monitoring is enabled. See the port mapping and Docker sections below for details.
 
--   **kubernetes**: Enables Kubernetes service port forwarding. When enabled, the Rancher Desktop Guest Agent creates a watcher for the Kubernetes API, monitoring NodePort and LoadBalancer services needing port forwarding. For services with exposed ports, the agent creates corresponding port mappings, forwarding them to Rancher Desktop Networking’s `host-switch`, which hosts an API for exposing ports from the host into the network namespace. If WSL integration is enabled, the port mapping is also forwarded to Rancher Desktop Networking’s `wsl-proxy`, allowing access from other WSL distributions.
+-   **kubernetes**: Enables Kubernetes service port forwarding. When enabled, the Sulla Desktop Guest Agent creates a watcher for the Kubernetes API, monitoring NodePort and LoadBalancer services needing port forwarding. For services with exposed ports, the agent creates corresponding port mappings, forwarding them to Sulla Desktop Networking’s `host-switch`, which hosts an API for exposing ports from the host into the network namespace. If WSL integration is enabled, the port mapping is also forwarded to Sulla Desktop Networking’s `wsl-proxy`, allowing access from other WSL distributions.
 
 -   **kubeconfig**: Specifies the path to `kubeconfig` for locating the Kubernetes API endpoint. By default, it looks in `/etc/rancher/k3s/k3s.yaml`.
 
--   **iptables**: This flag enables the scanning of iptables. In newer versions of Kubernetes, kubelet no longer creates listeners for NodePort and LoadBalancer services. To rectify this, we manually create those listeners so the port forwarding functions correctly. The guest agent creates a corresponding port mapping that represents the service’s exposed port. The port mapping is then forwarded to Rancher Desktop Networking’s `host-switch`, which hosts an API for exposing ports from the host into the network namespace. If WSL integration options are enabled within Rancher Desktop, a copy of that port mapping is also forwarded to Rancher Desktop Networking’s `wsl-proxy`. The `wsl-proxy` exposes the service port to enable users to access it from other WSL distros.
+-   **iptables**: This flag enables the scanning of iptables. In newer versions of Kubernetes, kubelet no longer creates listeners for NodePort and LoadBalancer services. To rectify this, we manually create those listeners so the port forwarding functions correctly. The guest agent creates a corresponding port mapping that represents the service’s exposed port. The port mapping is then forwarded to Sulla Desktop Networking’s `host-switch`, which hosts an API for exposing ports from the host into the network namespace. If WSL integration options are enabled within Sulla Desktop, a copy of that port mapping is also forwarded to Sulla Desktop Networking’s `wsl-proxy`. The `wsl-proxy` exposes the service port to enable users to access it from other WSL distros.
 
--   **containerd**: When this flag is enabled, the guest agent monitors container events from the containerd API. It connects to the Containerd API via the containerd socket (`/run/k3s/containerd/containerd.sock`). Whenever a container is created or deleted, if there are exposed ports associated with that container, the guest agent creates a corresponding port mapping. This port mapping is then forwarded to Rancher Desktop Networking's `host-switch`, which hosts an API for exposing ports from the host into the network namespace. If WSL integration options are enabled within Rancher Desktop, a copy of this port mapping is also forwarded to Rancher Desktop Networking's `wsl-proxy`. The `wsl-proxy` exposes the container's port to enable users to access it from other WSL distros.
+-   **containerd**: When this flag is enabled, the guest agent monitors container events from the containerd API. It connects to the Containerd API via the containerd socket (`/run/k3s/containerd/containerd.sock`). Whenever a container is created or deleted, if there are exposed ports associated with that container, the guest agent creates a corresponding port mapping. This port mapping is then forwarded to Sulla Desktop Networking's `host-switch`, which hosts an API for exposing ports from the host into the network namespace. If WSL integration options are enabled within Sulla Desktop, a copy of this port mapping is also forwarded to Sulla Desktop Networking's `wsl-proxy`. The `wsl-proxy` exposes the container's port to enable users to access it from other WSL distros.
 
 -   **containerdSock**: File path for the containerd socket address. If no argument is provided, it defaults to `/run/k3s/containerd/containerd.sock`.
 
@@ -47,7 +47,7 @@ end
 
 -   **k8sServiceListenerAddr**: Specifies an IP address (`0.0.0.0` or `127.0.0.1`) to bind Kubernetes services on the host.
 
--   **adminInstall**: This flag indicates whether Rancher Desktop is installed with administrator privileges. It is used to enable Network Tunnel mode, where port mappings are forwarded to Rancher Desktop Networking's `host-switch`. The `host-switch` hosts an API that exposes ports from the host into the network namespace.
+-   **adminInstall**: This flag indicates whether Sulla Desktop is installed with administrator privileges. It is used to enable Network Tunnel mode, where port mappings are forwarded to Sulla Desktop Networking's `host-switch`. The `host-switch` hosts an API that exposes ports from the host into the network namespace.
 
 -   **k8sAPIPort**: Specifies the Kubernetes API port, which is forwarded to `wsl-proxy` to allow other distros that are part of WSL integrations to  interact via `kubectl`.
 
@@ -67,15 +67,15 @@ type PortMapping struct {
 ```
 ## Networking Mode
 
-Rancher Desktop Guest Agent can operate in one of two networking modes, depending on startup arguments:
+Sulla Desktop Guest Agent can operate in one of two networking modes, depending on startup arguments:
 
 **-adminInstall**
 
-The Network Tunnel mode allows the Guest Agent to operate in an isolated network namespace with a dedicated iptables. This mode is enabled through Rancher Desktop Networking.
+The Network Tunnel mode allows the Guest Agent to operate in an isolated network namespace with a dedicated iptables. This mode is enabled through Sulla Desktop Networking.
 
 None  **-adminInstall**
 
-Rancher Desktop Guest Agent operates in non-admin user mode. In this mode, all port mappings are bound to localhost, and the use of privileged ports is restricted.
+Sulla Desktop Guest Agent operates in non-admin user mode. In this mode, all port mappings are bound to localhost, and the use of privileged ports is restricted.
 
 
 ## Containerd
@@ -122,7 +122,7 @@ DNAT tcp -- anywhere anywhere tcp dpt:9119 to:10.4.0.22:80
 ```
 ## Kubernetes
 
-When this option is enabled, the Rancher Desktop guest agent uses the Kubernetes service watcher to subscribe to the Kubernetes API for any services of type NodePort and LoadBalancer that require port exposure. If the service watcher detects such services, it creates a port mapping object representing each service. The port mapping object is then forwarded to the host based on the selected network mode. If the privileged service is enabled, it uses the vtunnel peer process to communicate the port mappings with privileged services. Otherwise, if network tunnel mode is enabled, it sends the port mappings to the API provided in the host switch process.
+When this option is enabled, the Sulla Desktop guest agent uses the Kubernetes service watcher to subscribe to the Kubernetes API for any services of type NodePort and LoadBalancer that require port exposure. If the service watcher detects such services, it creates a port mapping object representing each service. The port mapping object is then forwarded to the host based on the selected network mode. If the privileged service is enabled, it uses the vtunnel peer process to communicate the port mappings with privileged services. Otherwise, if network tunnel mode is enabled, it sends the port mappings to the API provided in the host switch process.
 
 It is important to note that if the `k8sServiceListenerAddr` flag is provided, the specified IP address (either `0.0.0.0` or `127.0.0.1`) is used to bind the Kubernetes services on the host.
 
@@ -145,7 +145,7 @@ types.PortMapping {
 
 ## iptables
 
-In [newer versions](https://github.com/rancher-sandbox/rancher-desktop/blob/bb7f71f18828c45b711d6d4982a2dcaf19f8f3fa/pkg/rancher-desktop/backend/k3sHelper.ts#L1152) of Kubernetes, kubelet no longer automatically creates listeners for NodePort and LoadBalancer services. To address this, we manually create these listeners to ensure proper port forwarding functionality. Service ports requiring forwarding are identified in iptables DNAT. When iptables identifies such ports, it creates a port mapping object representing that service. Depending on the selected network mode, the port mapping object is then forwarded to the host. If the privileged service is enabled, it uses the vtunnel peer process to communicate the port mappings with privileged services. Otherwise, if network tunnel mode is enabled, it sends the port mappings to the API provided by the host switch process.
+In [newer versions](https://github.com/rancher-sandbox/rancher-desktop/blob/bb7f71f18828c45b711d6d4982a2dcaf19f8f3fa/pkg/rancher-desktop/backend/k3sHelper.ts#L1152) *(upstream reference)* of Kubernetes, kubelet no longer automatically creates listeners for NodePort and LoadBalancer services. To address this, we manually create these listeners to ensure proper port forwarding functionality. Service ports requiring forwarding are identified in iptables DNAT. When iptables identifies such ports, it creates a port mapping object representing that service. Depending on the selected network mode, the port mapping object is then forwarded to the host. If the privileged service is enabled, it uses the vtunnel peer process to communicate the port mappings with privileged services. Otherwise, if network tunnel mode is enabled, it sends the port mappings to the API provided by the host switch process.
 
 If network tunnel mode is enabled along with the WSL integration option, a copy of the port mapping is also forwarded to the `wsl-proxy` process, allowing access to the exposed port from other distributions.
 

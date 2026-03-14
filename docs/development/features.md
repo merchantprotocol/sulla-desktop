@@ -144,15 +144,21 @@ Note:
 
 :heavy_check_mark: k3s
 
-:calendar: Sulla Dashboard
+:heavy_check_mark: Sulla Dashboard
 
-:sun_with_face: Epinio
+:heavy_check_mark: n8n Workflow Automation
 
-:sun_with_face: NeuVector
+:heavy_check_mark: AI/LLM Providers (OpenAI, Anthropic, etc.)
 
-:sun_with_face: Marketplace
+:heavy_check_mark: Docker Container Management
 
-:sun_with_face: Kubewarden
+:heavy_check_mark: Kubernetes Cluster Management
+
+:heavy_check_mark: Slack Messaging
+
+:heavy_check_mark: GitHub Operations
+
+:calendar: Extension Marketplace
 
 ### Development
 

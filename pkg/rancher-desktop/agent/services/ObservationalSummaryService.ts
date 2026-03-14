@@ -44,10 +44,12 @@ that has grown too large, keeping only the most valuable ones.
 
 Rules for prioritization:
 - 🔴 Critical observations (identity, core preferences, promises, deal-breakers) have highest priority
-- 🟡 Valuable observations (decisions, patterns, progress) have medium priority  
+- 🟡 Valuable observations (decisions, patterns, progress) have medium priority
 - ⚪ Low priority observations (minor details) have lowest priority
 - Within same priority level, prefer more recent and specific observations
-- Remove redundant or outdated observations
+- **Merge duplicates**: If multiple observations cover the same fact or event, keep ONLY the most complete and recent version. Discard all others.
+- **Consolidate related facts**: Combine observations about the same topic into a single, richer observation rather than keeping multiple partial ones.
+- Remove outdated observations that have been superseded by newer ones
 - Keep observations that provide unique context or insights
 
 Your task: Select the most important observations to keep, removing the least valuable ones.

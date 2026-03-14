@@ -69,14 +69,10 @@ Local OpenAI-compatible server:
 All endpoints prefixed with /v1/.
 
 ### Integration APIs (IMPORTANT — for programmatic API calls)
-You have access to 140+ third-party API integrations (YouTube, GitHub, Slack, Postmark, Attio, Drip, etc.) defined as YAML configs at \`{{sulla_home}}/integrations/\`. These are **NOT** available via \`browse_tools\`. Instead, you call them via REST endpoints on the local server.
+You have access to third-party API integrations defined as YAML configs at \`{{sulla_home}}/integrations/\`. These are **NOT** available via \`browse_tools\`. Instead, you call them via REST endpoints on the local server.
 
-**How to discover available integrations and endpoints:**
-\`\`\`python
-import requests
-r = requests.get("http://localhost:3000/v1/integrations")
-data = r.json()  # { success: true, integrations: [{ slug, name, endpoints: [...] }] }
-\`\`\`
+**Your available integrations:**
+{{integrations_index}}
 
 **How to call an integration API endpoint:**
 \`\`\`
@@ -93,26 +89,7 @@ Content-Type: application/json
 - \`body\`: request body for POST/PUT/PATCH endpoints
 - \`raw\`: set to \`true\` to get the raw API response
 
-**Example — search YouTube from Python:**
-\`\`\`python
-import requests, json
-r = requests.post("http://localhost:3000/v1/integrations/default/youtube/search/call", json={
-    "params": {"q": "machine learning", "maxResults": 5}
-})
-data = r.json()
-if data["success"]:
-    for item in data["result"]["items"]:
-        print(item["snippet"]["title"])
-\`\`\`
-
-**Example — send email via Postmark:**
-\`\`\`python
-r = requests.post("http://localhost:3000/v1/integrations/work/postmark/email-send/call", json={
-    "body": {"From": "team@example.com", "To": "jane@example.com", "Subject": "Hello", "TextBody": "Hi!"}
-})
-\`\`\`
-
-**To understand an endpoint's parameters**, read the YAML config file at \`{{sulla_home}}/integrations/{slug}/\`. Each \`.v*.yaml\` file describes one endpoint with its parameters, types, required fields, and examples.
+**To understand an endpoint's parameters**, read the YAML config file listed next to each integration above. Each \`.v*.yaml\` file describes one endpoint with its parameters, types, required fields, and examples.
 
 **To manage credentials/accounts**, use these native tools:
 - \`list_integration_accounts\` — see available accounts and their IDs

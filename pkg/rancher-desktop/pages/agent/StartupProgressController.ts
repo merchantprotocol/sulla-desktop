@@ -173,15 +173,18 @@ export class StartupProgressController {
 
     ws.onopen = () => {
       clearTimeout(timeout);
-      console.log('[StartupProgressController] WebSocket probe connected');
-      if (!this.receivedProgress) {
-        console.log('[StartupProgressController] No progress events received — services already running, closing overlay');
-        this.state.systemReady.value = true;
-        this.state.showOverlay.value = false;
-        this.state.progressDescription.value = 'System ready!';
-        this.state.startupPhase.value = 'ready';
-        sessionStorage.setItem('sulla-startup-splash-seen', 'true');
+      console.log('[StartupProgressController] WebSocket probe connected — services are running, closing overlay');
+      // Stop the readiness interval so it doesn't trigger a page reload
+      if (this.readinessInterval) {
+        clearInterval(this.readinessInterval);
+        this.readinessInterval = null;
       }
+      this.k8sReady = true;
+      this.state.systemReady.value = true;
+      this.state.showOverlay.value = false;
+      this.state.progressDescription.value = 'System ready!';
+      this.state.startupPhase.value = 'ready';
+      sessionStorage.setItem('sulla-startup-splash-seen', 'true');
       cleanup();
     };
 

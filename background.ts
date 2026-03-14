@@ -39,7 +39,7 @@ import { Snapshots } from '@pkg/main/snapshots/snapshots';
 import { Snapshot, SnapshotDialog } from '@pkg/main/snapshots/types';
 import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
-import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
+import { hookSullaEnd, sullaEnd, onMainProxyLoad, markSullaRestarting } from '@pkg/sulla';
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { spawnFile } from '@pkg/utils/childProcess';
 import getCommandLineArgs from '@pkg/utils/commandLine';
@@ -706,13 +706,25 @@ function isK8sError(object: any): object is K8sError {
   return 'errCode' in object;
 }
 
+// When true, the app is restarting (not fully quitting) — skip container/VM teardown
+let isRestarting = false;
+
+mainEvents.on('restarting', () => {
+  console.log('[Shutdown] background.ts received "restarting" event — setting isRestarting=true');
+  isRestarting = true;
+  markSullaRestarting();
+});
+
 Electron.app.on('before-quit', async(event) => {
+  console.log(`[Shutdown] before-quit fired — gone=${gone}, isRestarting=${isRestarting}`);
   if (gone) {
+    console.log('[Shutdown] before-quit: already gone, emitting "quit" and returning');
     mainEvents.emit('quit');
 
     return;
   }
   event.preventDefault();
+  console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');
   httpCommandServer?.closeServer();
   httpCredentialHelperServer.closeServer();
 
@@ -722,22 +734,35 @@ Electron.app.on('before-quit', async(event) => {
     // Commands to shut down database connections
     ////////////////////////////////////////////////////////////////////////////////
 
-
+      console.log('[Shutdown] before-quit: calling sullaEnd()');
       await sullaEnd(event);
-
+      console.log('[Shutdown] before-quit: sullaEnd() complete');
 
     ////////////////////////////////////////////////////////////////////////////////
     // SULLA DESKTOP - END
     ////////////////////////////////////////////////////////////////////////////////
 
+  if (isRestarting) {
+    // Restart: skip container/VM teardown so the app relaunches fast
+    console.log('[Shutdown] RESTART PATH — skipping k8smanager.stop(), extensions/shutdown, shutdown-integrations');
+    gone = true;
+    Electron.app.quit();
+
+    return;
+  }
+
+  console.log('[Shutdown] FULL QUIT PATH — stopping k8smanager, extensions, integrations');
   try {
+    console.log('[Shutdown] calling extensions/shutdown...');
     await mainEvents.tryInvoke('extensions/shutdown');
+    console.log('[Shutdown] calling k8smanager?.stop() (this stops Docker + Lima VM)...');
     await k8smanager?.stop();
+    console.log('[Shutdown] calling shutdown-integrations...');
     await mainEvents.tryInvoke('shutdown-integrations');
 
-    console.log(`2: Child exited cleanly.`);
+    console.log(`[Shutdown] Full quit completed cleanly.`);
   } catch (ex: any) {
-    console.log(`2: Child exited with code ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`);
+    console.log(`[Shutdown] Full quit error: ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`);
     handleFailure(ex);
   } finally {
     gone = true;

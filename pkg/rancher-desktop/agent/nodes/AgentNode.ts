@@ -224,14 +224,20 @@ export class AgentNode extends BaseNode {
         state.messages = [];
       }
       const normalizedUserVisibleResult = userVisibleResultText.trim();
+      const stripWrapperXml = (text: string): string => text
+        .replace(AGENT_DONE_XML_REGEX, '')
+        .replace(AGENT_BLOCKED_XML_REGEX, '')
+        .replace(AGENT_CONTINUE_XML_REGEX, '')
+        .trim();
+
       const alreadyStored = state.messages.some((msg: any) => {
         if (msg.role !== 'assistant') return false;
-        // Match string content
-        if (typeof msg.content === 'string' && msg.content.trim() === normalizedUserVisibleResult) return true;
+        // Match string content (strip wrapper XML so raw responses match their stripped counterparts)
+        if (typeof msg.content === 'string' && stripWrapperXml(msg.content) === normalizedUserVisibleResult) return true;
         // Match text inside native content arrays (e.g. [{ type: 'text', text: '...' }, { type: 'tool_use', ... }])
         if (Array.isArray(msg.content)) {
           return msg.content.some((block: any) =>
-            block?.type === 'text' && typeof block.text === 'string' && block.text.trim() === normalizedUserVisibleResult,
+            block?.type === 'text' && typeof block.text === 'string' && stripWrapperXml(block.text) === normalizedUserVisibleResult,
           );
         }
         return false;
@@ -285,8 +291,37 @@ export class AgentNode extends BaseNode {
     } catch (error) {
       // Re-throw abort errors so they propagate to the graph loop
       if ((error as any)?.name === 'AbortError') throw error;
-      console.error('[AgentNode] Execution failed:', error);
-      return null;
+
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[AgentNode] Execution failed:', errorMsg);
+
+      // Surface the error to the user instead of silently dying
+      const userMessage = `⚠️ I encountered an error and couldn't complete the request: ${errorMsg}. Please try again or switch to a different model.`;
+
+      // Push error as assistant message so user sees it in the chat
+      state.messages.push({
+        role: 'assistant',
+        content: userMessage,
+        metadata: {
+          nodeId: this.id,
+          nodeName: this.name,
+          kind: 'agent_error',
+          timestamp: Date.now(),
+        },
+      } as ChatMessage);
+
+      // Send error via WebSocket so user sees it immediately
+      await this.wsChatMessage(state, userMessage, 'assistant');
+
+      // Mark as blocked so graph takes the clean exit path (not the ambiguous in_progress path)
+      (state.metadata as any).agent = {
+        ...((state.metadata as any).agent || {}),
+        status: 'blocked',
+        blocker_reason: errorMsg,
+        updatedAt: Date.now(),
+      };
+
+      return userMessage;
     }
   }
 

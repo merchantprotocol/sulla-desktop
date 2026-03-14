@@ -2,7 +2,7 @@
 
 Use this checklist before installing Sulla Desktop.
 
-Source: [Sulla Desktop Downloads](https://sulladesktop.com/downloads)
+Source: [Sulla Desktop Downloads](https://sulladesktop.ai/downloads.html)
 
 ## Operating System Requirements
 

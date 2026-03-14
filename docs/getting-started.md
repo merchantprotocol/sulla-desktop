@@ -51,7 +51,7 @@ For direct access to our developers and priority support, join our [SKOOL commun
 
 ## System Requirements
 
-- **macOS**: 10.15 or later
+- **macOS**: macOS 11 Big Sur or later
 - **Windows**: Windows 10 or later
 - **Linux**: Ubuntu 20.04 or equivalent
 - **RAM**: Minimum 8GB (16GB recommended)

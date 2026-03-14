@@ -142,7 +142,7 @@ Two variables are substituted before execution:
 
 | Variable | Resolves To |
 |----------|-------------|
-| `${APP_DIR}` | The extension's local directory (e.g. `~/Library/Application Support/rancher-desktop/extensions/stirling-pdf/`) |
+| `${APP_DIR}` | The extension's local directory (e.g. `~/Library/Application Support/sulla-desktop/extensions/stirling-pdf/`) |
 | `${COMPOSE_FILE}` | Full path to your compose file (e.g. `${APP_DIR}/docker-compose.yml`) |
 
 > **Note:** `${VAR}` syntax is for shell command substitution in `setup` and `commands`. `{{var}}` syntax is for docker-compose files and `env` values.

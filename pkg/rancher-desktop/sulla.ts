@@ -19,9 +19,20 @@ import * as path from 'path';
 import { app } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
+import Logging from '@pkg/utils/logging';
+
+const console = Logging.sulla;
 
 /** Track whether Sulla services were actually started during this session. */
 let sullaDockerServicesStarted = false;
+
+/** When true, the app is restarting — skip Docker Compose teardown. */
+let sullaIsRestarting = false;
+
+export function markSullaRestarting(): void {
+  console.log('[Shutdown] markSullaRestarting() called — sullaIsRestarting=true');
+  sullaIsRestarting = true;
+}
 
 export function markSullaDockerServicesStarted(): void {
   sullaDockerServicesStarted = true;
@@ -75,7 +86,14 @@ const checkDockerMode = async () => {
  * Only runs if services were actually started this session AND Docker daemon is reachable.
  */
 const trySullaComposeDown = (): void => {
+  console.log(`[Shutdown] trySullaComposeDown called — sullaIsRestarting=${sullaIsRestarting}, sullaDockerServicesStarted=${sullaDockerServicesStarted}`);
+  if (sullaIsRestarting) {
+    console.log('[Shutdown] Skipping compose down — app is restarting');
+
+    return;
+  }
   if (!sullaDockerServicesStarted) {
+    console.log('[Shutdown] Skipping compose down — services were not started this session');
     return;
   }
   if (!isDockerDaemonRunning()) {
@@ -317,6 +335,7 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
     });
 
     app.on('will-quit', async () => {
+        console.log(`[Shutdown] will-quit fired — sullaIsRestarting=${sullaIsRestarting}`);
         // Clear OAuth refresh timers
         try {
             const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
@@ -333,20 +352,24 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
         }
 
         // Stop Docker containers only if they were started this session
+        console.log(`[Shutdown] will-quit: about to call trySullaComposeDown — sullaIsRestarting=${sullaIsRestarting}, sullaDockerServicesStarted=${sullaDockerServicesStarted}`);
         trySullaComposeDown();
     });
 
     Electron.app.on('before-quit', async () => {
+        console.log(`[Shutdown] sulla.ts before-quit handler fired — sullaIsRestarting=${sullaIsRestarting}`);
         try {
             await getDatabaseManager().stop();
         } catch { } // swallow any remaining errors
     });
 
     process.on('SIGTERM', async () => {
+        console.log('[Shutdown] SIGTERM received — closing postgres and quitting');
         await postgresClient.end();
         app.quit();
     });
     process.on('SIGINT', async () => {
+        console.log('[Shutdown] SIGINT received — closing postgres and quitting');
         await postgresClient.end();
         app.quit();
     });

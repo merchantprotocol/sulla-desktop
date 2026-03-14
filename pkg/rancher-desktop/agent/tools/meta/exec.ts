@@ -13,11 +13,12 @@ export class ExecWorker extends BaseTool {
   description: string = '';
 
   schemaDef = {
-    command: { type: 'string' as const, optional: true, description: 'The exact shell command to run' },
-    cmd:     { type: 'string' as const, optional: true, description: 'Alias for command' },
-    cwd:     { type: 'string' as const, optional: true, description: 'Working directory inside the VM to run the command in' },
-    timeout: { type: 'number' as const, optional: true, description: 'Timeout in milliseconds (default 120000). Use higher values for long-running installs.' },
-    stdin:   { type: 'string' as const, optional: true, description: 'Optional stdin data to pipe into the command' },
+    command:     { type: 'string' as const, optional: true, description: 'The exact shell command to run' },
+    cmd:         { type: 'string' as const, optional: true, description: 'Alias for command' },
+    description: { type: 'string' as const, optional: true, description: 'A short description of what this command does (e.g. "Install dependencies", "Check disk usage"). Displayed to the user.' },
+    cwd:         { type: 'string' as const, optional: true, description: 'Working directory inside the VM to run the command in' },
+    timeout:     { type: 'number' as const, optional: true, description: 'Timeout in milliseconds (default 120000). Use higher values for long-running installs.' },
+    stdin:       { type: 'string' as const, optional: true, description: 'Optional stdin data to pipe into the command' },
   };
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {

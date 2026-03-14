@@ -1,3 +1,5 @@
+> **Note:** `rdctl` is the Sulla Desktop CLI tool.
+
 When `rdctl reset --factory` is launched from the UI, it writes its stdout into
 `TMP/rdctl-stdout.txt`
 

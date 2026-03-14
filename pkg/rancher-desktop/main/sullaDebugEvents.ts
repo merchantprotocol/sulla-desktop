@@ -139,7 +139,7 @@ export function initSullaDebugEvents(): void {
       const { resolveSullaLogsDir } = await import('@pkg/agent/utils/sullaPaths');
       const dir = resolveSullaLogsDir();
       const safe = conversationId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
-      const filePath = path.join(dir, `conv-${safe}.jsonl`);
+      const filePath = path.join(dir, `conv_${safe}.jsonl`);
       return readJsonlFile(filePath, 500) as Array<{ ts: string; type: string; [key: string]: unknown }>;
     } catch {
       return [];
@@ -231,7 +231,7 @@ export function initSullaDebugEvents(): void {
       }
 
       // Also scan recent conversation files for tool_call errors
-      const convFiles = fs.readdirSync(dir).filter(f => f.startsWith('conv-') && f.endsWith('.jsonl'));
+      const convFiles = fs.readdirSync(dir).filter(f => f.startsWith('conv_') && f.endsWith('.jsonl'));
       // Only scan last 20 files to keep it fast
       const recentFiles = convFiles.slice(-20);
       for (const file of recentFiles) {

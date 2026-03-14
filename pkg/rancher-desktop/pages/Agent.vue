@@ -34,44 +34,52 @@
                 </div>
 
                 <div v-else-if="m.kind === 'tool'" class="max-w-[min(760px,92%)]">
-                  <div v-if="m.toolCard" class="rounded border border-slate-200 bg-slate-900 px-4 dark:border-slate-700 dark:bg-slate-800/50">
+                  <div v-if="m.toolCard" class="tool-card-cc" :class="{ expanded: isToolCardExpanded(m.id) }">
+                    <!-- Header row: status dot + tool name + description -->
                     <button
                       type="button"
-                      class="w-full px-4 py-2 flex items-center justify-between transition-colors"
+                      class="tool-card-cc-header"
                       @click="toggleToolCard(m.id)"
                     >
-                      <div class="flex items-center gap-2">
-                        <span class="font-mono text-slate-300">{{ m.toolCard.toolName }}</span>
-                        <span
-                          class="rounded-full px-2 py-0.5 text-xs font-medium"
-                          :class="m.toolCard.status === 'success' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : m.toolCard.status === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' : 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'"
-                        >
-                          {{ m.toolCard.status }}
-                        </span>
-                      </div>
+                      <span
+                        class="tool-card-cc-dot"
+                        :class="m.toolCard.status"
+                      ></span>
+                      <span class="tool-card-cc-name">{{ toolCardLabel(m.toolCard) }}</span>
+                      <span v-if="m.toolCard.description" class="tool-card-cc-desc">{{ m.toolCard.description }}</span>
                       <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 15 15"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                        class="text-slate-500 transition-transform"
-                        :class="isToolCardExpanded(m.id) ? 'rotate-180' : ''"
+                        width="14" height="14" viewBox="0 0 15 15" fill="none"
+                        class="tool-card-cc-chevron"
+                        :class="{ open: isToolCardExpanded(m.id) }"
                       >
                         <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
                       </svg>
                     </button>
-                    <div v-show="isToolCardExpanded(m.id)" class="px-4 pb-3">
-                      <div v-if="m.toolCard.args && Object.keys(m.toolCard.args).length > 0" class="mb-2">
-                        <div class="text-xs font-semibold text-slate-600 dark:text-slate-400">Arguments:</div>
-                        <pre class="mt-1 overflow-x-auto rounded bg-slate-800 p-2 text-xs text-slate-400 dark:bg-slate-900/50"><code>{{ JSON.stringify(m.toolCard.args, null, 2) }}</code></pre>
+                    <!-- Command line preview (always visible for exec-like tools) -->
+                    <div v-if="toolCardCommand(m.toolCard)" class="tool-card-cc-cmd">
+                      <span class="tool-card-cc-cmd-label">IN</span>
+                      <code class="tool-card-cc-cmd-text">{{ toolCardCommand(m.toolCard) }}</code>
+                    </div>
+                    <!-- Exit code row (visible when result available) -->
+                    <div v-if="m.toolCard.status !== 'running' && toolCardCommand(m.toolCard)" class="tool-card-cc-cmd">
+                      <span class="tool-card-cc-cmd-label">OUT</span>
+                      <code class="tool-card-cc-cmd-text tool-card-cc-exit" :class="m.toolCard.status">{{ m.toolCard.status === 'success' ? '0' : '1' }}</code>
+                    </div>
+                    <!-- Expanded details -->
+                    <div v-show="isToolCardExpanded(m.id)" class="tool-card-cc-body">
+                      <div v-if="toolCardOutput(m.toolCard)" class="tool-card-cc-output">
+                        <pre>{{ toolCardOutput(m.toolCard) }}</pre>
                       </div>
-                      <div v-if="m.toolCard.result !== undefined" class="mb-2">
-                        <div class="text-xs font-semibold text-slate-600 dark:text-slate-400">Result:</div>
-                        <pre class="mt-1 overflow-x-auto rounded bg-slate-800 p-2 text-xs text-slate-400 dark:bg-slate-900/50"><code>{{ typeof m.toolCard.result === 'string' ? m.toolCard.result : JSON.stringify(m.toolCard.result, null, 2) }}</code></pre>
+                      <div v-if="!toolCardCommand(m.toolCard) && m.toolCard.args && Object.keys(m.toolCard.args).length > 0" class="tool-card-cc-output">
+                        <div class="tool-card-cc-section-label">Arguments</div>
+                        <pre>{{ JSON.stringify(m.toolCard.args, null, 2) }}</pre>
                       </div>
-                      <div v-if="m.toolCard.error" class="text-xs text-red-600 dark:text-red-400">
-                        Error: {{ m.toolCard.error }}
+                      <div v-if="!toolCardCommand(m.toolCard) && m.toolCard.result !== undefined" class="tool-card-cc-output">
+                        <div class="tool-card-cc-section-label">Result</div>
+                        <pre>{{ typeof m.toolCard.result === 'string' ? m.toolCard.result : JSON.stringify(m.toolCard.result, null, 2) }}</pre>
+                      </div>
+                      <div v-if="m.toolCard.error" class="tool-card-cc-error">
+                        {{ m.toolCard.error }}
                       </div>
                     </div>
                   </div>
@@ -318,6 +326,40 @@ function toggleToolCard(messageId: string): void {
 
 function isToolCardExpanded(messageId: string): boolean {
   return expandedToolCards.value.has(messageId);
+}
+
+/** Map exec-like tool names to a friendly label (like "Bash" in Claude Code) */
+const EXEC_TOOL_NAMES = new Set(['exec', 'exec_command', 'shell', 'bash', 'run_command']);
+
+function toolCardLabel(toolCard: { toolName: string }): string {
+  if (EXEC_TOOL_NAMES.has(toolCard.toolName)) {
+    return 'Bash';
+  }
+  return toolCard.toolName;
+}
+
+/** Extract the shell command from exec-like tool args */
+function toolCardCommand(toolCard: { toolName: string; args?: Record<string, unknown> }): string | null {
+  if (!EXEC_TOOL_NAMES.has(toolCard.toolName)) return null;
+  const cmd = toolCard.args?.command ?? toolCard.args?.cmd;
+  return typeof cmd === 'string' ? cmd : null;
+}
+
+/** Extract output text from a tool result */
+function toolCardOutput(toolCard: { toolName: string; result?: unknown }): string | null {
+  if (!toolCard.result) return null;
+  const r = toolCard.result as any;
+  // exec tool returns { responseString, successBoolean }
+  if (typeof r.responseString === 'string' && r.responseString.trim()) {
+    return r.responseString;
+  }
+  if (typeof r.result === 'string' && r.result.trim()) {
+    return r.result;
+  }
+  if (typeof r === 'string' && r.trim()) {
+    return r;
+  }
+  return null;
 }
 
 const chatScrollContainer = ref<HTMLElement | null>(null);
@@ -595,5 +637,154 @@ watch(isDark, () => {
 
 .prose :deep(.sulla-audio-player audio::-webkit-media-controls-panel) {
   background: transparent;
+}
+
+/* ── Claude Code-style tool card ── */
+.tool-card-cc {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+}
+.dark .tool-card-cc {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.tool-card-cc-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: #1e293b;
+  text-align: left;
+}
+.dark .tool-card-cc-header {
+  color: #e2e8f0;
+}
+
+.tool-card-cc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tool-card-cc-dot.running { background: #f59e0b; animation: dotPulse 1.5s ease-in-out infinite; }
+.tool-card-cc-dot.success { background: #22c55e; }
+.tool-card-cc-dot.failed  { background: #ef4444; }
+
+@keyframes dotPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.tool-card-cc-name {
+  font-weight: 700;
+  font-size: 13px;
+  color: #0f172a;
+}
+.dark .tool-card-cc-name {
+  color: #f1f5f9;
+}
+
+.tool-card-cc-desc {
+  font-weight: 400;
+  font-size: 13px;
+  color: #64748b;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dark .tool-card-cc-desc {
+  color: #94a3b8;
+}
+
+.tool-card-cc-chevron {
+  color: #94a3b8;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.tool-card-cc-chevron.open {
+  transform: rotate(180deg);
+}
+
+.tool-card-cc-cmd {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2px 12px 2px 20px;
+  font-size: 12px;
+}
+
+.tool-card-cc-cmd-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  min-width: 24px;
+}
+
+.tool-card-cc-cmd-text {
+  color: #334155;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.dark .tool-card-cc-cmd-text {
+  color: #cbd5e1;
+}
+
+.tool-card-cc-exit.success { color: #22c55e; }
+.tool-card-cc-exit.failed  { color: #ef4444; }
+
+.tool-card-cc-body {
+  border-top: 1px solid #e2e8f0;
+  margin: 6px 0 0;
+}
+.dark .tool-card-cc-body {
+  border-top-color: #334155;
+}
+
+.tool-card-cc-output {
+  padding: 8px 12px;
+}
+.tool-card-cc-output pre {
+  margin: 0;
+  padding: 0;
+  background: none;
+  color: #334155;
+  font-size: 12px;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.dark .tool-card-cc-output pre {
+  color: #cbd5e1;
+}
+
+.tool-card-cc-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.tool-card-cc-error {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #ef4444;
 }
 </style>

@@ -19,6 +19,7 @@ export type ChatMessage = {
   toolCard?: {
     toolRunId: string;
     toolName: string;
+    description?: string;
     status: 'running' | 'success' | 'failed';
     args?: Record<string, unknown>;
     result?: unknown;

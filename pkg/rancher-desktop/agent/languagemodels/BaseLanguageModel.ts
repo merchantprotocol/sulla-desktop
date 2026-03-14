@@ -173,6 +173,15 @@ export abstract class BaseLanguageModel {
   }
 
   /**
+   * Returns the context window size (in tokens) for the current model.
+   * Override in subclasses to return provider-specific values.
+   * Used by BaseNode to dynamically compute message budgets.
+   */
+  getContextWindow(): number {
+    return 128_000; // Safe default for most cloud models
+  }
+
+  /**
    * Pull a model from the service (only available for local services like Ollama)
    */
   pullModel(modelName: string, onProgress?: (status: string) => void): Promise<boolean> {
@@ -590,6 +599,17 @@ export abstract class BaseLanguageModel {
       .trim();
   }
 
+  /**
+   * Combine an optional caller-provided AbortSignal with a timeout signal.
+   * Returns a single signal that fires on whichever triggers first.
+   */
+  protected combinedSignal(signal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined {
+    if (!timeoutMs || timeoutMs <= 0) return signal;
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    if (!signal) return timeoutSignal;
+    return AbortSignal.any([signal, timeoutSignal]);
+  }
+
   // Optional: helper for building fetch options (auth, timeout, etc.)
   protected buildFetchOptions(body: any, signal?: AbortSignal): RequestInit {
     const headers: Record<string, string> = {
@@ -619,7 +639,8 @@ export interface ILLMService {
   initialize(): Promise<boolean>;
   isAvailable(): boolean;
   getModel(): string;
-  chat(messages: ChatMessage[], options?: { 
+  getContextWindow(): number;
+  chat(messages: ChatMessage[], options?: {
     model?: string;
     maxTokens?: number;
     format?: 'json' | undefined;
