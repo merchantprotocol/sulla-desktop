@@ -266,6 +266,55 @@ run_silent() {
   fi
 }
 
+# Run a command with live status updates — logs everything and updates the
+# spinner text with the last meaningful line of output so the user can see
+# what's happening during long-running operations.
+# Usage: run_with_status <label> <command...>
+run_with_status() {
+  local label="$1"
+  shift
+  echo "=== [$label] $(date) ===" >> "$INSTALL_LOG"
+  echo "CMD: $*" >> "$INSTALL_LOG"
+
+  # Run the command, tee to log, and update spinner with last line
+  "$@" 2>&1 | while IFS= read -r line; do
+    echo "$line" >> "$INSTALL_LOG"
+    # Filter for meaningful status lines (skip blank lines and noise)
+    case "$line" in
+      *"Resolving"*|*"Fetching"*|*"Linking"*|*"Building"*)
+        # Yarn v1 progress lines
+        stop_spinner 2>/dev/null
+        start_spinner "${label}: ${line:0:60}"
+        ;;
+      *"warning"*|*"error"*)
+        stop_spinner 2>/dev/null
+        start_spinner "${label}: ${line:0:60}"
+        ;;
+      *"step "*)
+        # Yarn step indicators like [1/4], [2/4]
+        stop_spinner 2>/dev/null
+        start_spinner "${label}: ${line:0:60}"
+        ;;
+      *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
+        # Native module compilation
+        stop_spinner 2>/dev/null
+        start_spinner "${label}: compiling native modules..."
+        ;;
+      *"webpack"*|*"ts-loader"*|*"babel"*)
+        stop_spinner 2>/dev/null
+        start_spinner "${label}: ${line:0:60}"
+        ;;
+    esac
+  done
+
+  # Capture exit code from the piped command (not the while loop)
+  local rc=${PIPESTATUS[0]}
+  if [ "$rc" -ne 0 ]; then
+    echo "EXIT CODE: $rc" >> "$INSTALL_LOG"
+  fi
+  return "$rc"
+}
+
 # Prompt the user for sudo access with a clear explanation of why.
 # Pre-authenticates so subsequent sudo calls don't re-prompt.
 # Usage: require_sudo "Go ${GO_VERSION}" "needs to install to /usr/local which requires user authorization"
@@ -921,17 +970,17 @@ install_deps() {
     nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
 
-  printf "  ${DIM}Log: %s${RESET}\n" "$INSTALL_LOG"
-  start_spinner "Installing dependencies (this may take a few minutes)..."
-  if run_silent "yarn-install" yarn install --ignore-engines; then
-    step_ok "Dependencies installed"
+  printf "  ${DIM}Log: tail -f %s${RESET}\n" "$INSTALL_LOG"
+  start_spinner "Installing packages..."
+  if run_with_status "Installing packages" yarn install --ignore-engines; then
+    step_ok "Packages installed"
   else
     start_spinner "Retrying with clean state..."
     rm -rf node_modules
-    if run_silent "yarn-install-retry" yarn install --ignore-engines; then
-      step_ok "Dependencies installed (retry succeeded)"
+    if run_with_status "Installing packages (retry)" yarn install --ignore-engines; then
+      step_ok "Packages installed (retry succeeded)"
     else
-      step_fail "Dependency installation failed — run 'tail -50 ${INSTALL_LOG}' to see what went wrong"
+      step_fail "Package installation failed — run 'tail -50 ${INSTALL_LOG}' to see what went wrong"
     fi
   fi
 }
@@ -957,14 +1006,14 @@ build_app() {
     heap_mb=12288
   fi
 
-  start_spinner "Building Sulla Desktop (this may take several minutes)..."
-  if run_silent "build" env NODE_OPTIONS="--max-old-space-size=$heap_mb" yarn build; then
+  start_spinner "Compiling desktop application..."
+  if run_with_status "Compiling" env NODE_OPTIONS="--max-old-space-size=$heap_mb" yarn build; then
     if [ ! -f "dist/app/background.js" ]; then
       step_fail "Build produced no output"
     fi
-    step_ok "Build complete"
+    step_ok "Desktop application compiled"
   else
-    step_fail "Build failed — check $INSTALL_LOG for details"
+    step_fail "Compilation failed — run 'tail -50 ${INSTALL_LOG}' to see what went wrong"
   fi
 }
 
