@@ -125,7 +125,6 @@ import AgentCalendar from './AgentCalendar.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
-import { useRouter } from 'vue-router';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
 import {
@@ -152,7 +151,6 @@ const props = defineProps<{
 }>();
 
 const { isDark, toggleTheme } = useTheme();
-const router = useRouter();
 const { updateTab, getTab } = useBrowserTabs();
 
 const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
@@ -161,10 +159,9 @@ function onSetMode(mode: BrowserTabMode) {
   updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
 }
 
-function onStartChat(chatQuery: string) {
-  // Tell Agent.vue to start a fresh chat with this query
-  window.dispatchEvent(new CustomEvent('sulla:new-chat', { detail: { query: chatQuery } }));
-  router.push('/Chat');
+function onStartChat(_chatQuery: string) {
+  // Switch this tab to chat mode
+  updateTab(props.tabId, { mode: 'chat', title: 'New Chat' });
 }
 
 /** Bridge ID: use the agent's asset ID if this tab was created by manage_active_asset */

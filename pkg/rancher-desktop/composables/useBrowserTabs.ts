@@ -35,11 +35,28 @@ export function useBrowserTabs() {
     return tab;
   }
 
+  /**
+   * Ensure at least one chat tab exists.
+   * Returns the existing or newly created tab.
+   */
+  function ensureOneTab(): BrowserTab {
+    if (tabs.length > 0) {
+      return tabs[0];
+    }
+
+    return createTab('about:blank', { mode: 'chat' });
+  }
+
   function closeTab(id: string) {
     const idx = tabs.findIndex(t => t.id === id);
 
     if (idx !== -1) {
       tabs.splice(idx, 1);
+    }
+
+    // Always keep at least one tab open
+    if (tabs.length === 0) {
+      createTab('about:blank', { mode: 'chat' });
     }
   }
 
@@ -61,5 +78,6 @@ export function useBrowserTabs() {
     closeTab,
     updateTab,
     getTab,
+    ensureOneTab,
   };
 }

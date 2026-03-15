@@ -426,7 +426,7 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 
 const extensionService = getExtensionService();
 const router = useRouter();
-const { tabs: browserTabs, createTab, closeTab, updateTab } = useBrowserTabs();
+const { tabs: browserTabs, createTab, closeTab, updateTab, ensureOneTab } = useBrowserTabs();
 
 // Active assets from the agent persona service
 const personaRegistry = getAgentPersonaRegistry();
@@ -450,6 +450,15 @@ const isMobileMenuOpen = ref(false);
 const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();
 const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark-nobg.png', import.meta.url).toString();
 
+// On initial load, ensure at least one tab exists and redirect /Chat to it
+{
+  const tab = ensureOneTab();
+
+  if (route.path === '/Chat' || route.path === '/') {
+    router.replace(`/Browser/${ tab.id }`);
+  }
+}
+
 const toggleMobileMenu = () => {
   isMobileMenuOpen.value = !isMobileMenuOpen.value;
 };
@@ -465,7 +474,11 @@ function closeBrowserTab(id: string) {
 
   closeTab(id);
   if (isActive) {
-    router.push('/Chat');
+    // closeTab auto-creates a new tab if it was the last one,
+    // so there's always at least one tab to navigate to.
+    const next = browserTabs[browserTabs.length - 1];
+
+    router.push(`/Browser/${ next.id }`);
   }
 }
 
@@ -491,21 +504,6 @@ interface HeaderTab {
 /** Build the unordered set of all tabs from their sources */
 const allTabsById = computed(() => {
   const map = new Map<string, HeaderTab>();
-
-  // Static tabs (Calendar, Integrations, Extensions are now on-demand via new-tab welcome page)
-  const staticTabs: { id: string; label: string; route: string; matchPrefix?: boolean }[] = [
-    { id: 'chat', label: 'Chat', route: '/Chat' },
-  ];
-
-  for (const s of staticTabs) {
-    const isActive = s.matchPrefix
-      ? route.path === s.route || route.path.startsWith(`${ s.route }/`)
-      : route.path === s.route;
-
-    map.set(s.id, {
-      id: s.id, label: s.label, route: s.route, isActive, native: true,
-    });
-  }
 
   // Extension tabs
   for (const item of extensionMenuItems.value) {

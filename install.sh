@@ -29,6 +29,7 @@ REPO_URL="https://github.com/sulla-ai/sulla-desktop.git"
 REPO_OWNER="sulla-ai"
 REPO_NAME="sulla-desktop"
 REPO_DIR="sulla-desktop"
+INSTALL_DIR="$HOME/sulla-desktop"
 NODE_VERSION="22.22.0"
 GO_VERSION="1.24.2"
 MIN_DISK_GB=10
@@ -911,18 +912,13 @@ resolve_version() {
 # Clone / update repo
 # ---------------------------------------------------------------------------
 checkout_version() {
+  # Always fetch latest from remote
+  run_silent "fetch" git fetch origin --tags --force 2>/dev/null || true
+
   if [ "$INSTALL_REF" = "main" ]; then
     run_silent "checkout" git checkout main 2>/dev/null || true
-    local stashed=false
-    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-      run_silent "stash" git stash --include-untracked 2>/dev/null && stashed=true
-    fi
-    run_silent "pull" git pull --ff-only || {
-      run_silent "pull-rebase" git pull --rebase || true
-    }
-    if [ "$stashed" = true ]; then
-      run_silent "stash-pop" git stash pop 2>/dev/null || true
-    fi
+    # Force-reset to match remote — installer should always use latest code
+    run_silent "reset" git reset --hard origin/main 2>/dev/null || true
   else
     local current_tag
     current_tag="$(git describe --tags --exact-match 2>/dev/null || true)"
@@ -933,6 +929,35 @@ checkout_version() {
       run_silent "fetch-tag" git fetch origin "refs/tags/$INSTALL_REF:refs/tags/$INSTALL_REF" 2>/dev/null || true
       run_silent "checkout" git checkout "$INSTALL_REF" || step_fail "Failed to checkout ${INSTALL_REF}"
     }
+  fi
+}
+
+# Safely remove the install directory.
+# Guards against empty/dangerous paths and verifies it looks like our repo.
+safe_remove_install_dir() {
+  local dir="$1"
+
+  # Never remove empty, root, or home paths
+  if [ -z "$dir" ] || [ "$dir" = "/" ] || [ "$dir" = "$HOME" ]; then
+    step_fail "Refusing to remove dangerous path: '${dir}'"
+  fi
+
+  # Must be an absolute path under $HOME
+  case "$dir" in
+    "$HOME"/*) ;; # OK — under home directory
+    *) step_fail "Refusing to remove path outside \$HOME: '${dir}'" ;;
+  esac
+
+  # Must contain our repo marker (package.json with sulla-desktop)
+  if [ -d "$dir" ]; then
+    if [ -f "$dir/package.json" ] && grep -q '"sulla-desktop"' "$dir/package.json" 2>/dev/null; then
+      rm -rf "$dir"
+    elif [ -d "$dir/.git" ]; then
+      # Has .git but no package.json — still likely ours, allow removal
+      rm -rf "$dir"
+    else
+      step_fail "Directory '${dir}' does not look like a sulla-desktop repo — refusing to remove"
+    fi
   fi
 }
 
@@ -947,20 +972,22 @@ ensure_repo() {
     return
   fi
 
-  local target="$HOME/$REPO_DIR"
+  # Nightly: wipe and fresh clone every time to guarantee clean state
+  if [ "$USE_NIGHTLY" = true ] && [ -d "$INSTALL_DIR" ]; then
+    safe_remove_install_dir "$INSTALL_DIR"
+  fi
 
-  if [ -d "$target" ] && [ -d "$target/.git" ]; then
-    cd "$target"
-    run_silent "fetch" git fetch --tags --force 2>/dev/null || true
+  if [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
+    cd "$INSTALL_DIR"
     REPO_DIR="$(pwd)"
-  elif [ -d "$target" ]; then
-    rm -rf "$target"
-    run_silent "clone" git clone "$REPO_URL" "$target"
-    cd "$target"
+  elif [ -d "$INSTALL_DIR" ]; then
+    safe_remove_install_dir "$INSTALL_DIR"
+    run_silent "clone" git clone "$REPO_URL" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
     REPO_DIR="$(pwd)"
   else
-    run_silent "clone" git clone "$REPO_URL" "$target"
-    cd "$target"
+    run_silent "clone" git clone "$REPO_URL" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
     REPO_DIR="$(pwd)"
   fi
 
@@ -1098,7 +1125,7 @@ install_deps() {
   fi
 
   start_spinner "Installing packages..."
-  run_with_status "Installing packages" yarn install --ignore-engines || true
+  run_with_status "Installing packages" yarn install --ignore-engines --ignore-platform || true
   stop_spinner
 
   # Don't trust the exit code — verify artifacts instead.
