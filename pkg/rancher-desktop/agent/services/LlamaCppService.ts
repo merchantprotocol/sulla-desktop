@@ -165,6 +165,36 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: 'Specialized for code generation and understanding',
   },
+  'qwq-32b-abliterated-q2': {
+    displayName: 'QwQ 32B Abliterated (Q2_K)',
+    filename:    'huihui-ai_QwQ-32B-abliterated-Q2_K.gguf',
+    url:         'https://huggingface.co/bartowski/huihui-ai_QwQ-32B-abliterated-GGUF/resolve/main/huihui-ai_QwQ-32B-abliterated-Q2_K.gguf',
+    size:        '13GB',
+    sizeBytes:   13_000_000_000,
+    minMemoryGB: 15,
+    minCPUs:     4,
+    description: 'QwQ 32B uncensored reasoning model — smallest quantization, fits 32GB RAM',
+  },
+  'qwq-32b-abliterated-q3': {
+    displayName: 'QwQ 32B Abliterated (Q3_K_M)',
+    filename:    'huihui-ai_QwQ-32B-abliterated-Q3_K_M.gguf',
+    url:         'https://huggingface.co/bartowski/huihui-ai_QwQ-32B-abliterated-GGUF/resolve/main/huihui-ai_QwQ-32B-abliterated-Q3_K_M.gguf',
+    size:        '16GB',
+    sizeBytes:   16_000_000_000,
+    minMemoryGB: 18,
+    minCPUs:     4,
+    description: 'QwQ 32B uncensored reasoning model — balanced quality/size, recommended for 32GB',
+  },
+  'qwq-32b-abliterated-q4': {
+    displayName: 'QwQ 32B Abliterated (Q4_K_M)',
+    filename:    'huihui-ai_QwQ-32B-abliterated-Q4_K_M.gguf',
+    url:         'https://huggingface.co/bartowski/huihui-ai_QwQ-32B-abliterated-GGUF/resolve/main/huihui-ai_QwQ-32B-abliterated-Q4_K_M.gguf',
+    size:        '20GB',
+    sizeBytes:   20_000_000_000,
+    minMemoryGB: 22,
+    minCPUs:     4,
+    description: 'QwQ 32B uncensored reasoning model — best quality, needs 32GB+ RAM',
+  },
 };
 
 /**
@@ -1228,9 +1258,10 @@ export class LlamaCppService {
      * No-ops if the model file already exists on disk.
      *
      * @param modelKey Key from the GGUF_MODELS registry (e.g. 'qwen2-0.5b')
+     * @param onProgress Optional callback for download progress
      * @returns Absolute path to the downloaded .gguf file
      */
-  async downloadModel(modelKey: string): Promise<string> {
+  async downloadModel(modelKey: string, onProgress?: (received: number, total: number) => void): Promise<string> {
     const entry = GGUF_MODELS[modelKey];
     if (!entry) {
       throw new Error(`${ LOG_PREFIX } Unknown model key: ${ modelKey }`);
@@ -1252,7 +1283,7 @@ export class LlamaCppService {
     // Stream to a temp file then rename — avoids partial files on crash
     const tmpPath = destPath + '.tmp';
     try {
-      await httpGetToFile(entry.url, tmpPath);
+      await httpGetToFile(entry.url, tmpPath, onProgress);
       fs.renameSync(tmpPath, destPath);
       const stat = fs.statSync(destPath);
       console.log(`${ LOG_PREFIX } Model ${ entry.displayName } downloaded (${ (stat.size / 1024 / 1024).toFixed(1) } MB)`);

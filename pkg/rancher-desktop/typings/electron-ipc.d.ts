@@ -263,6 +263,7 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Local Models
+  'system-resources':     () => { totalMemoryGB: number; availableMemoryGB: number; availableDiskGB: number };
   'local-models-status':  () => Record<string, boolean>;
   'local-model-download': (modelKey: string) => { ok: boolean };
   // #endregion
@@ -348,6 +349,7 @@ export interface IpcRendererEvents {
   ) => void;
   'settings-read':        (settings: import('@pkg/config/settings').Settings) => void;
   'settings-write-error': (error: any) => void;
+  'local-model-download-progress': (data: { modelKey: string; received: number; total: number; percent: number }) => void;
   'get-app-version':      (version: string) => void;
   'update-state':         (state: import('@pkg/main/update').UpdateState) => void;
   'always-debugging':     (status: boolean) => void;

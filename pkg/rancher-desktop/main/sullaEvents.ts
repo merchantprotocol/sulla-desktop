@@ -558,6 +558,38 @@ export function initSullaEvents(): void {
   import('./trainingController').then(tc => tc.initScheduleOnStartup()).catch(() => {});
 
   /**
+   * Return system resource info for the renderer's fitness indicators.
+   */
+  ipcMainProxy.handle('system-resources', async() => {
+    const os = require('os');
+    const totalMemoryGB = Math.round((os.totalmem() / (1024 ** 3)) * 10) / 10;
+    const freeMemoryGB = Math.round((os.freemem() / (1024 ** 3)) * 10) / 10;
+
+    let availableDiskGB = 0;
+
+    try {
+      const { execSync } = require('child_process');
+      const { app } = require('electron');
+      const userDataPath = app.getPath('userData');
+      const dfOutput = execSync(`df -k "${ userDataPath }"`, { encoding: 'utf-8' });
+      const lines = dfOutput.trim().split('\n');
+
+      if (lines.length >= 2) {
+        const parts = lines[1].split(/\s+/);
+        const availKB = parseInt(parts[3], 10);
+
+        if (!isNaN(availKB)) {
+          availableDiskGB = Math.round((availKB / (1024 ** 2)) * 10) / 10;
+        }
+      }
+    } catch {
+      // Ignore disk space check failures
+    }
+
+    return { totalMemoryGB, availableMemoryGB: freeMemoryGB, availableDiskGB };
+  });
+
+  /**
    * Check which LOCAL_MODELS keys have their GGUF file downloaded on disk.
    * Returns a Record<modelKey, boolean>.
    */
@@ -576,12 +608,25 @@ export function initSullaEvents(): void {
 
   /**
    * Download a GGUF model by key. Returns { ok: true } on success.
-   * The download is blocking — the renderer should show a spinner.
+   * Sends 'local-model-download-progress' events to the renderer during download.
    */
-  ipcMainProxy.handle('local-model-download', async(_event: unknown, modelKey: string) => {
+  ipcMainProxy.handle('local-model-download', async(event: unknown, modelKey: string) => {
     const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
     const svc = getLlamaCppService();
-    await svc.downloadModel(modelKey);
+
+    const sender = (event as { sender?: Electron.WebContents })?.sender;
+    let lastReportedPercent = -1;
+    const onProgress = (received: number, total: number) => {
+      const percent = Math.round((received / total) * 100);
+
+      if (percent !== lastReportedPercent && sender) {
+        lastReportedPercent = percent;
+        sender.send('local-model-download-progress', { modelKey, received, total, percent });
+      }
+    };
+
+    await svc.downloadModel(modelKey, onProgress);
+
     return { ok: true };
   });
 

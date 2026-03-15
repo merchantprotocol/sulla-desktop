@@ -159,9 +159,14 @@ export default defineComponent({
       localModels:              LOCAL_MODELS,
       localModelDownloadStatus: {} as Record<string, boolean>,
       localModelSelected:       '' as string,
-      localModelDownloading:    null as string | null,
-      localModelError:          '' as string,
-      loadingLocalModels:       false,
+      localModelDownloading:      null as string | null,
+      localModelDownloadProgress: 0,
+      localModelError:            '' as string,
+      loadingLocalModels:         false,
+      activatedLocalModel:        '' as string,
+      systemTotalMemoryGB:        0,
+      systemAvailableMemoryGB:    0,
+      systemAvailableDiskGB:      0,
 
     };
   },
@@ -329,6 +334,26 @@ export default defineComponent({
       await this.loadRemoteModels();
     }
 
+    // Listen for download progress events from main process
+    ipcRenderer.on('local-model-download-progress', (
+      _event: unknown,
+      data: { modelKey: string; received: number; total: number; percent: number },
+    ) => {
+      if (data.modelKey === this.localModelDownloading) {
+        this.localModelDownloadProgress = data.percent;
+      }
+    });
+
+    // Load system resource info for fitness indicators
+    this.loadSystemResources();
+
+    // Load which local model is currently activated
+    const currentLocalModel = await SullaSettingsModel.get('sullaModel', '');
+
+    if (currentLocalModel && LOCAL_MODELS.some(m => m.name === currentLocalModel)) {
+      this.activatedLocalModel = currentLocalModel;
+    }
+
     ipcRenderer.send('dialog/ready');
   },
 
@@ -407,6 +432,7 @@ export default defineComponent({
     // Clean up IPC listeners
     ipcRenderer.removeAllListeners('settings-write-error');
     ipcRenderer.removeAllListeners('model-changed');
+    ipcRenderer.removeAllListeners('local-model-download-progress');
   },
 
   methods: {
@@ -1004,6 +1030,56 @@ export default defineComponent({
       }
     },
 
+    async loadSystemResources() {
+      try {
+        const result: { totalMemoryGB: number; availableMemoryGB: number; availableDiskGB: number } =
+          await ipcRenderer.invoke('system-resources');
+
+        this.systemTotalMemoryGB = result.totalMemoryGB;
+        this.systemAvailableMemoryGB = result.availableMemoryGB;
+        this.systemAvailableDiskGB = result.availableDiskGB;
+      } catch (err) {
+        console.warn('[LM Settings] Failed to load system resources:', err);
+      }
+    },
+
+    resourceFitness(model: LocalModelOption): 'green' | 'yellow' | 'red' {
+      const totalMem = this.systemTotalMemoryGB;
+      const availDisk = this.systemAvailableDiskGB;
+
+      if (totalMem === 0) return 'green';
+
+      let sizeGB = 0;
+
+      if (model.size.endsWith('GB')) {
+        sizeGB = parseFloat(model.size);
+      } else if (model.size.endsWith('MB')) {
+        sizeGB = parseFloat(model.size) / 1024;
+      }
+
+      if (totalMem < model.minMemoryGB || (availDisk > 0 && availDisk < sizeGB)) {
+        return 'red';
+      }
+
+      const memHeadroom = totalMem - model.minMemoryGB;
+      const diskHeadroom = availDisk > 0 ? availDisk - sizeGB : 999;
+
+      if (memHeadroom < 4 || diskHeadroom < sizeGB) {
+        return 'yellow';
+      }
+
+      return 'green';
+    },
+
+    resourceFitnessLabel(model: LocalModelOption): string {
+      const fit = this.resourceFitness(model);
+
+      if (fit === 'green') return 'Resources OK';
+      if (fit === 'yellow') return 'Tight fit';
+
+      return 'Insufficient';
+    },
+
     async loadLocalModelStatuses() {
       this.loadingLocalModels = true;
       this.localModelError = '';
@@ -1031,15 +1107,18 @@ export default defineComponent({
 
     async downloadLocalModel(modelName: string) {
       this.localModelDownloading = modelName;
+      this.localModelDownloadProgress = 0;
       this.localModelError = '';
       try {
         await ipcRenderer.invoke('local-model-download', modelName);
         this.localModelDownloadStatus[modelName] = true;
+        this.localModelDownloadProgress = 100;
       } catch (err) {
         console.error('[LM Settings] Failed to download local model:', err);
         this.localModelError = `Failed to download ${ modelName }. Check your internet connection.`;
       } finally {
         this.localModelDownloading = null;
+        this.localModelDownloadProgress = 0;
       }
     },
 
@@ -1061,6 +1140,9 @@ export default defineComponent({
         // Also set primary provider to ollama
         this.primaryProvider = 'ollama';
         await this.writeExperimentalSettings();
+
+        // Track the activated model for visual indicator
+        this.activatedLocalModel = this.localModelSelected;
 
         // Emit event for other windows
         ipcRenderer.send('model-changed', { model: this.localModelSelected, type: 'local' });
@@ -1303,8 +1385,19 @@ export default defineComponent({
         >
           <h2>Local Models</h2>
           <p class="description">
-            Select and manage locally downloaded GGUF models. Downloaded models appear in full color; models not yet downloaded are grayed out but still selectable.
+            Select and manage locally downloaded GGUF models. The colored dot indicates resource fitness: green = plenty of resources, yellow = tight fit, red = insufficient.
           </p>
+
+          <!-- System Resources Summary -->
+          <div
+            v-if="systemTotalMemoryGB > 0"
+            class="system-resources-bar"
+          >
+            <span>System: {{ systemTotalMemoryGB }}GB RAM total</span>
+            <span v-if="systemAvailableDiskGB > 0">
+              &middot; {{ systemAvailableDiskGB }}GB disk free
+            </span>
+          </div>
 
           <div
             v-if="localModelError"
@@ -1332,17 +1425,37 @@ export default defineComponent({
                 'is-downloaded': localModelDownloadStatus[model.name],
                 'is-not-downloaded': !localModelDownloadStatus[model.name],
                 'is-selected': localModelSelected === model.name,
+                'is-activated': activatedLocalModel === model.name,
               }"
               @click="selectLocalModel(model.name)"
             >
               <div class="local-model-header">
                 <span class="local-model-name">{{ model.displayName }}</span>
-                <span
-                  class="local-model-badge"
-                  :class="localModelDownloadStatus[model.name] ? 'badge-downloaded' : 'badge-not-downloaded'"
-                >
-                  {{ localModelDownloadStatus[model.name] ? 'Downloaded' : 'Not Downloaded' }}
-                </span>
+                <div class="local-model-badges">
+                  <!-- Resource fitness indicator -->
+                  <span
+                    class="fitness-badge"
+                    :class="'fitness-' + resourceFitness(model)"
+                    :title="resourceFitnessLabel(model)"
+                  >
+                    {{ resourceFitnessLabel(model) }}
+                  </span>
+                  <!-- Activated badge -->
+                  <span
+                    v-if="activatedLocalModel === model.name"
+                    class="local-model-badge badge-activated"
+                  >
+                    Active
+                  </span>
+                  <!-- Download status badge -->
+                  <span
+                    v-else
+                    class="local-model-badge"
+                    :class="localModelDownloadStatus[model.name] ? 'badge-downloaded' : 'badge-not-downloaded'"
+                  >
+                    {{ localModelDownloadStatus[model.name] ? 'Downloaded' : 'Not Downloaded' }}
+                  </span>
+                </div>
               </div>
               <div class="local-model-meta">
                 <span>{{ model.size }}</span>
@@ -1353,16 +1466,33 @@ export default defineComponent({
                 {{ model.description }}
               </p>
 
+              <!-- Download progress bar — always visible during download -->
               <div
-                v-if="localModelSelected === model.name && !localModelDownloadStatus[model.name]"
+                v-if="localModelDownloading === model.name"
+                class="local-model-download-progress"
+              >
+                <div class="download-status-text">
+                  Downloading {{ model.displayName }}... {{ localModelDownloadProgress }}%
+                </div>
+                <div class="progress-bar-lg">
+                  <div
+                    class="progress-fill-lg"
+                    :style="{ width: localModelDownloadProgress + '%' }"
+                  />
+                </div>
+              </div>
+
+              <!-- Download button — only when selected, not downloaded, and not currently downloading -->
+              <div
+                v-else-if="localModelSelected === model.name && !localModelDownloadStatus[model.name]"
                 class="local-model-actions"
               >
                 <button
                   class="btn role-primary"
-                  :disabled="localModelDownloading === model.name"
+                  :disabled="!!localModelDownloading"
                   @click.stop="downloadLocalModel(model.name)"
                 >
-                  {{ localModelDownloading === model.name ? 'Downloading...' : 'Download Model' }}
+                  Download Model
                 </button>
               </div>
             </div>
@@ -1373,11 +1503,14 @@ export default defineComponent({
             class="local-model-activate"
           >
             <button
-              class="btn role-primary activate-btn"
-              :disabled="!localModelDownloadStatus[localModelSelected] || !!localModelDownloading"
+              class="btn activate-btn"
+              :class="activatedLocalModel === localModelSelected ? 'is-active' : 'role-primary'"
+              :disabled="!localModelDownloadStatus[localModelSelected] || !!localModelDownloading || activatedLocalModel === localModelSelected"
               @click="activateSelectedGgufModel"
             >
-              Activate {{ localModels.find(m => m.name === localModelSelected)?.displayName || localModelSelected }}
+              {{ activatedLocalModel === localModelSelected
+                ? (localModels.find(m => m.name === localModelSelected)?.displayName || localModelSelected) + ' is Active'
+                : 'Activate ' + (localModels.find(m => m.name === localModelSelected)?.displayName || localModelSelected) }}
             </button>
             <p
               v-if="!localModelDownloadStatus[localModelSelected]"
@@ -2517,15 +2650,27 @@ export default defineComponent({
   margin-bottom: 1.5rem;
 }
 
+// System resources summary bar
+.system-resources-bar {
+  display: flex;
+  gap: 0.5rem;
+  font-size: var(--fs-body-sm);
+  color: var(--muted);
+  padding: 0.5rem 0.75rem;
+  background: var(--input-bg, rgba(0, 0, 0, 0.05));
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
 .local-model-card {
-  border: 1px solid var(--input-border);
+  border: 2px solid var(--input-border);
   border-radius: 8px;
   padding: 1rem;
   cursor: pointer;
-  transition: border-color 0.15s, opacity 0.15s, background 0.15s;
+  transition: border-color 0.2s, opacity 0.15s, background 0.2s, box-shadow 0.2s;
 
   &.is-not-downloaded {
-    opacity: 0.45;
+    opacity: 0.9;
   }
 
   &.is-downloaded {
@@ -2537,8 +2682,26 @@ export default defineComponent({
     background: var(--primary-bg, rgba(59, 130, 246, 0.06));
   }
 
+  // Activated model gets a prominent green treatment
+  &.is-activated {
+    border-color: var(--success, #22c55e);
+    background: rgba(34, 197, 94, 0.06);
+    box-shadow: 0 0 0 1px var(--success, #22c55e);
+    opacity: 1;
+  }
+
+  &.is-activated.is-selected {
+    border-color: var(--success, #22c55e);
+    background: rgba(34, 197, 94, 0.1);
+    box-shadow: 0 0 0 1px var(--success, #22c55e);
+  }
+
   &:hover {
     border-color: var(--primary, #3b82f6);
+  }
+
+  &.is-activated:hover {
+    border-color: var(--success, #22c55e);
   }
 }
 
@@ -2547,6 +2710,12 @@ export default defineComponent({
   justify-content: space-between;
   align-items: center;
   margin-bottom: 0.5rem;
+}
+
+.local-model-badges {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
 }
 
 .local-model-name {
@@ -2569,6 +2738,35 @@ export default defineComponent({
     background: var(--bg-hover);
     color: var(--text-muted);
   }
+
+  &.badge-activated {
+    background: var(--success, #22c55e);
+    color: white;
+    font-weight: 600;
+  }
+}
+
+// Resource fitness indicator dot + label
+.fitness-badge {
+  font-size: var(--fs-body-sm);
+  padding: 0.15rem 0.5rem;
+  border-radius: 12px;
+  font-weight: 500;
+
+  &.fitness-green {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--status-success, #22c55e);
+  }
+
+  &.fitness-yellow {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--status-warning, #f59e0b);
+  }
+
+  &.fitness-red {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--status-error, #ef4444);
+  }
 }
 
 .local-model-meta {
@@ -2587,6 +2785,37 @@ export default defineComponent({
 
 .local-model-actions {
   margin-top: 0.75rem;
+}
+
+// Prominent download progress indicator
+.local-model-download-progress {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--primary-bg, rgba(59, 130, 246, 0.08));
+  border: 1px solid var(--primary, #3b82f6);
+  border-radius: 6px;
+
+  .download-status-text {
+    font-size: var(--fs-body);
+    font-weight: 500;
+    color: var(--primary, #3b82f6);
+    margin-bottom: 0.5rem;
+  }
+}
+
+.progress-bar-lg {
+  width: 100%;
+  height: 12px;
+  background: var(--input-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.progress-fill-lg {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary, #3b82f6), #6366f1);
+  border-radius: 6px;
+  transition: width 0.3s ease;
 }
 
 .local-model-activate {

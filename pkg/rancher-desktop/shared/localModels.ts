@@ -38,4 +38,28 @@ export const LOCAL_MODELS: LocalModelOption[] = [
     minCPUs:     4,
     description: 'Qwen3.5 9B \u2014 strongest reasoning, recommended',
   },
+  {
+    name:        'qwq-32b-abliterated-q2',
+    displayName: 'QwQ 32B Abliterated (Q2_K)',
+    size:        '13GB',
+    minMemoryGB: 15,
+    minCPUs:     4,
+    description: 'QwQ 32B uncensored reasoning \u2014 smallest quantization, fits 32GB RAM',
+  },
+  {
+    name:        'qwq-32b-abliterated-q3',
+    displayName: 'QwQ 32B Abliterated (Q3_K_M)',
+    size:        '16GB',
+    minMemoryGB: 18,
+    minCPUs:     4,
+    description: 'QwQ 32B uncensored reasoning \u2014 balanced quality/size, recommended for 32GB',
+  },
+  {
+    name:        'qwq-32b-abliterated-q4',
+    displayName: 'QwQ 32B Abliterated (Q4_K_M)',
+    size:        '20GB',
+    minMemoryGB: 22,
+    minCPUs:     4,
+    description: 'QwQ 32B uncensored reasoning \u2014 best quality, needs 32GB+ RAM',
+  },
 ];
