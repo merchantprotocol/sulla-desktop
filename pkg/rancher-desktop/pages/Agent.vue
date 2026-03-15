@@ -248,15 +248,11 @@
                 </div>
               </div>
               <div
-                v-if="loading"
-                class="mb-3 flex justify-start"
+                v-if="loading || graphRunning"
+                class="mb-3 flex items-center gap-2 px-4"
               >
-                <div class="relative max-w-[min(760px,92%)] whitespace-pre-wrap rounded-xl px-4 py-3 text-sm leading-6 text-content">
-                  <div class="absolute -inset-px rounded-xl border-2 border-transparent [background:linear-gradient(var(--quick-links-hover-bg,var(--color-sky-50)),var(--quick-links-hover-bg,var(--color-sky-50)))_padding-box,linear-gradient(to_top,var(--color-indigo-400),var(--color-cyan-400),var(--color-sky-500))_border-box] dark:[--quick-links-hover-bg:var(--color-slate-800)]" />
-                  <div class="relative">
-                    Thinking...
-                  </div>
-                </div>
+                <span class="activity-dot" />
+                <span class="text-sm font-bold text-secondary">{{ currentActivity || 'Thinking' }}..<span class="blink-dot">.</span></span>
               </div>
               <div
                 v-if="showContinueButton"
@@ -431,6 +427,7 @@ const displayMessages = computed(() => {
 });
 
 const loading = chatController.loading;
+const currentActivity = chatController.currentActivity;
 const showContinueButton = chatController.showContinueButton;
 const activeAssets = chatController.activeAssets;
 const threadId = chatController.threadId;
@@ -873,5 +870,28 @@ watch(isDark, () => {
   padding: 8px 12px;
   font-size: var(--fs-body-sm);
   color: var(--status-error);
+}
+
+.activity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: activityPulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.blink-dot {
+  animation: blinkDot 1s step-end infinite;
+}
+
+@keyframes blinkDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes activityPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 </style>

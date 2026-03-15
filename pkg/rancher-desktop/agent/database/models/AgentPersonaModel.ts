@@ -68,6 +68,74 @@ export interface PersonaSidebarAsset {
   refKey?:    string;
 }
 
+// ─── Tool-name → human-friendly verb mapping ───────────────────────────────
+const TOOL_VERB_MAP: Record<string, string> = {
+  // Filesystem
+  fs_read_file: 'Reading', fs_write_file: 'Writing', fs_append_file: 'Writing',
+  fs_list_dir: 'Browsing files', fs_mkdir: 'Creating folder', fs_path_info: 'Inspecting',
+  fs_copy_path: 'Copying', fs_move_path: 'Moving', fs_delete_path: 'Deleting',
+  // Execution
+  exec: 'Running', exec_command: 'Running', shell: 'Running', bash: 'Running', run_command: 'Running',
+  // Search
+  meta_search: 'Searching', browse_tools: 'Searching tools',
+  // Git / GitHub
+  git_status: 'Checking status', git_log: 'Reviewing history', git_diff: 'Comparing changes',
+  git_add: 'Staging', git_commit: 'Committing', git_push: 'Pushing', git_pull: 'Pulling',
+  git_branch: 'Branching', git_checkout: 'Switching branch', git_stash: 'Stashing',
+  git_blame: 'Blaming', git_conflicts: 'Resolving conflicts',
+  github_create_pr: 'Creating PR', github_create_issue: 'Creating issue',
+  github_get_issue: 'Fetching issue', github_get_issues: 'Fetching issues',
+  github_read_file: 'Reading', github_create_file: 'Creating', github_update_file: 'Updating',
+  github_comment_on_issue: 'Commenting',
+  // Docker
+  docker_build: 'Building image', docker_run: 'Running container', docker_exec: 'Executing',
+  docker_ps: 'Listing containers', docker_logs: 'Reading logs',
+  docker_pull: 'Pulling image', docker_stop: 'Stopping container', docker_rm: 'Removing container',
+  docker_images: 'Listing images',
+  // Kubernetes
+  kubectl_apply: 'Applying manifest', kubectl_delete: 'Deleting resource', kubectl_describe: 'Describing resource',
+  // Database
+  pg_query: 'Querying', pg_queryall: 'Querying', pg_queryone: 'Querying',
+  pg_execute: 'Executing SQL', pg_count: 'Counting', pg_transaction: 'Running transaction',
+  // Redis
+  redis_get: 'Reading cache', redis_set: 'Writing cache', redis_del: 'Clearing cache',
+  // N8n / Workflows
+  execute_workflow: 'Running workflow', create_workflow: 'Creating workflow',
+  update_workflow: 'Updating workflow', validate_workflow: 'Validating workflow',
+  patch_workflow: 'Patching workflow', activate_workflow: 'Activating workflow',
+  // Playwright / Browser
+  click_element: 'Clicking', get_page_snapshot: 'Capturing page', get_page_text: 'Reading page',
+  set_field: 'Filling form', scroll_to_element: 'Scrolling',
+  // Slack
+  slack_send_message: 'Messaging', slack_search_users: 'Searching users',
+  // Calendar
+  calendar_list: 'Checking calendar', calendar_create: 'Creating event', calendar_list_upcoming: 'Checking schedule',
+  // Memory
+  add_observational_memory: 'Remembering', remove_observational_memory: 'Forgetting',
+  // Skills / Projects
+  load_skill: 'Loading skill', create_skill: 'Creating skill', load_project: 'Loading project',
+  // Lima
+  lima_shell: 'Running shell', lima_start: 'Starting VM', lima_stop: 'Stopping VM',
+  // Channel
+  send_channel_message: 'Messaging',
+};
+
+function toolNameToVerb(toolName: string): string {
+  if (TOOL_VERB_MAP[toolName]) return TOOL_VERB_MAP[toolName];
+
+  // Prefix-based fallbacks
+  if (toolName.startsWith('fs_'))      return 'Working with files';
+  if (toolName.startsWith('git'))      return 'Using git';
+  if (toolName.startsWith('docker_'))  return 'Using Docker';
+  if (toolName.startsWith('kubectl_')) return 'Using kubectl';
+  if (toolName.startsWith('pg_'))      return 'Querying database';
+  if (toolName.startsWith('redis_'))   return 'Using cache';
+  if (toolName.startsWith('slack_'))   return 'Using Slack';
+  if (toolName.startsWith('n8n_') || toolName.includes('workflow')) return 'Working on workflow';
+
+  return 'Working';
+}
+
 export class AgentPersonaService {
   private readonly registry:            AgentPersonaRegistry;
   private wsService = getWebSocketClientService();
@@ -80,6 +148,9 @@ export class AgentPersonaService {
   graphRunning = ref(false);
   waitingForUser = ref(false);
   stopReason = ref<string | null>(null);
+
+  /** Human-friendly verb describing what the agent is currently doing */
+  currentActivity = ref('Thinking');
 
   readonly state = reactive<AgentPersonaState>({
     agentId:   'unit-01',
@@ -338,6 +409,7 @@ export class AgentPersonaService {
     console.log(`[AgentPersonaService] _addUserMessage() — channel="${ id }", threadId="${ this.state.threadId || '(none)' }", content="${ content.slice(0, 80) }"`);
     this.stopReason.value = null;
     this.waitingForUser.value = false;
+    this.currentActivity.value = 'Thinking';
 
     this.messages.push({
       id:        `user_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
@@ -567,6 +639,9 @@ export class AgentPersonaService {
         const toolName = typeof data?.toolName === 'string' ? data.toolName : 'unknown';
         const args = data?.args && typeof data.args === 'object' ? data.args : {};
 
+        // Update the current activity status verb
+        this.currentActivity.value = toolNameToVerb(toolName);
+
         // Skip tool cards for chat message tools - they emit directly as chat messages
         if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image') {
           return;
@@ -597,6 +672,8 @@ export class AgentPersonaService {
 
       // Handle tool_result progress events - update tool card status
       if (phase === 'tool_result') {
+        // Reset to "Thinking" while the LLM processes the result
+        this.currentActivity.value = 'Thinking';
         const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
         const success = data?.success === true;
         const error = typeof data?.error === 'string' ? data.error : null;

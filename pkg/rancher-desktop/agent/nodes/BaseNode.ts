@@ -707,6 +707,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   ): Promise<any | null> {
     const reply = await this.normalizedChat(state, systemPrompt, options);
     if (!reply) return null;
+
+    // Execute pending tool calls (preserves default behavior for callers using chat())
+    await this.processPendingToolCalls(state, reply);
+
     if (options.format === 'json') {
       const parsedReply = this.parseJson(reply.content);
       console.log(`[${ this.name }] Parsed JSON in method:chat:`, parsedReply);
@@ -1030,13 +1034,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       // Training data: capture LLM turn (user message + assistant response + reasoning)
       this.logTrainingTurn(state, nodeRunContext, reply);
-
-      // Handle tool calls using the unified executeToolCalls method
-      const toolCalls = reply.metadata.tool_calls || [];
-      if (toolCalls.length) {
-        console.log(`[${ this.name }] Processing ${ toolCalls.length } tool calls via executeToolCalls`);
-        await this.executeToolCalls(state, toolCalls);
-      }
 
       this.triggerBackgroundStateMaintenance(state);
 
@@ -1532,6 +1529,22 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       },
       timestamp: Date.now(),
     });
+  }
+
+  /**
+     * Process pending tool calls from an LLM reply.
+     * Extracted so callers of normalizedChat can control when tool execution
+     * happens relative to other work (e.g. emitting text to the UI first).
+     */
+  protected async processPendingToolCalls(
+    state: BaseThreadState,
+    reply: { metadata: { tool_calls?: { name: string; id?: string; args: any }[] } },
+  ): Promise<void> {
+    const toolCalls = reply.metadata.tool_calls || [];
+    if (toolCalls.length) {
+      console.log(`[${ this.name }] Processing ${ toolCalls.length } tool calls via executeToolCalls`);
+      await this.executeToolCalls(state, toolCalls);
+    }
   }
 
   private stableStringify(value: unknown): string {
