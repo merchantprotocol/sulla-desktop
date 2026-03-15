@@ -13,10 +13,9 @@ export interface BrowserTab {
 }
 
 const tabs = reactive<BrowserTab[]>([]);
-let nextId = 1;
 
 function generateId(): string {
-  return `browser-${ nextId++ }`;
+  return `tab_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 8) }`;
 }
 
 export function useBrowserTabs() {
