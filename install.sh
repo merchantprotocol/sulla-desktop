@@ -29,7 +29,7 @@ REPO_URL="https://github.com/sulla-ai/sulla-desktop.git"
 REPO_OWNER="sulla-ai"
 REPO_NAME="sulla-desktop"
 REPO_DIR="sulla-desktop"
-INSTALL_DIR="$HOME/sulla-desktop"
+INSTALL_DIR="$HOME/.sulla-desktop"
 NODE_VERSION="22.22.0"
 GO_VERSION="1.24.2"
 MIN_DISK_GB=10
@@ -279,34 +279,34 @@ run_with_status() {
 
   local last_update=0
 
+  local current_phase="$label"
+
   "$@" 2>&1 | while IFS= read -r -t 300 line; do
     echo "$line" >> "$INSTALL_LOG"
 
-    # Throttle spinner updates to at most once per second to avoid flicker
-    [ "$SECONDS" = "$last_update" ] && continue
+    # Throttle spinner updates to at most once every 3 seconds to keep it calm
+    local now="$SECONDS"
+    [ "$((now - last_update))" -lt 3 ] && continue
 
+    local new_phase=""
     case "$line" in
-      *"Resolving"*|*"Fetching"*|*"Linking"*|*"Building"*)
-        stop_spinner 2>/dev/null
-        start_spinner "${label}: ${line:0:60}"
-        last_update="$SECONDS"
-        ;;
-      *"step "*)
-        stop_spinner 2>/dev/null
-        start_spinner "${label}: ${line:0:60}"
-        last_update="$SECONDS"
-        ;;
+      *"Resolving"*)  new_phase="${label}: resolving dependencies..." ;;
+      *"Fetching"*)   new_phase="${label}: fetching packages..." ;;
+      *"Linking"*)    new_phase="${label}: linking packages..." ;;
+      *"Building"*)   new_phase="${label}: building..." ;;
       *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
-        stop_spinner 2>/dev/null
-        start_spinner "${label}: compiling native modules..."
-        last_update="$SECONDS"
-        ;;
+                      new_phase="${label}: compiling native modules..." ;;
       *"webpack"*|*"ts-loader"*|*"babel"*)
-        stop_spinner 2>/dev/null
-        start_spinner "${label}: ${line:0:60}"
-        last_update="$SECONDS"
-        ;;
+                      new_phase="${label}: bundling application..." ;;
     esac
+
+    # Only restart the spinner when the phase actually changes
+    if [ -n "$new_phase" ] && [ "$new_phase" != "$current_phase" ]; then
+      current_phase="$new_phase"
+      stop_spinner 2>/dev/null
+      start_spinner "$current_phase"
+      last_update="$now"
+    fi
   done
 
   stop_spinner 2>/dev/null
@@ -961,6 +961,46 @@ safe_remove_install_dir() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Reset first-run state so the app re-runs its setup wizard on next launch.
+# Removes only the settings file and fallback lock — does NOT touch the Lima
+# VM, Docker containers, volumes, or any other user data.
+# ---------------------------------------------------------------------------
+reset_first_run_state() {
+  local removed=false
+
+  # 1. settings.json — its absence triggers _isFirstRun = true
+  case "$OS" in
+    macos)
+      local settings_file="$HOME/Library/Preferences/rancher-desktop/settings.json"
+      local fallback_file="$HOME/Library/Application Support/Sulla Desktop/sulla-settings-fallback.json"
+      ;;
+    linux)
+      local settings_file="$HOME/.config/rancher-desktop/settings.json"
+      local fallback_file="$HOME/.config/Sulla Desktop/sulla-settings-fallback.json"
+      ;;
+    windows)
+      local settings_file="$LOCALAPPDATA/rancher-desktop/settings.json"
+      local fallback_file="$LOCALAPPDATA/Sulla Desktop/sulla-settings-fallback.json"
+      ;;
+  esac
+
+  if [ -f "$settings_file" ]; then
+    rm -f "$settings_file"
+    removed=true
+  fi
+
+  # 2. Fallback file — contains sullaInstalled flag that also blocks first-run
+  if [ -f "$fallback_file" ]; then
+    rm -f "$fallback_file"
+    removed=true
+  fi
+
+  if [ "$removed" = true ]; then
+    echo "  [nightly] Reset first-run state (containers & data preserved)" >> "$INSTALL_LOG"
+  fi
+}
+
 ensure_repo() {
   start_spinner "Setting up repository..."
 
@@ -972,9 +1012,11 @@ ensure_repo() {
     return
   fi
 
-  # Nightly: wipe and fresh clone every time to guarantee clean state
+  # Nightly: wipe repo and reset first-run state so setup runs again.
+  # This does NOT delete user data (Lima VM, containers, volumes).
   if [ "$USE_NIGHTLY" = true ] && [ -d "$INSTALL_DIR" ]; then
     safe_remove_install_dir "$INSTALL_DIR"
+    reset_first_run_state
   fi
 
   if [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
@@ -1283,24 +1325,42 @@ launch_app() {
 # Final success banner
 # ---------------------------------------------------------------------------
 print_success() {
-  local log_file="${APP_LOG_FILE:-}"
-
   echo ""
   echo ""
   printf "  ${GREEN}${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}\n"
   printf "  ${GREEN}${BOLD}║                                                          ║${RESET}\n"
   printf "  ${GREEN}${BOLD}║   ${CHECK}  ${WHITE}Installation Complete!${GREEN}                            ║${RESET}\n"
   printf "  ${GREEN}${BOLD}║                                                          ║${RESET}\n"
-  printf "  ${GREEN}${BOLD}║   ${RESET}${DIM}Sulla Desktop is now running in the background.${GREEN}${BOLD}      ║${RESET}\n"
-  printf "  ${GREEN}${BOLD}║   ${RESET}${DIM}You can safely close this window.${GREEN}${BOLD}                   ║${RESET}\n"
+  printf "  ${GREEN}${BOLD}║   ${RESET}${DIM}Everything was installed properly.${GREEN}${BOLD}                  ║${RESET}\n"
+  printf "  ${GREEN}${BOLD}║   ${RESET}${DIM}Sulla is booting up — you can now close this terminal.${GREEN}${BOLD}║${RESET}\n"
   printf "  ${GREEN}${BOLD}║                                                          ║${RESET}\n"
   printf "  ${GREEN}${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}\n"
   echo ""
-  if [ -n "$log_file" ]; then
-    printf "  ${DIM}App logs: %s${RESET}\n" "$log_file"
-  fi
-  printf "  ${DIM}Install log: %s${RESET}\n" "$INSTALL_LOG"
-  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Auto-close the terminal window after a brief pause
+# ---------------------------------------------------------------------------
+auto_close_terminal() {
+  sleep 3
+  case "$OS" in
+    macos)
+      # Close the Terminal.app or iTerm2 window via AppleScript
+      if [ "$TERM_PROGRAM" = "Apple_Terminal" ]; then
+        osascript -e 'tell application "Terminal" to close front window' 2>/dev/null || true
+      elif [ "$TERM_PROGRAM" = "iTerm.app" ]; then
+        osascript -e 'tell application "iTerm2" to close current session of current window' 2>/dev/null || true
+      fi
+      ;;
+    linux)
+      # Send SIGHUP to the parent shell to close the terminal
+      kill -HUP "$PPID" 2>/dev/null || true
+      ;;
+    windows)
+      # Exit the Git Bash / MSYS2 window
+      exit 0
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -1346,9 +1406,11 @@ main() {
   section "Launch"
   launch_app
 
-  # Done!
+  # Done — kill any lingering spinner and show the final banner
+  stop_spinner 2>/dev/null
   show_cursor
   print_success
+  auto_close_terminal
 }
 
 main "$@"
