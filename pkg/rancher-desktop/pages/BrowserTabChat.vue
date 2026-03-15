@@ -117,42 +117,19 @@
       </div>
     </div>
 
-    <!-- Empty state: centered composer + quick links -->
-    <div v-else class="flex min-h-0 flex-1 items-center justify-center bg-page">
-      <div class="w-full px-4">
-        <div class="flex h-full flex-col items-center justify-center">
-          <AgentComposer
-            v-model="query"
-            form-class="group/composer mx-auto mb-3 w-full max-w-3xl"
-            panel-class="z-10"
-            :loading="loading"
-            :show-overlay="false"
-            :has-messages="hasMessages"
-            :graph-running="graphRunning"
-            :model-selector="modelSelector"
-            @send="send"
-            @stop="stop"
-            @primary-action="handlePrimaryAction"
-          />
-          <div class="quick-links-grid">
-            <button
-              v-for="link in quickLinks"
-              :key="link.id"
-              class="quick-link-tile"
-              @click="emit('set-mode', link.mode)"
-            >
-              <div class="quick-link-icon" :style="{ background: link.color }">
-                <svg :viewBox="link.viewBox" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
-                  <path v-for="(d, i) in link.paths" :key="i" :d="d" />
-                  <rect v-if="link.rect" v-bind="link.rect" />
-                  <line v-for="(l, i) in (link.lines || [])" :key="'l'+i" :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2" />
-                  <circle v-if="link.circle" v-bind="link.circle" />
-                </svg>
-              </div>
-              <span class="quick-link-label">{{ link.label }}</span>
-            </button>
-          </div>
-        </div>
+    <!-- Empty state: editorial landing -->
+    <div v-else class="flex min-h-0 flex-1 overflow-y-auto bg-page">
+      <div class="w-full min-h-full px-4">
+        <ChatOptionsVariantB
+          v-model:query="query"
+          :loading="loading"
+          :graph-running="graphRunning"
+          :model-selector="modelSelector"
+          @send="send"
+          @stop="stop"
+          @primary-action="handlePrimaryAction"
+          @pick="(mode: string) => emit('set-mode', mode as BrowserTabMode)"
+        />
       </div>
     </div>
   </div>
@@ -163,6 +140,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import AgentComposer from './agent/AgentComposer.vue';
+import ChatOptionsVariantB from './chat-options/ChatOptionsVariantB.vue';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
 import type { BrowserTabMode } from '@pkg/composables/useBrowserTabs';
@@ -174,44 +152,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   'set-mode': [mode: BrowserTabMode];
 }>();
-
-const quickLinks = [
-  {
-    id: 'calendar', label: 'Calendar', mode: 'calendar' as BrowserTabMode,
-    color: '#f59e0b', viewBox: '0 0 24 24',
-    rect: { x: '3', y: '4', width: '18', height: '18', rx: '2', ry: '2' },
-    paths: [],
-    lines: [
-      { x1: '16', y1: '2', x2: '16', y2: '6' },
-      { x1: '8', y1: '2', x2: '8', y2: '6' },
-      { x1: '3', y1: '10', x2: '21', y2: '10' },
-    ],
-  },
-  {
-    id: 'integrations', label: 'Integrations', mode: 'integrations' as BrowserTabMode,
-    color: '#8b5cf6', viewBox: '0 0 24 24',
-    paths: [
-      'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
-    ],
-    circle: { cx: '12', cy: '12', r: '3' },
-  },
-  {
-    id: 'extensions', label: 'Extensions', mode: 'extensions' as BrowserTabMode,
-    color: '#10b981', viewBox: '0 0 24 24',
-    paths: [
-      'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
-    ],
-  },
-  {
-    id: 'browser', label: 'Browser', mode: 'browser' as BrowserTabMode,
-    color: '#3b82f6', viewBox: '0 0 24 24',
-    paths: [
-      'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',
-      'M2 12h20',
-      'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z',
-    ],
-  },
-];
 
 // Each tab gets its own ChatInterface keyed by tabId for independent
 // localStorage (messages, threadId) while sharing the 'sulla-desktop' WS channel.
@@ -338,48 +278,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.quick-links-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1rem;
-  width: 100%;
-  max-width: 420px;
-  margin-top: 2rem;
-}
-
-.quick-link-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1rem 0.5rem;
-  background: transparent;
-  border: none;
-  border-radius: 0.75rem;
-  cursor: pointer;
-  transition: background-color 150ms;
-}
-
-.quick-link-tile:hover {
-  background: var(--bg-surface);
-}
-
-.quick-link-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 3rem;
-  height: 3rem;
-  border-radius: 0.75rem;
-  color: white;
-}
-
-.quick-link-label {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
 /* ── Thinking indicator ── */
 .activity-dot {
   width: 6px;
