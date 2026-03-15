@@ -972,18 +972,34 @@ ensure_repo() {
 # ---------------------------------------------------------------------------
 
 # Verify that yarn install produced a working node_modules tree.
-# Returns 0 if all critical artifacts are present.
+# Only checks what yarn install actually creates — node_modules.
+# Platform binaries (rdctl, docker, kubectl) and preload.js are
+# produced by postinstall/build, verified separately in build_app.
 verify_install_artifacts() {
-  # Core: node_modules integrity marker
   [ -f "node_modules/.yarn-integrity" ] || return 1
+  [ -d "node_modules/electron" ]        || return 1
+  return 0
+}
 
-  # Electron must be present — it's the runtime
-  [ -d "node_modules/electron" ] || return 1
+# Verify that yarn build produced a launchable application.
+# Checks compiled output AND platform binaries/preload from postinstall,
+# since both are needed to launch and both are produced before this runs.
+verify_build_artifacts() {
+  # Electron main entry — this is what package.json "main" points to
+  [ -f "dist/app/background.js" ] || return 1
 
-  # The preload script must have been built by postinstall
+  # Renderer HTML — at least the primary window
+  [ -f "dist/app/index.html" ] || return 1
+
+  # JS bundles must exist
+  local js_count
+  js_count="$(find dist/app/js -name '*.js' 2>/dev/null | head -5 | wc -l)"
+  [ "${js_count:-0}" -ge 1 ] || return 1
+
+  # Preload script (built by webpack during yarn build)
   [ -f "resources/preload.js" ] || return 1
 
-  # Platform-specific binaries from postinstall
+  # Platform binaries (built by postinstall during yarn install)
   case "$OS" in
     macos)
       [ -x "resources/darwin/bin/rdctl" ]   || return 1
@@ -1000,23 +1016,7 @@ verify_install_artifacts() {
   return 0
 }
 
-# Verify that yarn build produced a launchable application.
-verify_build_artifacts() {
-  # Electron main entry — this is what package.json "main" points to
-  [ -f "dist/app/background.js" ] || return 1
-
-  # Renderer HTML — at least the primary window
-  [ -f "dist/app/index.html" ] || return 1
-
-  # JS bundles must exist
-  local js_count
-  js_count="$(find dist/app/js -name '*.js' 2>/dev/null | head -5 | wc -l)"
-  [ "${js_count:-0}" -ge 1 ] || return 1
-
-  return 0
-}
-
-# Dump full verification results — shows every check with pass/fail
+# Dump full install verification results — shows every check with pass/fail
 dump_install_verification() {
   echo ""
   printf "  ${WHITE}${BOLD}Install Verification Report${RESET}\n"
@@ -1038,43 +1038,6 @@ dump_install_verification() {
   else
     printf "  ${CROSS}  node_modules/electron/ ${RED}MISSING${RESET}\n"
     all_ok=false
-  fi
-
-  # Preload script
-  if [ -f "resources/preload.js" ]; then
-    printf "  ${CHECK}  resources/preload.js\n"
-  else
-    printf "  ${CROSS}  resources/preload.js ${RED}MISSING${RESET}\n"
-    all_ok=false
-  fi
-
-  # Platform binaries
-  local bin_dir=""
-  case "$OS" in
-    macos)  bin_dir="resources/darwin/bin" ;;
-    linux)  bin_dir="resources/linux/bin" ;;
-  esac
-
-  if [ -n "$bin_dir" ]; then
-    for bin in rdctl docker kubectl; do
-      if [ -x "$bin_dir/$bin" ]; then
-        printf "  ${CHECK}  %s/%s\n" "$bin_dir" "$bin"
-      else
-        printf "  ${CROSS}  %s/%s ${RED}MISSING${RESET}\n" "$bin_dir" "$bin"
-        all_ok=false
-      fi
-    done
-
-    # Show what IS in the bin dir so we can see what succeeded
-    echo ""
-    printf "  ${DIM}Contents of %s/:${RESET}\n" "$bin_dir"
-    if [ -d "$bin_dir" ]; then
-      ls -la "$bin_dir" 2>/dev/null | while IFS= read -r line; do
-        printf "  ${DIM}  %s${RESET}\n" "$line"
-      done
-    else
-      printf "  ${DIM}  (directory does not exist)${RESET}\n"
-    fi
   fi
 
   # Show last 30 lines of install log for context
@@ -1118,7 +1081,42 @@ dump_build_verification() {
     printf "  ${CROSS}  dist/app/js/ ${RED}NO BUNDLES${RESET}\n"
   fi
 
-  # Show what IS in dist/app so we can see what succeeded
+  # Preload script
+  if [ -f "resources/preload.js" ]; then
+    printf "  ${CHECK}  resources/preload.js\n"
+  else
+    printf "  ${CROSS}  resources/preload.js ${RED}MISSING${RESET}\n"
+  fi
+
+  # Platform binaries
+  local bin_dir=""
+  case "$OS" in
+    macos)  bin_dir="resources/darwin/bin" ;;
+    linux)  bin_dir="resources/linux/bin" ;;
+  esac
+
+  if [ -n "$bin_dir" ]; then
+    for bin in rdctl docker kubectl; do
+      if [ -x "$bin_dir/$bin" ]; then
+        printf "  ${CHECK}  %s/%s\n" "$bin_dir" "$bin"
+      else
+        printf "  ${CROSS}  %s/%s ${RED}MISSING${RESET}\n" "$bin_dir" "$bin"
+      fi
+    done
+
+    # Show what IS in the bin dir
+    echo ""
+    printf "  ${DIM}Contents of %s/:${RESET}\n" "$bin_dir"
+    if [ -d "$bin_dir" ]; then
+      ls -la "$bin_dir" 2>/dev/null | while IFS= read -r line; do
+        printf "  ${DIM}  %s${RESET}\n" "$line"
+      done
+    else
+      printf "  ${DIM}  (directory does not exist)${RESET}\n"
+    fi
+  fi
+
+  # Show what IS in dist/app
   echo ""
   printf "  ${DIM}Contents of dist/app/:${RESET}\n"
   if [ -d "dist/app" ]; then
