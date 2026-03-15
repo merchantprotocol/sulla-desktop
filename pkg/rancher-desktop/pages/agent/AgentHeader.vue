@@ -1,6 +1,6 @@
 <template>
-  <header class="sticky top-0 z-50 flex flex-none items-center justify-between bg-page pl-20 pr-4 py-4 shadow-md transition duration-500 backdrop-blur-sm sm:pr-6 lg:pr-8 app-titlebar">
-    <div class="relative flex grow basis-0 items-center">
+  <header class="sticky top-0 z-50 flex flex-none items-end justify-between border-b border-edge bg-page pl-20 pr-4 pt-4 pb-0 shadow-md transition duration-500 backdrop-blur-sm sm:pr-6 lg:pr-8 app-titlebar">
+    <div class="relative flex grow basis-0 items-center pb-2">
       <a
         aria-label="Home page"
         href="#/"
@@ -17,48 +17,53 @@
         >
       </a>
     </div>
-    <div class="hidden lg:block">
-      <nav class="flex items-center gap-x-5">
-        <router-link
-          to="/Chat"
-          class="text-xs font-semibold"
-          :class="route.path === '/Chat' ? 'text-content' : 'text-content-secondary hover:text-content'"
-        >
-          Chat
-        </router-link>
-        <router-link
-          to="/Calendar"
-          class="text-xs font-semibold"
-          :class="route.path === '/Calendar' ? 'text-content' : 'text-content-secondary hover:text-content'"
-        >
-          Calendar
-        </router-link>
-        <router-link
-          to="/Integrations"
-          class="text-xs font-semibold"
-          :class="route.path === '/Integrations' ? 'text-content' : 'text-content-secondary hover:text-content'"
-        >
-          Integrations
-        </router-link>
-        <router-link
-          to="/Extensions"
-          class="text-xs font-semibold"
-          :class="route.path === '/Extensions' ? 'text-content' : 'text-content-secondary hover:text-content'"
-        >
-          Extensions
-        </router-link>
-        <router-link
-          v-for="item in extensionMenuItems"
-          :key="item.link"
-          :to="item.link"
-          class="text-xs font-semibold"
-          :class="route.path === item.link ? 'text-content' : 'text-content-secondary hover:text-content'"
-        >
-          {{ item.title }}
-        </router-link>
-      </nav>
+    <div class="hidden lg:flex items-end gap-0.5 self-stretch">
+      <router-link
+        to="/Chat"
+        class="tab-item"
+        :class="route.path === '/Chat' ? 'tab-active' : 'tab-inactive'"
+      >
+        Chat
+      </router-link>
+      <router-link
+        to="/Calendar"
+        class="tab-item"
+        :class="route.path === '/Calendar' ? 'tab-active' : 'tab-inactive'"
+      >
+        Calendar
+      </router-link>
+      <router-link
+        to="/Integrations"
+        class="tab-item"
+        :class="route.path === '/Integrations' || route.path.startsWith('/Integrations/') ? 'tab-active' : 'tab-inactive'"
+      >
+        Integrations
+      </router-link>
+      <router-link
+        to="/Extensions"
+        class="tab-item"
+        :class="route.path === '/Extensions' ? 'tab-active' : 'tab-inactive'"
+      >
+        Extensions
+      </router-link>
+      <router-link
+        v-for="item in extensionMenuItems"
+        :key="item.link"
+        :to="item.link"
+        class="tab-item"
+        :class="route.path === item.link ? 'tab-active' : 'tab-inactive'"
+      >
+        {{ item.title }}
+      </router-link>
+      <button
+        class="tab-new"
+        type="button"
+        aria-label="New tab"
+      >
+        +
+      </button>
     </div>
-    <div class="relative flex basis-0 justify-end items-center gap-4">
+    <div class="relative flex basis-0 justify-end items-center gap-4 pb-2">
       <div
         v-if="route.path === '/Filesystem'"
         class="flex gap-2"
@@ -320,3 +325,60 @@ const toggleMobileMenu = () => {
   isMobileMenuOpen.value = !isMobileMenuOpen.value;
 };
 </script>
+
+<style scoped>
+.tab-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  cursor: pointer;
+  transition: color 150ms, background-color 150ms;
+  position: relative;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.tab-active {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  margin-bottom: -1px;
+  padding-bottom: calc(0.5rem + 1px);
+}
+
+.tab-inactive {
+  color: var(--text-secondary);
+}
+
+.tab-inactive:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-surface-hover);
+}
+
+.tab-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
+  cursor: pointer;
+  transition: color 150ms, background-color 150ms;
+  background: transparent;
+  border: none;
+}
+
+.tab-new:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-surface-hover);
+}
+</style>
