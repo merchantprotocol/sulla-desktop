@@ -331,13 +331,14 @@ export class AgentNode extends BaseNode {
 
   private async startLiveDomStream(state: BaseThreadState): Promise<() => void> {
     try {
-      const { hostBridgeRegistry } = await import('../scripts/injected/HostBridgeRegistry');
+      const { hostBridgeProxy } = await import('../scripts/injected/HostBridgeProxy');
 
-      if (hostBridgeRegistry.size() === 0) {
+      const size = await hostBridgeProxy.size();
+      if (size === 0) {
         return () => {};
       }
 
-      const unsub = hostBridgeRegistry.onDomEvent((event) => {
+      const unsub = hostBridgeProxy.onDomEvent((event) => {
         const content = event.message;
         if (!content) return;
 

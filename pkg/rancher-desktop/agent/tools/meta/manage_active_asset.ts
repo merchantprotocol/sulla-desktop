@@ -1,5 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
-import { getAgentPersonaRegistry } from '../../database/registry/AgentPersonaRegistry';
+import { getWebSocketClientService } from '../../services/WebSocketClientService';
 
 export class ManageActiveAssetWorker extends BaseTool {
   name = '';
@@ -17,10 +17,9 @@ export class ManageActiveAssetWorker extends BaseTool {
     const assetType = String(input.assetType || '').trim().toLowerCase();
     const skillSlug = typeof input.skillSlug === 'string' ? input.skillSlug.trim() : '';
     const metadata = (this.state).metadata || {};
-    const agentId = String(metadata.wsChannel || 'sulla-desktop');
+    const wsChannel = String(metadata.wsChannel || 'sulla-desktop');
 
-    const registry = getAgentPersonaRegistry();
-    const persona = registry.getOrCreatePersonaService(agentId);
+    const wsService = getWebSocketClientService();
 
     if (action === 'remove') {
       const removeId = typeof input.assetId === 'string' ? input.assetId.trim() : '';
@@ -30,7 +29,13 @@ export class ManageActiveAssetWorker extends BaseTool {
           responseString: 'assetId is required when action is remove.',
         };
       }
-      persona.removeAsset(removeId);
+
+      await wsService.send(wsChannel, {
+        type:      'deactivate_asset',
+        data:      { assetId: removeId },
+        timestamp: Date.now(),
+      });
+
       return {
         successBoolean: true,
         responseString: `Removed active asset ${ removeId }`,
@@ -64,31 +69,46 @@ export class ManageActiveAssetWorker extends BaseTool {
         };
       }
 
-      persona.registerIframeAsset({
-        id: assetId,
-        title,
-        url,
-        skillSlug: skillSlug || undefined,
-        active,
-        collapsed,
-        refKey,
+      await wsService.send(wsChannel, {
+        type:      'register_or_activate_asset',
+        data:      {
+          asset: {
+            type: 'iframe',
+            id:   assetId,
+            title,
+            url,
+            active,
+            collapsed,
+            skillSlug: skillSlug || undefined,
+            refKey,
+          },
+        },
+        timestamp: Date.now(),
       });
 
       return {
         successBoolean: true,
-        responseString: `Upserted iframe active asset id=${ assetId } url=${ url }`,
+        responseString: `Upserted iframe active asset id=${ assetId } url=${ url }. The page is loading in a browser tab. Use browse_tools(category='playwright') to discover interaction tools, then use get_page_snapshot(assetId='${ assetId }') to see the page content.`,
       };
     }
 
     const content = typeof input.content === 'string' ? input.content : '';
 
-    persona.registerDocumentAsset({
-      id: assetId,
-      title,
-      content,
-      active,
-      collapsed,
-      refKey,
+    await wsService.send(wsChannel, {
+      type:      'register_or_activate_asset',
+      data:      {
+        asset: {
+          type: 'document',
+          id:   assetId,
+          title,
+          content,
+          active,
+          collapsed,
+          skillSlug: skillSlug || undefined,
+          refKey,
+        },
+      },
+      timestamp: Date.now(),
     });
 
     return {

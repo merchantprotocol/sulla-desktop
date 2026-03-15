@@ -17,11 +17,19 @@ import AgentIntegrationDetail from '../pages/AgentIntegrationDetail.vue';
 import AgentExtensions from '../pages/AgentExtensions.vue';
 import AgentAutomations from '../pages/AgentAutomations.vue';
 
-import AgentAssetView from '../pages/AgentAssetView.vue';
-import BrowserTab from '../pages/BrowserTab.vue';
+// BrowserTab is rendered persistently in AgentRouter (outside keep-alive)
+// so iframes are never removed from the DOM.  This stub just lets the
+// router match /Browser/:id for route.path / route.params without
+// rendering a duplicate component through router-view.
+const BrowserTabStub = { name: 'BrowserTabStub', render: () => null };
 import FirstRun from '../pages/FirstRun.vue';
 import ExtensionView from '../pages/ExtensionView.vue';
 await initiateWindowContext();
+
+// Start the renderer-side bridge IPC so the main-process agent can
+// interact with iframe browser tabs via WebSocket.
+import { initHostBridgeIpc } from '@pkg/agent/scripts/injected/HostBridgeIpcRenderer';
+initHostBridgeIpc();
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -33,8 +41,7 @@ const router = createRouter({
     { path: '/Integrations/:id', component: AgentIntegrationDetail, name: 'AgentIntegrationDetail' },
     { path: '/Extensions', component: AgentExtensions, name: 'AgentExtensions' },
     { path: '/Automations', component: AgentAutomations, name: 'AgentAutomations' },
-    { path: '/Asset/:id', component: AgentAssetView, name: 'AgentAssetView' },
-    { path: '/Browser/:id', component: BrowserTab, name: 'BrowserTab' },
+    { path: '/Browser/:id', component: BrowserTabStub, name: 'BrowserTab' },
 
     { path: '/FirstRun', component: FirstRun, name: 'FirstRun' },
     { path: '/Extension/:name/:path*', component: ExtensionView, name: 'ExtensionView' },

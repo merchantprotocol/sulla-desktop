@@ -80,8 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, watch, onMounted, onUnmounted } from 'vue';
 
 import AgentHeader from './agent/AgentHeader.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
@@ -95,9 +94,20 @@ import {
 } from '@pkg/agent/scripts/injected';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-const route = useRoute();
+const props = defineProps<{
+  tabId:     string;
+  isVisible: boolean;
+}>();
+
 const { isDark, toggleTheme } = useTheme();
-const { updateTab } = useBrowserTabs();
+const { updateTab, getTab } = useBrowserTabs();
+
+/** Bridge ID: use the agent's asset ID if this tab was created by manage_active_asset */
+const bridgeId = () => {
+  const bt = getTab(props.tabId);
+
+  return bt?.assetId || `browser-tab-${ props.tabId }`;
+};
 
 const iframeRef = ref<HTMLIFrameElement | null>(null);
 const addressInput = ref<HTMLInputElement | null>(null);
@@ -110,8 +120,6 @@ const canGoForward = ref(false);
 // Navigation history (iframe doesn't expose history state)
 const navHistory: string[] = [];
 let navIndex = -1;
-
-const tabId = () => route.params.id as string;
 
 // Bridge integration
 let hostBridge: WebviewHostBridge | null = null;
@@ -176,11 +184,11 @@ function setupBridge() {
   hostBridge.attach(bridgeAdapter);
   setActiveHostBridge(hostBridge);
 
-  // Register in the multi-asset registry
-  const id = `browser-tab-${ tabId() }`;
+  // Register in the multi-asset registry using the agent's asset ID when available
+  const id = bridgeId();
 
   hostBridgeRegistry.registerBridge(id, hostBridge, {
-    title: 'Browser Tab',
+    title: getTab(props.tabId)?.title || 'Browser Tab',
     url:   currentUrl.value,
   });
   hostBridgeRegistry.setActiveBridge(id);
@@ -188,12 +196,12 @@ function setupBridge() {
   // Log bridge events
   bridgeUnsubs.push(hostBridge.on('injected', (payload: HostBridgeEventMap['injected']) => {
     console.log('[BrowserTab] bridge:injected', payload);
-    updateTab(tabId(), { title: payload.title });
+    updateTab(props.tabId, { title: payload.title });
   }));
   bridgeUnsubs.push(hostBridge.on('routeChanged', (payload: HostBridgeEventMap['routeChanged']) => {
     console.log('[BrowserTab] bridge:routeChanged', payload);
     addressBarUrl.value = payload.url;
-    updateTab(tabId(), { title: payload.title, url: payload.url });
+    updateTab(props.tabId, { title: payload.title, url: payload.url });
   }));
   bridgeUnsubs.push(hostBridge.on('domChange', (payload: HostBridgeEventMap['domChange']) => {
     console.log('[BrowserTab] bridge:domChange', payload.summary.slice(0, 200));
@@ -245,7 +253,7 @@ function navigate() {
   loading.value = true;
   updateNavButtons();
 
-  hostBridgeRegistry.updateMeta(`browser-tab-${ tabId() }`, { url });
+  hostBridgeRegistry.updateMeta(bridgeId(), { url });
 }
 
 function goBack() {
@@ -316,18 +324,38 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => {
-  const url = route.query.url as string;
+// ── Visibility management ──
+// This component is rendered with v-show (never removed from DOM).
+// We watch the isVisible prop to manage event listeners and bridge state.
 
-  if (url) {
+watch(() => props.isVisible, (visible) => {
+  if (visible) {
+    window.addEventListener('keydown', onKeydown);
+    window.addEventListener('message', onBridgeMessage);
+    hostBridgeRegistry.setActiveBridge(bridgeId());
+    setActiveHostBridge(hostBridge);
+  } else {
+    window.removeEventListener('keydown', onKeydown);
+    window.removeEventListener('message', onBridgeMessage);
+  }
+}, { immediate: true });
+
+// ── Lifecycle ──
+// onMounted: fires once when the tab is created. Sets URL and starts bridge.
+// onUnmounted: fires when the tab is closed (removed from the tab list).
+
+onMounted(() => {
+  // Read initial URL from the shared tab state
+  const tab = getTab(props.tabId);
+  const url = tab?.url || '';
+
+  if (url && url !== 'about:blank') {
     currentUrl.value = url;
     addressBarUrl.value = url;
     navHistory.push(url);
     navIndex = 0;
   }
 
-  window.addEventListener('keydown', onKeydown);
-  window.addEventListener('message', onBridgeMessage);
   setupBridge();
 });
 
@@ -340,9 +368,7 @@ onUnmounted(() => {
     try { unsub?.() } catch { /* no-op */ }
   }
 
-  const id = `browser-tab-${ tabId() }`;
-
-  hostBridgeRegistry.unregisterBridge(id);
+  hostBridgeRegistry.unregisterBridge(bridgeId());
   hostBridge?.detach();
   hostBridge = null;
   bridgeAdapter = null;

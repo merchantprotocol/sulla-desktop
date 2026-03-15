@@ -11,7 +11,7 @@ export class ClickElementWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { handle } = input;
     console.log('[SULLA_CLICK_TOOL] _validatedCall', { handle, assetId: input.assetId });
-    const result = resolveBridge(input.assetId);
+    const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) {
       console.log('[SULLA_CLICK_TOOL] bridge resolution failed', result);
       return result;

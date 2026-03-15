@@ -414,6 +414,7 @@ import { ref } from 'vue';
 
 // Module-level state: shared across all AgentHeader instances (one per keep-alive'd page)
 const tabOrder = ref<string[]>([]);
+const knownAssetIds = ref(new Set<string>());
 </script>
 
 <script setup lang="ts">
@@ -425,7 +426,7 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 
 const extensionService = getExtensionService();
 const router = useRouter();
-const { tabs: browserTabs, createTab, closeTab } = useBrowserTabs();
+const { tabs: browserTabs, createTab, closeTab, updateTab } = useBrowserTabs();
 
 // Active assets from the agent persona service
 const personaRegistry = getAgentPersonaRegistry();
@@ -468,19 +469,8 @@ function closeBrowserTab(id: string) {
   }
 }
 
-function closeAssetTab(assetId: string) {
-  const isActive = route.path === `/Asset/${ assetId }`;
-
-  persona.removeAsset(assetId);
-  if (isActive) {
-    router.push('/Chat');
-  }
-}
-
 function closeAnyTab(tab: HeaderTab) {
-  if (tab.assetId) {
-    closeAssetTab(tab.assetId);
-  } else if (tab.browserId) {
+  if (tab.browserId) {
     closeBrowserTab(tab.browserId);
   }
 }
@@ -496,7 +486,6 @@ interface HeaderTab {
   favicon?:   string;
   closeable?: boolean;
   browserId?: string;
-  assetId?:   string;
 }
 
 /** Build the unordered set of all tabs from their sources */
@@ -542,21 +531,6 @@ const allTabsById = computed(() => {
       favicon:   bt.favicon,
       closeable: true,
       browserId: bt.id,
-    });
-  }
-
-  // Active asset tabs (managed by the agent)
-  for (const asset of persona.activeAssets) {
-    if (!asset.active) continue;
-    const id = `asset-${ asset.id }`;
-
-    map.set(id, {
-      id,
-      label:     asset.title || 'Asset',
-      route:     `/Asset/${ asset.id }`,
-      isActive:  route.path === `/Asset/${ asset.id }`,
-      closeable: true,
-      assetId:   asset.id,
     });
   }
 
@@ -609,16 +583,22 @@ watch(
   { immediate: true },
 );
 
-// Auto-navigate to a new asset tab when the agent registers one
-const knownAssetIds = ref(new Set<string>());
+// Auto-open a browser tab when the agent registers a new active asset
 
 watch(
-  () => persona.activeAssets.filter(a => a.active).map(a => a.id),
-  (currentIds) => {
-    for (const id of currentIds) {
-      if (!knownAssetIds.value.has(id)) {
-        knownAssetIds.value.add(id);
-        router.push(`/Asset/${ id }`);
+  () => persona.activeAssets.filter(a => a.active).map(a => ({ id: a.id, url: a.url, title: a.title })),
+  (currentAssets) => {
+    const currentIds = currentAssets.map(a => a.id);
+
+    for (const asset of currentAssets) {
+      if (!knownAssetIds.value.has(asset.id) && asset.url) {
+        knownAssetIds.value.add(asset.id);
+        const tab = createTab(asset.url);
+
+        updateTab(tab.id, { title: asset.title || 'Website', assetId: asset.id });
+        // No navigation needed — BrowserTab instances are rendered persistently
+        // by AgentRouter with v-show, so the iframe mounts and starts loading
+        // immediately when createTab() adds it to the reactive tabs array.
       }
     }
     // Clean up removed assets
@@ -744,14 +724,6 @@ function ctxCloseOtherTabs() {
     }
   }
 
-  // Close all asset tabs except the one we right-clicked
-  for (const asset of [...persona.activeAssets]) {
-    const tabId = `asset-${ asset.id }`;
-
-    if (tabId !== keepId) {
-      persona.removeAsset(asset.id);
-    }
-  }
 }
 
 function ctxCloseTabsToRight() {

@@ -10,7 +10,7 @@ export class ScrollToElementWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { selector } = input;
-    const result = resolveBridge(input.assetId);
+    const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
 
     try {

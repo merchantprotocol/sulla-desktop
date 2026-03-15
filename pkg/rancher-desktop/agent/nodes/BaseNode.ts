@@ -564,12 +564,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Lazy import to avoid pulling injected scripts into the background build
       /// //////////////////////////////////////////////////////////////
       try {
-        const { hostBridgeRegistry } = await import('../scripts/injected/HostBridgeRegistry');
-        const activePagesContext = await hostBridgeRegistry.getSystemPromptContext();
+        const { hostBridgeProxy } = await import('../scripts/injected/HostBridgeProxy');
+        const activePagesContext = await hostBridgeProxy.getSystemPromptContext();
         if (activePagesContext) {
           parts.push(activePagesContext);
         }
-      } catch { /* registry not available in this context */ }
+      } catch { /* proxy not available in this context */ }
     }
 
     /// //////////////////////////////////////////////////////////////

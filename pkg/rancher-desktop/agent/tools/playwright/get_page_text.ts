@@ -9,7 +9,7 @@ export class GetPageTextWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const result = resolveBridge(input.assetId);
+    const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
 
     try {

@@ -6,6 +6,7 @@ export interface BrowserTab {
   title:    string;
   favicon:  string;
   loading:  boolean;
+  assetId?: string;
 }
 
 const tabs = reactive<BrowserTab[]>([]);
