@@ -1,0 +1,382 @@
+<template>
+  <div class="flex h-full flex-col bg-page">
+    <!-- Chat messages -->
+    <div
+      v-if="hasMessages"
+      ref="chatScrollContainer"
+      class="min-h-0 flex-1 overflow-y-auto"
+    >
+      <div class="relative mx-auto flex w-full max-w-8xl xl:px-12 sm:px-2 lg:px-8 justify-center">
+        <div class="min-w-0 py-16 max-w-2xl flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16">
+          <div ref="transcriptEl" class="pb-8">
+            <div
+              v-for="m in displayMessages"
+              :key="m.id"
+              class="mb-8"
+            >
+              <div v-if="m.role === 'user'" class="flex justify-end">
+                <div class="max-w-[min(760px,92%)] rounded-3xl p-6 bg-surface-alt ring-1 ring-edge-subtle">
+                  <div class="whitespace-pre-wrap text-content">{{ m.content }}</div>
+                </div>
+              </div>
+
+              <div v-else-if="m.kind === 'tool'" class="max-w-[min(760px,92%)]">
+                <div
+                  v-if="m.toolCard"
+                  class="tool-card-cc"
+                  :class="{ expanded: expandedToolCards.has(m.id) }"
+                >
+                  <button type="button" class="tool-card-cc-header" @click="toggleToolCard(m.id)">
+                    <span class="tool-card-cc-dot" :class="m.toolCard.status" />
+                    <span class="tool-card-cc-name">{{ toolCardLabel(m.toolCard) }}</span>
+                    <span v-if="m.toolCard.description" class="tool-card-cc-desc">{{ m.toolCard.description }}</span>
+                    <svg width="14" height="14" viewBox="0 0 15 15" fill="none" class="tool-card-cc-chevron" :class="{ open: expandedToolCards.has(m.id) }">
+                      <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" />
+                    </svg>
+                  </button>
+                  <div v-if="toolCardCommand(m.toolCard)" class="tool-card-cc-cmd">
+                    <span class="tool-card-cc-cmd-label">IN</span>
+                    <code class="tool-card-cc-cmd-text">{{ toolCardCommand(m.toolCard) }}</code>
+                  </div>
+                  <div v-if="m.toolCard.status !== 'running' && toolCardCommand(m.toolCard)" class="tool-card-cc-cmd">
+                    <span class="tool-card-cc-cmd-label">OUT</span>
+                    <code class="tool-card-cc-cmd-text tool-card-cc-exit" :class="m.toolCard.status">{{ m.toolCard.status === 'success' ? '0' : '1' }}</code>
+                  </div>
+                  <div v-show="expandedToolCards.has(m.id)" class="tool-card-cc-body">
+                    <div v-if="toolCardOutput(m.toolCard)" class="tool-card-cc-output">
+                      <pre>{{ toolCardOutput(m.toolCard) }}</pre>
+                    </div>
+                    <div v-if="!toolCardCommand(m.toolCard) && m.toolCard.args && Object.keys(m.toolCard.args).length > 0" class="tool-card-cc-output">
+                      <div class="tool-card-cc-section-label">Arguments</div>
+                      <pre>{{ JSON.stringify(m.toolCard.args, null, 2) }}</pre>
+                    </div>
+                    <div v-if="!toolCardCommand(m.toolCard) && m.toolCard.result !== undefined" class="tool-card-cc-output">
+                      <div class="tool-card-cc-section-label">Result</div>
+                      <pre>{{ typeof m.toolCard.result === 'string' ? m.toolCard.result : JSON.stringify(m.toolCard.result, null, 2) }}</pre>
+                    </div>
+                    <div v-if="m.toolCard.error" class="tool-card-cc-error">{{ m.toolCard.error }}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else-if="m.kind === 'thinking'" class="thinking-bubble max-w-[min(760px,92%)]">
+                <div class="thinking-bubble-inner">
+                  <div class="thinking-bubble-content text-xs text-content-muted italic" v-html="renderMarkdown(m.content)" />
+                </div>
+              </div>
+
+              <div v-else class="max-w-[min(760px,92%)]">
+                <div v-if="m.image" class="space-y-2">
+                  <img :src="m.image.dataUrl" :alt="m.image.alt || ''" class="block h-auto max-w-full rounded-xl border border-black/10 dark:border-white/10">
+                  <div v-if="m.image.alt" class="text-xs text-content-secondary">{{ m.image.alt }}</div>
+                </div>
+                <div v-else class="flex gap-3">
+                  <div class="sulla-avatar" aria-hidden="true">S</div>
+                  <div>
+                    <div class="sulla-name">Sulla</div>
+                    <div class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert" v-html="renderMarkdown(m.content)" />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-if="loading || graphRunning" class="mb-3 flex items-center gap-2 px-4">
+              <span class="activity-dot" />
+              <span class="text-sm font-bold text-secondary">{{ currentActivity || 'Thinking' }}..<span class="blink-dot">.</span></span>
+            </div>
+            <div v-if="showContinueButton" class="flex justify-end mb-3">
+              <button type="button" class="rounded-lg bg-content px-4 py-2 text-sm font-medium text-page shadow-sm hover:bg-surface-hover transition-colors" @click="continueRun">Continue</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Composer: docked at bottom when messages exist -->
+    <div
+      v-if="hasMessages"
+      class="flex-none border-t border-edge bg-page/80 backdrop-blur"
+    >
+      <div class="relative mx-auto flex w-full max-w-8xl justify-center sm:px-2 lg:px-8 xl:px-12">
+        <div class="max-w-2xl min-w-0 flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16">
+          <div class="pb-3">
+            <div class="flex h-full flex-col items-center">
+              <AgentComposer
+                v-model="query"
+                :loading="loading"
+                :show-overlay="false"
+                :has-messages="hasMessages"
+                :graph-running="graphRunning"
+                :model-selector="modelSelector"
+                @send="send"
+                @stop="stop"
+                @primary-action="handlePrimaryAction"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Empty state: centered composer + quick links -->
+    <div v-else class="flex min-h-0 flex-1 items-center justify-center bg-page">
+      <div class="w-full px-4">
+        <div class="flex h-full flex-col items-center justify-center">
+          <AgentComposer
+            v-model="query"
+            form-class="group/composer mx-auto mb-3 w-full max-w-3xl"
+            panel-class="z-10"
+            :loading="loading"
+            :show-overlay="false"
+            :has-messages="hasMessages"
+            :graph-running="graphRunning"
+            :model-selector="modelSelector"
+            @send="send"
+            @stop="stop"
+            @primary-action="handlePrimaryAction"
+          />
+          <div class="quick-links-grid">
+            <button
+              v-for="link in quickLinks"
+              :key="link.id"
+              class="quick-link-tile"
+              @click="emit('set-mode', link.mode)"
+            >
+              <div class="quick-link-icon" :style="{ background: link.color }">
+                <svg :viewBox="link.viewBox" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
+                  <path v-for="(d, i) in link.paths" :key="i" :d="d" />
+                  <rect v-if="link.rect" v-bind="link.rect" />
+                  <line v-for="(l, i) in (link.lines || [])" :key="'l'+i" :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2" />
+                  <circle v-if="link.circle" v-bind="link.circle" />
+                </svg>
+              </div>
+              <span class="quick-link-label">{{ link.label }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
+import AgentComposer from './agent/AgentComposer.vue';
+import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
+import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
+import type { BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+
+const props = defineProps<{
+  tabId: string;
+}>();
+
+const emit = defineEmits<{
+  'set-mode': [mode: BrowserTabMode];
+}>();
+
+const quickLinks = [
+  {
+    id: 'calendar', label: 'Calendar', mode: 'calendar' as BrowserTabMode,
+    color: '#f59e0b', viewBox: '0 0 24 24',
+    rect: { x: '3', y: '4', width: '18', height: '18', rx: '2', ry: '2' },
+    paths: [],
+    lines: [
+      { x1: '16', y1: '2', x2: '16', y2: '6' },
+      { x1: '8', y1: '2', x2: '8', y2: '6' },
+      { x1: '3', y1: '10', x2: '21', y2: '10' },
+    ],
+  },
+  {
+    id: 'integrations', label: 'Integrations', mode: 'integrations' as BrowserTabMode,
+    color: '#8b5cf6', viewBox: '0 0 24 24',
+    paths: [
+      'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
+    ],
+    circle: { cx: '12', cy: '12', r: '3' },
+  },
+  {
+    id: 'extensions', label: 'Extensions', mode: 'extensions' as BrowserTabMode,
+    color: '#10b981', viewBox: '0 0 24 24',
+    paths: [
+      'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
+    ],
+  },
+  {
+    id: 'browser', label: 'Browser', mode: 'browser' as BrowserTabMode,
+    color: '#3b82f6', viewBox: '0 0 24 24',
+    paths: [
+      'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',
+      'M2 12h20',
+      'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z',
+    ],
+  },
+];
+
+// Each tab gets its own ChatInterface keyed by tabId for independent
+// localStorage (messages, threadId) while sharing the 'sulla-desktop' WS channel.
+const chatController = new ChatInterface('sulla-desktop', props.tabId);
+
+// Start with a fresh thread only if this tab has no persisted thread yet.
+// If the tab already has a stored threadId it will be restored automatically.
+if (!chatController.threadId.value) {
+  chatController.newChat();
+}
+
+const { query, messages, hasMessages, graphRunning } = chatController;
+const loading = chatController.loading;
+const currentActivity = chatController.currentActivity;
+const showContinueButton = chatController.showContinueButton;
+
+// Model selector — shares the same global model settings
+const modelName = ref('');
+const modelMode = ref<'local' | 'remote'>('local');
+const systemReady = ref(true);
+const isRunning = computed<boolean>(() => true);
+
+const modelSelector = new AgentModelSelectorController({
+  systemReady,
+  loading,
+  modelName,
+  modelMode,
+  isRunning,
+});
+
+const displayMessages = computed(() => {
+  return messages.value.filter((m: ChatMessage) => {
+    const kind = String((m as any)?.metadata?.kind || '').trim();
+    return kind !== 'action_live_n8n_event';
+  });
+});
+
+const renderMarkdown = (markdown: string): string => {
+  const raw = typeof markdown === 'string' ? markdown : String(markdown || '');
+  const html = (marked(raw) as string) || '';
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES:       { html: true },
+    ADD_TAGS:           ['audio', 'source'],
+    ADD_ATTR:           ['controls', 'preload', 'src', 'type'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|file):|data:image\/(?:png|gif|jpe?g|webp);base64,|\/|\.|#)/i,
+  });
+};
+
+const send = () => chatController.send();
+const stop = () => chatController.stop();
+const continueRun = () => chatController.continueRun();
+const handlePrimaryAction = () => {
+  if (query.value.trim()) send();
+};
+
+// Tool card helpers
+const expandedToolCards = ref<Set<string>>(new Set());
+function toggleToolCard(id: string) {
+  if (expandedToolCards.value.has(id)) {
+    expandedToolCards.value.delete(id);
+  } else {
+    expandedToolCards.value.add(id);
+  }
+}
+
+const EXEC_TOOL_NAMES = new Set(['exec', 'exec_command', 'shell', 'bash', 'run_command']);
+function toolCardLabel(tc: { toolName: string }) {
+  return EXEC_TOOL_NAMES.has(tc.toolName) ? 'Bash' : tc.toolName;
+}
+function toolCardCommand(tc: { toolName: string; args?: Record<string, unknown> }): string | null {
+  if (!EXEC_TOOL_NAMES.has(tc.toolName)) return null;
+  const cmd = tc.args?.command ?? tc.args?.cmd;
+  return typeof cmd === 'string' ? cmd : null;
+}
+function toolCardOutput(tc: { toolName: string; result?: unknown }): string | null {
+  if (!tc.result) return null;
+  const r = tc.result as any;
+  if (typeof r.responseString === 'string' && r.responseString.trim()) return r.responseString;
+  if (typeof r.result === 'string' && r.result.trim()) return r.result;
+  if (typeof r === 'string' && r.trim()) return r;
+  return null;
+}
+
+// Auto-scroll
+const chatScrollContainer = ref<HTMLElement | null>(null);
+const autoScrollEnabled = ref(true);
+let isUserScrolling = false;
+let scrollTimeout: NodeJS.Timeout | null = null;
+
+function attachScrollListeners(container: HTMLElement) {
+  const startScroll = () => { isUserScrolling = true; };
+  const endScroll = () => {
+    if (scrollTimeout) clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => { isUserScrolling = false; }, 150);
+  };
+  container.addEventListener('wheel', startScroll, { passive: true });
+  container.addEventListener('wheel', endScroll, { passive: true });
+  container.addEventListener('touchstart', startScroll, { passive: true });
+  container.addEventListener('touchend', endScroll, { passive: true });
+  container.addEventListener('scroll', () => {
+    if (!isUserScrolling) return;
+    const dist = container.scrollHeight - container.scrollTop - container.clientHeight;
+    autoScrollEnabled.value = dist <= 140;
+  }, { passive: true });
+}
+
+watch(chatScrollContainer, (el) => { if (el) attachScrollListeners(el); });
+onMounted(async () => {
+  if (chatScrollContainer.value) attachScrollListeners(chatScrollContainer.value);
+  await modelSelector.start();
+});
+
+watch(() => messages.value.length, async () => {
+  await nextTick();
+  const container = chatScrollContainer.value;
+  if (!container || !autoScrollEnabled.value) return;
+  container.scrollTop = container.scrollHeight;
+}, { flush: 'post' });
+
+onUnmounted(() => {
+  chatController.dispose();
+  modelSelector.dispose();
+});
+</script>
+
+<style scoped>
+.quick-links-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 2rem;
+}
+
+.quick-link-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 0.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+
+.quick-link-tile:hover {
+  background: var(--bg-surface);
+}
+
+.quick-link-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.75rem;
+  color: white;
+}
+
+.quick-link-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+</style>

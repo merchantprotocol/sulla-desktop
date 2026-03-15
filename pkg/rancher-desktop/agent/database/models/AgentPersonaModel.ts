@@ -185,8 +185,12 @@ export class AgentPersonaService {
     this.wsService = getWebSocketClientService();
   }
 
-  constructor(registry: AgentPersonaRegistry, agentData?: AgentRegistryEntry, requestedAgentId?: string) {
+  /** Optional tab identifier — scopes localStorage keys so multiple tabs are independent */
+  private readonly tabId?: string;
+
+  constructor(registry: AgentPersonaRegistry, agentData?: AgentRegistryEntry, requestedAgentId?: string, tabId?: string) {
     this.registry = registry;
+    this.tabId = tabId;
 
     if (agentData) {
       Object.assign(this.state, {
@@ -414,6 +418,7 @@ export class AgentPersonaService {
     this.messages.push({
       id:        `user_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
       channelId: id,
+      threadId:  this.state.threadId,
       role:      'user',
       content,
     });
@@ -441,6 +446,7 @@ export class AgentPersonaService {
       this.messages.push({
         id:        `sys_${ Date.now() }_delivery_fail`,
         channelId: id,
+        threadId:  this.state.threadId,
         role:      'system',
         content:   'Message could not be delivered — the connection to the agent appears to be down. Please try again.',
       });
@@ -450,7 +456,8 @@ export class AgentPersonaService {
   }
 
   private threadStorageKey(): string {
-    return `chat_threadId_${ this.state.agentId }`;
+    const base = this.state.agentId;
+    return this.tabId ? `chat_threadId_${ base }_${ this.tabId }` : `chat_threadId_${ base }`;
   }
 
   setThreadId(threadId: string): void {
@@ -562,12 +569,36 @@ export class AgentPersonaService {
     this.waitingForUser.value = false;
   }
 
+  /**
+   * Extract thread_id from an incoming WebSocket message payload.
+   * Backend messages use `thread_id` (snake_case) while some frontend-origin
+   * messages use `threadId` (camelCase). We normalise both here.
+   */
+  private extractThreadId(msg: WebSocketMessage): string | undefined {
+    if (msg.data && typeof msg.data === 'object') {
+      const d = msg.data as any;
+      return typeof d.thread_id === 'string' ? d.thread_id
+        : typeof d.threadId === 'string' ? d.threadId
+          : undefined;
+    }
+    return undefined;
+  }
+
   private handleWebSocketMessage(agentId: string, msg: WebSocketMessage): void {
     const dataPreview = msg.data
       ? (typeof msg.data === 'string'
         ? msg.data.substring(0, 50)
         : JSON.stringify(msg.data).substring(0, 50))
       : 'undefined';
+
+    // ── Thread-ID filtering ──────────────────────────────────────────
+    // If the incoming message carries a thread_id and this persona already
+    // has an active threadId, drop messages that belong to a different thread.
+    const msgThreadId = this.extractThreadId(msg);
+    const myThreadId = this.state.threadId;
+    if (msgThreadId && myThreadId && msgThreadId !== myThreadId) {
+      return; // belongs to a different chat tab — ignore
+    }
 
     switch (msg.type) {
     case 'chat_message':
@@ -586,6 +617,7 @@ export class AgentPersonaService {
         const message: ChatMessage = {
           id:        `${ Date.now() }_ws_${ msg.type }`,
           channelId: agentId,
+          threadId:  msgThreadId,
           role:      msg.type === 'system_message' ? 'system' : 'assistant',
           content:   msg.data,
         };
@@ -610,6 +642,7 @@ export class AgentPersonaService {
       const message: ChatMessage = {
         id:        `${ Date.now() }_ws_${ msg.type }`,
         channelId: agentId,
+        threadId:  msgThreadId,
         role,
         kind,
         content,
@@ -680,6 +713,7 @@ export class AgentPersonaService {
           const message: ChatMessage = {
             id:        messageId,
             channelId: agentId,
+            threadId:  msgThreadId,
             role:      'assistant',
             kind:      'tool',
             content:   '',
@@ -743,6 +777,7 @@ export class AgentPersonaService {
       const message: ChatMessage = {
         id:        `${ Date.now() }_ws_chat_image`,
         channelId: agentId,
+        threadId:  msgThreadId,
         role,
         content:   '',
         image:     {
@@ -795,6 +830,7 @@ export class AgentPersonaService {
           this.messages.push({
             id:        msg.id || `restored_${ Date.now() }_${ Math.random().toString(36).slice(2, 6) }`,
             channelId: agentId,
+            threadId:  msgThreadId,
             role,
             content,
           });

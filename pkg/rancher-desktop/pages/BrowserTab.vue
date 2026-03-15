@@ -107,10 +107,10 @@
       </div>
     </template>
 
-    <!-- Chat mode: for now, navigate to /Chat -->
+    <!-- Chat mode: independent chat session per tab -->
     <template v-else-if="tabMode === 'chat'">
-      <div class="flex-1 min-h-0 overflow-auto flex items-center justify-center">
-        <p class="text-content-secondary text-sm">Chat tab — coming soon (multi-instance chat requires Phase 2)</p>
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <BrowserTabChat :tab-id="props.tabId" @set-mode="onSetMode" />
       </div>
     </template>
   </div>
@@ -124,6 +124,7 @@ import NewTabWelcome from './NewTabWelcome.vue';
 import AgentCalendar from './AgentCalendar.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
+import BrowserTabChat from './BrowserTabChat.vue';
 import { useRouter } from 'vue-router';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
@@ -160,8 +161,9 @@ function onSetMode(mode: BrowserTabMode) {
   updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
 }
 
-function onStartChat(_query: string) {
-  // For now, navigate to the main Chat tab
+function onStartChat(chatQuery: string) {
+  // Tell Agent.vue to start a fresh chat with this query
+  window.dispatchEvent(new CustomEvent('sulla:new-chat', { detail: { query: chatQuery } }));
   router.push('/Chat');
 }
 

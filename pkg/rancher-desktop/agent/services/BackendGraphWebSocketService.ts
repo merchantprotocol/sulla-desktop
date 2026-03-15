@@ -242,8 +242,9 @@ export class BackendGraphWebSocketService {
       } else if (err?.name !== 'AbortError') {
         console.error(`[BackendGraphWS] Agent execution FAILED on ${ channelId }:`, err);
         this.emitMessage(channelId, 'assistant_message', {
-          content: `Agent error: ${ err.message || String(err) }`,
-          role:    'assistant',
+          content:   `Agent error: ${ err.message || String(err) }`,
+          role:      'assistant',
+          thread_id: threadId,
         });
       }
     } finally {

@@ -581,7 +581,20 @@ const modelSelector = new AgentModelSelectorController({
   isRunning,
 });
 
+// Listen for new-chat requests from browser tabs (NewTabWelcome)
+function handleNewChatEvent(e: Event) {
+  const detail = (e as CustomEvent).detail;
+
+  chatController.newChat();
+  if (detail?.query) {
+    query.value = detail.query;
+    nextTick(() => send());
+  }
+}
+
 onMounted(async() => {
+  window.addEventListener('sulla:new-chat', handleNewChatEvent);
+
   const n8nVueBridgeService = getN8nVueBridgeService();
   n8nVueBridgeService.markInitialized('Agent.vue:onMounted');
 
@@ -609,6 +622,7 @@ watch(systemReady, async(ready) => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('sulla:new-chat', handleNewChatEvent);
   presenceTracker.stop();
   modelSelector.dispose();
   chatController.dispose();

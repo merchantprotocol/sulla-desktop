@@ -215,10 +215,10 @@ export class FrontendGraphWebSocketService {
       if (err.name === 'AbortError') {
         state.metadata.cycleComplete = true;
         state.metadata.waitingForUser = true;
-        this.emitSystemMessage('Execution stopped.');
+        this.emitSystemMessage('Execution stopped.', threadId);
       } else {
         console.error('[FrontendGraphWS] Error:', err?.message);
-        this.emitSystemMessage(`Error: ${ err.message || String(err) }`);
+        this.emitSystemMessage(`Error: ${ err.message || String(err) }`, threadId);
       }
     } finally {
       // Reset here — after graph run completes this is fine
@@ -267,10 +267,10 @@ export class FrontendGraphWebSocketService {
       if (err.name === 'AbortError') {
         state.metadata.cycleComplete = true;
         state.metadata.waitingForUser = true;
-        this.emitSystemMessage('Execution stopped.');
+        this.emitSystemMessage('Execution stopped.', threadId ?? undefined);
       } else {
         console.error('[FrontendGraphWS] Continue error:', err?.message);
-        this.emitSystemMessage(`Error: ${ err.message || String(err) }`);
+        this.emitSystemMessage(`Error: ${ err.message || String(err) }`, threadId ?? undefined);
       }
     } finally {
       state.metadata.consecutiveSameNode = 0;
@@ -283,18 +283,18 @@ export class FrontendGraphWebSocketService {
     }
   }
 
-  private emitAssistantMessage(content: string): void {
+  private emitAssistantMessage(content: string, threadId?: string): void {
     this.wsService.send(this.channelId, {
       type:      'assistant_message',
-      data:      { role: 'assistant', content },
+      data:      { role: 'assistant', content, thread_id: threadId ?? this.deps.currentThreadId.value },
       timestamp: Date.now(),
     });
   }
 
-  private emitSystemMessage(content: string): void {
+  private emitSystemMessage(content: string, threadId?: string): void {
     this.wsService.send(this.channelId, {
       type:      'system_message',
-      data:      content,
+      data:      { role: 'system', content, thread_id: threadId ?? this.deps.currentThreadId.value },
       timestamp: Date.now(),
     });
   }

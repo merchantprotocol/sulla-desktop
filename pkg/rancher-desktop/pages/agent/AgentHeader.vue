@@ -437,7 +437,7 @@ defineProps<{
   toggleTheme: () => void;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   'toggle-left-pane':   [];
   'toggle-center-pane': [];
   'toggle-right-pane':  [];
@@ -455,7 +455,7 @@ const toggleMobileMenu = () => {
 };
 
 function openNewBrowserTab() {
-  const tab = createTab();
+  const tab = createTab('about:blank', { mode: 'chat' });
 
   router.push(`/Browser/${ tab.id }`);
 }

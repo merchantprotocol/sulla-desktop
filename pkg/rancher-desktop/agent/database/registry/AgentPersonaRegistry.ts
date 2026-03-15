@@ -6,6 +6,7 @@ import { AgentPersonaService } from '@pkg/agent';
 export interface ChatMessage {
   id:        string;
   channelId: string;
+  threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
   kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message';
@@ -93,14 +94,21 @@ export class AgentPersonaRegistry {
     });
   }
 
-  // Kept for full backward compatibility with any other code
-  getOrCreatePersonaService(agentId: string): AgentPersonaService {
-    if (!this.personaServices.has(agentId)) {
+  /**
+   * Get or create a persona service.
+   * @param agentId  The WebSocket channel / agent ID (e.g. 'sulla-desktop')
+   * @param tabId    Optional tab identifier. When provided a separate persona
+   *                 instance is created per tab so each tab has its own messages,
+   *                 threadId, and localStorage scope while sharing the same WS channel.
+   */
+  getOrCreatePersonaService(agentId: string, tabId?: string): AgentPersonaService {
+    const key = tabId ? `${ agentId }_${ tabId }` : agentId;
+    if (!this.personaServices.has(key)) {
       const agentData = this.state.agents.find(a => a.agentId === agentId);
-      const service = new AgentPersonaService(this, agentData, agentId);
-      this.personaServices.set(agentId, service);
+      const service = new AgentPersonaService(this, agentData, agentId, tabId);
+      this.personaServices.set(key, service);
     }
-    return this.personaServices.get(agentId)!;
+    return this.personaServices.get(key)!;
   }
 
   getPersonaService(agentId: string): AgentPersonaService | undefined {
