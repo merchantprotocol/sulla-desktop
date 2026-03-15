@@ -379,4 +379,197 @@ onUnmounted(() => {
   font-weight: 500;
   color: var(--text-secondary);
 }
+
+/* ── Thinking indicator ── */
+.activity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: activityPulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.blink-dot {
+  animation: blinkDot 1s step-end infinite;
+}
+
+@keyframes blinkDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes activityPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* ── Thinking bubble ── */
+.thinking-bubble {
+  position: relative;
+  max-height: 100px;
+  overflow: hidden;
+}
+
+.thinking-bubble-inner {
+  max-height: 100px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.thinking-bubble-inner::-webkit-scrollbar {
+  display: none;
+}
+
+.thinking-bubble::before,
+.thinking-bubble::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 16px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.thinking-bubble::before {
+  top: 0;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg-page) 90%, transparent), transparent);
+}
+
+.thinking-bubble::after {
+  bottom: 0;
+  background: linear-gradient(to top, color-mix(in srgb, var(--bg-page) 90%, transparent), transparent);
+}
+
+.thinking-bubble-content :deep(p) {
+  margin: 0;
+}
+
+/* ── Claude Code-style tool card ── */
+.tool-card-cc {
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-page);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+}
+
+.tool-card-cc-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.tool-card-cc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tool-card-cc-dot.running { background: var(--status-warning); animation: dotPulse 1.5s ease-in-out infinite; }
+.tool-card-cc-dot.success { background: var(--status-success); }
+.tool-card-cc-dot.failed  { background: var(--status-error); }
+
+@keyframes dotPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.tool-card-cc-name {
+  font-weight: var(--weight-bold);
+  font-size: var(--fs-code);
+  color: var(--text-primary);
+}
+
+.tool-card-cc-desc {
+  font-weight: var(--weight-normal);
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-card-cc-chevron {
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.tool-card-cc-chevron.open {
+  transform: rotate(180deg);
+}
+
+.tool-card-cc-cmd {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2px 12px 2px 20px;
+  font-size: var(--fs-body-sm);
+}
+
+.tool-card-cc-cmd-label {
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-bold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  flex-shrink: 0;
+  min-width: 24px;
+}
+
+.tool-card-cc-cmd-text {
+  color: var(--text-secondary);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.tool-card-cc-exit.success { color: var(--status-success); }
+.tool-card-cc-exit.failed  { color: var(--status-error); }
+
+.tool-card-cc-body {
+  border-top: 1px solid var(--border-default);
+  margin: 6px 0 0;
+}
+
+.tool-card-cc-output {
+  padding: 8px 12px;
+}
+.tool-card-cc-output pre {
+  margin: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--fs-body-sm);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.tool-card-cc-section-label {
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-bold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.tool-card-cc-error {
+  padding: 8px 12px;
+  font-size: var(--fs-body-sm);
+  color: var(--status-error);
+}
 </style>
