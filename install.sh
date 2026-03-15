@@ -1125,7 +1125,7 @@ install_deps() {
   fi
 
   start_spinner "Installing packages..."
-  run_with_status "Installing packages" yarn install --ignore-engines || true
+  run_with_status "Installing packages" yarn install --ignore-engines --ignore-platform || true
   stop_spinner
 
   # Don't trust the exit code — verify artifacts instead.
@@ -1146,8 +1146,13 @@ build_app() {
       step_ok "Build up to date (${INSTALL_REF})"
       return
     fi
-    # Stale or unmarked build — rebuild for current ref
-    step_warn "Stale build — rebuilding for ${INSTALL_REF}"
+    if [ -z "$build_ref" ]; then
+      # No ref marker but valid build — accept it
+      step_ok "Build artifacts present (cached)"
+      return
+    fi
+    # Stale build from a different ref — rebuild
+    step_warn "Stale build (${build_ref}) — rebuilding for ${INSTALL_REF}"
     rm -rf dist
   fi
 
