@@ -51,6 +51,10 @@ export class EditorChatInterface {
 
   readonly loading = ref(false);
 
+  readonly currentActivity = computed(() => {
+    return this.persona.currentActivity.value;
+  });
+
   constructor() {
     // Create a minimal registry just for the persona service's internal needs
     this.registry = new AgentPersonaRegistry();

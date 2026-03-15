@@ -193,17 +193,13 @@
         </div>
       </div>
 
-      <!-- Loading indicator -->
+      <!-- Activity status indicator -->
       <div
-        v-if="loading"
-        class="chat-message assistant"
+        v-if="loading || graphRunning"
+        class="chat-activity-status"
       >
-        <div
-          class="bubble assistant-bubble loading-bubble"
-          :class="{ dark: isDark }"
-        >
-          <span class="loading-dots">Thinking<span class="dot-anim">...</span></span>
-        </div>
+        <span class="activity-dot" />
+        <span class="activity-text">{{ currentActivity || 'Thinking' }}..<span class="blink-dot">.</span></span>
       </div>
 
       <!-- Waiting for user indicator -->
@@ -517,6 +513,7 @@ const props = defineProps<{
   loading:            boolean;
   graphRunning:       boolean;
   waitingForUser?:    boolean;
+  currentActivity?:   string;
   modelSelector?:     AgentModelSelectorController;
   agentRegistry?:     AgentPersonaRegistry;
   totalTokensUsed?:   number;
@@ -918,22 +915,40 @@ watch(() => props.messages.length, () => scrollToBottom());
   border-radius: 3px;
 }
 
-.loading-bubble {
-  padding: 6px 12px;
+.chat-activity-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
 }
 
-.loading-dots {
-  font-size: var(--fs-code);
-  color: var(--text-muted);
+.activity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: activityPulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
 }
 
-@keyframes dotPulse {
-  0%, 100% { opacity: 0.3; }
+.activity-text {
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-bold, 700);
+  color: var(--text-secondary);
+}
+
+.blink-dot {
+  animation: blinkDot 1s step-end infinite;
+}
+
+@keyframes blinkDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes activityPulse {
+  0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
-}
-
-.dot-anim {
-  animation: dotPulse 1.2s ease-in-out infinite;
 }
 
 .waiting-for-user {

@@ -386,14 +386,22 @@ ensure_curl() {
 ensure_xcode_clt() {
   # macOS only — must run before anything that needs git or build tools
   [ "$OS" != "macos" ] && return
-  if xcode-select -p >/dev/null 2>&1; then
+
+  # Check that CLT actually works, not just that the path is set.
+  # xcode-select -p can return 0 even when tools are in a broken/stub state
+  # that triggers the "install tools" GUI dialog when you run git.
+  if xcode-select -p >/dev/null 2>&1 \
+     && /usr/bin/xcrun --find clang >/dev/null 2>&1; then
     step_ok "Xcode Command Line Tools"
     return
   fi
+
   start_spinner "Installing Xcode Command Line Tools (this may take a few minutes)..."
+
   # Silent install: create the trigger file, find the CLT package via softwareupdate, install it
   local placeholder="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress"
   touch "$placeholder"
+
   local clt_pkg
   clt_pkg="$(softwareupdate -l 2>/dev/null \
     | grep -o '.*Command Line Tools.*' \
@@ -402,13 +410,14 @@ ensure_xcode_clt() {
     | sed 's/^ *Label: //' \
     | sort -rV \
     | head -1)"
+
   if [ -n "$clt_pkg" ]; then
     run_silent "xcode-clt" softwareupdate --install "$clt_pkg" --agree-to-license
   else
     # Fallback: use the GUI installer if softwareupdate can't find the package
     xcode-select --install >/dev/null 2>&1 || true
     local waited=0
-    while ! xcode-select -p >/dev/null 2>&1; do
+    while ! /usr/bin/xcrun --find clang >/dev/null 2>&1; do
       sleep 5
       waited=$((waited + 5))
       if [ "$waited" -ge 1800 ]; then
@@ -417,11 +426,13 @@ ensure_xcode_clt() {
       fi
     done
   fi
+
   rm -f "$placeholder"
-  if xcode-select -p >/dev/null 2>&1; then
+
+  if /usr/bin/xcrun --find clang >/dev/null 2>&1; then
     step_ok "Xcode Command Line Tools installed"
   else
-    step_fail "Xcode Command Line Tools installation failed"
+    step_fail "Xcode Command Line Tools installation failed — run 'xcode-select --install' manually"
   fi
 }
 

@@ -42,6 +42,10 @@ export class ChatInterface {
     return this.registry.isLoading(SULLA_DESKTOP_CHANNEL);
   });
 
+  readonly currentActivity = computed(() => {
+    return this.persona.currentActivity.value;
+  });
+
   readonly showContinueButton = computed(() => {
     return this.persona.stopReason.value === 'max_loops' && !this.persona.graphRunning.value;
   });

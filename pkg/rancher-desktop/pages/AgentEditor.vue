@@ -1121,6 +1121,7 @@
             :loading="chatLoading"
             :graph-running="chatGraphRunning"
             :waiting-for-user="chatWaitingForUser"
+            :current-activity="chatCurrentActivity"
             :model-selector="modelSelector"
             :agent-registry="agentRegistry"
             :hide-agent-selector="false"
@@ -1146,6 +1147,7 @@
           :loading="chatLoading"
           :graph-running="chatGraphRunning"
           :waiting-for-user="chatWaitingForUser"
+          :current-activity="chatCurrentActivity"
           :model-selector="modelSelector"
           :agent-registry="agentRegistry"
           :hide-agent-selector="!agentMode && !workflowMode"
@@ -1550,6 +1552,7 @@ export default defineComponent({
     const chatLoading = editorChat.loading;
     const chatGraphRunning = editorChat.graphRunning;
     const chatWaitingForUser = editorChat.waitingForUser;
+    const chatCurrentActivity = editorChat.currentActivity;
     const chatSend = () => editorChat.send();
     const chatStop = () => editorChat.stop();
     const chatUpdateQuery = (val: string) => { editorChat.query.value = val };
@@ -2896,6 +2899,7 @@ export default defineComponent({
       chatLoading,
       chatGraphRunning,
       chatWaitingForUser,
+      chatCurrentActivity,
       chatSend,
       chatStop,
       chatUpdateQuery,

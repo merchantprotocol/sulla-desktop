@@ -2,7 +2,7 @@ import { BaseNode } from './BaseNode';
 import type { NodeRunPolicy } from './BaseNode';
 import type { BaseThreadState, NodeResult } from './Graph';
 import { throwIfAborted } from '../services/AbortService';
-import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
 // ============================================================================
 // AGENT PROMPT
@@ -256,7 +256,7 @@ export class AgentNode extends BaseNode {
         } as ChatMessage);
         this.bumpStateVersion(state);
       }
-      await this.wsChatMessage(state, userVisibleResultText, 'assistant');
+      // Text already dispatched to UI in executeAgent() before tool execution
     }
 
     // ----------------------------------------------------------------
@@ -282,12 +282,24 @@ export class AgentNode extends BaseNode {
         persistAssistantToGraph: true,
       };
 
-      const chatResult = await this.chat(state, systemPrompt, {
+      const reply = await this.normalizedChat(state, systemPrompt, {
         temperature:   0.2,
         nodeRunPolicy: policy,
       });
 
-      return chatResult || null;
+      if (!reply) return null;
+
+      // Emit text to the UI BEFORE tool execution so text appears before tool cards
+      const agentOutcome = this.extractAgentOutcome(reply.content);
+      const userVisibleText = this.toUserVisibleAgentMessage(reply.content, agentOutcome);
+      if (userVisibleText?.trim()) {
+        await this.wsChatMessage(state, userVisibleText, 'assistant');
+      }
+
+      // Now execute tool calls — tool cards appear after text in the UI
+      await this.processPendingToolCalls(state, reply);
+
+      return reply.content || null;
     } catch (error) {
       // Re-throw abort errors so they propagate to the graph loop
       if ((error as any)?.name === 'AbortError') throw error;
