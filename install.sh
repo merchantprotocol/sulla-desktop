@@ -60,8 +60,8 @@ SPINNER_PID=""
 # Track all step results for final summary
 STEP_RESULTS=()
 
-# Log file for suppressed output
-INSTALL_LOG="/tmp/sulla-install-$$.log"
+# Log file for suppressed output — fixed path so it's always easy to find
+INSTALL_LOG="/tmp/sulla-install.log"
 : > "$INSTALL_LOG"
 
 # ---------------------------------------------------------------------------
@@ -921,6 +921,7 @@ install_deps() {
     nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
 
+  printf "  ${DIM}Log: %s${RESET}\n" "$INSTALL_LOG"
   start_spinner "Installing dependencies (this may take a few minutes)..."
   if run_silent "yarn-install" yarn install --ignore-engines; then
     step_ok "Dependencies installed"
@@ -930,7 +931,7 @@ install_deps() {
     if run_silent "yarn-install-retry" yarn install --ignore-engines; then
       step_ok "Dependencies installed (retry succeeded)"
     else
-      step_fail "Dependency installation failed"
+      step_fail "Dependency installation failed — run 'tail -50 ${INSTALL_LOG}' to see what went wrong"
     fi
   fi
 }
