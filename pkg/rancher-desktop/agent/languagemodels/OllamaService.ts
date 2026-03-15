@@ -48,14 +48,36 @@ export class OllamaService extends BaseLanguageModel {
   }
 
   /**
-   * Check if llama-server is reachable via /health.
+   * Check if llama-server is reachable AND has a model loaded.
+   * A bare /health returning {"status":"ok"} doesn't mean the server can
+   * actually serve completions — it may have no model loaded, causing
+   * requests to hang until timeout.
    */
   protected async healthCheck(): Promise<boolean> {
     try {
       const res = await fetch(`${ this.baseUrl }/health`, {
         signal: AbortSignal.timeout(4000),
       });
-      return res.ok;
+      if (!res.ok) return false;
+
+      // Quick probe: ask /v1/models to confirm at least one model is loaded
+      try {
+        const modelsRes = await fetch(`${ this.baseUrl }/v1/models`, {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (modelsRes.ok) {
+          const body = await modelsRes.json();
+          const models = body?.data;
+          if (!Array.isArray(models) || models.length === 0) {
+            console.log('[OllamaService] Server healthy but no models loaded — marking unavailable');
+            return false;
+          }
+        }
+      } catch {
+        // If /v1/models isn't supported, fall through to trusting /health
+      }
+
+      return true;
     } catch {
       return false;
     }
