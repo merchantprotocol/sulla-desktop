@@ -268,7 +268,7 @@ run_silent() {
 
 # Prompt the user for sudo access with a clear explanation of why.
 # Pre-authenticates so subsequent sudo calls don't re-prompt.
-# Usage: require_sudo "Go ${GO_VERSION}" "needs to install to /usr/local which requires admin access"
+# Usage: require_sudo "Go ${GO_VERSION}" "needs to install to /usr/local which requires user authorization"
 require_sudo() {
   local package="$1"
   local reason="$2"
@@ -286,7 +286,7 @@ require_sudo() {
     echo ""
     return 0
   else
-    step_fail "sudo authentication failed — cannot continue without admin access"
+    step_fail "sudo authentication failed — cannot continue without user authorization"
   fi
 }
 
@@ -584,7 +584,7 @@ install_curl() {
   case "$OS" in
     macos) ;;
     linux)
-      require_sudo "curl" "is required for downloading packages and needs admin access to install"
+      require_sudo "curl" "is required for downloading packages and needs user authorization to install"
       start_spinner "Installing curl..."
       case "$(detect_pkg_manager)" in
         apt)    run_silent "curl" sudo apt-get update -qq && run_silent "curl" sudo apt-get install -yqq curl ;;
@@ -616,7 +616,7 @@ install_git() {
       fi
       ;;
     linux)
-      require_sudo "git" "is required for source control and needs admin access to install"
+      require_sudo "git" "is required for source control and needs user authorization to install"
       start_spinner "Installing git..."
       case "$(detect_pkg_manager)" in
         apt)    run_silent "git" sudo apt-get update -qq && run_silent "git" sudo apt-get install -yqq git ;;
@@ -691,7 +691,7 @@ install_build_tools() {
       local pkgs_needed=""
       command_exists make    || pkgs_needed="$pkgs_needed build-essential"
       command_exists python3 || pkgs_needed="$pkgs_needed python3"
-      require_sudo "Build tools (${pkgs_needed# })" "are required for compiling native modules and need admin access to install"
+      require_sudo "Build tools (${pkgs_needed# })" "are required for compiling native modules and need user authorization to install"
       start_spinner "Installing build tools..."
       case "$(detect_pkg_manager)" in
         apt)    run_silent "build-tools" sudo apt-get update -qq && run_silent "build-tools" sudo apt-get install -yqq $pkgs_needed ;;
@@ -720,7 +720,7 @@ install_go() {
           || run_silent "go" brew upgrade go
         run_silent "go" brew link --overwrite "go@1.24" 2>/dev/null || true
       else
-        require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs admin access to install to /usr/local"
+        require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs user authorization to install to /usr/local"
         start_spinner "Installing Go ${GO_VERSION}..."
         local arch go_arch="amd64"
         arch="$(uname -m)"
@@ -733,7 +733,7 @@ install_go() {
       fi
       ;;
     linux)
-      require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs admin access to install to /usr/local"
+      require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs user authorization to install to /usr/local"
       start_spinner "Installing Go ${GO_VERSION}..."
       local arch go_arch="amd64"
       arch="$(uname -m)"
