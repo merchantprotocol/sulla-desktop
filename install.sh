@@ -276,27 +276,18 @@ run_with_status() {
   echo "=== [$label] $(date) ===" >> "$INSTALL_LOG"
   echo "CMD: $*" >> "$INSTALL_LOG"
 
-  # Run the command, tee to log, and update spinner with last line
   "$@" 2>&1 | while IFS= read -r line; do
     echo "$line" >> "$INSTALL_LOG"
-    # Filter for meaningful status lines (skip blank lines and noise)
     case "$line" in
       *"Resolving"*|*"Fetching"*|*"Linking"*|*"Building"*)
-        # Yarn v1 progress lines
-        stop_spinner 2>/dev/null
-        start_spinner "${label}: ${line:0:60}"
-        ;;
-      *"warning"*|*"error"*)
         stop_spinner 2>/dev/null
         start_spinner "${label}: ${line:0:60}"
         ;;
       *"step "*)
-        # Yarn step indicators like [1/4], [2/4]
         stop_spinner 2>/dev/null
         start_spinner "${label}: ${line:0:60}"
         ;;
       *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
-        # Native module compilation
         stop_spinner 2>/dev/null
         start_spinner "${label}: compiling native modules..."
         ;;
@@ -307,13 +298,13 @@ run_with_status() {
     esac
   done
 
-  # Capture exit code from the piped command (not the while loop)
   local rc=${PIPESTATUS[0]}
   if [ "$rc" -ne 0 ]; then
     echo "EXIT CODE: $rc" >> "$INSTALL_LOG"
   fi
   return "$rc"
 }
+
 
 # Prompt the user for sudo access with a clear explanation of why.
 # Pre-authenticates so subsequent sudo calls don't re-prompt.
@@ -970,7 +961,6 @@ install_deps() {
     nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
 
-  printf "  ${DIM}Log: tail -f %s${RESET}\n" "$INSTALL_LOG"
   start_spinner "Installing packages..."
   if run_with_status "Installing packages" yarn install --ignore-engines; then
     step_ok "Packages installed"
@@ -980,7 +970,7 @@ install_deps() {
     if run_with_status "Installing packages (retry)" yarn install --ignore-engines; then
       step_ok "Packages installed (retry succeeded)"
     else
-      step_fail "Package installation failed — run 'tail -50 ${INSTALL_LOG}' to see what went wrong"
+      step_fail "Package installation failed"
     fi
   fi
 }
@@ -1013,7 +1003,7 @@ build_app() {
     fi
     step_ok "Desktop application compiled"
   else
-    step_fail "Compilation failed — run 'tail -50 ${INSTALL_LOG}' to see what went wrong"
+    step_fail "Compilation failed"
   fi
 }
 
