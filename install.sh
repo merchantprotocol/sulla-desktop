@@ -911,18 +911,13 @@ resolve_version() {
 # Clone / update repo
 # ---------------------------------------------------------------------------
 checkout_version() {
+  # Always fetch latest from remote
+  run_silent "fetch" git fetch origin --tags --force 2>/dev/null || true
+
   if [ "$INSTALL_REF" = "main" ]; then
     run_silent "checkout" git checkout main 2>/dev/null || true
-    local stashed=false
-    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-      run_silent "stash" git stash --include-untracked 2>/dev/null && stashed=true
-    fi
-    run_silent "pull" git pull --ff-only || {
-      run_silent "pull-rebase" git pull --rebase || true
-    }
-    if [ "$stashed" = true ]; then
-      run_silent "stash-pop" git stash pop 2>/dev/null || true
-    fi
+    # Force-reset to match remote — installer should always use latest code
+    run_silent "reset" git reset --hard origin/main 2>/dev/null || true
   else
     local current_tag
     current_tag="$(git describe --tags --exact-match 2>/dev/null || true)"
@@ -951,7 +946,6 @@ ensure_repo() {
 
   if [ -d "$target" ] && [ -d "$target/.git" ]; then
     cd "$target"
-    run_silent "fetch" git fetch --tags --force 2>/dev/null || true
     REPO_DIR="$(pwd)"
   elif [ -d "$target" ]; then
     rm -rf "$target"
