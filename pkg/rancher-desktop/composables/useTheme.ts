@@ -63,7 +63,7 @@ const THEME_SETTING_KEY = 'theme';
 const THEME_STORAGE_KEY = 'agentTheme';
 
 // Shared reactive state across all composable instances in the same window
-const currentTheme = ref<ThemeName>('default-light');
+const currentTheme = ref<ThemeName>('protocol-dark');
 let initialized = false;
 
 function applyThemeClass(theme: ThemeName): void {
@@ -106,7 +106,7 @@ async function loadThemeFromSettings(): Promise<ThemeName> {
   }
 
   // Final fallback: OS preference
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'default-dark' : 'default-light';
+  return 'protocol-dark';
 }
 
 async function persistTheme(theme: ThemeName): Promise<void> {
