@@ -359,48 +359,192 @@ preflight_checks() {
 }
 
 # ---------------------------------------------------------------------------
-# Dependency installation — each is quiet with spinner
+# Dependency management — audit everything first, then install what's needed
 # ---------------------------------------------------------------------------
-ensure_curl() {
-  if command_exists curl; then
-    step_ok "curl"
-    return
+
+# Audit tracking
+DEP_NAMES=()
+DEP_STATUSES=()   # ok, install, upgrade, warn
+DEP_DETAILS=()
+DEP_WORK_NEEDED=false
+
+dep_found()   { DEP_NAMES+=("$1"); DEP_STATUSES+=("ok");      DEP_DETAILS+=("${2:-}"); }
+dep_missing() { DEP_NAMES+=("$1"); DEP_STATUSES+=("install");  DEP_DETAILS+=("$2");     DEP_WORK_NEEDED=true; }
+dep_upgrade() { DEP_NAMES+=("$1"); DEP_STATUSES+=("upgrade");  DEP_DETAILS+=("$2");     DEP_WORK_NEEDED=true; }
+dep_warn()    { DEP_NAMES+=("$1"); DEP_STATUSES+=("warn");     DEP_DETAILS+=("$2"); }
+
+# --- Phase 1: Audit — check every dependency without installing anything ---
+audit_dependencies() {
+  start_spinner "Checking dependencies..."
+
+  # Xcode CLT (macOS only)
+  local xcode_ok=false
+  if [ "$OS" = "macos" ]; then
+    if xcode-select -p >/dev/null 2>&1 \
+       && /usr/bin/xcrun --find clang >/dev/null 2>&1; then
+      dep_found "Xcode CLT"
+      xcode_ok=true
+    else
+      dep_missing "Xcode CLT" "not installed"
+    fi
+  else
+    xcode_ok=true
   fi
-  start_spinner "Installing curl..."
+
+  # curl
+  if command_exists curl; then
+    dep_found "curl"
+  else
+    dep_missing "curl" "not installed"
+  fi
+
+  # git — on macOS without CLT, git is a shim that pops up the install dialog,
+  # so don't probe it; just report it as pending CLT install.
+  if [ "$OS" = "macos" ] && [ "$xcode_ok" = false ]; then
+    dep_missing "git" "provided by Xcode CLT"
+  elif command_exists git && git --version >/dev/null 2>&1; then
+    dep_found "git" "$(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+  else
+    dep_missing "git" "not installed"
+  fi
+
+  # Node.js — source nvm/fnm if available so we detect managed installs
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    . "$NVM_DIR/nvm.sh" 2>/dev/null || true
+  fi
+  if command_exists fnm; then
+    eval "$(fnm env --shell bash 2>/dev/null)" || true
+  fi
+  local node_current=""
+  command_exists node && node_current="$(node -v 2>/dev/null | sed 's/^v//')"
+
+  if [ -n "$node_current" ] && [ "$node_current" = "$NODE_VERSION" ]; then
+    dep_found "Node.js" "v${node_current}"
+  elif [ -n "$node_current" ]; then
+    dep_upgrade "Node.js" "v${node_current} → v${NODE_VERSION}"
+  else
+    dep_missing "Node.js" "need v${NODE_VERSION}"
+  fi
+
+  # yarn
+  if command_exists yarn; then
+    dep_found "yarn" "$(yarn --version 2>/dev/null)"
+  else
+    dep_missing "yarn" "not installed"
+  fi
+
+  # Build tools (Linux/Windows only — macOS is covered by Xcode CLT)
   case "$OS" in
-    macos) ;; # ships with macOS
     linux)
-      case "$(detect_pkg_manager)" in
-        apt)    run_silent "curl" sudo apt-get update -qq && run_silent "curl" sudo apt-get install -yqq curl ;;
-        dnf)    run_silent "curl" sudo dnf install -y curl ;;
-        yum)    run_silent "curl" sudo yum install -y curl ;;
-        pacman) run_silent "curl" sudo pacman -Sy --noconfirm curl ;;
-        *)      step_fail "Cannot install curl automatically" ;;
-      esac ;;
-    windows) step_fail "curl not found — please install Git for Windows" ;;
+      if command_exists make && command_exists python3; then
+        dep_found "Build tools" "make, python3"
+      else
+        local bt_detail=""
+        command_exists make    || bt_detail="make"
+        if ! command_exists python3; then
+          [ -n "$bt_detail" ] && bt_detail="$bt_detail, "
+          bt_detail="${bt_detail}python3"
+        fi
+        dep_missing "Build tools" "${bt_detail} missing"
+      fi
+      ;;
+    windows)
+      if command_exists cl || [ -d "${PROGRAMFILES:-C:\\Program Files}/Microsoft Visual Studio" ]; then
+        dep_found "Build tools" "Visual Studio"
+      else
+        dep_warn "Build tools" "VS Build Tools may be needed"
+      fi
+      ;;
   esac
-  command_exists curl || step_fail "curl installation failed"
-  step_ok "curl installed"
+
+  # Go
+  if command_exists go; then
+    local go_ver go_major go_minor
+    go_ver="$(go version 2>/dev/null | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/^go//')"
+    go_major="$(echo "$go_ver" | cut -d. -f1)"
+    go_minor="$(echo "$go_ver" | cut -d. -f2)"
+    if [ "${go_major:-0}" -gt 1 ] 2>/dev/null || \
+       { [ "${go_major:-0}" -eq 1 ] && [ "${go_minor:-0}" -ge 24 ]; } 2>/dev/null; then
+      dep_found "Go" "${go_ver}"
+    else
+      dep_upgrade "Go" "${go_ver} → ${GO_VERSION}"
+    fi
+  else
+    dep_missing "Go" "need ${GO_VERSION}+"
+  fi
+
+  # Python (optional — warn only)
+  local python_ver=""
+  for cmd in python3.13 python3.12 python3.11 python3.10 python3 python; do
+    if command_exists "$cmd"; then
+      local ver minor
+      ver="$($cmd --version 2>/dev/null | grep -oE '3\.[0-9]+' | head -1)" || continue
+      minor="$(echo "$ver" | cut -d. -f2)"
+      if [ "${minor:-0}" -ge 10 ] 2>/dev/null; then
+        python_ver="$($cmd --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+        break
+      fi
+    fi
+  done
+  if [ -n "$python_ver" ]; then
+    dep_found "Python" "${python_ver}"
+  else
+    dep_warn "Python" "3.10+ not found — training features unavailable"
+  fi
+
+  stop_spinner
 }
 
-ensure_xcode_clt() {
-  # macOS only — must run before anything that needs git or build tools
-  [ "$OS" != "macos" ] && return
+# --- Phase 2: Show the audit results ---
+print_dep_plan() {
+  local i name status detail
+  for i in "${!DEP_NAMES[@]}"; do
+    name="${DEP_NAMES[$i]}"
+    status="${DEP_STATUSES[$i]}"
+    detail="${DEP_DETAILS[$i]}"
+    case "$status" in
+      ok)      printf "  ${CHECK}  %-24s${DIM}%s${RESET}\n" "$name" "$detail" ;;
+      install) printf "  ${CROSS}  %-24s${YELLOW}%s${RESET}\n" "$name" "$detail" ;;
+      upgrade) printf "  ${WARN_SYM}  %-24s${YELLOW}%s${RESET}\n" "$name" "$detail" ;;
+      warn)    printf "  ${WARN_SYM}  %-24s${DIM}%s${RESET}\n" "$name" "$detail" ;;
+    esac
+  done
+  echo ""
 
-  # Check that CLT actually works, not just that the path is set.
-  # xcode-select -p can return 0 even when tools are in a broken/stub state
-  # that triggers the "install tools" GUI dialog when you run git.
+  if [ "$DEP_WORK_NEEDED" = true ]; then
+    local install_count=0 upgrade_count=0
+    for status in "${DEP_STATUSES[@]}"; do
+      case "$status" in
+        install) install_count=$((install_count + 1)) ;;
+        upgrade) upgrade_count=$((upgrade_count + 1)) ;;
+      esac
+    done
+    local summary=""
+    [ "$install_count" -gt 0 ] && summary="${install_count} to install"
+    if [ "$upgrade_count" -gt 0 ]; then
+      [ -n "$summary" ] && summary="$summary, "
+      summary="${summary}${upgrade_count} to upgrade"
+    fi
+    printf "  ${ARROW}  ${BOLD}%s${RESET}\n" "$summary"
+  else
+    printf "  ${CHECK}  ${BOLD}All dependencies satisfied${RESET}\n"
+  fi
+}
+
+# --- Phase 3: Individual installers (install/upgrade only, no pre-check) ---
+
+install_xcode_clt() {
+  # Recheck — may have been installed between audit and now
   if xcode-select -p >/dev/null 2>&1 \
      && /usr/bin/xcrun --find clang >/dev/null 2>&1; then
     step_ok "Xcode Command Line Tools"
     return
   fi
 
-  # Trigger the macOS GUI installer dialog
   xcode-select --install >/dev/null 2>&1 || true
   step_warn "User authorization needed for Xcode Command Line Tools — approve the dialog to continue"
 
-  # Wait for the user to approve and installation to finish
   local waited=0
   while ! /usr/bin/xcrun --find clang >/dev/null 2>&1; do
     sleep 5
@@ -409,28 +553,41 @@ ensure_xcode_clt() {
       step_fail "Xcode CLT installation timed out — please install manually and re-run"
     fi
   done
-
-  if /usr/bin/xcrun --find clang >/dev/null 2>&1; then
-    step_ok "Xcode Command Line Tools installed"
-  else
-    step_fail "Xcode Command Line Tools installation failed — run 'xcode-select --install' manually"
-  fi
+  step_ok "Xcode Command Line Tools installed"
 }
 
-ensure_git() {
-  if command_exists git; then
-    step_ok "git ($(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'))"
+install_curl() {
+  start_spinner "Installing curl..."
+  case "$OS" in
+    macos) ;;
+    linux)
+      case "$(detect_pkg_manager)" in
+        apt)    run_silent "curl" sudo apt-get update -qq && run_silent "curl" sudo apt-get install -yqq curl ;;
+        dnf)    run_silent "curl" sudo dnf install -y curl ;;
+        yum)    run_silent "curl" sudo yum install -y curl ;;
+        pacman) run_silent "curl" sudo pacman -Sy --noconfirm curl ;;
+        *)      step_fail "Cannot install curl — install manually and re-run" ;;
+      esac ;;
+    windows) step_fail "curl not found — please install Git for Windows" ;;
+  esac
+  command_exists curl || step_fail "curl installation failed"
+  step_ok "curl installed"
+}
+
+install_git() {
+  # On macOS, Xcode CLT provides git — recheck after CLT install
+  if command_exists git && git --version >/dev/null 2>&1; then
+    step_ok "git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
     return
   fi
+
   start_spinner "Installing git..."
   case "$OS" in
     macos)
-      # Xcode CLT should already be installed by ensure_xcode_clt
-      # but if somehow git is still missing, try brew
       if command_exists brew; then
         run_silent "git" brew install git
       else
-        step_fail "git not available — please install Xcode Command Line Tools and re-run"
+        step_fail "git not available — Xcode CLT installation may have failed"
       fi
       ;;
     linux)
@@ -439,7 +596,7 @@ ensure_git() {
         dnf)    run_silent "git" sudo dnf install -y git ;;
         yum)    run_silent "git" sudo yum install -y git ;;
         pacman) run_silent "git" sudo pacman -Sy --noconfirm git ;;
-        *)      step_fail "Cannot install git automatically" ;;
+        *)      step_fail "Cannot install git — install manually and re-run" ;;
       esac ;;
     windows) step_fail "Please install Git for Windows: https://git-scm.com/download/win" ;;
   esac
@@ -447,23 +604,20 @@ ensure_git() {
   step_ok "git installed"
 }
 
-ensure_nvm() {
-  if [ "$OS" = "windows" ]; then return; fi
+install_nvm() {
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     . "$NVM_DIR/nvm.sh"
     return
   fi
-  start_spinner "Installing nvm..."
   run_silent "nvm" bash -c 'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash'
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   . "$NVM_DIR/nvm.sh"
   command_exists nvm || step_fail "nvm installation failed"
 }
 
-ensure_fnm() {
+install_fnm() {
   if command_exists fnm; then return; fi
-  start_spinner "Installing fnm..."
   if command_exists powershell.exe; then
     run_silent "fnm" powershell.exe -Command "irm https://fnm.vercel.app/install | iex" || {
       if command_exists cargo; then
@@ -481,106 +635,62 @@ ensure_fnm() {
   command_exists fnm || step_fail "fnm installation failed"
 }
 
-ensure_node() {
+install_node() {
+  start_spinner "Installing Node.js v${NODE_VERSION}..."
   if [ "$OS" = "windows" ]; then
-    ensure_fnm
-    local current=""
-    command_exists node && current="$(node -v | sed 's/^v//')"
-    if [ "$current" = "$NODE_VERSION" ]; then
-      step_ok "Node.js v${current}"
-      return
-    fi
-    start_spinner "Installing Node.js v${NODE_VERSION}..."
+    install_fnm
     run_silent "node" fnm install "$NODE_VERSION"
     run_silent "node" fnm use "$NODE_VERSION"
     eval "$(fnm env --shell bash 2>/dev/null)" || true
   else
-    ensure_nvm
-    local current=""
-    command_exists node && current="$(node -v | sed 's/^v//')"
-    if [ "$current" = "$NODE_VERSION" ]; then
-      step_ok "Node.js v${current}"
-      return
-    fi
-    start_spinner "Installing Node.js v${NODE_VERSION}..."
+    install_nvm
     run_silent "node" nvm install "$NODE_VERSION"
     run_silent "node" nvm use "$NODE_VERSION"
   fi
+  command_exists node || step_fail "Node.js installation failed"
   step_ok "Node.js $(node -v)"
 }
 
-ensure_yarn() {
-  if command_exists yarn; then
-    step_ok "yarn ($(yarn --version))"
-    return
-  fi
+install_yarn() {
   start_spinner "Installing yarn..."
   run_silent "yarn" bash -c 'corepack enable 2>/dev/null || npm install -g yarn'
   command_exists yarn || step_fail "yarn installation failed"
-  step_ok "yarn installed"
+  step_ok "yarn $(yarn --version)"
 }
 
-ensure_build_tools() {
+install_build_tools() {
+  start_spinner "Installing build tools..."
   case "$OS" in
-    macos)
-      # Already handled by ensure_xcode_clt earlier
-      step_ok "Build tools (Xcode CLT)"
-      ;;
     linux)
       local pkgs_needed=""
       command_exists make    || pkgs_needed="$pkgs_needed build-essential"
       command_exists python3 || pkgs_needed="$pkgs_needed python3"
-      if [ -n "$pkgs_needed" ]; then
-        start_spinner "Installing build tools..."
-        case "$(detect_pkg_manager)" in
-          apt)    run_silent "build-tools" sudo apt-get update -qq && run_silent "build-tools" sudo apt-get install -yqq $pkgs_needed ;;
-          dnf)    run_silent "build-tools" sudo dnf install -y gcc gcc-c++ make python3 ;;
-          yum)    run_silent "build-tools" sudo yum install -y gcc gcc-c++ make python3 ;;
-          pacman) run_silent "build-tools" sudo pacman -Sy --noconfirm base-devel python ;;
-          *)      step_warn "Please ensure C/C++ build tools are installed" ;;
-        esac
-        step_ok "Build tools installed"
-      else
-        step_ok "Build tools"
-      fi
+      case "$(detect_pkg_manager)" in
+        apt)    run_silent "build-tools" sudo apt-get update -qq && run_silent "build-tools" sudo apt-get install -yqq $pkgs_needed ;;
+        dnf)    run_silent "build-tools" sudo dnf install -y gcc gcc-c++ make python3 ;;
+        yum)    run_silent "build-tools" sudo yum install -y gcc gcc-c++ make python3 ;;
+        pacman) run_silent "build-tools" sudo pacman -Sy --noconfirm base-devel python ;;
+        *)      step_warn "Please ensure C/C++ build tools are installed" ; return ;;
+      esac
       ;;
     windows)
-      if command_exists cl || [ -d "${PROGRAMFILES:-C:\\Program Files}/Microsoft Visual Studio" ]; then
-        step_ok "Visual Studio Build Tools"
-      else
-        start_spinner "Installing build tools..."
-        run_silent "build-tools" npm install --global windows-build-tools 2>/dev/null || true
-        step_warn "VS Build Tools — install manually if native modules fail"
-      fi
+      run_silent "build-tools" npm install --global windows-build-tools 2>/dev/null || true
+      step_warn "VS Build Tools — install manually if native modules fail"
+      return
       ;;
   esac
+  step_ok "Build tools installed"
 }
 
-ensure_go() {
-  local required_major=1
-  local required_minor=24
-
-  if command_exists go; then
-    local go_ver
-    go_ver="$(go version | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/^go//')"
-    local cur_major cur_minor
-    cur_major="$(echo "$go_ver" | cut -d. -f1)"
-    cur_minor="$(echo "$go_ver" | cut -d. -f2)"
-    if [ "$cur_major" -gt "$required_major" ] 2>/dev/null || \
-       { [ "$cur_major" -eq "$required_major" ] && [ "$cur_minor" -ge "$required_minor" ]; } 2>/dev/null; then
-      step_ok "Go ${go_ver}"
-      return
-    fi
-  fi
-
+install_go() {
   start_spinner "Installing Go ${GO_VERSION}..."
   case "$OS" in
     macos)
       if command_exists brew; then
-        run_silent "go" brew install "go@${required_major}.${required_minor}" 2>/dev/null \
+        run_silent "go" brew install "go@1.24" 2>/dev/null \
           || run_silent "go" brew install go 2>/dev/null \
           || run_silent "go" brew upgrade go
-        run_silent "go" brew link --overwrite "go@${required_major}.${required_minor}" 2>/dev/null || true
+        run_silent "go" brew link --overwrite "go@1.24" 2>/dev/null || true
       else
         local arch go_arch="amd64"
         arch="$(uname -m)"
@@ -617,44 +727,61 @@ ensure_go() {
       export PATH="/c/Go/bin:$PATH"
       ;;
   esac
-
   command_exists go    || step_fail "Go installation failed"
   command_exists gofmt || step_fail "Go installation failed"
   step_ok "Go $(go version | grep -oE 'go[0-9]+\.[0-9]+\.[0-9]+')"
 }
 
-check_python() {
-  local python_cmd=""
-  for cmd in python3.13 python3.12 python3.11 python3.10 python3 python; do
-    if command_exists "$cmd"; then
-      local ver
-      ver="$($cmd --version 2>/dev/null | grep -oE '3\.[0-9]+' | head -1)" || continue
-      local minor
-      minor="$(echo "$ver" | cut -d. -f2)"
-      if [ "${minor:-0}" -ge 10 ] 2>/dev/null; then
-        python_cmd="$cmd"
-        break
-      fi
-    fi
-  done
+# --- Phase 4: Execute the plan — install/upgrade only what's needed ---
+execute_dep_plan() {
+  echo ""
+  local i name status
+  for i in "${!DEP_NAMES[@]}"; do
+    name="${DEP_NAMES[$i]}"
+    status="${DEP_STATUSES[$i]}"
+    [ "$status" = "ok" ] || [ "$status" = "warn" ] && continue
 
-  if [ -n "$python_cmd" ]; then
-    step_ok "Python ($($python_cmd --version 2>/dev/null))"
-  else
-    step_warn "Python 3.10+ not found — training features unavailable"
+    case "$name" in
+      "Xcode CLT")    install_xcode_clt ;;
+      "curl")         install_curl ;;
+      "git")          install_git ;;
+      "Node.js")      install_node ;;
+      "yarn")         install_yarn ;;
+      "Build tools")  install_build_tools ;;
+      "Go")           install_go ;;
+    esac
+  done
+}
+
+# --- Phase 5: Verify everything works ---
+verify_dependencies() {
+  local failed=""
+
+  if [ "$OS" = "macos" ] && ! /usr/bin/xcrun --find clang >/dev/null 2>&1; then
+    failed="${failed} Xcode CLT"
+  fi
+  command_exists curl  || failed="${failed} curl"
+  command_exists git   || failed="${failed} git"
+  command_exists node  || failed="${failed} node"
+  command_exists yarn  || failed="${failed} yarn"
+  command_exists go    || failed="${failed} go"
+
+  if [ -n "$failed" ]; then
+    step_fail "Dependencies still missing after install:${failed} — check ${INSTALL_LOG}"
   fi
 }
 
+# --- Main entry point ---
 install_dependencies() {
   section "Dependencies"
-  ensure_xcode_clt
-  ensure_curl
-  ensure_git
-  ensure_node
-  ensure_yarn
-  ensure_build_tools
-  ensure_go
-  check_python
+  audit_dependencies
+  print_dep_plan
+  if [ "$DEP_WORK_NEEDED" = true ]; then
+    execute_dep_plan
+    echo ""
+    verify_dependencies
+    printf "\n  ${CHECK}  ${BOLD}All dependencies satisfied${RESET}\n"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -758,7 +885,7 @@ install_deps() {
     eval "$(fnm env --shell bash 2>/dev/null)" || true
     fnm use "$NODE_VERSION" >/dev/null 2>&1 || true
   else
-    ensure_nvm
+    install_nvm
     nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
 
