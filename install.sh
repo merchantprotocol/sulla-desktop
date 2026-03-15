@@ -29,6 +29,7 @@ REPO_URL="https://github.com/sulla-ai/sulla-desktop.git"
 REPO_OWNER="sulla-ai"
 REPO_NAME="sulla-desktop"
 REPO_DIR="sulla-desktop"
+INSTALL_DIR="$HOME/sulla-desktop"
 NODE_VERSION="22.22.0"
 GO_VERSION="1.24.2"
 MIN_DISK_GB=10
@@ -931,6 +932,35 @@ checkout_version() {
   fi
 }
 
+# Safely remove the install directory.
+# Guards against empty/dangerous paths and verifies it looks like our repo.
+safe_remove_install_dir() {
+  local dir="$1"
+
+  # Never remove empty, root, or home paths
+  if [ -z "$dir" ] || [ "$dir" = "/" ] || [ "$dir" = "$HOME" ]; then
+    step_fail "Refusing to remove dangerous path: '${dir}'"
+  fi
+
+  # Must be an absolute path under $HOME
+  case "$dir" in
+    "$HOME"/*) ;; # OK — under home directory
+    *) step_fail "Refusing to remove path outside \$HOME: '${dir}'" ;;
+  esac
+
+  # Must contain our repo marker (package.json with sulla-desktop)
+  if [ -d "$dir" ]; then
+    if [ -f "$dir/package.json" ] && grep -q '"sulla-desktop"' "$dir/package.json" 2>/dev/null; then
+      rm -rf "$dir"
+    elif [ -d "$dir/.git" ]; then
+      # Has .git but no package.json — still likely ours, allow removal
+      rm -rf "$dir"
+    else
+      step_fail "Directory '${dir}' does not look like a sulla-desktop repo — refusing to remove"
+    fi
+  fi
+}
+
 ensure_repo() {
   start_spinner "Setting up repository..."
 
@@ -942,19 +972,22 @@ ensure_repo() {
     return
   fi
 
-  local target="$HOME/$REPO_DIR"
+  # Nightly: wipe and fresh clone every time to guarantee clean state
+  if [ "$USE_NIGHTLY" = true ] && [ -d "$INSTALL_DIR" ]; then
+    safe_remove_install_dir "$INSTALL_DIR"
+  fi
 
-  if [ -d "$target" ] && [ -d "$target/.git" ]; then
-    cd "$target"
+  if [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
+    cd "$INSTALL_DIR"
     REPO_DIR="$(pwd)"
-  elif [ -d "$target" ]; then
-    rm -rf "$target"
-    run_silent "clone" git clone "$REPO_URL" "$target"
-    cd "$target"
+  elif [ -d "$INSTALL_DIR" ]; then
+    safe_remove_install_dir "$INSTALL_DIR"
+    run_silent "clone" git clone "$REPO_URL" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
     REPO_DIR="$(pwd)"
   else
-    run_silent "clone" git clone "$REPO_URL" "$target"
-    cd "$target"
+    run_silent "clone" git clone "$REPO_URL" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
     REPO_DIR="$(pwd)"
   fi
 
@@ -1113,13 +1146,8 @@ build_app() {
       step_ok "Build up to date (${INSTALL_REF})"
       return
     fi
-    if [ -z "$build_ref" ]; then
-      # No ref marker but valid build — accept it
-      step_ok "Build artifacts present (cached)"
-      return
-    fi
-    # Stale build from a different ref — rebuild
-    step_warn "Stale build (${build_ref}) — rebuilding for ${INSTALL_REF}"
+    # Stale or unmarked build — rebuild for current ref
+    step_warn "Stale build — rebuilding for ${INSTALL_REF}"
     rm -rf dist
   fi
 
