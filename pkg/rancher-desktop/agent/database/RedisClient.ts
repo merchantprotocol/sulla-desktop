@@ -15,7 +15,13 @@ export class RedisClient {
 
   constructor() {
     this.client = new Redis(REDIS_URL, {
-      retryStrategy:        (times: number) => Math.min(times * 50, 2000),
+      retryStrategy: (times: number) => {
+        if (times > this.maxConnectionAttempts) {
+          return null; // Stop retrying
+        }
+
+        return Math.min(times * 50, 2000);
+      },
       maxRetriesPerRequest: 3,
       lazyConnect:          true, // Don't auto-connect on construction
     });

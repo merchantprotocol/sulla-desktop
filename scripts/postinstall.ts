@@ -129,11 +129,21 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
       }
     }
   }
+  const warnings: string[] = [];
+
   async function process(name: string) {
     running.add(name);
     const item = dependenciesByName[name];
 
-    await item.dependency.download(item.context);
+    try {
+      await item.dependency.download(item.context);
+    } catch (e: any) {
+      // Log the failure but don't block other dependencies.
+      // Non-critical tools (trivy, wasm-shims, etc.) can fail without
+      // preventing the app from launching.
+      console.warn(`WARNING: Failed to download ${ name }: ${ e.message ?? e }`);
+      warnings.push(name);
+    }
     done.add(name);
     for (const dependent of reverseDependencies[name]) {
       if (!running.has(dependent)) {
@@ -176,6 +186,14 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
       message.unshift('Timed out downloading dependencies');
     }
     throw new Error(message.join('\n'));
+  }
+
+  if (warnings.length > 0) {
+    console.warn(`\nPostinstall completed with ${ warnings.length } warning(s):`);
+    for (const name of warnings) {
+      console.warn(`  - ${ name }`);
+    }
+    console.warn('These dependencies are non-critical and can be retried later.\n');
   }
 }
 
