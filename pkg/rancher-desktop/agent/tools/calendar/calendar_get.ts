@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { calendarClient } from "../../services/CalendarClient";
+import { BaseTool, ToolResponse } from '../base';
+import { calendarClient } from '../../services/CalendarClient';
 
 /**
  * Calendar Get Tool - Worker class for execution
  */
 export class CalendarGetWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { eventId } = input;
 
@@ -15,7 +15,7 @@ export class CalendarGetWorker extends BaseTool {
       if (!event) {
         return {
           successBoolean: false,
-          responseString: `Event with ID ${eventId} not found.`
+          responseString: `Event with ID ${ eventId } not found.`,
         };
       }
 
@@ -23,22 +23,22 @@ export class CalendarGetWorker extends BaseTool {
       const startDate = new Date(event.start).toLocaleString();
       const endDate = event.end ? new Date(event.end).toLocaleString() : 'N/A';
       const responseString = `Event Details:
-Title: ${event.title || 'N/A'}
-Start: ${startDate}
-End: ${endDate}
-Description: ${event.description || 'N/A'}
-Location: ${event.location || 'N/A'}
-Attendees: ${event.people ? event.people.join(', ') : 'N/A'}
-Status: ${event.status || 'N/A'}`;
+Title: ${ event.title || 'N/A' }
+Start: ${ startDate }
+End: ${ endDate }
+Description: ${ event.description || 'N/A' }
+Location: ${ event.location || 'N/A' }
+Attendees: ${ event.people ? event.people.join(', ') : 'N/A' }
+Status: ${ event.status || 'N/A' }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting calendar event: ${(error as Error).message}`
+        responseString: `Error getting calendar event: ${ (error as Error).message }`,
       };
     }
   }

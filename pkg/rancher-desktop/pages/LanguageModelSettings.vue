@@ -71,14 +71,14 @@ const OLLAMA_MODELS = [
   },
   {
     name: 'deepseek-coder:33b', displayName: 'DeepSeek Coder 33B', size: '19GB', minMemoryGB: 24, minCPUs: 6, description: 'Advanced coding model, excellent for development',
-  }
+  },
 ];
 
 interface InstalledModel {
-  name: string;
-  size: number;
+  name:        string;
+  size:        number;
   modified_at: string;
-  digest: string;
+  digest:      string;
 }
 
 export default defineComponent({
@@ -96,56 +96,56 @@ export default defineComponent({
         memoryPercent: 0,
         status:        'unknown' as string,
       },
-      statsInterval:    null as ReturnType<typeof setInterval> | null,
-      loadingStats:     false,
+      statsInterval:         null as ReturnType<typeof setInterval> | null,
+      loadingStats:          false,
       // Which tab is being viewed (local or remote)
-      viewingTab:       'local' as 'local' | 'remote',
+      viewingTab:            'local' as 'local' | 'remote',
       // Which mode is currently active (saved in settings)
-      activeMode:       'local' as 'local' | 'remote',
+      activeMode:            'local' as 'local' | 'remote',
       // Local model settings
-      activeModel:      'qwen2:0.5b', // The currently saved/active local model
-      pendingModel:     'qwen2:0.5b', // The model selected in dropdown
-      installedModels:  [] as InstalledModel[],
-      loadingModels:    false,
-      downloadingModel: null as string | null,
-      downloadProgress: 0,
+      activeModel:           'qwen2:0.5b', // The currently saved/active local model
+      pendingModel:          'qwen2:0.5b', // The model selected in dropdown
+      installedModels:       [] as InstalledModel[],
+      loadingModels:         false,
+      downloadingModel:      null as string | null,
+      downloadProgress:      0,
       // Remote model settings
-      remoteProviders:      REMOTE_PROVIDERS,
-      selectedProvider:     'grok',
-      selectedRemoteModel:  'grok-4-1-fast-reasoning',
-      apiKey:               '',
-      apiKeyVisible:        false,
+      remoteProviders:       REMOTE_PROVIDERS,
+      selectedProvider:      'grok',
+      selectedRemoteModel:   'grok-4-1-fast-reasoning',
+      apiKey:                '',
+      apiKeyVisible:         false,
       // Dynamic model loading
-      dynamicModels:        {} as Record<string, Array<{id: string; name: string; description: string; pricing?: string}>>,
-      loadingRemoteModels:  false,
-      modelLoadError:       '' as string,
-      remoteRetryCount:     3, // Number of retries before falling back to local LLM
-      remoteTimeoutSeconds: 60, // Remote API timeout limit in seconds
+      dynamicModels:         {} as Record<string, { id: string; name: string; description: string; pricing?: string }[]>,
+      loadingRemoteModels:   false,
+      modelLoadError:        '' as string,
+      remoteRetryCount:      3, // Number of retries before falling back to local LLM
+      remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
       // Local Ollama settings
-      localTimeoutSeconds:  120, // Local Ollama timeout limit in seconds
-      localRetryCount:      2, // Number of retries for local Ollama
+      localTimeoutSeconds:   120, // Local Ollama timeout limit in seconds
+      localRetryCount:       2, // Number of retries for local Ollama
       // Ollama model status tracking
-      modelStatuses: {} as Record<string, 'installed' | 'missing' | 'failed'>,
+      modelStatuses:         {} as Record<string, 'installed' | 'missing' | 'failed'>,
       checkingModelStatuses: false,
       // Heartbeat settings
-      heartbeatEnabled:     true,
+      heartbeatEnabled:      true,
       heartbeatDelayMinutes: 30,
-      heartbeatPrompt:      '',
-      heartbeatProvider:    'default' as string, // 'default' = use primary provider, or a specific provider id
+      heartbeatPrompt:       '',
+      heartbeatProvider:     'default' as string, // 'default' = use primary provider, or a specific provider id
 
       // Soul prompt settings
-      soulPrompt: '',
-      botName: 'Sulla',
+      soulPrompt:      '',
+      botName:         'Sulla',
       primaryUserName: '',
 
       // Default prompts for reset
-      soulPromptDefault: soulPrompt,
+      soulPromptDefault:      soulPrompt,
       heartbeatPromptDefault: heartbeatPrompt,
 
       // Primary / Secondary provider selection
       primaryProvider:      'ollama' as string,
       secondaryProvider:    'ollama' as string,
-      availableProviders:   [{ id: 'ollama', name: 'Ollama (Local)' }] as Array<{ id: string; name: string }>,
+      availableProviders:   [{ id: 'ollama', name: 'Ollama (Local)' }] as { id: string; name: string }[],
 
       // Activation state
       activating:           false,
@@ -163,7 +163,7 @@ export default defineComponent({
       localModelError:          '' as string,
       loadingLocalModels:       false,
 
-};
+    };
   },
 
   computed: {
@@ -188,7 +188,7 @@ export default defineComponent({
         this.heartbeatPrompt = String(val || '');
       },
     },
-    availableModels(): Array<{ name: string; displayName: string; size: string; description: string }> {
+    availableModels(): { name: string; displayName: string; size: string; description: string }[] {
       return OLLAMA_MODELS;
     },
     pendingModelDescription(): string {
@@ -205,7 +205,7 @@ export default defineComponent({
     isPendingDifferentFromActive(): boolean {
       return this.pendingModel !== this.activeModel;
     },
-    formattedInstalledModels(): Array<InstalledModel & { formattedSize: string }> {
+    formattedInstalledModels(): (InstalledModel & { formattedSize: string })[] {
       return this.installedModels.map(model => ({
         ...model,
         formattedSize: this.formatBytes(model.size),
@@ -214,7 +214,7 @@ export default defineComponent({
     currentProvider(): typeof REMOTE_PROVIDERS[0] | undefined {
       return this.remoteProviders.find(p => p.id === this.selectedProvider);
     },
-    currentProviderModels(): Array<{ id: string; name: string; description: string; pricing?: string }> {
+    currentProviderModels(): { id: string; name: string; description: string; pricing?: string }[] {
       // Use dynamic models if available, fallback to static ones
       return this.dynamicModels[this.selectedProvider] || this.currentProvider?.models || [];
     },
@@ -248,7 +248,7 @@ export default defineComponent({
     // Listen for settings write errors from main process
     ipcRenderer.on('settings-write-error', (_event: unknown, error: any) => {
       console.error('[LM Settings] Settings write error from main process:', error);
-      this.activationError = `Failed to save settings: ${error?.message || 'Unknown error'}`;
+      this.activationError = `Failed to save settings: ${ error?.message || 'Unknown error' }`;
     });
 
     this.activeMode = await SullaSettingsModel.get('activeMode', 'local');
@@ -282,14 +282,14 @@ export default defineComponent({
     this.pendingModel = this.activeModel;
 
     console.log('Loaded settings values:', {
-      activeMode: this.activeMode,
-      viewingTab: this.viewingTab,
-      selectedProvider: this.selectedProvider,
-      selectedRemoteModel: this.selectedRemoteModel,
+      activeMode:           this.activeMode,
+      viewingTab:           this.viewingTab,
+      selectedProvider:     this.selectedProvider,
+      selectedRemoteModel:  this.selectedRemoteModel,
       remoteTimeoutSeconds: this.remoteTimeoutSeconds,
-      localTimeoutSeconds: this.localTimeoutSeconds,
-      remoteRetryCount: this.remoteRetryCount,
-      localRetryCount: this.localRetryCount
+      localTimeoutSeconds:  this.localTimeoutSeconds,
+      remoteRetryCount:     this.remoteRetryCount,
+      localRetryCount:      this.localRetryCount,
     });
 
     // Load primary/secondary provider settings
@@ -302,7 +302,7 @@ export default defineComponent({
       await integrationService.initialize();
 
       const EXCLUDED_IDS = ['activepieces'];
-      const providers: Array<{ id: string; name: string }> = [
+      const providers: { id: string; name: string }[] = [
         { id: 'ollama', name: 'Ollama (Local)' },
       ];
 
@@ -323,12 +323,12 @@ export default defineComponent({
     }
 
     await this.loadModels();
-    
+
     // Load remote models if API key exists
     if (this.selectedProvider && this.apiKey.trim()) {
       await this.loadRemoteModels();
     }
-    
+
     ipcRenderer.send('dialog/ready');
   },
 
@@ -339,8 +339,8 @@ export default defineComponent({
         await this.loadRemoteModels();
       }
     },
-    
-    // Watch for provider changes to automatically load models  
+
+    // Watch for provider changes to automatically load models
     async selectedProvider(newProvider: string, oldProvider: string) {
       if (newProvider && newProvider !== oldProvider && this.apiKey.trim()) {
         await this.loadRemoteModels();
@@ -400,7 +400,7 @@ export default defineComponent({
           ? { model: preferredModel, type: 'local' }
           : { model: preferredModel, type: 'remote', provider: newProvider },
       );
-    }
+    },
   },
 
   beforeUnmount() {
@@ -435,12 +435,12 @@ export default defineComponent({
             clearTimeout(timeoutId);
             // Convert XMLHttpRequest to Response-like object
             const response = {
-              ok: xhr.status >= 200 && xhr.status < 300,
-              status: xhr.status,
+              ok:         xhr.status >= 200 && xhr.status < 300,
+              status:     xhr.status,
               statusText: xhr.statusText,
-              text: () => Promise.resolve(xhr.responseText),
-              json: () => Promise.resolve(JSON.parse(xhr.responseText || '{}')),
-              body: null, // Not supported
+              text:       () => Promise.resolve(xhr.responseText),
+              json:       () => Promise.resolve(JSON.parse(xhr.responseText || '{}')),
+              body:       null, // Not supported
             };
             resolve(response as any);
           };
@@ -458,12 +458,12 @@ export default defineComponent({
           xhr.timeout = 5000; // Default timeout
           xhr.onload = () => {
             const response = {
-              ok: xhr.status >= 200 && xhr.status < 300,
-              status: xhr.status,
+              ok:         xhr.status >= 200 && xhr.status < 300,
+              status:     xhr.status,
               statusText: xhr.statusText,
-              text: () => Promise.resolve(xhr.responseText),
-              json: () => Promise.resolve(JSON.parse(xhr.responseText || '{}')),
-              body: null,
+              text:       () => Promise.resolve(xhr.responseText),
+              json:       () => Promise.resolve(JSON.parse(xhr.responseText || '{}')),
+              body:       null,
             };
             resolve(response as any);
           };
@@ -504,7 +504,7 @@ export default defineComponent({
           this.silentFetch('http://127.0.0.1:30114/api/ps', { signal: AbortSignal.timeout(3000) }),
         ]);
 
-        if (!tagsRes || !tagsRes.ok) {
+        if (!tagsRes?.ok) {
           this.containerStats.status = 'offline';
 
           return;
@@ -648,7 +648,7 @@ export default defineComponent({
       this.activeModel = this.pendingModel;
       try {
         await SullaSettingsModel.set('sullaModel', this.pendingModel, 'string');
-        console.log(`[LM Settings] Model activated: ${this.pendingModel}`);
+        console.log(`[LM Settings] Model activated: ${ this.pendingModel }`);
       } catch (err) {
         console.error('Failed to save model setting:', err);
       }
@@ -658,7 +658,7 @@ export default defineComponent({
     async onProviderChange() {
       // Clear current model selection
       this.selectedRemoteModel = '';
-      
+
       // Load models for the new provider if we have an API key
       if (this.apiKey.trim()) {
         await this.loadRemoteModels();
@@ -681,15 +681,15 @@ export default defineComponent({
 
       try {
         const modelList = await fetchModelsForProvider(this.selectedProvider, this.apiKey);
-        
+
         // Transform models to match expected format
         const transformedModels = modelList.map(modelInfo => ({
-          id: modelInfo.id,
-          name: modelInfo.name,
-          description: modelInfo.description || `${modelInfo.name} model`,
-          pricing: modelInfo.pricing ? 
-            `Input: $${modelInfo.pricing.input || 0}/1M tokens, Output: $${modelInfo.pricing.output || 0}/1M tokens` : 
-            undefined
+          id:          modelInfo.id,
+          name:        modelInfo.name,
+          description: modelInfo.description || `${ modelInfo.name } model`,
+          pricing:     modelInfo.pricing
+            ? `Input: $${ modelInfo.pricing.input || 0 }/1M tokens, Output: $${ modelInfo.pricing.output || 0 }/1M tokens`
+            : undefined,
         }));
 
         this.dynamicModels[this.selectedProvider] = transformedModels;
@@ -699,9 +699,9 @@ export default defineComponent({
           this.selectedRemoteModel = transformedModels[0].id;
         }
       } catch (error) {
-        this.modelLoadError = `Failed to load models: ${error instanceof Error ? error.message : String(error)}`;
+        this.modelLoadError = `Failed to load models: ${ error instanceof Error ? error.message : String(error) }`;
         console.error('[LM Settings] Failed to load remote models:', error);
-        
+
         // Fallback to static models on error
         const provider = this.remoteProviders.find(p => p.id === this.selectedProvider);
         if (provider && provider.models.length > 0 && !this.selectedRemoteModel) {
@@ -720,15 +720,15 @@ export default defineComponent({
       try {
         // Clear the cache for this provider
         clearModelCache(this.selectedProvider);
-        
+
         // Clear current models and reload
         this.dynamicModels[this.selectedProvider] = [];
         this.selectedRemoteModel = '';
-        
+
         // Force reload models from API
         await this.loadRemoteModels();
       } catch (error) {
-        this.modelLoadError = `Failed to refresh models: ${error instanceof Error ? error.message : String(error)}`;
+        this.modelLoadError = `Failed to refresh models: ${ error instanceof Error ? error.message : String(error) }`;
         console.error('[LM Settings] Model refresh failed:', error);
       }
     },
@@ -743,7 +743,7 @@ export default defineComponent({
           signal: AbortSignal.timeout(5000),
         });
 
-        if (!ollamaRes || !ollamaRes.ok) {
+        if (!ollamaRes?.ok) {
           this.activationError = 'Cannot connect to Ollama. Make sure the service is running.';
 
           return;
@@ -751,7 +751,7 @@ export default defineComponent({
 
         // Check if selected model is installed
         if (!this.isPendingModelInstalled) {
-          this.activationError = `Model "${this.pendingModel}" is not installed. Please download it first.`;
+          this.activationError = `Model "${ this.pendingModel }" is not installed. Please download it first.`;
 
           return;
         }
@@ -763,7 +763,7 @@ export default defineComponent({
         this.viewingTab = 'local';
         console.log('Activated local model, activeMode and viewingTab set to local');
         this.activeModel = this.pendingModel;
-        console.log(`[LM Settings] Local model activated: ${this.pendingModel}`);
+        console.log(`[LM Settings] Local model activated: ${ this.pendingModel }`);
 
         // Emit event for other windows to update
         ipcRenderer.send('model-changed', { model: this.pendingModel, type: 'local' });
@@ -800,7 +800,7 @@ export default defineComponent({
         const timeoutMs = Math.max(1000, Math.min(300, this.remoteTimeoutSeconds)) * 1000;
 
         if (provider.id === 'grok' || provider.id === 'openai' || provider.id === 'kimi' || provider.id === 'nvidia') {
-          const testUrl = `${provider.baseUrl}/chat/completions`;
+          const testUrl = `${ provider.baseUrl }/chat/completions`;
           const testBody = {
             model:       this.selectedRemoteModel,
             messages:    [{ role: 'user', content: 'Reply with the word: OK' }],
@@ -818,7 +818,7 @@ export default defineComponent({
               method:  'POST',
               headers: {
                 'Content-Type':  'application/json',
-                Authorization:   `Bearer ${this.apiKey}`,
+                Authorization:   `Bearer ${ this.apiKey }`,
               },
               body:    JSON.stringify(testBody),
               signal:  AbortSignal.timeout(timeoutMs),
@@ -828,7 +828,7 @@ export default defineComponent({
               const errorText = await testRes.text();
               console.error('[Remote Test] Error response:', testRes.status, errorText);
 
-              this.activationError = `Remote model test failed: ${testRes.status}. Check model, key, and timeout.`;
+              this.activationError = `Remote model test failed: ${ testRes.status }. Check model, key, and timeout.`;
               console.error('Remote model test error:', errorText);
 
               return;
@@ -840,11 +840,11 @@ export default defineComponent({
             return;
           }
         } else if (provider.id === 'anthropic') {
-          const testUrl = `${provider.baseUrl}/messages`;
+          const testUrl = `${ provider.baseUrl }/messages`;
           const testBody = {
-            model: this.selectedRemoteModel,
+            model:      this.selectedRemoteModel,
             max_tokens: 10,
-            messages: [{ role: 'user', content: 'Reply with the word: OK' }]
+            messages:   [{ role: 'user', content: 'Reply with the word: OK' }],
           };
 
           console.log('[Remote Test] Provider:', provider.id);
@@ -854,13 +854,13 @@ export default defineComponent({
 
           try {
             const testRes = await fetch(testUrl, {
-              method: 'POST',
+              method:  'POST',
               headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': this.apiKey,
-                'anthropic-version': '2023-06-01'
+                'Content-Type':      'application/json',
+                'x-api-key':         this.apiKey,
+                'anthropic-version': '2023-06-01',
               },
-              body: JSON.stringify(testBody),
+              body:   JSON.stringify(testBody),
               signal: AbortSignal.timeout(timeoutMs),
             });
 
@@ -868,7 +868,7 @@ export default defineComponent({
               const errorText = await testRes.text();
               console.error('[Remote Test] Error response:', testRes.status, errorText);
 
-              this.activationError = `Remote model test failed: ${testRes.status}. Check model, key, and timeout.`;
+              this.activationError = `Remote model test failed: ${ testRes.status }. Check model, key, and timeout.`;
               console.error('Remote model test error:', errorText);
 
               return;
@@ -892,7 +892,7 @@ export default defineComponent({
         this.viewingTab = 'remote';
         console.log('Activated remote model, activeMode and viewingTab set to remote');
         this.activeModel = this.pendingModel;
-        console.log(`[LM Settings] Remote model activated: ${this.selectedProvider}/${this.selectedRemoteModel}`);
+        console.log(`[LM Settings] Remote model activated: ${ this.selectedProvider }/${ this.selectedRemoteModel }`);
 
         // Emit event for other windows to update
         ipcRenderer.send('model-changed', { model: this.selectedRemoteModel, type: 'remote', provider: this.selectedProvider });
@@ -908,10 +908,10 @@ export default defineComponent({
       this.checkingModelStatuses = true;
       try {
         // Ollama availability already checked in loadModels(), proceed with model checks
-        
+
         // Check status of key models by checking against installed models list
         const keyModels = ['nomic-embed-text', this.activeModel].filter((model, index, arr) => arr.indexOf(model) === index);
-        
+
         for (const modelName of keyModels) {
           try {
             // Check if model is in the installed models list from /api/tags
@@ -963,36 +963,35 @@ export default defineComponent({
     },
 
     async writeExperimentalSettings(extra: Record<string, unknown> = {}) {
-
       try {
         // Save all settings to database
         const settingsToSave = {
-          botName: String(this.botName || ''),
-          primaryUserName: String(this.primaryUserName || ''),
-          primaryProvider: String(this.primaryProvider || 'ollama'),
-          secondaryProvider: String(this.secondaryProvider || 'ollama'),
-          remoteProvider: String(this.selectedProvider || ''),
-          remoteModel: String(this.selectedRemoteModel || ''),
-          remoteApiKey: String(this.apiKey || ''),
-          remoteRetryCount: Number(this.remoteRetryCount) || 3,
-          remoteTimeoutSeconds: Number(this.remoteTimeoutSeconds) || 60,
-          localTimeoutSeconds: Number(this.localTimeoutSeconds) || 120,
-          localRetryCount: Number(this.localRetryCount) || 2,
-          heartbeatEnabled: Boolean(this.heartbeatEnabled),
+          botName:               String(this.botName || ''),
+          primaryUserName:       String(this.primaryUserName || ''),
+          primaryProvider:       String(this.primaryProvider || 'ollama'),
+          secondaryProvider:     String(this.secondaryProvider || 'ollama'),
+          remoteProvider:        String(this.selectedProvider || ''),
+          remoteModel:           String(this.selectedRemoteModel || ''),
+          remoteApiKey:          String(this.apiKey || ''),
+          remoteRetryCount:      Number(this.remoteRetryCount) || 3,
+          remoteTimeoutSeconds:  Number(this.remoteTimeoutSeconds) || 60,
+          localTimeoutSeconds:   Number(this.localTimeoutSeconds) || 120,
+          localRetryCount:       Number(this.localRetryCount) || 2,
+          heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 30,
-          heartbeatPrompt: String(this.heartbeatPrompt || ''),
-          heartbeatProvider: String(this.heartbeatProvider || 'default'),
+          heartbeatPrompt:       String(this.heartbeatPrompt || ''),
+          heartbeatProvider:     String(this.heartbeatProvider || 'default'),
           ...extra,
         };
 
         // Define cast types for settings
         const settingCasts: Record<string, string> = {
-          remoteRetryCount: 'number',
-          remoteTimeoutSeconds: 'number',
-          localTimeoutSeconds: 'number',
-          localRetryCount: 'number',
+          remoteRetryCount:      'number',
+          remoteTimeoutSeconds:  'number',
+          localTimeoutSeconds:   'number',
+          localRetryCount:       'number',
           heartbeatDelayMinutes: 'number',
-          heartbeatEnabled: 'boolean',
+          heartbeatEnabled:      'boolean',
         };
 
         for (const [key, value] of Object.entries(settingsToSave)) {
@@ -1038,7 +1037,7 @@ export default defineComponent({
         this.localModelDownloadStatus[modelName] = true;
       } catch (err) {
         console.error('[LM Settings] Failed to download local model:', err);
-        this.localModelError = `Failed to download ${modelName}. Check your internet connection.`;
+        this.localModelError = `Failed to download ${ modelName }. Check your internet connection.`;
       } finally {
         this.localModelDownloading = null;
       }
@@ -1066,7 +1065,7 @@ export default defineComponent({
         // Emit event for other windows
         ipcRenderer.send('model-changed', { model: this.localModelSelected, type: 'local' });
 
-        console.log(`[LM Settings] Local GGUF model activated: ${this.localModelSelected}`);
+        console.log(`[LM Settings] Local GGUF model activated: ${ this.localModelSelected }`);
       } catch (err) {
         console.error('[LM Settings] Failed to activate local GGUF model:', err);
         this.localModelError = 'Failed to activate model.';
@@ -1146,9 +1145,11 @@ export default defineComponent({
                 'status-unknown': containerStats.status === 'unknown' || containerStats.status === 'not_found',
               }"
             >
-              {{ containerStats.status === 'docker_unavailable' ? 'Docker Unavailable' :
-                 containerStats.status === 'not_found' ? 'Container Not Found' :
-                 containerStats.status.charAt(0).toUpperCase() + containerStats.status.slice(1) }}
+              {{ containerStats.status === 'docker_unavailable'
+                ? 'Docker Unavailable'
+                : containerStats.status === 'not_found'
+                  ? 'Container Not Found'
+                  : containerStats.status.charAt(0).toUpperCase() + containerStats.status.slice(1) }}
             </span>
           </div>
 
@@ -1397,7 +1398,10 @@ export default defineComponent({
             Configure the agent's identity and system prompt. The bot name and user name will be prefixed to the soul prompt.
           </p>
 
-          <div class="form-group" style="margin-bottom: 1.5rem;">
+          <div
+            class="form-group"
+            style="margin-bottom: 1.5rem;"
+          >
             <label class="form-label">Bot Name</label>
             <input
               v-model="botName"
@@ -1411,7 +1415,10 @@ export default defineComponent({
             </p>
           </div>
 
-          <div class="form-group" style="margin-bottom: 2rem;">
+          <div
+            class="form-group"
+            style="margin-bottom: 2rem;"
+          >
             <label class="form-label">Your Human's Name</label>
             <input
               v-model="primaryUserName"
@@ -1538,7 +1545,6 @@ export default defineComponent({
             </div>
           </div>
         </div>
-
       </div>
     </div>
 
@@ -2590,6 +2596,5 @@ export default defineComponent({
     margin-top: 0.5rem;
   }
 }
-
 
 </style>

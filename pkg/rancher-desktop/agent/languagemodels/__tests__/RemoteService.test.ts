@@ -20,39 +20,39 @@ describe('RemoteModelService fallback behavior', () => {
     jest.clearAllMocks();
   });
 
-  it('switches to local model when remote retries fail and fallback uses Ollama', async () => {
+  it('switches to local model when remote retries fail and fallback uses Ollama', async() => {
     const { RemoteModelService } = await loadRemoteModule();
 
     const localResponse: NormalizedResponse = {
-      content: 'local fallback ok',
+      content:  'local fallback ok',
       metadata: {
-        tokens_used: 3,
-        time_spent: 1,
-        prompt_tokens: 1,
+        tokens_used:       3,
+        time_spent:        1,
+        prompt_tokens:     1,
         completion_tokens: 2,
-        finish_reason: 'stop' as any,
+        finish_reason:     'stop' as any,
       },
     };
 
     const fallbackService = {
-      initialize: jest.fn(async () => true),
+      initialize:  jest.fn(async() => true),
       isAvailable: jest.fn(() => true),
-      getModel: jest.fn(() => 'tinyllama:latest'),
-      chat: jest.fn(async () => localResponse),
+      getModel:    jest.fn(() => 'tinyllama:latest'),
+      chat:        jest.fn(async() => localResponse),
     };
 
-    global.fetch = jest.fn(async () => {
+    global.fetch = jest.fn(async() => {
       throw new Error('remote unavailable');
     }) as typeof fetch;
 
     const service = new RemoteModelService({
-      id: 'grok',
-      name: 'grok',
+      id:      'grok',
+      name:    'grok',
       baseUrl: 'https://api.x.ai/v1',
-      apiKey: 'test-key',
-      model: 'grok-4-1-fast-reasoning',
+      apiKey:  'test-key',
+      model:   'grok-4-1-fast-reasoning',
     }) as any;
-    service.getFallbackLocalService = jest.fn(async () => fallbackService);
+    service.getFallbackLocalService = jest.fn(async() => fallbackService);
     service.setRetryCount(0);
 
     const messages: ChatMessage[] = [{ role: 'user', content: 'hello' }];

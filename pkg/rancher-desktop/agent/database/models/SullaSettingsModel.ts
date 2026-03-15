@@ -8,8 +8,8 @@ import { redisClient } from '../RedisClient';
 
 interface SettingsAttributes {
   property: string;
-  value: any;
-  cast?: string;
+  value:    any;
+  cast?:    string;
 }
 
 export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
@@ -20,7 +20,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
   protected primaryKey = 'property';
   protected fillable: string[] = ['property', 'value', 'cast'];
-  protected guarded: string[] = [];
+  protected guarded:  string[] = [];
   protected timestamps = false;
 
   /**
@@ -34,20 +34,20 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
    * Convert value to string based on cast type
    */
   private static toStringValue(value: any, cast: string): string {
-    switch(cast) {
-      case 'string':
-      case 'slug':
-        return String(value);
-      case 'number':
-        return String(value);
-      case 'boolean':
-        return String(value);
-      case 'array':
-      case 'json':
-        return JSON.stringify(value);
-      default:
-        // For uncast values, treat as plain string (don't JSON stringify)
-        return value;
+    switch (cast) {
+    case 'string':
+    case 'slug':
+      return String(value);
+    case 'number':
+      return String(value);
+    case 'boolean':
+      return String(value);
+    case 'array':
+    case 'json':
+      return JSON.stringify(value);
+    default:
+      // For uncast values, treat as plain string (don't JSON stringify)
+      return value;
     }
   }
 
@@ -56,22 +56,22 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
    */
   private static castValue(value: string, cast?: string): any {
     try {
-      switch(cast) {
-        case 'string':
-        case 'slug':
-          return value;
-        case 'number':
-          return Number(value);
-        case 'boolean':
-          const cleaned = value.toLowerCase();
-          const truthyValues = ['true', '1', 'yes', 'on'];
-          return truthyValues.includes(cleaned);
-        case 'array':
-        case 'json':
-          return JSON.parse(value);
-        default:
-          // For uncast values, return as-is
-          return value;
+      switch (cast) {
+      case 'string':
+      case 'slug':
+        return value;
+      case 'number':
+        return Number(value);
+      case 'boolean':
+        const cleaned = value.toLowerCase();
+        const truthyValues = ['true', '1', 'yes', 'on'];
+        return truthyValues.includes(cleaned);
+      case 'array':
+      case 'json':
+        return JSON.parse(value);
+      default:
+        // For uncast values, return as-is
+        return value;
       }
     } catch (err) {
       console.error('Error casting value:', err);
@@ -105,7 +105,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   // Bootstrap / Offline-First Fallback Layer
   // ──────────────────────────────────────────────
 
-  private static isReady: boolean = false;
+  private static isReady = false;
 
   // ──────────────────────────────────────────────
   // Bootstrap: sync fallback → real backends
@@ -114,8 +114,8 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
   /**
    * Full bootstrap: call when DBs are ready
-   * 
-   * @returns 
+   *
+   * @returns
    */
   public static async bootstrap(): Promise<void> {
     if (this.isReady) return;
@@ -139,7 +139,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
           for (const [property, value] of Object.entries(data)) {
             await this.setSetting(property, value);
           }
-          console.log(`SullaSettingsModel: synced ${Object.keys(data).length} settings from lock file`);
+          console.log(`SullaSettingsModel: synced ${ Object.keys(data).length } settings from lock file`);
         } catch (err) {
           console.log('SullaSettingsModel: no lock file to sync or error reading:', err);
         }
@@ -160,7 +160,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
   /**
    * Sync all settings from PostgreSQL to Redis
-   * @returns 
+   * @returns
    */
   public static async initialize(): Promise<void> {
     try {
@@ -170,14 +170,13 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       console.log('SullaSettingsModel: initializing with', all.length, 'settings');
       if (all.length === 0) return;
       for (const setting of all) {
-        const property = setting.attributes.property as string;
+        const property = setting.attributes.property!;
         const value = setting.attributes.value;
         pipeline.hset('sulla_settings', property, String(value));
       }
       await pipeline.exec();
-
     } catch (error) {
-      throw new Error(`Failed to initialize settings in Redis: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Failed to initialize settings in Redis: ${ error instanceof Error ? error.message : String(error) }`);
     }
   }
 
@@ -186,10 +185,10 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   // ──────────────────────────────────────────────
 
   /**
-   * 
-   * @param property 
-   * @param _default 
-   * @returns 
+   *
+   * @param property
+   * @param _default
+   * @returns
    */
   public static async getSetting(property: string, _default: any = null): Promise<any> {
     if (this.isReady) {
@@ -227,10 +226,10 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   }
 
   /**
-   * 
-   * @param property 
-   * @param value 
-   * @returns 
+   *
+   * @param property
+   * @param value
+   * @returns
    */
   public static async setSetting(property: string, value: any, cast?: string): Promise<void> {
     const valueCast = cast || typeof value;
@@ -254,7 +253,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
     // Fallback: read-modify-write JSON file
     const filePath = this.getFallbackFilePath();
-    console.log(`[SullaSettingsModel] Fallback path set to: ${filePath}`);
+    console.log(`[SullaSettingsModel] Fallback path set to: ${ filePath }`);
     let data: Record<string, any> = {};
     try {
       const content = await fs.readFile(filePath, 'utf8');
@@ -268,9 +267,9 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
   /**
    * Public API
-   * @param property 
-   * @param defaultValue 
-   * @returns 
+   * @param property
+   * @param defaultValue
+   * @returns
    */
   public static async get(property: string, defaultValue: any = null): Promise<any> {
     return this.getSetting(property, defaultValue);
@@ -278,9 +277,9 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
   /**
    * Public API
-   * @param property 
-   * @param value 
-   * @returns 
+   * @param property
+   * @param value
+   * @returns
    */
   public static async set(property: string, value: any, cast?: string): Promise<void> {
     return this.setSetting(property, value, cast);
@@ -339,7 +338,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       if (keys[1].length > 0) {
         const values = await redisClient.hmget('sulla_settings', ...keys[1]);
         const result: Record<string, any> = {};
-        
+
         for (let i = 0; i < keys[1].length; i++) {
           const key = keys[1][i];
           const value = values[i];
@@ -352,7 +351,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
         }
         return result;
       }
-      
+
       // Fallback to PostgreSQL pattern matching
       try {
         const settings = await this.query(`
@@ -377,16 +376,16 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       const filePath = this.getFallbackFilePath();
       const content = await fs.readFile(filePath, 'utf8');
       const data = JSON.parse(content) as Record<string, any>;
-      
+
       const regex = new RegExp('^' + pattern.replace('*', '.*') + '$');
       const result: Record<string, any> = {};
-      
+
       for (const [key, value] of Object.entries(data)) {
         if (regex.test(key)) {
           result[key] = value;
         }
       }
-      
+
       return result;
     } catch (error) {
       console.warn('File pattern query failed:', error);
@@ -400,7 +399,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   public static async deleteByPattern(pattern: string): Promise<number> {
     const matches = await this.getByPattern(pattern);
     const keys = Object.keys(matches);
-    
+
     if (keys.length === 0) {
       return 0;
     }
@@ -412,7 +411,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
           DELETE FROM sulla_settings
           WHERE property LIKE $1
         `, [pattern.replace('*', '%')]);
-        
+
         if (keys.length > 0) {
           await redisClient.hdel('sulla_settings', ...keys);
         }
@@ -425,17 +424,17 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
         const filePath = this.getFallbackFilePath();
         const content = await fs.readFile(filePath, 'utf8');
         const data = JSON.parse(content) as Record<string, any>;
-        
+
         for (const key of keys) {
           delete data[key];
         }
-        
+
         await fs.writeFile(filePath, JSON.stringify(data, null, 2));
       } catch (error) {
         console.warn('File pattern deletion failed:', error);
       }
     }
-    
+
     return keys.length;
   }
 

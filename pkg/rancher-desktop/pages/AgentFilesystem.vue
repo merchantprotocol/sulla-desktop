@@ -1,128 +1,227 @@
 <template>
-  <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
+  <div
+    class="h-screen overflow-hidden font-sans flex flex-col page-root"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="AgentFilesystem" />
-    <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" @toggle-left-pane="leftPaneVisible = !leftPaneVisible" @toggle-center-pane="centerPaneVisible = !centerPaneVisible" @toggle-right-pane="rightPaneVisible = !rightPaneVisible" />
+    <AgentHeader
+      :is-dark="isDark"
+      :toggle-theme="toggleTheme"
+      @toggle-left-pane="leftPaneVisible = !leftPaneVisible"
+      @toggle-center-pane="centerPaneVisible = !centerPaneVisible"
+      @toggle-right-pane="rightPaneVisible = !rightPaneVisible"
+    />
 
     <div class="flex flex-1 min-h-0 overflow-hidden">
-        <!-- Left sidebar: File tree -->
-        <div class="file-tree-panel" v-show="leftPaneVisible" :class="{ dark: isDark }">
-          <FileTreeSidebar
-            :is-dark="isDark"
-            :highlight-path="highlightPath"
-            @file-selected="onFileSelected"
-          />
-        </div>
+      <!-- Left sidebar: File tree -->
+      <div
+        v-show="leftPaneVisible"
+        class="file-tree-panel"
+        :class="{ dark: isDark }"
+      >
+        <FileTreeSidebar
+          :is-dark="isDark"
+          :highlight-path="highlightPath"
+          @file-selected="onFileSelected"
+        />
+      </div>
 
-        <!-- Right content: Editor area -->
-        <div class="editor-panel" v-show="centerPaneVisible" :class="{ dark: isDark }">
-          <!-- Top editor area -->
-          <div class="editor-top">
-            <!-- Tab bar (always visible when tabs exist) -->
-            <div v-if="openTabs.length > 0" class="tab-bar" :class="{ dark: isDark }">
-              <div
-                v-for="tab in openTabs"
-                :key="`${tab.path}-${tab.editorType || 'code'}`"
-                class="tab"
-                :class="{ active: activeTabKey === `${tab.path}-${tab.editorType || 'code'}`, dark: isDark }"
-                @click="switchTab(tab)"
-                @contextmenu.prevent="onTabContextMenu($event, tab)"
+      <!-- Right content: Editor area -->
+      <div
+        v-show="centerPaneVisible"
+        class="editor-panel"
+        :class="{ dark: isDark }"
+      >
+        <!-- Top editor area -->
+        <div class="editor-top">
+          <!-- Tab bar (always visible when tabs exist) -->
+          <div
+            v-if="openTabs.length > 0"
+            class="tab-bar"
+            :class="{ dark: isDark }"
+          >
+            <div
+              v-for="tab in openTabs"
+              :key="`${tab.path}-${tab.editorType || 'code'}`"
+              class="tab"
+              :class="{ active: activeTabKey === `${tab.path}-${tab.editorType || 'code'}`, dark: isDark }"
+              @click="switchTab(tab)"
+              @contextmenu.prevent="onTabContextMenu($event, tab)"
+            >
+              <span class="tab-icon">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                >
+                  <path
+                    d="M3.5 1C2.94772 1 2.5 1.44772 2.5 2V14C2.5 14.5523 2.94772 15 3.5 15H12.5C13.0523 15 13.5 14.5523 13.5 14V5L9.5 1H3.5Z"
+                    :fill="getIconColor(tab.ext)"
+                    stroke-width="0.5"
+                    :stroke="getIconColor(tab.ext)"
+                  />
+                  <path
+                    d="M9.5 1V5H13.5"
+                    :stroke="getIconColor(tab.ext)"
+                    stroke-width="0.8"
+                    fill="none"
+                  />
+                </svg>
+              </span>
+              <span class="tab-label">{{ tab.name }}</span>
+              <span
+                v-if="tab.dirty"
+                class="tab-dirty-dot"
+              />
+              <span
+                class="tab-close"
+                @click.stop="closeTab(tab)"
               >
-                <span class="tab-icon">
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path d="M3.5 1C2.94772 1 2.5 1.44772 2.5 2V14C2.5 14.5523 2.94772 15 3.5 15H12.5C13.0523 15 13.5 14.5523 13.5 14V5L9.5 1H3.5Z" :fill="getIconColor(tab.ext)" stroke-width="0.5" :stroke="getIconColor(tab.ext)"/>
-                    <path d="M9.5 1V5H13.5" :stroke="getIconColor(tab.ext)" stroke-width="0.8" fill="none"/>
-                  </svg>
-                </span>
-                <span class="tab-label">{{ tab.name }}</span>
-                <span v-if="tab.dirty" class="tab-dirty-dot"></span>
-                <span class="tab-close" @click.stop="closeTab(tab)">
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z"/>
-                  </svg>
-                </span>
-              </div>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                >
+                  <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z" />
+                </svg>
+              </span>
+            </div>
+          </div>
+
+          <!-- Empty state (no tabs open) -->
+          <div
+            v-if="openTabs.length === 0"
+            class="empty-state"
+          >
+            <svg
+              width="48"
+              height="48"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="empty-icon"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            <p class="empty-text">
+              Select a file to view its contents
+            </p>
+            <p class="empty-hint">
+              Browse your sulla workspace using the file tree on the left
+            </p>
+          </div>
+
+          <!-- Active tab content -->
+          <template v-if="activeTab">
+            <!-- Loading state -->
+            <div
+              v-if="activeTab.loading"
+              class="empty-state"
+            >
+              <div class="loading-spinner" />
+              <p class="empty-text">
+                Loading {{ activeTab.name }}…
+              </p>
             </div>
 
-            <!-- Empty state (no tabs open) -->
-            <div v-if="openTabs.length === 0" class="empty-state">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="empty-icon">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-              </svg>
-              <p class="empty-text">Select a file to view its contents</p>
-              <p class="empty-hint">Browse your sulla workspace using the file tree on the left</p>
+            <!-- Error state -->
+            <div
+              v-else-if="activeTab.error"
+              class="empty-state"
+            >
+              <p class="error-text">
+                {{ activeTab.error }}
+              </p>
             </div>
 
-            <!-- Active tab content -->
-            <template v-if="activeTab">
-              <!-- Loading state -->
-              <div v-if="activeTab.loading" class="empty-state">
-                <div class="loading-spinner"></div>
-                <p class="empty-text">Loading {{ activeTab.name }}…</p>
-              </div>
-
-              <!-- Error state -->
-              <div v-else-if="activeTab.error" class="empty-state">
-                <p class="error-text">{{ activeTab.error }}</p>
+            <!-- Editor content -->
+            <template v-else>
+              <!-- Breadcrumb and Save Button Row -->
+              <div
+                class="editor-header"
+                :class="{ dark: isDark }"
+              >
+                <div
+                  class="breadcrumb-bar"
+                  :class="{ dark: isDark }"
+                >
+                  <span
+                    v-for="(segment, idx) in activeBreadcrumbs"
+                    :key="idx"
+                    class="breadcrumb-segment"
+                  >
+                    <span
+                      v-if="idx > 0"
+                      class="breadcrumb-sep"
+                    >›</span>
+                    {{ segment }}
+                  </span>
+                </div>
+                <button
+                  v-if="activeTab && activeTab.dirty"
+                  class="save-button"
+                  :class="{ dark: isDark }"
+                  :disabled="activeTab.loading"
+                  @click="saveActiveTab"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                    <polyline points="17,21 17,13 7,13 7,21" />
+                    <polyline points="7,3 7,8 15,8" />
+                  </svg>
+                  Save
+                </button>
               </div>
 
               <!-- Editor content -->
-              <template v-else>
-                <!-- Breadcrumb and Save Button Row -->
-                <div class="editor-header" :class="{ dark: isDark }">
-                  <div class="breadcrumb-bar" :class="{ dark: isDark }">
-                    <span
-                      v-for="(segment, idx) in activeBreadcrumbs"
-                      :key="idx"
-                      class="breadcrumb-segment"
-                    >
-                      <span v-if="idx > 0" class="breadcrumb-sep">›</span>
-                      {{ segment }}
-                    </span>
-                  </div>
-                  <button
-                    v-if="activeTab && activeTab.dirty"
-                    class="save-button"
-                    :class="{ dark: isDark }"
-                    @click="saveActiveTab"
-                    :disabled="activeTab.loading"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                      <polyline points="17,21 17,13 7,13 7,21"/>
-                      <polyline points="7,3 7,8 15,8"/>
-                    </svg>
-                    Save
-                  </button>
-                </div>
-
-                <!-- Editor content -->
-                <div class="editor-content">
-                  <component
-                    :is="activeEditorComponent"
-                    ref="editorRef"
-                    :content="activeTab.content"
-                    :file-path="activeTab.path"
-                    :file-ext="activeTab.ext"
-                    :is-dark="isDark"
-                    :read-only="activeTab.editorType === 'preview'"
-                    @dirty="markActiveTabDirty"
-                  />
-                </div>
-              </template>
+              <div class="editor-content">
+                <component
+                  :is="activeEditorComponent"
+                  ref="editorRef"
+                  :content="activeTab.content"
+                  :file-path="activeTab.path"
+                  :file-ext="activeTab.ext"
+                  :is-dark="isDark"
+                  :read-only="activeTab.editorType === 'preview'"
+                  @dirty="markActiveTabDirty"
+                />
+              </div>
             </template>
-          </div>
-
-          <!-- Bottom center pane -->
-          <div class="editor-bottom" :class="{ dark: isDark }">
-            <!-- Empty for now -->
-          </div>
+          </template>
         </div>
 
-        <!-- Right pane -->
-        <div class="right-pane" v-show="rightPaneVisible" :class="{ dark: isDark }">
+        <!-- Bottom center pane -->
+        <div
+          class="editor-bottom"
+          :class="{ dark: isDark }"
+        >
           <!-- Empty for now -->
         </div>
+      </div>
+
+      <!-- Right pane -->
+      <div
+        v-show="rightPaneVisible"
+        class="right-pane"
+        :class="{ dark: isDark }"
+      >
+        <!-- Empty for now -->
+      </div>
     </div>
   </div>
 
@@ -137,20 +236,50 @@
       @contextmenu.prevent
     >
       <!-- View in Finder -->
-      <button class="context-menu-item" @click="viewInFinder(tabContextMenu.tab!)">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <button
+        class="context-menu-item"
+        @click="viewInFinder(tabContextMenu.tab!)"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-          <circle cx="12" cy="12" r="3" />
+          <circle
+            cx="12"
+            cy="12"
+            r="3"
+          />
         </svg>
         <span>View in Finder</span>
       </button>
 
       <!-- Open with... -->
-      <div class="context-menu-sep"></div>
-      <div class="context-menu-subheader">Open with…</div>
-      <button class="context-menu-item" @click="openWithEditor(tabContextMenu.tab!, 'code')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+      <div class="context-menu-sep" />
+      <div class="context-menu-subheader">
+        Open with…
+      </div>
+      <button
+        class="context-menu-item"
+        @click="openWithEditor(tabContextMenu.tab!, 'code')"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
         </svg>
         <span>Code Editor</span>
       </button>
@@ -159,12 +288,31 @@
         class="context-menu-item"
         @click="openWithEditor(tabContextMenu.tab!, 'markdown')"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="16" y1="13" x2="8" y2="13"/>
-          <line x1="16" y1="17" x2="8" y2="17"/>
-          <polyline points="10 9 9 9 8 9"/>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line
+            x1="16"
+            y1="13"
+            x2="8"
+            y2="13"
+          />
+          <line
+            x1="16"
+            y1="17"
+            x2="8"
+            y2="17"
+          />
+          <polyline points="10 9 9 9 8 9" />
         </svg>
         <span>Markdown Editor</span>
       </button>
@@ -173,20 +321,45 @@
         class="context-menu-item"
         @click="openWithEditor(tabContextMenu.tab!, 'preview')"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
         </svg>
         <span>Preview</span>
       </button>
 
       <!-- Save (if dirty) -->
-      <div v-if="tabContextMenu.tab?.dirty" class="context-menu-sep"></div>
-      <button v-if="tabContextMenu.tab?.dirty" class="context-menu-item" @click="saveTab(tabContextMenu.tab!)">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-          <polyline points="17,21 17,13 7,13 7,21"/>
-          <polyline points="7,3 7,8 15,8"/>
+      <div
+        v-if="tabContextMenu.tab?.dirty"
+        class="context-menu-sep"
+      />
+      <button
+        v-if="tabContextMenu.tab?.dirty"
+        class="context-menu-item"
+        @click="saveTab(tabContextMenu.tab!)"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+          <polyline points="17,21 17,13 7,13 7,21" />
+          <polyline points="7,3 7,8 15,8" />
         </svg>
         <span>Save</span>
         <span class="context-menu-shortcut">⌘S</span>
@@ -208,13 +381,13 @@ import CodeEditor from './filesystem/CodeEditor.vue';
 import type { FileEntry } from './filesystem/FileTreeSidebar.vue';
 
 interface TabState {
-  path: string;
-  name: string;
-  ext: string;
-  content: string;
-  loading: boolean;
-  error: string;
-  dirty: boolean;
+  path:        string;
+  name:        string;
+  ext:         string;
+  content:     string;
+  loading:     boolean;
+  error:       string;
+  dirty:       boolean;
   editorType?: 'code' | 'preview';
 }
 
@@ -241,7 +414,7 @@ const EXT_ICON_COLORS: Record<string, string> = {
  * Extensible: add new entries here to support more file types.
  */
 const editorRegistry: Record<string, Component> = {
-  code:      markRaw(CodeEditor),
+  code: markRaw(CodeEditor),
 };
 
 function resolveEditorType(_ext: string): string {
@@ -275,7 +448,7 @@ export default defineComponent({
     loadRootPath();
 
     const activeTab = computed(() => {
-      return openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === activeTabKey.value) || null;
+      return openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === activeTabKey.value) || null;
     });
 
     const activeEditorComponent = computed(() => {
@@ -307,8 +480,8 @@ export default defineComponent({
 
     async function onFileSelected(entry: FileEntry) {
       // Check if tab already open with same path and editorType
-      const key = `${entry.path}-${entry.editorType || 'code'}`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ entry.path }-${ entry.editorType || 'code' }`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
@@ -333,14 +506,14 @@ export default defineComponent({
     }
 
     function switchTab(tab: TabState) {
-      activeTabKey.value = `${tab.path}-${tab.editorType || 'code'}`;
+      activeTabKey.value = `${ tab.path }-${ tab.editorType || 'code' }`;
     }
 
     function closeTab(tab: TabState) {
       const index = openTabs.value.findIndex(t => t === tab);
       if (index === -1) return;
 
-      const wasActive = `${tab.path}-${tab.editorType || 'code'}` === activeTabKey.value;
+      const wasActive = `${ tab.path }-${ tab.editorType || 'code' }` === activeTabKey.value;
       openTabs.value.splice(index, 1);
 
       if (wasActive) {
@@ -349,7 +522,7 @@ export default defineComponent({
         } else {
           // Switch to the last tab
           const lastTab = openTabs.value[openTabs.value.length - 1];
-          activeTabKey.value = `${lastTab.path}-${lastTab.editorType || 'code'}`;
+          activeTabKey.value = `${ lastTab.path }-${ lastTab.editorType || 'code' }`;
         }
       }
     }
@@ -358,21 +531,21 @@ export default defineComponent({
 
     const tabContextMenu = ref<{
       visible: boolean;
-      x: number;
-      y: number;
-      tab: TabState | null;
+      x:       number;
+      y:       number;
+      tab:     TabState | null;
     }>({
       visible: false,
-      x: 0,
-      y: 0,
-      tab: null,
+      x:       0,
+      y:       0,
+      tab:     null,
     });
 
     function onTabContextMenu(event: MouseEvent, tab: TabState) {
       tabContextMenu.value = {
         visible: true,
-        x: event.clientX,
-        y: event.clientY,
+        x:       event.clientX,
+        y:       event.clientY,
         tab,
       };
     }
@@ -391,8 +564,8 @@ export default defineComponent({
 
     function openWithEditor(tab: TabState, editorType: 'code' | 'markdown' | 'preview') {
       // Check if tab with same path and editorType already exists
-      const key = `${tab.path}-${editorType}`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ tab.path }-${ editorType }`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         hideTabContextMenu();
@@ -408,7 +581,7 @@ export default defineComponent({
         loading:    true,
         error:      '',
         dirty:      false,
-        editorType: editorType,
+        editorType,
       });
 
       openTabs.value = [...openTabs.value, newTab];
@@ -436,7 +609,7 @@ export default defineComponent({
 
     async function saveActiveTab() {
       const tab = activeTab.value;
-      if (!tab || !tab.dirty) return;
+      if (!tab?.dirty) return;
 
       try {
         let content = tab.content;
@@ -742,7 +915,6 @@ export default defineComponent({
   background: var(--bg-surface-hover);
   cursor: not-allowed;
 }
-
 
 .breadcrumb-segment {
   white-space: nowrap;

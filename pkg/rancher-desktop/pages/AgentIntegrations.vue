@@ -1,8 +1,14 @@
 <template>
-  <div class="min-h-screen text-sm font-sans page-root" :class="{ dark: isDark }">
+  <div
+    class="min-h-screen text-sm font-sans page-root"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="AgentIntegrations" />
     <div class="flex min-h-screen flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+      <AgentHeader
+        :is-dark="isDark"
+        :toggle-theme="toggleTheme"
+      />
 
       <div class="flex w-full flex-col">
         <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
@@ -22,8 +28,12 @@
               <div class="relative">
                 <div class="flex flex-col gap-4">
                   <div class="relative">
-                    <svg aria-hidden="true" viewBox="0 0 20 20" class="pointer-events-none absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 fill-slate-400 dark:fill-slate-500">
-                      <path d="M16.293 17.707a1 1 0 0 0 1.414-1.414l-1.414 1.414ZM9 14a5 5 0 0 1-5-5H2a7 7 0 0 0 7 7v-2ZM4 9a5 5 0 0 1 5-5V2a7 7 0 0 0-7 7h2Zm5-5a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7v2Zm8.707 12.293-3.757-3.757-1.414 1.414 3.757 3.757 1.414-1.414ZM14 9a4.98 4.98 0 0 1-1.464 3.536l1.414 1.414A6.98 6.98 0 0 0 16 9h-2Zm-1.464 3.536A4.98 4.98 0 0 1 9 14v2a6.98 6.98 0 0 0 4.95-2.05l-1.414-1.414Z"></path>
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 20 20"
+                      class="pointer-events-none absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 fill-slate-400 dark:fill-slate-500"
+                    >
+                      <path d="M16.293 17.707a1 1 0 0 0 1.414-1.414l-1.414 1.414ZM9 14a5 5 0 0 1-5-5H2a7 7 0 0 0 7 7v-2ZM4 9a5 5 0 0 1 5-5V2a7 7 0 0 0-7 7h2Zm5-5a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7v2Zm8.707 12.293-3.757-3.757-1.414 1.414 3.757 3.757 1.414-1.414ZM14 9a4.98 4.98 0 0 1-1.464 3.536l1.414 1.414A6.98 6.98 0 0 0 16 9h-2Zm-1.464 3.536A4.98 4.98 0 0 1 9 14v2a6.98 6.98 0 0 0 4.95-2.05l-1.414-1.414Z" />
                     </svg>
 
                     <input
@@ -48,7 +58,9 @@
               <!-- Category Sidebar -->
               <nav class="hidden md:block w-48 shrink-0">
                 <div class="sticky top-6">
-                  <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Categories</h3>
+                  <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    Categories
+                  </h3>
                   <ul class="space-y-0.5">
                     <li>
                       <button
@@ -60,10 +72,16 @@
                         @click="activeCategory = null"
                       >
                         <span>Popular</span>
-                        <span class="text-xs tabular-nums" :class="activeCategory === null ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'">{{ popularCount }}</span>
+                        <span
+                          class="text-xs tabular-nums"
+                          :class="activeCategory === null ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
+                        >{{ popularCount }}</span>
                       </button>
                     </li>
-                    <li v-for="cat in categoriesWithCounts" :key="cat.name">
+                    <li
+                      v-for="cat in categoriesWithCounts"
+                      :key="cat.name"
+                    >
                       <button
                         type="button"
                         class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
@@ -73,7 +91,10 @@
                         @click="activeCategory = cat.name"
                       >
                         <span>{{ cat.name }}</span>
-                        <span class="text-xs tabular-nums" :class="activeCategory === cat.name ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'">{{ cat.count }}</span>
+                        <span
+                          class="text-xs tabular-nums"
+                          :class="activeCategory === cat.name ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
+                        >{{ cat.count }}</span>
                       </button>
                     </li>
                   </ul>
@@ -87,113 +108,143 @@
                   :value="activeCategory ?? ''"
                   @change="activeCategory = ($event.target as HTMLSelectElement).value || null"
                 >
-                  <option value="">Popular ({{ popularCount }})</option>
-                  <option v-for="cat in categoriesWithCounts" :key="cat.name" :value="cat.name">{{ cat.name }} ({{ cat.count }})</option>
+                  <option value="">
+                    Popular ({{ popularCount }})
+                  </option>
+                  <option
+                    v-for="cat in categoriesWithCounts"
+                    :key="cat.name"
+                    :value="cat.name"
+                  >
+                    {{ cat.name }} ({{ cat.count }})
+                  </option>
                 </select>
               </div>
 
               <!-- Integration Grid -->
               <div class="flex-1 min-w-0">
-              <div
-                v-if="categoryLoading"
-                class="flex h-40 items-center justify-center text-sm text-slate-400 dark:text-slate-500"
-              >
-                <svg class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                </svg>
-                Loading integrations…
-              </div>
-              <div
-                v-else-if="filteredIntegrations.length === 0"
-                class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:text-white/60"
-              >
-                No integrations found.
-              </div>
-
-              <div
-                v-else
-                class="grid md:grid-cols-2 xl:grid-cols-3 gap-6"
-              >
                 <div
-                  v-for="integration in filteredIntegrations"
-                  :key="integration.id"
-                  class="group relative overflow-hidden rounded-xl bg-white shadow-sm border border-gray-200 transition-all duration-200 hover:shadow-lg hover:border-gray-300 dark:bg-slate-800 dark:border-gray-700 dark:hover:border-gray-600"
+                  v-if="categoryLoading"
+                  class="flex h-40 items-center justify-center text-sm text-slate-400 dark:text-slate-500"
                 >
-                  <div class="p-6">
-                    <div class="flex items-start justify-between mb-4">
-                      <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700">
-                        <img
-                          v-if="isImageIcon(integration.icon) && safeIconSrc(integration.icon!)"
-                          :src="safeIconSrc(integration.icon!)"
-                          :alt="integration.name"
-                          class="h-8 w-8 object-contain"
-                        >
-                        <span v-else class="text-2xl">{{ isImageIcon(integration.icon) ? '🔌' : integration.icon }}</span>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <!-- Only show connection status for integrations that are not coming soon -->
-                        <div v-if="!integration.comingSoon" class="flex items-center gap-2">
+                  <svg
+                    class="animate-spin -ml-1 mr-2 h-4 w-4"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    />
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                    />
+                  </svg>
+                  Loading integrations…
+                </div>
+                <div
+                  v-else-if="filteredIntegrations.length === 0"
+                  class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:text-white/60"
+                >
+                  No integrations found.
+                </div>
+
+                <div
+                  v-else
+                  class="grid md:grid-cols-2 xl:grid-cols-3 gap-6"
+                >
+                  <div
+                    v-for="integration in filteredIntegrations"
+                    :key="integration.id"
+                    class="group relative overflow-hidden rounded-xl bg-white shadow-sm border border-gray-200 transition-all duration-200 hover:shadow-lg hover:border-gray-300 dark:bg-slate-800 dark:border-gray-700 dark:hover:border-gray-600"
+                  >
+                    <div class="p-6">
+                      <div class="flex items-start justify-between mb-4">
+                        <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700">
+                          <img
+                            v-if="isImageIcon(integration.icon) && safeIconSrc(integration.icon!)"
+                            :src="safeIconSrc(integration.icon!)"
+                            :alt="integration.name"
+                            class="h-8 w-8 object-contain"
+                          >
+                          <span
+                            v-else
+                            class="text-2xl"
+                          >{{ isImageIcon(integration.icon) ? '🔌' : integration.icon }}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <!-- Only show connection status for integrations that are not coming soon -->
                           <div
-                            class="h-2 w-2 rounded-full"
-                            :class="integration.connected ? 'bg-green-500' : 'bg-gray-300'"
-                          ></div>
-                          <span class="text-xs text-slate-500 dark:text-slate-400">
-                            {{ integration.connected ? 'Connected' : 'Disconnected' }}
-                          </span>
-                        </div>
-                        <!-- Beta/Coming Soon Badges -->
-                        <div class="flex gap-1 ml-2">
-                          <span
-                            v-if="integration.beta"
-                            class="inline-flex items-center rounded-full bg-blue-500 text-white text-xs px-2 py-0.5 font-medium"
+                            v-if="!integration.comingSoon"
+                            class="flex items-center gap-2"
                           >
-                            BETA
-                          </span>
-                          <span
-                            v-if="integration.comingSoon"
-                            class="inline-flex items-center rounded-full bg-gray-400 text-white text-xs px-2 py-0.5 font-medium"
-                          >
-                            COMING SOON
-                          </span>
+                            <div
+                              class="h-2 w-2 rounded-full"
+                              :class="integration.connected ? 'bg-green-500' : 'bg-gray-300'"
+                            />
+                            <span class="text-xs text-slate-500 dark:text-slate-400">
+                              {{ integration.connected ? 'Connected' : 'Disconnected' }}
+                            </span>
+                          </div>
+                          <!-- Beta/Coming Soon Badges -->
+                          <div class="flex gap-1 ml-2">
+                            <span
+                              v-if="integration.beta"
+                              class="inline-flex items-center rounded-full bg-blue-500 text-white text-xs px-2 py-0.5 font-medium"
+                            >
+                              BETA
+                            </span>
+                            <span
+                              v-if="integration.comingSoon"
+                              class="inline-flex items-center rounded-full bg-gray-400 text-white text-xs px-2 py-0.5 font-medium"
+                            >
+                              COMING SOON
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-2">
-                      {{ integration.name }}
-                    </h3>
-                    
-                    <p class="text-sm text-slate-600 dark:text-slate-300 mb-4 line-clamp-2">
-                      {{ integration.description }}
-                    </p>
+                      <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-2">
+                        {{ integration.name }}
+                      </h3>
 
-                    <div class="flex items-center justify-between">
-                      <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800 dark:bg-slate-700 dark:text-slate-200">
-                        {{ integration.category }}
-                      </span>
-                      
-                      <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                        <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
+                      <p class="text-sm text-slate-600 dark:text-slate-300 mb-4 line-clamp-2">
+                        {{ integration.description }}
+                      </p>
+
+                      <div class="flex items-center justify-between">
+                        <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800 dark:bg-slate-700 dark:text-slate-200">
+                          {{ integration.category }}
+                        </span>
+
+                        <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                          <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
+                        </div>
                       </div>
-                    </div>
-                    
-                    <div class="flex items-center justify-between mt-3">
-                      <router-link
-                        :to="`/Integrations/${integration.id}`"
-                        class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-                        :class="integration.comingSoon
-                          ? 'bg-gray-500 text-white hover:bg-gray-600'
-                          : integration.connected 
-                            ? 'bg-red-600 text-white hover:bg-red-700' 
-                            : 'bg-blue-600 text-white hover:bg-blue-700'"
-                      >
-                        {{ integration.comingSoon ? 'Read more' : (integration.connected ? 'Manage' : 'Connect now') }}
-                      </router-link>
+
+                      <div class="flex items-center justify-between mt-3">
+                        <router-link
+                          :to="`/Integrations/${integration.id}`"
+                          class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                          :class="integration.comingSoon
+                            ? 'bg-gray-500 text-white hover:bg-gray-600'
+                            : integration.connected
+                              ? 'bg-red-600 text-white hover:bg-red-700'
+                              : 'bg-blue-600 text-white hover:bg-blue-700'"
+                        >
+                          {{ integration.comingSoon ? 'Read more' : (integration.connected ? 'Manage' : 'Connect now') }}
+                        </router-link>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
               </div>
             </div>
           </div>
@@ -222,7 +273,7 @@ const integrationService = getIntegrationService();
 /** Safely resolve an integration icon path — returns null if the asset doesn't exist */
 function safeIconSrc(icon: string): string | null {
   try {
-    return require(`@pkg/assets/images/${icon}`);
+    return require(`@pkg/assets/images/${ icon }`);
   } catch {
     return null;
   }
@@ -290,7 +341,7 @@ const categoriesWithCounts = computed(() => {
   return allCategories
     .map(name => ({
       name,
-      count: counts.get(name) || 0,
+      count:      counts.get(name) || 0,
       popularity: popularityCounts.get(name) || 0,
     }))
     .sort((a, b) => {
@@ -311,7 +362,7 @@ const filteredIntegrations = computed(() => {
     .filter((integration) => {
       if (q) {
         // When searching, search across all categories
-        const hay = `${integration.name} ${integration.description} ${integration.category}`.toLowerCase();
+        const hay = `${ integration.name } ${ integration.description } ${ integration.category }`.toLowerCase();
         return hay.includes(q);
       }
 
@@ -332,29 +383,29 @@ const filteredIntegrations = computed(() => {
 
 // Map category display name → file slug for dynamic imports
 const categoryFileMap: Record<string, string> = {
-  'Communication': 'communication',
-  'Productivity': 'productivity',
+  Communication:        'communication',
+  Productivity:         'productivity',
   'Project Management': 'project_management',
-  'Developer Tools': 'developer_tools',
-  'CRM & Sales': 'crm_sales',
-  'Customer Support': 'customer_support',
-  'Marketing': 'marketing',
-  'Finance': 'finance',
-  'File Storage': 'file_storage',
-  'Social Media': 'social_media',
-  'E-Commerce': 'ecommerce',
-  'HR & Recruiting': 'hr_recruiting',
-  'Analytics': 'analytics',
-  'Automation': 'automation',
-  'Design': 'design',
-  'AI & ML': 'ai_ml',
-  'Database': 'database',
-  'AI Infrastructure': 'ai_infrastructure',
+  'Developer Tools':    'developer_tools',
+  'CRM & Sales':        'crm_sales',
+  'Customer Support':   'customer_support',
+  Marketing:            'marketing',
+  Finance:              'finance',
+  'File Storage':       'file_storage',
+  'Social Media':       'social_media',
+  'E-Commerce':         'ecommerce',
+  'HR & Recruiting':    'hr_recruiting',
+  Analytics:            'analytics',
+  Automation:           'automation',
+  Design:               'design',
+  'AI & ML':            'ai_ml',
+  Database:             'database',
+  'AI Infrastructure':  'ai_infrastructure',
 };
 
 /** Lazy-load a category's integrations (activepieces if enabled) */
 async function loadCategory(categoryName: string): Promise<Record<string, Integration>> {
-  const cacheKey = `${categoryName}:ap=${activepiecesEnabled.value}`;
+  const cacheKey = `${ categoryName }:ap=${ activepiecesEnabled.value }`;
   if (categoryCache.has(cacheKey)) {
     return categoryCache.get(cacheKey)!;
   }
@@ -366,7 +417,7 @@ async function loadCategory(categoryName: string): Promise<Record<string, Integr
 
   // Load native category file (always available — slack, github, AI providers, etc.)
   try {
-    const nativeMod = await import(`@pkg/agent/integrations/native/${slug}.ts`);
+    const nativeMod = await import(`@pkg/agent/integrations/native/${ slug }.ts`);
     const nativeEntries: Record<string, Integration> = Object.values(nativeMod)[0] as any || {};
     Object.assign(result, nativeEntries);
   } catch { /* no native file for this category */ }
@@ -374,7 +425,7 @@ async function loadCategory(categoryName: string): Promise<Record<string, Integr
   // Load activepieces-backed integrations only if AP extension is connected
   if (activepiecesEnabled.value) {
     try {
-      const apMod = await import(`@pkg/agent/integrations/activepieces/${slug}.ts`);
+      const apMod = await import(`@pkg/agent/integrations/activepieces/${ slug }.ts`);
       const apEntries: Record<string, Integration> = Object.values(apMod)[0] as any || {};
       Object.assign(result, apEntries);
     } catch { /* no activepieces file for this category */ }
@@ -419,7 +470,7 @@ async function loadCategoryView(categoryName: string) {
 /** Hydrate connection status from IntegrationService for all entries */
 async function hydrateConnectionStatus(entries: Record<string, Integration>) {
   const ids = Object.keys(entries);
-  const results = await Promise.all(ids.map(async (id) => {
+  const results = await Promise.all(ids.map(async(id) => {
     try {
       const connected = await integrationService.isAnyAccountConnected(id);
       return { id, connected };
@@ -433,7 +484,7 @@ async function hydrateConnectionStatus(entries: Record<string, Integration>) {
 }
 
 // Watch category changes → lazy-load or return to popular
-watch(activeCategory, async (newCategory) => {
+watch(activeCategory, async(newCategory) => {
   if (newCategory === null) {
     await loadPopularView();
   } else {
@@ -441,7 +492,7 @@ watch(activeCategory, async (newCategory) => {
   }
 });
 
-const connectIntegration = async (id: string) => {
+const connectIntegration = async(id: string) => {
   try {
     await integrationService.setConnectionStatus(id, true);
     const integration = mergedIntegrations.value[id];
@@ -457,7 +508,7 @@ const connectIntegration = async (id: string) => {
   }
 };
 
-const disconnectIntegration = async (id: string) => {
+const disconnectIntegration = async(id: string) => {
   try {
     await integrationService.setConnectionStatus(id, false);
     const integration = mergedIntegrations.value[id];
@@ -473,7 +524,7 @@ const disconnectIntegration = async (id: string) => {
   }
 };
 
-onMounted(async () => {
+onMounted(async() => {
   // Build stable sidebar counts from the full catalog
   buildCategoryCounts();
 

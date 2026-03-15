@@ -1,5 +1,8 @@
 <template>
-  <div ref="containerRef" class="code-editor-container"></div>
+  <div
+    ref="containerRef"
+    class="code-editor-container"
+  />
 </template>
 
 <script lang="ts">
@@ -77,11 +80,11 @@ const EXT_LANGUAGE_MAP: Record<string, string> = {
 };
 
 const FILENAME_LANGUAGE_MAP: Record<string, string> = {
-  'dockerfile':  'dockerfile',
-  'makefile':    'shell',
-  'justfile':    'shell',
-  'rakefile':    'ruby',
-  'gemfile':     'ruby',
+  dockerfile:      'dockerfile',
+  makefile:        'shell',
+  justfile:        'shell',
+  rakefile:        'ruby',
+  gemfile:         'ruby',
   '.editorconfig': 'ini',
 };
 
@@ -128,27 +131,27 @@ export default defineComponent({
         applyMonacoTheme(props.isDark);
 
         editor = monaco.editor.create(containerRef.value, {
-          value:       props.content || '',
+          value:                      props.content || '',
           language,
-          theme:       'sulla-custom',
-          readOnly:    props.readOnly,
-          automaticLayout: true,
-          minimap:     { enabled: true },
-          scrollBeyondLastLine: false,
-          fontSize:    13,
-          lineNumbers: 'on',
-          renderLineHighlight: 'line',
-          wordWrap:    'on',
-          padding:     { top: 8 },
+          theme:                      'sulla-custom',
+          readOnly:                   props.readOnly,
+          automaticLayout:            true,
+          minimap:                    { enabled: true },
+          scrollBeyondLastLine:       false,
+          fontSize:                   13,
+          lineNumbers:                'on',
+          renderLineHighlight:        'line',
+          wordWrap:                   'on',
+          padding:                    { top: 8 },
           // Disable features that require web workers
-          hover:       { enabled: false },
-          parameterHints: { enabled: false },
+          hover:                      { enabled: false },
+          parameterHints:             { enabled: false },
           // Disable language services that use workers
-          quickSuggestions: { other: false, comments: false, strings: false },
+          quickSuggestions:           { other: false, comments: false, strings: false },
           suggestOnTriggerCharacters: false,
-          acceptSuggestionOnEnter: 'off',
-          tabCompletion: 'off',
-          wordBasedSuggestions: 'off',
+          acceptSuggestionOnEnter:    'off',
+          tabCompletion:              'off',
+          wordBasedSuggestions:       'off',
         });
 
         // Check content immediately after creation and force render
@@ -158,14 +161,14 @@ export default defineComponent({
             if (model) {
               console.log('CodeEditor: After creation - model value length:', model.getValue().length);
               console.log('CodeEditor: After creation - model value preview:', model.getValue().substring(0, 100));
-              
+
               // Force Monaco to render the content
               editor.layout();
               const targetLine = props.line && props.line > 0 ? props.line : 1;
               editor.revealLineInCenter(targetLine);
               editor.setPosition({ lineNumber: targetLine, column: 1 });
               editor.focus();
-              
+
               // Force a content refresh
               setTimeout(() => {
                 if (editor) {
@@ -203,7 +206,7 @@ export default defineComponent({
           console.log('CodeEditor: Setting model value, current value length:', model.getValue().length);
           model.setValue(props.content || '');
           console.log('CodeEditor: Model value set, new length:', model.getValue().length);
-          
+
           // Force display update
           editor.layout();
           const targetLine = props.line && props.line > 0 ? props.line : 1;
@@ -272,7 +275,7 @@ export default defineComponent({
       const selection = editor.getSelection();
       if (selection) {
         editor.executeEdits('inject-variable', [{
-          range: selection,
+          range:            selection,
           text,
           forceMoveMarkers: true,
         }]);

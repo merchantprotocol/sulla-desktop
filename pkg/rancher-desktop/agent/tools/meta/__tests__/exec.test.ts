@@ -22,7 +22,7 @@ describe('exec security guardrails', () => {
     runCommandMock.mockReset();
   });
 
-  it('allows benign format usages in flags and JSON headers', async () => {
+  it('allows benign format usages in flags and JSON headers', async() => {
     const { ExecWorker } = await loadExecModule();
     const worker = new ExecWorker() as any;
 
@@ -31,7 +31,7 @@ describe('exec security guardrails', () => {
     expect(worker.getForbiddenPattern('curl --data "{\"format\":\"json\"}" https://example.com')).toBeNull();
   });
 
-  it('blocks true dangerous formatting commands', async () => {
+  it('blocks true dangerous formatting commands', async() => {
     const { ExecWorker } = await loadExecModule();
     const worker = new ExecWorker() as any;
 
@@ -40,13 +40,13 @@ describe('exec security guardrails', () => {
     expect(worker.getForbiddenPattern('cmd /c format.com D:')).not.toBeNull();
   });
 
-  it('reproduces lima instance-missing failure when exec is invoked with real-style command payload', async () => {
+  it('reproduces lima instance-missing failure when exec is invoked with real-style command payload', async() => {
     const { ExecWorker, execRegistration } = await loadExecModule();
 
     runCommandMock.mockResolvedValueOnce({
       exitCode: 1,
-      stdout: '',
-      stderr: 'time="2026-02-19T19:59:03-08:00" level=fatal msg="instance \\\"0\\\" does not exist, run `limactl create 0` to create a new instance"\n',
+      stdout:   '',
+      stderr:   'time="2026-02-19T19:59:03-08:00" level=fatal msg="instance \\\"0\\\" does not exist, run `limactl create 0` to create a new instance"\n',
     });
 
     const worker = configureWorker(new ExecWorker(), execRegistration);
@@ -63,13 +63,13 @@ describe('exec security guardrails', () => {
     expect(result.result as string).toContain('instance \\\"0\\\" does not exist');
   });
 
-  it('accepts cmd alias and forwards it to runCommand', async () => {
+  it('accepts cmd alias and forwards it to runCommand', async() => {
     const { ExecWorker, execRegistration } = await loadExecModule();
 
     runCommandMock.mockResolvedValueOnce({
       exitCode: 0,
-      stdout: 'ok',
-      stderr: '',
+      stdout:   'ok',
+      stderr:   '',
     });
 
     const worker = configureWorker(new ExecWorker(), execRegistration);
@@ -84,7 +84,7 @@ describe('exec security guardrails', () => {
     expect(result.result).toBe('ok');
   });
 
-  it('returns a clear error when neither command nor cmd is provided', async () => {
+  it('returns a clear error when neither command nor cmd is provided', async() => {
     const { ExecWorker, execRegistration } = await loadExecModule();
     const worker = configureWorker(new ExecWorker(), execRegistration);
 

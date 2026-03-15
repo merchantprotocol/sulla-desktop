@@ -14,7 +14,7 @@ import { up as up_0017, down as down_0017 } from './0017_create_workflow_checkpo
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
-  { name: '0002_create_agent_awareness_table',      up: up_0002, down: down_0002 },
+  { name: '0002_create_agent_awareness_table', up: up_0002, down: down_0002 },
   { name: '0008_create_calendar_events_table', up: up_0008, down: down_0008 },
   { name: '0009_add_status_to_calendar_events', up: up_0009, down: down_0009 },
   { name: '0010_create_sections_and_categories_tables', up: up_0010, down: down_0010 },

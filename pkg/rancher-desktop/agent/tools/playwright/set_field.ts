@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { resolveBridge, isBridgeResolved } from "./resolve_bridge";
+import { BaseTool, ToolResponse } from '../base';
+import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
  * Set Field Tool - Sets the value of a form field on a website asset.
  */
 export class SetFieldWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { handle, value } = input;
@@ -18,20 +18,19 @@ export class SetFieldWorker extends BaseTool {
       if (success) {
         return {
           successBoolean: true,
-          responseString: `[${result.assetId}] Successfully set field ${handle} to "${value}"`,
+          responseString: `[${ result.assetId }] Successfully set field ${ handle } to "${ value }"`,
         };
       }
 
       return {
         successBoolean: false,
-        responseString: `[${result.assetId}] Field not found: ${handle}. Use get_page_snapshot to see available form fields.`,
+        responseString: `[${ result.assetId }] Field not found: ${ handle }. Use get_page_snapshot to see available form fields.`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error setting field value: ${(error as Error).message}`,
+        responseString: `Error setting field value: ${ (error as Error).message }`,
       };
     }
   }
 }
-

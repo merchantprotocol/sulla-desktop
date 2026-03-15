@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { postgresClient } from "../../database/PostgresClient";
+import { BaseTool, ToolResponse } from '../base';
+import { postgresClient } from '../../database/PostgresClient';
 
 /**
  * Pg Execute Tool - Worker class for execution
  */
 export class PgExecuteWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const sql = String(input.sql ?? input.query ?? input.statement ?? '').trim();
     const params = Array.isArray(input.params) ? input.params : [];
@@ -23,19 +23,19 @@ export class PgExecuteWorker extends BaseTool {
       const rowsJson = JSON.stringify(res.rows ?? [], null, 2);
 
       const responseString = `PostgreSQL Execution Result:
-Command: ${res.command}
-Rows Affected: ${res.rowCount}
-Rows: ${rowsJson}
-OID: ${res.oid || 'N/A'}`;
+Command: ${ res.command }
+Rows Affected: ${ res.rowCount }
+Rows: ${ rowsJson }
+OID: ${ res.oid || 'N/A' }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing PostgreSQL statement: ${(error as Error).message}`
+        responseString: `Error executing PostgreSQL statement: ${ (error as Error).message }`,
       };
     }
   }

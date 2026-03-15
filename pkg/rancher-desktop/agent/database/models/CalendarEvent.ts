@@ -5,18 +5,18 @@ import { BaseModel } from '../BaseModel';
 export type CalendarEventStatus = 'active' | 'cancelled' | 'completed';
 
 export interface CalendarEventAttributes {
-  id?: number;
-  title: string;
-  start_time: string;           // ISO string
-  end_time: string;             // ISO string
+  id?:          number;
+  title:        string;
+  start_time:   string;           // ISO string
+  end_time:     string;             // ISO string
   description?: string;
-  location?: string;
-  people?: string[];
+  location?:    string;
+  people?:      string[];
   calendar_id?: string;
-  all_day?: boolean;
-  status?: 'active' | 'cancelled' | 'completed';
-  created_at?: string;
-  updated_at?: string;
+  all_day?:     boolean;
+  status?:      'active' | 'cancelled' | 'completed';
+  created_at?:  string;
+  updated_at?:  string;
 }
 
 export class CalendarEvent extends BaseModel<CalendarEventAttributes> {
@@ -31,16 +31,17 @@ export class CalendarEvent extends BaseModel<CalendarEventAttributes> {
     'people',
     'calendar_id',
     'all_day',
-    'status'
+    'status',
   ];
+
   protected guarded = ['id', 'created_at', 'updated_at'];
   protected casts = {
     start_time: 'string',
-    end_time: 'string',
+    end_time:   'string',
     created_at: 'string',
     updated_at: 'string',
-    all_day: 'boolean',
-    people: 'array'
+    all_day:    'boolean',
+    people:     'array',
   };
 
   // Static helpers
@@ -50,48 +51,48 @@ export class CalendarEvent extends BaseModel<CalendarEventAttributes> {
 
   static async findUpcoming(
     limit = 10,
-    startAfter: string = new Date().toISOString()
+    startAfter: string = new Date().toISOString(),
   ): Promise<CalendarEvent[]> {
     return this.where(
       'start_time >= $1',
-      [startAfter]
+      [startAfter],
     ).then(results => results.slice(0, limit));
   }
 
   static async findByCalendar(
     calendarId: string,
-    limit = 20
+    limit = 20,
   ): Promise<CalendarEvent[]> {
     return this.where({ calendar_id: calendarId }, null).then(results =>
-      results.slice(0, limit)
+      results.slice(0, limit),
     );
   }
 
   static async findWithFilters(options: {
     startAfter?: string;
-    endBefore?: string;
+    endBefore?:  string;
     calendarId?: string;
   }): Promise<CalendarEvent[]> {
     const conditions: string[] = [];
     const params: any[] = [];
 
     if (options.startAfter) {
-      conditions.push(`start_time >= $${params.length + 1}`);
+      conditions.push(`start_time >= $${ params.length + 1 }`);
       params.push(options.startAfter);
     }
 
     if (options.endBefore) {
-      conditions.push(`end_time <= $${params.length + 1}`);
+      conditions.push(`end_time <= $${ params.length + 1 }`);
       params.push(options.endBefore);
     }
 
     if (options.calendarId) {
-      conditions.push(`calendar_id = $${params.length + 1}`);
+      conditions.push(`calendar_id = $${ params.length + 1 }`);
       params.push(options.calendarId);
     }
 
     const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
-    
+
     return this.where(whereClause, params.length > 0 ? params : []);
   }
 
@@ -116,21 +117,21 @@ export class CalendarEvent extends BaseModel<CalendarEventAttributes> {
   async save(): Promise<this> {
     const isNew = !this.exists;
     const eventId = this.attributes.id || 'new';
-    
-    console.log(`[CalendarEvent] ${isNew ? 'Creating' : 'Updating'} calendar event:`, {
-      id: eventId,
+
+    console.log(`[CalendarEvent] ${ isNew ? 'Creating' : 'Updating' } calendar event:`, {
+      id:    eventId,
       title: this.attributes.title,
       start: this.attributes.start_time,
-      end: this.attributes.end_time
+      end:   this.attributes.end_time,
     });
 
     const result = await super.save();
 
-    console.log(`[CalendarEvent] Successfully ${isNew ? 'created' : 'updated'} calendar event:`, {
-      id: this.attributes.id,
+    console.log(`[CalendarEvent] Successfully ${ isNew ? 'created' : 'updated' } calendar event:`, {
+      id:    this.attributes.id,
       title: this.attributes.title,
       start: this.attributes.start_time,
-      end: this.attributes.end_time
+      end:   this.attributes.end_time,
     });
 
     return result;

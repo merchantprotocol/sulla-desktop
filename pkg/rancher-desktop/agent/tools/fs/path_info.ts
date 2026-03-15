@@ -4,8 +4,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { resolveFsPath } from './path_utils';
 
 export class FsPathInfoWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const targetPath = resolveFsPath(input.path);
@@ -13,12 +13,12 @@ export class FsPathInfoWorker extends BaseTool {
     try {
       const stats = fs.statSync(targetPath);
       const payload = {
-        path: targetPath,
+        path:   targetPath,
         exists: true,
-        type: stats.isDirectory() ? 'directory' : stats.isFile() ? 'file' : 'other',
-        size: stats.size,
-        mtime: stats.mtime.toISOString(),
-        ctime: stats.ctime.toISOString(),
+        type:   stats.isDirectory() ? 'directory' : stats.isFile() ? 'file' : 'other',
+        size:   stats.size,
+        mtime:  stats.mtime.toISOString(),
+        ctime:  stats.ctime.toISOString(),
       };
 
       return {
@@ -35,9 +35,8 @@ export class FsPathInfoWorker extends BaseTool {
 
       return {
         successBoolean: false,
-        responseString: `Failed to stat path "${targetPath}": ${error.message}`,
+        responseString: `Failed to stat path "${ targetPath }": ${ error.message }`,
       };
     }
   }
 }
-

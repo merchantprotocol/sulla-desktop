@@ -2,7 +2,7 @@ export type AbortCallback = () => void | Promise<void>;
 
 export class AbortService {
   private controller: AbortController;
-  private callbacks: AbortCallback[] = [];
+  private callbacks:  AbortCallback[] = [];
 
   constructor() {
     this.controller = new AbortController();
@@ -62,8 +62,8 @@ export class AbortService {
    * Pause the current graph run and signal that we're waiting for user input.
    * Use this when the agent has completed a cycle and wants to stop.
    */
-  pauseForUserInput(reason: string = 'Cycle complete - waiting for user input'): void {
-    console.log(`[AbortService] Pausing for user: ${reason}`);
+  pauseForUserInput(reason = 'Cycle complete - waiting for user input'): void {
+    console.log(`[AbortService] Pausing for user: ${ reason }`);
     this.abort();
   }
 }
@@ -71,14 +71,14 @@ export class AbortService {
 /**
  * Portable function to check abort signal and throw AbortError if triggered.
  * Use this to immediately stop execution when abort is detected.
- * 
+ *
  * @param stateOrSignal State object (with metadata.options.abort) or AbortSignal to check
  * @param message Optional error message
  * @throws AbortError if signal was aborted
  */
 export function throwIfAborted(stateOrSignal?: any | AbortSignal, message?: string): void {
   let signal: AbortSignal | undefined;
-  
+
   // If it's a state object, extract the abort signal from options.abort
   if (stateOrSignal && typeof stateOrSignal === 'object' && stateOrSignal.metadata) {
     const abort = stateOrSignal.metadata?.options?.abort;
@@ -87,7 +87,7 @@ export function throwIfAborted(stateOrSignal?: any | AbortSignal, message?: stri
     // Assume it's already an AbortSignal
     signal = stateOrSignal;
   }
-  
+
   if (signal?.aborted) {
     throw new DOMException(message || 'Operation aborted', 'AbortError');
   }

@@ -107,8 +107,8 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 
 export default defineComponent({
-  name:   'kubernetes-error-dialog',
-  layout: 'dialog',
+  name:       'kubernetes-error-dialog',
+  layout:     'dialog',
   components: { PostHogTracker },
   data() {
     return {
@@ -142,7 +142,7 @@ export default defineComponent({
       switch (this.reportStatus) {
       case 'sending': return 'Sending...';
       case 'success': return 'Sent!';
-      default:        return 'Send Report';
+      default: return 'Send Report';
       }
     },
   },

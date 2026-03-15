@@ -5,20 +5,20 @@ import yaml from 'js-yaml';
 export type SkillSource = 'database' | 'filesystem';
 
 export interface SkillManifest {
-  schemaversion?: number;
-  slug: string;
-  title: string;
-  section?: string;
-  category?: string;
-  tags?: string[];
-  order?: number | string;
-  locked?: boolean;
-  author?: string;
-  created_at?: string;
-  updated_at?: string;
-  mentions?: string[];
+  schemaversion?:    number;
+  slug:              string;
+  title:             string;
+  section?:          string;
+  category?:         string;
+  tags?:             string[];
+  order?:            number | string;
+  locked?:           boolean;
+  author?:           string;
+  created_at?:       string;
+  updated_at?:       string;
+  mentions?:         string[];
   related_entities?: string[];
-  [key: string]: unknown;
+  [key: string]:     unknown;
 }
 
 export interface SkillResource {
@@ -27,33 +27,33 @@ export interface SkillResource {
 }
 
 export interface SkillSchema {
-  source: SkillSource;
-  manifest: SkillManifest;
-  slug: string;
-  name: string;
-  triggers: string[];
+  source:      SkillSource;
+  manifest:    SkillManifest;
+  slug:        string;
+  name:        string;
+  triggers:    string[];
   description: string;
-  resources: SkillResource[];
-  templates: string[];
-  scripts: string[];
-  document: string;
+  resources:   SkillResource[];
+  templates:   string[];
+  scripts:     string[];
+  document:    string;
 }
 
 export interface SkillSummarySchema {
-  slug: string;
-  name: string;
-  triggers: string[];
+  slug:        string;
+  name:        string;
+  triggers:    string[];
   description: string;
 }
 
 export interface SkillLoadedResource {
-  type: string;
-  path: string;
+  type:    string;
+  path:    string;
   content: string;
 }
 
 export class SkillService {
-  readonly source: SkillSource;
+  readonly source:   SkillSource;
   readonly manifest: SkillManifest;
   readonly document: string;
 
@@ -75,7 +75,7 @@ export class SkillService {
 
     return new SkillService(source, {
       ...manifest,
-      slug: normalizedSlug,
+      slug:  normalizedSlug,
       title: normalizedTitle,
     }, parsed.document);
   }
@@ -108,7 +108,7 @@ export class SkillService {
     const lines = this.document.split(/\r?\n/);
 
     for (const line of lines) {
-      const m = line.match(/^\s*[-*]\s*(Template|Script|Doc|Config)\s*:\s*`?([^`\n]+)`?\s*$/i);
+      const m = /^\s*[-*]\s*(Template|Script|Doc|Config)\s*:\s*`?([^`\n]+)`?\s*$/i.exec(line);
       if (!m) continue;
 
       const typeLabel = m[1].toLowerCase();
@@ -135,7 +135,7 @@ export class SkillService {
     const out = new Set<string>();
     const doc = this.document;
 
-    const explicit = doc.match(/\*\*Triggers?\*\*\s*:\s*(.+)/i) || doc.match(/(?:^|\n)\s*Triggers?\s*:\s*(.+)/i);
+    const explicit = (/\*\*Triggers?\*\*\s*:\s*(.+)/i.exec(doc)) || (/(?:^|\n)\s*Triggers?\s*:\s*(.+)/i.exec(doc));
     if (explicit?.[1]) {
       this.splitTriggerCandidates(explicit[1]).forEach(t => out.add(t));
     }
@@ -178,16 +178,16 @@ export class SkillService {
       if (firstParagraph) return firstParagraph;
     }
 
-    const goalMatch = this.document.match(/\*\*Goal\*\*\s*:\s*(.+)/i);
+    const goalMatch = /\*\*Goal\*\*\s*:\s*(.+)/i.exec(this.document);
     if (goalMatch?.[1]) return goalMatch[1].trim();
 
     const lines = this.document.split(/\r?\n/)
       .map(l => l.trim())
       .filter(Boolean)
-      .filter(l => !l.startsWith('#')
-        && !/^\*\*Triggers?\*\*/i.test(l)
-        && !/^\*\*Goal\*\*/i.test(l)
-        && !/^\*\*Status\*\*/i.test(l));
+      .filter(l => !l.startsWith('#') &&
+        !/^\*\*Triggers?\*\*/i.test(l) &&
+        !/^\*\*Goal\*\*/i.test(l) &&
+        !/^\*\*Status\*\*/i.test(l));
 
     return lines[0] || this.name;
   }
@@ -198,38 +198,38 @@ export class SkillService {
 
   getSchema(): SkillSchema {
     return {
-      source: this.source,
-      manifest: this.manifest,
-      slug: this.slug,
-      name: this.name,
-      triggers: this.triggers,
+      source:      this.source,
+      manifest:    this.manifest,
+      slug:        this.slug,
+      name:        this.name,
+      triggers:    this.triggers,
       description: this.description,
-      resources: this.resources,
-      templates: this.templates,
-      scripts: this.scripts,
-      document: this.document,
+      resources:   this.resources,
+      templates:   this.templates,
+      scripts:     this.scripts,
+      document:    this.document,
     };
   }
 
   getSummarySchema(): SkillSummarySchema {
     return {
-      slug: this.slug,
-      name: this.name,
-      triggers: this.triggers,
+      slug:        this.slug,
+      name:        this.name,
+      triggers:    this.triggers,
       description: this.description,
     };
   }
 
   getManifestAssistantMessage(): string {
     const resourceLines = this.resources.length > 0
-      ? this.resources.map((resource) => `- ${resource.type}: ${resource.path}`).join('\n')
+      ? this.resources.map((resource) => `- ${ resource.type }: ${ resource.path }`).join('\n')
       : '- none';
 
     return [
-      `${this.name}`,
-      `slug: ${this.slug}`,
-      `trigger: ${this.triggers.join(' | ') || 'none'}`,
-      `description: ${this.description}`,
+      `${ this.name }`,
+      `slug: ${ this.slug }`,
+      `trigger: ${ this.triggers.join(' | ') || 'none' }`,
+      `description: ${ this.description }`,
       'resources:',
       resourceLines,
     ].join('\n');
@@ -263,7 +263,7 @@ export class SkillService {
     const dedupeKey = (resource: SkillLoadedResource): string => {
       const type = String(resource.type || '').toLowerCase();
       const resourcePath = String(resource.path || '').trim();
-      return `${type}:${resourcePath}`;
+      return `${ type }:${ resourcePath }`;
     };
 
     const seen = new Set<string>(loaded.map(dedupeKey));
@@ -281,8 +281,8 @@ export class SkillService {
     const templateResources = this.resources.filter((resource) => String(resource.type || '').toLowerCase() === 'template');
     if (templateResources.length === 0) return '';
 
-    const prdResource = templateResources.find((resource) => /(^|\/)prd\.[^/]+$/i.test(String(resource.path || '').trim()))
-      || templateResources[0];
+    const prdResource = templateResources.find((resource) => /(^|\/)prd\.[^/]+$/i.test(String(resource.path || '').trim())) ||
+      templateResources[0];
     if (!prdResource) return '';
 
     const candidates = this.resolveResourcePaths(prdResource.path);
@@ -300,7 +300,7 @@ export class SkillService {
 
   private static parseSkillDocument(rawContent: string): { manifest: SkillManifest; document: string } | null {
     const raw = String(rawContent || '');
-    const fmMatch = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
+    const fmMatch = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/.exec(raw);
     if (!fmMatch) return null;
 
     try {
@@ -317,11 +317,11 @@ export class SkillService {
   }
 
   private extractResourcesYamlBlock(document: string): SkillResource[] {
-    const match = document.match(/```yaml\s*\n([\s\S]*?)\n```/i);
+    const match = /```yaml\s*\n([\s\S]*?)\n```/i.exec(document);
     if (!match?.[1]) return [];
 
     try {
-      const parsed = yaml.load(match[1]) as { resources?: Array<{ type?: string; path?: string }> };
+      const parsed = yaml.load(match[1]) as { resources?: { type?: string; path?: string }[] };
       const resources = Array.isArray(parsed?.resources) ? parsed.resources : [];
 
       return resources
@@ -359,7 +359,7 @@ export class SkillService {
 
     const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const sectionRegex = new RegExp(
-      `(?:^|\\n)##\\s+${escapedHeading}\\s*\\n([\\s\\S]*?)(?=\\n##\\s+|$)`,
+      `(?:^|\\n)##\\s+${ escapedHeading }\\s*\\n([\\s\\S]*?)(?=\\n##\\s+|$)`,
       'i',
     );
     const match = this.document.match(sectionRegex);
@@ -479,7 +479,7 @@ export class SkillService {
       : null;
     if (byExpectedName) return byExpectedName;
 
-    const firstConstMatch = raw.match(/export\s+const\s+[a-zA-Z_$][\w$]*\s*=\s*(`(?:[^`\\]|\\[\s\S])*`|"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*')\s*;?/m);
+    const firstConstMatch = /export\s+const\s+[a-zA-Z_$][\w$]*\s*=\s*(`(?:[^`\\]|\\[\s\S])*`|"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*')\s*;?/m.exec(raw);
     if (!firstConstMatch?.[1]) return null;
 
     return this.unwrapLiteral(firstConstMatch[1]);
@@ -488,11 +488,11 @@ export class SkillService {
   private extractConstAssignmentLiteral(source: string, constName: string): string | null {
     const escapedConstName = constName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(
-      `export\\s+const\\s+${escapedConstName}\\s*=\\s*(`
-        + '(?:[^`\\\\]|\\\\[\\s\\S])*`|'
-        + '"(?:[^"\\\\]|\\\\[\\s\\S])*"|'
-        + "'(?:[^'\\\\]|\\\\[\\s\\S])*'"
-        + ')\\s*;?',
+      `export\\s+const\\s+${ escapedConstName }\\s*=\\s*(` +
+        '(?:[^`\\\\]|\\\\[\\s\\S])*`|' +
+        '"(?:[^"\\\\]|\\\\[\\s\\S])*"|' +
+        "'(?:[^'\\\\]|\\\\[\\s\\S])*'" +
+        ')\\s*;?',
       'm',
     );
 
@@ -511,7 +511,7 @@ export class SkillService {
 
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       try {
-        return JSON.parse(value.startsWith("'") ? `"${value.slice(1, -1).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : value);
+        return JSON.parse(value.startsWith("'") ? `"${ value.slice(1, -1).replace(/\\/g, '\\\\').replace(/"/g, '\\"') }"` : value);
       } catch {
         return value.slice(1, -1);
       }

@@ -11,7 +11,7 @@ const WS_CHANNEL = 'tasker';
 
 export class ChatCompletionsServer {
   private app = express();
-  private server: any = null;
+  private server:            any = null;
   private readonly wsService = getWebSocketClientService();
   private taskerUnsubscribe: (() => void) | null = null;
 
@@ -46,11 +46,11 @@ export class ChatCompletionsServer {
     try {
       const responseText = await this.processUserInputDirect([
         {
-          id: nextMessageId(),
-          role: 'user',
+          id:        nextMessageId(),
+          role:      'user',
           content,
           timestamp: Date.now(),
-          metadata: { source: 'tasker', origin: metadata?.origin || 'unknown' },
+          metadata:  { source: 'tasker', origin: metadata?.origin || 'unknown' },
         },
       ]);
 
@@ -61,16 +61,16 @@ export class ChatCompletionsServer {
       await this.wsService.send(WS_CHANNEL, {
         type: 'assistant_message',
         data: {
-          role: 'assistant',
-          content: responseText,
+          role:     'assistant',
+          content:  responseText,
           metadata: {
-            origin: 'tasker_router',
-            replyToId: msg.id,
-            requestOrigin: metadata?.origin,
+            origin:           'tasker_router',
+            replyToId:        msg.id,
+            requestOrigin:    metadata?.origin,
             requestEventType: metadata?.eventType,
-            slackChannel: metadata?.channel,
-            slackThreadTs: metadata?.threadTs,
-            slackUser: metadata?.user,
+            slackChannel:     metadata?.channel,
+            slackThreadTs:    metadata?.threadTs,
+            slackUser:        metadata?.user,
           },
         },
         channel: WS_CHANNEL,
@@ -86,20 +86,20 @@ export class ChatCompletionsServer {
     const metadata = payload?.metadata;
 
     console.log('[ChatCompletionsAPI] Tasker listener received message', {
-      type: msg.type,
-      id: msg.id,
-      channel: msg.channel,
-      contentPreview: content.slice(0, 80),
-      metadataOrigin: metadata?.origin,
+      type:              msg.type,
+      id:                msg.id,
+      channel:           msg.channel,
+      contentPreview:    content.slice(0, 80),
+      metadataOrigin:    metadata?.origin,
       metadataEventType: metadata?.eventType,
     });
 
     if (msg.type === 'user_message' && metadata?.origin === 'slack' && metadata?.eventType === 'app_mention') {
       console.log('[ChatCompletionsAPI] Tasker listener received Slack app_mention trigger', {
-        id: msg.id,
-        slackChannel: metadata?.channel,
+        id:            msg.id,
+        slackChannel:  metadata?.channel,
         slackThreadTs: metadata?.threadTs,
-        slackUser: metadata?.user,
+        slackUser:     metadata?.user,
       });
     }
   }
@@ -110,8 +110,8 @@ export class ChatCompletionsServer {
   private setupMiddleware() {
     // Enable CORS for all origins (since this is a public API)
     this.app.use(cors({
-      origin: true, // Allow all origins
-      credentials: true
+      origin:      true, // Allow all origins
+      credentials: true,
     }));
 
     // Parse JSON bodies
@@ -119,7 +119,7 @@ export class ChatCompletionsServer {
 
     // Add request logging
     this.app.use((req: Request, res: Response, next: NextFunction) => {
-      console.log(`[ChatCompletionsAPI] ${req.method} ${req.path}`);
+      console.log(`[ChatCompletionsAPI] ${ req.method } ${ req.path }`);
       next();
     });
   }
@@ -134,39 +134,39 @@ export class ChatCompletionsServer {
     });
 
     // OpenAI-compatible models endpoint
-    this.app.get('/v1/models', async (req: Request, res: Response) => {
+    this.app.get('/v1/models', async(req: Request, res: Response) => {
       await this.handleModels(req, res);
     });
 
     // OpenAI-compatible chat completions endpoint
-    this.app.post('/v1/chat/completions', async (req: Request, res: Response) => {
+    this.app.post('/v1/chat/completions', async(req: Request, res: Response) => {
       await this.handleChatCompletions(req, res);
     });
 
     // OpenAI-compatible completions endpoint
-    this.app.post('/v1/completions', async (req: Request, res: Response) => {
+    this.app.post('/v1/completions', async(req: Request, res: Response) => {
       await this.handleCompletions(req, res);
     });
 
     // OpenAI-compatible embeddings endpoint
-    this.app.post('/v1/embeddings', async (req: Request, res: Response) => {
+    this.app.post('/v1/embeddings', async(req: Request, res: Response) => {
       await this.handleEmbeddings(req, res);
     });
 
     // OpenAI-compatible moderations endpoint
-    this.app.post('/v1/moderations', async (req: Request, res: Response) => {
+    this.app.post('/v1/moderations', async(req: Request, res: Response) => {
       await this.handleModerations(req, res);
     });
 
     // ── Integration API endpoints ────────────────────────────────────
 
     // List all integrations and their endpoints
-    this.app.get('/v1/integrations', async (req: Request, res: Response) => {
+    this.app.get('/v1/integrations', async(req: Request, res: Response) => {
       await this.handleListIntegrations(req, res);
     });
 
     // Call an integration endpoint with specific account credentials
-    this.app.post('/v1/integrations/:accountId/:slug/:endpoint/call', async (req: Request, res: Response) => {
+    this.app.post('/v1/integrations/:accountId/:slug/:endpoint/call', async(req: Request, res: Response) => {
       await this.handleIntegrationCall(req, res);
     });
 
@@ -174,9 +174,9 @@ export class ChatCompletionsServer {
     this.app.use((req: Request, res: Response) => {
       res.status(404).json({
         error: {
-          message: `Endpoint ${req.method} ${req.path} not found`,
-          type: 'invalid_request_error'
-        }
+          message: `Endpoint ${ req.method } ${ req.path } not found`,
+          type:    'invalid_request_error',
+        },
       });
     });
   }
@@ -195,8 +195,8 @@ export class ChatCompletionsServer {
         return res.status(400).json({
           error: {
             message: 'messages array is required',
-            type: 'invalid_request_error'
-          }
+            type:    'invalid_request_error',
+          },
         });
       }
 
@@ -208,8 +208,8 @@ export class ChatCompletionsServer {
         return res.status(400).json({
           error: {
             message: 'Streaming is not yet implemented',
-            type: 'not_implemented'
-          }
+            type:    'not_implemented',
+          },
         });
       }
 
@@ -218,7 +218,7 @@ export class ChatCompletionsServer {
         ? lastMessage.content
         : JSON.stringify(lastMessage.content);
 
-      console.log(`[ChatCompletionsAPI] Processing message: ${userText.substring(0, 100)}...`);
+      console.log(`[ChatCompletionsAPI] Processing message: ${ userText.substring(0, 100) }...`);
 
       // Process the user input directly — model param is the agent ID
       const resolvedThreadId = thread_id || nextThreadId();
@@ -226,37 +226,36 @@ export class ChatCompletionsServer {
 
       // Return the response in OpenAI format
       const response = {
-        id: `chatcmpl-${Date.now()}`,
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model: model,
+        id:        `chatcmpl-${ Date.now() }`,
+        object:    'chat.completion',
+        created:   Math.floor(Date.now() / 1000),
+        model,
         thread_id: resolvedThreadId,
-        choices: [{
-          index: 0,
+        choices:   [{
+          index:   0,
           message: {
-            role: 'assistant',
-            content: responseContent
+            role:    'assistant',
+            content: responseContent,
           },
-          finish_reason: 'stop'
+          finish_reason: 'stop',
         }],
         usage: {
-          prompt_tokens: Math.ceil(userText.length / 4), // Rough estimate
+          prompt_tokens:     Math.ceil(userText.length / 4), // Rough estimate
           completion_tokens: Math.ceil(responseContent.length / 4), // Rough estimate
-          total_tokens: Math.ceil(userText.length / 4) + Math.ceil(responseContent.length / 4)
-        }
+          total_tokens:      Math.ceil(userText.length / 4) + Math.ceil(responseContent.length / 4),
+        },
       };
 
-      console.log(`[ChatCompletionsAPI] Response sent (thread=${resolvedThreadId})`);
+      console.log(`[ChatCompletionsAPI] Response sent (thread=${ resolvedThreadId })`);
 
       res.json(response);
-
     } catch (error) {
       console.error('[ChatCompletionsAPI] Error handling chat completion:', error);
       res.status(500).json({
         error: {
           message: 'Internal server error',
-          type: 'internal_error'
-        }
+          type:    'internal_error',
+        },
       });
     }
   }
@@ -271,7 +270,7 @@ export class ChatCompletionsServer {
     // Get or create persistent AgentGraph for this thread
     const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId, {
       userVisibleBrowser: false,
-      isTrustedUser: 'untrusted',
+      isTrustedUser:      'untrusted',
     });
 
     try {
@@ -280,11 +279,11 @@ export class ChatCompletionsServer {
       // Append new user messages
       for (const msg of messages) {
         state.messages.push({
-          id: msg.id || nextMessageId(),
-          role: msg.role || 'user',
-          content: msg.content,
+          id:        msg.id || nextMessageId(),
+          role:      msg.role || 'user',
+          content:   msg.content,
           timestamp: msg.timestamp || Date.now(),
-          metadata: msg.metadata || { source: 'api' },
+          metadata:  msg.metadata || { source: 'api' },
         });
       }
 
@@ -298,21 +297,20 @@ export class ChatCompletionsServer {
       // Extract the final response text
       const agentMeta = (state.metadata as any).agent;
       const responseText =
-        agentMeta?.response?.trim()
-        || agentMeta?.status_report?.trim()
-        || state.metadata.finalSummary?.trim()
-        || (() => {
+        agentMeta?.response?.trim() ||
+        agentMeta?.status_report?.trim() ||
+        state.metadata.finalSummary?.trim() ||
+        (() => {
           const msg = [...state.messages].reverse().find((m: any) => m.role === 'assistant');
           if (!msg?.content) return '';
           return typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-        })()
-        || '';
+        })() ||
+        '';
 
       return responseText;
-
     } catch (err: any) {
       console.error('[ChatCompletionsAPI] Error processing user input:', err);
-      return `Error: ${err.message || String(err)}`;
+      return `Error: ${ err.message || String(err) }`;
     } finally {
       // Park the graph so it won't re-enter on its own
       state.metadata.waitingForUser = true;
@@ -342,10 +340,10 @@ export class ChatCompletionsServer {
 
       const response = {
         object: 'list',
-        data: agentIds.map(id => ({
+        data:   agentIds.map(id => ({
           id,
-          object: 'model',
-          created: Math.floor(Date.now() / 1000),
+          object:   'model',
+          created:  Math.floor(Date.now() / 1000),
           owned_by: 'sulla',
         })),
       };
@@ -357,7 +355,7 @@ export class ChatCompletionsServer {
       res.status(500).json({
         error: {
           message: 'Internal server error',
-          type: 'internal_error',
+          type:    'internal_error',
         },
       });
     }
@@ -374,32 +372,32 @@ export class ChatCompletionsServer {
         return res.status(400).json({
           error: {
             message: 'prompt string is required',
-            type: 'invalid_request_error'
-          }
+            type:    'invalid_request_error',
+          },
         });
       }
 
-      console.log(`[ChatCompletionsAPI] Processing completion for prompt: ${prompt.substring(0, 100)}...`);
+      console.log(`[ChatCompletionsAPI] Processing completion for prompt: ${ prompt.substring(0, 100) }...`);
 
       // Reuse chat logic with single user message — model param is the agent ID
       const responseContent = await this.processUserInputDirect([{ role: 'user', content: prompt }], model);
 
       const response = {
-        id: `cmpl-${Date.now()}`,
-        object: 'text_completion',
+        id:      `cmpl-${ Date.now() }`,
+        object:  'text_completion',
         created: Math.floor(Date.now() / 1000),
-        model: model,
+        model,
         choices: [{
-          text: responseContent,
-          index: 0,
-          logprobs: null,
-          finish_reason: 'stop'
+          text:          responseContent,
+          index:         0,
+          logprobs:      null,
+          finish_reason: 'stop',
         }],
         usage: {
-          prompt_tokens: Math.ceil(prompt.length / 4),
+          prompt_tokens:     Math.ceil(prompt.length / 4),
           completion_tokens: Math.ceil(responseContent.length / 4),
-          total_tokens: Math.ceil(prompt.length / 4) + Math.ceil(responseContent.length / 4)
-        }
+          total_tokens:      Math.ceil(prompt.length / 4) + Math.ceil(responseContent.length / 4),
+        },
       };
 
       console.log('[ChatCompletionsAPI] Completions response sent');
@@ -409,8 +407,8 @@ export class ChatCompletionsServer {
       res.status(500).json({
         error: {
           message: 'Internal server error',
-          type: 'internal_error'
-        }
+          type:    'internal_error',
+        },
       });
     }
   }
@@ -426,8 +424,8 @@ export class ChatCompletionsServer {
         return res.status(400).json({
           error: {
             message: 'input is required',
-            type: 'invalid_request_error'
-          }
+            type:    'invalid_request_error',
+          },
         });
       }
 
@@ -441,14 +439,14 @@ export class ChatCompletionsServer {
 
         try {
           // llama-server uses OpenAI-compatible /v1/embeddings endpoint
-          const response = await fetch(`${llamaBase}/v1/embeddings`, {
-            method: 'POST',
+          const response = await fetch(`${ llamaBase }/v1/embeddings`, {
+            method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: model || 'default', input: prompt })
+            body:    JSON.stringify({ model: model || 'default', input: prompt }),
           });
 
           if (!response.ok) {
-            throw new Error(`llama-server embeddings failed: ${response.status}`);
+            throw new Error(`llama-server embeddings failed: ${ response.status }`);
           }
 
           const data = await response.json();
@@ -456,27 +454,27 @@ export class ChatCompletionsServer {
           embeddings.push({
             object: 'embedding',
             embedding,
-            index: i
+            index:  i,
           });
         } catch (error) {
           console.error('[ChatCompletionsAPI] Embeddings error:', error);
           // Return zero vector as fallback
           embeddings.push({
-            object: 'embedding',
+            object:    'embedding',
             embedding: new Array(768).fill(0), // Common embedding size
-            index: i
+            index:     i,
           });
         }
       }
 
       const response = {
         object: 'list',
-        data: embeddings,
-        model: model || 'nomic-embed-text',
-        usage: {
+        data:   embeddings,
+        model:  model || 'nomic-embed-text',
+        usage:  {
           prompt_tokens: inputs.reduce((sum, inp) => sum + (typeof inp === 'string' ? Math.ceil(inp.length / 4) : 0), 0),
-          total_tokens: inputs.reduce((sum, inp) => sum + (typeof inp === 'string' ? Math.ceil(inp.length / 4) : 0), 0)
-        }
+          total_tokens:  inputs.reduce((sum, inp) => sum + (typeof inp === 'string' ? Math.ceil(inp.length / 4) : 0), 0),
+        },
       };
 
       console.log('[ChatCompletionsAPI] Embeddings response sent');
@@ -486,8 +484,8 @@ export class ChatCompletionsServer {
       res.status(500).json({
         error: {
           message: 'Internal server error',
-          type: 'internal_error'
-        }
+          type:    'internal_error',
+        },
       });
     }
   }
@@ -505,38 +503,38 @@ export class ChatCompletionsServer {
         return res.status(400).json({
           error: {
             message: 'input is required',
-            type: 'invalid_request_error'
-          }
+            type:    'invalid_request_error',
+          },
         });
       }
 
       const inputs = Array.isArray(input) ? input : [input];
       const results = inputs.map(inp => ({
         categories: {
-          hate: false,
+          hate:               false,
           'hate/threatening': false,
-          'self-harm': false,
-          sexual: false,
-          'sexual/minors': false,
-          violence: false,
-          'violence/graphic': false
+          'self-harm':        false,
+          sexual:             false,
+          'sexual/minors':    false,
+          violence:           false,
+          'violence/graphic': false,
         },
         category_scores: {
-          hate: 0.0,
+          hate:               0.0,
           'hate/threatening': 0.0,
-          'self-harm': 0.0,
-          sexual: 0.0,
-          'sexual/minors': 0.0,
-          violence: 0.0,
-          'violence/graphic': 0.0
+          'self-harm':        0.0,
+          sexual:             0.0,
+          'sexual/minors':    0.0,
+          violence:           0.0,
+          'violence/graphic': 0.0,
         },
-        flagged: false
+        flagged: false,
       }));
 
       const response = {
-        id: `modr-${Date.now()}`,
-        model: 'text-moderation-stable',
-        results: results
+        id:      `modr-${ Date.now() }`,
+        model:   'text-moderation-stable',
+        results,
       };
 
       console.log('[ChatCompletionsAPI] Moderations response sent');
@@ -546,8 +544,8 @@ export class ChatCompletionsServer {
       res.status(500).json({
         error: {
           message: 'Internal server error',
-          type: 'internal_error'
-        }
+          type:    'internal_error',
+        },
       });
     }
   }
@@ -610,7 +608,7 @@ export class ChatCompletionsServer {
         const available = loader.getAvailableIntegrations();
         return res.status(404).json({
           success: false,
-          error:   `Integration "${slug}" not found. Available: ${available.join(', ')}`,
+          error:   `Integration "${ slug }" not found. Available: ${ available.join(', ') }`,
         });
       }
 
@@ -618,7 +616,7 @@ export class ChatCompletionsServer {
       if (!epConfig) {
         return res.status(404).json({
           success: false,
-          error:   `Endpoint "${endpoint}" not found. Available: ${client.endpointNames.join(', ')}`,
+          error:   `Endpoint "${ endpoint }" not found. Available: ${ client.endpointNames.join(', ') }`,
         });
       }
 
@@ -632,7 +630,7 @@ export class ChatCompletionsServer {
 
       res.json({ success: true, result: JSON.parse(JSON.stringify(result)) });
     } catch (error: any) {
-      console.error(`[ChatCompletionsAPI] Integration call failed (${slug}/${endpoint}):`, error);
+      console.error(`[ChatCompletionsAPI] Integration call failed (${ slug }/${ endpoint }):`, error);
       res.status(500).json({ success: false, error: error.message || 'Integration call failed' });
     }
   }
@@ -641,9 +639,9 @@ export class ChatCompletionsServer {
     return new Promise((resolve, reject) => {
       try {
         this.server = this.app.listen(port, '0.0.0.0', () => {
-          console.log(`[ChatCompletionsAPI] Server listening on http://0.0.0.0:${port}`);
-          console.log(`[ChatCompletionsAPI] Health check: http://localhost:${port}/health`);
-          console.log(`[ChatCompletionsAPI] Chat completions: http://localhost:${port}/chat/completions`);
+          console.log(`[ChatCompletionsAPI] Server listening on http://0.0.0.0:${ port }`);
+          console.log(`[ChatCompletionsAPI] Health check: http://localhost:${ port }/health`);
+          console.log(`[ChatCompletionsAPI] Chat completions: http://localhost:${ port }/chat/completions`);
           resolve();
         });
 

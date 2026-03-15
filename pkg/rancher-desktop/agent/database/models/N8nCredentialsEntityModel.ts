@@ -54,8 +54,8 @@ export class N8nCredentialsEntityModel extends BaseModel {
     const password = Buffer.concat([Buffer.from(encryptionKey, 'binary'), salt]);
     const hash1 = crypto.createHash('md5').update(password).digest();
     const hash2 = crypto.createHash('md5').update(Buffer.concat([hash1, password])).digest();
-    const iv    = crypto.createHash('md5').update(Buffer.concat([hash2, password])).digest();
-    const key   = Buffer.concat([hash1, hash2]);
+    const iv = crypto.createHash('md5').update(Buffer.concat([hash2, password])).digest();
+    const key = Buffer.concat([hash1, hash2]);
     return [key, iv];
   }
 
@@ -100,7 +100,7 @@ export class N8nCredentialsEntityModel extends BaseModel {
 
     const catalogEntry = integrations[integrationSlug];
     if (!catalogEntry) {
-      throw new Error(`Integration "${integrationSlug}" not found in catalog`);
+      throw new Error(`Integration "${ integrationSlug }" not found in catalog`);
     }
 
     // Build credential data from integration form values
@@ -111,11 +111,11 @@ export class N8nCredentialsEntityModel extends BaseModel {
     }
 
     if (Object.keys(credentialData).length === 0) {
-      throw new Error(`No credentials found for integration "${integrationSlug}"`);
+      throw new Error(`No credentials found for integration "${ integrationSlug }"`);
     }
 
     // n8n credential type mapping
-    const n8nType = N8N_CREDENTIAL_TYPE_MAP[integrationSlug] || `${integrationSlug}Api`;
+    const n8nType = N8N_CREDENTIAL_TYPE_MAP[integrationSlug] || `${ integrationSlug }Api`;
 
     // Find existing credential by type or create new
     const existing = await N8nCredentialsEntityModel.where<N8nCredentialsEntityModel>('type', n8nType);
@@ -134,7 +134,7 @@ export class N8nCredentialsEntityModel extends BaseModel {
     await model.encryptData(credentialData);
     await model.save();
 
-    console.log(`[N8nCredentialsEntityModel] Transferred credentials for ${integrationSlug} → ${n8nType} (id: ${model.attributes.id})`);
+    console.log(`[N8nCredentialsEntityModel] Transferred credentials for ${ integrationSlug } → ${ n8nType } (id: ${ model.attributes.id })`);
     return model;
   }
 

@@ -22,8 +22,8 @@ export class SkillsRegistry {
   private static instance: SkillsRegistry | null = null;
   private readonly skillsBySlug = new Map<string, SkillService>();
   private initialized = false;
-  private initPromise: Promise<void> | null = null;
-  private refreshPromise: Promise<void> | null = null;
+  private initPromise:     Promise<void> | null = null;
+  private refreshPromise:  Promise<void> | null = null;
   private cachedSummaries: SkillSummarySchema[] | null = null;
   private cachedAtSeconds = 0;
   private cacheHydrated = false;
@@ -66,7 +66,7 @@ export class SkillsRegistry {
     this.cacheHydrated = true;
     await this.writeSummariesToCache(this.cachedSummaries, this.cachedAtSeconds);
 
-    console.log(`[SkillsRegistry] initialized with ${this.skillsBySlug.size} skills`);
+    console.log(`[SkillsRegistry] initialized with ${ this.skillsBySlug.size } skills`);
   }
 
   async refresh(options: SkillRegistryInitOptions = {}): Promise<void> {
@@ -141,7 +141,7 @@ export class SkillsRegistry {
     return summaries;
   }
 
-  async getPlanRetrievalSkillList(): Promise<Array<{ slug: string; name: string; triggers: string[]; description: string }>> {
+  async getPlanRetrievalSkillList(): Promise<{ slug: string; name: string; triggers: string[]; description: string }[]> {
     if (!this.initialized) {
       await this.initialize(this.lastInitOptions);
     }
@@ -167,7 +167,7 @@ export class SkillsRegistry {
       const trigger = Array.isArray(skill.triggers) ? skill.triggers.join(', ') : '';
       if (!trigger || /^no\s+trigger\s+defined$/i.test(trigger)) continue;
 
-      lines.push(`- **${title}** (slug: \`${slug}\`)\n  Trigger: ${trigger}`);
+      lines.push(`- **${ title }** (slug: \`${ slug }\`)\n  Trigger: ${ trigger }`);
     }
 
     return lines.length > 0
@@ -198,7 +198,7 @@ export class SkillsRegistry {
           if (!this.looksLikeSkill(service)) continue;
           skills.push(service);
         } catch (error) {
-          console.warn(`[SkillsRegistry] Failed to load skill file ${filePath}:`, error);
+          console.warn(`[SkillsRegistry] Failed to load skill file ${ filePath }:`, error);
         }
       }
     }
@@ -311,11 +311,11 @@ export class SkillsRegistry {
 
   private getSourcePriority(source: string): number {
     switch (String(source || '').toLowerCase()) {
-      case 'filesystem':
-        return 2;
-      case 'database':
-      default:
-        return 1;
+    case 'filesystem':
+      return 2;
+    case 'database':
+    default:
+      return 1;
     }
   }
 
@@ -392,7 +392,7 @@ export class SkillsRegistry {
       // Try to get parsed skill from registry cache first
       const cached = this.skillsBySlug.get(slug);
       if (cached) {
-        dynamicResults.push(`${cached.name}: ${cached.description}`);
+        dynamicResults.push(`${ cached.name }: ${ cached.description }`);
         continue;
       }
 
@@ -401,18 +401,18 @@ export class SkillsRegistry {
         const raw = await readFile(hit.filePath, 'utf8');
         const service = SkillService.fromRaw('filesystem', slug, raw);
         if (service) {
-          dynamicResults.push(`${service.name}: ${service.description}`);
+          dynamicResults.push(`${ service.name }: ${ service.description }`);
         } else {
-          dynamicResults.push(`${slug}: (matched file: ${hit.filePath})`);
+          dynamicResults.push(`${ slug }: (matched file: ${ hit.filePath })`);
         }
       } catch {
-        dynamicResults.push(`${slug}: (matched file: ${hit.filePath})`);
+        dynamicResults.push(`${ slug }: (matched file: ${ hit.filePath })`);
       }
     }
 
     return dynamicResults.length > 0
       ? dynamicResults.join('\n')
-      : `No matching skills after searching terms: ${grepResult.attemptedTerms.map(term => `'${term}'`).join(', ') || '(none)'} (0 skills found). You can create one with create_skill.`;
+      : `No matching skills after searching terms: ${ grepResult.attemptedTerms.map(term => `'${ term }'`).join(', ') || '(none)' } (0 skills found). You can create one with create_skill.`;
   }
 
   async loadSkill(skillName: string): Promise<string> {
@@ -439,7 +439,7 @@ export class SkillsRegistry {
     }
 
     const available = Array.from(this.skillsBySlug.keys()).join(', ') || '(none)';
-    return `Skill '${name}' not found. Available: ${available}`;
+    return `Skill '${ name }' not found. Available: ${ available }`;
   }
 
   async createSkill(skillName: string, content: string): Promise<string> {
@@ -461,9 +461,9 @@ export class SkillsRegistry {
         this.cachedSummaries = this.buildSummariesFromCurrentMap();
       }
 
-      return `Skill '${name}' created/updated successfully.\nSkill directory: ${skillDir}\nSkill file: ${skillFile}\nYou can now load it anytime with load_skill.`;
+      return `Skill '${ name }' created/updated successfully.\nSkill directory: ${ skillDir }\nSkill file: ${ skillFile }\nYou can now load it anytime with load_skill.`;
     } catch (error: any) {
-      return `Failed to create skill '${name}': ${error.message}`;
+      return `Failed to create skill '${ name }': ${ error.message }`;
     }
   }
 }

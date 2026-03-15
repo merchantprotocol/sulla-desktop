@@ -20,14 +20,14 @@ import { getIntegrationService } from '../services/IntegrationService';
 
 // Provider factory map — lazy-loaded to avoid circular imports
 const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
-  ollama:    async () => { return getOllamaService(); },
-  grok:      async () => { const { getGrokService } = await import('./GrokService'); return getGrokService(); },
-  openai:    async () => { const { getOpenAIService } = await import('./OpenAIService'); return getOpenAIService(); },
-  anthropic: async () => { const { getAnthropicService } = await import('./AnthropicService'); return getAnthropicService(); },
-  google:    async () => { const { getGoogleService } = await import('./GoogleService'); return getGoogleService(); },
-  kimi:      async () => { const { getKimiService } = await import('./KimiService'); return getKimiService(); },
-  nvidia:    async () => { const { getNvidiaService } = await import('./NvidiaService'); return getNvidiaService(); },
-  custom:    async () => { const { getCustomService } = await import('./CustomService'); return getCustomService(); },
+  ollama:    async() => { return getOllamaService() },
+  grok:      async() => { const { getGrokService } = await import('./GrokService'); return getGrokService() },
+  openai:    async() => { const { getOpenAIService } = await import('./OpenAIService'); return getOpenAIService() },
+  anthropic: async() => { const { getAnthropicService } = await import('./AnthropicService'); return getAnthropicService() },
+  google:    async() => { const { getGoogleService } = await import('./GoogleService'); return getGoogleService() },
+  kimi:      async() => { const { getKimiService } = await import('./KimiService'); return getKimiService() },
+  nvidia:    async() => { const { getNvidiaService } = await import('./NvidiaService'); return getNvidiaService() },
+  custom:    async() => { const { getCustomService } = await import('./CustomService'); return getCustomService() },
 };
 
 class LLMRegistryImpl {
@@ -72,7 +72,7 @@ class LLMRegistryImpl {
   async getRemoteService(overrideModel?: string): Promise<BaseLanguageModel> {
     // Determine which remote provider is active
     const remoteProvider = await this.getActiveRemoteProviderId();
-    const key = `remote:${remoteProvider}`;
+    const key = `remote:${ remoteProvider }`;
     let svc = this.services.get(key);
 
     if (!svc) {
@@ -81,7 +81,7 @@ class LLMRegistryImpl {
         svc = await factory();
       } else {
         // Unknown provider — try custom OpenAI-compatible
-        console.warn(`[LLMRegistry] Unknown provider '${remoteProvider}', falling back to custom`);
+        console.warn(`[LLMRegistry] Unknown provider '${ remoteProvider }', falling back to custom`);
         const { getCustomService } = await import('./CustomService');
         svc = await getCustomService();
       }
@@ -97,13 +97,13 @@ class LLMRegistryImpl {
    * Get service by specific provider ID (e.g., 'anthropic', 'grok')
    */
   async getServiceByProvider(providerId: string): Promise<BaseLanguageModel> {
-    const key = `provider:${providerId}`;
+    const key = `provider:${ providerId }`;
     let svc = this.services.get(key);
 
     if (!svc) {
       const factory = PROVIDER_FACTORIES[providerId];
       if (!factory) {
-        throw new Error(`Unknown LLM provider: ${providerId}`);
+        throw new Error(`Unknown LLM provider: ${ providerId }`);
       }
       svc = await factory();
       this.services.set(key, svc);
@@ -161,7 +161,7 @@ class LLMRegistryImpl {
   private isLikelyLocalModel(name: string): boolean {
     return (
       name.includes(':') ||
-      !!name.match(/^\d+b$/) ||
+      !!(/^\d+b$/.exec(name)) ||
       /^(llama|phi|qwen|gemma|mistral|deepseek|ollama)/i.test(name)
     );
   }
@@ -278,9 +278,9 @@ class LLMRegistryImpl {
     }
 
     if (!key) {
-      throw new Error(`No API key configured for provider: ${providerId}`);
+      throw new Error(`No API key configured for provider: ${ providerId }`);
     }
-    
+
     return await modelDiscoveryService.fetchModelsForProvider(providerId, key);
   }
 
@@ -291,7 +291,7 @@ class LLMRegistryImpl {
   async fetchAllAvailableModels(): Promise<ModelInfo[]> {
     const providers: Record<string, string> = {};
     const supportedProviders = modelDiscoveryService.getSupportedProviders();
-    
+
     for (const providerId of supportedProviders) {
       try {
         const integrationService = getIntegrationService();
@@ -303,10 +303,10 @@ class LLMRegistryImpl {
           providers[providerId] = apiKey;
         }
       } catch (error) {
-        console.warn(`[LLMRegistry] Failed to get API key for ${providerId}:`, error);
+        console.warn(`[LLMRegistry] Failed to get API key for ${ providerId }:`, error);
       }
     }
-    
+
     return await modelDiscoveryService.fetchAllAvailableModels(providers);
   }
 
@@ -316,11 +316,11 @@ class LLMRegistryImpl {
   async getCurrentRemoteModels(): Promise<ModelInfo[]> {
     const remoteProvider = await this.getActiveRemoteProviderId();
     const svc = await this.getRemoteService();
-    
+
     return [{
-      id: svc.getModel(),
-      name: svc.getModel(),
-      provider: remoteProvider
+      id:       svc.getModel(),
+      name:     svc.getModel(),
+      provider: remoteProvider,
     }];
   }
 
@@ -339,36 +339,36 @@ class LLMRegistryImpl {
 
 export const LLMRegistry = new LLMRegistryImpl();
 
-export const getLLMService     = async (spec: 'local' | 'remote' | string) => await LLMRegistry.getService(spec);
-export const getLocalService   = async (model?: string) => await LLMRegistry.getLocalService(model);
-export const getRemoteService  = async (model?: string) => await LLMRegistry.getRemoteService(model);
-export const getHeartbeatLLM   = async () => await LLMRegistry.getHeartbeatLLM();
-export const getLocalModel     = async () => await LLMRegistry.getLocalModel();
-export const getRemoteModel    = async () => await LLMRegistry.getRemoteModel();
-export const getService = async (context: 'local' | 'remote', model?: string) =>
+export const getLLMService = async(spec: 'local' | 'remote' | string) => await LLMRegistry.getService(spec);
+export const getLocalService = async(model?: string) => await LLMRegistry.getLocalService(model);
+export const getRemoteService = async(model?: string) => await LLMRegistry.getRemoteService(model);
+export const getHeartbeatLLM = async() => await LLMRegistry.getHeartbeatLLM();
+export const getLocalModel = async() => await LLMRegistry.getLocalModel();
+export const getRemoteModel = async() => await LLMRegistry.getRemoteModel();
+export const getService = async(context: 'local' | 'remote', model?: string) =>
   await LLMRegistry.getServiceForContext(context, model);
-export const getCurrentModel = async () => await LLMRegistry.getCurrentModel();
-export const getCurrentMode = async () => await LLMRegistry.getCurrentMode();
+export const getCurrentModel = async() => await LLMRegistry.getCurrentModel();
+export const getCurrentMode = async() => await LLMRegistry.getCurrentMode();
 
 // Primary / Secondary / Heartbeat provider exports
-export const getPrimaryService   = async () => await LLMRegistry.getPrimaryService();
-export const getSecondaryService = async () => await LLMRegistry.getSecondaryService();
-export const getHeartbeatService = async () => await LLMRegistry.getHeartbeatLLM();
+export const getPrimaryService = async() => await LLMRegistry.getPrimaryService();
+export const getSecondaryService = async() => await LLMRegistry.getSecondaryService();
+export const getHeartbeatService = async() => await LLMRegistry.getHeartbeatLLM();
 
 // Dynamic model discovery exports
-export const fetchModelsForProvider = async (providerId: string, apiKey?: string) => 
+export const fetchModelsForProvider = async(providerId: string, apiKey?: string) =>
   await LLMRegistry.fetchModelsForProvider(providerId, apiKey);
-export const fetchAllAvailableModels = async () => 
+export const fetchAllAvailableModels = async() =>
   await LLMRegistry.fetchAllAvailableModels();
-export const getCurrentRemoteModels = async () => 
+export const getCurrentRemoteModels = async() =>
   await LLMRegistry.getCurrentRemoteModels();
-export const clearModelCache = (providerId?: string) => 
+export const clearModelCache = (providerId?: string) =>
   LLMRegistry.clearModelCache(providerId);
-export const getModelCacheStats = () => 
+export const getModelCacheStats = () =>
   LLMRegistry.getModelCacheStats();
-export const getSupportedProviders = () => 
+export const getSupportedProviders = () =>
   LLMRegistry.getSupportedProviders();
 
 // Export ModelInfo type for external use
 export type { ModelInfo };
-export const getCurrentConfig = async () => await LLMRegistry.getCurrentConfig();
+export const getCurrentConfig = async() => await LLMRegistry.getCurrentConfig();

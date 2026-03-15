@@ -8,20 +8,20 @@ import { integrations } from '@pkg/agent/integrations/catalog';
 import { LOCAL_MODELS } from '@pkg/shared/localModels';
 
 export interface ModelOption {
-  providerId: string;
-  providerName: string;
-  modelId: string;
-  modelLabel: string;
+  providerId:       string;
+  providerName:     string;
+  modelId:          string;
+  modelLabel:       string;
   isActiveProvider: boolean;
-  isActiveModel: boolean;
+  isActiveModel:    boolean;
 }
 
 export interface ProviderGroup {
-  providerId: string;
-  providerName: string;
+  providerId:       string;
+  providerName:     string;
   isActiveProvider: boolean;
-  loading: boolean;
-  models: ModelOption[];
+  loading:          boolean;
+  models:           ModelOption[];
 }
 
 const EXCLUDED_INTEGRATION_IDS = ['activepieces', 'composio', 'ollama'];
@@ -42,12 +42,12 @@ export class AgentModelSelectorController {
   readonly loadingProviders = ref(false);
 
   readonly activeModelLabel: ComputedRef<string>;
-  readonly isRunningValue: ComputedRef<boolean>;
+  readonly isRunningValue:   ComputedRef<boolean>;
 
   constructor(private readonly deps: {
     systemReady: Ref<boolean>;
-    loading: Ref<boolean>;
-    isRunning: Ref<boolean>;
+    loading:     Ref<boolean>;
+    isRunning:   Ref<boolean>;
 
     modelName: Ref<string>;
     modelMode: Ref<'local' | 'remote'>;
@@ -156,10 +156,10 @@ export class AgentModelSelectorController {
       this.providerGroups.value = this.providerGroups.value.map((group) => ({
         ...group,
         isActiveProvider: group.providerId === option.providerId,
-        models: group.models.map((m) => ({
+        models:           group.models.map((m) => ({
           ...m,
           isActiveProvider: m.providerId === option.providerId,
-          isActiveModel: m.providerId === option.providerId && m.modelId === option.modelId,
+          isActiveModel:    m.providerId === option.providerId && m.modelId === option.modelId,
         })),
       }));
     } finally {
@@ -315,7 +315,7 @@ export class AgentModelSelectorController {
       // Trigger reactivity
       this.providerGroups.value = [...this.providerGroups.value];
     } catch (err) {
-      console.warn(`[ModelSelector] Failed to fetch models for ${integration.id}:`, err);
+      console.warn(`[ModelSelector] Failed to fetch models for ${ integration.id }:`, err);
       group.loading = false;
       this.providerGroups.value = [...this.providerGroups.value];
     }

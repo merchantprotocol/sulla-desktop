@@ -22,12 +22,12 @@ async function reloadIntegration(integrationId: string, reason: string): Promise
     await registry.invalidate(integrationId);
     const client = await registry.get(integrationId);
     if (client) {
-      console.log(`[Integrations] ${integrationId} hot-reloaded (${reason})`);
+      console.log(`[Integrations] ${ integrationId } hot-reloaded (${ reason })`);
     } else {
-      console.warn(`[Integrations] ${integrationId} hot-reload returned null (${reason})`);
+      console.warn(`[Integrations] ${ integrationId } hot-reload returned null (${ reason })`);
     }
   } catch (error) {
-    console.error(`[Integrations] ${integrationId} hot-reload failed (${reason}):`, error);
+    console.error(`[Integrations] ${ integrationId } hot-reload failed (${ reason }):`, error);
   }
 }
 
@@ -40,12 +40,12 @@ async function initializeIntegration(integrationId: string): Promise<void> {
     await registry.invalidate(integrationId);
     const client = await registry.get(integrationId);
     if (client) {
-      console.log(`[Integrations] ${integrationId} initialized via Connect`);
+      console.log(`[Integrations] ${ integrationId } initialized via Connect`);
     } else {
-      console.warn(`[Integrations] ${integrationId} initialization returned null after Connect`);
+      console.warn(`[Integrations] ${ integrationId } initialization returned null after Connect`);
     }
   } catch (error) {
-    console.error(`[Integrations] ${integrationId} initialization failed:`, error);
+    console.error(`[Integrations] ${ integrationId } initialization failed:`, error);
   }
 }
 
@@ -55,18 +55,18 @@ async function initializeIntegration(integrationId: string): Promise<void> {
 async function disconnectIntegration(integrationId: string): Promise<void> {
   try {
     await registry.invalidate(integrationId);
-    console.log(`[Integrations] ${integrationId} disconnected`);
+    console.log(`[Integrations] ${ integrationId } disconnected`);
   } catch (error) {
-    console.error(`[Integrations] ${integrationId} disconnect failed:`, error);
+    console.error(`[Integrations] ${ integrationId } disconnect failed:`, error);
   }
 }
 
 /**
  * Slack
- * 
- * 
+ *
+ *
  */
-registry.register('slack', async () => {
+registry.register('slack', async() => {
   const svc = getIntegrationService();
   await svc.initialize(); // ensure DB tables
 
@@ -112,15 +112,15 @@ export async function SullaIntegrations(): Promise<void> {
         // connection_status changed → user clicked Connect/Disconnect in UI
         if (value.property === 'connection_status') {
           if (isConnectionStatusSuppressed()) {
-            console.log(`[Integrations] Suppressed connection_status reload for ${id} (backend-initiated)`);
+            console.log(`[Integrations] Suppressed connection_status reload for ${ id } (backend-initiated)`);
             return;
           }
           const isConnect = value.value === 'true';
           if (isConnect) {
-            console.log(`[Integrations] Connect event for ${id}`);
+            console.log(`[Integrations] Connect event for ${ id }`);
             void initializeIntegration(id);
           } else {
-            console.log(`[Integrations] Disconnect event for ${id}`);
+            console.log(`[Integrations] Disconnect event for ${ id }`);
             void disconnectIntegration(id);
           }
           return;
@@ -128,7 +128,7 @@ export async function SullaIntegrations(): Promise<void> {
 
         // Credential/token changed → hot-reload if it's a known credential property
         if (CREDENTIAL_PROPERTIES.has(value.property)) {
-          void reloadIntegration(id, `${action}:${value.property}`);
+          void reloadIntegration(id, `${ action }:${ value.property }`);
         }
       });
       integrationListenerSubscribed = true;
@@ -147,7 +147,6 @@ export async function SullaIntegrations(): Promise<void> {
         console.error('[Integrations] Slack deferred init error:', err);
       });
     }, 5000);
-
   } catch (ex: any) {
     console.error('[Background] Failed to initialize cron services:', ex);
   }

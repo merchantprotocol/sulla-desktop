@@ -17,38 +17,38 @@ import { buildGuestBridgeScript, BRIDGE_CHANNEL } from './GuestBridgePreload';
 type JsonRecord = Record<string, unknown>;
 
 export interface WebviewLike {
-  src?: string;
-  getURL?: () => string;
-  executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
-  addEventListener: (event: 'dom-ready' | 'ipc-message', listener: (event: unknown) => void) => void;
+  src?:                 string;
+  getURL?:              () => string;
+  executeJavaScript:    (code: string, userGesture?: boolean) => Promise<unknown>;
+  addEventListener:     (event: 'dom-ready' | 'ipc-message', listener: (event: unknown) => void) => void;
   removeEventListener?: (event: 'dom-ready' | 'ipc-message', listener: (event: unknown) => void) => void;
 }
 
 export interface HostBridgeEventMap {
-  injected: { url: string; title: string; timestamp: number };
+  injected:     { url: string; title: string; timestamp: number };
   routeChanged: { url: string; path: string; title: string; timestamp: number };
   click: {
-    text: string;
-    tagName: string;
-    id: string;
-    name: string;
+    text:       string;
+    tagName:    string;
+    id:         string;
+    name:       string;
     dataTestId: string;
-    disabled: boolean;
-    timestamp: number;
+    disabled:   boolean;
+    timestamp:  number;
   };
   domChange: {
-    summary: string;
-    url: string;
-    title: string;
+    summary:   string;
+    url:       string;
+    title:     string;
     timestamp: number;
   };
   dialog: {
-    dialogType: 'alert' | 'confirm' | 'prompt';
-    message: string;
+    dialogType:    'alert' | 'confirm' | 'prompt';
+    message:       string;
     defaultValue?: string;
-    url: string;
-    title: string;
-    timestamp: number;
+    url:           string;
+    title:         string;
+    timestamp:     number;
   };
 }
 
@@ -66,8 +66,8 @@ export class WebviewHostBridge {
     [K in keyof HostBridgeEventMap]?: Set<EventHandler<K>>;
   } = {};
 
-  private webview: WebviewLike | null = null;
-  private boundDomReady: ((event: unknown) => void) | null = null;
+  private webview:         WebviewLike | null = null;
+  private boundDomReady:   ((event: unknown) => void) | null = null;
   private boundIpcMessage: ((event: unknown) => void) | null = null;
   private lastInjectedForUrl = '';
   private injected = false;
@@ -124,19 +124,19 @@ export class WebviewHostBridge {
   /* ------------------------------------------------------------------ */
 
   on<K extends keyof HostBridgeEventMap>(event: K, handler: EventHandler<K>): () => void {
-    const bucket = (this.listeners[event] || new Set()) as Set<EventHandler<K>>;
+    const bucket = (this.listeners[event] || new Set());
     bucket.add(handler);
     this.listeners[event] = bucket as (typeof this.listeners)[K];
     return () => this.off(event, handler);
   }
 
   off<K extends keyof HostBridgeEventMap>(event: K, handler: EventHandler<K>): void {
-    const bucket = this.listeners[event] as Set<EventHandler<K>> | undefined;
+    const bucket = this.listeners[event];
     bucket?.delete(handler);
   }
 
   private emit<K extends keyof HostBridgeEventMap>(event: K, payload: HostBridgeEventMap[K]): void {
-    const bucket = this.listeners[event] as Set<EventHandler<K>> | undefined;
+    const bucket = this.listeners[event];
     if (!bucket) return;
     for (const handler of bucket) {
       try {
@@ -158,7 +158,7 @@ export class WebviewHostBridge {
   async click(handle: string): Promise<boolean> {
     const safe = JSON.stringify(handle);
     console.log(`${ LOG_PREFIX } click: invoking guest`, { handle, injected: this.injected, hasWebview: !!this.webview });
-    const raw = await this.exec(`window.sullaBridge.click(${safe})`);
+    const raw = await this.exec(`window.sullaBridge.click(${ safe })`);
     console.log(`${ LOG_PREFIX } click: guest returned`, { raw, type: typeof raw });
     return !!raw;
   }
@@ -166,7 +166,7 @@ export class WebviewHostBridge {
   async setValue(handle: string, value: string): Promise<boolean> {
     const safeHandle = JSON.stringify(handle);
     const safeValue = JSON.stringify(value);
-    return !!(await this.exec(`window.sullaBridge.setValue(${safeHandle}, ${safeValue})`));
+    return !!(await this.exec(`window.sullaBridge.setValue(${ safeHandle }, ${ safeValue })`));
   }
 
   async getFormValues(): Promise<Record<string, string>> {
@@ -178,12 +178,12 @@ export class WebviewHostBridge {
 
   async waitForSelector(selector: string, timeoutMs = 5000): Promise<boolean> {
     const safeSel = JSON.stringify(selector);
-    return !!(await this.exec(`window.sullaBridge.waitForSelector(${safeSel}, ${timeoutMs})`));
+    return !!(await this.exec(`window.sullaBridge.waitForSelector(${ safeSel }, ${ timeoutMs })`));
   }
 
   async scrollTo(selector: string): Promise<boolean> {
     const safe = JSON.stringify(selector);
-    return !!(await this.exec(`window.sullaBridge.scrollTo(${safe})`));
+    return !!(await this.exec(`window.sullaBridge.scrollTo(${ safe })`));
   }
 
   async getPageText(): Promise<string> {
@@ -255,8 +255,8 @@ export class WebviewHostBridge {
 
     if (type === 'sulla:injected') {
       this.emit('injected', {
-        url: String(rec.url || ''),
-        title: String(rec.title || ''),
+        url:       String(rec.url || ''),
+        title:     String(rec.title || ''),
         timestamp: this.asTimestamp(rec.timestamp),
       });
       return;
@@ -264,9 +264,9 @@ export class WebviewHostBridge {
 
     if (type === 'sulla:routeChanged') {
       this.emit('routeChanged', {
-        url: String(rec.url || ''),
-        path: String(rec.path || ''),
-        title: String(rec.title || ''),
+        url:       String(rec.url || ''),
+        path:      String(rec.path || ''),
+        title:     String(rec.title || ''),
         timestamp: this.asTimestamp(rec.timestamp),
       });
       return;
@@ -274,22 +274,22 @@ export class WebviewHostBridge {
 
     if (type === 'sulla:click') {
       this.emit('click', {
-        text: String(rec.text || ''),
-        tagName: String(rec.tagName || ''),
-        id: String(rec.id || ''),
-        name: String(rec.name || ''),
+        text:       String(rec.text || ''),
+        tagName:    String(rec.tagName || ''),
+        id:         String(rec.id || ''),
+        name:       String(rec.name || ''),
         dataTestId: String(rec.dataTestId || ''),
-        disabled: rec.disabled === true,
-        timestamp: this.asTimestamp(rec.timestamp),
+        disabled:   rec.disabled === true,
+        timestamp:  this.asTimestamp(rec.timestamp),
       });
       return;
     }
 
     if (type === 'sulla:domChange') {
       this.emit('domChange', {
-        summary: String(rec.summary || ''),
-        url: String(rec.url || ''),
-        title: String(rec.title || ''),
+        summary:   String(rec.summary || ''),
+        url:       String(rec.url || ''),
+        title:     String(rec.title || ''),
         timestamp: this.asTimestamp(rec.timestamp),
       });
       return;
@@ -297,14 +297,13 @@ export class WebviewHostBridge {
 
     if (type === 'sulla:dialog') {
       this.emit('dialog', {
-        dialogType: (rec.dialogType === 'confirm' ? 'confirm' : rec.dialogType === 'prompt' ? 'prompt' : 'alert') as 'alert' | 'confirm' | 'prompt',
-        message: String(rec.message || ''),
+        dialogType:   (rec.dialogType === 'confirm' ? 'confirm' : rec.dialogType === 'prompt' ? 'prompt' : 'alert'),
+        message:      String(rec.message || ''),
         defaultValue: typeof rec.defaultValue === 'string' ? rec.defaultValue : undefined,
-        url: String(rec.url || ''),
-        title: String(rec.title || ''),
-        timestamp: this.asTimestamp(rec.timestamp),
+        url:          String(rec.url || ''),
+        title:        String(rec.title || ''),
+        timestamp:    this.asTimestamp(rec.timestamp),
       });
-      return;
     }
   }
 

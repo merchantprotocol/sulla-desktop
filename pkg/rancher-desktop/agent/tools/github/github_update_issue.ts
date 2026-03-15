@@ -1,13 +1,13 @@
-import { BaseTool, ToolResponse } from "../base";
-import { Octokit } from "@octokit/rest";
+import { BaseTool, ToolResponse } from '../base';
+import { Octokit } from '@octokit/rest';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * GitHub Update Issue Tool - Edit title, body, labels, assignees, or state.
  */
 export class GitHubUpdateIssueWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { owner, repo, issue_number } = input;
@@ -17,7 +17,7 @@ export class GitHubUpdateIssueWorker extends BaseTool {
     if (!tokenValue) {
       return {
         successBoolean: false,
-        responseString: "Error: GitHub token not configured.",
+        responseString: 'Error: GitHub token not configured.',
       };
     }
 
@@ -36,12 +36,12 @@ export class GitHubUpdateIssueWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Issue #${issue.number} updated: "${issue.title}"\nState: ${issue.state}\nURL: ${issue.html_url}`,
+        responseString: `Issue #${ issue.number } updated: "${ issue.title }"\nState: ${ issue.state }\nURL: ${ issue.html_url }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error updating issue: ${(error as Error).message}`,
+        responseString: `Error updating issue: ${ (error as Error).message }`,
       };
     }
   }

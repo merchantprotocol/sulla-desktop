@@ -5,8 +5,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { resolveFsPath } from './path_utils';
 
 export class FsCopyPathWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const sourcePath = resolveFsPath(input.sourcePath);
@@ -22,14 +22,13 @@ export class FsCopyPathWorker extends BaseTool {
       fs.cpSync(sourcePath, destinationPath, { recursive, force: overwrite });
       return {
         successBoolean: true,
-        responseString: `Copied ${sourcePath} to ${destinationPath}`,
+        responseString: `Copied ${ sourcePath } to ${ destinationPath }`,
       };
     } catch (error: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to copy path from "${sourcePath}" to "${destinationPath}": ${error.message}`,
+        responseString: `Failed to copy path from "${ sourcePath }" to "${ destinationPath }": ${ error.message }`,
       };
     }
   }
 }
-

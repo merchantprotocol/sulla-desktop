@@ -3,7 +3,6 @@
  */
 // hoping this is the absolute earliest we can run in the renderer context
 import { initiateWindowContext } from '@pkg/sulla';
-await initiateWindowContext();
 
 import { createApp } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
@@ -20,6 +19,7 @@ import AgentAutomations from '../pages/AgentAutomations.vue';
 
 import FirstRun from '../pages/FirstRun.vue';
 import ExtensionView from '../pages/ExtensionView.vue';
+await initiateWindowContext();
 
 const router = createRouter({
   history: createWebHashHistory(),

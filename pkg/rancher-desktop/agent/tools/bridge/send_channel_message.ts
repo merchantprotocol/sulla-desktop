@@ -30,9 +30,9 @@ export class SendChannelMessageWorker extends BaseTool {
       const sent = await wsService.send(channel, {
         type: 'user_message',
         data: {
-          content: `[Channel message from ${sender_id || 'unknown'} on ${replyChannel || 'unknown'}]\n\n${message}`,
-          kind: 'channel_message',
-          senderId: sender_id || 'unknown',
+          content:       `[Channel message from ${ sender_id || 'unknown' } on ${ replyChannel || 'unknown' }]\n\n${ message }`,
+          kind:          'channel_message',
+          senderId:      sender_id || 'unknown',
           senderChannel: replyChannel,
         },
         timestamp: Date.now(),
@@ -41,7 +41,7 @@ export class SendChannelMessageWorker extends BaseTool {
       if (!sent) {
         return {
           successBoolean: false,
-          responseString: `Failed to deliver message to channel "${channel}". The channel may not have any active subscribers.`,
+          responseString: `Failed to deliver message to channel "${ channel }". The channel may not have any active subscribers.`,
         };
       }
 
@@ -51,21 +51,21 @@ export class SendChannelMessageWorker extends BaseTool {
         if (reply) {
           return {
             successBoolean: true,
-            responseString: `Message delivered to "${channel}". Reply received:\n\n${reply}`,
+            responseString: `Message delivered to "${ channel }". Reply received:\n\n${ reply }`,
           };
         }
       }
 
       return {
         successBoolean: true,
-        responseString: `Message delivered to channel "${channel}" from "${sender_id}". `
-          + `No reply arrived within ${REPLY_WAIT_MS / 1000}s. `
-          + `If the receiver replies later, it will arrive on your channel ("${replyChannel}") as an incoming message.`,
+        responseString: `Message delivered to channel "${ channel }" from "${ sender_id }". ` +
+          `No reply arrived within ${ REPLY_WAIT_MS / 1000 }s. ` +
+          `If the receiver replies later, it will arrive on your channel ("${ replyChannel }") as an incoming message.`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Failed to send message to channel "${channel}": ${error instanceof Error ? error.message : String(error)}`,
+        responseString: `Failed to send message to channel "${ channel }": ${ error instanceof Error ? error.message : String(error) }`,
       };
     }
   }

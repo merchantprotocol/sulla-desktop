@@ -81,11 +81,11 @@ export class HumanPresenceTracker {
       const isIdle = idleMs > this.IDLE_THRESHOLD_MS;
 
       await bridge.updatePresence({
-        available: !isIdle,
-        currentView: this.currentView,
+        available:       !isIdle,
+        currentView:     this.currentView,
         currentActivity: isIdle ? 'idle' : this.currentActivity,
-        activeChannel: this.activeChannel,
-        idleMinutes: Math.floor(idleMs / 60000),
+        activeChannel:   this.activeChannel,
+        idleMinutes:     Math.floor(idleMs / 60000),
       });
     } catch (err) {
       // Silently fail — Redis may not be ready yet

@@ -1,8 +1,8 @@
 import { BaseModel } from '../BaseModel';
 
 interface N8nSettingsAttributes {
-  key: string;
-  value: string;
+  key:           string;
+  value:         string;
   loadOnStartup: boolean;
 }
 
@@ -18,7 +18,7 @@ export class N8nSettingsModel extends BaseModel<N8nSettingsAttributes> {
   ];
 
   protected readonly casts: Record<string, string> = {
-    value: 'string',
+    value:         'string',
     loadOnStartup: 'boolean',
   };
 

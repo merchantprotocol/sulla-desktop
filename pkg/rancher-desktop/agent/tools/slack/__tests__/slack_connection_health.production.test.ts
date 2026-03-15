@@ -7,7 +7,7 @@ import { SlackConnectionHealthWorker, slackConnectionHealthRegistration } from '
 
 const SLACK_ID = 'slack';
 const service = getIntegrationService();
-type HealthTestSlackClient = { isConnected: () => boolean };
+interface HealthTestSlackClient { isConnected: () => boolean }
 
 function makeHealthWorker() {
   const worker = new SlackConnectionHealthWorker();
@@ -18,7 +18,7 @@ function makeHealthWorker() {
 }
 
 describe('slack_connection_health (production path)', () => {
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
 
@@ -43,15 +43,15 @@ describe('slack_connection_health (production path)', () => {
     await registry.invalidate(SLACK_ID);
   }, 120000);
 
-  afterAll(async () => {
+  afterAll(async() => {
     await registry.invalidate(SLACK_ID);
   }, 30000);
 
-  it('preserves backend-initialized Slack client and reports healthy', async () => {
+  it('preserves backend-initialized Slack client and reports healthy', async() => {
     await registry.invalidate(SLACK_ID);
     await SullaIntegrations();
 
-    const initialClient = (await registry.get(SLACK_ID)) as HealthTestSlackClient | null;
+    const initialClient = (await registry.get(SLACK_ID));
     expect(initialClient).toBeTruthy();
     if (!initialClient) {
       throw new Error('Expected backend-initialized Slack client to exist');
@@ -62,13 +62,13 @@ describe('slack_connection_health (production path)', () => {
     const worker = makeHealthWorker();
     const result = await worker.invoke({
       reinitializeIfNeeded: true,
-      validateAuth: true,
-      validateDataPull: true,
-      recoveryAttempts: 1,
-      recoveryDelayMs: 0,
+      validateAuth:         true,
+      validateDataPull:     true,
+      recoveryAttempts:     1,
+      recoveryDelayMs:      0,
     });
 
-    const clientAfterHealth = (await registry.get(SLACK_ID)) as HealthTestSlackClient | null;
+    const clientAfterHealth = (await registry.get(SLACK_ID));
     expect(clientAfterHealth).toBeTruthy();
     if (!clientAfterHealth) {
       throw new Error('Expected Slack client to still exist after health check');
@@ -85,17 +85,17 @@ describe('slack_connection_health (production path)', () => {
     expect(clientAfterHealth.isConnected()).toBe(true);
   }, 120000);
 
-  it('reports healthy from a cold context with real auth/data pull validation', async () => {
+  it('reports healthy from a cold context with real auth/data pull validation', async() => {
     // Simulate a separate execution context with no pre-warmed registry entry.
     await registry.invalidate(SLACK_ID);
 
     const worker = makeHealthWorker();
     const result = await worker.invoke({
       reinitializeIfNeeded: true,
-      validateAuth: true,
-      validateDataPull: true,
-      recoveryAttempts: 1,
-      recoveryDelayMs: 0,
+      validateAuth:         true,
+      validateDataPull:     true,
+      recoveryAttempts:     1,
+      recoveryDelayMs:      0,
     });
 
     expect(result.success).toBe(true);

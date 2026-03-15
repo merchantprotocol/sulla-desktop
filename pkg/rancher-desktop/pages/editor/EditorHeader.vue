@@ -1,8 +1,15 @@
 <template>
-  <header class="editor-header-bar" :class="{ dark: isDark }">
+  <header
+    class="editor-header-bar"
+    :class="{ dark: isDark }"
+  >
     <!-- Left: Logo -->
     <div class="header-left">
-      <a aria-label="Home page" href="#/" class="logo-link">
+      <a
+        aria-label="Home page"
+        href="#/"
+        class="logo-link"
+      >
         <img
           :src="logoLightUrl"
           alt="Sulla Desktop"
@@ -29,9 +36,31 @@
         title="Toggle sidebar"
         @click="$emit('toggle-left-pane')"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="1" y="2" width="14" height="12" rx="1" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
-          <rect x="1" y="2" width="4" height="12" rx="1" :fill="leftPaneVisible ? (isDark ? '#94a3b8' : '#333') : 'none'" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+        >
+          <rect
+            x="1"
+            y="2"
+            width="14"
+            height="12"
+            rx="1"
+            :stroke="isDark ? '#94a3b8' : '#333'"
+            stroke-width="1.2"
+          />
+          <rect
+            x="1"
+            y="2"
+            width="4"
+            height="12"
+            rx="1"
+            :fill="leftPaneVisible ? (isDark ? '#94a3b8' : '#333') : 'none'"
+            :stroke="isDark ? '#94a3b8' : '#333'"
+            stroke-width="1.2"
+          />
         </svg>
       </button>
 
@@ -44,9 +73,31 @@
         title="Toggle terminal"
         @click="$emit('toggle-bottom-pane')"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="1" y="2" width="14" height="12" rx="1" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
-          <rect x="1" y="10" width="14" height="4" rx="1" :fill="bottomPaneVisible ? (isDark ? '#94a3b8' : '#333') : 'none'" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+        >
+          <rect
+            x="1"
+            y="2"
+            width="14"
+            height="12"
+            rx="1"
+            :stroke="isDark ? '#94a3b8' : '#333'"
+            stroke-width="1.2"
+          />
+          <rect
+            x="1"
+            y="10"
+            width="14"
+            height="4"
+            rx="1"
+            :fill="bottomPaneVisible ? (isDark ? '#94a3b8' : '#333') : 'none'"
+            :stroke="isDark ? '#94a3b8' : '#333'"
+            stroke-width="1.2"
+          />
         </svg>
       </button>
 
@@ -59,13 +110,35 @@
         title="Toggle right panel"
         @click="$emit('toggle-right-pane')"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="1" y="2" width="14" height="12" rx="1" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
-          <rect x="11" y="2" width="4" height="12" rx="1" :fill="rightPaneVisible ? (isDark ? '#94a3b8' : '#333') : 'none'" :stroke="isDark ? '#94a3b8' : '#333'" stroke-width="1.2"/>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+        >
+          <rect
+            x="1"
+            y="2"
+            width="14"
+            height="12"
+            rx="1"
+            :stroke="isDark ? '#94a3b8' : '#333'"
+            stroke-width="1.2"
+          />
+          <rect
+            x="11"
+            y="2"
+            width="4"
+            height="12"
+            rx="1"
+            :fill="rightPaneVisible ? (isDark ? '#94a3b8' : '#333') : 'none'"
+            :stroke="isDark ? '#94a3b8' : '#333'"
+            stroke-width="1.2"
+          />
         </svg>
       </button>
 
-      <div class="header-separator"></div>
+      <div class="header-separator" />
 
       <!-- Theme toggle -->
       <button
@@ -76,11 +149,31 @@
         :title="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
         @click="toggleTheme"
       >
-        <svg v-if="isDark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path fill-rule="evenodd" clip-rule="evenodd" d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1Z"/>
+        <svg
+          v-if="isDark"
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+        >
+          <path
+            fill-rule="evenodd"
+            clip-rule="evenodd"
+            d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1Z"
+          />
         </svg>
-        <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path fill-rule="evenodd" clip-rule="evenodd" d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 1 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z"/>
+        <svg
+          v-else
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+        >
+          <path
+            fill-rule="evenodd"
+            clip-rule="evenodd"
+            d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 1 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z"
+          />
         </svg>
       </button>
     </div>
@@ -89,17 +182,17 @@
 
 <script setup lang="ts">
 defineProps<{
-  isDark: boolean;
-  toggleTheme: () => void;
-  leftPaneVisible: boolean;
+  isDark:            boolean;
+  toggleTheme:       () => void;
+  leftPaneVisible:   boolean;
   bottomPaneVisible: boolean;
-  rightPaneVisible: boolean;
+  rightPaneVisible:  boolean;
 }>();
 
 defineEmits<{
-  'toggle-left-pane': [];
+  'toggle-left-pane':   [];
   'toggle-bottom-pane': [];
-  'toggle-right-pane': [];
+  'toggle-right-pane':  [];
 }>();
 
 const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();

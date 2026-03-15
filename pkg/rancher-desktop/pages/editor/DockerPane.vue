@@ -1,30 +1,95 @@
 <template>
-  <div class="docker-pane" :class="{ dark: isDark }">
-    <div class="docker-header" :class="{ dark: isDark }">
+  <div
+    class="docker-pane"
+    :class="{ dark: isDark }"
+  >
+    <div
+      class="docker-header"
+      :class="{ dark: isDark }"
+    >
       <span class="docker-title">Docker</span>
       <div class="docker-header-actions">
-        <button class="refresh-btn" :class="{ dark: isDark }" @click="refresh" :disabled="loading">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <button
+          class="refresh-btn"
+          :class="{ dark: isDark }"
+          :disabled="loading"
+          @click="refresh"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <polyline points="23,4 23,10 17,10" />
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
           </svg>
         </button>
-        <button class="refresh-btn" :class="{ dark: isDark }" @click="$emit('close')" title="Close Panel">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
+        <button
+          class="refresh-btn"
+          :class="{ dark: isDark }"
+          title="Close Panel"
+          @click="$emit('close')"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="18"
+              y1="6"
+              x2="6"
+              y2="18"
+            />
+            <line
+              x1="6"
+              y1="6"
+              x2="18"
+              y2="18"
+            />
           </svg>
         </button>
       </div>
     </div>
 
-    <div v-if="loading && containers.length === 0" class="docker-status">Loading...</div>
-    <div v-else-if="error" class="docker-status error">{{ error }}</div>
-    <div v-else-if="containers.length === 0" class="docker-status">No containers found</div>
+    <div
+      v-if="loading && containers.length === 0"
+      class="docker-status"
+    >
+      Loading...
+    </div>
+    <div
+      v-else-if="error"
+      class="docker-status error"
+    >
+      {{ error }}
+    </div>
+    <div
+      v-else-if="containers.length === 0"
+      class="docker-status"
+    >
+      No containers found
+    </div>
 
-    <div class="container-list" v-else>
+    <div
+      v-else
+      class="container-list"
+    >
       <!-- Compose project groups -->
-      <template v-for="group in groupedContainers" :key="group.project">
+      <template
+        v-for="group in groupedContainers"
+        :key="group.project"
+      >
         <button
           v-if="group.project"
           class="compose-group-header"
@@ -34,21 +99,62 @@
           <svg
             class="compose-chevron"
             :class="{ expanded: expandedGroups.has(group.project) }"
-            width="10" height="10" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round"
+            width="10"
+            height="10"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
           >
-            <polyline points="9 18 15 12 9 6"/>
+            <polyline points="9 18 15 12 9 6" />
           </svg>
-          <svg class="compose-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2" y="3" width="6" height="5" rx="1"/>
-            <rect x="16" y="3" width="6" height="5" rx="1"/>
-            <rect x="9" y="16" width="6" height="5" rx="1"/>
-            <path d="M5 8v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/>
-            <line x1="12" y1="12" x2="12" y2="16"/>
+          <svg
+            class="compose-icon"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect
+              x="2"
+              y="3"
+              width="6"
+              height="5"
+              rx="1"
+            />
+            <rect
+              x="16"
+              y="3"
+              width="6"
+              height="5"
+              rx="1"
+            />
+            <rect
+              x="9"
+              y="16"
+              width="6"
+              height="5"
+              rx="1"
+            />
+            <path d="M5 8v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
+            <line
+              x1="12"
+              y1="12"
+              x2="12"
+              y2="16"
+            />
           </svg>
           <span class="compose-group-name">{{ group.project }}</span>
-          <span class="compose-group-count" :class="{ dark: isDark }">{{ group.containers.length }}</span>
+          <span
+            class="compose-group-count"
+            :class="{ dark: isDark }"
+          >{{ group.containers.length }}</span>
           <span
             class="compose-group-status"
             :class="groupRunningStatus(group.containers)"
@@ -64,11 +170,17 @@
             @click="toggleExpand(c.id)"
           >
             <div class="container-row">
-              <span class="status-dot" :class="c.state === 'running' ? 'running' : 'stopped'"></span>
+              <span
+                class="status-dot"
+                :class="c.state === 'running' ? 'running' : 'stopped'"
+              />
               <span class="container-name">{{ group.project ? stripProjectPrefix(c.name, group.project) : c.name }}</span>
             </div>
 
-            <div v-if="expandedId === c.id" class="container-details">
+            <div
+              v-if="expandedId === c.id"
+              class="container-details"
+            >
               <div class="detail-row">
                 <span class="detail-label">Image</span>
                 <span class="detail-value">{{ c.image }}</span>
@@ -81,7 +193,10 @@
                 <span class="detail-label">ID</span>
                 <span class="detail-value">{{ c.id }}</span>
               </div>
-              <div v-if="parsedPorts(c.ports).length > 0" class="detail-row">
+              <div
+                v-if="parsedPorts(c.ports).length > 0"
+                class="detail-row"
+              >
                 <span class="detail-label">Ports</span>
                 <div class="ports-list">
                   <a
@@ -94,19 +209,61 @@
                 </div>
               </div>
               <div class="detail-actions">
-                <button class="action-btn" :class="{ dark: isDark }" @click.stop="$emit('docker-logs', c.name)">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14,2 14,8 20,8"/>
-                    <line x1="16" y1="13" x2="8" y2="13"/>
-                    <line x1="16" y1="17" x2="8" y2="17"/>
+                <button
+                  class="action-btn"
+                  :class="{ dark: isDark }"
+                  @click.stop="$emit('docker-logs', c.name)"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14,2 14,8 20,8" />
+                    <line
+                      x1="16"
+                      y1="13"
+                      x2="8"
+                      y2="13"
+                    />
+                    <line
+                      x1="16"
+                      y1="17"
+                      x2="8"
+                      y2="17"
+                    />
                   </svg>
                   Logs
                 </button>
-                <button v-if="c.state === 'running'" class="action-btn" :class="{ dark: isDark }" @click.stop="$emit('docker-exec', c.name)">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="4,17 10,11 4,5"/>
-                    <line x1="12" y1="19" x2="20" y2="19"/>
+                <button
+                  v-if="c.state === 'running'"
+                  class="action-btn"
+                  :class="{ dark: isDark }"
+                  @click.stop="$emit('docker-exec', c.name)"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="4,17 10,11 4,5" />
+                    <line
+                      x1="12"
+                      y1="19"
+                      x2="20"
+                      y2="19"
+                    />
                   </svg>
                   Shell
                 </button>
@@ -124,24 +281,24 @@ import { defineComponent, ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ipcRenderer } from 'electron';
 
 interface DockerContainer {
-  id: string;
-  name: string;
-  image: string;
-  status: string;
-  state: string;
-  ports: string;
+  id:             string;
+  name:           string;
+  image:          string;
+  status:         string;
+  state:          string;
+  ports:          string;
   composeProject: string;
 }
 
 interface ContainerGroup {
-  project: string; // '' for standalone containers
+  project:    string; // '' for standalone containers
   containers: DockerContainer[];
 }
 
 interface ParsedPort {
-  hostPort: string;
+  hostPort:      string;
   containerPort: string;
-  url: string;
+  url:           string;
 }
 
 export default defineComponent({
@@ -217,7 +374,7 @@ export default defineComponent({
 
     function stripProjectPrefix(name: string, project: string): string {
       // Docker Compose names: "project-service-1" or "project_service_1"
-      const prefixes = [`${project}-`, `${project}_`];
+      const prefixes = [`${ project }-`, `${ project }_`];
       for (const prefix of prefixes) {
         if (name.startsWith(prefix)) {
           // Strip trailing replica number too: "service-1" -> "service"
@@ -237,7 +394,7 @@ export default defineComponent({
     function groupStatusLabel(ctrs: DockerContainer[]): string {
       const running = ctrs.filter(c => c.state === 'running').length;
       if (running === ctrs.length) return 'running';
-      if (running > 0) return `${running}/${ctrs.length}`;
+      if (running > 0) return `${ running }/${ ctrs.length }`;
       return 'stopped';
     }
 
@@ -249,7 +406,7 @@ export default defineComponent({
       for (const m of matches) {
         const hostPort = m[2];
         const containerPort = m[3];
-        const key = `${hostPort}-${containerPort}`;
+        const key = `${ hostPort }-${ containerPort }`;
         if (seen.has(key)) continue;
         seen.add(key);
         const HTTPS_PORTS = new Set(['443', '8443', '9443']);
@@ -257,7 +414,7 @@ export default defineComponent({
         results.push({
           hostPort,
           containerPort,
-          url: `${protocol}://localhost:${hostPort}`,
+          url: `${ protocol }://localhost:${ hostPort }`,
         });
       }
       return results;

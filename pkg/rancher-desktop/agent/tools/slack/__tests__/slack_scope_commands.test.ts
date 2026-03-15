@@ -24,7 +24,8 @@ describe('slack_scope_commands', () => {
     mockGet.mockReset();
   });
 
-  it('registers scope tools for the provided Slack OAuth scopes', async () => { const { slackScopeToolRegistrations, slackApiMethodToolRegistrations } = await loadScopeTools();
+  it('registers scope tools for the provided Slack OAuth scopes', async() => {
+    const { slackScopeToolRegistrations, slackApiMethodToolRegistrations } = await loadScopeTools();
     const toolNames = slackScopeToolRegistrations.map((r: any) => r.name);
     const commandToolNames = slackApiMethodToolRegistrations.map((r: any) => r.name);
 
@@ -40,11 +41,12 @@ describe('slack_scope_commands', () => {
     expect(commandToolNames).toContain('slack_cmd_usergroups_update');
   });
 
-  it('executes scope command through Slack apiCall', async () => { const { SlackScopeCommandWorker, slackScopeToolRegistrations } = await loadScopeTools();
+  it('executes scope command through Slack apiCall', async() => {
+    const { SlackScopeCommandWorker, slackScopeToolRegistrations } = await loadScopeTools();
     const registration = slackScopeToolRegistrations.find((r: any) => r.name === 'slack_users_read');
 
     mockGet.mockResolvedValueOnce({
-      apiCall: jest.fn(async () => ({ ok: true, members: [] })),
+      apiCall: jest.fn(async() => ({ ok: true, members: [] })),
     });
 
     const worker = configureWorker(new SlackScopeCommandWorker(), registration);
@@ -55,11 +57,12 @@ describe('slack_scope_commands', () => {
     expect(result.result).toContain('users.list');
   });
 
-  it('executes concrete slack_cmd tool through mapped API method', async () => { const { SlackApiCommandWorker, slackApiMethodToolRegistrations } = await loadScopeTools();
+  it('executes concrete slack_cmd tool through mapped API method', async() => {
+    const { SlackApiCommandWorker, slackApiMethodToolRegistrations } = await loadScopeTools();
     const registration = slackApiMethodToolRegistrations.find((r: any) => r.name === 'slack_cmd_team_info');
 
     mockGet.mockResolvedValueOnce({
-      apiCall: jest.fn(async () => ({ ok: true, team: { id: 'T1' } })),
+      apiCall: jest.fn(async() => ({ ok: true, team: { id: 'T1' } })),
     });
 
     const worker = configureWorker(new SlackApiCommandWorker(), registration);

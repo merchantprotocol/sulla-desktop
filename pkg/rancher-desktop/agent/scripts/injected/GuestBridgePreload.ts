@@ -22,8 +22,8 @@ export function buildGuestBridgeScript(): string {
   if (window.__sullaBridgeInjected) return;
   window.__sullaBridgeInjected = true;
 
-  var CHANNEL = ${JSON.stringify(BRIDGE_CHANNEL)};
-  var GLOBAL  = ${JSON.stringify(GLOBAL_NAME)};
+  var CHANNEL = ${ JSON.stringify(BRIDGE_CHANNEL) };
+  var GLOBAL  = ${ JSON.stringify(GLOBAL_NAME) };
 
   /* ------------------------------------------------------------------ */
   /*  Host communication helper                                         */

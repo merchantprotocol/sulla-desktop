@@ -10,13 +10,12 @@ import path from 'path';
 import stream from 'stream';
 import util from 'util';
 
-import Electron from 'electron';
+import Electron, { ipcMain } from 'electron';
 import merge from 'lodash/merge';
 import omit from 'lodash/omit';
 import semver from 'semver';
 import tar from 'tar-stream';
 import yaml from 'yaml';
-import { ipcMain } from 'electron';
 
 import {
   Architecture,
@@ -128,7 +127,7 @@ export interface LimaConfiguration {
     legacyBIOS?: boolean;
   }
   video?: {
-    display?: string;
+    display?:           string;
     use3DAcceleration?: boolean;
   }
   provision?: {
@@ -1815,7 +1814,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const status = await this.status;
     if (!status) {
       // Explicit create step
-      await this.progressTracker.action('Creating new Lima instance', 20, async () => {
+      await this.progressTracker.action('Creating new Lima instance', 20, async() => {
         await this.lima('create', '--name=0', '--tty=false', this.CONFIG_PATH);
       });
     }
@@ -1857,12 +1856,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     this.currentAction = Action.STARTING;
     this.#adminAccess = config_.application.adminAccess ?? false;
     this.#containerEngineClient = undefined;
-    
-    await this.progressTracker.action('Starting Backend', 10, async() => {
 
+    await this.progressTracker.action('Starting Backend', 10, async() => {
       // Emit event when main process starts up (for detecting restarts)
       ipcMain.emit('sulla-main-started');
-      
+
       try {
         this.progressTracker.numeric('Starting Backend', 0, 100);
         this.ensureArchitectureMatch();
@@ -2004,9 +2002,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         case ContainerEngine.MOBY:
           this.#containerEngineClient = new MobyClient(this, `unix://${ path.join(paths.altAppHome, 'docker.sock') }`);
           await this.progressTracker.action('Setting docker context', 50,
-             dockerDirManager.ensureDockerContextConfigured(
-               this.#adminAccess,
-               path.join(paths.altAppHome, 'docker.sock')));
+            dockerDirManager.ensureDockerContextConfigured(
+              this.#adminAccess,
+              path.join(paths.altAppHome, 'docker.sock')));
           break;
         case ContainerEngine.CONTAINERD:
           await this.execCommand({ root: true }, '/sbin/rc-service', '--ifnotstarted', 'buildkitd', 'start');
@@ -2028,7 +2026,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         if (config.kubernetes.enabled) {
           this.progressTracker.numeric('Kubernetes starting', 75, 100);
 
-          await this.progressTracker.action('Waiting for Kubernetes API ready (up to 10 min)', 76, async () => {
+          await this.progressTracker.action('Waiting for Kubernetes API ready (up to 10 min)', 76, async() => {
             const start = Date.now();
             const timeoutMs = 10 * 60 * 1000; // 10 minutes
 
@@ -2036,7 +2034,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
               try {
                 const health = await this.execCommand(
                   { capture: true, root: true },
-                  'k3s', 'kubectl', 'get', '--raw', '/healthz'
+                  'k3s', 'kubectl', 'get', '--raw', '/healthz',
                 );
                 if (health.trim() === 'ok') {
                   // Quick extra check
@@ -2055,7 +2053,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         }
 
         await this.setState(config.kubernetes.enabled ? State.STARTED : State.DISABLED);
-
       } catch (err) {
         console.error('Error starting lima:', err);
         await this.setState(State.ERROR);
@@ -2070,8 +2067,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       }
     });
 
-    
-
     await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
 
     // Load firstRunCredentialsNeeded from SullaSettingsModel
@@ -2079,7 +2074,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     if (config.kubernetes.enabled) {
       this.progressTracker.numeric('Starting Sulla on Kubernetes', 99, 100);
-      
+
       // if we get here the user has entered their credentials and k8s has booted. we can install sulla.
       if (firstRunCredentialsNeeded === false && this.kubeBackend.sullaStepCustomEnvironment) {
         await this.kubeBackend.sullaStepCustomEnvironment();
@@ -2091,9 +2086,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         await this.sullaStepDockerEnvironment();
       }
     }
-    
   }
-
 
   /**
    * Deploys Sulla services using Docker Compose when Kubernetes is disabled.
@@ -2114,19 +2107,19 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       return;
     }
 
-    await this.progressTracker.action('Preparing Sulla Docker Compose file', 30, async () => {
+    await this.progressTracker.action('Preparing Sulla Docker Compose file', 30, async() => {
       this.progressTracker.numeric('Preparing Sulla Docker Compose file', 5, 100);
       await this.prepareSullaComposeFile();
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
-    await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async () => {
+    await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
       this.progressTracker.numeric('Deploying Sulla services with Docker Compose', 20, 100);
       await this.applySullaCompose();
       this.progressTracker.numeric('Sulla services deployed', 35, 100);
     });
 
-    await this.progressTracker.action('Waiting for Sulla services to be ready', 180, async () => {
+    await this.progressTracker.action('Waiting for Sulla services to be ready', 180, async() => {
       this.progressTracker.numeric('Waiting for Sulla services to be ready', 40, 100);
       await this.waitForSullaDockerServices();
       this.progressTracker.numeric('Sulla services ready', 64, 100);
@@ -2150,11 +2143,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       for (const service of requiredServices) {
         const status = await this.execCommand(
           { capture: true, root: true },
-          'docker', 'ps', '--filter', `name=${service}`, '--filter', 'status=running', '--format', '{{.Names}}',
+          'docker', 'ps', '--filter', `name=${ service }`, '--filter', 'status=running', '--format', '{{.Names}}',
         );
 
         if (!status.trim().includes(service)) {
-          console.log(`[Sulla] Service ${service} not running — will redeploy`);
+          console.log(`[Sulla] Service ${ service } not running — will redeploy`);
 
           return false;
         }
@@ -2183,7 +2176,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     if (compose.services?.postgres?.environment) {
       compose.services.postgres.environment = compose.services.postgres.environment.map((env: string) => {
         if (env.startsWith('POSTGRES_PASSWORD=')) {
-          return `POSTGRES_PASSWORD=${sullaServicePassword}`;
+          return `POSTGRES_PASSWORD=${ sullaServicePassword }`;
         }
         return env;
       });
@@ -2191,16 +2184,16 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     if (compose.services?.n8n?.environment) {
       compose.services.n8n.environment = compose.services.n8n.environment.map((env: string) => {
         if (env.startsWith('N8N_ENCRYPTION_KEY=')) {
-          return `N8N_ENCRYPTION_KEY=${sullaN8nEncryptionKey}`;
+          return `N8N_ENCRYPTION_KEY=${ sullaN8nEncryptionKey }`;
         }
         if (env.startsWith('N8N_USER_MANAGEMENT_JWT_SECRET=')) {
-          return `N8N_USER_MANAGEMENT_JWT_SECRET=${sullaN8nEncryptionKey}`;
+          return `N8N_USER_MANAGEMENT_JWT_SECRET=${ sullaN8nEncryptionKey }`;
         }
         if (env.startsWith('N8N_BASIC_AUTH_PASSWORD=')) {
-          return `N8N_BASIC_AUTH_PASSWORD=${sullaServicePassword}`;
+          return `N8N_BASIC_AUTH_PASSWORD=${ sullaServicePassword }`;
         }
         if (env.startsWith('DB_POSTGRESDB_PASSWORD=')) {
-          return `DB_POSTGRESDB_PASSWORD=${sullaServicePassword}`;
+          return `DB_POSTGRESDB_PASSWORD=${ sullaServicePassword }`;
         }
         return env;
       });
@@ -2216,14 +2209,14 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   private async applySullaCompose(): Promise<void> {
     // Clean up any existing sulla containers to prevent name conflicts
     try {
-      await this.progressTracker.action('Checking for existing containers', 60, async () => {
+      await this.progressTracker.action('Checking for existing containers', 60, async() => {
         const existingContainers = await this.execCommand({ capture: true, root: true }, 'docker', 'ps', '-aq', '--filter', 'name=sulla_');
         const containerIds = existingContainers.trim().split('\n').map(id => id.trim()).filter(id => id && /^[a-f0-9]{12,64}$/i.test(id));
         if (containerIds.length > 0) {
-          await this.progressTracker.action('Stopping existing containers', 61, async () => {
+          await this.progressTracker.action('Stopping existing containers', 61, async() => {
             await this.execCommand({ root: true }, 'docker', 'stop', ...containerIds);
           });
-          await this.progressTracker.action('Cleaning containers', 62, async () => {
+          await this.progressTracker.action('Cleaning containers', 62, async() => {
             await this.execCommand({ root: true }, 'docker', 'rm', ...containerIds);
           });
         }
@@ -2232,7 +2225,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       console.warn('[Sulla] Failed to clean up existing containers:', error);
     }
 
-    await this.progressTracker.action('Verifying compose file', 62.5, async () => {
+    await this.progressTracker.action('Verifying compose file', 62.5, async() => {
       try {
         await this.execCommand({ root: true }, 'test', '-f', '/tmp/sulla-docker-compose.yml');
         console.log('[Sulla] Compose file verified at /tmp/sulla-docker-compose.yml');
@@ -2242,7 +2235,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       }
     });
 
-    await this.progressTracker.action('Deploying new containers', 63, async () => {
+    await this.progressTracker.action('Deploying new containers', 63, async() => {
       await this.execCommand({ root: true }, 'docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla', 'up', '-d');
     });
   }
@@ -2263,13 +2256,13 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * @param serviceName The name of the Docker container to check.
    * @param timeoutSec Maximum time to wait in seconds (default 300).
    */
-  private async waitForDockerServiceHealthy(serviceName: string, timeoutSec: number = 300): Promise<void> {
+  private async waitForDockerServiceHealthy(serviceName: string, timeoutSec = 300): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < timeoutSec * 1000) {
       try {
-        const status = await this.execCommand({ capture: true, root: true }, 'docker', 'ps', '--filter', `name=${serviceName}`, '--format', '{{.Status}}');
+        const status = await this.execCommand({ capture: true, root: true }, 'docker', 'ps', '--filter', `name=${ serviceName }`, '--format', '{{.Status}}');
         if (status.includes('healthy') || status.includes('Up')) {
-          console.log(`Docker service ${serviceName} is ready`);
+          console.log(`Docker service ${ serviceName } is ready`);
           return;
         }
       } catch {
@@ -2277,7 +2270,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       }
       await new Promise(r => setTimeout(r, 5000));
     }
-    throw new Error(`Docker service ${serviceName} not healthy after ${timeoutSec}s`);
+    throw new Error(`Docker service ${ serviceName } not healthy after ${ timeoutSec }s`);
   }
 
   async waitForApiReady(timeoutSec = 120): Promise<void> {

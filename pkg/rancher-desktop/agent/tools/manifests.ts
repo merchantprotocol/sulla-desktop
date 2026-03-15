@@ -47,4 +47,3 @@ toolRegistry.registerManifests([
   ...workflowToolManifests,
   ...workspaceToolManifests,
 ]);
-

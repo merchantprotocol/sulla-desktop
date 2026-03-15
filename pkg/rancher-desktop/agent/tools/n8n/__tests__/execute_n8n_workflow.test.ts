@@ -8,10 +8,10 @@ const mockRunWorkflow: any = jest.fn();
 const mockBridgeRequest: any = jest.fn();
 
 const runtimeServiceMockFactory = () => ({
-  getN8nRuntime: jest.fn(async () => ({
+  getN8nRuntime: jest.fn(async() => ({
     bridge: {
       runWorkflow: mockRunWorkflow,
-      request: mockBridgeRequest,
+      request:     mockBridgeRequest,
     },
   })),
 });
@@ -31,7 +31,7 @@ function configureWorker(worker: any, registration: any) {
 }
 
 describe('execute_n8n_workflow tool', () => {
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
 
@@ -54,14 +54,14 @@ describe('execute_n8n_workflow tool', () => {
     mockBridgeRequest.mockReset();
   });
 
-  it('returns failure in async mode when execution is already failed', async () => {
+  it('returns failure in async mode when execution is already failed', async() => {
     const { ExecuteN8nWorkflowBridgeWorker, executeN8nWorkflowBridgeRegistration } = await loadExecuteTool();
 
     mockRunWorkflow.mockResolvedValueOnce({ executionId: 'exec_async_fail' });
     mockBridgeRequest.mockResolvedValueOnce({
-      id: 'exec_async_fail',
+      id:     'exec_async_fail',
       status: 'error',
-      data: {
+      data:   {
         resultData: {
           error: {
             message: "Problem in node 'Merge All Sources': Cannot read properties of undefined (reading 'execute')",
@@ -77,14 +77,14 @@ describe('execute_n8n_workflow tool', () => {
     expect(String(result.result || '')).toContain("Cannot read properties of undefined (reading 'execute')");
   });
 
-  it('returns failure in sync mode when execution ends with error status', async () => {
+  it('returns failure in sync mode when execution ends with error status', async() => {
     const { ExecuteN8nWorkflowBridgeWorker, executeN8nWorkflowBridgeRegistration } = await loadExecuteTool();
 
     mockRunWorkflow.mockResolvedValueOnce({ executionId: 'exec_sync_fail' });
     mockBridgeRequest.mockResolvedValueOnce({
-      id: 'exec_sync_fail',
+      id:     'exec_sync_fail',
       status: 'failed',
-      data: {
+      data:   {
         resultData: {
           error: {
             message: 'Node execution failed hard',
@@ -101,7 +101,7 @@ describe('execute_n8n_workflow tool', () => {
     expect(String(result.result || '')).toContain('Node execution failed hard');
   });
 
-  it('returns failure when run endpoint does not return executionId', async () => {
+  it('returns failure when run endpoint does not return executionId', async() => {
     const { ExecuteN8nWorkflowBridgeWorker, executeN8nWorkflowBridgeRegistration } = await loadExecuteTool();
 
     mockRunWorkflow.mockResolvedValueOnce({ ok: true });

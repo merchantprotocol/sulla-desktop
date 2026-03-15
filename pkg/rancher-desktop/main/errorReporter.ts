@@ -13,12 +13,12 @@ import Electron from 'electron';
 const ERROR_REPORT_URL = 'https://error-reports.merchantprotocol.workers.dev';
 
 export interface ErrorReportPayload {
-  error_type: string;
+  error_type:    string;
   error_message: string;
-  stack_trace?: string;
-  app_version?: string;
-  os_platform?: string;
-  os_version?: string;
+  stack_trace?:  string;
+  app_version?:  string;
+  os_platform?:  string;
+  os_version?:   string;
   user_context?: string;
   notify_email?: string;
 }
@@ -29,7 +29,7 @@ export interface ErrorReportPayload {
  */
 export async function submitErrorReport(report: ErrorReportPayload): Promise<{ success: boolean; action?: string; issue_number?: number }> {
   const payload: ErrorReportPayload = {
-    error_type:   report.error_type || 'unknown',
+    error_type:    report.error_type || 'unknown',
     error_message: report.error_message || 'No error message provided',
     stack_trace:   report.stack_trace || '',
     app_version:   report.app_version || getAppVersion(),
@@ -77,7 +77,7 @@ export async function reportError(
   const err = typeof error === 'string' ? new Error(error) : error;
 
   return submitErrorReport({
-    error_type:   err.name || 'Error',
+    error_type:    err.name || 'Error',
     error_message: err.message,
     stack_trace:   err.stack || '',
     user_context:  context,

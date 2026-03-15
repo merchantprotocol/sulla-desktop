@@ -1,27 +1,95 @@
 <template>
-  <div class="agent-pane" :class="{ dark: isDark }">
-    <div class="agent-header" :class="{ dark: isDark }">
+  <div
+    class="agent-pane"
+    :class="{ dark: isDark }"
+  >
+    <div
+      class="agent-header"
+      :class="{ dark: isDark }"
+    >
       <span class="agent-header-title">Agent</span>
       <div class="agent-header-actions">
-        <button class="agent-header-btn" :class="{ dark: isDark }" title="New Agent" @click="$emit('open-new-agent-tab')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <line x1="12" y1="18" x2="12" y2="12"/>
-            <line x1="9" y1="15" x2="15" y2="15"/>
+        <button
+          class="agent-header-btn"
+          :class="{ dark: isDark }"
+          title="New Agent"
+          @click="$emit('open-new-agent-tab')"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line
+              x1="12"
+              y1="18"
+              x2="12"
+              y2="12"
+            />
+            <line
+              x1="9"
+              y1="15"
+              x2="15"
+              y2="15"
+            />
           </svg>
         </button>
-        <button class="agent-header-btn" :class="{ dark: isDark }" title="Refresh" @click="loadAgents">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"/>
-            <polyline points="1 20 1 14 7 14"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        <button
+          class="agent-header-btn"
+          :class="{ dark: isDark }"
+          title="Refresh"
+          @click="loadAgents"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
           </svg>
         </button>
-        <button class="agent-header-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
+        <button
+          class="agent-header-btn"
+          :class="{ dark: isDark }"
+          title="Close Panel"
+          @click="$emit('close')"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="18"
+              y1="6"
+              x2="6"
+              y2="18"
+            />
+            <line
+              x1="6"
+              y1="6"
+              x2="18"
+              y2="18"
+            />
           </svg>
         </button>
       </div>
@@ -29,22 +97,57 @@
 
     <div class="agent-content">
       <!-- Loading -->
-      <div v-if="loading" class="agent-status">Loading agents...</div>
+      <div
+        v-if="loading"
+        class="agent-status"
+      >
+        Loading agents...
+      </div>
 
       <!-- Empty state -->
-      <div v-else-if="agents.length === 0" class="agent-empty">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.3">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="12" y1="18" x2="12" y2="12"/>
-          <line x1="9" y1="15" x2="15" y2="15"/>
+      <div
+        v-else-if="agents.length === 0"
+        class="agent-empty"
+      >
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          opacity="0.3"
+        >
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line
+            x1="12"
+            y1="18"
+            x2="12"
+            y2="12"
+          />
+          <line
+            x1="9"
+            y1="15"
+            x2="15"
+            y2="15"
+          />
         </svg>
-        <p class="agent-empty-text">No agents yet</p>
-        <p class="agent-empty-hint">Click + to create your first agent</p>
+        <p class="agent-empty-text">
+          No agents yet
+        </p>
+        <p class="agent-empty-hint">
+          Click + to create your first agent
+        </p>
       </div>
 
       <!-- Agent list -->
-      <div v-else class="agent-list">
+      <div
+        v-else
+        class="agent-list"
+      >
         <div
           v-for="(agent, idx) in agents"
           :key="agent.id"
@@ -59,7 +162,11 @@
               @click="editAgent(agent)"
               @contextmenu.prevent="showContextMenu($event, agent.path, true, '')"
             >
-              <img :src="logoUrl" class="agent-logo" alt="" />
+              <img
+                :src="logoUrl"
+                class="agent-logo"
+                alt=""
+              >
               <div class="agent-meta">
                 <span class="agent-name">{{ agent.name }}</span>
                 <span class="agent-type">{{ agent.type }}</span>
@@ -72,10 +179,27 @@
                 title="Agent options"
                 @click.stop="toggleAgentMenu(agent.id)"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="12" cy="5" r="2"/>
-                  <circle cx="12" cy="12" r="2"/>
-                  <circle cx="12" cy="19" r="2"/>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <circle
+                    cx="12"
+                    cy="5"
+                    r="2"
+                  />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="2"
+                  />
+                  <circle
+                    cx="12"
+                    cy="19"
+                    r="2"
+                  />
                 </svg>
               </button>
               <!-- Dropdown -->
@@ -84,17 +208,43 @@
                 class="agent-dropdown"
                 :class="{ dark: isDark }"
               >
-                <button class="agent-dropdown-item" :class="{ dark: isDark }" @click="editAgent(agent)">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                <button
+                  class="agent-dropdown-item"
+                  :class="{ dark: isDark }"
+                  @click="editAgent(agent)"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                   </svg>
                   <span>Edit</span>
                 </button>
-                <button class="agent-dropdown-item danger" :class="{ dark: isDark }" @click="confirmDeleteAgent(agent)">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                <button
+                  class="agent-dropdown-item danger"
+                  :class="{ dark: isDark }"
+                  @click="confirmDeleteAgent(agent)"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                   </svg>
                   <span>Delete</span>
                 </button>
@@ -103,8 +253,14 @@
           </div>
 
           <!-- Agent files (all files and directories) -->
-          <div v-if="agent.children && agent.children.length > 0" class="agent-files">
-            <template v-for="entry in agent.children" :key="entry.path">
+          <div
+            v-if="agent.children && agent.children.length > 0"
+            class="agent-files"
+          >
+            <template
+              v-for="entry in agent.children"
+              :key="entry.path"
+            >
               <!-- Directory row -->
               <button
                 v-if="entry.isDir"
@@ -113,17 +269,47 @@
                 @click="toggleDir(entry.path, agent)"
                 @contextmenu.prevent="showContextMenu($event, entry.path, true, '')"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
-                  <path v-if="expandedDirs.has(entry.path)" d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                  <path v-else d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  opacity="0.5"
+                >
+                  <path
+                    v-if="expandedDirs.has(entry.path)"
+                    d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                  />
+                  <path
+                    v-else
+                    d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                  />
                 </svg>
                 <span>{{ entry.name }}</span>
-                <svg class="agent-expand-icon" :class="{ expanded: expandedDirs.has(entry.path) }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="9 18 15 12 9 6"/>
+                <svg
+                  class="agent-expand-icon"
+                  :class="{ expanded: expandedDirs.has(entry.path) }"
+                  width="10"
+                  height="10"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="9 18 15 12 9 6" />
                 </svg>
               </button>
               <!-- Expanded directory children -->
-              <div v-if="entry.isDir && expandedDirs.has(entry.path) && dirChildren.get(entry.path)" class="agent-subfiles">
+              <div
+                v-if="entry.isDir && expandedDirs.has(entry.path) && dirChildren.get(entry.path)"
+                class="agent-subfiles"
+              >
                 <button
                   v-for="child in dirChildren.get(entry.path)"
                   :key="child.path"
@@ -132,12 +318,34 @@
                   @click="child.isDir ? toggleDir(child.path, agent) : openFileEntry(child)"
                   @contextmenu.prevent="showContextMenu($event, child.path, child.isDir, child.ext)"
                 >
-                  <svg v-if="child.isDir" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
-                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  <svg
+                    v-if="child.isDir"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    opacity="0.5"
+                  >
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                   </svg>
-                  <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
+                  <svg
+                    v-else
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    opacity="0.5"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
                   </svg>
                   <span>{{ child.name }}</span>
                 </button>
@@ -150,9 +358,19 @@
                 @click="openFileEntry(entry)"
                 @contextmenu.prevent="showContextMenu($event, entry.path, false, entry.ext)"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  opacity="0.5"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
                 </svg>
                 <span>{{ entry.name }}</span>
               </button>
@@ -164,15 +382,36 @@
 
     <!-- Delete confirmation dialog -->
     <Teleport to="body">
-      <div v-if="deleteConfirm" class="agent-confirm-overlay" @click.self="deleteConfirm = null">
-        <div class="agent-confirm-dialog" :class="{ dark: isDark }">
-          <p class="agent-confirm-msg">Are you sure you want to delete <strong>{{ deleteConfirmName }}</strong>?</p>
-          <p class="agent-confirm-hint">{{ deleteConfirmIsAgent
-            ? 'This will permanently remove the agent directory and all its files.'
-            : 'This action cannot be undone.' }}</p>
+      <div
+        v-if="deleteConfirm"
+        class="agent-confirm-overlay"
+        @click.self="deleteConfirm = null"
+      >
+        <div
+          class="agent-confirm-dialog"
+          :class="{ dark: isDark }"
+        >
+          <p class="agent-confirm-msg">
+            Are you sure you want to delete <strong>{{ deleteConfirmName }}</strong>?
+          </p>
+          <p class="agent-confirm-hint">
+            {{ deleteConfirmIsAgent
+              ? 'This will permanently remove the agent directory and all its files.'
+              : 'This action cannot be undone.' }}
+          </p>
           <div class="agent-confirm-actions">
-            <button class="agent-confirm-btn cancel" :class="{ dark: isDark }" @click="deleteConfirm = null">Cancel</button>
-            <button class="agent-confirm-btn delete" :disabled="deleting" @click="doDelete">
+            <button
+              class="agent-confirm-btn cancel"
+              :class="{ dark: isDark }"
+              @click="deleteConfirm = null"
+            >
+              Cancel
+            </button>
+            <button
+              class="agent-confirm-btn delete"
+              :disabled="deleting"
+              @click="doDelete"
+            >
               {{ deleting ? 'Deleting...' : 'Delete' }}
             </button>
           </div>
@@ -187,7 +426,10 @@
       :has-clipboard="!!fileClipboard"
       @action="handleContextAction"
     />
-    <InlinePrompt ref="inlinePromptRef" :is-dark="isDark" />
+    <InlinePrompt
+      ref="inlinePromptRef"
+      :is-dark="isDark"
+    />
   </div>
 </template>
 
@@ -198,20 +440,20 @@ import FileContextMenu from '@pkg/pages/filesystem/FileContextMenu.vue';
 import InlinePrompt from './InlinePrompt.vue';
 
 interface AgentInfo {
-  id: string;
-  name: string;
+  id:          string;
+  name:        string;
   description: string;
-  type: string;
-  path: string;
-  children?: FileEntry[];
+  type:        string;
+  path:        string;
+  children?:   FileEntry[];
 }
 
 interface FileEntry {
-  name: string;
-  path: string;
-  isDir: boolean;
-  size: number;
-  ext: string;
+  name:        string;
+  path:        string;
+  isDir:       boolean;
+  size:        number;
+  ext:         string;
   editorType?: 'code' | 'markdown';
 }
 
@@ -220,10 +462,10 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'close': [];
-  'file-selected': [entry: FileEntry];
+  close:                [];
+  'file-selected':      [entry: FileEntry];
   'open-new-agent-tab': [];
-  'edit-agent': [agent: AgentInfo];
+  'edit-agent':         [agent: AgentInfo];
 }>();
 
 const agents = ref<AgentInfo[]>([]);
@@ -368,88 +610,88 @@ async function handleContextAction(action: { type: string; path: string; isDir: 
   const targetDir = action.isDir ? action.path : action.path.replace(/\/[^/]+$/, '');
 
   switch (action.type) {
-    case 'new-file': {
-      const name = await inlinePromptRef.value?.show('New file name:');
-      if (!name) return;
-      try {
-        await ipcRenderer.invoke('filesystem-create-file', targetDir, name);
-        await loadAgents();
-      } catch (err: any) {
-        alert(err?.message || 'Failed to create file');
+  case 'new-file': {
+    const name = await inlinePromptRef.value?.show('New file name:');
+    if (!name) return;
+    try {
+      await ipcRenderer.invoke('filesystem-create-file', targetDir, name);
+      await loadAgents();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to create file');
+    }
+    break;
+  }
+  case 'new-folder': {
+    const name = await inlinePromptRef.value?.show('New folder name:');
+    if (!name) return;
+    try {
+      await ipcRenderer.invoke('filesystem-create-dir', targetDir, name);
+      await loadAgents();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to create folder');
+    }
+    break;
+  }
+  case 'cut':
+    fileClipboard.value = { path: action.path, operation: 'cut' };
+    break;
+  case 'copy':
+    fileClipboard.value = { path: action.path, operation: 'copy' };
+    break;
+  case 'paste': {
+    if (!fileClipboard.value) return;
+    try {
+      if (fileClipboard.value.operation === 'copy') {
+        await ipcRenderer.invoke('filesystem-copy', fileClipboard.value.path, targetDir);
+      } else {
+        await ipcRenderer.invoke('filesystem-move', fileClipboard.value.path, targetDir);
+        fileClipboard.value = null;
       }
-      break;
+      await loadAgents();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to paste');
     }
-    case 'new-folder': {
-      const name = await inlinePromptRef.value?.show('New folder name:');
-      if (!name) return;
-      try {
-        await ipcRenderer.invoke('filesystem-create-dir', targetDir, name);
-        await loadAgents();
-      } catch (err: any) {
-        alert(err?.message || 'Failed to create folder');
-      }
-      break;
+    break;
+  }
+  case 'rename': {
+    const currentName = action.path.split('/').pop() || '';
+    const newName = await inlinePromptRef.value?.show('Rename to:', currentName);
+    if (!newName || newName === currentName) return;
+    try {
+      await ipcRenderer.invoke('filesystem-rename', action.path, newName);
+      await loadAgents();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to rename');
     }
-    case 'cut':
-      fileClipboard.value = { path: action.path, operation: 'cut' };
-      break;
-    case 'copy':
-      fileClipboard.value = { path: action.path, operation: 'copy' };
-      break;
-    case 'paste': {
-      if (!fileClipboard.value) return;
-      try {
-        if (fileClipboard.value.operation === 'copy') {
-          await ipcRenderer.invoke('filesystem-copy', fileClipboard.value.path, targetDir);
-        } else {
-          await ipcRenderer.invoke('filesystem-move', fileClipboard.value.path, targetDir);
-          fileClipboard.value = null;
-        }
-        await loadAgents();
-      } catch (err: any) {
-        alert(err?.message || 'Failed to paste');
-      }
-      break;
-    }
-    case 'rename': {
-      const currentName = action.path.split('/').pop() || '';
-      const newName = await inlinePromptRef.value?.show('Rename to:', currentName);
-      if (!newName || newName === currentName) return;
-      try {
-        await ipcRenderer.invoke('filesystem-rename', action.path, newName);
-        await loadAgents();
-      } catch (err: any) {
-        alert(err?.message || 'Failed to rename');
-      }
-      break;
-    }
-    case 'delete': {
-      const fileName = action.path.split('/').pop() || 'this item';
-      deleteConfirm.value = { name: fileName, path: action.path, isAgent: false };
-      break;
-    }
-    case 'copy-path':
-      clipboard.writeText(action.path);
-      break;
-    case 'copy-relative-path': {
-      // Relative to ~/sulla
-      const sullaIdx = action.path.indexOf('/sulla/');
-      const rel = sullaIdx >= 0 ? action.path.slice(sullaIdx + 7) : action.path;
-      clipboard.writeText(rel);
-      break;
-    }
-    case 'reveal':
-      await ipcRenderer.invoke('filesystem-reveal', action.path);
-      break;
-    case 'open-external':
-      await ipcRenderer.invoke('filesystem-open-external', action.path);
-      break;
-    case 'open-code-editor': {
-      const name = action.path.split('/').pop() || '';
-      const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
-      emit('file-selected', { name, path: action.path, isDir: false, size: 0, ext });
-      break;
-    }
+    break;
+  }
+  case 'delete': {
+    const fileName = action.path.split('/').pop() || 'this item';
+    deleteConfirm.value = { name: fileName, path: action.path, isAgent: false };
+    break;
+  }
+  case 'copy-path':
+    clipboard.writeText(action.path);
+    break;
+  case 'copy-relative-path': {
+    // Relative to ~/sulla
+    const sullaIdx = action.path.indexOf('/sulla/');
+    const rel = sullaIdx >= 0 ? action.path.slice(sullaIdx + 7) : action.path;
+    clipboard.writeText(rel);
+    break;
+  }
+  case 'reveal':
+    await ipcRenderer.invoke('filesystem-reveal', action.path);
+    break;
+  case 'open-external':
+    await ipcRenderer.invoke('filesystem-open-external', action.path);
+    break;
+  case 'open-code-editor': {
+    const name = action.path.split('/').pop() || '';
+    const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
+    emit('file-selected', { name, path: action.path, isDir: false, size: 0, ext });
+    break;
+  }
   }
 }
 

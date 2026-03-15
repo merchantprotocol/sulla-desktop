@@ -1,21 +1,49 @@
 <template>
-  <div class="training-pane" :class="{ dark: isDark }">
+  <div
+    class="training-pane"
+    :class="{ dark: isDark }"
+  >
     <!-- Loading -->
-    <div v-if="!installChecked" class="tp-loading">
+    <div
+      v-if="!installChecked"
+      class="tp-loading"
+    >
       <span class="tp-loading-text">Checking installation…</span>
     </div>
 
-    <div v-else-if="!envInstalled" class="tp-install-screen">
+    <div
+      v-else-if="!envInstalled"
+      class="tp-install-screen"
+    >
       <!-- Before install starts: centered prompt -->
-      <div v-if="!envInstalling && !installError" class="tp-install-prompt">
+      <div
+        v-if="!envInstalling && !installError"
+        class="tp-install-prompt"
+      >
         <div class="tp-install-icon">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
+          <svg
+            width="48"
+            height="48"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line
+              x1="12"
+              y1="15"
+              x2="12"
+              y2="3"
+            />
           </svg>
         </div>
-        <h2 class="tp-install-title">Install Training Setup</h2>
+        <h2 class="tp-install-title">
+          Install Training Setup
+        </h2>
         <p class="tp-install-desc">
           This will install the Python training dependencies and download the
           <strong>{{ installModelName }}</strong> model<span v-if="installModelRepo"> ({{ installModelRepo }})</span>.
@@ -23,7 +51,10 @@
         </p>
 
         <!-- Disk space info -->
-        <div class="tp-disk-info" :class="{ insufficient: !hasEnoughSpace }">
+        <div
+          class="tp-disk-info"
+          :class="{ insufficient: !hasEnoughSpace }"
+        >
           <div class="tp-disk-row">
             <span class="tp-disk-label">Required space:</span>
             <span class="tp-disk-value">{{ formatBytes(requiredBytes) }}</span>
@@ -32,11 +63,33 @@
             <span class="tp-disk-label">Available space:</span>
             <span class="tp-disk-value">{{ formatBytes(availableBytes) }}</span>
           </div>
-          <div v-if="!hasEnoughSpace" class="tp-disk-warning">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
+          <div
+            v-if="!hasEnoughSpace"
+            class="tp-disk-warning"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line
+                x1="12"
+                y1="9"
+                x2="12"
+                y2="13"
+              />
+              <line
+                x1="12"
+                y1="17"
+                x2="12.01"
+                y2="17"
+              />
             </svg>
             Not enough disk space. Free up at least {{ formatBytes(requiredBytes - availableBytes) }} to continue.
           </div>
@@ -53,13 +106,23 @@
       </div>
 
       <!-- During install: progress + logs -->
-      <div v-if="envInstalling" class="tp-install-progress">
-        <h2 class="tp-progress-title">Installing Training Environment</h2>
-        <p class="tp-progress-desc">{{ installDescription || 'Starting...' }}</p>
+      <div
+        v-if="envInstalling"
+        class="tp-install-progress"
+      >
+        <h2 class="tp-progress-title">
+          Installing Training Environment
+        </h2>
+        <p class="tp-progress-desc">
+          {{ installDescription || 'Starting...' }}
+        </p>
 
         <!-- Progress bar -->
         <div class="tp-progress-track">
-          <div class="tp-progress-fill" :style="{ width: progressPct + '%' }"/>
+          <div
+            class="tp-progress-fill"
+            :style="{ width: progressPct + '%' }"
+          />
         </div>
         <div class="tp-progress-labels">
           <span>{{ installPhase === 'model' ? 'Downloading model' : 'Installing dependencies' }}</span>
@@ -67,41 +130,71 @@
         </div>
 
         <!-- File download detail -->
-        <div v-if="installPhase === 'model' && installFileName" class="tp-file-detail">
+        <div
+          v-if="installPhase === 'model' && installFileName"
+          class="tp-file-detail"
+        >
           <span>{{ installFileName }}</span>
-          <span v-if="downloadDetail" class="tp-file-size">{{ downloadDetail }}</span>
+          <span
+            v-if="downloadDetail"
+            class="tp-file-size"
+          >{{ downloadDetail }}</span>
         </div>
 
         <!-- Live log output -->
         <div class="tp-log-box">
-          <pre class="tp-log-output" ref="logOutputRef">{{ installLogContent || 'Waiting for output…' }}</pre>
+          <pre
+            ref="logOutputRef"
+            class="tp-log-output"
+          >{{ installLogContent || 'Waiting for output…' }}</pre>
         </div>
       </div>
 
       <!-- Error state -->
-      <div v-if="!envInstalling && installError" class="tp-install-prompt">
+      <div
+        v-if="!envInstalling && installError"
+        class="tp-install-prompt"
+      >
         <div class="tp-error-box">
           <strong>Installation failed:</strong> {{ installError }}
         </div>
-        <button class="tp-btn-install" @click="startInstall">
+        <button
+          class="tp-btn-install"
+          @click="startInstall"
+        >
           Retry Installation
         </button>
-        <div v-if="installLogContent" class="tp-log-box tp-log-error">
+        <div
+          v-if="installLogContent"
+          class="tp-log-box tp-log-error"
+        >
           <pre class="tp-log-output">{{ installLogContent }}</pre>
         </div>
       </div>
     </div>
 
     <!-- ==================== WIZARD STEPS ==================== -->
-    <div v-else class="tp-wizard">
-
+    <div
+      v-else
+      class="tp-wizard"
+    >
       <!-- ─── DASHBOARD ─── -->
-      <TrainingDashboard v-if="currentStep === -1" :is-dark="isDark" @open-training-log="$emit('open-training-log', $event)" />
+      <TrainingDashboard
+        v-if="currentStep === -1"
+        :is-dark="isDark"
+        @open-training-log="$emit('open-training-log', $event)"
+      />
 
       <!-- ─── STEP 1: Document Selection ─── -->
-      <div v-if="currentStep === 0" class="tp-step tp-step-select">
+      <div
+        v-if="currentStep === 0"
+        class="tp-step tp-step-select"
+      >
         <!-- Left: File tree + continue button -->
-        <div class="tp-select-tree" :class="{ dark: isDark }">
+        <div
+          class="tp-select-tree"
+          :class="{ dark: isDark }"
+        >
           <div class="tp-select-tree-header">
             <span class="tp-select-tree-title">Your Files</span>
             <span class="tp-select-tree-count">
@@ -110,11 +203,32 @@
             </span>
           </div>
           <div class="tp-select-tree-content">
-            <div v-if="treeLoading === '__root__'" class="tp-tree-status">Loading…</div>
-            <div v-else-if="loadError" class="tp-tree-status tp-tree-error">{{ loadError }}</div>
-            <div v-else-if="treeRoot.length === 0" class="tp-tree-status">No files found.</div>
-            <div v-else class="tp-tree-list">
-              <template v-for="node in treeRoot" :key="node.path">
+            <div
+              v-if="treeLoading === '__root__'"
+              class="tp-tree-status"
+            >
+              Loading…
+            </div>
+            <div
+              v-else-if="loadError"
+              class="tp-tree-status tp-tree-error"
+            >
+              {{ loadError }}
+            </div>
+            <div
+              v-else-if="treeRoot.length === 0"
+              class="tp-tree-status"
+            >
+              No files found.
+            </div>
+            <div
+              v-else
+              class="tp-tree-list"
+            >
+              <template
+                v-for="node in treeRoot"
+                :key="node.path"
+              >
                 <TreeNode
                   :node="node"
                   :depth="0"
@@ -132,8 +246,14 @@
             </div>
           </div>
           <!-- Pinned action bar below tree -->
-          <div class="tp-select-tree-actions" :class="{ dark: isDark }">
-            <span class="tp-selection-summary" v-if="selectedFolders.length > 0 || selectedFiles.length > 0">
+          <div
+            class="tp-select-tree-actions"
+            :class="{ dark: isDark }"
+          >
+            <span
+              v-if="selectedFolders.length > 0 || selectedFiles.length > 0"
+              class="tp-selection-summary"
+            >
               {{ selectedFolders.length + selectedFiles.length }} item{{ (selectedFolders.length + selectedFiles.length) !== 1 ? 's' : '' }} selected
             </span>
             <button
@@ -142,27 +262,45 @@
               @click="$emit('step-change', 1)"
             >
               Continue
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="9 18 15 12 9 6"/>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="9 18 15 12 9 6" />
               </svg>
             </button>
           </div>
         </div>
-
       </div>
 
       <!-- ─── STEP 2: Craft Prompt ─── -->
-      <div v-if="currentStep === 1" class="tp-step tp-step-prompt">
+      <div
+        v-if="currentStep === 1"
+        class="tp-step tp-step-prompt"
+      >
         <div class="tp-fullpage-content">
-          <h2 class="tp-page-title">Craft Your Prompt</h2>
+          <h2 class="tp-page-title">
+            Craft Your Prompt
+          </h2>
           <p class="tp-page-desc">
             Write or select a prompt template that guides how your documents are turned into training data.
             This prompt is sent to an LLM to generate high-quality examples from each document.
           </p>
 
           <!-- Prompt template selector -->
-          <div class="tp-prompt-templates" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Template</h3>
+          <div
+            class="tp-prompt-templates"
+            :class="{ dark: isDark }"
+          >
+            <h3 class="tp-section-title">
+              Template
+            </h3>
             <div class="tp-template-grid">
               <button
                 v-for="tmpl in promptTemplates"
@@ -171,19 +309,28 @@
                 :class="{ dark: isDark, selected: selectedTemplate === tmpl.id }"
                 @click="selectTemplate(tmpl.id)"
               >
-                <div class="tp-template-name">{{ tmpl.name }}</div>
-                <div class="tp-template-desc">{{ tmpl.description }}</div>
+                <div class="tp-template-name">
+                  {{ tmpl.name }}
+                </div>
+                <div class="tp-template-desc">
+                  {{ tmpl.description }}
+                </div>
               </button>
             </div>
           </div>
 
           <!-- Custom prompt textarea -->
-          <div class="tp-prompt-editor" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Prompt</h3>
+          <div
+            class="tp-prompt-editor"
+            :class="{ dark: isDark }"
+          >
+            <h3 class="tp-section-title">
+              Prompt
+            </h3>
             <textarea
+              v-model="customPrompt"
               class="tp-prompt-textarea"
               :class="{ dark: isDark }"
-              v-model="customPrompt"
               rows="8"
               placeholder="Enter your custom prompt here. Use {document} as a placeholder for the document text and {filename} for the file name."
             />
@@ -194,214 +341,452 @@
         </div>
 
         <div class="tp-step-actions">
-          <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 0)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 18 9 12 15 6"/>
+          <button
+            class="tp-btn-back"
+            :class="{ dark: isDark }"
+            @click="$emit('step-change', 0)"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
             </svg>
             Back
           </button>
-          <button class="tp-btn-primary" @click="$emit('step-change', 2)">
+          <button
+            class="tp-btn-primary"
+            @click="$emit('step-change', 2)"
+          >
             Continue
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6" />
             </svg>
           </button>
         </div>
       </div>
 
       <!-- ─── STEP 3: Pre-Process (choose LLM + generate training data) ─── -->
-      <div v-if="currentStep === 2" class="tp-step tp-step-generate">
+      <div
+        v-if="currentStep === 2"
+        class="tp-step tp-step-generate"
+      >
         <!-- Left: main controls -->
-        <div class="tp-generate-main" :class="{ dark: isDark }">
+        <div
+          class="tp-generate-main"
+          :class="{ dark: isDark }"
+        >
           <div class="tp-generate-main-scroll">
-          <h2 class="tp-page-title">Generate Training Data</h2>
-          <p class="tp-page-desc" style="margin-bottom: 16px;">
-            Select a model to read your documents and generate training examples from your prompt template.
-          </p>
-
-          <!-- LLM Model selection for processing -->
-          <div class="tp-llm-section" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Choose a Model for Processing</h3>
-            <p class="tp-model-section-desc" :class="{ dark: isDark }">
-              Select which LLM will read your documents and generate the training prompts. More capable models
-              produce higher-quality questions but cost more and take longer. You can use any model from your
-              locally installed models or your connected integrations (OpenAI, Anthropic, etc.).
+            <h2 class="tp-page-title">
+              Generate Training Data
+            </h2>
+            <p
+              class="tp-page-desc"
+              style="margin-bottom: 16px;"
+            >
+              Select a model to read your documents and generate training examples from your prompt template.
             </p>
 
-            <!-- Local models -->
-            <div v-if="localLlmModels.length > 0" class="tp-llm-group">
-              <div class="tp-llm-group-label" :class="{ dark: isDark }">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
-                  <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
-                  <line x1="6" y1="6" x2="6.01" y2="6"/>
-                  <line x1="6" y1="18" x2="6.01" y2="18"/>
-                </svg>
-                Local Models
-                <span class="tp-llm-group-badge">Free</span>
-              </div>
-              <div class="tp-llm-list">
-                <button
-                  v-for="model in localLlmModels"
-                  :key="'local-' + model.id"
-                  class="tp-llm-card"
-                  :class="{ dark: isDark, selected: processLlm === model.id && processLlmProvider === 'local' }"
-                  @click="selectProcessLlm(model.id, 'local')"
+            <!-- LLM Model selection for processing -->
+            <div
+              class="tp-llm-section"
+              :class="{ dark: isDark }"
+            >
+              <h3 class="tp-section-title">
+                Choose a Model for Processing
+              </h3>
+              <p
+                class="tp-model-section-desc"
+                :class="{ dark: isDark }"
+              >
+                Select which LLM will read your documents and generate the training prompts. More capable models
+                produce higher-quality questions but cost more and take longer. You can use any model from your
+                locally installed models or your connected integrations (OpenAI, Anthropic, etc.).
+              </p>
+
+              <!-- Local models -->
+              <div
+                v-if="localLlmModels.length > 0"
+                class="tp-llm-group"
+              >
+                <div
+                  class="tp-llm-group-label"
+                  :class="{ dark: isDark }"
                 >
-                  <div class="tp-model-radio" :class="{ selected: processLlm === model.id && processLlmProvider === 'local' }" />
-                  <div class="tp-llm-card-info">
-                    <div class="tp-model-name">{{ model.name }}</div>
-                    <div class="tp-llm-card-meta">Local · No cost · Slower</div>
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            <!-- Remote / integration models -->
-            <div v-if="remoteLlmModels.length > 0" class="tp-llm-group">
-              <div class="tp-llm-group-label" :class="{ dark: isDark }">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                </svg>
-                Cloud Models (via Integrations)
-              </div>
-              <div class="tp-llm-list">
-                <button
-                  v-for="model in remoteLlmModels"
-                  :key="'remote-' + model.id"
-                  class="tp-llm-card"
-                  :class="{ dark: isDark, selected: processLlm === model.id && processLlmProvider === model.provider }"
-                  @click="selectProcessLlm(model.id, model.provider)"
-                >
-                  <div class="tp-model-radio" :class="{ selected: processLlm === model.id && processLlmProvider === model.provider }" />
-                  <div class="tp-llm-card-info">
-                    <div class="tp-model-name">{{ model.name }}</div>
-                    <div class="tp-llm-card-meta">{{ model.provider }} · API cost applies · Fast</div>
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            <div v-if="localLlmModels.length === 0 && remoteLlmModels.length === 0" class="tp-model-empty" :class="{ dark: isDark }">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-              </svg>
-              <p>No models available. Install a local model or connect an integration (OpenAI, Anthropic, etc.) in Settings.</p>
-            </div>
-          </div>
-
-          <!-- Estimates panel -->
-          <div v-if="processLlm" class="tp-estimates" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Estimated Cost & Time</h3>
-            <div class="tp-estimates-grid">
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Documents</div>
-                <div class="tp-estimate-value">{{ selectedFolders.length + selectedFiles.length }} items</div>
-              </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Est. Chunks</div>
-                <div class="tp-estimate-value">{{ estChunks }}</div>
-              </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Est. Tokens</div>
-                <div class="tp-estimate-value">{{ estTokensFormatted }}</div>
-              </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Est. Cost</div>
-                <div class="tp-estimate-value" :class="{ 'tp-estimate-free': processLlmProvider === 'local' }">
-                  {{ processLlmProvider === 'local' ? 'Free' : estCostFormatted }}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect
+                      x="2"
+                      y="2"
+                      width="20"
+                      height="8"
+                      rx="2"
+                      ry="2"
+                    />
+                    <rect
+                      x="2"
+                      y="14"
+                      width="20"
+                      height="8"
+                      rx="2"
+                      ry="2"
+                    />
+                    <line
+                      x1="6"
+                      y1="6"
+                      x2="6.01"
+                      y2="6"
+                    />
+                    <line
+                      x1="6"
+                      y1="18"
+                      x2="6.01"
+                      y2="18"
+                    />
+                  </svg>
+                  Local Models
+                  <span class="tp-llm-group-badge">Free</span>
+                </div>
+                <div class="tp-llm-list">
+                  <button
+                    v-for="model in localLlmModels"
+                    :key="'local-' + model.id"
+                    class="tp-llm-card"
+                    :class="{ dark: isDark, selected: processLlm === model.id && processLlmProvider === 'local' }"
+                    @click="selectProcessLlm(model.id, 'local')"
+                  >
+                    <div
+                      class="tp-model-radio"
+                      :class="{ selected: processLlm === model.id && processLlmProvider === 'local' }"
+                    />
+                    <div class="tp-llm-card-info">
+                      <div class="tp-model-name">
+                        {{ model.name }}
+                      </div>
+                      <div class="tp-llm-card-meta">
+                        Local · No cost · Slower
+                      </div>
+                    </div>
+                  </button>
                 </div>
               </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Est. Time</div>
-                <div class="tp-estimate-value">{{ estTimeFormatted }}</div>
-              </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Model</div>
-                <div class="tp-estimate-value tp-estimate-model">{{ processLlm }}</div>
-              </div>
-            </div>
-            <div class="tp-estimate-disclaimer" :class="{ dark: isDark }">
-              These are rough estimates based on average document sizes. Actual costs and time may vary
-              depending on document complexity and model response lengths.
-            </div>
-          </div>
 
-          <!-- Output filename -->
-          <div class="tp-output-filename" :class="{ dark: isDark }">
-            <label class="tp-config-label">Output File Name</label>
-            <div class="tp-output-filename-row">
-              <input
-                type="text"
-                class="tp-config-input"
+              <!-- Remote / integration models -->
+              <div
+                v-if="remoteLlmModels.length > 0"
+                class="tp-llm-group"
+              >
+                <div
+                  class="tp-llm-group-label"
+                  :class="{ dark: isDark }"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                  </svg>
+                  Cloud Models (via Integrations)
+                </div>
+                <div class="tp-llm-list">
+                  <button
+                    v-for="model in remoteLlmModels"
+                    :key="'remote-' + model.id"
+                    class="tp-llm-card"
+                    :class="{ dark: isDark, selected: processLlm === model.id && processLlmProvider === model.provider }"
+                    @click="selectProcessLlm(model.id, model.provider)"
+                  >
+                    <div
+                      class="tp-model-radio"
+                      :class="{ selected: processLlm === model.id && processLlmProvider === model.provider }"
+                    />
+                    <div class="tp-llm-card-info">
+                      <div class="tp-model-name">
+                        {{ model.name }}
+                      </div>
+                      <div class="tp-llm-card-meta">
+                        {{ model.provider }} · API cost applies · Fast
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                v-if="localLlmModels.length === 0 && remoteLlmModels.length === 0"
+                class="tp-model-empty"
                 :class="{ dark: isDark }"
-                v-model="outputFilename"
-                placeholder="training-data"
-              />
-              <span class="tp-output-ext">.jsonl</span>
+              >
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  opacity="0.4"
+                >
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
+                <p>No models available. Install a local model or connect an integration (OpenAI, Anthropic, etc.) in Settings.</p>
+              </div>
             </div>
-            <div class="tp-config-doc" :class="{ dark: isDark }">
-              Name your output training file. The processed data will be saved as
-              <strong>{{ outputFilenameClean }}.jsonl</strong> in your training data directory.
-            </div>
-          </div>
 
-          <!-- Processing summary -->
-          <div class="tp-process-summary" :class="{ dark: isDark }">
-            <div class="tp-process-row">
-              <span class="tp-process-label">Selected items</span>
-              <span class="tp-process-value">{{ selectedFolders.length + selectedFiles.length }}</span>
+            <!-- Estimates panel -->
+            <div
+              v-if="processLlm"
+              class="tp-estimates"
+              :class="{ dark: isDark }"
+            >
+              <h3 class="tp-section-title">
+                Estimated Cost & Time
+              </h3>
+              <div class="tp-estimates-grid">
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Documents
+                  </div>
+                  <div class="tp-estimate-value">
+                    {{ selectedFolders.length + selectedFiles.length }} items
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Est. Chunks
+                  </div>
+                  <div class="tp-estimate-value">
+                    {{ estChunks }}
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Est. Tokens
+                  </div>
+                  <div class="tp-estimate-value">
+                    {{ estTokensFormatted }}
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Est. Cost
+                  </div>
+                  <div
+                    class="tp-estimate-value"
+                    :class="{ 'tp-estimate-free': processLlmProvider === 'local' }"
+                  >
+                    {{ processLlmProvider === 'local' ? 'Free' : estCostFormatted }}
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Est. Time
+                  </div>
+                  <div class="tp-estimate-value">
+                    {{ estTimeFormatted }}
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Model
+                  </div>
+                  <div class="tp-estimate-value tp-estimate-model">
+                    {{ processLlm }}
+                  </div>
+                </div>
+              </div>
+              <div
+                class="tp-estimate-disclaimer"
+                :class="{ dark: isDark }"
+              >
+                These are rough estimates based on average document sizes. Actual costs and time may vary
+                depending on document complexity and model response lengths.
+              </div>
             </div>
-            <div class="tp-process-row">
-              <span class="tp-process-label">Prompt template</span>
-              <span class="tp-process-value">{{ selectedTemplateName }}</span>
-            </div>
-            <div class="tp-process-row">
-              <span class="tp-process-label">Processing model</span>
-              <span class="tp-process-value">{{ processLlm || '—' }}</span>
-            </div>
-            <div class="tp-process-row">
-              <span class="tp-process-label">Output file</span>
-              <span class="tp-process-value"><code>{{ outputFilenameClean }}.jsonl</code></span>
-            </div>
-          </div>
 
-          <!-- Processing state -->
-          <div v-if="!preprocessing && !preprocessDone" class="tp-process-ready" :class="{ dark: isDark }">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-              <polyline points="16 16 12 12 8 16"/>
-              <line x1="12" y1="12" x2="12" y2="21"/>
-              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
-            </svg>
-            <p>Ready to process. Select a model above and click the button below to start generating training data.</p>
-          </div>
-
-          <div v-if="preprocessing" class="tp-process-active" :class="{ dark: isDark }">
-            <div class="tp-process-spinner-row">
-              <span class="tp-btn-spinner tp-spinner-lg" />
-              <span>Processing documents…</span>
+            <!-- Output filename -->
+            <div
+              class="tp-output-filename"
+              :class="{ dark: isDark }"
+            >
+              <label class="tp-config-label">Output File Name</label>
+              <div class="tp-output-filename-row">
+                <input
+                  v-model="outputFilename"
+                  type="text"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                  placeholder="training-data"
+                >
+                <span class="tp-output-ext">.jsonl</span>
+              </div>
+              <div
+                class="tp-config-doc"
+                :class="{ dark: isDark }"
+              >
+                Name your output training file. The processed data will be saved as
+                <strong>{{ outputFilenameClean }}.jsonl</strong> in your training data directory.
+              </div>
             </div>
-          </div>
 
-          <!-- Results after processing -->
-          <div v-if="preprocessDone" class="tp-process-done" :class="{ dark: isDark }">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-              <polyline points="22 4 12 14.01 9 11.01"/>
-            </svg>
-            <div>
-              <strong>Processing complete</strong>
-              <p>{{ totalExamples }} training examples generated across {{ dataFiles.length }} file{{ dataFiles.length !== 1 ? 's' : '' }}</p>
+            <!-- Processing summary -->
+            <div
+              class="tp-process-summary"
+              :class="{ dark: isDark }"
+            >
+              <div class="tp-process-row">
+                <span class="tp-process-label">Selected items</span>
+                <span class="tp-process-value">{{ selectedFolders.length + selectedFiles.length }}</span>
+              </div>
+              <div class="tp-process-row">
+                <span class="tp-process-label">Prompt template</span>
+                <span class="tp-process-value">{{ selectedTemplateName }}</span>
+              </div>
+              <div class="tp-process-row">
+                <span class="tp-process-label">Processing model</span>
+                <span class="tp-process-value">{{ processLlm || '—' }}</span>
+              </div>
+              <div class="tp-process-row">
+                <span class="tp-process-label">Output file</span>
+                <span class="tp-process-value"><code>{{ outputFilenameClean }}.jsonl</code></span>
+              </div>
             </div>
-          </div>
 
+            <!-- Processing state -->
+            <div
+              v-if="!preprocessing && !preprocessDone"
+              class="tp-process-ready"
+              :class="{ dark: isDark }"
+            >
+              <svg
+                width="40"
+                height="40"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                opacity="0.4"
+              >
+                <polyline points="16 16 12 12 8 16" />
+                <line
+                  x1="12"
+                  y1="12"
+                  x2="12"
+                  y2="21"
+                />
+                <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+              </svg>
+              <p>Ready to process. Select a model above and click the button below to start generating training data.</p>
+            </div>
+
+            <div
+              v-if="preprocessing"
+              class="tp-process-active"
+              :class="{ dark: isDark }"
+            >
+              <div class="tp-process-spinner-row">
+                <span class="tp-btn-spinner tp-spinner-lg" />
+                <span>Processing documents…</span>
+              </div>
+            </div>
+
+            <!-- Results after processing -->
+            <div
+              v-if="preprocessDone"
+              class="tp-process-done"
+              :class="{ dark: isDark }"
+            >
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+              <div>
+                <strong>Processing complete</strong>
+                <p>{{ totalExamples }} training examples generated across {{ dataFiles.length }} file{{ dataFiles.length !== 1 ? 's' : '' }}</p>
+              </div>
+            </div>
           </div><!-- /tp-generate-main-scroll -->
 
           <!-- Pinned action bar -->
-          <div class="tp-step-actions" :class="{ dark: isDark }">
-            <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 1)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 18 9 12 15 6"/>
+          <div
+            class="tp-step-actions"
+            :class="{ dark: isDark }"
+          >
+            <button
+              class="tp-btn-back"
+              :class="{ dark: isDark }"
+              @click="$emit('step-change', 1)"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="15 18 9 12 15 6" />
               </svg>
               Back
             </button>
@@ -411,9 +796,22 @@
                 :disabled="preprocessing || !processLlm || (selectedFolders.length === 0 && selectedFiles.length === 0)"
                 @click="enqueueAndSchedule"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10"/>
-                  <polyline points="12 6 12 12 16 14"/>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                  />
+                  <polyline points="12 6 12 12 16 14" />
                 </svg>
                 Schedule Nightly Training
               </button>
@@ -422,14 +820,30 @@
                 :disabled="preprocessing || !processLlm || (selectedFolders.length === 0 && selectedFiles.length === 0)"
                 @click="enqueueAndProcess"
               >
-                <span v-if="preprocessing" class="tp-btn-spinner" />
+                <span
+                  v-if="preprocessing"
+                  class="tp-btn-spinner"
+                />
                 {{ preprocessing ? 'Processing…' : 'Manually Process Now' }}
               </button>
             </template>
-            <div v-else-if="scheduledForNightly && !preprocessDone" class="tp-scheduled-badge" :class="{ dark: isDark }">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                <polyline points="22 4 12 14.01 9 11.01"/>
+            <div
+              v-else-if="scheduledForNightly && !preprocessDone"
+              class="tp-scheduled-badge"
+              :class="{ dark: isDark }"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
               Queued for nightly training
             </div>
@@ -440,19 +854,32 @@
               @click="$emit('step-change', 3)"
             >
               Continue
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="9 18 15 12 9 6"/>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="9 18 15 12 9 6" />
               </svg>
             </button>
           </div>
         </div><!-- /tp-generate-main -->
-
       </div>
 
       <!-- ─── STEP 4 (Train Wizard Step 1): Select Data Files ─── -->
-      <div v-if="currentStep === 3" class="tp-step tp-step-datafiles">
+      <div
+        v-if="currentStep === 3"
+        class="tp-step tp-step-datafiles"
+      >
         <div class="tp-fullpage-content">
-          <h2 class="tp-page-title">Select Training Data</h2>
+          <h2 class="tp-page-title">
+            Select Training Data
+          </h2>
           <p class="tp-page-desc">
             Choose which training data files to use for fine-tuning. These are the JSONL files
             generated from your documents or collected from chat sessions.
@@ -460,17 +887,34 @@
 
           <!-- Refresh -->
           <div style="margin-bottom: 16px;">
-            <button class="tp-btn-secondary tp-btn-sm" :class="{ dark: isDark }" @click="loadDataFiles">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="23 4 23 10 17 10"/>
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            <button
+              class="tp-btn-secondary tp-btn-sm"
+              :class="{ dark: isDark }"
+              @click="loadDataFiles"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
               </svg>
               Refresh
             </button>
           </div>
 
           <!-- Loading -->
-          <div v-if="dataFilesLoading" class="tp-process-active" :class="{ dark: isDark }">
+          <div
+            v-if="dataFilesLoading"
+            class="tp-process-active"
+            :class="{ dark: isDark }"
+          >
             <div class="tp-process-spinner-row">
               <span class="tp-btn-spinner tp-spinner-lg" />
               <span>Loading data files…</span>
@@ -478,24 +922,44 @@
           </div>
 
           <!-- Empty state -->
-          <div v-else-if="dataFiles.length === 0" class="tp-process-ready" :class="{ dark: isDark }">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
+          <div
+            v-else-if="dataFiles.length === 0"
+            class="tp-process-ready"
+            :class="{ dark: isDark }"
+          >
+            <svg
+              width="40"
+              height="40"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              opacity="0.4"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
             </svg>
             <p>No training data files found. Go back to the Create Training Data wizard to generate some.</p>
           </div>
 
           <!-- File list with checkboxes -->
-          <div v-else class="tp-datafiles-list">
-            <div class="tp-datafiles-header" :class="{ dark: isDark }">
+          <div
+            v-else
+            class="tp-datafiles-list"
+          >
+            <div
+              class="tp-datafiles-header"
+              :class="{ dark: isDark }"
+            >
               <label class="tp-datafiles-check-all">
                 <input
                   type="checkbox"
                   :checked="selectedDataFiles.length === dataFiles.length"
                   :indeterminate="selectedDataFiles.length > 0 && selectedDataFiles.length < dataFiles.length"
                   @change="toggleAllDataFiles"
-                />
+                >
                 Select All
               </label>
               <span class="tp-datafiles-count">
@@ -516,10 +980,15 @@
                 :checked="selectedDataFiles.includes(file.path)"
                 @click.stop
                 @change="toggleDataFile(file.path)"
-              />
+              >
               <div class="tp-datafile-info">
-                <div class="tp-datafile-name">{{ file.filename }}</div>
-                <div class="tp-datafile-meta" :class="{ dark: isDark }">
+                <div class="tp-datafile-name">
+                  {{ file.filename }}
+                </div>
+                <div
+                  class="tp-datafile-meta"
+                  :class="{ dark: isDark }"
+                >
                   {{ file.examples }} examples · {{ formatBytes(file.size) }} · {{ sourceLabel(file.source) }} · {{ formatDate(file.modifiedAt) }}
                 </div>
               </div>
@@ -527,27 +996,64 @@
           </div>
 
           <!-- Scale based on selected files -->
-          <div v-if="selectedDataFiles.length > 0" class="tp-scale" :class="{ dark: isDark }" style="margin-top: 20px;">
+          <div
+            v-if="selectedDataFiles.length > 0"
+            class="tp-scale"
+            :class="{ dark: isDark }"
+            style="margin-top: 20px;"
+          >
             <div class="tp-scale-header">
               <span class="tp-scale-label">{{ selectedDataExamples }} training examples</span>
-              <span class="tp-scale-badge" :class="selectedDataScale">{{ selectedDataScaleLabel }}</span>
+              <span
+                class="tp-scale-badge"
+                :class="selectedDataScale"
+              >{{ selectedDataScaleLabel }}</span>
             </div>
             <div class="tp-scale-bar">
-              <div class="tp-scale-fill" :class="selectedDataScale" :style="{ width: selectedDataScalePct + '%' }" />
+              <div
+                class="tp-scale-fill"
+                :class="selectedDataScale"
+                :style="{ width: selectedDataScalePct + '%' }"
+              />
               <div class="tp-scale-marks">
-                <span class="tp-scale-mark" :style="{ left: '0%' }">0</span>
-                <span class="tp-scale-mark" :style="{ left: '10%' }">100</span>
-                <span class="tp-scale-mark" :style="{ left: '50%' }">500</span>
-                <span class="tp-scale-mark" :style="{ left: '100%' }">1000+</span>
+                <span
+                  class="tp-scale-mark"
+                  :style="{ left: '0%' }"
+                >0</span>
+                <span
+                  class="tp-scale-mark"
+                  :style="{ left: '10%' }"
+                >100</span>
+                <span
+                  class="tp-scale-mark"
+                  :style="{ left: '50%' }"
+                >500</span>
+                <span
+                  class="tp-scale-mark"
+                  :style="{ left: '100%' }"
+                >1000+</span>
               </div>
             </div>
           </div>
         </div>
 
         <div class="tp-step-actions">
-          <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 2)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 18 9 12 15 6"/>
+          <button
+            class="tp-btn-back"
+            :class="{ dark: isDark }"
+            @click="$emit('step-change', 2)"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
             </svg>
             Back
           </button>
@@ -557,17 +1063,31 @@
             @click="$emit('step-change', 4)"
           >
             Continue
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6" />
             </svg>
           </button>
         </div>
       </div>
 
       <!-- ─── STEP 5 (Train Wizard Step 2): Model & Training Settings ─── -->
-      <div v-if="currentStep === 4" class="tp-step tp-step-model">
+      <div
+        v-if="currentStep === 4"
+        class="tp-step tp-step-model"
+      >
         <div class="tp-fullpage-content">
-          <h2 class="tp-page-title">Model & Training Settings</h2>
+          <h2 class="tp-page-title">
+            Model & Training Settings
+          </h2>
           <p class="tp-page-desc">
             Choose the base model you want to fine-tune and configure your training parameters.
             LoRA (Low-Rank Adaptation) lets you customize a model quickly without retraining
@@ -575,28 +1095,61 @@
           </p>
 
           <!-- Downloaded models -->
-          <div class="tp-model-section" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Your Downloaded Models</h3>
-            <p class="tp-model-section-desc" :class="{ dark: isDark }">
+          <div
+            class="tp-model-section"
+            :class="{ dark: isDark }"
+          >
+            <h3 class="tp-section-title">
+              Your Downloaded Models
+            </h3>
+            <p
+              class="tp-model-section-desc"
+              :class="{ dark: isDark }"
+            >
               These are models already downloaded to your machine that support fine-tuning.
               Select one to use as your base model.
             </p>
 
-            <div v-if="downloadedModelsLoading" class="tp-model-loading">
+            <div
+              v-if="downloadedModelsLoading"
+              class="tp-model-loading"
+            >
               <span class="tp-btn-spinner tp-spinner-lg" />
               <span>Loading models…</span>
             </div>
 
-            <div v-else-if="downloadedModels.length === 0" class="tp-model-empty" :class="{ dark: isDark }">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                <line x1="12" y1="22.08" x2="12" y2="12"/>
+            <div
+              v-else-if="downloadedModels.length === 0"
+              class="tp-model-empty"
+              :class="{ dark: isDark }"
+            >
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                opacity="0.4"
+              >
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line
+                  x1="12"
+                  y1="22.08"
+                  x2="12"
+                  y2="12"
+                />
               </svg>
               <p>No trainable models found. Download a model from the Models page first, or paste a HuggingFace repo below.</p>
             </div>
 
-            <div v-else class="tp-model-list">
+            <div
+              v-else
+              class="tp-model-list"
+            >
               <button
                 v-for="model in downloadedModels"
                 :key="model.key"
@@ -605,10 +1158,17 @@
                 @click="selectedModel = model.key"
               >
                 <div class="tp-model-card-left">
-                  <div class="tp-model-radio" :class="{ selected: selectedModel === model.key }" />
+                  <div
+                    class="tp-model-radio"
+                    :class="{ selected: selectedModel === model.key }"
+                  />
                   <div>
-                    <div class="tp-model-name">{{ model.displayName }}</div>
-                    <div class="tp-model-repo">{{ model.trainingRepo }}</div>
+                    <div class="tp-model-name">
+                      {{ model.displayName }}
+                    </div>
+                    <div class="tp-model-repo">
+                      {{ model.trainingRepo }}
+                    </div>
                   </div>
                 </div>
               </button>
@@ -616,41 +1176,92 @@
           </div>
 
           <!-- HuggingFace URL input (accordion) -->
-          <div class="tp-hf-section" :class="{ dark: isDark }">
-            <button class="tp-hf-toggle" :class="{ dark: isDark }" @click="hfExpanded = !hfExpanded">
+          <div
+            class="tp-hf-section"
+            :class="{ dark: isDark }"
+          >
+            <button
+              class="tp-hf-toggle"
+              :class="{ dark: isDark }"
+              @click="hfExpanded = !hfExpanded"
+            >
               <svg
                 class="tp-hf-toggle-icon"
                 :class="{ open: hfExpanded }"
-                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               >
-                <line x1="12" y1="5" x2="12" y2="19"/>
-                <line x1="5" y1="12" x2="19" y2="12"/>
+                <line
+                  x1="12"
+                  y1="5"
+                  x2="12"
+                  y2="19"
+                />
+                <line
+                  x1="5"
+                  y1="12"
+                  x2="19"
+                  y2="12"
+                />
               </svg>
               Add a Model from HuggingFace
             </button>
-            <div v-if="hfExpanded" class="tp-hf-body">
-              <p class="tp-model-section-desc" :class="{ dark: isDark }">
+            <div
+              v-if="hfExpanded"
+              class="tp-hf-body"
+            >
+              <p
+                class="tp-model-section-desc"
+                :class="{ dark: isDark }"
+              >
                 Want to train a model that isn't listed above? Paste a HuggingFace model URL or repo ID below.
                 The model weights will be downloaded before training begins.
               </p>
               <div class="tp-hf-input-row">
                 <input
+                  v-model="hfInput"
                   type="text"
                   class="tp-hf-input"
                   :class="{ dark: isDark, error: !!hfError }"
-                  v-model="hfInput"
-                  @input="onHfInputChange"
                   placeholder="e.g. unsloth/Qwen3.5-9B or https://huggingface.co/unsloth/Qwen3.5-9B"
-                />
+                  @input="onHfInputChange"
+                >
               </div>
-              <div v-if="hfError" class="tp-hf-error">{{ hfError }}</div>
-              <div v-else-if="hfParsedRepo" class="tp-hf-parsed" :class="{ dark: isDark }">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="20 6 9 17 4 12"/>
+              <div
+                v-if="hfError"
+                class="tp-hf-error"
+              >
+                {{ hfError }}
+              </div>
+              <div
+                v-else-if="hfParsedRepo"
+                class="tp-hf-parsed"
+                :class="{ dark: isDark }"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
                 </svg>
                 Resolved: <strong>{{ hfParsedRepo }}</strong>
               </div>
-              <div class="tp-hf-examples" :class="{ dark: isDark }">
+              <div
+                class="tp-hf-examples"
+                :class="{ dark: isDark }"
+              >
                 <span class="tp-hf-examples-label">Accepted formats:</span>
                 <code>unsloth/Qwen3.5-9B</code>
                 <code>https://huggingface.co/unsloth/Qwen3.5-9B</code>
@@ -660,14 +1271,27 @@
           </div>
 
           <!-- Training parameters — single column with thorough docs -->
-          <div class="tp-train-config" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Training Parameters</h3>
+          <div
+            class="tp-train-config"
+            :class="{ dark: isDark }"
+          >
+            <h3 class="tp-section-title">
+              Training Parameters
+            </h3>
 
             <div class="tp-config-stack">
               <div class="tp-config-field">
                 <label class="tp-config-label">Learning Rate</label>
-                <input type="text" class="tp-config-input" :class="{ dark: isDark }" v-model="trainLearningRate" />
-                <div class="tp-config-doc" :class="{ dark: isDark }">
+                <input
+                  v-model="trainLearningRate"
+                  type="text"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                >
+                <div
+                  class="tp-config-doc"
+                  :class="{ dark: isDark }"
+                >
                   Controls how much the model's weights change with each training step. A higher learning rate
                   means faster learning but risks overshooting and producing unstable results. A lower rate is
                   more stable but takes longer and may under-learn your data. For LoRA fine-tuning, values between
@@ -678,8 +1302,18 @@
 
               <div class="tp-config-field">
                 <label class="tp-config-label">Epochs</label>
-                <input type="number" class="tp-config-input" :class="{ dark: isDark }" v-model.number="trainEpochs" min="1" max="20" />
-                <div class="tp-config-doc" :class="{ dark: isDark }">
+                <input
+                  v-model.number="trainEpochs"
+                  type="number"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                  min="1"
+                  max="20"
+                >
+                <div
+                  class="tp-config-doc"
+                  :class="{ dark: isDark }"
+                >
                   An epoch is one complete pass through your entire training dataset. More epochs mean the model
                   sees your data more times. With small datasets (&lt;100 examples), 2-5 epochs helps the model
                   learn thoroughly. With larger datasets (500+), 1-2 epochs is usually sufficient. Too many epochs
@@ -690,8 +1324,18 @@
 
               <div class="tp-config-field">
                 <label class="tp-config-label">LoRA Rank</label>
-                <input type="number" class="tp-config-input" :class="{ dark: isDark }" v-model.number="trainLoraRank" min="4" max="128" />
-                <div class="tp-config-doc" :class="{ dark: isDark }">
+                <input
+                  v-model.number="trainLoraRank"
+                  type="number"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                  min="4"
+                  max="128"
+                >
+                <div
+                  class="tp-config-doc"
+                  :class="{ dark: isDark }"
+                >
                   LoRA works by adding small trainable matrices to the model's layers instead of modifying
                   every weight. The <em>rank</em> controls the size of these matrices — think of it as the
                   model's capacity to learn new things. A rank of <strong>8</strong> is minimal and fast but
@@ -703,8 +1347,18 @@
 
               <div class="tp-config-field">
                 <label class="tp-config-label">Eval Split (%)</label>
-                <input type="number" class="tp-config-input" :class="{ dark: isDark }" v-model.number="trainEvalSplit" min="0" max="50" />
-                <div class="tp-config-doc" :class="{ dark: isDark }">
+                <input
+                  v-model.number="trainEvalSplit"
+                  type="number"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                  min="0"
+                  max="50"
+                >
+                <div
+                  class="tp-config-doc"
+                  :class="{ dark: isDark }"
+                >
                   The percentage of your training data held out for evaluation. This data is never used for
                   training — instead, the model is tested against it after each epoch to measure how well
                   it's actually learning (vs. just memorizing). A <strong>20%</strong> split is standard. Set
@@ -718,9 +1372,22 @@
         </div>
 
         <div class="tp-step-actions">
-          <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 3)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 18 9 12 15 6"/>
+          <button
+            class="tp-btn-back"
+            :class="{ dark: isDark }"
+            @click="$emit('step-change', 3)"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
             </svg>
             Back
           </button>
@@ -730,31 +1397,51 @@
             @click="$emit('step-change', 5)"
           >
             Continue
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6" />
             </svg>
           </button>
         </div>
       </div>
 
       <!-- ─── STEP 5: Train & Deploy ─── -->
-      <div v-if="currentStep === 5" class="tp-step tp-step-train">
+      <div
+        v-if="currentStep === 5"
+        class="tp-step tp-step-train"
+      >
         <div class="tp-fullpage-content">
-          <h2 class="tp-page-title">Train & Deploy</h2>
+          <h2 class="tp-page-title">
+            Train & Deploy
+          </h2>
           <p class="tp-page-desc">
             Run LoRA fine-tuning on your processed training data. The output model will be saved
             and ready for use.
           </p>
 
           <!-- Summary card -->
-          <div class="tp-train-summary" :class="{ dark: isDark }">
+          <div
+            class="tp-train-summary"
+            :class="{ dark: isDark }"
+          >
             <div class="tp-train-summary-row">
               <span class="tp-train-summary-label">Training Examples</span>
               <span class="tp-train-summary-value">{{ totalExamples }}</span>
             </div>
             <div class="tp-train-summary-row">
               <span class="tp-train-summary-label">Data Quality</span>
-              <span class="tp-scale-badge" :class="dataScale">{{ dataScaleLabel }}</span>
+              <span
+                class="tp-scale-badge"
+                :class="dataScale"
+              >{{ dataScaleLabel }}</span>
             </div>
             <div class="tp-train-summary-row">
               <span class="tp-train-summary-label">Base Model</span>
@@ -775,11 +1462,34 @@
           </div>
 
           <!-- Data quality warning -->
-          <div v-if="dataScale === 'poor'" class="tp-train-warning" :class="{ dark: isDark }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
+          <div
+            v-if="dataScale === 'poor'"
+            class="tp-train-warning"
+            :class="{ dark: isDark }"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line
+                x1="12"
+                y1="9"
+                x2="12"
+                y2="13"
+              />
+              <line
+                x1="12"
+                y1="17"
+                x2="12.01"
+                y2="17"
+              />
             </svg>
             <div>
               <strong>Low training data</strong>
@@ -789,24 +1499,61 @@
         </div>
 
         <div class="tp-step-actions">
-          <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 4)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 18 9 12 15 6"/>
+          <button
+            class="tp-btn-back"
+            :class="{ dark: isDark }"
+            @click="$emit('step-change', 4)"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
             </svg>
             Back
           </button>
-          <button class="tp-btn-primary tp-btn-train" :disabled="totalExamples === 0 || trainingLoading" @click="startTraining">
-            <svg v-if="!trainingLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3"/>
+          <button
+            class="tp-btn-primary tp-btn-train"
+            :disabled="totalExamples === 0 || trainingLoading"
+            @click="startTraining"
+          >
+            <svg
+              v-if="!trainingLoading"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
             </svg>
-            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
-              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+            <svg
+              v-else
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="animate-spin"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
             </svg>
             {{ trainingLoading ? 'Starting Training...' : 'Start Training' }}
           </button>
         </div>
       </div>
-
     </div>
   </div>
 </template>
@@ -818,17 +1565,17 @@ import TreeNode from './TreeNode.vue';
 import TrainingDashboard from './TrainingDashboard.vue';
 
 interface TreeEntry {
-  path: string;
-  name: string;
-  isDir: boolean;
+  path:        string;
+  name:        string;
+  isDir:       boolean;
   hasChildren: boolean;
-  size: number;
-  ext: string;
-  category?: string;
+  size:        number;
+  ext:         string;
+  category?:   string;
 }
 
 export default defineComponent({
-  name: 'TrainingPane',
+  name:       'TrainingPane',
   components: { TreeNode, TrainingDashboard },
 
   props: {
@@ -875,12 +1622,12 @@ export default defineComponent({
 
     // ─── Training data state (Step 2) ───
     interface DataFile {
-      filename: string;
-      path: string;
-      size: number;
+      filename:   string;
+      path:       string;
+      size:       number;
       modifiedAt: string;
-      examples: number;
-      source: 'sessions' | 'documents' | 'processed';
+      examples:   number;
+      source:     'sessions' | 'documents' | 'processed';
     }
     const dataFiles = ref<DataFile[]>([]);
     const dataFilesLoading = ref(false);
@@ -992,7 +1739,7 @@ export default defineComponent({
       const key = sortKey.value;
       const dir = sortDir.value === 'asc' ? 1 : -1;
       return [...dataFiles.value].sort((a, b) => {
-        const av = a[key], bv = b[key];
+        const av = a[key]; const bv = b[key];
         if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
         return String(av).localeCompare(String(bv)) * dir;
       });
@@ -1013,34 +1760,34 @@ export default defineComponent({
     }
 
     function formatDate(iso: string): string {
-      try { return new Date(iso).toLocaleString(); } catch { return iso; }
+      try { return new Date(iso).toLocaleString() } catch { return iso }
     }
 
     // ─── Step 2: Prompt crafting ───
     interface PromptTemplate {
-      id: string;
-      name: string;
+      id:          string;
+      name:        string;
       description: string;
-      prompt: string;
+      prompt:      string;
     }
     const promptTemplates: PromptTemplate[] = [
       {
-        id: 'qa',
-        name: 'Q&A',
+        id:          'qa',
+        name:        'Q&A',
         description: 'Generate question-answer pairs for factual recall',
-        prompt: 'Generate diverse Q&A pairs from the following document. Each question should test knowledge of the content.\n\nDocument ({filename}):\n{document}',
+        prompt:      'Generate diverse Q&A pairs from the following document. Each question should test knowledge of the content.\n\nDocument ({filename}):\n{document}',
       },
       {
-        id: 'conversational',
-        name: 'Conversational',
+        id:          'conversational',
+        name:        'Conversational',
         description: 'Simulate chat — user asks, respond as me',
-        prompt: 'Simulate a conversation where the user asks about topics from this document. Respond in the author\'s voice and style.\n\nDocument ({filename}):\n{document}',
+        prompt:      'Simulate a conversation where the user asks about topics from this document. Respond in the author\'s voice and style.\n\nDocument ({filename}):\n{document}',
       },
       {
-        id: 'style',
-        name: 'Style Transfer',
+        id:          'style',
+        name:        'Style Transfer',
         description: 'Rewrite content in my personal voice',
-        prompt: 'Analyze the writing style of this document and generate examples that capture the author\'s tone, vocabulary, and approach.\n\nDocument ({filename}):\n{document}',
+        prompt:      'Analyze the writing style of this document and generate examples that capture the author\'s tone, vocabulary, and approach.\n\nDocument ({filename}):\n{document}',
       },
     ];
     const selectedTemplate = ref('qa');
@@ -1061,8 +1808,8 @@ export default defineComponent({
 
     // ─── Step 3: Model & Settings ───
     interface DownloadedModel {
-      key: string;
-      displayName: string;
+      key:          string;
+      displayName:  string;
       trainingRepo: string;
     }
     const downloadedModels = ref<DownloadedModel[]>([]);
@@ -1110,14 +1857,14 @@ export default defineComponent({
       // Try to extract from URL-like patterns
       // Match: (https?://)?(www\.)?(huggingface\.co|hf\.co)/org/model(/anything)?
       const urlPattern = /^(?:https?:\/\/)?(?:www\.)?(?:huggingface\.co|hf\.co)\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)/;
-      const urlMatch = trimmed.match(urlPattern);
+      const urlMatch = urlPattern.exec(trimmed);
       if (urlMatch) {
         return urlMatch[1];
       }
 
       // Try bare org/model format (e.g. "unsloth/Qwen3.5-9B")
       const repoPattern = /^([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)$/;
-      const repoMatch = trimmed.match(repoPattern);
+      const repoMatch = repoPattern.exec(trimmed);
       if (repoMatch) {
         return repoMatch[1];
       }
@@ -1146,8 +1893,8 @@ export default defineComponent({
 
     // ─── Step 3: Pre-process — LLM model selection for prompt generation ───
     interface LlmModelOption {
-      id: string;
-      name: string;
+      id:       string;
+      name:     string;
       provider: string;
     }
     const localLlmModels = ref<LlmModelOption[]>([]);
@@ -1209,9 +1956,9 @@ export default defineComponent({
 
     const estTokensFormatted = computed(() => {
       const t = estTokens.value;
-      if (t < 1000) return `~${t}`;
-      if (t < 1_000_000) return `~${(t / 1000).toFixed(0)}K`;
-      return `~${(t / 1_000_000).toFixed(1)}M`;
+      if (t < 1000) return `~${ t }`;
+      if (t < 1_000_000) return `~${ (t / 1000).toFixed(0) }K`;
+      return `~${ (t / 1_000_000).toFixed(1) }M`;
     });
 
     const estCostFormatted = computed(() => {
@@ -1221,22 +1968,22 @@ export default defineComponent({
       const outputTokens = estChunks.value * 500;
       const cost = (inputTokens * 3 + outputTokens * 15) / 1_000_000;
       if (cost < 0.01) return '< $0.01';
-      return `~$${cost.toFixed(2)}`;
+      return `~$${ cost.toFixed(2) }`;
     });
 
     const estTimeFormatted = computed(() => {
       if (processLlmProvider.value === 'local') {
         // Local models: ~2-5 seconds per chunk
         const secs = estChunks.value * 3;
-        if (secs < 60) return `~${secs}s`;
-        if (secs < 3600) return `~${Math.round(secs / 60)} min`;
-        return `~${(secs / 3600).toFixed(1)} hrs`;
+        if (secs < 60) return `~${ secs }s`;
+        if (secs < 3600) return `~${ Math.round(secs / 60) } min`;
+        return `~${ (secs / 3600).toFixed(1) } hrs`;
       }
       // API models: ~0.5-1 second per chunk
       const secs = estChunks.value * 0.8;
-      if (secs < 60) return `~${Math.round(secs)}s`;
-      if (secs < 3600) return `~${Math.round(secs / 60)} min`;
-      return `~${(secs / 3600).toFixed(1)} hrs`;
+      if (secs < 60) return `~${ Math.round(secs) }s`;
+      if (secs < 3600) return `~${ Math.round(secs / 60) } min`;
+      return `~${ (secs / 3600).toFixed(1) } hrs`;
     });
 
     // ─── Step 4: Pre-process state ───
@@ -1417,15 +2164,15 @@ export default defineComponent({
       const pct = Math.round((installBytesReceived.value / installBytesTotal.value) * 100);
       const received = (installBytesReceived.value / (1024 * 1024)).toFixed(1);
       const total = (installBytesTotal.value / (1024 * 1024)).toFixed(1);
-      return `${received} / ${total} MB (${pct}%)`;
+      return `${ received } / ${ total } MB (${ pct }%)`;
     });
 
     function formatBytes(bytes: number): string {
       if (bytes <= 0) return '\u2014';
       if (bytes < 1_000_000_000) {
-        return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+        return `${ (bytes / (1024 * 1024)).toFixed(0) } MB`;
       }
-      return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      return `${ (bytes / (1024 * 1024 * 1024)).toFixed(1) } GB`;
     }
 
     async function checkInstallStatus() {
@@ -1557,21 +2304,21 @@ export default defineComponent({
     async function restoreSettings() {
       try {
         const create = await ipcRenderer.invoke('training-wizard-settings-load', 'create') as Record<string, any>;
-        if (create.selectedFolders?.length)    selectedFolders.value = create.selectedFolders;
-        if (create.selectedFiles?.length)      selectedFiles.value = create.selectedFiles;
-        if (create.selectedTemplate)           selectedTemplate.value = create.selectedTemplate;
-        if (create.customPrompt)               customPrompt.value = create.customPrompt;
-        if (create.processLlm)                 processLlm.value = create.processLlm;
-        if (create.processLlmProvider)         processLlmProvider.value = create.processLlmProvider;
-        if (create.outputFilename)             outputFilename.value = create.outputFilename;
+        if (create.selectedFolders?.length) selectedFolders.value = create.selectedFolders;
+        if (create.selectedFiles?.length) selectedFiles.value = create.selectedFiles;
+        if (create.selectedTemplate) selectedTemplate.value = create.selectedTemplate;
+        if (create.customPrompt) customPrompt.value = create.customPrompt;
+        if (create.processLlm) processLlm.value = create.processLlm;
+        if (create.processLlmProvider) processLlmProvider.value = create.processLlmProvider;
+        if (create.outputFilename) outputFilename.value = create.outputFilename;
 
         const train = await ipcRenderer.invoke('training-wizard-settings-load', 'train') as Record<string, any>;
-        if (train.selectedDataFiles?.length)   selectedDataFiles.value = train.selectedDataFiles;
-        if (train.selectedModel)               selectedModel.value = train.selectedModel;
-        if (train.trainEpochs != null)         trainEpochs.value = train.trainEpochs;
-        if (train.trainLearningRate)           trainLearningRate.value = train.trainLearningRate;
-        if (train.trainLoraRank != null)       trainLoraRank.value = train.trainLoraRank;
-        if (train.trainEvalSplit != null)      trainEvalSplit.value = train.trainEvalSplit;
+        if (train.selectedDataFiles?.length) selectedDataFiles.value = train.selectedDataFiles;
+        if (train.selectedModel) selectedModel.value = train.selectedModel;
+        if (train.trainEpochs != null) trainEpochs.value = train.trainEpochs;
+        if (train.trainLearningRate) trainLearningRate.value = train.trainLearningRate;
+        if (train.trainLoraRank != null) trainLoraRank.value = train.trainLoraRank;
+        if (train.trainEvalSplit != null) trainEvalSplit.value = train.trainEvalSplit;
       } catch {
         // Settings not available yet — use defaults
       }
@@ -1647,7 +2394,7 @@ export default defineComponent({
         // Training started successfully - result contains log info
         console.log('[TrainingPane] Training started:', result);
         // Navigate to Training Dashboard by triggering click event
-        const dashboardLink = document.querySelector('.tw-dashboard-link') as HTMLElement;
+        const dashboardLink = document.querySelector('.tw-dashboard-link')!;
         if (dashboardLink) {
           const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
           dashboardLink.dispatchEvent(clickEvent);
@@ -1660,7 +2407,7 @@ export default defineComponent({
       }
     };
 
-    onMounted(async () => {
+    onMounted(async() => {
       await checkInstallStatus();
       loadDownloadedModels();
       loadLlmModels();

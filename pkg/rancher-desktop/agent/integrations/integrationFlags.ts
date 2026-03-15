@@ -7,7 +7,7 @@ let suppressConnectionStatusReload = false;
 
 export function withSuppressedConnectionStatus<T>(fn: () => Promise<T>): Promise<T> {
   suppressConnectionStatusReload = true;
-  return fn().finally(() => { suppressConnectionStatusReload = false; });
+  return fn().finally(() => { suppressConnectionStatusReload = false });
 }
 
 export function isConnectionStatusSuppressed(): boolean {

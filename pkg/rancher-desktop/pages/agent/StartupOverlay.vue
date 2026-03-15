@@ -6,17 +6,36 @@
   >
     <div class="sulla-startup-card w-full max-w-md overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-8 shadow-2xl shadow-sky-500/5 dark:border-slate-700/60 dark:bg-slate-800 dark:shadow-sky-400/5">
       <!-- Decorative top accent bar -->
-      <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-500"></div>
+      <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-500" />
 
       <!-- Icon + Title -->
       <div class="flex items-center gap-3 mb-4">
         <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 dark:bg-sky-500/10">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-sky-500 dark:text-sky-400">
-            <path d="M12 8V4" /><path d="M8 4h8" /><rect x="6" y="8" width="12" height="10" rx="2" /><path d="M9 18v2" /><path d="M15 18v2" /><path d="M9.5 12h.01" /><path d="M14.5 12h.01" /><path d="M10 15h4" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="text-sky-500 dark:text-sky-400"
+          >
+            <path d="M12 8V4" /><path d="M8 4h8" /><rect
+              x="6"
+              y="8"
+              width="12"
+              height="10"
+              rx="2"
+            /><path d="M9 18v2" /><path d="M15 18v2" /><path d="M9.5 12h.01" /><path d="M14.5 12h.01" /><path d="M10 15h4" />
           </svg>
         </div>
         <div>
-          <h2 class="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Starting Sulla</h2>
+          <h2 class="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+            Starting Sulla
+          </h2>
           <p class="text-sm text-slate-500 dark:text-slate-400">
             {{ progressDescription || 'Initializing system...' }}
           </p>
@@ -54,7 +73,10 @@
       </div>
 
       <!-- Percentage label -->
-      <div v-if="progressMax > 0" class="mt-2 text-right text-xs font-medium tabular-nums text-slate-400 dark:text-slate-500">
+      <div
+        v-if="progressMax > 0"
+        class="mt-2 text-right text-xs font-medium tabular-nums text-slate-400 dark:text-slate-500"
+      >
         {{ Math.round(progressCurrent / progressMax * 100) }}%
       </div>
     </div>
@@ -83,7 +105,7 @@ const startupProgress = new StartupProgressController(startupState);
 
 const emit = defineEmits<{
   'overlay-visible': [value: boolean];
-  'system-ready': [value: boolean];
+  'system-ready':    [value: boolean];
 }>();
 
 // Emit initial values

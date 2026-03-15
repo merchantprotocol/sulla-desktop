@@ -9,7 +9,7 @@ export const getTool = (name: string) => toolRegistry.getTool(name);
 export const getToolsByCategory = (cat: string) => toolRegistry.getToolsByCategory(cat);
 
 // Primary tools export - meta category only
-export const tools = toolRegistry.getLLMToolsForCategory("meta");
+export const tools = toolRegistry.getLLMToolsForCategory('meta');
 
 // For LangGraph agents – returns a function that loads on demand for all tools
 export const createAgentTools = toolRegistry.getAllLLMTools();

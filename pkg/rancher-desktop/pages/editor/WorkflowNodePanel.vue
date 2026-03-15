@@ -1,11 +1,41 @@
 <template>
-  <div class="node-panel" :class="{ dark: isDark }">
-    <div class="node-panel-header" :class="{ dark: isDark }">
+  <div
+    class="node-panel"
+    :class="{ dark: isDark }"
+  >
+    <div
+      class="node-panel-header"
+      :class="{ dark: isDark }"
+    >
       <span class="node-panel-title">{{ panelTitle }}</span>
-      <button class="node-panel-close" :class="{ dark: isDark }" title="Close" @click="$emit('close')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
+      <button
+        class="node-panel-close"
+        :class="{ dark: isDark }"
+        title="Close"
+        @click="$emit('close')"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <line
+            x1="18"
+            y1="6"
+            x2="6"
+            y2="18"
+          />
+          <line
+            x1="6"
+            y1="6"
+            x2="18"
+            y2="18"
+          />
         </svg>
       </button>
     </div>
@@ -13,13 +43,16 @@
     <div class="node-panel-body">
       <!-- Label field (all node types) -->
       <div class="node-field">
-        <label class="node-field-label" :class="{ dark: isDark }">Label</label>
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Label</label>
         <input
           class="node-field-input"
           :class="{ dark: isDark }"
           :value="node.label"
           @input="$emit('update-label', node.id, ($event.target as HTMLInputElement).value)"
-        />
+        >
       </div>
 
       <!-- Type-specific config panels -->
@@ -102,7 +135,7 @@ import IONodeConfig from './workflow/IONodeConfig.vue';
 const props = defineProps<{
   isDark: boolean;
   node: {
-    id: string;
+    id:    string;
     label: string;
     type?: string;
     data?: WorkflowNodeData;
@@ -111,9 +144,9 @@ const props = defineProps<{
 }>();
 
 defineEmits<{
-  'close': [];
-  'update-label': [nodeId: string, label: string];
-  'update-trigger': [nodeId: string, triggerType: string];
+  close:                [];
+  'update-label':       [nodeId: string, label: string];
+  'update-trigger':     [nodeId: string, triggerType: string];
   'update-node-config': [nodeId: string, config: Record<string, any>];
 }>();
 

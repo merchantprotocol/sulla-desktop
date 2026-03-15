@@ -24,7 +24,7 @@ export class GetHumanPresenceWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Failed to read human presence: ${error instanceof Error ? error.message : String(error)}`,
+        responseString: `Failed to read human presence: ${ error instanceof Error ? error.message : String(error) }`,
       };
     }
   }

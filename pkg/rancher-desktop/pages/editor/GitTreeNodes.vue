@@ -1,5 +1,8 @@
 <template>
-  <template v-for="node in nodes" :key="section + '-' + node.path">
+  <template
+    v-for="node in nodes"
+    :key="section + '-' + node.path"
+  >
     <!-- Directory node -->
     <div v-if="node.isDir">
       <button
@@ -8,11 +11,27 @@
         :style="{ paddingLeft: (32 + depth * 16) + 'px' }"
         @click="toggle(node.path)"
       >
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" :class="{ rotated: isOpen(node.path) }">
-          <path d="M3 1l4 4-4 4z"/>
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="currentColor"
+          :class="{ rotated: isOpen(node.path) }"
+        >
+          <path d="M3 1l4 4-4 4z" />
         </svg>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="git-tree-folder-icon">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="git-tree-folder-icon"
+        >
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
         </svg>
         <span class="git-tree-dir-name">{{ node.name }}</span>
       </button>
@@ -52,12 +71,45 @@
         :title="actionType === 'unstage' ? 'Unstage' : 'Stage'"
         @click.stop="$emit(actionType, node.entry?.file || node.path)"
       >
-        <svg v-if="actionType === 'unstage'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-          <line x1="5" y1="12" x2="19" y2="12"/>
+        <svg
+          v-if="actionType === 'unstage'"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+        >
+          <line
+            x1="5"
+            y1="12"
+            x2="19"
+            y2="12"
+          />
         </svg>
-        <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-          <line x1="12" y1="5" x2="12" y2="19"/>
-          <line x1="5" y1="12" x2="19" y2="12"/>
+        <svg
+          v-else
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+        >
+          <line
+            x1="12"
+            y1="5"
+            x2="12"
+            y2="19"
+          />
+          <line
+            x1="5"
+            y1="12"
+            x2="19"
+            y2="12"
+          />
         </svg>
       </button>
     </div>
@@ -68,17 +120,17 @@
 import { defineComponent, reactive, type PropType } from 'vue';
 
 interface GitStatusEntry {
-  index: string;
+  index:    string;
   worktree: string;
-  file: string;
+  file:     string;
 }
 
 interface TreeNode {
-  name: string;
-  path: string;
-  isDir: boolean;
+  name:     string;
+  path:     string;
+  isDir:    boolean;
   children: TreeNode[];
-  entry?: GitStatusEntry;
+  entry?:   GitStatusEntry;
 }
 
 // Shared state for expanded dirs across all instances
@@ -88,20 +140,20 @@ export default defineComponent({
   name: 'GitTreeNodes',
 
   props: {
-    nodes: { type: Array as PropType<TreeNode[]>, required: true },
-    repo: { type: Object as PropType<{ root: string }>, required: true },
-    section: { type: String, required: true },
-    badgeType: { type: String, required: true }, // 'staged' | 'worktree' | 'untracked'
+    nodes:      { type: Array as PropType<TreeNode[]>, required: true },
+    repo:       { type: Object as PropType<{ root: string }>, required: true },
+    section:    { type: String, required: true },
+    badgeType:  { type: String, required: true }, // 'staged' | 'worktree' | 'untracked'
     actionType: { type: String, required: true }, // 'stage' | 'unstage'
-    depth: { type: Number, default: 0 },
-    isDark: { type: Boolean, default: false },
+    depth:      { type: Number, default: 0 },
+    isDark:     { type: Boolean, default: false },
   },
 
   emits: ['open-file', 'stage', 'unstage', 'contextmenu'],
 
   setup(props) {
     function dirKey(dirPath: string): string {
-      return `${props.repo.root}::${props.section}::${dirPath}`;
+      return `${ props.repo.root }::${ props.section }::${ dirPath }`;
     }
 
     function isOpen(dirPath: string): boolean {
@@ -118,11 +170,11 @@ export default defineComponent({
       if (props.badgeType === 'staged') return 'staged';
       if (props.badgeType === 'untracked') return 'added';
       switch (entry.worktree) {
-        case 'M': return 'modified';
-        case 'D': return 'deleted';
-        case 'A': return 'added';
-        case 'R': return 'renamed';
-        default:  return 'modified';
+      case 'M': return 'modified';
+      case 'D': return 'deleted';
+      case 'A': return 'added';
+      case 'R': return 'renamed';
+      default: return 'modified';
       }
     }
 

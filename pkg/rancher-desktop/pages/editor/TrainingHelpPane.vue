@@ -1,16 +1,23 @@
 <template>
-  <div class="th-pane" :class="{ dark: isDark }">
+  <div
+    class="th-pane"
+    :class="{ dark: isDark }"
+  >
     <div class="th-content">
       <!-- Step 0: Select Documents -->
       <template v-if="currentStep === 0">
-        <h2 class="th-title">Select Your Training Data</h2>
+        <h2 class="th-title">
+          Select Your Training Data
+        </h2>
         <p class="th-desc">
           Browse your file system and select the folders and files that contain your personal knowledge,
           writing, configs, and expertise. Sulla will auto-scan for supported document types.
         </p>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Supported File Types</h3>
+          <h3 class="th-subtitle">
+            Supported File Types
+          </h3>
           <div class="th-chips">
             <span class="th-chip">.txt</span>
             <span class="th-chip">.md</span>
@@ -21,7 +28,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Tips for Best Results</h3>
+          <h3 class="th-subtitle">
+            Tips for Best Results
+          </h3>
           <ul class="th-list">
             <li>Select folders with your personal writing, notes, or documentation</li>
             <li>Include config files to teach the model your environment preferences</li>
@@ -31,7 +40,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">What Happens Next</h3>
+          <h3 class="th-subtitle">
+            What Happens Next
+          </h3>
           <p class="th-text">
             In the next step you'll craft a prompt that controls how your documents
             are converted into training examples — Q&A pairs, conversational style, or custom formats.
@@ -39,18 +50,36 @@
         </div>
 
         <!-- Data quality meter -->
-        <div class="th-meter" :class="{ dark: isDark }">
-          <h3 class="th-subtitle">Data Quality Estimate</h3>
-          <p class="th-text" style="margin-bottom: 10px;">
+        <div
+          class="th-meter"
+          :class="{ dark: isDark }"
+        >
+          <h3 class="th-subtitle">
+            Data Quality Estimate
+          </h3>
+          <p
+            class="th-text"
+            style="margin-bottom: 10px;"
+          >
             Based on the total size of your selected files, this meter estimates
             how much material your model will have to learn from.
           </p>
           <div class="th-meter-header">
             <span class="th-meter-size">{{ formattedSize }} selected</span>
-            <span class="th-meter-badge" :class="contentScale.scale">{{ contentScale.label }}</span>
+            <span
+              class="th-meter-badge"
+              :class="contentScale.scale"
+            >{{ contentScale.label }}</span>
           </div>
-          <div class="th-meter-track" :class="{ dark: isDark }">
-            <div class="th-meter-fill" :class="contentScale.scale" :style="{ width: contentScale.pct + '%' }" />
+          <div
+            class="th-meter-track"
+            :class="{ dark: isDark }"
+          >
+            <div
+              class="th-meter-fill"
+              :class="contentScale.scale"
+              :style="{ width: contentScale.pct + '%' }"
+            />
           </div>
           <div class="th-meter-labels">
             <span>Poor</span>
@@ -58,7 +87,10 @@
             <span>Good</span>
             <span>Excellent</span>
           </div>
-          <ul class="th-list" style="margin-top: 10px;">
+          <ul
+            class="th-list"
+            style="margin-top: 10px;"
+          >
             <li><strong>&lt; 50 KB</strong> — Not enough material for meaningful training</li>
             <li><strong>50–500 KB</strong> — Basic personalization, picks up key patterns</li>
             <li><strong>500 KB – 5 MB</strong> — Strong results, consistent style and knowledge</li>
@@ -69,14 +101,18 @@
 
       <!-- Step 1: Craft Prompt -->
       <template v-else-if="currentStep === 1">
-        <h2 class="th-title">Craft Your Prompt</h2>
+        <h2 class="th-title">
+          Craft Your Prompt
+        </h2>
         <p class="th-desc">
           The prompt template controls how an LLM transforms your documents into training data.
           A well-crafted prompt produces higher-quality examples.
         </p>
 
         <div class="th-section">
-          <h3 class="th-subtitle">How Prompts Work</h3>
+          <h3 class="th-subtitle">
+            How Prompts Work
+          </h3>
           <p class="th-text">
             When your documents are processed, each chunk of text is sent to an LLM along with your prompt.
             The LLM generates questions or conversation starters based on the content, and the original
@@ -85,7 +121,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Template Variables</h3>
+          <h3 class="th-subtitle">
+            Template Variables
+          </h3>
           <ul class="th-list">
             <li><code>{document}</code> — replaced with the document chunk text</li>
             <li><code>{filename}</code> — replaced with the source file name</li>
@@ -93,7 +131,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Tips</h3>
+          <h3 class="th-subtitle">
+            Tips
+          </h3>
           <ul class="th-list">
             <li>Be specific about the format you want (Q&A, conversation, instruction-following)</li>
             <li>Ask for multiple questions per chunk to maximize training data</li>
@@ -104,14 +144,18 @@
 
       <!-- Step 2: Generate Data -->
       <template v-else-if="currentStep === 2">
-        <h2 class="th-title">How It Works</h2>
+        <h2 class="th-title">
+          How It Works
+        </h2>
         <p class="th-desc">
           An intelligent LLM reads each of your documents chunk by chunk and generates
           training examples based on your prompt template.
         </p>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Step 1: Chunking</h3>
+          <h3 class="th-subtitle">
+            Step 1: Chunking
+          </h3>
           <p class="th-text">
             Your documents are split into manageable pieces (typically 1-2K tokens each)
             so the LLM can process them thoroughly. Larger documents produce more chunks,
@@ -120,7 +164,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Step 2: Prompt Generation</h3>
+          <h3 class="th-subtitle">
+            Step 2: Prompt Generation
+          </h3>
           <p class="th-text">
             For each chunk, the LLM uses your prompt template to generate
             questions, conversation starters, or other prompts that someone might ask about that content.
@@ -129,7 +175,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Step 3: Pairing</h3>
+          <h3 class="th-subtitle">
+            Step 3: Pairing
+          </h3>
           <p class="th-text">
             Each generated question is paired with the original document chunk as the answer,
             creating a complete training example. These Q&A pairs teach the model to respond
@@ -138,7 +186,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Local vs Cloud Models</h3>
+          <h3 class="th-subtitle">
+            Local vs Cloud Models
+          </h3>
           <ul class="th-list">
             <li><strong>Local models</strong> are free but slower — they use your machine's hardware.</li>
             <li><strong>Cloud models</strong> (OpenAI, Anthropic) are faster and often higher quality, but cost per API call.</li>
@@ -148,7 +198,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Tips</h3>
+          <h3 class="th-subtitle">
+            Tips
+          </h3>
           <ul class="th-list">
             <li>More capable models (GPT-4o, Claude Sonnet) produce better questions but cost more</li>
             <li>Start with a small batch to check quality before processing everything</li>
@@ -159,14 +211,18 @@
 
       <!-- Step 3: Select Data Files -->
       <template v-else-if="currentStep === 3">
-        <h2 class="th-title">Select Training Data</h2>
+        <h2 class="th-title">
+          Select Training Data
+        </h2>
         <p class="th-desc">
           Choose which data files to include in your fine-tuning run. You can mix and match
           files from different sources.
         </p>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Data Sources</h3>
+          <h3 class="th-subtitle">
+            Data Sources
+          </h3>
           <ul class="th-list">
             <li><strong>Documents</strong> — Generated from your files using the Create Training Data wizard</li>
             <li><strong>Sessions</strong> — Collected from your chat conversations with Sulla</li>
@@ -175,7 +231,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">How Much Data Do I Need?</h3>
+          <h3 class="th-subtitle">
+            How Much Data Do I Need?
+          </h3>
           <ul class="th-list">
             <li><strong>&lt; 50 examples</strong> — Not enough for meaningful learning</li>
             <li><strong>50-200 examples</strong> — Basic personalization, model picks up key patterns</li>
@@ -185,7 +243,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Tips</h3>
+          <h3 class="th-subtitle">
+            Tips
+          </h3>
           <ul class="th-list">
             <li>More diverse training data produces better generalization</li>
             <li>Select all files unless you have a specific reason to exclude some</li>
@@ -196,13 +256,17 @@
 
       <!-- Step 4: Model & Settings -->
       <template v-else-if="currentStep === 4">
-        <h2 class="th-title">Model & Training Settings</h2>
+        <h2 class="th-title">
+          Model & Training Settings
+        </h2>
         <p class="th-desc">
           Configure the base model and LoRA parameters for your fine-tuning run.
         </p>
 
         <div class="th-section">
-          <h3 class="th-subtitle">What is LoRA?</h3>
+          <h3 class="th-subtitle">
+            What is LoRA?
+          </h3>
           <p class="th-text">
             LoRA (Low-Rank Adaptation) is a technique that lets you customize a model by training
             only a small number of additional parameters, rather than retraining the entire model.
@@ -211,7 +275,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Parameter Guide</h3>
+          <h3 class="th-subtitle">
+            Parameter Guide
+          </h3>
           <ul class="th-list">
             <li><strong>Learning Rate</strong> — How fast the model learns. Too high = unstable, too low = slow. Default 2e-4 works well for most cases.</li>
             <li><strong>Epochs</strong> — How many times the model sees each example. 2-3 is typical. More epochs risk overfitting.</li>
@@ -221,7 +287,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Choosing a Base Model</h3>
+          <h3 class="th-subtitle">
+            Choosing a Base Model
+          </h3>
           <ul class="th-list">
             <li>Larger models (9B) are more capable but slower to train</li>
             <li>Smaller models (0.8B-4B) train faster and run on less hardware</li>
@@ -232,13 +300,17 @@
 
       <!-- Step 5: Train & Deploy -->
       <template v-else-if="currentStep === 5">
-        <h2 class="th-title">Train & Deploy</h2>
+        <h2 class="th-title">
+          Train & Deploy
+        </h2>
         <p class="th-desc">
           Start the LoRA fine-tuning process and deploy your custom model.
         </p>
 
         <div class="th-section">
-          <h3 class="th-subtitle">What Happens During Training</h3>
+          <h3 class="th-subtitle">
+            What Happens During Training
+          </h3>
           <ul class="th-list">
             <li>Training data is loaded and formatted for the base model</li>
             <li>LoRA adapter layers are trained on your data</li>
@@ -249,7 +321,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">Training Time</h3>
+          <h3 class="th-subtitle">
+            Training Time
+          </h3>
           <p class="th-text">
             Typical training takes 10-60 minutes depending on your hardware, data size, and model size.
             On Apple Silicon Macs, the MLX backend is used for optimal performance.
@@ -258,7 +332,9 @@
         </div>
 
         <div class="th-section">
-          <h3 class="th-subtitle">After Training</h3>
+          <h3 class="th-subtitle">
+            After Training
+          </h3>
           <p class="th-text">
             Your custom model will be automatically loaded and available in the model selector.
             You can test it immediately through the chat interface.
@@ -273,14 +349,14 @@
 import { defineComponent, computed } from 'vue';
 
 interface ContentScaleData {
-  size: number;
+  size:  number;
   scale: string;
   label: string;
-  pct: number;
+  pct:   number;
 }
 
 export default defineComponent({
-  name: 'TrainingHelpPane',
+  name:  'TrainingHelpPane',
   props: {
     isDark:       { type: Boolean, default: false },
     currentStep:  { type: Number, default: 0 },

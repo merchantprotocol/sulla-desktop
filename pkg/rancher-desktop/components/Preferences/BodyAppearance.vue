@@ -13,7 +13,7 @@ export default defineComponent({
   name: 'preferences-body-appearance',
   data() {
     return {
-      selectedTheme:  localStorage.getItem(THEME_STORAGE_KEY) || 'default-light',
+      selectedTheme: localStorage.getItem(THEME_STORAGE_KEY) || 'default-light',
       themeGroups,
     };
   },
@@ -40,8 +40,8 @@ export default defineComponent({
       const current = availableThemes.find(t => t.id === this.selectedTheme);
       const preferredMode = current?.mode ?? 'dark';
       // Pick the variant matching the current mode, or fall back to any variant
-      const match = availableThemes.find(t => t.scheme === scheme && t.mode === preferredMode)
-        ?? availableThemes.find(t => t.scheme === scheme);
+      const match = availableThemes.find(t => t.scheme === scheme && t.mode === preferredMode) ??
+        availableThemes.find(t => t.scheme === scheme);
       if (match) {
         this.selectedTheme = match.id;
         localStorage.setItem(THEME_STORAGE_KEY, match.id);
@@ -77,17 +77,32 @@ export default defineComponent({
         :class="{ active: selectedScheme === group.scheme }"
         @click="selectScheme(group.scheme)"
       >
-        <div class="theme-preview" :class="hasBothModes(group) ? 'split' : ''">
+        <div
+          class="theme-preview"
+          :class="hasBothModes(group) ? 'split' : ''"
+        >
           <template v-if="hasBothModes(group)">
-            <div class="preview-half" :class="'preview-' + group.scheme + '-light'" />
-            <div class="preview-half" :class="'preview-' + group.scheme + '-dark'" />
+            <div
+              class="preview-half"
+              :class="'preview-' + group.scheme + '-light'"
+            />
+            <div
+              class="preview-half"
+              :class="'preview-' + group.scheme + '-dark'"
+            />
           </template>
           <template v-else>
-            <div class="preview-full" :class="'preview-' + group.themes[0].id" />
+            <div
+              class="preview-full"
+              :class="'preview-' + group.themes[0].id"
+            />
           </template>
         </div>
         <div class="theme-card-label">
-          <span class="theme-card-dot" :class="{ active: selectedScheme === group.scheme }" />
+          <span
+            class="theme-card-dot"
+            :class="{ active: selectedScheme === group.scheme }"
+          />
           {{ group.label }}
         </div>
       </button>

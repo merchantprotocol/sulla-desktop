@@ -473,9 +473,9 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
         const spec = deployment.spec as Record<string, unknown>;
         const template = spec?.template as Record<string, unknown>;
         const podSpec = template?.spec as Record<string, unknown>;
-        const containers = podSpec?.containers as Array<Record<string, unknown>>;
+        const containers = podSpec?.containers as Record<string, unknown>[];
         if (containers?.[0]?.env) {
-          containers[0].env = (containers[0].env as Array<any>).map((envVar: any) => {
+          containers[0].env = (containers[0].env as any[]).map((envVar: any) => {
             if (envVar.name === 'POSTGRES_PASSWORD' || envVar.name === 'DB_POSTGRESDB_PASSWORD') {
               envVar.value = sullaServicePassword;
             }
@@ -487,9 +487,9 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
         const spec = deployment.spec as Record<string, unknown>;
         const template = spec?.template as Record<string, unknown>;
         const podSpec = template?.spec as Record<string, unknown>;
-        const containers = podSpec?.containers as Array<Record<string, unknown>>;
+        const containers = podSpec?.containers as Record<string, unknown>[];
         if (containers?.[0]?.env) {
-          containers[0].env = (containers[0].env as Array<any>).map((envVar: any) => {
+          containers[0].env = (containers[0].env as any[]).map((envVar: any) => {
             if (envVar.name === 'N8N_ENCRYPTION_KEY') {
               envVar.value = sullaN8nEncryptionKey;
             }
@@ -530,8 +530,8 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     }
   }
 
-  private async waitForDeployment(name: string, timeoutSec: number = 600): Promise<void> {
-    return this.waitForCondition(async () => {
+  private async waitForDeployment(name: string, timeoutSec = 600): Promise<void> {
+    return this.waitForCondition(async() => {
       try {
         const status = await this.vm.execCommand({ capture: true, root: true }, 'k3s', 'kubectl', 'get', 'deployment', '-n', 'sulla', name, '-o', 'jsonpath={.status.availableReplicas}');
         return parseInt(status.trim()) > 0;
@@ -541,14 +541,14 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     }, timeoutSec);
   }
 
-  private async waitForPodCondition(label: string, conditionType: string, expectedStatus: string, timeoutSec: number = 180): Promise<void> {
-    return this.waitForCondition(async () => {
+  private async waitForPodCondition(label: string, conditionType: string, expectedStatus: string, timeoutSec = 180): Promise<void> {
+    return this.waitForCondition(async() => {
       try {
         const status = await this.vm.execCommand(
           { capture: true, root: true },
           'k3s', 'kubectl', 'get', 'pod', '-n', 'sulla',
-          '-l', `app=${label}`,
-          '-o', `jsonpath={.items[0].status.conditions[?(@.type=="${conditionType}")].status}`
+          '-l', `app=${ label }`,
+          '-o', `jsonpath={.items[0].status.conditions[?(@.type=="${ conditionType }")].status}`,
         );
         return status.trim() === expectedStatus;
       } catch {
@@ -557,13 +557,13 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     }, timeoutSec);
   }
 
-  private async waitForCondition(check: () => Promise<boolean>, timeoutSec: number = 120, intervalMs: number = 2000): Promise<void> {
+  private async waitForCondition(check: () => Promise<boolean>, timeoutSec = 120, intervalMs = 2000): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < timeoutSec * 1000) {
       if (await check()) return;
       await new Promise(r => setTimeout(r, intervalMs));
     }
-    throw new Error(`Timeout waiting for condition after ${timeoutSec}s`);
+    throw new Error(`Timeout waiting for condition after ${ timeoutSec }s`);
   }
 
   private async logK8sDiagnostics(message: string): Promise<void> {
@@ -580,26 +580,26 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     // Reset progress counter at the start
     this.progressTracker.numeric('Starting Sulla deployment', 0, 100);
 
-    await this.progressTracker.action('Preparing Sulla deployment files', 30, async () => {
+    await this.progressTracker.action('Preparing Sulla deployment files', 30, async() => {
       this.progressTracker.numeric('Preparing Sulla deployment files', 5, 100);
       await this.prepareSullaDeploymentFiles();
       this.progressTracker.numeric('Deployment files prepared', 15, 100);
     });
 
-    await this.progressTracker.action('Applying Sulla manifests', 50, async () => {
+    await this.progressTracker.action('Applying Sulla manifests', 50, async() => {
       this.progressTracker.numeric('Applying Sulla manifests', 20, 100);
       await this.applySullaManifests();
       this.progressTracker.numeric('Manifests applied', 35, 100);
     });
 
-    await this.progressTracker.action('Booting Virtual Container Environment...', 60, async () => {
+    await this.progressTracker.action('Booting Virtual Container Environment...', 60, async() => {
       this.progressTracker.numeric('Booting Virtual Container Environment', 40, 100);
       const containers = ['ws-server', 'redis', 'postgres', 'n8n'];
-      
+
       // Track each container individually
       for (const container of containers) {
-        await this.progressTracker.action(`Downloading and Starting ${container}`, 100, async () => {
-          await this.waitForDeployment(`${container}`, 600);
+        await this.progressTracker.action(`Downloading and Starting ${ container }`, 100, async() => {
+          await this.waitForDeployment(`${ container }`, 600);
         });
       }
       this.progressTracker.numeric('Container environment booted', 60, 100);

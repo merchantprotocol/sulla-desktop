@@ -21,11 +21,11 @@ function httpProbe(port: number, pathname = '/'): Promise<{ ok: boolean; statusC
   return new Promise((resolve) => {
     const req = http.get({ hostname: '127.0.0.1', port, path: pathname, timeout: 3000 }, (res) => {
       let body = '';
-      res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      res.on('data', (chunk: Buffer) => { body += chunk.toString() });
       res.on('end', () => resolve({ ok: res.statusCode === 200, statusCode: res.statusCode, body }));
     });
     req.on('error', (err) => resolve({ ok: false, error: err.message }));
-    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }) });
   });
 }
 
@@ -33,9 +33,9 @@ function tcpProbe(port: number): Promise<{ ok: boolean; error?: string }> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(3000);
-    socket.on('connect', () => { socket.destroy(); resolve({ ok: true }); });
+    socket.on('connect', () => { socket.destroy(); resolve({ ok: true }) });
     socket.on('error', (err) => resolve({ ok: false, error: err.message }));
-    socket.on('timeout', () => { socket.destroy(); resolve({ ok: false, error: 'timeout' }); });
+    socket.on('timeout', () => { socket.destroy(); resolve({ ok: false, error: 'timeout' }) });
     socket.connect(port, '127.0.0.1');
   });
 }
@@ -62,21 +62,26 @@ export function initSullaDebugEvents(): void {
   // Heartbeat status & history
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('debug-heartbeat-status', async () => {
+  ipcMainProxy.handle('debug-heartbeat-status', async() => {
     try {
       const { getHeartbeatService } = await import('@pkg/agent/services/HeartbeatService');
       const svc = getHeartbeatService();
       return svc.getStatus();
     } catch {
       return {
-        initialized: false, isExecuting: false, lastTriggerMs: 0,
-        schedulerRunning: false, totalTriggers: 0, totalErrors: 0,
-        totalSkips: 0, uptimeMs: 0,
+        initialized:      false,
+        isExecuting:      false,
+        lastTriggerMs:    0,
+        schedulerRunning: false,
+        totalTriggers:    0,
+        totalErrors:      0,
+        totalSkips:       0,
+        uptimeMs:         0,
       };
     }
   });
 
-  ipcMainProxy.handle('debug-heartbeat-schedule', async () => {
+  ipcMainProxy.handle('debug-heartbeat-schedule', async() => {
     try {
       const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
       const { getHeartbeatService } = await import('@pkg/agent/services/HeartbeatService');
@@ -92,7 +97,7 @@ export function initSullaDebugEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('debug-heartbeat-history', async (_event: unknown, limit?: number) => {
+  ipcMainProxy.handle('debug-heartbeat-history', async(_event: unknown, limit?: number) => {
     try {
       const { getHeartbeatService } = await import('@pkg/agent/services/HeartbeatService');
       const svc = getHeartbeatService();
@@ -106,7 +111,7 @@ export function initSullaDebugEvents(): void {
   // Conversation log browser
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('debug-conversations-list', async () => {
+  ipcMainProxy.handle('debug-conversations-list', async() => {
     try {
       const { resolveSullaLogsDir } = await import('@pkg/agent/utils/sullaPaths');
       const dir = resolveSullaLogsDir();
@@ -134,13 +139,13 @@ export function initSullaDebugEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('debug-conversation-events', async (_event: unknown, conversationId: string) => {
+  ipcMainProxy.handle('debug-conversation-events', async(_event: unknown, conversationId: string) => {
     try {
       const { resolveSullaLogsDir } = await import('@pkg/agent/utils/sullaPaths');
       const dir = resolveSullaLogsDir();
       const safe = conversationId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
-      const filePath = path.join(dir, `conv_${safe}.jsonl`);
-      return readJsonlFile(filePath, 500) as Array<{ ts: string; type: string; [key: string]: unknown }>;
+      const filePath = path.join(dir, `conv_${ safe }.jsonl`);
+      return readJsonlFile(filePath, 500) as { ts: string; type: string; [key: string]: unknown }[];
     } catch {
       return [];
     }
@@ -150,7 +155,7 @@ export function initSullaDebugEvents(): void {
   // System health checks
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('debug-health-check', async () => {
+  ipcMainProxy.handle('debug-health-check', async() => {
     const [chatApi, terminal, dashboard, wsHub] = await Promise.all([
       httpProbe(3000, '/health'),
       tcpProbe(6108),
@@ -164,7 +169,7 @@ export function initSullaDebugEvents(): void {
       const { redisClient } = await import('@pkg/agent/database/RedisClient');
       const client = redisClient as any;
       const pong = typeof client.ping === 'function' ? await client.ping() : 'unavailable';
-      redis = { ok: pong === 'PONG', error: pong !== 'PONG' ? `unexpected: ${pong}` : undefined } as any;
+      redis = { ok: pong === 'PONG', error: pong !== 'PONG' ? `unexpected: ${ pong }` : undefined } as any;
     } catch (err) {
       redis = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -193,7 +198,7 @@ export function initSullaDebugEvents(): void {
   // Active agents (from Redis)
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('debug-active-agents', async () => {
+  ipcMainProxy.handle('debug-active-agents', async() => {
     try {
       const { getActiveAgentsRegistry } = await import('@pkg/agent/services/ActiveAgentsRegistry');
       const registry = getActiveAgentsRegistry();
@@ -207,7 +212,7 @@ export function initSullaDebugEvents(): void {
   // Error aggregation from conversation logs
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('debug-errors', async (_event: unknown, limit?: number) => {
+  ipcMainProxy.handle('debug-errors', async(_event: unknown, limit?: number) => {
     try {
       const { resolveSullaLogsDir } = await import('@pkg/agent/utils/sullaPaths');
       const dir = resolveSullaLogsDir();
@@ -237,13 +242,13 @@ export function initSullaDebugEvents(): void {
       for (const file of recentFiles) {
         const events = readJsonlFile(path.join(dir, file), 200) as any[];
         for (const evt of events) {
-          if (evt.type === 'tool_call' && evt.result && typeof evt.result === 'object' && (evt.result as any).error) {
+          if (evt.type === 'tool_call' && evt.result && typeof evt.result === 'object' && (evt.result).error) {
             errors.push({
               conversationId: file.replace('conv-', '').replace('.jsonl', ''),
               type:           'tool_error',
               name:           evt.toolName,
               startedAt:      evt.ts,
-              error:          (evt.result as any).error,
+              error:          (evt.result).error,
             });
           }
         }
@@ -261,7 +266,7 @@ export function initSullaDebugEvents(): void {
   // WebSocket connection stats
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('debug-ws-stats', async () => {
+  ipcMainProxy.handle('debug-ws-stats', async() => {
     type WsStats = Record<string, { connected: boolean; reconnectAttempts: number; pendingMessages: number; subscribedChannels: string[] }>;
     try {
       const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
@@ -276,7 +281,7 @@ export function initSullaDebugEvents(): void {
   // WebSocket message tap (enable/disable + fetch recent messages)
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('debug-ws-tap', async (_event: unknown, enabled: boolean) => {
+  ipcMainProxy.handle('debug-ws-tap', async(_event: unknown, enabled: boolean) => {
     try {
       const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
       getWebSocketClientService().setTapping(enabled);
@@ -286,7 +291,7 @@ export function initSullaDebugEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('debug-ws-messages', async (_event: unknown, connectionId?: string, limit?: number) => {
+  ipcMainProxy.handle('debug-ws-messages', async(_event: unknown, connectionId?: string, limit?: number) => {
     try {
       const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
       return getWebSocketClientService().getRecentMessages(connectionId || undefined, limit ?? 100);
@@ -299,7 +304,7 @@ export function initSullaDebugEvents(): void {
   // Service detail logs (heartbeat events, conversation events for agents)
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('debug-service-detail', async (_event: unknown, serviceKey: string) => {
+  ipcMainProxy.handle('debug-service-detail', async(_event: unknown, serviceKey: string) => {
     try {
       switch (serviceKey) {
       case 'heartbeat': {
@@ -338,7 +343,7 @@ export function initSullaDebugEvents(): void {
   let liveConvListener: ((...args: any[]) => void) | null = null;
   let liveEventListener: ((...args: any[]) => void) | null = null;
 
-  ipcMainProxy.handle('debug-live-start', async (event: any) => {
+  ipcMainProxy.handle('debug-live-start', async(event: any) => {
     try {
       const { getConversationLogger } = await import('@pkg/agent/services/ConversationLogger');
       const logger = getConversationLogger();
@@ -373,7 +378,7 @@ export function initSullaDebugEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('debug-live-stop', async () => {
+  ipcMainProxy.handle('debug-live-stop', async() => {
     try {
       const { getConversationLogger } = await import('@pkg/agent/services/ConversationLogger');
       const logger = getConversationLogger();

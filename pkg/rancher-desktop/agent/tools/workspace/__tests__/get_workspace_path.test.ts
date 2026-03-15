@@ -14,13 +14,13 @@ function configureWorker() {
 }
 
 describe('create_workspace tool', () => {
-  it('creates a workspace directory for a valid workspace name', async () => {
+  it('creates a workspace directory for a valid workspace name', async() => {
     const worker = configureWorker();
-    const workspaceName = `jest-create-workspace-${Date.now()}`;
+    const workspaceName = `jest-create-workspace-${ Date.now() }`;
     const workspaceDir = path.join(
       os.homedir(),
       'workspaces',
-      workspaceName
+      workspaceName,
     );
 
     const result = await worker.invoke({ name: workspaceName });
@@ -30,7 +30,7 @@ describe('create_workspace tool', () => {
     expect(fs.existsSync(workspaceDir)).toBe(true);
   });
 
-  it('fails validation when workspace name is missing', async () => {
+  it('fails validation when workspace name is missing', async() => {
     const worker = configureWorker();
 
     await expect(worker.invoke({})).rejects.toThrow('Input validation failed');

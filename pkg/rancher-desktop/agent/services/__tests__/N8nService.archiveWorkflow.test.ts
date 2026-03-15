@@ -4,17 +4,17 @@ import { beforeAll, describe, expect, it, jest } from '@jest/globals';
 let N8nServiceClass: any;
 
 describe('N8nService.setWorkflowArchived', () => {
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
     const mod = await import('../N8nService');
     N8nServiceClass = mod.N8nService;
   });
 
-  it('archives with POST /workflows/:id/archive on supported APIs', async () => {
-    const service = new N8nServiceClass() as any;
+  it('archives with POST /workflows/:id/archive on supported APIs', async() => {
+    const service = new N8nServiceClass();
 
-    const requestMock = jest.fn(async (_url: string, _init?: { method?: string; body?: string }) => ({ id: 'wf_1', archived: true }));
+    const requestMock = jest.fn(async(_url: string, _init?: { method?: string; body?: string }) => ({ id: 'wf_1', archived: true }));
     service.request = requestMock;
 
     const result = await service.setWorkflowArchived(' wf_1 ', true);
@@ -24,10 +24,10 @@ describe('N8nService.setWorkflowArchived', () => {
     expect(requestMock).toHaveBeenCalledWith('/api/v1/workflows/wf_1/archive', { method: 'POST' });
   });
 
-  it('unarchives with POST /workflows/:id/unarchive on supported APIs', async () => {
-    const service = new N8nServiceClass() as any;
+  it('unarchives with POST /workflows/:id/unarchive on supported APIs', async() => {
+    const service = new N8nServiceClass();
 
-    const requestMock = jest.fn(async () => {
+    const requestMock = jest.fn(async() => {
       return { id: 'wf_2', archived: false };
     });
 
@@ -42,20 +42,20 @@ describe('N8nService.setWorkflowArchived', () => {
     expect(calls[0][1]).toEqual({ method: 'POST' });
   });
 
-  it('falls back to PUT /workflows/:id when PATCH fallback is not allowed', async () => {
-    const service = new N8nServiceClass() as any;
+  it('falls back to PUT /workflows/:id when PATCH fallback is not allowed', async() => {
+    const service = new N8nServiceClass();
 
     let callCount = 0;
     const existingWorkflow = {
-      id: 'wf_put_1',
-      name: 'Workflow A',
-      nodes: [],
+      id:          'wf_put_1',
+      name:        'Workflow A',
+      nodes:       [],
       connections: {},
-      settings: {},
-      archived: false,
+      settings:    {},
+      archived:    false,
     };
 
-    const requestMock = jest.fn(async (url: string, init?: { method?: string; body?: string }) => {
+    const requestMock = jest.fn(async(url: string, init?: { method?: string; body?: string }) => {
       callCount += 1;
 
       if (callCount === 1) {
@@ -76,11 +76,11 @@ describe('N8nService.setWorkflowArchived', () => {
         expect(url).toBe('/api/v1/workflows/wf_put_1');
         expect(init?.method).toBe('PUT');
         expect(JSON.parse(init?.body || '{}')).toEqual({
-          name: existingWorkflow.name,
-          nodes: existingWorkflow.nodes,
+          name:        existingWorkflow.name,
+          nodes:       existingWorkflow.nodes,
           connections: existingWorkflow.connections,
-          settings: existingWorkflow.settings,
-          archived: true,
+          settings:    existingWorkflow.settings,
+          archived:    true,
         });
         return { id: 'wf_put_1', archived: true };
       }
@@ -104,30 +104,30 @@ describe('N8nService.setWorkflowArchived', () => {
     expect(calls[3][0]).toBe('/api/v1/workflows/wf_put_1');
     expect(calls[3][1]).toEqual({
       method: 'PUT',
-      body: JSON.stringify({
-        name: existingWorkflow.name,
-        nodes: existingWorkflow.nodes,
+      body:   JSON.stringify({
+        name:        existingWorkflow.name,
+        nodes:       existingWorkflow.nodes,
         connections: existingWorkflow.connections,
-        settings: existingWorkflow.settings,
-        archived: true,
+        settings:    existingWorkflow.settings,
+        archived:    true,
       }),
     });
   });
 
-  it('falls back to PUT when PATCH returns 400 additional-properties schema mismatch', async () => {
-    const service = new N8nServiceClass() as any;
+  it('falls back to PUT when PATCH returns 400 additional-properties schema mismatch', async() => {
+    const service = new N8nServiceClass();
 
     let callCount = 0;
     const existingWorkflow = {
-      id: 'wf_put_2',
-      name: 'Workflow B',
-      nodes: [],
+      id:          'wf_put_2',
+      name:        'Workflow B',
+      nodes:       [],
       connections: {},
-      settings: {},
-      archived: false,
+      settings:    {},
+      archived:    false,
     };
 
-    const requestMock = jest.fn(async (url: string, init?: { method?: string; body?: string }) => {
+    const requestMock = jest.fn(async(url: string, init?: { method?: string; body?: string }) => {
       callCount += 1;
 
       if (callCount === 1) {
@@ -148,11 +148,11 @@ describe('N8nService.setWorkflowArchived', () => {
         expect(url).toBe('/api/v1/workflows/wf_put_2');
         expect(init?.method).toBe('PUT');
         expect(JSON.parse(init?.body || '{}')).toEqual({
-          name: existingWorkflow.name,
-          nodes: existingWorkflow.nodes,
+          name:        existingWorkflow.name,
+          nodes:       existingWorkflow.nodes,
           connections: existingWorkflow.connections,
-          settings: existingWorkflow.settings,
-          archived: true,
+          settings:    existingWorkflow.settings,
+          archived:    true,
         });
         return { id: 'wf_put_2', archived: true };
       }
@@ -176,17 +176,17 @@ describe('N8nService.setWorkflowArchived', () => {
     expect(calls[3][0]).toBe('/api/v1/workflows/wf_put_2');
     expect(calls[3][1]).toEqual({
       method: 'PUT',
-      body: JSON.stringify({
-        name: existingWorkflow.name,
-        nodes: existingWorkflow.nodes,
+      body:   JSON.stringify({
+        name:        existingWorkflow.name,
+        nodes:       existingWorkflow.nodes,
         connections: existingWorkflow.connections,
-        settings: existingWorkflow.settings,
-        archived: true,
+        settings:    existingWorkflow.settings,
+        archived:    true,
       }),
     });
   });
 
-  it('throws for blank workflow IDs', async () => {
+  it('throws for blank workflow IDs', async() => {
     const service = new N8nServiceClass();
     await expect(service.setWorkflowArchived('  ', true)).rejects.toThrow('Workflow ID is required for archive state change');
   });

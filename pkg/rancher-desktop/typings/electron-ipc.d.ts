@@ -114,9 +114,9 @@ export interface IpcMainEvents {
 
   // #region Error Reporting
   'error-report/submit': (report: {
-    error_type: string;
+    error_type:    string;
     error_message: string;
-    stack_trace?: string;
+    stack_trace?:  string;
     user_context?: string;
     notify_email?: string;
   }) => void;
@@ -142,46 +142,46 @@ export interface IpcMainInvokeEvents {
 
   // #region Error Reporting
   'error-report/invoke': (report: {
-    error_type: string;
+    error_type:    string;
     error_message: string;
-    stack_trace?: string;
+    stack_trace?:  string;
     user_context?: string;
     notify_email?: string;
   }) => { success: boolean; action?: string; issue_number?: number };
   // #endregion
 
   // #region Sulla
-  'start-sulla-custom-env':    () => void;
-  'sulla-restart-ollama':      () => void;
-  'app-quit':                  () => void;
-  'sulla-settings-get':        (property: string, defaultValue?: any) => any;
-  'sulla-settings-set':        (property: string, value: any) => void;
+  'start-sulla-custom-env': () => void;
+  'sulla-restart-ollama':   () => void;
+  'app-quit':               () => void;
+  'sulla-settings-get':     (property: string, defaultValue?: any) => any;
+  'sulla-settings-set':     (property: string, value: any) => void;
   // #endregion
 
   // #region Filesystem
-  'filesystem-get-root':  () => string;
-  'filesystem-get-git-changes': (path: string) => Promise<{status: string, file: string}[]>;
+  'filesystem-get-root':        () => string;
+  'filesystem-get-git-changes': (path: string) => Promise<{ status: string, file: string }[]>;
 
   // Git source control
-  'git-discover-repos': (dirPath: string) => Array<{ root: string; name: string }>;
-  'git-branch':       (dirPath: string) => string;
-  'git-list-branches': (dirPath: string) => Array<{ name: string; current: boolean; remote: boolean }>;
-  'git-checkout-branch': (dirPath: string, branchName: string) => { success: boolean; error: string };
-  'git-create-branch': (dirPath: string, branchName: string) => { success: boolean; error: string };
-  'git-status-full':  (dirPath: string) => Array<{ index: string; worktree: string; file: string }>;
-  'git-stage':        (dirPath: string, files: string[]) => boolean;
-  'git-unstage':      (dirPath: string, files: string[]) => boolean;
-  'git-diff':         (dirPath: string, file: string, staged: boolean) => string;
-  'git-show-head':    (dirPath: string, file: string) => string;
-  'git-show-staged':  (dirPath: string, file: string) => string;
-  'agents-list':      () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
-  'agents-get-prompt-templates': () => { soul: string; environment: string };
-  'agents-delete':    (agentId: string) => boolean;
+  'git-discover-repos':            (dirPath: string) => { root: string; name: string }[];
+  'git-branch':                    (dirPath: string) => string;
+  'git-list-branches':             (dirPath: string) => { name: string; current: boolean; remote: boolean }[];
+  'git-checkout-branch':           (dirPath: string, branchName: string) => { success: boolean; error: string };
+  'git-create-branch':             (dirPath: string, branchName: string) => { success: boolean; error: string };
+  'git-status-full':               (dirPath: string) => { index: string; worktree: string; file: string }[];
+  'git-stage':                     (dirPath: string, files: string[]) => boolean;
+  'git-unstage':                   (dirPath: string, files: string[]) => boolean;
+  'git-diff':                      (dirPath: string, file: string, staged: boolean) => string;
+  'git-show-head':                 (dirPath: string, file: string) => string;
+  'git-show-staged':               (dirPath: string, file: string) => string;
+  'agents-list':                   () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
+  'agents-get-prompt-templates':   () => { soul: string; environment: string };
+  'agents-delete':                 (agentId: string) => boolean;
   'agents-get-template-variables': () => { key: string; label: string; preview: string }[];
-  'tools-list-by-category': () => Array<{ category: string; description: string; tools: { name: string; description: string; operationTypes: string[] }[] }>;
+  'tools-list-by-category':        () => { category: string; description: string; tools: { name: string; description: string; operationTypes: string[] }[] }[];
 
   // Workflow CRUD
-  'workflow-list':   () => Array<{ id: string; name: string; updatedAt: string }>;
+  'workflow-list':   () => { id: string; name: string; updatedAt: string }[];
   'workflow-get':    (workflowId: string) => any;
   'workflow-save':   (workflow: any) => boolean;
   'workflow-delete': (workflowId: string) => boolean;
@@ -195,71 +195,71 @@ export interface IpcMainInvokeEvents {
   // Workflow registry dispatch (used by external trigger sources)
   'workflow-dispatch': (triggerType: string, message: string, workflowId?: string) => { executionId: string; workflowId: string; workflowName: string } | null;
 
-  'git-commit':       (dirPath: string, message: string) => boolean;
-  'git-pull':         (dirPath: string) => { success: boolean; output: string };
-  'git-push':         (dirPath: string) => { success: boolean; output: string };
-  'git-fetch':        (dirPath: string) => { success: boolean; output: string };
-  'git-stash':        (dirPath: string) => { success: boolean; output: string };
-  'git-stash-pop':    (dirPath: string) => { success: boolean; output: string };
-  'git-discard-all':  (dirPath: string) => { success: boolean; output: string };
+  'git-commit':        (dirPath: string, message: string) => boolean;
+  'git-pull':          (dirPath: string) => { success: boolean; output: string };
+  'git-push':          (dirPath: string) => { success: boolean; output: string };
+  'git-fetch':         (dirPath: string) => { success: boolean; output: string };
+  'git-stash':         (dirPath: string) => { success: boolean; output: string };
+  'git-stash-pop':     (dirPath: string) => { success: boolean; output: string };
+  'git-discard-all':   (dirPath: string) => { success: boolean; output: string };
   'git-add-gitignore': (repoRoot: string, pattern: string) => { success: boolean; output: string };
 
-  'filesystem-read-dir':  (dirPath: string) => Array<{ name: string; path: string; isDir: boolean; size: number; ext: string }>;
-  'filesystem-read-file':  (filePath: string) => string;
-  'filesystem-write-file': (filePath: string, content: string) => void;
-  'filesystem-save-dialog': (defaultName: string, defaultPath?: string) => string | null;
-  'filesystem-rename':     (oldPath: string, newName: string) => string;
-  'filesystem-delete':     (targetPath: string) => void;
-  'filesystem-create-file':(dirPath: string, fileName: string) => string;
-  'filesystem-create-dir': (dirPath: string, dirName: string) => string;
-  'filesystem-copy':       (srcPath: string, destDir: string) => string;
-  'filesystem-move':       (srcPath: string, destDir: string) => string;
-  'filesystem-reveal':     (targetPath: string) => void;
-  'filesystem-open-external': (targetPath: string) => void;
+  'filesystem-read-dir':       (dirPath: string) => { name: string; path: string; isDir: boolean; size: number; ext: string }[];
+  'filesystem-read-file':      (filePath: string) => string;
+  'filesystem-write-file':     (filePath: string, content: string) => void;
+  'filesystem-save-dialog':    (defaultName: string, defaultPath?: string) => string | null;
+  'filesystem-rename':         (oldPath: string, newName: string) => string;
+  'filesystem-delete':         (targetPath: string) => void;
+  'filesystem-create-file':    (dirPath: string, fileName: string) => string;
+  'filesystem-create-dir':     (dirPath: string, dirName: string) => string;
+  'filesystem-copy':           (srcPath: string, destDir: string) => string;
+  'filesystem-move':           (srcPath: string, destDir: string) => string;
+  'filesystem-reveal':         (targetPath: string) => void;
+  'filesystem-open-external':  (targetPath: string) => void;
   'filesystem-open-in-editor': (targetPath: string, line?: number) => void;
-  'filesystem-upload':       (destDir: string, fileName: string, base64Data: string) => string;
+  'filesystem-upload':         (destDir: string, fileName: string, base64Data: string) => string;
   // #endregion
 
   // #region Training
-  'training-install-status': () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string; requiredBytes: number; availableBytes: number };
-  'training-install':        () => { logFilename: string };
-  'training-run':          (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
-  'training-status':       () => { running: boolean; logFilename: string };
-  'training-docs-config-exists': () => boolean;
-  'training-history':      () => Array<{ filename: string; size: number; createdAt: string; modifiedAt: string; model?: string; durationMs?: number; conversationsProcessed?: number; status: 'completed' | 'running' | 'failed' }>;
-  'training-log-read':     (filename: string) => string;
-  'training-schedule-get': () => { enabled: boolean; hour: number; minute: number };
-  'training-schedule-set': (opts: { enabled: boolean; hour: number; minute: number }) => { ok: boolean };
-  'training-models-downloaded': () => Array<{ key: string; displayName: string; trainingRepo: string }>;
-  'training-docs-config-load':  () => { folders: string[]; files: string[]; fileTypes: string[] };
-  'training-docs-list-dir':     (dirPath: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }>;
-  'training-docs-config-save':  (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
-  'training-content-tree':      (dirPath?: string) => Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string }>;
-  'editor-footer-stats':        () => { availableBytes: number; unprocessedTrainingBytes: number };
-  'training-data-files':        () => Array<{ filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }>;
-  'training-preprocess':        () => { conversations: number; filesProcessed: number; filesSkipped: number };
-  'training-prepare-docs':      (folders: string[], files: string[], options: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => { filesProcessed: number; pairsGenerated: number };
-  'training-queue-add':         (entries: Array<{ filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }>) => { queued: number };
-  'training-queue-process-now': () => { ok: boolean };
-  'training-queue-status':      () => { pending: number; processing: boolean };
-  'training-train-conversations-now': () => { logFilename: string; logPath: string };
-  'training-scheduled-configs-list': () => Array<{ id: string; name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; createdAt: string; files?: string[] }>;
-  'training-scheduled-configs-add': (config: { name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => { id: string };
+  'training-install-status':           () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string; requiredBytes: number; availableBytes: number };
+  'training-install':                  () => { logFilename: string };
+  'training-run':                      (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
+  'training-status':                   () => { running: boolean; logFilename: string };
+  'training-docs-config-exists':       () => boolean;
+  'training-history':                  () => { filename: string; size: number; createdAt: string; modifiedAt: string; model?: string; durationMs?: number; conversationsProcessed?: number; status: 'completed' | 'running' | 'failed' }[];
+  'training-log-read':                 (filename: string) => string;
+  'training-schedule-get':             () => { enabled: boolean; hour: number; minute: number };
+  'training-schedule-set':             (opts: { enabled: boolean; hour: number; minute: number }) => { ok: boolean };
+  'training-models-downloaded':        () => { key: string; displayName: string; trainingRepo: string }[];
+  'training-docs-config-load':         () => { folders: string[]; files: string[]; fileTypes: string[] };
+  'training-docs-list-dir':            (dirPath: string) => { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }[];
+  'training-docs-config-save':         (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
+  'training-content-tree':             (dirPath?: string) => { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string }[];
+  'editor-footer-stats':               () => { availableBytes: number; unprocessedTrainingBytes: number };
+  'training-data-files':               () => { filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }[];
+  'training-preprocess':               () => { conversations: number; filesProcessed: number; filesSkipped: number };
+  'training-prepare-docs':             (folders: string[], files: string[], options: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => { filesProcessed: number; pairsGenerated: number };
+  'training-queue-add':                (entries: { filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }[]) => { queued: number };
+  'training-queue-process-now':        () => { ok: boolean };
+  'training-queue-status':             () => { pending: number; processing: boolean };
+  'training-train-conversations-now':  () => { logFilename: string; logPath: string };
+  'training-scheduled-configs-list':   () => { id: string; name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; createdAt: string; files?: string[] }[];
+  'training-scheduled-configs-add':    (config: { name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => { id: string };
   'training-scheduled-configs-remove': (id: string) => { ok: boolean };
-  'training-wizard-settings-save': (wizard: 'create' | 'train', settings: Record<string, unknown>) => { ok: boolean };
-  'training-wizard-settings-load': (wizard: 'create' | 'train') => Record<string, unknown>;
+  'training-wizard-settings-save':     (wizard: 'create' | 'train', settings: Record<string, unknown>) => { ok: boolean };
+  'training-wizard-settings-load':     (wizard: 'create' | 'train') => Record<string, unknown>;
   // #endregion
 
   // #region QMD Search
   'qmd-index':  (dirPath: string, glob?: string) => { indexed: number; updated: number; removed: number };
-  'qmd-search': (query: string, dirPath: string) => Array<{
-    path: string;
-    name: string;
-    line: number;
+  'qmd-search': (query: string, dirPath: string) => {
+    path:    string;
+    name:    string;
+    line:    number;
     preview: string;
-    score: number;
-    source: 'fts' | 'filename';
-  }>;
+    score:   number;
+    source:  'fts' | 'filename';
+  }[];
   // #endregion
 
   // #region Local Models
@@ -289,49 +289,49 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Docker
-  'docker-list-containers': () => Array<{ id: string; name: string; image: string; status: string; state: string; ports: string }>;
+  'docker-list-containers': () => { id: string; name: string; image: string; status: string; state: string; ports: string }[];
   // #endregion
 
   // #region Snapshots
   'show-snapshots-confirm-dialog':  (options: { window: Partial<Electron.MessageBoxOptions>, format: SnapshotDialog }) => any;
   'show-snapshots-blocking-dialog': (options: { window: Partial<Electron.MessageBoxOptions>, format: SnapshotDialog }) => any;
-  'snapshot-cancel': () => void;
+  'snapshot-cancel':                () => void;
   // #endregion
 
   // #region Debug & Monitoring
   'debug-heartbeat-status':    () => { initialized: boolean; isExecuting: boolean; lastTriggerMs: number; schedulerRunning: boolean; totalTriggers: number; totalErrors: number; totalSkips: number; uptimeMs: number };
-  'debug-heartbeat-history':   (limit?: number) => Array<{ ts: number; type: string; message: string; durationMs?: number; error?: string; meta?: Record<string, unknown> }>;
+  'debug-heartbeat-history':   (limit?: number) => { ts: number; type: string; message: string; durationMs?: number; error?: string; meta?: Record<string, unknown> }[];
   'debug-heartbeat-schedule':  () => { enabled: boolean; delayMinutes: number; nextTriggerMs: number };
-  'debug-conversations-list':  () => Array<{ id: string; type: string; name: string; startedAt: string; completedAt?: string; status?: string; error?: string; channel?: string }>;
-  'debug-conversation-events': (conversationId: string) => Array<{ ts: string; type: string; [key: string]: unknown }>;
+  'debug-conversations-list':  () => { id: string; type: string; name: string; startedAt: string; completedAt?: string; status?: string; error?: string; channel?: string }[];
+  'debug-conversation-events': (conversationId: string) => { ts: string; type: string; [key: string]: unknown }[];
   'debug-health-check':        () => Record<string, { name: string; ok: boolean; port?: number; error?: string }>;
-  'debug-active-agents':       () => Array<{ agentId: string; name: string; role: string; channel: string; type: string; status: string; startedAt: number; lastActiveAt: number; description: string; statusNote?: string }>;
-  'debug-errors':              (limit?: number) => Array<{ conversationId: string; type: string; name: string; startedAt: string; error: string; channel?: string }>;
+  'debug-active-agents':       () => { agentId: string; name: string; role: string; channel: string; type: string; status: string; startedAt: number; lastActiveAt: number; description: string; statusNote?: string }[];
+  'debug-errors':              (limit?: number) => { conversationId: string; type: string; name: string; startedAt: string; error: string; channel?: string }[];
   'debug-ws-stats':            () => Record<string, { connected: boolean; reconnectAttempts: number; pendingMessages: number; subscribedChannels: string[] }>;
   'debug-ws-tap':              (enabled: boolean) => { ok: boolean; error?: string };
-  'debug-ws-messages':         (connectionId?: string, limit?: number) => Array<{ connectionId: string; direction: 'in' | 'out'; message: any; ts: number }>;
+  'debug-ws-messages':         (connectionId?: string, limit?: number) => { connectionId: string; direction: 'in' | 'out'; message: any; ts: number }[];
   'debug-service-detail':      (serviceKey: string) => any;
   'debug-live-start':          () => { ok: boolean; error?: string };
   'debug-live-stop':           () => { ok: boolean; error?: string };
   // #endregion
 
   // #region Config API (integration YAML -> live API calls)
-  'configapi-list-integrations': () => Array<{
-    slug: string;
-    name: string;
-    baseUrl: string;
-    version: string;
-    endpoints: Array<{
-      name: string;
-      path: string;
-      method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  'configapi-list-integrations': () => ({
+    slug:      string;
+    name:      string;
+    baseUrl:   string;
+    version:   string;
+    endpoints: {
+      name:        string;
+      path:        string;
+      method:      'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
       description: string;
-      auth: 'required' | 'optional' | 'none';
-      queryParams: Array<{ key: string; type: string; required?: boolean; default?: any; description?: string; enum?: string[] }>;
-    }>;
-  } | null>;
+      auth:        'required' | 'optional' | 'none';
+      queryParams: { key: string; type: string; required?: boolean; default?: any; description?: string; enum?: string[] }[];
+    }[];
+  } | null)[];
   'configapi-reload': () => string[];
-  'configapi-call': (slug: string, endpointName: string, params: Record<string, any>, options?: Record<string, any>) => any;
+  'configapi-call':   (slug: string, endpointName: string, params: Record<string, any>, options?: Record<string, any>) => any;
   // #endregion
 }
 
@@ -341,17 +341,17 @@ export interface IpcMainInvokeEvents {
  */
 export interface IpcRendererEvents {
   'ollama-model-status': (event: Electron.IpcRendererEvent, payload: { status: string; model?: string }) => void;
-  'backend-locked':   (action?: string) => void;
-  'backend-unlocked': () => void;
+  'backend-locked':      (action?: string) => void;
+  'backend-unlocked':    () => void;
   'settings-update': (
     settings: import('@pkg/config/settings').Settings
   ) => void;
-  'settings-read':    (settings: import('@pkg/config/settings').Settings) => void;
+  'settings-read':        (settings: import('@pkg/config/settings').Settings) => void;
   'settings-write-error': (error: any) => void;
-  'get-app-version':  (version: string) => void;
-  'update-state':     (state: import('@pkg/main/update').UpdateState) => void;
-  'always-debugging': (status: boolean) => void;
-  'is-debugging':     (status: boolean) => void;
+  'get-app-version':      (version: string) => void;
+  'update-state':         (state: import('@pkg/main/update').UpdateState) => void;
+  'always-debugging':     (status: boolean) => void;
+  'is-debugging':         (status: boolean) => void;
   'k8s-progress': (
     progress: Readonly<{
       current:         number;

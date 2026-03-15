@@ -3,8 +3,8 @@ import { createN8nService } from '../../services/N8nService';
 import { countNodeConnections, resolveNodeIndex } from './workflow_node_utils';
 
 export class GetWorkflowNodeWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
@@ -17,18 +17,18 @@ export class GetWorkflowNodeWorker extends BaseTool {
       const workflow = await service.getWorkflow(workflowId, input.excludePinnedData);
 
       const nodeIndex = resolveNodeIndex(workflow.nodes || [], {
-        nodeId: input.nodeId,
+        nodeId:   input.nodeId,
         nodeName: input.nodeName,
       });
       const node = workflow.nodes[nodeIndex];
       const nodeName = String(node?.name || '');
 
       const response = {
-        workflowId: workflow.id,
+        workflowId:   workflow.id,
         workflowName: workflow.name,
         nodeIndex,
         node,
-        connections: countNodeConnections(workflow.connections || {}, nodeName),
+        connections:  countNodeConnections(workflow.connections || {}, nodeName),
       };
 
       return {
@@ -38,9 +38,8 @@ export class GetWorkflowNodeWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting workflow node: ${(error as Error).message}`,
+        responseString: `Error getting workflow node: ${ (error as Error).message }`,
       };
     }
   }
 }
-

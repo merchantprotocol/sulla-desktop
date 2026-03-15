@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { createN8nService } from "../../services/N8nService";
+import { BaseTool, ToolResponse } from '../base';
+import { createN8nService } from '../../services/N8nService';
 
 /**
  * Get Workflow Tool - Worker class for execution
  */
 export class GetWorkflowWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
       const service = await createN8nService();
@@ -16,12 +16,12 @@ export class GetWorkflowWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting workflow: ${(error as Error).message}`
+        responseString: `Error getting workflow: ${ (error as Error).message }`,
       };
     }
   }

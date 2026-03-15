@@ -1,33 +1,33 @@
-import { BaseTool, ToolResponse } from "../base";
-import { createN8nService } from "../../services/N8nService";
-import { postgresClient } from "../../database/PostgresClient";
+import { BaseTool, ToolResponse } from '../base';
+import { createN8nService } from '../../services/N8nService';
+import { postgresClient } from '../../database/PostgresClient';
 
-type RegisteredWebhookRow = {
+interface RegisteredWebhookRow {
   webhookPath: string;
-  method: string;
-  workflowId: string;
-};
+  method:      string;
+  workflowId:  string;
+}
 
-type WorkflowWebhookInfo = {
-  nodeId: string;
-  nodeName: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
-  customPath: string;
-  expectedPath: string;
-  fullUrl: string;
+interface WorkflowWebhookInfo {
+  nodeId:               string;
+  nodeName:             string;
+  method:               'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  customPath:           string;
+  expectedPath:         string;
+  fullUrl:              string;
   registeredInDatabase: boolean;
-  testCommand: string;
+  testCommand:          string;
   namingIssue?: {
-    severity: 'high' | 'medium';
-    problem: string;
-    recommendation: string;
+    severity:            'high' | 'medium';
+    problem:             string;
+    recommendation:      string;
     expectedUrlAfterFix: string;
   };
-};
+}
 
 export class GetWorkflowWebhookUrlWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   private normalizeMethod(raw: unknown): 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' {
     const normalized = String(raw || '').trim().toUpperCase();
@@ -78,8 +78,8 @@ export class GetWorkflowWebhookUrlWorker extends BaseTool {
 
     return rows.map((row) => ({
       webhookPath: this.normalizePath(row.webhookPath),
-      method: this.normalizeMethod(row.method),
-      workflowId: String(row.workflowId || '').trim(),
+      method:      this.normalizeMethod(row.method),
+      workflowId:  String(row.workflowId || '').trim(),
     })).filter((row) => row.webhookPath.length > 0);
   }
 
@@ -105,25 +105,25 @@ export class GetWorkflowWebhookUrlWorker extends BaseTool {
           const nodeId = String(node?.id || '').trim();
           const nodeName = String(node?.name || '').trim();
           const parameters = node?.parameters && typeof node.parameters === 'object' ? node.parameters : {};
-          const method = this.normalizeMethod((parameters as any).httpMethod);
-          const customPath = this.normalizePath((parameters as any).path || (parameters as any).webhookPath || '');
+          const method = this.normalizeMethod((parameters).httpMethod);
+          const customPath = this.normalizePath((parameters).path || (parameters).webhookPath || '');
           const kebabNodeName = this.toKebabCase(nodeName) || 'webhook';
-          const expectedPath = `${workflowId}/${kebabNodeName}${customPath ? `/${customPath}` : ''}`;
-          const fullUrl = `${baseUrl}/webhook/${expectedPath}`;
+          const expectedPath = `${ workflowId }/${ kebabNodeName }${ customPath ? `/${ customPath }` : '' }`;
+          const fullUrl = `${ baseUrl }/webhook/${ expectedPath }`;
 
           const registeredInDatabase = dbRows.some((row) => row.webhookPath === expectedPath && row.method === method);
 
           const testCommand = method === 'GET'
-            ? `curl -X GET ${fullUrl}`
-            : `curl -X ${method} ${fullUrl} -H 'Content-Type: application/json' -d '{"test": true}'`;
+            ? `curl -X GET ${ fullUrl }`
+            : `curl -X ${ method } ${ fullUrl } -H 'Content-Type: application/json' -d '{"test": true}'`;
 
           const namingIssue = this.hasNamingIssue(nodeName)
             ? {
-                severity: /\s|[^a-zA-Z0-9\s-]/.test(nodeName) ? 'high' as const : 'medium' as const,
-                problem: `Node name '${nodeName}' contains spaces, mixed case, or special characters that can cause unexpected webhook path behavior.`,
-                recommendation: `Rename node to kebab-case '${kebabNodeName}'.`,
-                expectedUrlAfterFix: `${baseUrl}/webhook/${workflowId}/${kebabNodeName}${customPath ? `/${customPath}` : ''}`,
-              }
+              severity:            /\s|[^a-zA-Z0-9\s-]/.test(nodeName) ? 'high' as const : 'medium' as const,
+              problem:             `Node name '${ nodeName }' contains spaces, mixed case, or special characters that can cause unexpected webhook path behavior.`,
+              recommendation:      `Rename node to kebab-case '${ kebabNodeName }'.`,
+              expectedUrlAfterFix: `${ baseUrl }/webhook/${ workflowId }/${ kebabNodeName }${ customPath ? `/${ customPath }` : '' }`,
+            }
             : undefined;
 
           return {
@@ -145,19 +145,19 @@ export class GetWorkflowWebhookUrlWorker extends BaseTool {
 
       const payload = {
         workflowId,
-        workflowName: String(workflow?.name || ''),
+        workflowName:   String(workflow?.name || ''),
         webhooks,
         webhookWarning: hasUnregisteredWebhook
           ? {
-              critical: true,
-              message: registeredCount === 0
-                ? '⚠️ Webhooks activated via API do NOT register until n8n container restart'
-                : '⚠️ Some webhook triggers are not registered yet and may return 404 until n8n restart',
-              registeredCount,
-              expectedCount,
-              action: 'docker restart sulla_n8n',
-              verifyCommand: `docker exec sulla_postgres psql -U sulla -d sulla -c "SELECT \"webhookPath\", \"method\", \"workflowId\" FROM webhook_entity WHERE \"workflowId\" = '${workflowId}';"`,
-            }
+            critical: true,
+            message:  registeredCount === 0
+              ? '⚠️ Webhooks activated via API do NOT register until n8n container restart'
+              : '⚠️ Some webhook triggers are not registered yet and may return 404 until n8n restart',
+            registeredCount,
+            expectedCount,
+            action:        'docker restart sulla_n8n',
+            verifyCommand: `docker exec sulla_postgres psql -U sulla -d sulla -c "SELECT \"webhookPath\", \"method\", \"workflowId\" FROM webhook_entity WHERE \"workflowId\" = '${ workflowId }';"`,
+          }
           : null,
       };
 
@@ -168,7 +168,7 @@ export class GetWorkflowWebhookUrlWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting workflow webhook URLs: ${(error as Error).message}`,
+        responseString: `Error getting workflow webhook URLs: ${ (error as Error).message }`,
       };
     }
   }

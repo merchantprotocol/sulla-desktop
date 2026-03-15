@@ -134,10 +134,12 @@ export function openMain() {
       resizable:      !process.env.RD_MOCK_FOR_SCREENSHOTS, // remove window's shadows while taking screenshots
       icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
       // macOS: hide native title bar, keep traffic lights overlaid on content
-      ...(os.platform() === 'darwin' ? {
-        titleBarStyle:        'hiddenInset',
-        trafficLightPosition: { x: 16, y: 16 },
-      } : {}),
+      ...(os.platform() === 'darwin'
+        ? {
+          titleBarStyle:        'hiddenInset',
+          trafficLightPosition: { x: 16, y: 16 },
+        }
+        : {}),
       webPreferences: {
         devTools:         !app.isPackaged,
         nodeIntegration:  true,
@@ -300,10 +302,12 @@ export function openEditor() {
       resizable:      true,
       icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
       // macOS: hide native title bar, keep traffic lights overlaid on content
-      ...(os.platform() === 'darwin' ? {
-        titleBarStyle:        'hiddenInset',
-        trafficLightPosition: { x: 16, y: 8 },
-      } : {}),
+      ...(os.platform() === 'darwin'
+        ? {
+          titleBarStyle:        'hiddenInset',
+          trafficLightPosition: { x: 16, y: 8 },
+        }
+        : {}),
       webPreferences: {
         devTools:         !app.isPackaged,
         nodeIntegration:  true,
@@ -729,10 +733,10 @@ export async function openFirstRunDialog() {
   const defaultWidth = Math.min(Math.trunc(width * 0.8), 1280);
   const defaultHeight = Math.min(Math.trunc(height * 0.8), 900);
 
-  console.log('[openFirstRunDialog] Creating window with name: first-run, url:', `${mainUrl}#FirstRun`);
+  console.log('[openFirstRunDialog] Creating window with name: first-run, url:', `${ mainUrl }#FirstRun`);
   const window = createWindow(
     'first-run',
-    `${mainUrl}#FirstRun`,
+    `${ mainUrl }#FirstRun`,
     {
       title:          'Sulla Desktop - First Run',
       width:          defaultWidth,

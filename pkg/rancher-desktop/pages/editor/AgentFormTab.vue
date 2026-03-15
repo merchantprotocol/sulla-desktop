@@ -1,7 +1,12 @@
 <template>
-  <div class="agent-form" :class="{ dark: isDark }">
+  <div
+    class="agent-form"
+    :class="{ dark: isDark }"
+  >
     <div class="form-inner">
-      <h2 class="form-title">{{ isEditMode ? 'Edit Agent' : 'Create New Agent' }}</h2>
+      <h2 class="form-title">
+        {{ isEditMode ? 'Edit Agent' : 'Create New Agent' }}
+      </h2>
 
       <label class="form-label">Agent ID <span class="required">*</span></label>
       <input
@@ -11,9 +16,19 @@
         :disabled="isEditMode"
         placeholder="my-agent-name"
         @input="enforceSlug"
-      />
-      <p v-if="!isEditMode" class="form-hint">Lowercase letters, numbers, and hyphens only. Becomes the folder name.</p>
-      <p v-if="errors.id" class="form-error">{{ errors.id }}</p>
+      >
+      <p
+        v-if="!isEditMode"
+        class="form-hint"
+      >
+        Lowercase letters, numbers, and hyphens only. Becomes the folder name.
+      </p>
+      <p
+        v-if="errors.id"
+        class="form-error"
+      >
+        {{ errors.id }}
+      </p>
 
       <label class="form-label">Agent Name <span class="required">*</span></label>
       <input
@@ -21,8 +36,13 @@
         class="form-input"
         :class="{ dark: isDark, error: errors.name }"
         placeholder="My Agent"
-      />
-      <p v-if="errors.name" class="form-error">{{ errors.name }}</p>
+      >
+      <p
+        v-if="errors.name"
+        class="form-error"
+      >
+        {{ errors.name }}
+      </p>
 
       <label class="form-label">Description</label>
       <textarea
@@ -31,34 +51,62 @@
         :class="{ dark: isDark }"
         placeholder="What does this agent do?"
         rows="3"
-      ></textarea>
+      />
 
       <label class="form-label">Type <span class="required">*</span></label>
-      <select v-model="form.type" class="form-select" :class="{ dark: isDark }">
-        <option value="planner">Planner</option>
-        <option value="worker">Worker</option>
-        <option value="judge">Judge</option>
+      <select
+        v-model="form.type"
+        class="form-select"
+        :class="{ dark: isDark }"
+      >
+        <option value="planner">
+          Planner
+        </option>
+        <option value="worker">
+          Worker
+        </option>
+        <option value="judge">
+          Judge
+        </option>
       </select>
 
-      <hr class="form-separator" :class="{ dark: isDark }" />
+      <hr
+        class="form-separator"
+        :class="{ dark: isDark }"
+      >
 
-      <h3 class="form-section-title">Agent Assignment</h3>
+      <h3 class="form-section-title">
+        Agent Assignment
+      </h3>
 
-      <label class="default-agent-toggle" :class="{ dark: isDark }">
+      <label
+        class="default-agent-toggle"
+        :class="{ dark: isDark }"
+      >
         <input
-          type="checkbox"
           v-model="form.isDefault"
+          type="checkbox"
           @change="onDefaultToggle"
-        />
+        >
         <span class="toggle-label">Set as Default Agent</span>
       </label>
-      <p class="form-hint">The default agent handles all triggers that don't have a specific agent assigned.</p>
-      <p v-if="currentDefaultAgentId && currentDefaultAgentId !== form.id && form.isDefault" class="form-hint form-hint-warn">
+      <p class="form-hint">
+        The default agent handles all triggers that don't have a specific agent assigned.
+      </p>
+      <p
+        v-if="currentDefaultAgentId && currentDefaultAgentId !== form.id && form.isDefault"
+        class="form-hint form-hint-warn"
+      >
         This will replace "{{ currentDefaultAgentId }}" as the default agent.
       </p>
 
       <label class="form-label">Trigger Assignments</label>
-      <p class="form-hint" style="margin-bottom: 8px;">Assign this agent to handle specific triggers. Leave empty to only use as default.</p>
+      <p
+        class="form-hint"
+        style="margin-bottom: 8px;"
+      >
+        Assign this agent to handle specific triggers. Leave empty to only use as default.
+      </p>
       <div class="trigger-list">
         <label
           v-for="trigger in TRIGGER_TYPES"
@@ -67,30 +115,66 @@
           :class="{ dark: isDark }"
         >
           <input
+            v-model="form.triggers"
             type="checkbox"
             :value="trigger.value"
-            v-model="form.triggers"
             @change="emit('dirty')"
-          />
+          >
           <span class="skill-name">{{ trigger.label }}</span>
-          <span v-if="triggerCurrentAgents[trigger.value] && triggerCurrentAgents[trigger.value] !== form.id" class="trigger-current-agent">
+          <span
+            v-if="triggerCurrentAgents[trigger.value] && triggerCurrentAgents[trigger.value] !== form.id"
+            class="trigger-current-agent"
+          >
             (currently: {{ triggerCurrentAgents[trigger.value] }})
           </span>
         </label>
       </div>
 
-      <hr class="form-separator" :class="{ dark: isDark }" />
+      <hr
+        class="form-separator"
+        :class="{ dark: isDark }"
+      >
 
       <div class="form-section-header">
-        <h3 class="form-section-title">Skills</h3>
-        <div v-if="!skillsLoading && skillsFolders.length > 0" class="bulk-actions">
-          <button class="bulk-btn" :class="{ dark: isDark }" @click="selectAllSkills">Select All</button>
-          <button class="bulk-btn" :class="{ dark: isDark }" @click="unselectAllSkills">Unselect All</button>
+        <h3 class="form-section-title">
+          Skills
+        </h3>
+        <div
+          v-if="!skillsLoading && skillsFolders.length > 0"
+          class="bulk-actions"
+        >
+          <button
+            class="bulk-btn"
+            :class="{ dark: isDark }"
+            @click="selectAllSkills"
+          >
+            Select All
+          </button>
+          <button
+            class="bulk-btn"
+            :class="{ dark: isDark }"
+            @click="unselectAllSkills"
+          >
+            Unselect All
+          </button>
         </div>
       </div>
-      <p v-if="skillsLoading" class="form-hint">Loading skills...</p>
-      <p v-else-if="skillsFolders.length === 0" class="form-hint">No skills folders found.</p>
-      <div v-else class="skills-list">
+      <p
+        v-if="skillsLoading"
+        class="form-hint"
+      >
+        Loading skills...
+      </p>
+      <p
+        v-else-if="skillsFolders.length === 0"
+        class="form-hint"
+      >
+        No skills folders found.
+      </p>
+      <div
+        v-else
+        class="skills-list"
+      >
         <label
           v-for="skill in skillsFolders"
           :key="skill"
@@ -98,38 +182,98 @@
           :class="{ dark: isDark }"
         >
           <input
+            v-model="form.skills"
             type="checkbox"
             :value="skill"
-            v-model="form.skills"
             @change="emit('dirty')"
-          />
+          >
           <span class="skill-name">{{ skill }}</span>
         </label>
       </div>
 
-      <hr class="form-separator" :class="{ dark: isDark }" />
+      <hr
+        class="form-separator"
+        :class="{ dark: isDark }"
+      >
 
       <div class="form-section-header">
-        <h3 class="form-section-title">Tools</h3>
-        <div v-if="!toolsLoading && toolCategories.length > 0" class="bulk-actions">
-          <button class="bulk-btn" :class="{ dark: isDark }" @click="selectAllTools">Select All</button>
-          <button class="bulk-btn" :class="{ dark: isDark }" @click="unselectAllTools">Unselect All</button>
+        <h3 class="form-section-title">
+          Tools
+        </h3>
+        <div
+          v-if="!toolsLoading && toolCategories.length > 0"
+          class="bulk-actions"
+        >
+          <button
+            class="bulk-btn"
+            :class="{ dark: isDark }"
+            @click="selectAllTools"
+          >
+            Select All
+          </button>
+          <button
+            class="bulk-btn"
+            :class="{ dark: isDark }"
+            @click="unselectAllTools"
+          >
+            Unselect All
+          </button>
         </div>
       </div>
-      <div v-if="!toolsLoading && toolCategories.length > 0" class="tool-filter-bar">
-        <select v-model="toolFilter" class="tool-filter-select" :class="{ dark: isDark }">
-          <option value="all">All operations</option>
-          <option v-for="op in ALL_OPERATION_TYPES" :key="op" :value="op">{{ op.charAt(0).toUpperCase() + op.slice(1) }}</option>
+      <div
+        v-if="!toolsLoading && toolCategories.length > 0"
+        class="tool-filter-bar"
+      >
+        <select
+          v-model="toolFilter"
+          class="tool-filter-select"
+          :class="{ dark: isDark }"
+        >
+          <option value="all">
+            All operations
+          </option>
+          <option
+            v-for="op in ALL_OPERATION_TYPES"
+            :key="op"
+            :value="op"
+          >
+            {{ op.charAt(0).toUpperCase() + op.slice(1) }}
+          </option>
         </select>
-        <span class="tool-filter-count" :class="{ dark: isDark }">
+        <span
+          class="tool-filter-count"
+          :class="{ dark: isDark }"
+        >
           {{ filteredToolCategories.flatMap(c => c.tools).length }} tools
         </span>
       </div>
-      <p v-if="toolsLoading" class="form-hint">Loading tools...</p>
-      <p v-else-if="toolCategories.length === 0" class="form-hint">No tools found.</p>
-      <p v-else-if="filteredToolCategories.length === 0" class="form-hint">No tools match this filter.</p>
-      <div v-else class="tools-tree">
-        <div v-for="cat in filteredToolCategories" :key="cat.category" class="tool-category">
+      <p
+        v-if="toolsLoading"
+        class="form-hint"
+      >
+        Loading tools...
+      </p>
+      <p
+        v-else-if="toolCategories.length === 0"
+        class="form-hint"
+      >
+        No tools found.
+      </p>
+      <p
+        v-else-if="filteredToolCategories.length === 0"
+        class="form-hint"
+      >
+        No tools match this filter.
+      </p>
+      <div
+        v-else
+        class="tools-tree"
+      >
+        <div
+          v-for="cat in filteredToolCategories"
+          :key="cat.category"
+          class="tool-category"
+        >
           <button
             class="tool-category-header"
             :class="{ dark: isDark }"
@@ -138,11 +282,16 @@
             <svg
               class="tool-chevron"
               :class="{ expanded: expandedCategories.has(cat.category) }"
-              width="10" height="10" viewBox="0 0 24 24"
-              fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round"
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
             >
-              <polyline points="9 18 15 12 9 6"/>
+              <polyline points="9 18 15 12 9 6" />
             </svg>
             <input
               type="checkbox"
@@ -150,11 +299,14 @@
               :indeterminate="isCategoryPartiallySelected(cat)"
               @click.stop
               @change="toggleCategoryTools(cat, $event)"
-            />
+            >
             <span class="tool-category-name">{{ cat.category }}</span>
             <span class="tool-category-count">{{ cat.tools.length }}</span>
           </button>
-          <div v-if="expandedCategories.has(cat.category)" class="tool-category-tools">
+          <div
+            v-if="expandedCategories.has(cat.category)"
+            class="tool-category-tools"
+          >
             <label
               v-for="tool in cat.tools"
               :key="tool.name"
@@ -163,11 +315,11 @@
               :title="tool.description"
             >
               <input
+                v-model="form.tools"
                 type="checkbox"
                 :value="tool.name"
-                v-model="form.tools"
                 @change="emit('dirty')"
-              />
+              >
               <span class="tool-name">{{ tool.name }}</span>
             </label>
           </div>
@@ -175,12 +327,22 @@
       </div>
 
       <div class="form-actions">
-        <button class="save-btn" :class="{ dark: isDark }" :disabled="saving" @click="save">
+        <button
+          class="save-btn"
+          :class="{ dark: isDark }"
+          :disabled="saving"
+          @click="save"
+        >
           {{ saving ? (isEditMode ? 'Saving...' : 'Creating...') : (isEditMode ? 'Save Changes' : 'Create Agent') }}
         </button>
       </div>
 
-      <p v-if="saveError" class="form-error save-error">{{ saveError }}</p>
+      <p
+        v-if="saveError"
+        class="form-error save-error"
+      >
+        {{ saveError }}
+      </p>
     </div>
   </div>
 </template>
@@ -191,16 +353,16 @@ import { ipcRenderer } from 'electron';
 import yaml from 'yaml';
 
 const props = defineProps<{
-  isDark: boolean;
-  content?: string;
+  isDark:    boolean;
+  content?:  string;
   filePath?: string;
-  fileExt?: string;
+  fileExt?:  string;
   readOnly?: boolean;
 }>();
 
 const emit = defineEmits<{
-  'dirty': [];
-  'saved': [agentPath: string];
+  dirty: [];
+  saved: [agentPath: string];
 }>();
 
 const isEditMode = computed(() => {
@@ -208,15 +370,15 @@ const isEditMode = computed(() => {
 });
 
 interface ToolEntry {
-  name: string;
-  description: string;
+  name:           string;
+  description:    string;
   operationTypes: string[];
 }
 
 interface ToolCategoryEntry {
-  category: string;
+  category:    string;
   description: string;
-  tools: ToolEntry[];
+  tools:       ToolEntry[];
 }
 
 const TRIGGER_TYPES = [
@@ -231,14 +393,14 @@ const TRIGGER_TYPES = [
 type TriggerType = typeof TRIGGER_TYPES[number]['value'];
 
 const form = reactive({
-  id: '',
-  name: '',
+  id:          '',
+  name:        '',
   description: '',
-  type: 'worker',
-  isDefault: false,
-  triggers: [] as string[],
-  skills: [] as string[],
-  tools: [] as string[],
+  type:        'worker',
+  isDefault:   false,
+  triggers:    [] as string[],
+  skills:      [] as string[],
+  tools:       [] as string[],
 });
 
 const errors = reactive({ id: '', name: '' });
@@ -429,8 +591,8 @@ async function save() {
 
   try {
     const root = await ipcRenderer.invoke('filesystem-get-root');
-    const agentsDir = `${root}/agents`;
-    const agentDir = `${agentsDir}/${form.id}`;
+    const agentsDir = `${ root }/agents`;
+    const agentDir = `${ agentsDir }/${ form.id }`;
 
     if (!isEditMode.value) {
       // Create the agent directory
@@ -439,21 +601,21 @@ async function save() {
 
     // Build and write agent.yaml
     const agentYaml = yaml.stringify({
-      name: form.name.trim(),
+      name:        form.name.trim(),
       description: form.description.trim(),
-      type: form.type,
-      skills: form.skills,
-      tools: form.tools,
+      type:        form.type,
+      skills:      form.skills,
+      tools:       form.tools,
     });
 
-    await ipcRenderer.invoke('filesystem-write-file', `${agentDir}/agent.yaml`, agentYaml);
+    await ipcRenderer.invoke('filesystem-write-file', `${ agentDir }/agent.yaml`, agentYaml);
 
     if (!isEditMode.value) {
       // Create soul.md from prompt template (only on new agent).
       // environment.md is NOT created — the global environment prompt is always
       // injected by enrichPrompt() and should not be overridable per-agent.
       const templates = await ipcRenderer.invoke('agents-get-prompt-templates');
-      await ipcRenderer.invoke('filesystem-write-file', `${agentDir}/soul.md`, templates.soul);
+      await ipcRenderer.invoke('filesystem-write-file', `${ agentDir }/soul.md`, templates.soul);
     }
 
     // Persist default agent setting

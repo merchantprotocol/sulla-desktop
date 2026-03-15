@@ -4,14 +4,14 @@ import crypto from 'crypto';
 import { BaseModel } from '../BaseModel';
 
 interface N8nProjectAttributes {
-  id: string;
-  name: string;
-  type: string;
-  createdAt: Date;
-  updatedAt: Date;
-  icon?: any;
+  id:           string;
+  name:         string;
+  type:         string;
+  createdAt:    Date;
+  updatedAt:    Date;
+  icon?:        any;
   description?: string;
-  creatorId?: string;
+  creatorId?:   string;
 }
 
 export class N8nProjectModel extends BaseModel<N8nProjectAttributes> {
@@ -33,13 +33,13 @@ export class N8nProjectModel extends BaseModel<N8nProjectAttributes> {
   protected readonly casts: Record<string, string> = {
     createdAt: 'timestamp',
     updatedAt: 'timestamp',
-    icon: 'json',
+    icon:      'json',
   };
 
   /**
    * Find or create a project by name
    */
-  public static async findOrCreate(name: string, type: string = 'personal', creatorId?: string): Promise<N8nProjectModel> {
+  public static async findOrCreate(name: string, type = 'personal', creatorId?: string): Promise<N8nProjectModel> {
     let project = await N8nProjectModel.where('name', name).first();
 
     if (!project) {

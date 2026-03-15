@@ -27,16 +27,14 @@ export interface TrainingQueueEntry {
   queuedAt:       string;
 }
 
-export interface QueueProgressCallback {
-  (event: {
-    phase: 'queue-start' | 'queue-file-ok' | 'queue-file-error' | 'queue-done';
-    file?: string;
-    pairs?: number;
-    processed?: number;
-    total?: number;
-    message: string;
-  }): void;
-}
+export type QueueProgressCallback = (event: {
+  phase:      'queue-start' | 'queue-file-ok' | 'queue-file-error' | 'queue-done';
+  file?:      string;
+  pairs?:     number;
+  processed?: number;
+  total?:     number;
+  message:    string;
+}) => void;
 
 let isProcessing = false;
 
@@ -85,7 +83,7 @@ export async function processQueue(
 
   try {
     const pending = await getQueueLength();
-    onProgress?.({ phase: 'queue-start', message: `Processing ${pending} queued file(s)`, total: pending, processed: 0 });
+    onProgress?.({ phase: 'queue-start', message: `Processing ${ pending } queued file(s)`, total: pending, processed: 0 });
 
     // Process in batches
     while (true) {
@@ -103,7 +101,7 @@ export async function processQueue(
             pairs,
             processed,
             total:     pending,
-            message:   `Processed ${path.basename(entry.filePath)} (${pairs} pairs)`,
+            message:   `Processed ${ path.basename(entry.filePath) } (${ pairs } pairs)`,
           });
         } catch (err) {
           processed++;
@@ -112,7 +110,7 @@ export async function processQueue(
             file:      path.basename(entry.filePath),
             processed,
             total:     pending,
-            message:   `Failed: ${path.basename(entry.filePath)} — ${err instanceof Error ? err.message : String(err)}`,
+            message:   `Failed: ${ path.basename(entry.filePath) } — ${ err instanceof Error ? err.message : String(err) }`,
           });
         }
       }
@@ -122,7 +120,7 @@ export async function processQueue(
       phase:     'queue-done',
       processed,
       total:     totalPairs,
-      message:   `Queue complete — ${processed} file(s), ${totalPairs} training pair(s)`,
+      message:   `Queue complete — ${ processed } file(s), ${ totalPairs } training pair(s)`,
     });
   } finally {
     isProcessing = false;
@@ -189,7 +187,7 @@ async function processEntry(
   if (entry.modelProvider !== 'local') {
     try {
       const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      apiKey = await SullaSettingsModel.get(`${entry.modelProvider.toLowerCase()}ApiKey`, '');
+      apiKey = await SullaSettingsModel.get(`${ entry.modelProvider.toLowerCase() }ApiKey`, '');
     } catch {
       // Settings may not be ready
     }
@@ -217,7 +215,7 @@ async function processEntry(
 
       for (const line of lines) {
         const trimmed = line.trim();
-        const okMatch = trimmed.match(/\[OK\]\s+Processed.*?:\s+(.+?)\s+\((\d+)\s+pairs?\)/);
+        const okMatch = /\[OK\]\s+Processed.*?:\s+(.+?)\s+\((\d+)\s+pairs?\)/.exec(trimmed);
         if (okMatch) {
           pairsGenerated += parseInt(okMatch[2], 10);
         }
@@ -232,7 +230,7 @@ async function processEntry(
       if (code === 0) {
         resolve(pairsGenerated);
       } else {
-        reject(new Error(`documents_processor.py exited with code ${code}`));
+        reject(new Error(`documents_processor.py exited with code ${ code }`));
       }
     });
 

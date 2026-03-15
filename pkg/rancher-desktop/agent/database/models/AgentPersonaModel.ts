@@ -4,7 +4,6 @@ import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/ser
 import { AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import type { ChatMessage, AgentRegistryEntry } from '../registry/AgentPersonaRegistry';
 
-
 export type PersonaTemplateId =
   | 'terminal'
   | 'industrial'
@@ -27,55 +26,55 @@ export type PersonaEmotion =
   | 'sadness'
   | 'mischief';
 
-export type AgentPersonaState = {
-  agentId: string;
+export interface AgentPersonaState {
+  agentId:   string;
   agentName: string;
 
   templateId: PersonaTemplateId;
-  emotion: PersonaEmotion;
+  emotion:    PersonaEmotion;
 
   status: PersonaStatus;
 
   tokensPerSecond: number;
-  temperature: number;
-  threadId?: string;
+  temperature:     number;
+  threadId?:       string;
 
   // Token tracking properties
-  totalTokensUsed: number;
-  totalPromptTokens: number;
+  totalTokensUsed:       number;
+  totalPromptTokens:     number;
   totalCompletionTokens: number;
-  lastResponseTime: number;
-  averageResponseTime: number;
-  responseCount: number;
-  
+  lastResponseTime:      number;
+  averageResponseTime:   number;
+  responseCount:         number;
+
   // Cost tracking properties (XAI Grok pricing)
-  totalInputCost: number;
+  totalInputCost:  number;
   totalOutputCost: number;
-  totalCost: number;
-};
+  totalCost:       number;
+}
 
 export type PersonaAssetType = 'iframe' | 'document';
 
-export type PersonaSidebarAsset = {
-  id: string;
-  type: PersonaAssetType;
-  title: string;
-  active: boolean;
+export interface PersonaSidebarAsset {
+  id:         string;
+  type:       PersonaAssetType;
+  title:      string;
+  active:     boolean;
   skillSlug?: string;
-  collapsed: boolean;
-  updatedAt: number;
-  url?: string;
-  content?: string;
-  refKey?: string;
-};
+  collapsed:  boolean;
+  updatedAt:  number;
+  url?:       string;
+  content?:   string;
+  refKey?:    string;
+}
 
 export class AgentPersonaService {
-  private readonly registry: AgentPersonaRegistry;
+  private readonly registry:            AgentPersonaRegistry;
   private wsService = getWebSocketClientService();
   private readonly wsUnsub = new Map<string, () => void>();
   private lastSentN8nLiveEventsEnabled: boolean | null = null;
 
-  readonly messages: ChatMessage[] = reactive([]);
+  readonly messages:     ChatMessage[] = reactive([]);
   private readonly toolRunIdToMessageId = new Map<string, string>();
   readonly activeAssets: PersonaSidebarAsset[] = reactive([]);
 
@@ -83,34 +82,33 @@ export class AgentPersonaService {
   waitingForUser = ref(false);
   stopReason = ref<string | null>(null);
 
-
   readonly state = reactive<AgentPersonaState>({
-    agentId: 'unit-01',
+    agentId:   'unit-01',
     agentName: 'UNIT_01',
 
     templateId: 'glass-core',
-    emotion: 'calm',
+    emotion:    'calm',
 
     status: 'online',
 
     tokensPerSecond: 847,
-    temperature: 0.7,
+    temperature:     0.7,
 
     // Token tracking initialization
-    totalTokensUsed: 0,
-    totalPromptTokens: 0,
+    totalTokensUsed:       0,
+    totalPromptTokens:     0,
     totalCompletionTokens: 0,
-    lastResponseTime: 0,
-    averageResponseTime: 0,
-    responseCount: 0,
-    
+    lastResponseTime:      0,
+    averageResponseTime:   0,
+    responseCount:         0,
+
     // Cost tracking initialization (XAI Grok pricing)
-    totalInputCost: 0,
+    totalInputCost:  0,
     totalOutputCost: 0,
-    totalCost: 0,
+    totalCost:       0,
   });
 
-  readonly emotionClass = computed(() => `persona-profile-${this.state.emotion}`);
+  readonly emotionClass = computed(() => `persona-profile-${ this.state.emotion }`);
 
   private refreshWebSocketService(): void {
     // Clone/refresh the service to avoid corruption from multiple connection attempts
@@ -122,13 +120,13 @@ export class AgentPersonaService {
 
     if (agentData) {
       Object.assign(this.state, {
-        agentId: agentData.agentId,
-        agentName: agentData.agentName,
-        templateId: agentData.templateId,
-        emotion: agentData.emotion,
-        status: agentData.status,
+        agentId:         agentData.agentId,
+        agentName:       agentData.agentName,
+        templateId:      agentData.templateId,
+        emotion:         agentData.emotion,
+        status:          agentData.status,
         tokensPerSecond: agentData.tokensPerSecond ?? 847,
-        temperature: agentData.temperature ?? 0.7,
+        temperature:     agentData.temperature ?? 0.7,
         totalTokensUsed: agentData.totalTokensUsed ?? 0,
       });
     } else if (requestedAgentId) {
@@ -142,13 +140,13 @@ export class AgentPersonaService {
   }
 
   registerIframeAsset(input: {
-    id: string;
-    title: string;
-    url: string;
-    active?: boolean;
+    id:         string;
+    title:      string;
+    url:        string;
+    active?:    boolean;
     skillSlug?: string;
     collapsed?: boolean;
-    refKey?: string;
+    refKey?:    string;
   }): void {
     const stableId = this.resolveWebsiteAssetId(input.id, input.skillSlug);
     const normalizedUrl = this.normalizeIframeUrlForAsset(stableId, input.skillSlug, input.url);
@@ -157,10 +155,10 @@ export class AgentPersonaService {
     const effectiveUrl = normalizedUrl || fallbackUrl;
 
     console.log('[AgentPersonaModel] registerIframeAsset', {
-      requestedId: input.id,
+      requestedId:      input.id,
       stableId,
-      skillSlug: input.skillSlug || '',
-      requestedUrl: input.url || '',
+      skillSlug:        input.skillSlug || '',
+      requestedUrl:     input.url || '',
       normalizedUrl,
       fallbackUrl,
       effectiveUrl,
@@ -173,15 +171,15 @@ export class AgentPersonaService {
     }
 
     this.upsertAsset({
-      id: stableId,
-      type: 'iframe',
-      title: input.title,
-      active: input.active ?? effectiveUrl.trim().length > 0,
+      id:        stableId,
+      type:      'iframe',
+      title:     input.title,
+      active:    input.active ?? effectiveUrl.trim().length > 0,
       skillSlug: input.skillSlug,
       collapsed: input.collapsed ?? true,
       updatedAt: Date.now(),
-      url: effectiveUrl,
-      refKey: input.refKey,
+      url:       effectiveUrl,
+      refKey:    input.refKey,
     });
   }
 
@@ -230,21 +228,21 @@ export class AgentPersonaService {
 
     try {
       const parsed = new URL(trimmed);
-      return `${parsed.origin}/`;
+      return `${ parsed.origin }/`;
     } catch {
       return trimmed;
     }
   }
 
   private applyAssetLifecycleUpdate(data: any, phase: string): boolean {
-    const asset = (data?.asset && typeof data.asset === 'object') ? data.asset as any : null;
+    const asset = (data?.asset && typeof data.asset === 'object') ? data.asset : null;
     if (!asset) {
       return false;
     }
 
     if (asset?.type === 'iframe') {
       const skillSlug = this.normalizeSkillSlug(asset.skillSlug ?? asset.selected_skill_slug ?? data?.selected_skill_slug);
-      const requestedId = String(asset.id || `iframe_${Date.now()}`);
+      const requestedId = String(asset.id || `iframe_${ Date.now() }`);
       const requestedUrl = String(asset.url || '');
 
       console.log('[AgentPersonaModel] websocket asset lifecycle iframe', {
@@ -252,25 +250,25 @@ export class AgentPersonaService {
         requestedId,
         requestedUrl,
         skillSlug,
-        active: asset.active !== false,
+        active:    asset.active !== false,
         collapsed: asset.collapsed !== false,
       });
 
       this.registerIframeAsset({
-        id: requestedId,
-        title: String(asset.title || 'Website'),
-        url: requestedUrl,
-        active: asset.active !== false,
+        id:        requestedId,
+        title:     String(asset.title || 'Website'),
+        url:       requestedUrl,
+        active:    asset.active !== false,
         skillSlug: skillSlug || undefined,
         collapsed: asset.collapsed !== false,
-        refKey: typeof asset.refKey === 'string' ? asset.refKey : undefined,
+        refKey:    typeof asset.refKey === 'string' ? asset.refKey : undefined,
       });
 
       return true;
     }
 
     if (asset?.type === 'document') {
-      const documentId = String(asset.id || `doc_${Date.now()}`);
+      const documentId = String(asset.id || `doc_${ Date.now() }`);
       const content = String(asset.content || '');
       const existingDocument = this.activeAssets.find((item) => item.id === documentId && item.type === 'document');
 
@@ -278,12 +276,12 @@ export class AgentPersonaService {
         this.updateDocumentAssetContent(documentId, content);
       } else {
         this.registerDocumentAsset({
-          id: documentId,
-          title: String(asset.title || 'Document'),
+          id:        documentId,
+          title:     String(asset.title || 'Document'),
           content,
-          active: asset.active !== false,
+          active:    asset.active !== false,
           collapsed: asset.collapsed !== false,
-          refKey: typeof asset.refKey === 'string' ? asset.refKey : undefined,
+          refKey:    typeof asset.refKey === 'string' ? asset.refKey : undefined,
         });
       }
 
@@ -294,22 +292,22 @@ export class AgentPersonaService {
   }
 
   registerDocumentAsset(input: {
-    id: string;
-    title: string;
-    content: string;
-    active?: boolean;
+    id:         string;
+    title:      string;
+    content:    string;
+    active?:    boolean;
     collapsed?: boolean;
-    refKey?: string;
+    refKey?:    string;
   }): void {
     this.upsertAsset({
-      id: input.id,
-      type: 'document',
-      title: input.title,
-      active: input.active ?? input.content.trim().length > 0,
+      id:        input.id,
+      type:      'document',
+      title:     input.title,
+      active:    input.active ?? input.content.trim().length > 0,
       collapsed: input.collapsed ?? true,
       updatedAt: Date.now(),
-      content: input.content,
-      refKey: input.refKey,
+      content:   input.content,
+      refKey:    input.refKey,
     });
   }
 
@@ -394,7 +392,7 @@ export class AgentPersonaService {
     const id = this.state.agentId;
     if (this.wsUnsub.has(id)) return;
 
-    console.log(`[AgentPersona:${this.state.agentName}] Connecting WebSocket for ${id}`);
+    console.log(`[AgentPersona:${ this.state.agentName }] Connecting WebSocket for ${ id }`);
 
     const maxAttempts = 3;
     let attempts = 0;
@@ -410,12 +408,12 @@ export class AgentPersonaService {
 
       if (unsub) {
         this.wsUnsub.set(id, unsub);
-        console.log(`[AgentPersona:${this.state.agentName}] WebSocket connected successfully on attempt ${attempts}`);
+        console.log(`[AgentPersona:${ this.state.agentName }] WebSocket connected successfully on attempt ${ attempts }`);
       } else if (attempts < maxAttempts) {
-        console.warn(`[AgentPersona:${this.state.agentName}] WebSocket connection attempt ${attempts} failed, retrying...`);
+        console.warn(`[AgentPersona:${ this.state.agentName }] WebSocket connection attempt ${ attempts } failed, retrying...`);
         setTimeout(attemptConnect, 1000 * attempts); // Exponential backoff
       } else {
-        console.error(`[AgentPersona:${this.state.agentName}] Failed to connect WebSocket after ${maxAttempts} attempts`);
+        console.error(`[AgentPersona:${ this.state.agentName }] Failed to connect WebSocket after ${ maxAttempts } attempts`);
       }
     };
 
@@ -432,14 +430,14 @@ export class AgentPersonaService {
     if (!content.trim()) return false;
 
     const id = this.state.agentId;
-    console.log(`[AgentPersonaService] _addUserMessage() — channel="${id}", threadId="${this.state.threadId || '(none)'}", content="${content.slice(0, 80)}"`);
+    console.log(`[AgentPersonaService] _addUserMessage() — channel="${ id }", threadId="${ this.state.threadId || '(none)' }", content="${ content.slice(0, 80) }"`);
     this.stopReason.value = null;
     this.waitingForUser.value = false;
 
     this.messages.push({
-      id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id:        `user_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
       channelId: id,
-      role: 'user',
+      role:      'user',
       content,
     });
 
@@ -447,33 +445,32 @@ export class AgentPersonaService {
 
     let delivered: boolean;
     try {
-      console.log(`[AgentPersonaService] _addUserMessage() — sending via WebSocket to channel="${id}"...`);
+      console.log(`[AgentPersonaService] _addUserMessage() — sending via WebSocket to channel="${ id }"...`);
       delivered = await this.wsService.send(id, {
-        type: 'user_message',
-        data: { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata },
+        type:      'user_message',
+        data:      { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata },
         timestamp: Date.now(),
       });
-      console.log(`[AgentPersonaService] _addUserMessage() — WebSocket send result: delivered=${delivered}`);
+      console.log(`[AgentPersonaService] _addUserMessage() — WebSocket send result: delivered=${ delivered }`);
     } catch (err) {
       console.error(`[AgentPersonaService] _addUserMessage() — WebSocket send THREW:`, err);
       delivered = false;
     }
 
     if (!delivered) {
-      console.warn(`[AgentPersonaService] Message delivery FAILED for channel="${id}" — connection may be down`);
+      console.warn(`[AgentPersonaService] Message delivery FAILED for channel="${ id }" — connection may be down`);
       this.registry.setLoading(id, false);
       this.graphRunning.value = false;
       this.messages.push({
-        id: `sys_${Date.now()}_delivery_fail`,
+        id:        `sys_${ Date.now() }_delivery_fail`,
         channelId: id,
-        role: 'system',
-        content: 'Message could not be delivered — the connection to the agent appears to be down. Please try again.',
+        role:      'system',
+        content:   'Message could not be delivered — the connection to the agent appears to be down. Please try again.',
       });
     }
 
     return delivered;
   }
-
 
   setThreadId(threadId: string): void {
     this.state.threadId = threadId;
@@ -501,7 +498,7 @@ export class AgentPersonaService {
     let delivered: boolean;
     try {
       delivered = await this.wsService.send(id, {
-        type: 'continue_run',
+        type:      'continue_run',
         timestamp: Date.now(),
       });
     } catch {
@@ -509,14 +506,14 @@ export class AgentPersonaService {
     }
 
     if (!delivered) {
-      console.warn(`[AgentPersonaService] continue_run delivery failed for ${id}`);
+      console.warn(`[AgentPersonaService] continue_run delivery failed for ${ id }`);
       this.registry.setLoading(id, false);
       this.graphRunning.value = false;
       this.messages.push({
-        id: `sys_${Date.now()}_delivery_fail`,
+        id:        `sys_${ Date.now() }_delivery_fail`,
         channelId: id,
-        role: 'system',
-        content: 'Could not resume the agent — the connection appears to be down. Please try again.',
+        role:      'system',
+        content:   'Could not resume the agent — the connection appears to be down. Please try again.',
       });
     }
 
@@ -528,7 +525,7 @@ export class AgentPersonaService {
     let sent: boolean;
     try {
       sent = await this.wsService.send(agentId, {
-        type: 'stop_run',
+        type:      'stop_run',
         timestamp: Date.now(),
       });
     } catch {
@@ -536,7 +533,7 @@ export class AgentPersonaService {
     }
     console.log('[AgentPersonaModel] Stop signal sent successfully:', sent);
     if (!sent) {
-      console.warn(`[AgentPersonaService] Failed to send stop signal on ${agentId}`);
+      console.warn(`[AgentPersonaService] Failed to send stop signal on ${ agentId }`);
     }
 
     return sent;
@@ -573,236 +570,236 @@ export class AgentPersonaService {
       : 'undefined';
 
     switch (msg.type) {
-      case 'chat_message':
-      case 'assistant_message':
-      case 'user_message':
-      case 'system_message': {
-        this.graphRunning.value = true;
-        // Store message locally - persona is source of truth
-        if (msg.type === 'user_message') {
+    case 'chat_message':
+    case 'assistant_message':
+    case 'user_message':
+    case 'system_message': {
+      this.graphRunning.value = true;
+      // Store message locally - persona is source of truth
+      if (msg.type === 'user_message') {
+        return;
+      }
+
+      if (typeof msg.data === 'string') {
+        // Skip raw tool_use JSON that leaked from the LLM response
+        if (msg.data.trimStart().startsWith('{"type":"tool_use"')) return;
+        const message: ChatMessage = {
+          id:        `${ Date.now() }_ws_${ msg.type }`,
+          channelId: agentId,
+          role:      msg.type === 'system_message' ? 'system' : 'assistant',
+          content:   msg.data,
+        };
+        this.messages.push(message);
+        return;
+      }
+
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+      // Skip tool_use objects that leaked from the LLM response
+      if (data?.type === 'tool_use') return;
+      const content = data?.content !== undefined ? String(data.content) : '';
+      if (!content.trim()) {
+        return;
+      }
+      // Skip if content is raw tool_use JSON
+      if (content.trimStart().startsWith('{"type":"tool_use"')) return;
+
+      const roleRaw = data?.role !== undefined ? String(data.role) : (msg.type === 'system_message' ? 'system' : 'assistant');
+      const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
+      const kind = (typeof data?.kind === 'string') ? data.kind : undefined;
+
+      const message: ChatMessage = {
+        id:        `${ Date.now() }_ws_${ msg.type }`,
+        channelId: agentId,
+        role,
+        kind,
+        content,
+      };
+
+      // Attach sender metadata for channel messages so UI can render them distinctly
+      if (kind === 'channel_message') {
+        message.channelMeta = {
+          senderId:      typeof data?.senderId === 'string' ? data.senderId : 'unknown',
+          senderChannel: typeof data?.senderChannel === 'string' ? data.senderChannel : '',
+        };
+      }
+
+      this.messages.push(message);
+      // Turn off loading when assistant responds
+      if (role === 'assistant') {
+        this.registry.setLoading(agentId, false);
+      }
+      return;
+    }
+    case 'register_or_activate_asset': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+      if (this.applyAssetLifecycleUpdate(data, 'register_or_activate_asset')) {
+        return;
+      }
+      console.error('[AgentPersonaModel] register_or_activate_asset payload not handled', {
+        reason: 'missing_or_invalid_asset_payload',
+        data,
+      });
+      return;
+    }
+    case 'deactivate_asset': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+      const assetId = String(data?.assetId || '').trim();
+      if (assetId) {
+        this.removeAsset(assetId);
+        console.log(`[AgentPersonaModel] deactivate_asset: removed ${ assetId }`);
+      } else {
+        console.error('[AgentPersonaModel] deactivate_asset: missing assetId', { data });
+      }
+      return;
+    }
+    case 'progress':
+    case 'plan_update': {
+      // Progress and plan_update messages contain plan updates, tool calls, etc.
+      // StrategicStateService sends: { type: 'progress', threadId, data: { phase, ... } }
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+      const phase = data?.phase;
+
+      // Handle tool_call progress events - create tool card message
+      if (phase === 'tool_call') {
+        const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
+        const toolName = typeof data?.toolName === 'string' ? data.toolName : 'unknown';
+        const args = data?.args && typeof data.args === 'object' ? data.args : {};
+
+        // Skip tool cards for chat message tools - they emit directly as chat messages
+        if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image') {
           return;
         }
 
-        if (typeof msg.data === 'string') {
-          // Skip raw tool_use JSON that leaked from the LLM response
-          if (msg.data.trimStart().startsWith('{"type":"tool_use"')) return;
+        if (toolRunId) {
+          const messageId = `${ Date.now() }_tool_${ toolRunId }`;
+          // Extract description from args if provided (e.g. exec tool sends description of what command does)
+          const description = typeof args?.description === 'string' ? args.description : undefined;
           const message: ChatMessage = {
-            id: `${Date.now()}_ws_${msg.type}`,
+            id:        messageId,
             channelId: agentId,
-            role: msg.type === 'system_message' ? 'system' : 'assistant',
-            content: msg.data,
+            role:      'assistant',
+            kind:      'tool',
+            content:   '',
+            toolCard:  {
+              toolRunId,
+              toolName,
+              description,
+              status: 'running',
+              args,
+            },
           };
           this.messages.push(message);
-          return;
+          this.toolRunIdToMessageId.set(toolRunId, messageId);
         }
-
-        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-        // Skip tool_use objects that leaked from the LLM response
-        if (data?.type === 'tool_use') return;
-        const content = data?.content !== undefined ? String(data.content) : '';
-        if (!content.trim()) {
-          return;
-        }
-        // Skip if content is raw tool_use JSON
-        if (content.trimStart().startsWith('{"type":"tool_use"')) return;
-
-        const roleRaw = data?.role !== undefined ? String(data.role) : (msg.type === 'system_message' ? 'system' : 'assistant');
-        const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
-        const kind = (typeof data?.kind === 'string') ? data.kind : undefined;
-
-        const message: ChatMessage = {
-          id: `${Date.now()}_ws_${msg.type}`,
-          channelId: agentId,
-          role,
-          kind,
-          content,
-        };
-
-        // Attach sender metadata for channel messages so UI can render them distinctly
-        if (kind === 'channel_message') {
-          message.channelMeta = {
-            senderId: typeof data?.senderId === 'string' ? data.senderId : 'unknown',
-            senderChannel: typeof data?.senderChannel === 'string' ? data.senderChannel : '',
-          };
-        }
-
-        this.messages.push(message);
-        // Turn off loading when assistant responds
-        if (role === 'assistant') {
-          this.registry.setLoading(agentId, false);
-        }
-        return;
       }
-      case 'register_or_activate_asset': {
-        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-        if (this.applyAssetLifecycleUpdate(data, 'register_or_activate_asset')) {
-          return;
-        }
-        console.error('[AgentPersonaModel] register_or_activate_asset payload not handled', {
-          reason: 'missing_or_invalid_asset_payload',
-          data,
-        });
-        return;
-      }
-      case 'deactivate_asset': {
-        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-        const assetId = String(data?.assetId || '').trim();
-        if (assetId) {
-          this.removeAsset(assetId);
-          console.log(`[AgentPersonaModel] deactivate_asset: removed ${assetId}`);
-        } else {
-          console.error('[AgentPersonaModel] deactivate_asset: missing assetId', { data });
-        }
-        return;
-      }
-      case 'progress':
-      case 'plan_update': {
-        // Progress and plan_update messages contain plan updates, tool calls, etc.
-        // StrategicStateService sends: { type: 'progress', threadId, data: { phase, ... } }
-        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-        const phase = data?.phase;
 
-        // Handle tool_call progress events - create tool card message
-        if (phase === 'tool_call') {
-          const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
-          const toolName = typeof data?.toolName === 'string' ? data.toolName : 'unknown';
-          const args = data?.args && typeof data.args === 'object' ? data.args : {};
-          
-          // Skip tool cards for chat message tools - they emit directly as chat messages
-          if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image') {
-            return;
-          }
-          
-          if (toolRunId) {
-            const messageId = `${Date.now()}_tool_${toolRunId}`;
-            // Extract description from args if provided (e.g. exec tool sends description of what command does)
-            const description = typeof args?.description === 'string' ? args.description : undefined;
-            const message: ChatMessage = {
-              id: messageId,
-              channelId: agentId,
-              role: 'assistant',
-              kind: 'tool',
-              content: '',
-              toolCard: {
-                toolRunId,
-                toolName,
-                description,
-                status: 'running',
-                args,
-              },
-            };
-            this.messages.push(message);
-            this.toolRunIdToMessageId.set(toolRunId, messageId);
-          }
-        }
+      // Handle tool_result progress events - update tool card status
+      if (phase === 'tool_result') {
+        const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
+        const success = data?.success === true;
+        const error = typeof data?.error === 'string' ? data.error : null;
+        const result = data?.result;
 
-        // Handle tool_result progress events - update tool card status
-        if (phase === 'tool_result') {
-          const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
-          const success = data?.success === true;
-          const error = typeof data?.error === 'string' ? data.error : null;
-          const result = data?.result;
-          
-          if (toolRunId) {
-            const messageId = this.toolRunIdToMessageId.get(toolRunId);
-            if (messageId) {
-              const message = this.messages.find(m => m.id === messageId);
-              if (message && message.toolCard) {
-                message.toolCard.status = success ? 'success' : 'failed';
-                message.toolCard.error = error;
-                message.toolCard.result = result;
-              }
-              // Clean up the mapping
-              this.toolRunIdToMessageId.delete(toolRunId);
+        if (toolRunId) {
+          const messageId = this.toolRunIdToMessageId.get(toolRunId);
+          if (messageId) {
+            const message = this.messages.find(m => m.id === messageId);
+            if (message?.toolCard) {
+              message.toolCard.status = success ? 'success' : 'failed';
+              message.toolCard.error = error;
+              message.toolCard.result = result;
             }
+            // Clean up the mapping
+            this.toolRunIdToMessageId.delete(toolRunId);
           }
         }
-        
+      }
+
+      return;
+    }
+    case 'chat_image': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+
+      const src = typeof data?.src === 'string' ? data.src : '';
+      const alt = typeof data?.alt === 'string' ? data.alt : '';
+      const path = typeof data?.path === 'string' ? data.path : '';
+      const isLocal = data?.isLocal === true;
+
+      if (!src) {
+        console.log('[AgentPersonaModel] Skipping chat_image - empty src');
         return;
       }
-      case 'chat_image': {
-        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-        
-        const src      = typeof data?.src === 'string' ? data.src : '';
-        const alt      = typeof data?.alt === 'string' ? data.alt : '';
-        const path     = typeof data?.path === 'string' ? data.path : '';
-        const isLocal  = data?.isLocal === true;
 
-        if (!src) {
-          console.log('[AgentPersonaModel] Skipping chat_image - empty src');
-          return;
-        }
+      const roleRaw = data?.role !== undefined ? String(data.role) : 'assistant';
+      const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error')
+        ? roleRaw
+        : 'assistant';
 
-        const roleRaw = data?.role !== undefined ? String(data.role) : 'assistant';
-        const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') 
-          ? roleRaw 
-          : 'assistant';
+      const message: ChatMessage = {
+        id:        `${ Date.now() }_ws_chat_image`,
+        channelId: agentId,
+        role,
+        content:   '',
+        image:     {
+          dataUrl: src,    // Map src to expected dataUrl property
+          alt,
+          path,
+        },
+      };
 
-        const message: ChatMessage = {
-          id: `${Date.now()}_ws_chat_image`,
-          channelId: agentId,
-          role,
-          content: '',
-          image: {
-            dataUrl: src,    // Map src to expected dataUrl property
-            alt,
-            path,
-          },
-        };
+      this.messages.push(message);
+      console.log('[AgentPersonaModel] Chat image stored (path/URL mode). src:', src.substring(0, 80));
 
-        this.messages.push(message);
-        console.log('[AgentPersonaModel] Chat image stored (path/URL mode). src:', src.substring(0, 80));
-
-        if (role === 'assistant') {
-          this.registry.setLoading(agentId, false);
-        }
-        return;
+      if (role === 'assistant') {
+        this.registry.setLoading(agentId, false);
       }
-      case 'transfer_data': {
-        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-        if (data === 'graph_execution_complete' || data?.content === 'graph_execution_complete') {
-          const reason = data?.stopReason || null;
-          const waiting = !!(data?.waitingForUser);
-          console.log('[AgentPersonaModel] Graph execution complete, stopReason:', reason, 'waitingForUser:', waiting);
-          this.graphRunning.value = false;
-          this.waitingForUser.value = waiting;
-          this.stopReason.value = reason;
-          this.registry.setLoading(agentId, false);
-        }
-        return;
+      return;
+    }
+    case 'transfer_data': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+      if (data === 'graph_execution_complete' || data?.content === 'graph_execution_complete') {
+        const reason = data?.stopReason || null;
+        const waiting = !!(data?.waitingForUser);
+        console.log('[AgentPersonaModel] Graph execution complete, stopReason:', reason, 'waitingForUser:', waiting);
+        this.graphRunning.value = false;
+        this.waitingForUser.value = waiting;
+        this.stopReason.value = reason;
+        this.registry.setLoading(agentId, false);
       }
-      case 'thread_created': {
-        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
-        const threadId = data.threadId;
+      return;
+    }
+    case 'thread_created': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
+      const threadId = data.threadId;
 
-        if (threadId && typeof threadId === 'string') {
-          this.setThreadId(threadId);
-        }
-        return;
+      if (threadId && typeof threadId === 'string') {
+        this.setThreadId(threadId);
       }
-      case 'token_info': {
-        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
-        const tokens_used = data.tokens_used;
-        const prompt_tokens = data.prompt_tokens;
-        const completion_tokens = data.completion_tokens;
-        const time_spent = data.time_spent;
-        const threadId = data.threadId;
-        const nodeId = data.nodeId;
+      return;
+    }
+    case 'token_info': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
+      const tokens_used = data.tokens_used;
+      const prompt_tokens = data.prompt_tokens;
+      const completion_tokens = data.completion_tokens;
+      const time_spent = data.time_spent;
+      const threadId = data.threadId;
+      const nodeId = data.nodeId;
 
-        if (typeof tokens_used === 'number') {
-          // Handle token information from completed LLM response
-          this.handleTokenInfo(tokens_used, prompt_tokens, completion_tokens, time_spent, threadId, nodeId);
-        }
-        return;
+      if (typeof tokens_used === 'number') {
+        // Handle token information from completed LLM response
+        this.handleTokenInfo(tokens_used, prompt_tokens, completion_tokens, time_spent, threadId, nodeId);
       }
-      case 'ack':
-      case 'ping':
-      case 'pong':
-      case 'subscribe':
-        // Silent — these are protocol-level messages, not content
-        return;
-      default:
-        console.log('[AgentPersonaModel] Unhandled message type:', msg.type);
+      return;
+    }
+    case 'ack':
+    case 'ping':
+    case 'pong':
+    case 'subscribe':
+      // Silent — these are protocol-level messages, not content
+      return;
+    default:
+      console.log('[AgentPersonaModel] Unhandled message type:', msg.type);
     }
   }
 
@@ -815,31 +812,31 @@ export class AgentPersonaService {
     completion_tokens: number,
     time_spent: number,
     threadId?: string,
-    nodeId?: string
+    nodeId?: string,
   ): void {
     // XAI Grok pricing
     const costPerMillionInputTokens = 0.50; // $0.50 per 1M input tokens
     const costPerMillionOutputTokens = 1.50; // $1.50 per 1M output tokens
-    
+
     // Calculate costs for this response
     const inputCost = (prompt_tokens * costPerMillionInputTokens) / 1000000;
     const outputCost = (completion_tokens * costPerMillionOutputTokens) / 1000000;
     const totalResponseCost = inputCost + outputCost;
-    
+
     // Update token tracking properties
     this.state.totalTokensUsed += tokens_used;
     this.state.totalPromptTokens += prompt_tokens;
     this.state.totalCompletionTokens += completion_tokens;
     this.state.lastResponseTime = time_spent;
     this.state.responseCount++;
-    
+
     // Update cost tracking properties
     this.state.totalInputCost += inputCost;
     this.state.totalOutputCost += outputCost;
     this.state.totalCost += totalResponseCost;
-    
+
     // Calculate rolling average response time
-    this.state.averageResponseTime = 
+    this.state.averageResponseTime =
       (this.state.averageResponseTime * (this.state.responseCount - 1) + time_spent) / this.state.responseCount;
   }
 

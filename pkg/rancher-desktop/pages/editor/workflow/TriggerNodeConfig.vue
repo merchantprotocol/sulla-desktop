@@ -1,7 +1,13 @@
 <template>
-  <div class="trigger-config" :class="{ dark: isDark }">
+  <div
+    class="trigger-config"
+    :class="{ dark: isDark }"
+  >
     <div class="node-field">
-      <label class="node-field-label" :class="{ dark: isDark }">Trigger Description</label>
+      <label
+        class="node-field-label"
+        :class="{ dark: isDark }"
+      >Trigger Description</label>
       <textarea
         class="node-field-input node-field-textarea"
         :class="{ dark: isDark }"
@@ -9,10 +15,13 @@
         placeholder="e.g. This workflow handles customer support questions about billing and refunds"
         :value="config.triggerDescription || ''"
         @input="updateField('triggerDescription', ($event.target as HTMLTextAreaElement).value)"
-      ></textarea>
+      />
     </div>
     <div class="node-field help-section">
-      <p class="help-text" :class="{ dark: isDark }">
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         This description is used by the workflow registry to determine if an incoming
         message should trigger this workflow. Be specific about what kinds of messages
         or events this workflow should handle.

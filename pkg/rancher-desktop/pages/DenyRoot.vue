@@ -27,8 +27,8 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 
 export default defineComponent({
-  name:   'page-deny-root',
-  layout: 'dialog',
+  name:       'page-deny-root',
+  layout:     'dialog',
   components: { PostHogTracker },
   mounted() {
     ipcRenderer.send('dialog/ready');

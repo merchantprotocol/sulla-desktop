@@ -2,8 +2,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { getAgentPersonaRegistry } from '../../database/registry/AgentPersonaRegistry';
 
 export class ManageActiveAssetWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     if (!this.state) {
@@ -16,7 +16,7 @@ export class ManageActiveAssetWorker extends BaseTool {
     const action = String(input.action || 'upsert').trim().toLowerCase();
     const assetType = String(input.assetType || '').trim().toLowerCase();
     const skillSlug = typeof input.skillSlug === 'string' ? input.skillSlug.trim() : '';
-    const metadata = (this.state as any).metadata || {};
+    const metadata = (this.state).metadata || {};
     const agentId = String(metadata.wsChannel || 'sulla-desktop');
 
     const registry = getAgentPersonaRegistry();
@@ -33,7 +33,7 @@ export class ManageActiveAssetWorker extends BaseTool {
       persona.removeAsset(removeId);
       return {
         successBoolean: true,
-        responseString: `Removed active asset ${removeId}`,
+        responseString: `Removed active asset ${ removeId }`,
       };
     }
 
@@ -46,7 +46,7 @@ export class ManageActiveAssetWorker extends BaseTool {
 
     const candidateId = typeof input.assetId === 'string' && input.assetId.trim().length > 0
       ? input.assetId.trim()
-      : `${assetType}_${Date.now()}`;
+      : `${ assetType }_${ Date.now() }`;
 
     const active = input.active !== false;
     const collapsed = input.collapsed !== false;
@@ -68,7 +68,7 @@ export class ManageActiveAssetWorker extends BaseTool {
         : (skillSlug.toLowerCase().includes('workflow') ? 'Sulla n8n' : 'Website');
 
       persona.registerIframeAsset({
-        id: effectiveId,
+        id:        effectiveId,
         title,
         url,
         skillSlug: skillSlug || undefined,
@@ -79,7 +79,7 @@ export class ManageActiveAssetWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Upserted iframe active asset id=${effectiveId} url=${url}`,
+        responseString: `Upserted iframe active asset id=${ effectiveId } url=${ url }`,
       };
     }
 
@@ -99,8 +99,7 @@ export class ManageActiveAssetWorker extends BaseTool {
 
     return {
       successBoolean: true,
-      responseString: `Upserted document active asset id=${effectiveId} contentLength=${content.length}`,
+      responseString: `Upserted document active asset id=${ effectiveId } contentLength=${ content.length }`,
     };
   }
 }
-

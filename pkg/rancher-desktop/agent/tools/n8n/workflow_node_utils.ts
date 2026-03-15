@@ -1,19 +1,19 @@
 export type WorkflowNode = Record<string, any>;
 
-export type WorkflowPayload = {
-  id?: string;
-  name: string;
-  active?: boolean;
-  nodes: WorkflowNode[];
+export interface WorkflowPayload {
+  id?:         string;
+  name:        string;
+  active?:     boolean;
+  nodes:       WorkflowNode[];
   connections: Record<string, any>;
-  settings: Record<string, any>;
+  settings:    Record<string, any>;
   staticData?: Record<string, any>;
-};
+}
 
-export type NodeSelector = {
-  nodeId?: string;
+export interface NodeSelector {
+  nodeId?:   string;
   nodeName?: string;
-};
+}
 
 function normalizeNodeLookupToken(value: unknown): string {
   return String(value || '')
@@ -24,10 +24,10 @@ function normalizeNodeLookupToken(value: unknown): string {
 
 export function cloneWorkflowGraph(workflow: any): WorkflowPayload {
   return {
-    id: workflow?.id,
-    name: String(workflow?.name || ''),
-    active: !!workflow?.active,
-    nodes: Array.isArray(workflow?.nodes) ? JSON.parse(JSON.stringify(workflow.nodes)) : [],
+    id:          workflow?.id,
+    name:        String(workflow?.name || ''),
+    active:      !!workflow?.active,
+    nodes:       Array.isArray(workflow?.nodes) ? JSON.parse(JSON.stringify(workflow.nodes)) : [],
     connections: workflow?.connections && typeof workflow.connections === 'object'
       ? JSON.parse(JSON.stringify(workflow.connections))
       : {},
@@ -53,7 +53,7 @@ export function resolveNodeIndex(nodes: WorkflowNode[], selector: NodeSelector):
     : [];
 
   if (nodeId && idMatches.length === 0) {
-    throw new Error(`Node not found by nodeId: ${nodeId}`);
+    throw new Error(`Node not found by nodeId: ${ nodeId }`);
   }
 
   if (nodeName) {
@@ -92,7 +92,7 @@ export function resolveNodeIndex(nodes: WorkflowNode[], selector: NodeSelector):
           .map(({ node }) => String(node?.name || node?.id || ''))
           .filter(Boolean)
           .join(', ');
-        throw new Error(`Node name is ambiguous: ${nodeName}. Matching candidates: ${candidates}. Provide nodeId instead.`);
+        throw new Error(`Node name is ambiguous: ${ nodeName }. Matching candidates: ${ candidates }. Provide nodeId instead.`);
       }
     }
 
@@ -102,7 +102,7 @@ export function resolveNodeIndex(nodes: WorkflowNode[], selector: NodeSelector):
         .map(({ node }) => String(node?.name || node?.id || ''))
         .filter(Boolean)
         .join(', ');
-      throw new Error(`Node not found by nodeName: ${nodeName}. Available nodes: ${availableNodes}`);
+      throw new Error(`Node not found by nodeName: ${ nodeName }. Available nodes: ${ availableNodes }`);
     }
 
     if (!nodeId && nameMatches.length > 1) {
@@ -111,7 +111,7 @@ export function resolveNodeIndex(nodes: WorkflowNode[], selector: NodeSelector):
         .map(({ node }) => String(node?.name || node?.id || ''))
         .filter(Boolean)
         .join(', ');
-      throw new Error(`Node name is ambiguous: ${nodeName}. Matching candidates: ${candidates}. Provide nodeId instead.`);
+      throw new Error(`Node name is ambiguous: ${ nodeName }. Matching candidates: ${ candidates }. Provide nodeId instead.`);
     }
 
     if (nodeId) {
@@ -119,7 +119,7 @@ export function resolveNodeIndex(nodes: WorkflowNode[], selector: NodeSelector):
       const idMatchName = String(idMatch.node?.name || '');
       const namesMatch = idMatchName === nodeName || normalizeNodeLookupToken(idMatchName) === requestedNameNormalized;
       if (!namesMatch) {
-        throw new Error(`Node selector mismatch: nodeId ${nodeId} does not match nodeName ${nodeName}.`);
+        throw new Error(`Node selector mismatch: nodeId ${ nodeId } does not match nodeName ${ nodeName }.`);
       }
       return idMatch.index;
     }
@@ -146,7 +146,7 @@ export function ensureUniqueNodeName(desiredName: string, existingNodes: Workflo
     existingNodes
       .filter(node => !currentNodeId || String(node?.id || '') !== currentNodeId)
       .map(node => String(node?.name || '').trim())
-      .filter(Boolean)
+      .filter(Boolean),
   );
 
   if (!usedNames.has(baseName)) {
@@ -154,10 +154,10 @@ export function ensureUniqueNodeName(desiredName: string, existingNodes: Workflo
   }
 
   let suffix = 2;
-  let candidate = `${baseName} (${suffix})`;
+  let candidate = `${ baseName } (${ suffix })`;
   while (usedNames.has(candidate)) {
     suffix += 1;
-    candidate = `${baseName} (${suffix})`;
+    candidate = `${ baseName } (${ suffix })`;
   }
 
   return candidate;
@@ -173,11 +173,11 @@ export function ensureNodeId(desiredId: unknown, fallbackName: string, existingN
 
   const token = slugifyNodeToken(fallbackName);
   let sequence = 1;
-  let generated = `${token}-${sequence}`;
+  let generated = `${ token }-${ sequence }`;
 
   while (usedIds.has(generated)) {
     sequence += 1;
-    generated = `${token}-${sequence}`;
+    generated = `${ token }-${ sequence }`;
   }
 
   return generated;
@@ -193,7 +193,7 @@ export function computeInsertIndex(
   }
 
   if (anchorIndex === undefined || anchorIndex < 0 || anchorIndex >= currentLength) {
-    throw new Error(`Anchor node is required for insert mode ${mode}.`);
+    throw new Error(`Anchor node is required for insert mode ${ mode }.`);
   }
 
   if (mode === 'before') {

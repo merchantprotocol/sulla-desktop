@@ -24,46 +24,46 @@ import { resolveSullaLogsDir } from '../utils/sullaPaths';
 export type ConversationType = 'workflow' | 'graph';
 
 export interface ConversationMeta {
-  id: string;
-  type: ConversationType;
-  name: string;
-  parentId?: string;
-  workflowId?: string;
-  agentId?: string;
-  channel?: string;
-  startedAt: string;
+  id:           string;
+  type:         ConversationType;
+  name:         string;
+  parentId?:    string;
+  workflowId?:  string;
+  agentId?:     string;
+  channel?:     string;
+  startedAt:    string;
   completedAt?: string;
-  status?: string;
-  error?: string;
+  status?:      string;
+  error?:       string;
 }
 
 export interface ConversationEvent {
-  ts: string;
-  type: string;
+  ts:            string;
+  type:          string;
   [key: string]: unknown;
 }
 
 // ── Formatting helpers ──
 
 const SEPARATOR = '════════════════════════════════════════════════════════════════';
-const THIN_SEP  = '────────────────────────────────────────────────────────────────';
+const THIN_SEP = '────────────────────────────────────────────────────────────────';
 
 function formatMeta(meta: ConversationMeta | (Partial<ConversationMeta> & { id: string; _update?: boolean })): string {
   const lines: string[] = [];
   lines.push(SEPARATOR);
   const isUpdate = '_update' in meta && (meta as any)._update;
-  lines.push(`[${meta.startedAt || new Date().toISOString()}] CONVERSATION ${isUpdate ? 'UPDATE' : 'START'}`);
+  lines.push(`[${ meta.startedAt || new Date().toISOString() }] CONVERSATION ${ isUpdate ? 'UPDATE' : 'START' }`);
   lines.push(SEPARATOR);
-  lines.push(`ID:       ${meta.id}`);
-  if (meta.type)       lines.push(`Type:     ${meta.type}`);
-  if (meta.name)       lines.push(`Name:     ${meta.name}`);
-  if (meta.channel)    lines.push(`Channel:  ${meta.channel}`);
-  if (meta.parentId)   lines.push(`Parent:   ${meta.parentId}`);
-  if (meta.workflowId) lines.push(`Workflow: ${meta.workflowId}`);
-  if (meta.agentId)    lines.push(`Agent:    ${meta.agentId}`);
-  if (meta.status)     lines.push(`Status:   ${meta.status}`);
-  if (meta.completedAt) lines.push(`Completed: ${meta.completedAt}`);
-  if (meta.error)      lines.push(`Error:    ${meta.error}`);
+  lines.push(`ID:       ${ meta.id }`);
+  if (meta.type) lines.push(`Type:     ${ meta.type }`);
+  if (meta.name) lines.push(`Name:     ${ meta.name }`);
+  if (meta.channel) lines.push(`Channel:  ${ meta.channel }`);
+  if (meta.parentId) lines.push(`Parent:   ${ meta.parentId }`);
+  if (meta.workflowId) lines.push(`Workflow: ${ meta.workflowId }`);
+  if (meta.agentId) lines.push(`Agent:    ${ meta.agentId }`);
+  if (meta.status) lines.push(`Status:   ${ meta.status }`);
+  if (meta.completedAt) lines.push(`Completed: ${ meta.completedAt }`);
+  if (meta.error) lines.push(`Error:    ${ meta.error }`);
   lines.push('');
   return lines.join('\n');
 }
@@ -72,19 +72,19 @@ function formatEvent(event: ConversationEvent): string {
   const { ts, type, ...rest } = event;
 
   switch (type) {
-    case 'llm_call':
-      return formatLLMCall(ts, rest);
-    case 'message':
-      return formatMessage(ts, rest);
-    case 'tool_call':
-      return formatToolCall(ts, rest);
-    case 'workflow_started':
-    case 'workflow_completed':
-    case 'graph_started':
-    case 'graph_completed':
-      return formatLifecycleEvent(ts, type, rest);
-    default:
-      return formatGenericEvent(ts, type, rest);
+  case 'llm_call':
+    return formatLLMCall(ts, rest);
+  case 'message':
+    return formatMessage(ts, rest);
+  case 'tool_call':
+    return formatToolCall(ts, rest);
+  case 'workflow_started':
+  case 'workflow_completed':
+  case 'graph_started':
+  case 'graph_completed':
+    return formatLifecycleEvent(ts, type, rest);
+  default:
+    return formatGenericEvent(ts, type, rest);
   }
 }
 
@@ -92,41 +92,41 @@ function formatLLMCall(ts: string, data: Record<string, unknown>): string {
   const lines: string[] = [];
   const direction = String(data.direction || 'unknown').toUpperCase();
   lines.push(SEPARATOR);
-  lines.push(`[${ts}] LLM ${direction}`);
+  lines.push(`[${ ts }] LLM ${ direction }`);
   lines.push(SEPARATOR);
 
   if (direction === 'REQUEST') {
-    if (data.model)    lines.push(`Model:    ${data.model}`);
-    if (data.provider)  lines.push(`Provider: ${data.provider}`);
-    if (data.nodeName) lines.push(`Node:     ${data.nodeName}`);
-    if (data.maxTokens) lines.push(`Max Tokens: ${data.maxTokens}`);
-    if (data.temperature !== undefined) lines.push(`Temperature: ${data.temperature}`);
-    if (data.format)   lines.push(`Format:   ${data.format}`);
+    if (data.model) lines.push(`Model:    ${ data.model }`);
+    if (data.provider) lines.push(`Provider: ${ data.provider }`);
+    if (data.nodeName) lines.push(`Node:     ${ data.nodeName }`);
+    if (data.maxTokens) lines.push(`Max Tokens: ${ data.maxTokens }`);
+    if (data.temperature !== undefined) lines.push(`Temperature: ${ data.temperature }`);
+    if (data.format) lines.push(`Format:   ${ data.format }`);
 
     // Tools summary
     if (Array.isArray(data.tools) && data.tools.length > 0) {
       const toolNames = data.tools.map((t: any) => t?.function?.name || t?.name || 'unknown');
-      lines.push(`Tools:    [${toolNames.join(', ')}]`);
+      lines.push(`Tools:    [${ toolNames.join(', ') }]`);
     }
 
     // Full messages array
     if (Array.isArray(data.messages)) {
       lines.push('');
       lines.push('Messages:');
-      for (const msg of data.messages as any[]) {
+      for (const msg of data.messages) {
         lines.push(THIN_SEP);
-        lines.push(`  [${msg.role}]${msg.name ? ` (${msg.name})` : ''}`);
+        lines.push(`  [${ msg.role }]${ msg.name ? ` (${ msg.name })` : '' }`);
         const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2);
         lines.push(indent(content, 4));
       }
     }
   } else if (direction === 'RESPONSE') {
-    if (data.model)          lines.push(`Model:         ${data.model}`);
-    if (data.finishReason)   lines.push(`Finish Reason: ${data.finishReason}`);
-    if (data.tokensUsed)     lines.push(`Tokens Used:   ${data.tokensUsed}`);
-    if (data.promptTokens)   lines.push(`  Prompt:      ${data.promptTokens}`);
-    if (data.completionTokens) lines.push(`  Completion:  ${data.completionTokens}`);
-    if (data.timeSpent)      lines.push(`Time:          ${data.timeSpent}ms`);
+    if (data.model) lines.push(`Model:         ${ data.model }`);
+    if (data.finishReason) lines.push(`Finish Reason: ${ data.finishReason }`);
+    if (data.tokensUsed) lines.push(`Tokens Used:   ${ data.tokensUsed }`);
+    if (data.promptTokens) lines.push(`  Prompt:      ${ data.promptTokens }`);
+    if (data.completionTokens) lines.push(`  Completion:  ${ data.completionTokens }`);
+    if (data.timeSpent) lines.push(`Time:          ${ data.timeSpent }ms`);
 
     if (data.content !== undefined) {
       lines.push('');
@@ -143,20 +143,20 @@ function formatLLMCall(ts: string, data: Record<string, unknown>): string {
     if (Array.isArray(data.toolCalls) && data.toolCalls.length > 0) {
       lines.push('');
       lines.push('Tool Calls:');
-      for (const tc of data.toolCalls as any[]) {
-        lines.push(`  - ${tc.name}(${JSON.stringify(tc.args, null, 2)})`);
+      for (const tc of data.toolCalls) {
+        lines.push(`  - ${ tc.name }(${ JSON.stringify(tc.args, null, 2) })`);
       }
     }
 
     if (data.error) {
       lines.push('');
-      lines.push(`ERROR: ${data.error}`);
+      lines.push(`ERROR: ${ data.error }`);
     }
   } else {
     // Unknown direction — dump everything
     for (const [k, v] of Object.entries(data)) {
       if (k === 'direction') continue;
-      lines.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v, null, 2)}`);
+      lines.push(`${ k }: ${ typeof v === 'string' ? v : JSON.stringify(v, null, 2) }`);
     }
   }
 
@@ -167,7 +167,7 @@ function formatLLMCall(ts: string, data: Record<string, unknown>): string {
 function formatMessage(ts: string, data: Record<string, unknown>): string {
   const lines: string[] = [];
   lines.push(THIN_SEP);
-  lines.push(`[${ts}] MESSAGE [${data.role}]`);
+  lines.push(`[${ ts }] MESSAGE [${ data.role }]`);
   lines.push(THIN_SEP);
   lines.push(String(data.content));
   lines.push('');
@@ -177,14 +177,14 @@ function formatMessage(ts: string, data: Record<string, unknown>): string {
 function formatToolCall(ts: string, data: Record<string, unknown>): string {
   const lines: string[] = [];
   lines.push(THIN_SEP);
-  lines.push(`[${ts}] TOOL CALL: ${data.toolName}`);
+  lines.push(`[${ ts }] TOOL CALL: ${ data.toolName }`);
   lines.push(THIN_SEP);
-  lines.push(`Args: ${typeof data.args === 'string' ? data.args : JSON.stringify(data.args, null, 2)}`);
+  lines.push(`Args: ${ typeof data.args === 'string' ? data.args : JSON.stringify(data.args, null, 2) }`);
   if (data.result !== undefined) {
-    lines.push(`Result: ${typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2)}`);
+    lines.push(`Result: ${ typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2) }`);
   }
   if (data.error) {
-    lines.push(`Error: ${data.error}`);
+    lines.push(`Error: ${ data.error }`);
   }
   lines.push('');
   return lines.join('\n');
@@ -194,10 +194,10 @@ function formatLifecycleEvent(ts: string, type: string, data: Record<string, unk
   const lines: string[] = [];
   const label = type.replace(/_/g, ' ').toUpperCase();
   lines.push(SEPARATOR);
-  lines.push(`[${ts}] ${label}`);
+  lines.push(`[${ ts }] ${ label }`);
   lines.push(SEPARATOR);
   for (const [k, v] of Object.entries(data)) {
-    lines.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v, null, 2)}`);
+    lines.push(`${ k }: ${ typeof v === 'string' ? v : JSON.stringify(v, null, 2) }`);
   }
   lines.push('');
   return lines.join('\n');
@@ -206,10 +206,10 @@ function formatLifecycleEvent(ts: string, type: string, data: Record<string, unk
 function formatGenericEvent(ts: string, type: string, data: Record<string, unknown>): string {
   const lines: string[] = [];
   lines.push(THIN_SEP);
-  lines.push(`[${ts}] ${type.toUpperCase()}`);
+  lines.push(`[${ ts }] ${ type.toUpperCase() }`);
   lines.push(THIN_SEP);
   for (const [k, v] of Object.entries(data)) {
-    lines.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v, null, 2)}`);
+    lines.push(`${ k }: ${ typeof v === 'string' ? v : JSON.stringify(v, null, 2) }`);
   }
   lines.push('');
   return lines.join('\n');
@@ -223,8 +223,8 @@ function indent(text: string, spaces: number): string {
 // ── Logger ──
 
 class ConversationLoggerImpl extends EventEmitter {
-  private dir: string;
-  private indexPath: string;
+  private dir:            string;
+  private indexPath:      string;
   private indexJsonlPath: string;
   /** Maps conversationId → resolved log file path (set on start). */
   private filePaths = new Map<string, string>();
@@ -260,9 +260,9 @@ class ConversationLoggerImpl extends EventEmitter {
     let filename: string;
     if (channel) {
       const safeChannel = channel.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100);
-      filename = `${safeChannel}_${safeId}.log`;
+      filename = `${ safeChannel }_${ safeId }.log`;
     } else {
-      filename = `conv_${safeId}.log`;
+      filename = `conv_${ safeId }.log`;
     }
     const filePath = path.join(this.dir, filename);
     this.filePaths.set(conversationId, filePath);
@@ -278,7 +278,7 @@ class ConversationLoggerImpl extends EventEmitter {
     if (cached) return cached;
 
     const safeId = conversationId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
-    const filePath = path.join(this.dir, `conv_${safeId}.jsonl`);
+    const filePath = path.join(this.dir, `conv_${ safeId }.jsonl`);
     this.jsonlPaths.set(conversationId, filePath);
     return filePath;
   }
@@ -389,8 +389,8 @@ class ConversationLoggerImpl extends EventEmitter {
       status:    'running',
     });
     this.log(conversationId, {
-      ts:   new Date().toISOString(),
-      type: 'graph_started',
+      ts:      new Date().toISOString(),
+      type:    'graph_started',
       agentName,
       agentId: opts?.agentId,
     });

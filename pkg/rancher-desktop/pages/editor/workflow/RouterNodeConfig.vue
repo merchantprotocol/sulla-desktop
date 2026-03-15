@@ -1,7 +1,13 @@
 <template>
-  <div class="router-config" :class="{ dark: isDark }">
+  <div
+    class="router-config"
+    :class="{ dark: isDark }"
+  >
     <div class="node-field">
-      <label class="node-field-label" :class="{ dark: isDark }">Classification Prompt</label>
+      <label
+        class="node-field-label"
+        :class="{ dark: isDark }"
+      >Classification Prompt</label>
       <textarea
         class="node-field-input node-field-textarea"
         :class="{ dark: isDark }"
@@ -9,17 +15,28 @@
         placeholder="Map the intent of the previous response to a route"
         :value="config.classificationPrompt || ''"
         @input="onPromptChange"
-      ></textarea>
-      <p class="field-hint" :class="{ dark: isDark }">
+      />
+      <p
+        class="field-hint"
+        :class="{ dark: isDark }"
+      >
         The LLM reads this prompt along with the incoming message to decide which route to take.
         Leave blank to use the default: classify by intent.
       </p>
     </div>
 
     <div class="node-field">
-      <label class="node-field-label" :class="{ dark: isDark }">Routes</label>
+      <label
+        class="node-field-label"
+        :class="{ dark: isDark }"
+      >Routes</label>
       <div class="routes-list">
-        <div v-for="(route, idx) in config.routes" :key="idx" class="route-card" :class="{ dark: isDark }">
+        <div
+          v-for="(route, idx) in config.routes"
+          :key="idx"
+          class="route-card"
+          :class="{ dark: isDark }"
+        >
           <div class="route-card-header">
             <input
               class="node-field-input route-label-input"
@@ -27,11 +44,34 @@
               placeholder="e.g. Support, Sales, Escalation"
               :value="route.label"
               @input="onRouteChange(idx, 'label', ($event.target as HTMLInputElement).value)"
-            />
-            <button class="route-remove-btn" :class="{ dark: isDark }" @click="removeRoute(idx)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
+            >
+            <button
+              class="route-remove-btn"
+              :class="{ dark: isDark }"
+              @click="removeRoute(idx)"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line
+                  x1="18"
+                  y1="6"
+                  x2="6"
+                  y2="18"
+                />
+                <line
+                  x1="6"
+                  y1="6"
+                  x2="18"
+                  y2="18"
+                />
               </svg>
             </button>
           </div>
@@ -42,30 +82,70 @@
             placeholder="e.g. Use when the user asks about billing, refunds, or account issues"
             :value="route.description || ''"
             @input="onRouteChange(idx, 'description', ($event.target as HTMLTextAreaElement).value)"
-          ></textarea>
+          />
         </div>
-        <button class="route-add-btn" :class="{ dark: isDark }" @click="addRoute">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
+        <button
+          class="route-add-btn"
+          :class="{ dark: isDark }"
+          @click="addRoute"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="12"
+              y1="5"
+              x2="12"
+              y2="19"
+            />
+            <line
+              x1="5"
+              y1="12"
+              x2="19"
+              y2="12"
+            />
           </svg>
           Add Route
         </button>
       </div>
     </div>
 
-    <div class="node-field help-section" :class="{ dark: isDark }">
-      <p class="help-title" :class="{ dark: isDark }">How routing works</p>
-      <p class="help-text" :class="{ dark: isDark }">
+    <div
+      class="node-field help-section"
+      :class="{ dark: isDark }"
+    >
+      <p
+        class="help-title"
+        :class="{ dark: isDark }"
+      >
+        How routing works
+      </p>
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         The router uses an LLM to read the incoming message and pick the best matching route.
         Each route needs a <strong>label</strong> (a short name shown on the node) and a
         <strong>description</strong> (tells the LLM when to choose this route).
       </p>
-      <p class="help-text" :class="{ dark: isDark }">
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         The classification prompt gives the LLM overall context. Good descriptions are specific
         &mdash; instead of "general questions", write "questions not related to billing, sales, or technical support".
       </p>
-      <p class="help-text" :class="{ dark: isDark }">
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         Each route creates a connectable output on the node. Connect each output to the
         downstream node that should handle that route.
       </p>

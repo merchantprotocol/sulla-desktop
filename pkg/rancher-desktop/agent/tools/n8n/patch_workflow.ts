@@ -1,35 +1,37 @@
 import { BaseTool, ToolResponse } from '../base';
 import { createN8nService } from '../../services/N8nService';
-import { cloneWorkflowGraph,
+import {
+  cloneWorkflowGraph,
   countNodeConnections,
   ensureNodeId,
   ensureUniqueNodeName,
   removeNodeFromConnections,
   resolveNodeIndex,
-  rewriteConnectionsForNodeRename, } from './workflow_node_utils';
+  rewriteConnectionsForNodeRename,
+} from './workflow_node_utils';
 
 type JsonRecord = Record<string, any>;
 type PatchOp = 'add' | 'update' | 'remove';
 type PatchTarget = 'node' | 'connection';
-type ConnectionIssue = { issue: string; detail: string };
+interface ConnectionIssue { issue: string; detail: string }
 
-type NormalizedNodeOperation = {
-  target: 'node';
-  op: PatchOp;
-  node?: JsonRecord;
-  nodeId?: string;
+interface NormalizedNodeOperation {
+  target:    'node';
+  op:        PatchOp;
+  node?:     JsonRecord;
+  nodeId?:   string;
   nodeName?: string;
-  patch?: JsonRecord;
-};
+  patch?:    JsonRecord;
+}
 
-type NormalizedConnectionOperation = {
-  target: 'connection';
-  op: 'add' | 'remove';
-  source: string;
+interface NormalizedConnectionOperation {
+  target:           'connection';
+  op:               'add' | 'remove';
+  source:           string;
   connectionTarget: string;
-  sourceIndex: number;
-  targetIndex: number;
-};
+  sourceIndex:      number;
+  targetIndex:      number;
+}
 
 type NormalizedOperation = NormalizedNodeOperation | NormalizedConnectionOperation;
 
@@ -101,7 +103,7 @@ function isSubsetMatch(expected: any, actual: any): boolean {
       if (!(key in actual)) {
         return false;
       }
-      if (!isSubsetMatch(expectedValue, (actual as JsonRecord)[key])) {
+      if (!isSubsetMatch(expectedValue, (actual)[key])) {
         return false;
       }
     }
@@ -159,7 +161,7 @@ function parseJsonIfString(value: any, field: string): any {
   try {
     return JSON.parse(value);
   } catch (error) {
-    throw new Error(`Invalid JSON for ${field}: ${(error as Error).message}`);
+    throw new Error(`Invalid JSON for ${ field }: ${ (error as Error).message }`);
   }
 }
 
@@ -186,25 +188,25 @@ function normalizeConnectionTargetSpec(
   targetWasExplicit: boolean,
 ): { connectionTarget: string; targetIndexFromTarget?: number } {
   const rawTarget =
-    rec.connectionTarget
-    ?? rec.targetNodeName
-    ?? rec.targetNode
-    ?? rec.to
-    ?? rec.destination
-    ?? (!targetWasExplicit ? rec.target : undefined);
+    rec.connectionTarget ??
+    rec.targetNodeName ??
+    rec.targetNode ??
+    rec.to ??
+    rec.destination ??
+    (!targetWasExplicit ? rec.target : undefined);
 
   if (rawTarget && typeof rawTarget === 'object' && !Array.isArray(rawTarget)) {
     const targetObj = ensureRecord(rawTarget);
     const connectionTarget = String(
-      targetObj.node
-      || targetObj.name
-      || targetObj.target
-      || targetObj.targetNodeName
-      || ''
+      targetObj.node ||
+      targetObj.name ||
+      targetObj.target ||
+      targetObj.targetNodeName ||
+      '',
     ).trim();
 
     if (!connectionTarget) {
-      throw new Error(`operations[${index}].connectionTarget object must include node/name/target.`);
+      throw new Error(`operations[${ index }].connectionTarget object must include node/name/target.`);
     }
 
     const rawTargetIndex = targetObj.index ?? targetObj.targetIndex ?? targetObj.inputIndex;
@@ -214,7 +216,7 @@ function normalizeConnectionTargetSpec(
 
     const targetIndexFromTarget = Number(rawTargetIndex);
     if (!Number.isInteger(targetIndexFromTarget) || targetIndexFromTarget < 0) {
-      throw new Error(`operations[${index}].connectionTarget.index must be a non-negative integer.`);
+      throw new Error(`operations[${ index }].connectionTarget.index must be a non-negative integer.`);
     }
 
     return { connectionTarget, targetIndexFromTarget };
@@ -233,12 +235,12 @@ function normalizeOperations(rawOperations: unknown): NormalizedOperation[] {
   }
 
   return rawOperations.map((raw, index) => {
-    const parsed = parseJsonIfString(raw, `operations[${index}]`);
+    const parsed = parseJsonIfString(raw, `operations[${ index }]`);
     const rec = ensureRecord(parsed);
     const op = String(rec.op || '').trim().toLowerCase();
 
     if (op !== 'add' && op !== 'update' && op !== 'remove') {
-      throw new Error(`operations[${index}].op must be one of: add, update, remove.`);
+      throw new Error(`operations[${ index }].op must be one of: add, update, remove.`);
     }
 
     const explicitTarget = String(rec.targetType || rec.entity || rec.resource || rec.target || '').trim().toLowerCase();
@@ -246,12 +248,12 @@ function normalizeOperations(rawOperations: unknown): NormalizedOperation[] {
 
     if (target === 'node') {
       if (op === 'add') {
-        const node = parseJsonIfString(rec.node, `operations[${index}].node`);
+        const node = parseJsonIfString(rec.node, `operations[${ index }].node`);
         if (!node || typeof node !== 'object' || Array.isArray(node)) {
-          throw new Error(`operations[${index}].node must be an object for node add.`);
+          throw new Error(`operations[${ index }].node must be an object for node add.`);
         }
         if (!String(node.type || '').trim() || !Array.isArray(node.position)) {
-          throw new Error(`operations[${index}].node must include at least type and position for node add.`);
+          throw new Error(`operations[${ index }].node must include at least type and position for node add.`);
         }
         return { target: 'node', op: 'add', node };
       }
@@ -259,20 +261,20 @@ function normalizeOperations(rawOperations: unknown): NormalizedOperation[] {
       if (op === 'update') {
         const nodeId = String(rec.nodeId || '').trim();
         const nodeName = String(rec.nodeName || '').trim();
-        const node = rec.node !== undefined ? parseJsonIfString(rec.node, `operations[${index}].node`) : undefined;
-        const patch = parseJsonIfString(rec.patch, `operations[${index}].patch`);
+        const node = rec.node !== undefined ? parseJsonIfString(rec.node, `operations[${ index }].node`) : undefined;
+        const patch = parseJsonIfString(rec.patch, `operations[${ index }].patch`);
 
         if (!nodeId && !nodeName) {
-          throw new Error(`operations[${index}] node update requires nodeId or nodeName.`);
+          throw new Error(`operations[${ index }] node update requires nodeId or nodeName.`);
         }
         if (node !== undefined && (typeof node !== 'object' || node === null || Array.isArray(node))) {
-          throw new Error(`operations[${index}].node must be an object when provided for node update.`);
+          throw new Error(`operations[${ index }].node must be an object when provided for node update.`);
         }
         if (patch !== undefined && (!patch || typeof patch !== 'object' || Array.isArray(patch))) {
-          throw new Error(`operations[${index}].patch must be an object for node update.`);
+          throw new Error(`operations[${ index }].patch must be an object for node update.`);
         }
         if (node === undefined && patch === undefined) {
-          throw new Error(`operations[${index}] node update requires either patch or node.`);
+          throw new Error(`operations[${ index }] node update requires either patch or node.`);
         }
 
         return { target: 'node', op: 'update', nodeId, nodeName, patch, node: node as JsonRecord | undefined };
@@ -281,14 +283,14 @@ function normalizeOperations(rawOperations: unknown): NormalizedOperation[] {
       const nodeId = String(rec.nodeId || '').trim();
       const nodeName = String(rec.nodeName || '').trim();
       if (!nodeId && !nodeName) {
-        throw new Error(`operations[${index}] node remove requires nodeId or nodeName.`);
+        throw new Error(`operations[${ index }] node remove requires nodeId or nodeName.`);
       }
 
       return { target: 'node', op: 'remove', nodeId, nodeName };
     }
 
     if (op === 'update') {
-      throw new Error(`operations[${index}] connection target does not support op=update. Use add/remove.`);
+      throw new Error(`operations[${ index }] connection target does not support op=update. Use add/remove.`);
     }
 
     const source = String(rec.source || rec.connectionSource || rec.sourceNodeName || '').trim();
@@ -302,16 +304,16 @@ function normalizeOperations(rawOperations: unknown): NormalizedOperation[] {
     const targetIndex = Number(rec.targetIndex ?? rec.targetInputIndex ?? targetSpec.targetIndexFromTarget ?? 0);
 
     if (!source) {
-      throw new Error(`operations[${index}].source is required for connection operations (accepted aliases: source, connectionSource, sourceNodeName).`);
+      throw new Error(`operations[${ index }].source is required for connection operations (accepted aliases: source, connectionSource, sourceNodeName).`);
     }
     if (!connectionTarget) {
-      throw new Error(`operations[${index}] connection destination is required (use connectionTarget string or connectionTarget object with node).`);
+      throw new Error(`operations[${ index }] connection destination is required (use connectionTarget string or connectionTarget object with node).`);
     }
     if (!Number.isInteger(sourceIndex) || sourceIndex < 0) {
-      throw new Error(`operations[${index}].sourceIndex must be a non-negative integer.`);
+      throw new Error(`operations[${ index }].sourceIndex must be a non-negative integer.`);
     }
     if (!Number.isInteger(targetIndex) || targetIndex < 0) {
-      throw new Error(`operations[${index}].targetIndex must be a non-negative integer.`);
+      throw new Error(`operations[${ index }].targetIndex must be a non-negative integer.`);
     }
 
     return {
@@ -339,7 +341,7 @@ function collectConnectionIssues(connectionsRaw: unknown, nodeNames: Set<string>
 
   for (const [sourceNode, byTypeRaw] of Object.entries(connections)) {
     if (!nodeNames.has(sourceNode)) {
-      issues.push({ issue: 'source_node_missing', detail: `Connection source node missing: ${sourceNode}` });
+      issues.push({ issue: 'source_node_missing', detail: `Connection source node missing: ${ sourceNode }` });
     }
 
     const byType = ensureRecord(byTypeRaw);
@@ -351,8 +353,8 @@ function collectConnectionIssues(connectionsRaw: unknown, nodeNames: Set<string>
       outputBuckets.forEach((targetsRaw, sourceOutputIndex) => {
         if (!Array.isArray(targetsRaw)) {
           issues.push({
-            issue: 'malformed_output_bucket',
-            detail: `${sourceNode}.${sourceType}[${sourceOutputIndex}] is not an array`,
+            issue:  'malformed_output_bucket',
+            detail: `${ sourceNode }.${ sourceType }[${ sourceOutputIndex }] is not an array`,
           });
           return;
         }
@@ -364,23 +366,23 @@ function collectConnectionIssues(connectionsRaw: unknown, nodeNames: Set<string>
 
           if (!targetNode) {
             issues.push({
-              issue: 'missing_target_node',
-              detail: `${sourceNode}.${sourceType}[${sourceOutputIndex}] edge has empty target node`,
+              issue:  'missing_target_node',
+              detail: `${ sourceNode }.${ sourceType }[${ sourceOutputIndex }] edge has empty target node`,
             });
             continue;
           }
 
           if (!nodeNames.has(targetNode)) {
             issues.push({
-              issue: 'target_node_missing',
-              detail: `${sourceNode}.${sourceType}[${sourceOutputIndex}] references missing target node: ${targetNode}`,
+              issue:  'target_node_missing',
+              detail: `${ sourceNode }.${ sourceType }[${ sourceOutputIndex }] references missing target node: ${ targetNode }`,
             });
           }
 
           if (!Number.isInteger(targetIndex) || targetIndex < 0) {
             issues.push({
-              issue: 'invalid_target_index',
-              detail: `${sourceNode}.${sourceType}[${sourceOutputIndex}] -> ${targetNode} has invalid target index`,
+              issue:  'invalid_target_index',
+              detail: `${ sourceNode }.${ sourceType }[${ sourceOutputIndex }] -> ${ targetNode } has invalid target index`,
             });
           }
         }
@@ -412,9 +414,9 @@ function getMainOutputEdges(connections: JsonRecord, sourceNode: string, sourceI
 
 function countMatchingMainEdges(outputEdges: any[], op: NormalizedConnectionOperation): number {
   return outputEdges.filter((edge) =>
-    String(edge?.node || '').trim() === op.connectionTarget
-    && Number(edge?.index ?? -1) === op.targetIndex
-    && String(edge?.type || 'main').trim() === 'main'
+    String(edge?.node || '').trim() === op.connectionTarget &&
+    Number(edge?.index ?? -1) === op.targetIndex &&
+    String(edge?.type || 'main').trim() === 'main',
   ).length;
 }
 
@@ -425,15 +427,15 @@ function connectionExists(connectionsRaw: unknown, source: string, connectionTar
   const outputEdges = Array.isArray(typeBuckets[sourceIndex]) ? typeBuckets[sourceIndex] : [];
 
   return outputEdges.some((edge) =>
-    String(edge?.node || '').trim() === connectionTarget
-    && Number(edge?.index ?? -1) === targetIndex
-    && String(edge?.type || 'main').trim() === 'main'
+    String(edge?.node || '').trim() === connectionTarget &&
+    Number(edge?.index ?? -1) === targetIndex &&
+    String(edge?.type || 'main').trim() === 'main',
   );
 }
 
 export class PatchWorkflowWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
@@ -448,17 +450,17 @@ export class PatchWorkflowWorker extends BaseTool {
       const workflow = await service.getWorkflow(workflowId, true);
       const graph = cloneWorkflowGraph(workflow);
       const originalSnapshot = {
-        name: graph.name,
-        nodes: deepClone(graph.nodes),
+        name:        graph.name,
+        nodes:       deepClone(graph.nodes),
         connections: deepClone(graph.connections),
-        settings: deepClone(graph.settings),
-        staticData: deepClone(graph.staticData),
+        settings:    deepClone(graph.settings),
+        staticData:  deepClone(graph.staticData),
       };
 
       const nodeNames = new Set(
         (Array.isArray(graph.nodes) ? graph.nodes : [])
           .map((node) => String(node?.name || '').trim())
-          .filter(Boolean)
+          .filter(Boolean),
       );
 
       if (nodeNames.size === 0) {
@@ -469,8 +471,8 @@ export class PatchWorkflowWorker extends BaseTool {
 
       const preflightIssues = collectConnectionIssues(graph.connections, nodeNames);
       if (preflightIssues.length > 0) {
-        const details = preflightIssues.slice(0, 8).map((issue) => `${issue.issue}: ${issue.detail}`).join('; ');
-        throw new Error(`Workflow connections preflight failed; refusing patch. ${details}`);
+        const details = preflightIssues.slice(0, 8).map((issue) => `${ issue.issue }: ${ issue.detail }`).join('; ');
+        throw new Error(`Workflow connections preflight failed; refusing patch. ${ details }`);
       }
 
       const results: any[] = [];
@@ -478,7 +480,7 @@ export class PatchWorkflowWorker extends BaseTool {
       for (const operation of operations) {
         if (operation.target === 'node') {
           if (operation.op === 'add') {
-            const rawNode = operation.node as JsonRecord;
+            const rawNode = operation.node!;
             const nodeName = ensureUniqueNodeName(rawNode.name || 'New Node', graph.nodes);
             const nodeId = ensureNodeId(rawNode.id, nodeName, graph.nodes);
             const nodeToInsert = { ...rawNode, id: nodeId, name: nodeName };
@@ -486,18 +488,18 @@ export class PatchWorkflowWorker extends BaseTool {
             nodeNames.add(nodeName);
 
             results.push({
-              target: 'node',
-              op: 'add',
-              changed: true,
-              insertedNodeId: nodeId,
+              target:           'node',
+              op:               'add',
+              changed:          true,
+              insertedNodeId:   nodeId,
               insertedNodeName: nodeName,
-              insertIndex: graph.nodes.length - 1,
+              insertIndex:      graph.nodes.length - 1,
             });
             continue;
           }
 
           const nodeIndex = resolveNodeIndex(graph.nodes, {
-            nodeId: operation.nodeId,
+            nodeId:   operation.nodeId,
             nodeName: operation.nodeName,
           });
 
@@ -523,7 +525,7 @@ export class PatchWorkflowWorker extends BaseTool {
 
             if (operation.patch?.name !== undefined || replacementNode?.name !== undefined) {
               const requestedName = String(
-                (replacementNode?.name !== undefined ? replacementNode.name : operation.patch?.name) || ''
+                (replacementNode?.name !== undefined ? replacementNode.name : operation.patch?.name) || '',
               );
               mergedNode.name = ensureUniqueNodeName(requestedName, graph.nodes, String(existingNode.id || ''));
             }
@@ -538,14 +540,14 @@ export class PatchWorkflowWorker extends BaseTool {
             }
 
             results.push({
-              target: 'node',
-              op: 'update',
-              changed: true,
+              target:           'node',
+              op:               'update',
+              changed:          true,
               nodeIndex,
-              appliedPatch: replacementNode ? mergedNode : patchObject,
+              appliedPatch:     replacementNode ? mergedNode : patchObject,
               previousNodeName: oldName,
-              updatedNodeName: newName,
-              updatedNodeId: mergedNode.id,
+              updatedNodeName:  newName,
+              updatedNodeId:    mergedNode.id,
             });
             continue;
           }
@@ -557,22 +559,22 @@ export class PatchWorkflowWorker extends BaseTool {
           nodeNames.delete(removedName);
 
           results.push({
-            target: 'node',
-            op: 'remove',
-            changed: true,
-            removedNodeId: removedNode?.id,
-            removedNodeName: removedName,
-            removedNodeIndex: nodeIndex,
+            target:             'node',
+            op:                 'remove',
+            changed:            true,
+            removedNodeId:      removedNode?.id,
+            removedNodeName:    removedName,
+            removedNodeIndex:   nodeIndex,
             removedConnections: removedConnectionSummary,
           });
           continue;
         }
 
         if (!nodeNames.has(operation.source)) {
-          throw new Error(`Source node not found: ${operation.source}`);
+          throw new Error(`Source node not found: ${ operation.source }`);
         }
         if (!nodeNames.has(operation.connectionTarget)) {
-          throw new Error(`Target node not found: ${operation.connectionTarget}`);
+          throw new Error(`Target node not found: ${ operation.connectionTarget }`);
         }
 
         const outputEdges = getMainOutputEdges(graph.connections, operation.source, operation.sourceIndex);
@@ -581,27 +583,27 @@ export class PatchWorkflowWorker extends BaseTool {
         if (operation.op === 'add') {
           if (beforeCount === 0) {
             outputEdges.push({
-              node: operation.connectionTarget,
-              type: 'main',
+              node:  operation.connectionTarget,
+              type:  'main',
               index: operation.targetIndex,
             });
           }
 
           const afterCount = countMatchingMainEdges(outputEdges, operation);
           if (afterCount < 1) {
-            throw new Error(`Patch add verification failed for ${operation.source} -> ${operation.connectionTarget}.`);
+            throw new Error(`Patch add verification failed for ${ operation.source } -> ${ operation.connectionTarget }.`);
           }
 
           results.push({
-            target: 'connection',
-            op: 'add',
-            source: operation.source,
-            connectionTarget: operation.connectionTarget,
-            sourceIndex: operation.sourceIndex,
-            targetIndex: operation.targetIndex,
-            changed: beforeCount === 0,
+            target:             'connection',
+            op:                 'add',
+            source:             operation.source,
+            connectionTarget:   operation.connectionTarget,
+            sourceIndex:        operation.sourceIndex,
+            targetIndex:        operation.targetIndex,
+            changed:            beforeCount === 0,
             matchedCountBefore: beforeCount,
-            matchedCountAfter: afterCount,
+            matchedCountAfter:  afterCount,
           });
           continue;
         }
@@ -621,57 +623,57 @@ export class PatchWorkflowWorker extends BaseTool {
         const afterEdges = getMainOutputEdges(graph.connections, operation.source, operation.sourceIndex);
         const afterCount = countMatchingMainEdges(afterEdges, operation);
         if (afterCount !== 0) {
-          throw new Error(`Patch remove verification failed for ${operation.source} -> ${operation.connectionTarget}.`);
+          throw new Error(`Patch remove verification failed for ${ operation.source } -> ${ operation.connectionTarget }.`);
         }
 
         const matchedCount = outputEdges.length - nextOutputEdges.length;
         results.push({
-          target: 'connection',
-          op: 'remove',
-          source: operation.source,
-          connectionTarget: operation.connectionTarget,
-          sourceIndex: operation.sourceIndex,
-          targetIndex: operation.targetIndex,
-          changed: matchedCount > 0,
+          target:             'connection',
+          op:                 'remove',
+          source:             operation.source,
+          connectionTarget:   operation.connectionTarget,
+          sourceIndex:        operation.sourceIndex,
+          targetIndex:        operation.targetIndex,
+          changed:            matchedCount > 0,
           matchedCountBefore: beforeCount,
-          matchedCountAfter: afterCount,
+          matchedCountAfter:  afterCount,
         });
       }
 
       const postPatchIssues = collectConnectionIssues(graph.connections, nodeNames);
       if (postPatchIssues.length > 0) {
-        const details = postPatchIssues.slice(0, 8).map((issue) => `${issue.issue}: ${issue.detail}`).join('; ');
-        throw new Error(`Workflow connections failed post-patch validation. ${details}`);
+        const details = postPatchIssues.slice(0, 8).map((issue) => `${ issue.issue }: ${ issue.detail }`).join('; ');
+        throw new Error(`Workflow connections failed post-patch validation. ${ details }`);
       }
 
       const changedCount = results.filter((result) => result.changed).length;
       const netChanged = !deepEqual(originalSnapshot, {
-        name: graph.name,
-        nodes: graph.nodes,
+        name:        graph.name,
+        nodes:       graph.nodes,
         connections: graph.connections,
-        settings: graph.settings,
-        staticData: graph.staticData,
+        settings:    graph.settings,
+        staticData:  graph.staticData,
       });
 
       if (changedCount === 0 || !netChanged) {
         return {
           successBoolean: true,
           responseString: JSON.stringify({
-            workflowId: String(workflow?.id || workflowId),
-            patchedCount: 0,
-            skippedUpdate: true,
+            workflowId:          String(workflow?.id || workflowId),
+            patchedCount:        0,
+            skippedUpdate:       true,
             skippedUpdateReason: changedCount === 0 ? 'no_effective_operations' : 'net_noop_after_patch_sequence',
-            operations: results,
+            operations:          results,
           }, null, 2),
         };
       }
 
       const updated = await service.updateWorkflow(workflow.id, {
-        name: graph.name,
-        nodes: graph.nodes,
+        name:        graph.name,
+        nodes:       graph.nodes,
         connections: graph.connections,
-        settings: graph.settings,
-        staticData: graph.staticData,
+        settings:    graph.settings,
+        staticData:  graph.staticData,
       });
 
       // Read-after-write verification to prevent silent no-op success responses.
@@ -696,10 +698,10 @@ export class PatchWorkflowWorker extends BaseTool {
           );
 
           if (result.op === 'add' && !exists) {
-            throw new Error(`Post-save verification failed: connection add was not persisted (${result.source} -> ${result.connectionTarget}).`);
+            throw new Error(`Post-save verification failed: connection add was not persisted (${ result.source } -> ${ result.connectionTarget }).`);
           }
           if (result.op === 'remove' && exists) {
-            throw new Error(`Post-save verification failed: connection remove was not persisted (${result.source} -> ${result.connectionTarget}).`);
+            throw new Error(`Post-save verification failed: connection remove was not persisted (${ result.source } -> ${ result.connectionTarget }).`);
           }
           continue;
         }
@@ -708,7 +710,7 @@ export class PatchWorkflowWorker extends BaseTool {
           const id = String(result.insertedNodeId || '').trim();
           const name = String(result.insertedNodeName || '').trim();
           if ((id && !persistedNodeIds.has(id)) || (name && !persistedNodeNames.has(name))) {
-            throw new Error(`Post-save verification failed: node add was not persisted (${name || id}).`);
+            throw new Error(`Post-save verification failed: node add was not persisted (${ name || id }).`);
           }
           continue;
         }
@@ -717,7 +719,7 @@ export class PatchWorkflowWorker extends BaseTool {
           const id = String(result.updatedNodeId || '').trim();
           const name = String(result.updatedNodeName || '').trim();
           if ((id && !persistedNodeIds.has(id)) || (name && !persistedNodeNames.has(name))) {
-            throw new Error(`Post-save verification failed: node update was not persisted (${name || id}).`);
+            throw new Error(`Post-save verification failed: node update was not persisted (${ name || id }).`);
           }
 
           const persistedNode = persistedNodes.find((node: any) => {
@@ -727,11 +729,11 @@ export class PatchWorkflowWorker extends BaseTool {
           });
 
           if (!persistedNode) {
-            throw new Error(`Post-save verification failed: updated node could not be located (${name || id}).`);
+            throw new Error(`Post-save verification failed: updated node could not be located (${ name || id }).`);
           }
 
           if (!isSubsetMatch(ensureRecord(result.appliedPatch), persistedNode)) {
-            throw new Error(`Post-save verification failed: node patch fields were not persisted (${name || id}).`);
+            throw new Error(`Post-save verification failed: node patch fields were not persisted (${ name || id }).`);
           }
           continue;
         }
@@ -740,7 +742,7 @@ export class PatchWorkflowWorker extends BaseTool {
           const id = String(result.removedNodeId || '').trim();
           const name = String(result.removedNodeName || '').trim();
           if ((id && persistedNodeIds.has(id)) || (name && persistedNodeNames.has(name))) {
-            throw new Error(`Post-save verification failed: node remove was not persisted (${name || id}).`);
+            throw new Error(`Post-save verification failed: node remove was not persisted (${ name || id }).`);
           }
         }
       }
@@ -748,18 +750,17 @@ export class PatchWorkflowWorker extends BaseTool {
       return {
         successBoolean: true,
         responseString: JSON.stringify({
-          workflowId: updated.id,
-          patchedCount: changedCount,
+          workflowId:    updated.id,
+          patchedCount:  changedCount,
           skippedUpdate: false,
-          operations: results,
+          operations:    results,
         }, null, 2),
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error patching workflow: ${(error as Error).message}`,
+        responseString: `Error patching workflow: ${ (error as Error).message }`,
       };
     }
   }
 }
-

@@ -9,20 +9,50 @@
       @contextmenu.prevent
     >
       <!-- View in Finder -->
-      <button class="context-menu-item" @click="handleViewInFinder">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <button
+        class="context-menu-item"
+        @click="handleViewInFinder"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-          <circle cx="12" cy="12" r="3" />
+          <circle
+            cx="12"
+            cy="12"
+            r="3"
+          />
         </svg>
         <span>View in Finder</span>
       </button>
 
       <!-- Open with... -->
-      <div class="context-menu-sep"></div>
-      <div class="context-menu-subheader">Open with…</div>
-      <button class="context-menu-item" @click="handleOpenWithEditor('code')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+      <div class="context-menu-sep" />
+      <div class="context-menu-subheader">
+        Open with…
+      </div>
+      <button
+        class="context-menu-item"
+        @click="handleOpenWithEditor('code')"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
         </svg>
         <span>Code Editor</span>
       </button>
@@ -31,38 +61,99 @@
         class="context-menu-item"
         @click="handleOpenWithEditor('preview')"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-          <circle cx="12" cy="12" r="3" />
+          <circle
+            cx="12"
+            cy="12"
+            r="3"
+          />
         </svg>
         <span>Preview</span>
       </button>
 
       <!-- Tab actions -->
-      <div class="context-menu-sep"></div>
-      <button class="context-menu-item" @click="handleSaveTab">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-          <polyline points="17,21 17,13 7,13 7,21"/>
-          <polyline points="7,3 7,8 15,8"/>
+      <div class="context-menu-sep" />
+      <button
+        class="context-menu-item"
+        @click="handleSaveTab"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+          <polyline points="17,21 17,13 7,13 7,21" />
+          <polyline points="7,3 7,8 15,8" />
         </svg>
         <span>Save</span>
       </button>
-      <button class="context-menu-item" @click="handleCloseTab">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 6L6 18M6 6l12 12"/>
+      <button
+        class="context-menu-item"
+        @click="handleCloseTab"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M18 6L6 18M6 6l12 12" />
         </svg>
         <span>Close Tab</span>
       </button>
-      <button class="context-menu-item" @click="handleCloseOthers">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 6L6 18M6 6l12 12"/>
+      <button
+        class="context-menu-item"
+        @click="handleCloseOthers"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M18 6L6 18M6 6l12 12" />
         </svg>
         <span>Close Others</span>
       </button>
-      <button class="context-menu-item" @click="handleCloseAll">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 6L6 18M6 6l12 12"/>
+      <button
+        class="context-menu-item"
+        @click="handleCloseAll"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M18 6L6 18M6 6l12 12" />
         </svg>
         <span>Close All</span>
       </button>
@@ -76,14 +167,14 @@ import { defineComponent, ref, watch } from 'vue';
 const MARKDOWN_EXTS = new Set(['.md', '.markdown', '.mdx']);
 
 export interface TabState {
-  path: string;
-  name: string;
-  ext: string;
-  content: string;
-  loading: boolean;
-  error: string;
-  dirty: boolean;
-  editorType?: 'code' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
+  path:             string;
+  name:             string;
+  ext:              string;
+  content:          string;
+  loading:          boolean;
+  error:            string;
+  dirty:            boolean;
+  editorType?:      'code' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
   originalContent?: string;
 }
 
@@ -92,25 +183,25 @@ export default defineComponent({
 
   props: {
     visible: {
-      type: Boolean,
-      default: false
+      type:    Boolean,
+      default: false,
     },
     x: {
-      type: Number,
-      default: 0
+      type:    Number,
+      default: 0,
     },
     y: {
-      type: Number,
-      default: 0
+      type:    Number,
+      default: 0,
     },
     tab: {
-      type: Object as () => TabState | null,
-      default: null
+      type:    Object as () => TabState | null,
+      default: null,
     },
     isDark: {
-      type: Boolean,
-      default: false
-    }
+      type:    Boolean,
+      default: false,
+    },
   },
 
   emits: [
@@ -119,7 +210,7 @@ export default defineComponent({
     'save-tab',
     'close-tab',
     'close-others',
-    'close-all'
+    'close-all',
   ],
 
   setup(props, { emit }) {
@@ -167,9 +258,9 @@ export default defineComponent({
       handleSaveTab,
       handleCloseTab,
       handleCloseOthers,
-      handleCloseAll
+      handleCloseAll,
     };
-  }
+  },
 });
 </script>
 

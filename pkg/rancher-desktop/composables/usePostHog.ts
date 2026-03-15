@@ -2,15 +2,14 @@ import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { PostHog } from 'posthog-node';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { Settings } from '@pkg/config/settings';
-import { randomUUID } from 'crypto';
-import { createHash } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
 const POSTHOG_API_KEY = 'phc_gXH23UnL6M7IbHXBfLEjMi555TwCKvyTkLLCE8mEECL';
 const POSTHOG_HOST = 'https://us.i.posthog.com';
 const DESKTOP_CONTEXT_PROPERTIES = {
-  app_platform: 'desktop',
-  app_name: 'sulla-desktop',
+  app_platform:    'desktop',
+  app_name:        'sulla-desktop',
   app_environment: 'electron-renderer',
 };
 

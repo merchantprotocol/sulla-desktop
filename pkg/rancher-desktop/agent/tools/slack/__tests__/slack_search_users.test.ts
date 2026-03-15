@@ -24,11 +24,11 @@ describe('slack_search_users tool', () => {
     mockGet.mockReset();
   });
 
-  it('returns success with matching users', async () => {
+  it('returns success with matching users', async() => {
     const { SlackSearchUsersWorker, slackSearchUsersRegistration } = await loadSlackSearchUsersTool();
 
     mockGet.mockResolvedValueOnce({
-      searchUsers: jest.fn(async () => ([
+      searchUsers: jest.fn(async() => ([
         { id: 'U1', name: 'jdoe', real_name: 'John Doe' },
       ])),
     });
@@ -41,11 +41,11 @@ describe('slack_search_users tool', () => {
     expect(result.result).toContain('U1');
   });
 
-  it('returns failure when no users match', async () => {
+  it('returns failure when no users match', async() => {
     const { SlackSearchUsersWorker, slackSearchUsersRegistration } = await loadSlackSearchUsersTool();
 
     mockGet.mockResolvedValueOnce({
-      searchUsers: jest.fn(async () => []),
+      searchUsers: jest.fn(async() => []),
     });
 
     const worker = configureWorker(new SlackSearchUsersWorker(), slackSearchUsersRegistration);

@@ -16,39 +16,95 @@
       @drop.prevent.stop="handleDrop"
     >
       <!-- Chevron for directories -->
-      <span v-if="entry.isDir" class="chevron" :class="{ expanded: isExpanded }">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+      <span
+        v-if="entry.isDir"
+        class="chevron"
+        :class="{ expanded: isExpanded }"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+        >
           <path d="M6 4l4 4-4 4" />
         </svg>
       </span>
-      <span v-else class="chevron-spacer"></span>
+      <span
+        v-else
+        class="chevron-spacer"
+      />
 
       <!-- File/folder icon -->
       <span class="node-icon">
         <!-- Folder open -->
-        <svg v-if="entry.isDir && isExpanded" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon-folder">
+        <svg
+          v-if="entry.isDir && isExpanded"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="icon-folder"
+        >
           <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2V7" />
           <path d="M8 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
           <path d="M21 15H9.5a2 2 0 0 0-1.9 1.4L6 21h11.5a2 2 0 0 0 1.9-1.4L21 15Z" />
         </svg>
         <!-- Folder closed -->
-        <svg v-else-if="entry.isDir" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon-folder">
+        <svg
+          v-else-if="entry.isDir"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="icon-folder"
+        >
           <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
         </svg>
         <!-- File -->
-        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon-file">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="currentColor" opacity="0.08" />
+        <svg
+          v-else
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="icon-file"
+        >
+          <path
+            d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+            fill="currentColor"
+            opacity="0.08"
+          />
           <polyline points="14 2 14 8 20 8" />
         </svg>
       </span>
 
       <!-- Label -->
-      <span class="node-label" :title="entry.path">{{ entry.name }}</span>
+      <span
+        class="node-label"
+        :title="entry.path"
+      >{{ entry.name }}</span>
     </div>
 
     <!-- Children (if expanded directory) -->
     <div v-if="entry.isDir && isExpanded">
-      <div v-if="isLoading" class="file-tree-row" :style="{ paddingLeft: ((depth + 1) * 16 + 8) + 'px' }">
+      <div
+        v-if="isLoading"
+        class="file-tree-row"
+        :style="{ paddingLeft: ((depth + 1) * 16 + 8) + 'px' }"
+      >
         <span class="loading-text">Loading…</span>
       </div>
       <FileTreeNode
@@ -76,23 +132,22 @@
 import { defineComponent, computed, type PropType } from 'vue';
 
 interface FileEntry {
-  name: string;
-  path: string;
+  name:  string;
+  path:  string;
   isDir: boolean;
-  size: number;
-  ext: string;
+  size:  number;
+  ext:   string;
 }
-
 
 export default defineComponent({
   name: 'FileTreeNode',
 
   props: {
-    entry:        { type: Object as PropType<FileEntry>, required: true },
-    depth:        { type: Number, required: true },
-    expandedDirs: { type: Object as PropType<Set<string>>, required: true },
-    childrenMap:  { type: Object as PropType<Record<string, FileEntry[]>>, required: true },
-    loadingDirs:  { type: Object as PropType<Set<string>>, required: true },
+    entry:          { type: Object as PropType<FileEntry>, required: true },
+    depth:          { type: Number, required: true },
+    expandedDirs:   { type: Object as PropType<Set<string>>, required: true },
+    childrenMap:    { type: Object as PropType<Record<string, FileEntry[]>>, required: true },
+    loadingDirs:    { type: Object as PropType<Set<string>>, required: true },
     selectedPaths:  { type: Object as PropType<Set<string>>, default: () => new Set() },
     dropTargetPath: { type: String, default: '' },
     highlightPath:  { type: String, default: '' },

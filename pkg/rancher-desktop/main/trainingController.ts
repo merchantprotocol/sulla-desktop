@@ -109,7 +109,7 @@ export function releaseTrainingLock(): void {
   isTrainingRunning = false;
   lastProgressUpdate = null;
   stopCaffeinate();
-  try { fs.unlinkSync(getTrainingLockFile()); } catch { /* already gone */ }
+  try { fs.unlinkSync(getTrainingLockFile()) } catch { /* already gone */ }
 }
 
 /**
@@ -127,7 +127,7 @@ export function isTrainingLocked(): boolean {
     return true;
   } catch {
     // PID is dead — stale lock
-    try { fs.unlinkSync(lockFile); } catch { /* ignore */ }
+    try { fs.unlinkSync(lockFile) } catch { /* ignore */ }
     return false;
   }
 }
@@ -148,13 +148,13 @@ function startCaffeinate(): void {
   try {
     const { spawn: spawnProc } = require('child_process');
     const proc = spawnProc('caffeinate', ['-i', '-s'], {
-      stdio: 'ignore',
+      stdio:    'ignore',
       detached: true,
     });
 
     proc.unref();
     caffeinateProcess = proc;
-    console.log(`[Training] caffeinate started (PID ${proc.pid}) — preventing sleep during training`);
+    console.log(`[Training] caffeinate started (PID ${ proc.pid }) — preventing sleep during training`);
   } catch (err) {
     console.error('[Training] Failed to start caffeinate:', err);
   }
@@ -190,14 +190,14 @@ function scheduleWake(hour: number, minute: number): void {
 
     // pmset expects: "MM/dd/yyyy HH:mm:ss"
     const pad = (n: number) => String(n).padStart(2, '0');
-    const dateStr = `${pad(wake.getMonth() + 1)}/${pad(wake.getDate())}/${wake.getFullYear()} ${pad(wake.getHours())}:${pad(wake.getMinutes())}:00`;
+    const dateStr = `${ pad(wake.getMonth() + 1) }/${ pad(wake.getDate()) }/${ wake.getFullYear() } ${ pad(wake.getHours()) }:${ pad(wake.getMinutes()) }:00`;
 
     const { execSync } = require('child_process');
-    execSync(`pmset schedule wake "${dateStr}"`, { stdio: 'pipe' });
-    console.log(`[Training] Scheduled macOS wake for ${dateStr}`);
+    execSync(`pmset schedule wake "${ dateStr }"`, { stdio: 'pipe' });
+    console.log(`[Training] Scheduled macOS wake for ${ dateStr }`);
   } catch (err) {
     // pmset requires root — non-fatal if it fails
-    console.log(`[Training] Could not schedule wake (pmset may need sudo): ${err}`);
+    console.log(`[Training] Could not schedule wake (pmset may need sudo): ${ err }`);
   }
 }
 
@@ -213,7 +213,7 @@ function createLogFile(prefix: string, headerLines: string[]): { logFilename: st
   const logsDir = getTrainingLogsDir();
   fs.mkdirSync(logsDir, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const logFilename = `${prefix}-${timestamp}.log`;
+  const logFilename = `${ prefix }-${ timestamp }.log`;
   const logPath = path.join(logsDir, logFilename);
   fs.writeFileSync(logPath, headerLines.join('\n') + '\n', 'utf-8');
   return { logFilename, logPath };
@@ -221,12 +221,12 @@ function createLogFile(prefix: string, headerLines: string[]): { logFilename: st
 
 /** Append a line to a log file (best-effort, never throws). */
 function appendLog(logPath: string, msg: string): void {
-  try { fs.appendFileSync(logPath, msg + '\n', 'utf-8'); } catch { /* ok */ }
+  try { fs.appendFileSync(logPath, msg + '\n', 'utf-8') } catch { /* ok */ }
 }
 
 /** Send a progress update to the renderer via IPC and also log it. */
 function sendProgress(logFilename: string, logPath: string, phase: string, progress: number, extra?: { iter?: number; totalIters?: number; eta?: string }): void {
-  appendLog(logPath, `[progress] ${phase} (${progress}%)`);
+  appendLog(logPath, `[progress] ${ phase } (${ progress }%)`);
   const payload = { phase, progress, logFilename, ...extra };
   lastProgressUpdate = payload;
   try {
@@ -303,13 +303,13 @@ export function getTrainingHistory() {
 
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
-      const modelMatch = content.match(/Model:\s+(.+)/);
+      const modelMatch = /Model:\s+(.+)/.exec(content);
       if (modelMatch) model = modelMatch[1].trim();
 
       if (content.includes('=== Completed:')) {
         status = 'completed';
-        const startMatch = content.match(/Started:\s+(.+)/);
-        const endMatch = content.match(/=== Completed:\s+(.+?)\s*(?:\(|===)/);
+        const startMatch = /Started:\s+(.+)/.exec(content);
+        const endMatch = /=== Completed:\s+(.+?)\s*(?:\(|===)/.exec(content);
         if (startMatch && endMatch) {
           const startTime = new Date(startMatch[1].trim()).getTime();
           const endTime = new Date(endMatch[1].trim()).getTime();
@@ -323,15 +323,19 @@ export function getTrainingHistory() {
         if (ageMs > 3 * 60 * 60 * 1000) status = 'failed';
       }
 
-      const countMatch = content.match(/(\d+)\s+conversation/i);
+      const countMatch = /(\d+)\s+conversation/i.exec(content);
       if (countMatch) conversationsProcessed = parseInt(countMatch[1], 10);
     } catch { /* ok */ }
 
     return {
-      filename, size: stat.size,
-      createdAt: stat.birthtime.toISOString(),
+      filename,
+      size:       stat.size,
+      createdAt:  stat.birthtime.toISOString(),
       modifiedAt: stat.mtime.toISOString(),
-      model, durationMs, conversationsProcessed, status,
+      model,
+      durationMs,
+      conversationsProcessed,
+      status,
     };
   });
 }
@@ -342,7 +346,7 @@ export function readTrainingLog(filename: string): string {
     throw new Error('Invalid filename');
   }
   const filePath = path.join(getTrainingLogsDir(), filename);
-  if (!fs.existsSync(filePath)) throw new Error(`Log file not found: ${filename}`);
+  if (!fs.existsSync(filePath)) throw new Error(`Log file not found: ${ filename }`);
   return fs.readFileSync(filePath, 'utf-8');
 }
 
@@ -388,12 +392,12 @@ function runPhase(
   logFilename?: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    appendLog(logPath, `\n--- ${label} ---`);
-    appendLog(logPath, `[${label}] Command: ${python} ${script} ${args.join(' ')}`);
+    appendLog(logPath, `\n--- ${ label } ---`);
+    appendLog(logPath, `[${ label }] Command: ${ python } ${ script } ${ args.join(' ') }`);
 
     const proc = require('child_process').spawn(python, [script, ...args], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      stdio:    ['ignore', 'pipe', 'pipe'],
+      env:      { ...process.env },
       detached: process.platform !== 'win32',
     });
     activeTrainingProcess = proc;
@@ -402,26 +406,26 @@ function runPhase(
     // Buffer partial lines from stdout for reliable [PROGRESS] parsing
     let stdoutBuffer = '';
 
-    appendLog(logPath, `[${label}] Spawned PID ${proc.pid}`);
+    appendLog(logPath, `[${ label }] Spawned PID ${ proc.pid }`);
 
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      appendLog(logPath, `\n[${label}] TIMEOUT: exceeded ${Math.round(timeoutMs / 60000)} minutes`);
+      appendLog(logPath, `\n[${ label }] TIMEOUT: exceeded ${ Math.round(timeoutMs / 60000) } minutes`);
       try {
         if (process.platform === 'win32') {
-          require('child_process').execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'pipe' });
+          require('child_process').execSync(`taskkill /pid ${ proc.pid } /T /F`, { stdio: 'pipe' });
         } else if (proc.pid) {
           process.kill(-proc.pid, 'SIGKILL');
         }
       } catch { /* dead */ }
       activeTrainingProcess = null;
-      reject(new Error(`${label} timed out`));
+      reject(new Error(`${ label } timed out`));
     }, timeoutMs);
 
     proc.stdout?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
-      try { fs.appendFileSync(logPath, text); } catch { /* ok */ }
+      try { fs.appendFileSync(logPath, text) } catch { /* ok */ }
 
       // Parse [PROGRESS] lines for IPC forwarding
       if (logFilename) {
@@ -433,13 +437,16 @@ function runPhase(
           if (m) {
             const [, phase, iter, total, pct, eta] = m;
             const phaseLabel = PHASE_LABELS[phase] || phase;
-            const etaStr = eta && eta !== 'calculating...' ? ` — ${eta} remaining` : '';
-            const progressStr = `${phaseLabel}: ${iter}/${total} (${pct}%)${etaStr}`;
+            const etaStr = eta && eta !== 'calculating...' ? ` — ${ eta } remaining` : '';
+            const progressStr = `${ phaseLabel }: ${ iter }/${ total } (${ pct }%)${ etaStr }`;
             // Map training progress to 30-95% range (30% = start, 95% = training done)
-            const overallPct = phase === 'complete' ? 100
-              : phase === 'training' ? 30 + Math.round(parseInt(pct) * 0.65)
-              : phase === 'fusing' ? 95 + Math.round(parseInt(pct) * 0.04)
-              : 99;
+            const overallPct = phase === 'complete'
+              ? 100
+              : phase === 'training'
+                ? 30 + Math.round(parseInt(pct) * 0.65)
+                : phase === 'fusing'
+                  ? 95 + Math.round(parseInt(pct) * 0.04)
+                  : 99;
             const payload = {
               phase:       progressStr,
               progress:    overallPct,
@@ -457,7 +464,7 @@ function runPhase(
       }
     });
     proc.stderr?.on('data', (chunk: Buffer) => {
-      try { fs.appendFileSync(logPath, chunk); } catch { /* ok */ }
+      try { fs.appendFileSync(logPath, chunk) } catch { /* ok */ }
     });
     proc.on('close', (code: number | null) => {
       clearTimeout(timer);
@@ -465,11 +472,11 @@ function runPhase(
       settled = true;
       activeTrainingProcess = null;
       if (code === 0) {
-        appendLog(logPath, `[${label}] Completed (exit 0)`);
+        appendLog(logPath, `[${ label }] Completed (exit 0)`);
         resolve();
       } else {
-        appendLog(logPath, `[${label}] Failed (exit ${code})`);
-        reject(new Error(`${label} failed (exit ${code})`));
+        appendLog(logPath, `[${ label }] Failed (exit ${ code })`);
+        reject(new Error(`${ label } failed (exit ${ code })`));
       }
     });
     proc.on('error', (err: Error) => {
@@ -477,7 +484,7 @@ function runPhase(
       if (settled) return;
       settled = true;
       activeTrainingProcess = null;
-      appendLog(logPath, `[${label}] Process error: ${err.message}`);
+      appendLog(logPath, `[${ label }] Process error: ${ err.message }`);
       reject(err);
     });
   });
@@ -503,7 +510,7 @@ export async function runTraining(
   const { getLlamaCppService, GGUF_MODELS, getTrainingScriptsDir } = await import('@pkg/agent/services/LlamaCppService');
   const service = getLlamaCppService();
   const entry = GGUF_MODELS[modelKey];
-  if (!entry?.trainingRepo) throw new Error(`Model ${modelKey} has no training repo configured`);
+  if (!entry?.trainingRepo) throw new Error(`Model ${ modelKey } has no training repo configured`);
 
   const { app } = require('electron');
   const llmRoot = path.join(app.getPath('userData'), 'llm');
@@ -515,40 +522,40 @@ export async function runTraining(
 
   const { logFilename, logPath } = createLogFile('training', [
     '=== Sulla Training Run ===',
-    `Started: ${new Date().toISOString()}`,
-    `Model: ${modelKey} (${entry.trainingRepo})`,
-    `Sources: ${enabledSources.join(', ') || 'none'}`,
-    `LLM Root: ${llmRoot}`,
+    `Started: ${ new Date().toISOString() }`,
+    `Model: ${ modelKey } (${ entry.trainingRepo })`,
+    `Sources: ${ enabledSources.join(', ') || 'none' }`,
+    `LLM Root: ${ llmRoot }`,
     '',
   ]);
 
   acquireTrainingLock(logFilename);
 
-  (async () => {
+  (async() => {
     try {
       const python = service.getTrainingPython();
       if (!python) {
         appendLog(logPath, '\n[ERROR] Training environment not installed.');
         return;
       }
-      appendLog(logPath, `Python: ${python}`);
+      appendLog(logPath, `Python: ${ python }`);
 
       const scriptsDir = getTrainingScriptsDir();
       const trainScript = path.join(scriptsDir, 'train_nightly.py');
       const docScript = path.join(scriptsDir, 'documents_processor.py');
 
-      appendLog(logPath, `Scripts dir: ${scriptsDir}`);
-      appendLog(logPath, `train_nightly.py exists: ${fs.existsSync(trainScript)}`);
-      appendLog(logPath, `documents_processor.py exists: ${fs.existsSync(docScript)}`);
+      appendLog(logPath, `Scripts dir: ${ scriptsDir }`);
+      appendLog(logPath, `train_nightly.py exists: ${ fs.existsSync(trainScript) }`);
+      appendLog(logPath, `documents_processor.py exists: ${ fs.existsSync(docScript) }`);
 
       // Phase 0: Preprocess conversation sessions into training JSONL
       appendLog(logPath, '\n--- Session Preprocessing ---');
       try {
         const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
         const result = preprocessTrainingData(logPath);
-        appendLog(logPath, `[preprocess] ${result.conversations} conversation(s) from ${result.filesProcessed} file(s) (${result.filesSkipped} skipped)`);
+        appendLog(logPath, `[preprocess] ${ result.conversations } conversation(s) from ${ result.filesProcessed } file(s) (${ result.filesSkipped } skipped)`);
       } catch (err) {
-        appendLog(logPath, `[preprocess] Failed: ${err}`);
+        appendLog(logPath, `[preprocess] Failed: ${ err }`);
       }
 
       // Phase 1: Document Processing (optional)
@@ -566,7 +573,7 @@ export async function runTraining(
       if (sources.loraTraining) {
         const { resolveSullaTrainingDir } = await import('@pkg/agent/utils/sullaPaths');
         const trainingDir = resolveSullaTrainingDir();
-        appendLog(logPath, `[LoRA] Training data dir: ${trainingDir}`);
+        appendLog(logPath, `[LoRA] Training data dir: ${ trainingDir }`);
         try {
           await runPhase(python, logPath, 'LoRA Training', trainScript,
             ['--model', entry.trainingRepo!, '--llm-root', llmRoot, '--training-dir', trainingDir],
@@ -581,12 +588,12 @@ export async function runTraining(
         appendLog(logPath, '\n--- Skills Training ---\n[Skills] Not yet implemented.');
       }
 
-      appendLog(logPath, `\n=== Completed: ${new Date().toISOString()} ===`);
+      appendLog(logPath, `\n=== Completed: ${ new Date().toISOString() } ===`);
     } catch (err) {
-      appendLog(logPath, `\n[ERROR] ${err}`);
+      appendLog(logPath, `\n[ERROR] ${ err }`);
     } finally {
       releaseTrainingLock();
-      appendLog(logPath, `\n=== Training Run Finished: ${new Date().toISOString()} ===`);
+      appendLog(logPath, `\n=== Training Run Finished: ${ new Date().toISOString() } ===`);
     }
   })().catch(() => releaseTrainingLock());
 
@@ -622,8 +629,8 @@ export async function runTraining(
  */
 export async function trainConversationsNow(): Promise<{ logFilename: string; logPath: string }> {
   const log = (msg: string, logPath?: string) => {
-    console.log(`[TrainConvNow] ${msg}`);
-    if (logPath) appendLog(logPath, `[TrainConvNow] ${msg}`);
+    console.log(`[TrainConvNow] ${ msg }`);
+    if (logPath) appendLog(logPath, `[TrainConvNow] ${ msg }`);
   };
 
   log('Handler invoked');
@@ -636,29 +643,29 @@ export async function trainConversationsNow(): Promise<{ logFilename: string; lo
   log('Step 1: Preprocessing session files...');
   const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
   const preprocessResult = preprocessTrainingData();
-  log(`Step 1 done: ${preprocessResult.conversations} conversation(s) from ${preprocessResult.filesProcessed} file(s), ${preprocessResult.filesSkipped} skipped`);
+  log(`Step 1 done: ${ preprocessResult.conversations } conversation(s) from ${ preprocessResult.filesProcessed } file(s), ${ preprocessResult.filesSkipped } skipped`);
 
   // 2. Resolve model config from settings
   log('Step 2: Loading model config...');
   const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
   const modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
-  log(`Step 2 done: modelKey="${modelKey}"`);
+  log(`Step 2 done: modelKey="${ modelKey }"`);
 
   // 3. Validate model and training environment
   log('Step 3: Validating model and training env...');
   const { GGUF_MODELS, getLlamaCppService, getTrainingScriptsDir } = await import('@pkg/agent/services/LlamaCppService');
   const entry = GGUF_MODELS[modelKey];
-  log(`Step 3a: GGUF_MODELS[${modelKey}] = ${JSON.stringify({ trainingRepo: entry?.trainingRepo, hasEntry: !!entry })}`);
-  if (!entry?.trainingRepo) throw new Error(`Model ${modelKey} has no training repo configured`);
+  log(`Step 3a: GGUF_MODELS[${ modelKey }] = ${ JSON.stringify({ trainingRepo: entry?.trainingRepo, hasEntry: !!entry }) }`);
+  if (!entry?.trainingRepo) throw new Error(`Model ${ modelKey } has no training repo configured`);
 
   const service = getLlamaCppService();
   const python = service.getTrainingPython();
-  log(`Step 3b: trainingPython = "${python || 'NOT FOUND'}"`);
+  log(`Step 3b: trainingPython = "${ python || 'NOT FOUND' }"`);
   if (!python) throw new Error('Training environment not installed');
 
   const scriptsDir = getTrainingScriptsDir();
-  log(`Step 3c: scriptsDir="${scriptsDir}"`);
-  log(`Step 3d: train_nightly.py exists = ${fs.existsSync(path.join(scriptsDir, 'train_nightly.py'))}`);
+  log(`Step 3c: scriptsDir="${ scriptsDir }"`);
+  log(`Step 3d: train_nightly.py exists = ${ fs.existsSync(path.join(scriptsDir, 'train_nightly.py')) }`);
 
   // 3e. Verify training data directory has files
   const { resolveSullaTrainingDir } = await import('@pkg/agent/utils/sullaPaths');
@@ -666,22 +673,22 @@ export async function trainConversationsNow(): Promise<{ logFilename: string; lo
   const trainingFiles = fs.existsSync(trainingDir)
     ? fs.readdirSync(trainingDir).filter(f => f.endsWith('.jsonl'))
     : [];
-  log(`Step 3e: trainingDir="${trainingDir}", files=${JSON.stringify(trainingFiles)}`);
+  log(`Step 3e: trainingDir="${ trainingDir }", files=${ JSON.stringify(trainingFiles) }`);
 
   // 4. Create log file
   const { logFilename, logPath } = createLogFile('training', [
     '=== Train on Conversations (Manual) ===',
-    `Started: ${new Date().toISOString()}`,
-    `Model: ${modelKey} (repo: ${entry.trainingRepo})`,
-    `Python: ${python}`,
-    `Scripts dir: ${scriptsDir}`,
-    `Training dir: ${trainingDir}`,
-    `Training files: ${trainingFiles.join(', ') || '(none)'}`,
-    `Conversations preprocessed: ${preprocessResult.conversations}`,
-    `Files processed: ${preprocessResult.filesProcessed}, skipped: ${preprocessResult.filesSkipped}`,
+    `Started: ${ new Date().toISOString() }`,
+    `Model: ${ modelKey } (repo: ${ entry.trainingRepo })`,
+    `Python: ${ python }`,
+    `Scripts dir: ${ scriptsDir }`,
+    `Training dir: ${ trainingDir }`,
+    `Training files: ${ trainingFiles.join(', ') || '(none)' }`,
+    `Conversations preprocessed: ${ preprocessResult.conversations }`,
+    `Files processed: ${ preprocessResult.filesProcessed }, skipped: ${ preprocessResult.filesSkipped }`,
     '',
   ]);
-  log(`Step 4 done: logFile="${logPath}"`);
+  log(`Step 4 done: logFile="${ logPath }"`);
 
   // 5. Run training asynchronously
   acquireTrainingLock(logFilename);
@@ -689,29 +696,29 @@ export async function trainConversationsNow(): Promise<{ logFilename: string; lo
 
   sendProgress(logFilename, logPath, 'Preprocessing conversations', 10);
 
-  (async () => {
+  (async() => {
     try {
       // 5a. Drain document queue (if any pending jobs)
       try {
         sendProgress(logFilename, logPath, 'Checking document queue', 15);
         const { processQueue, getQueueLength } = await import('@pkg/agent/services/TrainingQueueWorker');
         const pending = await getQueueLength();
-        log(`Document queue: ${pending} pending job(s)`, logPath);
+        log(`Document queue: ${ pending } pending job(s)`, logPath);
         if (pending > 0) {
-          sendProgress(logFilename, logPath, `Processing ${pending} queued doc job(s)`, 20);
+          sendProgress(logFilename, logPath, `Processing ${ pending } queued doc job(s)`, 20);
           await processQueue();
           log('Document queue drained', logPath);
         } else {
           log('Document queue empty, skipping', logPath);
         }
       } catch (qErr) {
-        log(`WARNING: Document queue processing failed: ${qErr}`, logPath);
+        log(`WARNING: Document queue processing failed: ${ qErr }`, logPath);
       }
 
       // 5b. Run full nightly training via LlamaCppService
       //     This calls: documents_processor.py, then train_nightly.py --training-dir
       sendProgress(logFilename, logPath, 'Starting LoRA training pipeline', 30);
-      log(`Calling runFullNightlyTraining("${modelKey}", "${logPath}")...`, logPath);
+      log(`Calling runFullNightlyTraining("${ modelKey }", "${ logPath }")...`, logPath);
 
       // Parse [PROGRESS] lines from train_nightly.py and forward as IPC events
       const onTrainingStdout = (line: string) => {
@@ -719,12 +726,15 @@ export async function trainConversationsNow(): Promise<{ logFilename: string; lo
         if (!m) return;
         const [, phase, iter, total, pct, eta] = m;
         const phaseLabel = PHASE_LABELS[phase] || phase;
-        const etaStr = eta && eta !== 'calculating...' ? ` — ${eta} remaining` : '';
-        const progressStr = `${phaseLabel}: ${iter}/${total} (${pct}%)${etaStr}`;
-        const overallPct = phase === 'complete' ? 100
-          : phase === 'training' ? 30 + Math.round(parseInt(pct) * 0.65)
-          : phase === 'fusing' ? 95 + Math.round(parseInt(pct) * 0.04)
-          : 99;
+        const etaStr = eta && eta !== 'calculating...' ? ` — ${ eta } remaining` : '';
+        const progressStr = `${ phaseLabel }: ${ iter }/${ total } (${ pct }%)${ etaStr }`;
+        const overallPct = phase === 'complete'
+          ? 100
+          : phase === 'training'
+            ? 30 + Math.round(parseInt(pct) * 0.65)
+            : phase === 'fusing'
+              ? 95 + Math.round(parseInt(pct) * 0.04)
+              : 99;
         const payload = {
           phase:       progressStr,
           progress:    overallPct,
@@ -743,13 +753,13 @@ export async function trainConversationsNow(): Promise<{ logFilename: string; lo
       await service.runFullNightlyTraining(modelKey, logPath, onTrainingStdout);
       const trainingDuration = Date.now() - trainingStart;
 
-      log(`runFullNightlyTraining completed in ${trainingDuration}ms`, logPath);
-      appendLog(logPath, `\n=== Completed: ${new Date().toISOString()} (${Math.round(trainingDuration / 1000)}s) ===`);
+      log(`runFullNightlyTraining completed in ${ trainingDuration }ms`, logPath);
+      appendLog(logPath, `\n=== Completed: ${ new Date().toISOString() } (${ Math.round(trainingDuration / 1000) }s) ===`);
       sendProgress(logFilename, logPath, 'Complete', 100);
     } catch (err: any) {
       const errMsg = err?.stack || err?.message || String(err);
-      log(`TRAINING FAILED: ${errMsg}`, logPath);
-      appendLog(logPath, `\n=== FAILED ===\n${errMsg}`);
+      log(`TRAINING FAILED: ${ errMsg }`, logPath);
+      appendLog(logPath, `\n=== FAILED ===\n${ errMsg }`);
       sendProgress(logFilename, logPath, 'Failed', 100);
     } finally {
       releaseTrainingLock();
@@ -757,7 +767,7 @@ export async function trainConversationsNow(): Promise<{ logFilename: string; lo
     }
   })();
 
-  log(`Returning logFilename="${logFilename}" (training running in background)`);
+  log(`Returning logFilename="${ logFilename }" (training running in background)`);
   return { logFilename, logPath };
 }
 
@@ -775,7 +785,7 @@ let preprocessJob: import('node-schedule').Job | null = null;
  * and don't drift or get garbage-collected.
  */
 export function rescheduleNightlyTraining(enabled: boolean, hour: number, minute: number): void {
-  if (nightlyJob) { nightlyJob.cancel(); nightlyJob = null; }
+  if (nightlyJob) { nightlyJob.cancel(); nightlyJob = null }
   if (!enabled) return;
 
   const schedule = require('node-schedule') as typeof import('node-schedule');
@@ -786,12 +796,12 @@ export function rescheduleNightlyTraining(enabled: boolean, hour: number, minute
   rule.minute = minute;
   rule.second = 0;
 
-  console.log(`[Training] Nightly training scheduled via node-schedule at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} daily`);
+  console.log(`[Training] Nightly training scheduled via node-schedule at ${ String(hour).padStart(2, '0') }:${ String(minute).padStart(2, '0') } daily`);
 
   // Schedule a macOS wake event so the Mac wakes from sleep before training
   scheduleWake(hour, minute);
 
-  nightlyJob = schedule.scheduleJob(rule, async () => {
+  nightlyJob = schedule.scheduleJob(rule, async() => {
     console.log('[Training] node-schedule fired nightly training job');
     try {
       await trainConversationsNow();
@@ -816,12 +826,12 @@ export function startAutoPreprocessing(): void {
   const rule = new schedule.RecurrenceRule();
   rule.minute = 0;
 
-  preprocessJob = schedule.scheduleJob(rule, async () => {
+  preprocessJob = schedule.scheduleJob(rule, async() => {
     try {
       const { preprocessTrainingData } = await import('@pkg/agent/services/TrainingDataPreprocessor');
       const result = preprocessTrainingData();
       if (result.conversations > 0) {
-        console.log(`[Training] Auto-preprocessed ${result.conversations} conversation(s)`);
+        console.log(`[Training] Auto-preprocessed ${ result.conversations } conversation(s)`);
       }
     } catch (err) {
       console.error('[Training] Auto-preprocessing failed:', err);
@@ -852,7 +862,7 @@ async function loadConfigsArray(): Promise<any[]> {
   const raw = await Settings.get(SCHEDULED_CONFIGS_KEY, '[]');
   try {
     return typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
-  } catch { return []; }
+  } catch { return [] }
 }
 
 export async function listScheduledConfigs(): Promise<any[]> {
@@ -862,7 +872,7 @@ export async function listScheduledConfigs(): Promise<any[]> {
 export async function addScheduledConfig(config: { name: string; source: string; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }): Promise<{ id: string }> {
   const Settings = await getSettingsModel();
   const configs = await loadConfigsArray();
-  const id = `cfg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const id = `cfg_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`;
   configs.push({ ...config, id, createdAt: new Date().toISOString() });
   await Settings.set(SCHEDULED_CONFIGS_KEY, JSON.stringify(configs), 'string');
   return { id };
@@ -881,10 +891,10 @@ export async function removeScheduledConfig(id: string): Promise<{ ok: boolean }
 /** Save wizard settings (create-model or train-model wizard) to the settings DB. */
 export async function saveWizardSettings(wizard: 'create' | 'train', settings: Record<string, unknown>): Promise<{ ok: boolean }> {
   const Settings = await getSettingsModel();
-  const prefix = `training:wizard:${wizard}`;
+  const prefix = `training:wizard:${ wizard }`;
   for (const [key, value] of Object.entries(settings)) {
     const cast = Array.isArray(value) ? 'json' : typeof value === 'object' && value !== null ? 'json' : typeof value as string;
-    await Settings.set(`${prefix}:${key}`, value, cast);
+    await Settings.set(`${ prefix }:${ key }`, value, cast);
   }
   return { ok: true };
 }
@@ -892,15 +902,15 @@ export async function saveWizardSettings(wizard: 'create' | 'train', settings: R
 /** Load wizard settings from the settings DB. */
 export async function loadWizardSettings(wizard: 'create' | 'train'): Promise<Record<string, unknown>> {
   const Settings = await getSettingsModel();
-  const prefix = `training:wizard:${wizard}`;
+  const prefix = `training:wizard:${ wizard }`;
   try {
-    const all = await Settings.getByPattern(`${prefix}:*`);
+    const all = await Settings.getByPattern(`${ prefix }:*`);
     const result: Record<string, unknown> = {};
     for (const [fullKey, value] of Object.entries(all)) {
-      result[fullKey.replace(`${prefix}:`, '')] = value;
+      result[fullKey.replace(`${ prefix }:`, '')] = value;
     }
     return result;
-  } catch { return {}; }
+  } catch { return {} }
 }
 
 // ─── Install ─────────────────────────────────────────────────────────
@@ -928,15 +938,15 @@ export async function installTrainingEnv(): Promise<{ logFilename: string }> {
   const service = getLlamaCppService();
   const modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
   const entry = GGUF_MODELS[modelKey];
-  if (!entry?.trainingRepo) throw new Error(`Model ${modelKey} has no training repo configured`);
+  if (!entry?.trainingRepo) throw new Error(`Model ${ modelKey } has no training repo configured`);
 
   isTrainingInstalling = true;
   trainingInstallError = '';
 
   const { logFilename, logPath } = createLogFile('install', [
     '=== Training Environment Install ===',
-    `Started: ${new Date().toISOString()}`,
-    `Model: ${modelKey} (${entry.trainingRepo})`,
+    `Started: ${ new Date().toISOString() }`,
+    `Model: ${ modelKey } (${ entry.trainingRepo })`,
     '',
   ]);
 
@@ -944,7 +954,7 @@ export async function installTrainingEnv(): Promise<{ logFilename: string }> {
     window.send('training-install-progress' as any, data);
   };
 
-  (async () => {
+  (async() => {
     try {
       sendInstallProgress({ phase: 'deps', description: 'Installing Python dependencies...', current: 0, max: 100 });
       await service.installTrainingDeps(logPath, (description, current, max) => {
@@ -953,22 +963,22 @@ export async function installTrainingEnv(): Promise<{ logFilename: string }> {
 
       service['writeDocumentsConfig']();
 
-      sendInstallProgress({ phase: 'model', description: `Downloading training model ${entry.trainingRepo}...`, current: 0, max: 100 });
+      sendInstallProgress({ phase: 'model', description: `Downloading training model ${ entry.trainingRepo }...`, current: 0, max: 100 });
       await service.downloadTrainingModel(modelKey, logPath, (fileIndex, fileCount, fileName, bytesReceived, bytesTotal) => {
         const overallPct = Math.round(((fileIndex + bytesReceived / bytesTotal) / fileCount) * 100);
-        sendInstallProgress({ phase: 'model', description: `Downloading ${fileName} (${fileIndex + 1}/${fileCount})`, current: overallPct, max: 100, fileName, bytesReceived, bytesTotal });
+        sendInstallProgress({ phase: 'model', description: `Downloading ${ fileName } (${ fileIndex + 1 }/${ fileCount })`, current: overallPct, max: 100, fileName, bytesReceived, bytesTotal });
       });
 
       sendInstallProgress({ phase: 'done', description: 'Training environment installed successfully', current: 100, max: 100 });
-      appendLog(logPath, `\n=== Install Complete: ${new Date().toISOString()} ===`);
+      appendLog(logPath, `\n=== Install Complete: ${ new Date().toISOString() } ===`);
     } catch (err: any) {
       trainingInstallError = err?.message || String(err);
-      appendLog(logPath, `\n[ERROR] ${trainingInstallError}`);
+      appendLog(logPath, `\n[ERROR] ${ trainingInstallError }`);
       sendInstallProgress({ phase: 'error', description: trainingInstallError, current: 0, max: 100 });
     } finally {
       isTrainingInstalling = false;
     }
-  })().catch(() => { isTrainingInstalling = false; });
+  })().catch(() => { isTrainingInstalling = false });
 
   return { logFilename };
 }
@@ -976,12 +986,15 @@ export async function installTrainingEnv(): Promise<{ logFilename: string }> {
 // ─── Queue ───────────────────────────────────────────────────────────
 
 /** Enqueue files for document processing (converts docs → training JSONL via LLM). */
-export async function addToQueue(entries: Array<{ filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }>): Promise<{ queued: number }> {
+export async function addToQueue(entries: { filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }[]): Promise<{ queued: number }> {
   const { enqueueTrainingFiles } = await import('@pkg/agent/services/TrainingQueueWorker');
   const queueEntries = entries.map(e => ({
-    filePath: e.filePath, prompt: e.prompt, modelId: e.modelId,
-    modelProvider: e.modelProvider, outputFilename: e.outputFilename,
-    queuedAt: new Date().toISOString(),
+    filePath:       e.filePath,
+    prompt:         e.prompt,
+    modelId:        e.modelId,
+    modelProvider:  e.modelProvider,
+    outputFilename: e.outputFilename,
+    queuedAt:       new Date().toISOString(),
   }));
   const queued = await enqueueTrainingFiles(queueEntries);
   return { queued };
@@ -1043,10 +1056,10 @@ export async function initScheduleOnStartup(): Promise<void> {
 // ─── Models ──────────────────────────────────────────────────────────
 
 /** Return the list of GGUF models that have both a training repo and a downloaded model file. */
-export async function getDownloadedTrainingModels(): Promise<Array<{ key: string; displayName: string; trainingRepo: string }>> {
+export async function getDownloadedTrainingModels(): Promise<{ key: string; displayName: string; trainingRepo: string }[]> {
   const { GGUF_MODELS, getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
   const svc = getLlamaCppService();
-  const results: Array<{ key: string; displayName: string; trainingRepo: string }> = [];
+  const results: { key: string; displayName: string; trainingRepo: string }[] = [];
   for (const [key, entry] of Object.entries(GGUF_MODELS)) {
     if (entry.trainingRepo && svc.getModelPath(key)) {
       results.push({ key, displayName: entry.displayName, trainingRepo: entry.trainingRepo });
@@ -1118,14 +1131,14 @@ export function docsConfigSave(folders: string[], files: string[], fileTypes: st
     file_types: fileTypes && fileTypes.length > 0 ? fileTypes : SUPPORTED_FILE_TYPES,
   };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-  console.log(`[Sulla] Saved documents_config.json with ${folders.length} folders, ${files.length} files`);
+  console.log(`[Sulla] Saved documents_config.json with ${ folders.length } folders, ${ files.length } files`);
   return { ok: true };
 }
 
 /** List files and directories in a path, filtered to supported document types. */
 export function docsListDir(dirPath: string) {
   const exts = new Set(SUPPORTED_FILE_TYPES);
-  const results: Array<{ path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }> = [];
+  const results: { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }[] = [];
 
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -1163,7 +1176,7 @@ export function docsListDir(dirPath: string) {
 
 /** List files and directories in a path (unfiltered, for the content tree browser). */
 export function contentTree(dirPath?: string) {
-  type TreeEntry = { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string };
+  interface TreeEntry { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string }
   const results: TreeEntry[] = [];
   const targetDir: string = dirPath || require('os').homedir();
 
@@ -1248,13 +1261,13 @@ export async function getFullInstallStatus() {
  * - <llm-root>/training/*.jsonl (document knowledge files)
  */
 export async function listTrainingDataFiles() {
-  const results: Array<{ filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }> = [];
+  const results: { filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }[] = [];
 
   function countLines(filePath: string): number {
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
       return content.split('\n').filter(l => l.trim().length > 0).length;
-    } catch { return 0; }
+    } catch { return 0 }
   }
 
   try {
@@ -1344,7 +1357,7 @@ export async function prepareDocs(
   if (options?.modelProvider && options.modelProvider !== 'local') {
     try {
       const Settings = await getSettingsModel();
-      const apiKey = await Settings.get(`${options.modelProvider.toLowerCase()}ApiKey`, '');
+      const apiKey = await Settings.get(`${ options.modelProvider.toLowerCase() }ApiKey`, '');
       if (apiKey) env.LLM_API_KEY = apiKey;
     } catch { /* ok */ }
   }
@@ -1368,18 +1381,18 @@ export async function prepareDocs(
 
       for (const line of lines) {
         const trimmed = line.trim();
-        const okMatch = trimmed.match(/\[OK\]\s+Processed.*?:\s+(.+?)\s+\((\d+)\s+pairs?\)/);
+        const okMatch = /\[OK\]\s+Processed.*?:\s+(.+?)\s+\((\d+)\s+pairs?\)/.exec(trimmed);
         if (okMatch) {
           processed++;
           const pairs = parseInt(okMatch[2], 10);
           totalPairs += pairs;
-          window.send('training-prepare-progress' as any, { phase: 'file-ok', file: okMatch[1], pairs, processed, total: totalPairs, message: `Processed ${okMatch[1]}` });
+          window.send('training-prepare-progress' as any, { phase: 'file-ok', file: okMatch[1], pairs, processed, total: totalPairs, message: `Processed ${ okMatch[1] }` });
         }
-        const skipMatch = trimmed.match(/\[SKIP\]\s+(.*)/);
+        const skipMatch = /\[SKIP\]\s+(.*)/.exec(trimmed);
         if (skipMatch) {
-          window.send('training-prepare-progress' as any, { phase: 'file-skip', file: skipMatch[1], message: `Skipped: ${skipMatch[1]}`, processed, total: totalPairs });
+          window.send('training-prepare-progress' as any, { phase: 'file-skip', file: skipMatch[1], message: `Skipped: ${ skipMatch[1] }`, processed, total: totalPairs });
         }
-        const summaryMatch = trimmed.match(/\[documents_processor\]\s+Processed\s+(\d+)\s+files?,\s+(\d+)\s+new\s+pairs?/);
+        const summaryMatch = /\[documents_processor\]\s+Processed\s+(\d+)\s+files?,\s+(\d+)\s+new\s+pairs?/.exec(trimmed);
         if (summaryMatch) {
           processed = parseInt(summaryMatch[1], 10);
           totalPairs = parseInt(summaryMatch[2], 10);
@@ -1396,10 +1409,10 @@ export async function prepareDocs(
 
     proc.on('close', (code: number | null) => {
       if (code === 0) {
-        window.send('training-prepare-progress' as any, { phase: 'done', message: processed > 0 ? `Done — ${processed} file(s), ${totalPairs} training pair(s) generated` : 'Done — all documents already up to date', processed, total: totalPairs });
+        window.send('training-prepare-progress' as any, { phase: 'done', message: processed > 0 ? `Done — ${ processed } file(s), ${ totalPairs } training pair(s) generated` : 'Done — all documents already up to date', processed, total: totalPairs });
         resolve({ filesProcessed: processed, pairsGenerated: totalPairs });
       } else {
-        const msg = `Document processing exited with code ${code}`;
+        const msg = `Document processing exited with code ${ code }`;
         window.send('training-prepare-progress' as any, { phase: 'error', message: msg });
         reject(new Error(msg));
       }

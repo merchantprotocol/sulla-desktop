@@ -9,7 +9,7 @@ export type ChatMessage = RegistryChatMessage;
 const SULLA_DESKTOP_CHANNEL = 'sulla-desktop';
 
 export class ChatInterface {
-  private readonly persona: AgentPersonaService;
+  private readonly persona:  AgentPersonaService;
   private readonly registry: AgentPersonaRegistry;
 
   readonly query = ref('');

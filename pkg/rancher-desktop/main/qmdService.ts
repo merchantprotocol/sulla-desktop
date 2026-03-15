@@ -16,12 +16,12 @@ import Logging from '@pkg/utils/logging';
 const console = Logging.background;
 
 export interface QmdSearchResult {
-  path: string;
-  name: string;
-  line: number;
+  path:    string;
+  name:    string;
+  line:    number;
   preview: string;
-  score: number;
-  source: 'fts' | 'filename';
+  score:   number;
+  source:  'fts' | 'filename';
 }
 
 // ── Worker management ───────────────────────────────────────────

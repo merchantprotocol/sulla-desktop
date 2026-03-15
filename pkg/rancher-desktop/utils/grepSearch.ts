@@ -4,15 +4,15 @@ import path from 'node:path';
 
 export interface GrepMatch {
   /** Absolute path to the matching file */
-  filePath: string;
+  filePath:   string;
   /** The folder name containing the file (used as slug) */
   folderName: string;
 }
 
 export interface GrepSearchResult {
-  matches: GrepMatch[];
+  matches:        GrepMatch[];
   attemptedTerms: string[];
-  searchedDirs: string[];
+  searchedDirs:   string[];
 }
 
 /**
@@ -28,7 +28,7 @@ export interface GrepSearchResult {
 export async function grepSearchFiles(
   query: string,
   dirs: string[],
-  fileGlob: string = '*.md',
+  fileGlob = '*.md',
 ): Promise<GrepMatch[]> {
   const result = await grepSearchFilesDetailed(query, dirs, fileGlob);
   return result.matches;
@@ -37,14 +37,14 @@ export async function grepSearchFiles(
 export async function grepSearchFilesDetailed(
   query: string,
   dirs: string[],
-  fileGlob: string = '*.md',
+  fileGlob = '*.md',
 ): Promise<GrepSearchResult> {
   const q = String(query || '').trim();
   if (!q) {
     return {
-      matches: [],
+      matches:        [],
       attemptedTerms: [],
-      searchedDirs: [],
+      searchedDirs:   [],
     };
   }
 
@@ -55,12 +55,12 @@ export async function grepSearchFilesDetailed(
   };
 
   const existingDirs = dirs.filter(d => {
-    try { return fs.statSync(d).isDirectory(); } catch { return false; }
+    try { return fs.statSync(d).isDirectory() } catch { return false }
   });
   if (existingDirs.length === 0) {
     pushAttemptedTerm(q);
     return {
-      matches: [],
+      matches:      [],
       attemptedTerms,
       searchedDirs: [],
     };
@@ -71,7 +71,7 @@ export async function grepSearchFilesDetailed(
   const exactHits = await runGrep(q, existingDirs, fileGlob);
   if (exactHits.length > 0) {
     return {
-      matches: dedupeAndRank(exactHits),
+      matches:      dedupeAndRank(exactHits),
       attemptedTerms,
       searchedDirs: existingDirs,
     };
@@ -80,7 +80,7 @@ export async function grepSearchFilesDetailed(
   // 2. Try phrases (sliding window of 2+ words)
   const words = q.split(/\s+/).filter(w => w.length >= 2);
   if (words.length >= 2) {
-    const phraseHits: Map<string, number> = new Map();
+    const phraseHits = new Map<string, number>();
     for (let len = words.length - 1; len >= 2; len--) {
       for (let i = 0; i <= words.length - len; i++) {
         const phrase = words.slice(i, i + len).join(' ');
@@ -93,7 +93,7 @@ export async function grepSearchFilesDetailed(
     }
     if (phraseHits.size > 0) {
       return {
-        matches: rankMap(phraseHits),
+        matches:      rankMap(phraseHits),
         attemptedTerms,
         searchedDirs: existingDirs,
       };
@@ -101,7 +101,7 @@ export async function grepSearchFilesDetailed(
   }
 
   // 3. Fall back to individual words
-  const wordHits: Map<string, number> = new Map();
+  const wordHits = new Map<string, number>();
   for (const word of words) {
     pushAttemptedTerm(word);
     const hits = await runGrep(word, existingDirs, fileGlob);
@@ -111,7 +111,7 @@ export async function grepSearchFilesDetailed(
   }
 
   return {
-    matches: rankMap(wordHits),
+    matches:      rankMap(wordHits),
     attemptedTerms,
     searchedDirs: existingDirs,
   };

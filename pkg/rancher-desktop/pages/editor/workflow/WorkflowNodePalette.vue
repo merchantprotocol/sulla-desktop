@@ -1,7 +1,17 @@
 <template>
-  <div class="node-palette" :class="{ dark: isDark }">
-    <div v-for="category in CATEGORY_ORDER" :key="category" class="palette-category">
-      <div class="category-header" :class="{ dark: isDark }">
+  <div
+    class="node-palette"
+    :class="{ dark: isDark }"
+  >
+    <div
+      v-for="category in CATEGORY_ORDER"
+      :key="category"
+      class="palette-category"
+    >
+      <div
+        class="category-header"
+        :class="{ dark: isDark }"
+      >
         <span class="category-label">{{ CATEGORY_LABELS[category] }}</span>
       </div>
       <div class="category-grid">
@@ -19,10 +29,16 @@
               :src="sullaIconUrl"
               class="palette-icon-img"
               :alt="nodeDef.label"
+            >
+            <span
+              v-else
+              class="palette-icon-svg"
+              v-html="nodeDef.iconSvg"
             />
-            <span v-else class="palette-icon-svg" v-html="nodeDef.iconSvg"></span>
           </div>
-          <div class="palette-card-label">{{ nodeDef.label }}</div>
+          <div class="palette-card-label">
+            {{ nodeDef.label }}
+          </div>
         </div>
       </div>
     </div>

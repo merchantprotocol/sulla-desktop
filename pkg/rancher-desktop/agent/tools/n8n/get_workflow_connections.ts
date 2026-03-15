@@ -3,13 +3,13 @@ import { createN8nService } from '../../services/N8nService';
 
 type JsonRecord = Record<string, unknown>;
 
-type FlatConnection = {
-  targetNode: string;
-  inputIndex: number;
-  outputIndex: number;
+interface FlatConnection {
+  targetNode:     string;
+  inputIndex:     number;
+  outputIndex:    number;
   connectionType: string;
-  targetType: string;
-};
+  targetType:     string;
+}
 
 function toRecord(value: unknown): JsonRecord {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -53,11 +53,11 @@ function flattenWorkflowConnections(connections: unknown): Record<string, Record
 
         for (const target of targets) {
           byOutputIndex[key].push({
-            targetNode: String(target.node || '').trim(),
-            inputIndex: Number(target.index ?? 0),
+            targetNode:     String(target.node || '').trim(),
+            inputIndex:     Number(target.index ?? 0),
             outputIndex,
             connectionType: String(connectionType || 'main'),
-            targetType: String(target.type || 'main'),
+            targetType:     String(target.type || 'main'),
           });
         }
       });
@@ -80,9 +80,9 @@ export class GetWorkflowConnectionsWorker extends BaseTool {
       const workflowRecord = toRecord(workflow);
 
       const response = {
-        workflowId: String(workflowRecord.id || input.id || ''),
+        workflowId:   String(workflowRecord.id || input.id || ''),
         workflowName: String(workflowRecord.name || ''),
-        connections: flattenWorkflowConnections(workflowRecord.connections),
+        connections:  flattenWorkflowConnections(workflowRecord.connections),
       };
 
       return {
@@ -92,9 +92,8 @@ export class GetWorkflowConnectionsWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting workflow connections: ${(error as Error).message}`,
+        responseString: `Error getting workflow connections: ${ (error as Error).message }`,
       };
     }
   }
 }
-

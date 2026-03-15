@@ -1,12 +1,42 @@
 <template>
-  <div class="tw-pane" :class="{ dark: isDark }">
-    <div class="tw-header" :class="{ dark: isDark }">
+  <div
+    class="tw-pane"
+    :class="{ dark: isDark }"
+  >
+    <div
+      class="tw-header"
+      :class="{ dark: isDark }"
+    >
       <span class="tw-header-title">Training Wizard</span>
       <div class="tw-header-actions">
-        <button class="tw-header-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
+        <button
+          class="tw-header-btn"
+          :class="{ dark: isDark }"
+          title="Close Panel"
+          @click="$emit('close')"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="18"
+              y1="6"
+              x2="6"
+              y2="18"
+            />
+            <line
+              x1="6"
+              y1="6"
+              x2="18"
+              y2="18"
+            />
           </svg>
         </button>
       </div>
@@ -19,17 +49,51 @@
         :class="{ dark: isDark, active: currentStep === -1 }"
         @click="goToStep(-1)"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="7" height="7"/>
-          <rect x="14" y="3" width="7" height="7"/>
-          <rect x="14" y="14" width="7" height="7"/>
-          <rect x="3" y="14" width="7" height="7"/>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect
+            x="3"
+            y="3"
+            width="7"
+            height="7"
+          />
+          <rect
+            x="14"
+            y="3"
+            width="7"
+            height="7"
+          />
+          <rect
+            x="14"
+            y="14"
+            width="7"
+            height="7"
+          />
+          <rect
+            x="3"
+            y="14"
+            width="7"
+            height="7"
+          />
         </svg>
         <span>Dashboard</span>
       </div>
 
       <!-- ─── Wizard 1: Create Training Data ─── -->
-      <div class="tw-section-title" :class="{ dark: isDark, active: currentStep >= 0 && currentStep <= 2 }">Create Training Data</div>
+      <div
+        class="tw-section-title"
+        :class="{ dark: isDark, active: currentStep >= 0 && currentStep <= 2 }"
+      >
+        Create Training Data
+      </div>
       <div
         v-for="(step, idx) in dataSteps"
         :key="'d-' + idx"
@@ -42,21 +106,48 @@
         }"
         @click="goToStep(idx)"
       >
-        <div class="tw-step-indicator" :class="{ active: currentStep === idx, completed: idx < currentStep && currentStep <= 2 }">
-          <svg v-if="idx < currentStep && currentStep <= 2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="20 6 9 17 4 12"/>
+        <div
+          class="tw-step-indicator"
+          :class="{ active: currentStep === idx, completed: idx < currentStep && currentStep <= 2 }"
+        >
+          <svg
+            v-if="idx < currentStep && currentStep <= 2"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="20 6 9 17 4 12" />
           </svg>
           <span v-else>{{ idx + 1 }}</span>
         </div>
         <div class="tw-step-content">
-          <div class="tw-step-title">{{ step.title }}</div>
-          <div class="tw-step-desc">{{ step.description }}</div>
+          <div class="tw-step-title">
+            {{ step.title }}
+          </div>
+          <div class="tw-step-desc">
+            {{ step.description }}
+          </div>
         </div>
-        <div v-if="idx < dataSteps.length - 1" class="tw-step-connector" :class="{ completed: idx < currentStep && currentStep <= 2 }" />
+        <div
+          v-if="idx < dataSteps.length - 1"
+          class="tw-step-connector"
+          :class="{ completed: idx < currentStep && currentStep <= 2 }"
+        />
       </div>
 
       <!-- ─── Wizard 2: Train Model ─── -->
-      <div class="tw-section-title" :class="{ dark: isDark, active: currentStep >= 3 }" style="margin-top: 16px;">Train Model</div>
+      <div
+        class="tw-section-title"
+        :class="{ dark: isDark, active: currentStep >= 3 }"
+        style="margin-top: 16px;"
+      >
+        Train Model
+      </div>
       <div
         v-for="(step, localIdx) in trainSteps"
         :key="'t-' + localIdx"
@@ -69,20 +160,40 @@
         }"
         @click="goToStep(localIdx + 3)"
       >
-        <div class="tw-step-indicator" :class="{ active: currentStep === localIdx + 3, completed: localIdx + 3 < currentStep }">
-          <svg v-if="localIdx + 3 < currentStep" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="20 6 9 17 4 12"/>
+        <div
+          class="tw-step-indicator"
+          :class="{ active: currentStep === localIdx + 3, completed: localIdx + 3 < currentStep }"
+        >
+          <svg
+            v-if="localIdx + 3 < currentStep"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="20 6 9 17 4 12" />
           </svg>
           <span v-else>{{ localIdx + 1 }}</span>
         </div>
         <div class="tw-step-content">
-          <div class="tw-step-title">{{ step.title }}</div>
-          <div class="tw-step-desc">{{ step.description }}</div>
+          <div class="tw-step-title">
+            {{ step.title }}
+          </div>
+          <div class="tw-step-desc">
+            {{ step.description }}
+          </div>
         </div>
-        <div v-if="localIdx < trainSteps.length - 1" class="tw-step-connector" :class="{ completed: localIdx + 3 < currentStep }" />
+        <div
+          v-if="localIdx < trainSteps.length - 1"
+          class="tw-step-connector"
+          :class="{ completed: localIdx + 3 < currentStep }"
+        />
       </div>
     </div>
-
   </div>
 </template>
 
@@ -90,7 +201,7 @@
 import { defineComponent } from 'vue';
 
 interface WizardStep {
-  title: string;
+  title:       string;
   description: string;
 }
 
@@ -107,30 +218,30 @@ export default defineComponent({
   setup(props, { emit }) {
     const dataSteps: WizardStep[] = [
       {
-        title: 'Select Documents',
+        title:       'Select Documents',
         description: 'Pick folders and files for training data',
       },
       {
-        title: 'Craft Prompt',
+        title:       'Craft Prompt',
         description: 'Write or choose a prompt template for data generation',
       },
       {
-        title: 'Generate Data',
+        title:       'Generate Data',
         description: 'Choose an LLM to generate training examples from your docs',
       },
     ];
 
     const trainSteps: WizardStep[] = [
       {
-        title: 'Select Data Files',
+        title:       'Select Data Files',
         description: 'Choose which training data files to use',
       },
       {
-        title: 'Model & Settings',
+        title:       'Model & Settings',
         description: 'Choose base model, learning rate, LoRA rank',
       },
       {
-        title: 'Train & Deploy',
+        title:       'Train & Deploy',
         description: 'Run LoRA fine-tune and output your custom model',
       },
     ];
@@ -299,7 +410,6 @@ export default defineComponent({
 .tw-step-connector.completed {
   background: var(--border-success);
 }
-
 
 /* Dashboard link */
 .tw-dashboard-link {

@@ -1,6 +1,6 @@
-import { BaseTool, ToolResponse } from "../base";
-import { createN8nService } from "../../services/N8nService";
-import { postgresClient } from "../../database/PostgresClient";
+import { BaseTool, ToolResponse } from '../base';
+import { createN8nService } from '../../services/N8nService';
+import { postgresClient } from '../../database/PostgresClient';
 
 function isVariablesLicenseError(error: Error): boolean {
   const message = error.message || '';
@@ -19,8 +19,8 @@ function formatVariableDate(value: unknown): string {
  * Get Variables Tool - Worker class for execution
  */
 export class GetVariablesWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   private async getVariablesFromPostgres(input: any): Promise<any[]> {
     await postgresClient.initialize();
@@ -36,7 +36,7 @@ export class GetVariablesWorker extends BaseTool {
          AND ($2::boolean = false OR value IS NULL OR value = '')
        ORDER BY key ASC
        LIMIT $3`,
-      [projectId, stateEmptyOnly, limit]
+      [projectId, stateEmptyOnly, limit],
     );
   }
 
@@ -48,23 +48,23 @@ export class GetVariablesWorker extends BaseTool {
       if (!variables || variables.length === 0) {
         return {
           successBoolean: false,
-          responseString: 'No variables found with the specified filters.'
+          responseString: 'No variables found with the specified filters.',
         };
       }
 
-      let responseString = `n8n Variables (${variables.length} found):\n\n`;
+      let responseString = `n8n Variables (${ variables.length } found):\n\n`;
       variables.forEach((variable: any, index: number) => {
-        responseString += `${index + 1}. Key: ${variable.key}\n`;
-        responseString += `   Value: ${variable.value}\n`;
-        responseString += `   ID: ${variable.id}\n`;
-        responseString += `   Project ID: ${variable.projectId || 'Global'}\n`;
-        responseString += `   Created: ${new Date(variable.createdAt).toLocaleString()}\n`;
-        responseString += `   Updated: ${new Date(variable.updatedAt).toLocaleString()}\n\n`;
+        responseString += `${ index + 1 }. Key: ${ variable.key }\n`;
+        responseString += `   Value: ${ variable.value }\n`;
+        responseString += `   ID: ${ variable.id }\n`;
+        responseString += `   Project ID: ${ variable.projectId || 'Global' }\n`;
+        responseString += `   Created: ${ new Date(variable.createdAt).toLocaleString() }\n`;
+        responseString += `   Updated: ${ new Date(variable.updatedAt).toLocaleString() }\n\n`;
       });
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       if (error instanceof Error && isVariablesLicenseError(error)) {
@@ -73,35 +73,35 @@ export class GetVariablesWorker extends BaseTool {
           if (!variables || variables.length === 0) {
             return {
               successBoolean: false,
-              responseString: 'No variables found with the specified filters (PostgreSQL fallback).'
+              responseString: 'No variables found with the specified filters (PostgreSQL fallback).',
             };
           }
 
-          let responseString = `n8n Variables (${variables.length} found, fallback via PostgreSQL):\n\n`;
+          let responseString = `n8n Variables (${ variables.length } found, fallback via PostgreSQL):\n\n`;
           variables.forEach((variable: any, index: number) => {
-            responseString += `${index + 1}. Key: ${variable.key}\n`;
-            responseString += `   Value: ${variable.value}\n`;
-            responseString += `   ID: ${variable.id}\n`;
-            responseString += `   Project ID: ${variable.projectId || 'Global'}\n`;
-            responseString += `   Created: ${formatVariableDate(variable.createdAt)}\n`;
-            responseString += `   Updated: ${formatVariableDate(variable.updatedAt)}\n\n`;
+            responseString += `${ index + 1 }. Key: ${ variable.key }\n`;
+            responseString += `   Value: ${ variable.value }\n`;
+            responseString += `   ID: ${ variable.id }\n`;
+            responseString += `   Project ID: ${ variable.projectId || 'Global' }\n`;
+            responseString += `   Created: ${ formatVariableDate(variable.createdAt) }\n`;
+            responseString += `   Updated: ${ formatVariableDate(variable.updatedAt) }\n\n`;
           });
 
           return {
             successBoolean: true,
-            responseString
+            responseString,
           };
         } catch (fallbackError) {
           return {
             successBoolean: false,
-            responseString: `Error getting variables: ${error.message}. PostgreSQL fallback failed: ${(fallbackError as Error).message}`
+            responseString: `Error getting variables: ${ error.message }. PostgreSQL fallback failed: ${ (fallbackError as Error).message }`,
           };
         }
       }
 
       return {
         successBoolean: false,
-        responseString: `Error getting variables: ${(error as Error).message}`
+        responseString: `Error getting variables: ${ (error as Error).message }`,
       };
     }
   }

@@ -16,10 +16,10 @@ export class NvidiaService extends OpenAICompatibleService {
     }
 
     return new NvidiaService({
-      id: 'nvidia',
-      model: valMap.model || 'meta/llama-3.1-405b-instruct',
+      id:      'nvidia',
+      model:   valMap.model || 'meta/llama-3.1-405b-instruct',
       baseUrl: 'https://integrate.api.nvidia.com/v1',
-      apiKey: valMap.api_key || '',
+      apiKey:  valMap.api_key || '',
     });
   }
 

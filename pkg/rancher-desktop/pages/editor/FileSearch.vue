@@ -1,48 +1,113 @@
 <template>
-  <div class="search-container" :class="{ dark: isDark }">
-    <div class="search-pane-header" :class="{ dark: isDark }">
+  <div
+    class="search-container"
+    :class="{ dark: isDark }"
+  >
+    <div
+      class="search-pane-header"
+      :class="{ dark: isDark }"
+    >
       <span class="search-pane-title">Search</span>
-      <button class="search-close-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
+      <button
+        class="search-close-btn"
+        :class="{ dark: isDark }"
+        title="Close Panel"
+        @click="$emit('close')"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <line
+            x1="18"
+            y1="6"
+            x2="6"
+            y2="18"
+          />
+          <line
+            x1="6"
+            y1="6"
+            x2="18"
+            y2="18"
+          />
         </svg>
       </button>
     </div>
-    <div class="search-input-wrapper" :class="{ dark: isDark }">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="8"/>
-        <path d="m21 21-4.35-4.35"/>
+    <div
+      class="search-input-wrapper"
+      :class="{ dark: isDark }"
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <circle
+          cx="11"
+          cy="11"
+          r="8"
+        />
+        <path d="m21 21-4.35-4.35" />
       </svg>
       <input
         ref="searchInput"
         :value="modelValue"
-        @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
         placeholder="Search files..."
         class="search-input"
         :class="{ dark: isDark }"
-      />
+        @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+      >
     </div>
 
-    <div class="path-input-wrapper" :class="{ dark: isDark }">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+    <div
+      class="path-input-wrapper"
+      :class="{ dark: isDark }"
+    >
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       </svg>
       <input
         :value="searchPath"
-        @input="$emit('update:searchPath', ($event.target as HTMLInputElement).value)"
         placeholder="Search path..."
         class="path-input"
         :class="{ dark: isDark }"
-      />
+        @input="$emit('update:searchPath', ($event.target as HTMLInputElement).value)"
+      >
     </div>
 
-    <div v-if="indexing || searching" class="status-bar" :class="{ dark: isDark }">
+    <div
+      v-if="indexing || searching"
+      class="status-bar"
+      :class="{ dark: isDark }"
+    >
       <span class="spinner" />
       {{ indexing ? 'Indexing...' : 'Searching...' }}
     </div>
 
-    <div class="results-list" :class="{ dark: isDark }">
+    <div
+      class="results-list"
+      :class="{ dark: isDark }"
+    >
       <div
         v-for="(result, idx) in results"
         :key="result.path + '-' + idx"
@@ -54,16 +119,30 @@
           <span class="result-icon">{{ result.source === 'fts' ? 'T' : 'F' }}</span>
           {{ result.name }}
         </div>
-        <div class="result-path" :class="{ dark: isDark }">
+        <div
+          class="result-path"
+          :class="{ dark: isDark }"
+        >
           {{ result.path }}
         </div>
-        <div v-if="result.preview && result.source === 'fts'" class="result-preview" :class="{ dark: isDark }">
-          <span v-if="result.line" class="result-line">L{{ result.line }}</span>
+        <div
+          v-if="result.preview && result.source === 'fts'"
+          class="result-preview"
+          :class="{ dark: isDark }"
+        >
+          <span
+            v-if="result.line"
+            class="result-line"
+          >L{{ result.line }}</span>
           {{ result.preview }}
         </div>
       </div>
 
-      <div v-if="modelValue && !results.length && !indexing && !searching" class="no-results" :class="{ dark: isDark }">
+      <div
+        v-if="modelValue && !results.length && !indexing && !searching"
+        class="no-results"
+        :class="{ dark: isDark }"
+      >
         No results found
       </div>
     </div>
@@ -73,14 +152,13 @@
 <script lang="ts">
 import { defineComponent, type PropType } from 'vue';
 
-
 export interface SearchResult {
-  path: string;
-  name: string;
-  line: number;
+  path:    string;
+  name:    string;
+  line:    number;
   preview: string;
-  score: number;
-  source: 'fts' | 'filename';
+  score:   number;
+  source:  'fts' | 'filename';
 }
 
 export default defineComponent({

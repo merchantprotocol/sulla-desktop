@@ -1,7 +1,13 @@
 <template>
-  <div class="workflow-pane" :class="{ dark: isDark }">
+  <div
+    class="workflow-pane"
+    :class="{ dark: isDark }"
+  >
     <!-- Tab bar -->
-    <div class="workflow-tab-bar" :class="{ dark: isDark }">
+    <div
+      class="workflow-tab-bar"
+      :class="{ dark: isDark }"
+    >
       <div class="workflow-tabs-scroll">
         <div
           v-for="tab in openTabs"
@@ -17,9 +23,28 @@
             title="Close"
             @click.stop="closeTab(tab.id)"
           >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line
+                x1="18"
+                y1="6"
+                x2="6"
+                y2="18"
+              />
+              <line
+                x1="6"
+                y1="6"
+                x2="18"
+                y2="18"
+              />
             </svg>
           </button>
         </div>
@@ -30,15 +55,58 @@
         title="Open or create workflow"
         @click="togglePicker"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19"></line>
-          <line x1="5" y1="12" x2="19" y2="12"></line>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <line
+            x1="12"
+            y1="5"
+            x2="12"
+            y2="19"
+          />
+          <line
+            x1="5"
+            y1="12"
+            x2="19"
+            y2="12"
+          />
         </svg>
       </button>
-      <button class="workflow-pane-close" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
+      <button
+        class="workflow-pane-close"
+        :class="{ dark: isDark }"
+        title="Close Panel"
+        @click="$emit('close')"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <line
+            x1="18"
+            y1="6"
+            x2="6"
+            y2="18"
+          />
+          <line
+            x1="6"
+            y1="6"
+            x2="18"
+            y2="18"
+          />
         </svg>
       </button>
     </div>
@@ -46,16 +114,39 @@
     <!-- Content area -->
     <div class="workflow-pane-content">
       <!-- Workflow picker (shown when "+" clicked or no tabs open) -->
-      <div v-if="showingPicker || openTabs.length === 0" class="workflow-picker" :class="{ dark: isDark }">
+      <div
+        v-if="showingPicker || openTabs.length === 0"
+        class="workflow-picker"
+        :class="{ dark: isDark }"
+      >
         <!-- Create new workflow card -->
         <div
           class="picker-card picker-card-create"
           :class="{ dark: isDark }"
           @click="createNewWorkflow"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="12"
+              y1="5"
+              x2="12"
+              y2="19"
+            />
+            <line
+              x1="5"
+              y1="12"
+              x2="19"
+              y2="12"
+            />
           </svg>
           <span class="picker-card-text">Create New Workflow</span>
         </div>
@@ -69,16 +160,51 @@
           @click="openWorkflow(wf.id, wf.name)"
           @contextmenu.prevent="showContextMenu($event, wf)"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2" y="3" width="6" height="5" rx="1"/>
-            <rect x="16" y="3" width="6" height="5" rx="1"/>
-            <rect x="9" y="16" width="6" height="5" rx="1"/>
-            <path d="M5 8v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/>
-            <line x1="12" y1="12" x2="12" y2="16"/>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect
+              x="2"
+              y="3"
+              width="6"
+              height="5"
+              rx="1"
+            />
+            <rect
+              x="16"
+              y="3"
+              width="6"
+              height="5"
+              rx="1"
+            />
+            <rect
+              x="9"
+              y="16"
+              width="6"
+              height="5"
+              rx="1"
+            />
+            <path d="M5 8v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
+            <line
+              x1="12"
+              y1="12"
+              x2="12"
+              y2="16"
+            />
           </svg>
           <div class="picker-card-info">
             <span class="picker-card-name">{{ wf.name }}</span>
-            <span v-if="wf.updatedAt" class="picker-card-date">{{ formatDate(wf.updatedAt) }}</span>
+            <span
+              v-if="wf.updatedAt"
+              class="picker-card-date"
+            >{{ formatDate(wf.updatedAt) }}</span>
           </div>
         </div>
 
@@ -96,24 +222,55 @@
             :class="{ dark: isDark }"
             :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
           >
-            <button class="wf-context-item" :class="{ dark: isDark }" @click="renameWorkflow">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+            <button
+              class="wf-context-item"
+              :class="{ dark: isDark }"
+              @click="renameWorkflow"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
               </svg>
               Rename
             </button>
-            <button class="wf-context-item danger" :class="{ dark: isDark }" @click="deleteWorkflowFromMenu">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            <button
+              class="wf-context-item danger"
+              :class="{ dark: isDark }"
+              @click="deleteWorkflowFromMenu"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
               </svg>
               Delete
             </button>
           </div>
         </Teleport>
 
-        <div v-if="availableWorkflows.length === 0" class="picker-empty">
-          <p class="picker-empty-text">No workflows saved yet</p>
+        <div
+          v-if="availableWorkflows.length === 0"
+          class="picker-empty"
+        >
+          <p class="picker-empty-text">
+            No workflows saved yet
+          </p>
         </div>
       </div>
 
@@ -137,15 +294,15 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'close': [];
+  close:                [];
   'workflow-activated': [workflowId: string];
-  'workflow-closed': [workflowId: string];
-  'workflow-created': [workflowId: string, workflowName: string];
-  'workflow-deleted': [workflowId: string];
+  'workflow-closed':    [workflowId: string];
+  'workflow-created':   [workflowId: string, workflowName: string];
+  'workflow-deleted':   [workflowId: string];
 }>();
 
 interface OpenTab {
-  id: string;
+  id:   string;
   name: string;
 }
 

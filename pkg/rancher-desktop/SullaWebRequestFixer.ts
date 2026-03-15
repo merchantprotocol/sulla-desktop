@@ -3,24 +3,24 @@ import { Session } from 'electron';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
 export interface SullaWebRequestLogEvent {
-  direction: string;
-  url?: string;
-  method?: string;
-  statusCode?: number | string;
+  direction:     string;
+  url?:          string;
+  method?:       string;
+  statusCode?:   number | string;
   resourceType?: string;
-  payload?: any;
+  payload?:      any;
 }
 
 interface UrlInfo {
   hostname: string;
-  port: string;
-  baseUrl: string;
-  isN8n: boolean;
+  port:     string;
+  baseUrl:  string;
+  isN8n:    boolean;
 }
 
 export class SullaWebRequestFixer {
   private cookieHeaderCacheByDomain: Record<string, string> = {};
-  private writeEvent: (event: SullaWebRequestLogEvent) => void;
+  private writeEvent:                (event: SullaWebRequestLogEvent) => void;
   private static readonly LOGGING_ENABLED = false;
   private hasLoggedN8nHealthz = false;
   private static readonly CONNECTIVITY_PROBE_URL_PREFIX = 'https://www.gstatic.com/generate_204';
@@ -35,7 +35,7 @@ export class SullaWebRequestFixer {
       const parsed = new URL(url);
       const hostname = parsed.hostname;
       const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
-      const baseUrl = `${parsed.protocol}//${hostname}:${port}`;
+      const baseUrl = `${ parsed.protocol }//${ hostname }:${ port }`;
       const isN8n = port === '30119' || url.includes(':30119');
       return { hostname, port, baseUrl, isN8n };
     } catch {
@@ -46,8 +46,8 @@ export class SullaWebRequestFixer {
   attachToSession(session: Session): void {
     this.writeEvent({
       direction: 'lifecycle',
-      url: 'SullaWebRequestFixer',
-      payload: { message: 'SullaWebRequestFixer attached' },
+      url:       'SullaWebRequestFixer',
+      payload:   { message: 'SullaWebRequestFixer attached' },
     });
 
     // ==================== onHeadersReceived ====================
@@ -61,7 +61,7 @@ export class SullaWebRequestFixer {
         return;
       }
 
-      let headers = { ...(details.responseHeaders || {}) };
+      const headers = { ...(details.responseHeaders || {}) };
       const shouldLog = this.shouldLogRequest(details.url);
 
       // Strip framing / security headers
@@ -86,10 +86,10 @@ export class SullaWebRequestFixer {
         "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
         "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
         "style-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
-        "img-src * data: blob:;",
-        "font-src * data:;",
+        'img-src * data: blob:;',
+        'font-src * data:;',
         "frame-ancestors app://* * 'self';",
-        "connect-src *;"
+        'connect-src *;',
       ];
 
       const urlInfo = this.getUrlInfo(details.url);
@@ -99,12 +99,12 @@ export class SullaWebRequestFixer {
 
       if (shouldLog) {
         this.writeEvent({
-          direction: 'response_headers',
-          url: details.url,
-          method: details.method,
-          statusCode: details.statusCode,
+          direction:    'response_headers',
+          url:          details.url,
+          method:       details.method,
+          statusCode:   details.statusCode,
           resourceType: details.resourceType,
-          payload: { requestId: details.id, responseHeaders: headers },
+          payload:      { requestId: details.id, responseHeaders: headers },
         });
       }
       callback({ responseHeaders: headers });
@@ -133,21 +133,21 @@ export class SullaWebRequestFixer {
         details.requestHeaders['Origin'] = details.requestHeaders['Origin'] || parsedUrl?.origin || '';
         details.requestHeaders['Referer'] = details.requestHeaders['Referer'] || details.url;
 
-        const isLocalN8nRequest = !!parsedUrl
-          && (parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1')
-          && (parsedUrl.port === '30119' || details.url.includes('/rest/push'));
+        const isLocalN8nRequest = !!parsedUrl &&
+          (parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1') &&
+          (parsedUrl.port === '30119' || details.url.includes('/rest/push'));
 
         // N8N SPECIFIC FIX
         if (isLocalN8nRequest && parsedUrl) {
           // ALWAYS use http:// origin for n8n, even on ws:// requests
-          const n8nOrigin = `http://${parsedUrl.hostname}:30119`;
+          const n8nOrigin = `http://${ parsedUrl.hostname }:30119`;
 
           details.requestHeaders['Origin'] = n8nOrigin;
-          details.requestHeaders['Referer'] = `${n8nOrigin}/`;
+          details.requestHeaders['Referer'] = `${ n8nOrigin }/`;
 
           const resourceType = String(details.resourceType || '').toLowerCase();
           const isFrameNavigation = resourceType === 'subframe' || resourceType === 'mainframe';
-          
+
           if (isFrameNavigation) {
             details.requestHeaders['Sec-Fetch-Site'] = 'cross-site';
             details.requestHeaders['Sec-Fetch-Mode'] = 'navigate';
@@ -180,17 +180,17 @@ export class SullaWebRequestFixer {
           details.requestHeaders['Cookie'] = cachedCookieHeader;
 
           this.writeEvent({
-            direction: 'request_headers',
-            url: details.url,
-            method: details.method,
+            direction:    'request_headers',
+            url:          details.url,
+            method:       details.method,
             resourceType: details.resourceType,
-            payload: {
-              requestId: details.id,
-              session: 'defaultSession',
+            payload:      {
+              requestId:                   details.id,
+              session:                     'defaultSession',
               manualCookieHeaderInjection: 'SUCCESS (from cache)',
-              injectedCookieHeader: cachedCookieHeader.substring(0, 120) + '...',
-              cookieCount: cachedCookieHeader.split(';').length,
-              targetUrl: urlInfo.baseUrl,
+              injectedCookieHeader:        cachedCookieHeader.substring(0, 120) + '...',
+              cookieCount:                 cachedCookieHeader.split(';').length,
+              targetUrl:                   urlInfo.baseUrl,
               domainKey,
             },
           });
@@ -198,11 +198,11 @@ export class SullaWebRequestFixer {
 
         if (shouldLog) {
           this.writeEvent({
-            direction: 'request_headers',
-            url: details.url,
-            method: details.method,
+            direction:    'request_headers',
+            url:          details.url,
+            method:       details.method,
             resourceType: details.resourceType,
-            payload: { requestId: details.id, requestHeaders: details.requestHeaders },
+            payload:      { requestId: details.id, requestHeaders: details.requestHeaders },
           });
         }
 
@@ -221,11 +221,11 @@ export class SullaWebRequestFixer {
           : 'NO COOKIE HEADER';
 
         this.writeEvent({
-          direction: 'request_sent',
-          url: details.url,
-          method: details.method,
+          direction:    'request_sent',
+          url:          details.url,
+          method:       details.method,
           resourceType: details.resourceType,
-          payload: { requestId: details.id, hasCookieHeader: hasCookie, cookiePreview },
+          payload:      { requestId: details.id, hasCookieHeader: hasCookie, cookiePreview },
         });
       }
     });
@@ -234,15 +234,15 @@ export class SullaWebRequestFixer {
     session.webRequest.onCompleted((details) => {
       if (this.shouldLogRequest(details.url)) {
         this.writeEvent({
-          direction: 'request_complete',
-          url: details.url,
-          method: details.method,
-          statusCode: details.statusCode,
+          direction:    'request_complete',
+          url:          details.url,
+          method:       details.method,
+          statusCode:   details.statusCode,
           resourceType: details.resourceType,
-          payload: { 
-            requestId: details.id, 
-            fromCache: details.fromCache, 
-            statusLine: details.statusLine
+          payload:      {
+            requestId:  details.id,
+            fromCache:  details.fromCache,
+            statusLine: details.statusLine,
           },
         });
       }
@@ -252,11 +252,11 @@ export class SullaWebRequestFixer {
     session.webRequest.onErrorOccurred((details) => {
       if (this.shouldLogRequest(details.url)) {
         this.writeEvent({
-          direction: 'request_error',
-          url: details.url,
-          method: details.method,
+          direction:    'request_error',
+          url:          details.url,
+          method:       details.method,
           resourceType: details.resourceType,
-          payload: { requestId: details.id, error: details.error },
+          payload:      { requestId: details.id, error: details.error },
         });
       }
     });
@@ -276,12 +276,12 @@ export class SullaWebRequestFixer {
       : [String(rawSetCookieHeader)];
 
     this.writeEvent({
-      direction: 'response_headers',
-      url: details.url,
-      method: details.method,
-      statusCode: details.statusCode,
+      direction:    'response_headers',
+      url:          details.url,
+      method:       details.method,
+      statusCode:   details.statusCode,
       resourceType: details.resourceType,
-      payload: { requestId: details.id, session: 'defaultSession', cookieRewritePhase: 'before', originalSetCookie: originalCookies },
+      payload:      { requestId: details.id, session: 'defaultSession', cookieRewritePhase: 'before', originalSetCookie: originalCookies },
     });
 
     const rewrittenCookies = originalCookies.map((cookie: string) => {
@@ -308,14 +308,14 @@ export class SullaWebRequestFixer {
     this.persistCookieHeaderForDomain(domainKey, cookieHeader);
 
     this.writeEvent({
-      direction: 'response_headers',
-      url: details.url,
-      method: details.method,
-      statusCode: details.statusCode,
+      direction:    'response_headers',
+      url:          details.url,
+      method:       details.method,
+      statusCode:   details.statusCode,
       resourceType: details.resourceType,
-      payload: {
-        requestId: details.id,
-        session: 'defaultSession',
+      payload:      {
+        requestId:          details.id,
+        session:            'defaultSession',
         cookieRewritePhase: 'after',
         rewrittenSetCookie: rewrittenCookies,
         domainKey,
@@ -324,7 +324,7 @@ export class SullaWebRequestFixer {
   }
 
   /**
-   * 
+   *
    */
   private shouldLogRequest(url: string): boolean {
     if (url.startsWith(SullaWebRequestFixer.CONNECTIVITY_PROBE_URL_PREFIX)) {
@@ -345,11 +345,11 @@ export class SullaWebRequestFixer {
   private getCookieDomainKey(url: string): string {
     const urlInfo = this.getUrlInfo(url);
 
-    return `${urlInfo.hostname}:${urlInfo.port}`;
+    return `${ urlInfo.hostname }:${ urlInfo.port }`;
   }
 
   private getCookiePropertyName(domainKey: string): string {
-    return `${SullaWebRequestFixer.COOKIE_PROPERTY_PREFIX}${domainKey}`;
+    return `${ SullaWebRequestFixer.COOKIE_PROPERTY_PREFIX }${ domainKey }`;
   }
 
   private async loadCookieHeaderForDomain(domainKey: string): Promise<string> {
@@ -374,5 +374,4 @@ export class SullaWebRequestFixer {
       .set(this.getCookiePropertyName(domainKey), cookieHeader, 'string')
       .catch(() => {});
   }
-
 }

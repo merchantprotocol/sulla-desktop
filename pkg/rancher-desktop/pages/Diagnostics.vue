@@ -29,8 +29,8 @@ export default defineComponent({
   <div>
     <PostHogTracker page-name="Diagnostics" />
     <diagnostics-body
-    :rows="diagnostics"
-    :time-last-run="timeLastRun"
-  />
+      :rows="diagnostics"
+      :time-last-run="timeLastRun"
+    />
   </div>
 </template>

@@ -1,174 +1,504 @@
 <template>
-  <div class="git-pane" :class="{ dark: isDark }">
+  <div
+    class="git-pane"
+    :class="{ dark: isDark }"
+  >
     <!-- Header -->
-    <div class="git-header" :class="{ dark: isDark }">
+    <div
+      class="git-header"
+      :class="{ dark: isDark }"
+    >
       <span class="git-header-title">Source Control</span>
       <div class="git-header-actions">
-        <button class="git-header-btn" :class="{ dark: isDark, active: treeView }" @click="treeView = !treeView" title="Toggle Tree View">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-            <line x1="10" y1="12" x2="10" y2="18"/>
-            <line x1="10" y1="18" x2="16" y2="18"/>
-            <line x1="10" y1="15" x2="16" y2="15"/>
+        <button
+          class="git-header-btn"
+          :class="{ dark: isDark, active: treeView }"
+          title="Toggle Tree View"
+          @click="treeView = !treeView"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            <line
+              x1="10"
+              y1="12"
+              x2="10"
+              y2="18"
+            />
+            <line
+              x1="10"
+              y1="18"
+              x2="16"
+              y2="18"
+            />
+            <line
+              x1="10"
+              y1="15"
+              x2="16"
+              y2="15"
+            />
           </svg>
         </button>
-        <button class="git-header-btn" :class="{ dark: isDark }" @click="discoverAndRefresh" title="Refresh">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"/>
-            <polyline points="1 20 1 14 7 14"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        <button
+          class="git-header-btn"
+          :class="{ dark: isDark }"
+          title="Refresh"
+          @click="discoverAndRefresh"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
           </svg>
         </button>
-        <button class="git-header-btn" :class="{ dark: isDark }" @click="$emit('close')" title="Close Panel">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
+        <button
+          class="git-header-btn"
+          :class="{ dark: isDark }"
+          title="Close Panel"
+          @click="$emit('close')"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="18"
+              y1="6"
+              x2="6"
+              y2="18"
+            />
+            <line
+              x1="6"
+              y1="6"
+              x2="18"
+              y2="18"
+            />
           </svg>
         </button>
       </div>
     </div>
 
     <!-- No repos found -->
-    <div v-if="!loading && repoStates.length === 0" class="git-empty">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-        <circle cx="12" cy="12" r="10"/>
-        <line x1="15" y1="9" x2="9" y2="15"/>
-        <line x1="9" y1="9" x2="15" y2="15"/>
+    <div
+      v-if="!loading && repoStates.length === 0"
+      class="git-empty"
+    >
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        opacity="0.4"
+      >
+        <circle
+          cx="12"
+          cy="12"
+          r="10"
+        />
+        <line
+          x1="15"
+          y1="9"
+          x2="9"
+          y2="15"
+        />
+        <line
+          x1="9"
+          y1="9"
+          x2="15"
+          y2="15"
+        />
       </svg>
       <span class="git-empty-text">No Git repositories found</span>
     </div>
 
     <!-- Scanning -->
-    <div v-else-if="loading && repoStates.length === 0" class="git-empty">
+    <div
+      v-else-if="loading && repoStates.length === 0"
+      class="git-empty"
+    >
       <span class="git-empty-text">Scanning for repositories...</span>
     </div>
 
     <!-- Repo trees -->
-    <div v-else class="git-repos-list">
-      <div v-for="repo in repoStates" :key="repo.root" class="git-repo-node">
+    <div
+      v-else
+      class="git-repos-list"
+    >
+      <div
+        v-for="repo in repoStates"
+        :key="repo.root"
+        class="git-repo-node"
+      >
         <!-- Repo root row (collapsible) -->
-        <button class="git-repo-header" :class="{ dark: isDark }" @click="repo.open = !repo.open">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" :class="{ rotated: repo.open }">
-            <path d="M3 1l4 4-4 4z"/>
+        <button
+          class="git-repo-header"
+          :class="{ dark: isDark }"
+          @click="repo.open = !repo.open"
+        >
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="currentColor"
+            :class="{ rotated: repo.open }"
+          >
+            <path d="M3 1l4 4-4 4z" />
           </svg>
           <!-- Git logo -->
-          <svg width="14" height="14" viewBox="0 0 92 92" class="git-repo-icon">
-            <path d="M90.156 41.965 50.036 1.848a5.913 5.913 0 0 0-8.368 0l-8.332 8.332 10.566 10.566a7.03 7.03 0 0 1 7.23 1.684 7.043 7.043 0 0 1 1.673 7.277l10.183 10.184a7.026 7.026 0 0 1 7.278 1.672 7.04 7.04 0 0 1 0 9.957 7.045 7.045 0 0 1-9.961 0 7.06 7.06 0 0 1-1.496-7.665l-9.5-9.497V55.57a7.078 7.078 0 0 1 1.91 1.318 7.044 7.044 0 0 1 0 9.957 7.045 7.045 0 0 1-9.961 0 7.04 7.04 0 0 1 0-9.957 7.09 7.09 0 0 1 2.188-1.529V34.14a7.044 7.044 0 0 1-3.821-11.593L29.242 12.17 1.73 39.678a5.918 5.918 0 0 0 0 8.371l40.12 40.116a5.916 5.916 0 0 0 8.369 0l39.937-39.829a5.917 5.917 0 0 0 0-8.371z" fill="#F05032"/>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 92 92"
+            class="git-repo-icon"
+          >
+            <path
+              d="M90.156 41.965 50.036 1.848a5.913 5.913 0 0 0-8.368 0l-8.332 8.332 10.566 10.566a7.03 7.03 0 0 1 7.23 1.684 7.043 7.043 0 0 1 1.673 7.277l10.183 10.184a7.026 7.026 0 0 1 7.278 1.672 7.04 7.04 0 0 1 0 9.957 7.045 7.045 0 0 1-9.961 0 7.06 7.06 0 0 1-1.496-7.665l-9.5-9.497V55.57a7.078 7.078 0 0 1 1.91 1.318 7.044 7.044 0 0 1 0 9.957 7.045 7.045 0 0 1-9.961 0 7.04 7.04 0 0 1 0-9.957 7.09 7.09 0 0 1 2.188-1.529V34.14a7.044 7.044 0 0 1-3.821-11.593L29.242 12.17 1.73 39.678a5.918 5.918 0 0 0 0 8.371l40.12 40.116a5.916 5.916 0 0 0 8.369 0l39.937-39.829a5.917 5.917 0 0 0 0-8.371z"
+              fill="#F05032"
+            />
           </svg>
           <span class="git-repo-name">{{ repo.name }}</span>
-          <span class="git-repo-branch-inline" :class="{ dark: isDark }" @click.stop="openBranchModal(repo)">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="6" y1="3" x2="6" y2="15"/>
-              <circle cx="18" cy="6" r="3"/>
-              <circle cx="6" cy="18" r="3"/>
-              <path d="M18 9a9 9 0 0 1-9 9"/>
+          <span
+            class="git-repo-branch-inline"
+            :class="{ dark: isDark }"
+            @click.stop="openBranchModal(repo)"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line
+                x1="6"
+                y1="3"
+                x2="6"
+                y2="15"
+              />
+              <circle
+                cx="18"
+                cy="6"
+                r="3"
+              />
+              <circle
+                cx="6"
+                cy="18"
+                r="3"
+              />
+              <path d="M18 9a9 9 0 0 1-9 9" />
             </svg>
             {{ repo.branch || '...' }}
           </span>
-          <span class="git-repo-actions" @click.stop>
-            <button class="git-repo-action-btn" :class="{ dark: isDark }" title="Refresh" @click="refreshRepo(repo)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="23 4 23 10 17 10"/>
-                <polyline points="1 20 1 14 7 14"/>
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          <span
+            class="git-repo-actions"
+            @click.stop
+          >
+            <button
+              class="git-repo-action-btn"
+              :class="{ dark: isDark }"
+              title="Refresh"
+              @click="refreshRepo(repo)"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="23 4 23 10 17 10" />
+                <polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
               </svg>
             </button>
-            <button class="git-repo-action-btn" :class="{ dark: isDark }" title="More actions" @click="toggleRepoMenu(repo)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="5" r="2"/>
-                <circle cx="12" cy="12" r="2"/>
-                <circle cx="12" cy="19" r="2"/>
+            <button
+              class="git-repo-action-btn"
+              :class="{ dark: isDark }"
+              title="More actions"
+              @click="toggleRepoMenu(repo)"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <circle
+                  cx="12"
+                  cy="5"
+                  r="2"
+                />
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="2"
+                />
+                <circle
+                  cx="12"
+                  cy="19"
+                  r="2"
+                />
               </svg>
             </button>
           </span>
         </button>
 
         <!-- Repo action menu dropdown -->
-        <div v-if="repoMenu.visible && repoMenu.repo === repo" class="git-repo-menu" :class="{ dark: isDark }">
-          <button class="git-repo-menu-item" :class="{ dark: isDark }" @click="repoAction(repo, 'pull')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="8 17 12 21 16 17"/>
-              <line x1="12" y1="12" x2="12" y2="21"/>
-              <path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/>
+        <div
+          v-if="repoMenu.visible && repoMenu.repo === repo"
+          class="git-repo-menu"
+          :class="{ dark: isDark }"
+        >
+          <button
+            class="git-repo-menu-item"
+            :class="{ dark: isDark }"
+            @click="repoAction(repo, 'pull')"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="8 17 12 21 16 17" />
+              <line
+                x1="12"
+                y1="12"
+                x2="12"
+                y2="21"
+              />
+              <path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29" />
             </svg>
             <span>Pull</span>
           </button>
-          <button class="git-repo-menu-item" :class="{ dark: isDark }" @click="repoAction(repo, 'push')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="16 16 12 12 8 16"/>
-              <line x1="12" y1="12" x2="12" y2="21"/>
-              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+          <button
+            class="git-repo-menu-item"
+            :class="{ dark: isDark }"
+            @click="repoAction(repo, 'push')"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="16 16 12 12 8 16" />
+              <line
+                x1="12"
+                y1="12"
+                x2="12"
+                y2="21"
+              />
+              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
             </svg>
             <span>Push</span>
           </button>
-          <button class="git-repo-menu-item" :class="{ dark: isDark }" @click="repoAction(repo, 'fetch')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
+          <button
+            class="git-repo-menu-item"
+            :class="{ dark: isDark }"
+            @click="repoAction(repo, 'fetch')"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line
+                x1="12"
+                y1="15"
+                x2="12"
+                y2="3"
+              />
             </svg>
             <span>Fetch</span>
           </button>
-          <div class="git-repo-menu-divider" :class="{ dark: isDark }"></div>
-          <button class="git-repo-menu-item" :class="{ dark: isDark }" @click="repoAction(repo, 'stash')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-              <polyline points="17 21 17 13 7 13 7 21"/>
-              <polyline points="7 3 7 8 15 8"/>
+          <div
+            class="git-repo-menu-divider"
+            :class="{ dark: isDark }"
+          />
+          <button
+            class="git-repo-menu-item"
+            :class="{ dark: isDark }"
+            @click="repoAction(repo, 'stash')"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
             </svg>
             <span>Stash</span>
           </button>
-          <button class="git-repo-menu-item" :class="{ dark: isDark }" @click="repoAction(repo, 'stash-pop')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-              <line x1="9" y1="15" x2="15" y2="15"/>
+          <button
+            class="git-repo-menu-item"
+            :class="{ dark: isDark }"
+            @click="repoAction(repo, 'stash-pop')"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <line
+                x1="9"
+                y1="15"
+                x2="15"
+                y2="15"
+              />
             </svg>
             <span>Stash Pop</span>
           </button>
-          <div class="git-repo-menu-divider" :class="{ dark: isDark }"></div>
-          <button class="git-repo-menu-item danger" :class="{ dark: isDark }" @click="repoAction(repo, 'discard-all')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          <div
+            class="git-repo-menu-divider"
+            :class="{ dark: isDark }"
+          />
+          <button
+            class="git-repo-menu-item danger"
+            :class="{ dark: isDark }"
+            @click="repoAction(repo, 'discard-all')"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
             </svg>
             <span>Discard All Changes</span>
           </button>
         </div>
 
         <!-- Expanded repo content -->
-        <div v-show="repo.open" class="git-repo-content">
+        <div
+          v-show="repo.open"
+          class="git-repo-content"
+        >
           <!-- Commit input -->
-          <div v-if="repoStaged(repo).length > 0" class="git-commit-bar" :class="{ dark: isDark }">
+          <div
+            v-if="repoStaged(repo).length > 0"
+            class="git-commit-bar"
+            :class="{ dark: isDark }"
+          >
             <input
               v-model="repo.commitMessage"
               class="git-commit-input"
               :class="{ dark: isDark }"
               placeholder="Commit message"
               @keydown.enter="doCommit(repo)"
-            />
+            >
             <button
               class="git-commit-btn"
               :class="{ dark: isDark }"
               :disabled="!repo.commitMessage.trim()"
-              @click="doCommit(repo)"
               title="Commit staged changes"
+              @click="doCommit(repo)"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"/>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
               </svg>
             </button>
           </div>
 
           <!-- Staged Changes -->
           <template v-if="repoStaged(repo).length > 0">
-            <button class="git-section-header" :class="{ dark: isDark }" @click="repo.stagedOpen = !repo.stagedOpen">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" :class="{ rotated: repo.stagedOpen }">
-                <path d="M3 1l4 4-4 4z"/>
+            <button
+              class="git-section-header"
+              :class="{ dark: isDark }"
+              @click="repo.stagedOpen = !repo.stagedOpen"
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="currentColor"
+                :class="{ rotated: repo.stagedOpen }"
+              >
+                <path d="M3 1l4 4-4 4z" />
               </svg>
               <span>Staged Changes</span>
               <span class="git-section-count">{{ repoStaged(repo).length }}</span>
             </button>
-            <div v-show="repo.stagedOpen" class="git-file-list">
+            <div
+              v-show="repo.stagedOpen"
+              class="git-file-list"
+            >
               <!-- List view -->
               <template v-if="!treeView">
                 <div
@@ -182,9 +512,27 @@
                   <span class="git-status-badge staged">{{ f.index }}</span>
                   <span class="git-file-name">{{ basename(f.file) }}</span>
                   <span class="git-file-path">{{ dirname(f.file) }}</span>
-                  <button class="git-file-action" :class="{ dark: isDark }" title="Unstage" @click.stop="unstage(repo, f.file)">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                      <line x1="5" y1="12" x2="19" y2="12"/>
+                  <button
+                    class="git-file-action"
+                    :class="{ dark: isDark }"
+                    title="Unstage"
+                    @click.stop="unstage(repo, f.file)"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                    >
+                      <line
+                        x1="5"
+                        y1="12"
+                        x2="19"
+                        y2="12"
+                      />
                     </svg>
                   </button>
                 </div>
@@ -210,14 +558,27 @@
 
           <!-- Changes (modified/deleted) -->
           <template v-if="repoChanged(repo).length > 0">
-            <button class="git-section-header" :class="{ dark: isDark }" @click="repo.changesOpen = !repo.changesOpen">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" :class="{ rotated: repo.changesOpen }">
-                <path d="M3 1l4 4-4 4z"/>
+            <button
+              class="git-section-header"
+              :class="{ dark: isDark }"
+              @click="repo.changesOpen = !repo.changesOpen"
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="currentColor"
+                :class="{ rotated: repo.changesOpen }"
+              >
+                <path d="M3 1l4 4-4 4z" />
               </svg>
               <span>Changes</span>
               <span class="git-section-count">{{ repoChanged(repo).length }}</span>
             </button>
-            <div v-show="repo.changesOpen" class="git-file-list">
+            <div
+              v-show="repo.changesOpen"
+              class="git-file-list"
+            >
               <!-- List view -->
               <template v-if="!treeView">
                 <div
@@ -228,13 +589,39 @@
                   @click="openFile(repo, f.file)"
                   @contextmenu.prevent="showFileContextMenu($event, repo, f.file, false)"
                 >
-                  <span class="git-status-badge" :class="statusClass(f.worktree)">{{ f.worktree }}</span>
+                  <span
+                    class="git-status-badge"
+                    :class="statusClass(f.worktree)"
+                  >{{ f.worktree }}</span>
                   <span class="git-file-name">{{ basename(f.file) }}</span>
                   <span class="git-file-path">{{ dirname(f.file) }}</span>
-                  <button class="git-file-action" :class="{ dark: isDark }" title="Stage" @click.stop="stage(repo, f.file)">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                      <line x1="12" y1="5" x2="12" y2="19"/>
-                      <line x1="5" y1="12" x2="19" y2="12"/>
+                  <button
+                    class="git-file-action"
+                    :class="{ dark: isDark }"
+                    title="Stage"
+                    @click.stop="stage(repo, f.file)"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                    >
+                      <line
+                        x1="12"
+                        y1="5"
+                        x2="12"
+                        y2="19"
+                      />
+                      <line
+                        x1="5"
+                        y1="12"
+                        x2="19"
+                        y2="12"
+                      />
                     </svg>
                   </button>
                 </div>
@@ -260,14 +647,27 @@
 
           <!-- Untracked Files -->
           <template v-if="repoUntracked(repo).length > 0">
-            <button class="git-section-header" :class="{ dark: isDark }" @click="repo.untrackedOpen = !repo.untrackedOpen">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" :class="{ rotated: repo.untrackedOpen }">
-                <path d="M3 1l4 4-4 4z"/>
+            <button
+              class="git-section-header"
+              :class="{ dark: isDark }"
+              @click="repo.untrackedOpen = !repo.untrackedOpen"
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="currentColor"
+                :class="{ rotated: repo.untrackedOpen }"
+              >
+                <path d="M3 1l4 4-4 4z" />
               </svg>
               <span>Untracked Files</span>
               <span class="git-section-count">{{ repoUntracked(repo).length }}</span>
             </button>
-            <div v-show="repo.untrackedOpen" class="git-file-list">
+            <div
+              v-show="repo.untrackedOpen"
+              class="git-file-list"
+            >
               <!-- List view -->
               <template v-if="!treeView">
                 <div
@@ -281,10 +681,33 @@
                   <span class="git-status-badge added">A</span>
                   <span class="git-file-name">{{ basename(f.file) }}</span>
                   <span class="git-file-path">{{ dirname(f.file) }}</span>
-                  <button class="git-file-action" :class="{ dark: isDark }" title="Stage" @click.stop="stage(repo, f.file)">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                      <line x1="12" y1="5" x2="12" y2="19"/>
-                      <line x1="5" y1="12" x2="19" y2="12"/>
+                  <button
+                    class="git-file-action"
+                    :class="{ dark: isDark }"
+                    title="Stage"
+                    @click.stop="stage(repo, f.file)"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                    >
+                      <line
+                        x1="12"
+                        y1="5"
+                        x2="12"
+                        y2="19"
+                      />
+                      <line
+                        x1="5"
+                        y1="12"
+                        x2="19"
+                        y2="12"
+                      />
                     </svg>
                   </button>
                 </div>
@@ -309,7 +732,11 @@
           </template>
 
           <!-- Clean state for this repo -->
-          <div v-if="totalChanges(repo) === 0" class="git-repo-clean" :class="{ dark: isDark }">
+          <div
+            v-if="totalChanges(repo) === 0"
+            class="git-repo-clean"
+            :class="{ dark: isDark }"
+          >
             <span>No changes</span>
           </div>
         </div>
@@ -328,32 +755,111 @@
           :class="{ dark: isDark }"
           :style="{ left: fileCtx.x + 'px', top: fileCtx.y + 'px' }"
         >
-          <button class="git-file-ctx-item" :class="{ dark: isDark }" @click="ctxOpen">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
+          <button
+            class="git-file-ctx-item"
+            :class="{ dark: isDark }"
+            @click="ctxOpen"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
             </svg>
             <span>Open</span>
           </button>
-          <button class="git-file-ctx-item" :class="{ dark: isDark }" @click="ctxOpenChanges">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2" y="3" width="8" height="18" rx="1"/>
-              <rect x="14" y="3" width="8" height="18" rx="1"/>
+          <button
+            class="git-file-ctx-item"
+            :class="{ dark: isDark }"
+            @click="ctxOpenChanges"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect
+                x="2"
+                y="3"
+                width="8"
+                height="18"
+                rx="1"
+              />
+              <rect
+                x="14"
+                y="3"
+                width="8"
+                height="18"
+                rx="1"
+              />
             </svg>
             <span>Open Changes</span>
           </button>
-          <div class="git-file-ctx-divider" :class="{ dark: isDark }"></div>
-          <button class="git-file-ctx-item" :class="{ dark: isDark }" @click="ctxReveal">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          <div
+            class="git-file-ctx-divider"
+            :class="{ dark: isDark }"
+          />
+          <button
+            class="git-file-ctx-item"
+            :class="{ dark: isDark }"
+            @click="ctxReveal"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
             <span>Reveal in Explorer</span>
           </button>
-          <div class="git-file-ctx-divider" :class="{ dark: isDark }"></div>
-          <button class="git-file-ctx-item" :class="{ dark: isDark }" @click="ctxAddGitignore">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+          <div
+            class="git-file-ctx-divider"
+            :class="{ dark: isDark }"
+          />
+          <button
+            class="git-file-ctx-item"
+            :class="{ dark: isDark }"
+            @click="ctxAddGitignore"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+              />
+              <line
+                x1="4.93"
+                y1="4.93"
+                x2="19.07"
+                y2="19.07"
+              />
             </svg>
             <span>Add to .gitignore</span>
           </button>
@@ -363,8 +869,15 @@
 
     <!-- Branch modal overlay -->
     <teleport to="body">
-      <div v-if="branchModal.visible" class="git-branch-overlay" @click.self="closeBranchModal">
-        <div class="git-branch-modal" :class="{ dark: isDark }">
+      <div
+        v-if="branchModal.visible"
+        class="git-branch-overlay"
+        @click.self="closeBranchModal"
+      >
+        <div
+          class="git-branch-modal"
+          :class="{ dark: isDark }"
+        >
           <!-- Search / Create input -->
           <div class="git-branch-modal-input-row">
             <input
@@ -375,7 +888,7 @@
               placeholder="Switch to or create branch..."
               @keydown.enter="onBranchInputEnter"
               @keydown.escape="closeBranchModal"
-            />
+            >
           </div>
 
           <!-- Create new branch option (shown when query doesn't match existing) -->
@@ -385,15 +898,38 @@
             :class="{ dark: isDark }"
             @click="createBranch"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <line x1="12" y1="5" x2="12" y2="19"/>
-              <line x1="5" y1="12" x2="19" y2="12"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            >
+              <line
+                x1="12"
+                y1="5"
+                x2="12"
+                y2="19"
+              />
+              <line
+                x1="5"
+                y1="12"
+                x2="19"
+                y2="12"
+              />
             </svg>
             <span>Create branch: <strong>{{ branchModal.query.trim() }}</strong></span>
           </button>
 
           <!-- Error message -->
-          <div v-if="branchModal.error" class="git-branch-modal-error">{{ branchModal.error }}</div>
+          <div
+            v-if="branchModal.error"
+            class="git-branch-modal-error"
+          >
+            {{ branchModal.error }}
+          </div>
 
           <!-- Branch list -->
           <div class="git-branch-modal-list">
@@ -404,17 +940,52 @@
               :class="{ dark: isDark, active: b.current }"
               @click="switchBranch(b.name)"
             >
-              <svg v-if="b.current" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                <polyline points="20 6 9 17 4 12"/>
+              <svg
+                v-if="b.current"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
               </svg>
-              <svg v-else-if="b.remote" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="2" y1="12" x2="22" y2="12"/>
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              <svg
+                v-else-if="b.remote"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                opacity="0.5"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                />
+                <line
+                  x1="2"
+                  y1="12"
+                  x2="22"
+                  y2="12"
+                />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
               </svg>
-              <span v-else style="width:14px; display:inline-block"></span>
+              <span
+                v-else
+                style="width:14px; display:inline-block"
+              />
               <span class="git-branch-modal-name">{{ b.name }}</span>
-              <span v-if="b.remote && !b.current" class="git-branch-modal-remote">remote</span>
+              <span
+                v-if="b.remote && !b.current"
+                class="git-branch-modal-remote"
+              >remote</span>
             </button>
           </div>
         </div>
@@ -430,32 +1001,32 @@ import GitTreeNodes from './GitTreeNodes.vue';
 import type { FileEntry } from '../filesystem/FileTreeSidebar.vue';
 
 interface GitStatusEntry {
-  index: string;
+  index:    string;
   worktree: string;
-  file: string;
+  file:     string;
 }
 
 interface RepoState {
-  root: string;
-  name: string;
-  branch: string;
-  entries: GitStatusEntry[];
-  open: boolean;
-  stagedOpen: boolean;
-  changesOpen: boolean;
+  root:          string;
+  name:          string;
+  branch:        string;
+  entries:       GitStatusEntry[];
+  open:          boolean;
+  stagedOpen:    boolean;
+  changesOpen:   boolean;
   untrackedOpen: boolean;
   commitMessage: string;
 }
 
 const props = defineProps<{
   rootPath: string;
-  isDark: boolean;
+  isDark:   boolean;
 }>();
 
 const emit = defineEmits<{
   'file-selected': [entry: FileEntry];
-  'open-diff': [repoRoot: string, file: string, staged: boolean];
-  'close': [];
+  'open-diff':     [repoRoot: string, file: string, staged: boolean];
+  close:           [];
 }>();
 
 const loading = ref(false);
@@ -465,11 +1036,11 @@ const treeView = ref(true);
 // ─── Tree view helpers ───────────────────────────────────────────
 
 interface TreeNode {
-  name: string;
-  path: string; // relative path from repo root
-  isDir: boolean;
+  name:     string;
+  path:     string; // relative path from repo root
+  isDir:    boolean;
   children: TreeNode[];
-  entry?: GitStatusEntry; // leaf file nodes have this
+  entry?:   GitStatusEntry; // leaf file nodes have this
 }
 
 function buildTree(entries: GitStatusEntry[]): TreeNode[] {
@@ -525,7 +1096,6 @@ function buildTree(entries: GitStatusEntry[]): TreeNode[] {
   return collapse(toNodes(root));
 }
 
-
 // ─── Filters ────────────────────────────────────────────────────
 
 function repoStaged(repo: RepoState): GitStatusEntry[] {
@@ -559,11 +1129,11 @@ function dirname(filePath: string): string {
 
 function statusClass(code: string): string {
   switch (code) {
-    case 'M': return 'modified';
-    case 'D': return 'deleted';
-    case 'A': return 'added';
-    case 'R': return 'renamed';
-    default:  return 'modified';
+  case 'M': return 'modified';
+  case 'D': return 'deleted';
+  case 'A': return 'added';
+  case 'R': return 'renamed';
+  default: return 'modified';
   }
 }
 
@@ -574,7 +1144,7 @@ async function discoverAndRefresh() {
   console.log('[GitPane] discoverAndRefresh rootPath:', props.rootPath);
   loading.value = true;
   try {
-    const discovered: Array<{ root: string; name: string }> = await ipcRenderer.invoke('git-discover-repos', props.rootPath);
+    const discovered: { root: string; name: string }[] = await ipcRenderer.invoke('git-discover-repos', props.rootPath);
     console.log('[GitPane] discovered repos:', JSON.stringify(discovered, null, 2));
 
     // Preserve existing UI state (open/closed) for repos we already know about
@@ -617,7 +1187,7 @@ async function refreshRepo(repo: RepoState) {
     repo.branch = br;
     repo.entries = entries;
   } catch (err) {
-    console.error(`[GitPane] refreshRepo error for ${repo.name}:`, err);
+    console.error(`[GitPane] refreshRepo error for ${ repo.name }:`, err);
   }
 }
 
@@ -669,18 +1239,18 @@ async function repoAction(repo: RepoState, action: string) {
   closeRepoMenu();
   let ipcChannel: string;
   switch (action) {
-    case 'pull':        ipcChannel = 'git-pull'; break;
-    case 'push':        ipcChannel = 'git-push'; break;
-    case 'fetch':       ipcChannel = 'git-fetch'; break;
-    case 'stash':       ipcChannel = 'git-stash'; break;
-    case 'stash-pop':   ipcChannel = 'git-stash-pop'; break;
-    case 'discard-all': ipcChannel = 'git-discard-all'; break;
-    default: return;
+  case 'pull': ipcChannel = 'git-pull'; break;
+  case 'push': ipcChannel = 'git-push'; break;
+  case 'fetch': ipcChannel = 'git-fetch'; break;
+  case 'stash': ipcChannel = 'git-stash'; break;
+  case 'stash-pop': ipcChannel = 'git-stash-pop'; break;
+  case 'discard-all': ipcChannel = 'git-discard-all'; break;
+  default: return;
   }
   try {
     await ipcRenderer.invoke(ipcChannel, repo.root);
   } catch (err) {
-    console.error(`[GitPane] ${action} error:`, err);
+    console.error(`[GitPane] ${ action } error:`, err);
   }
   await refreshRepo(repo);
 }
@@ -709,11 +1279,11 @@ function openFileRaw(repo: RepoState, file: string) {
 
 const fileCtx = reactive({
   visible: false,
-  x: 0,
-  y: 0,
-  repo: null as RepoState | null,
-  file: '',
-  staged: false,
+  x:       0,
+  y:       0,
+  repo:    null as RepoState | null,
+  file:    '',
+  staged:  false,
 });
 
 function showFileContextMenu(event: MouseEvent, repo: RepoState, file: string, staged: boolean) {
@@ -760,17 +1330,17 @@ async function ctxAddGitignore() {
 // ─── Branch modal ────────────────────────────────────────────────
 
 interface BranchInfo {
-  name: string;
+  name:    string;
   current: boolean;
-  remote: boolean;
+  remote:  boolean;
 }
 
 const branchInputRef = ref<HTMLInputElement | null>(null);
 const branchModal = reactive({
-  visible: false,
-  repo:    null as RepoState | null,
-  query:   '',
-  error:   '',
+  visible:  false,
+  repo:     null as RepoState | null,
+  query:    '',
+  error:    '',
   branches: [] as BranchInfo[],
 });
 

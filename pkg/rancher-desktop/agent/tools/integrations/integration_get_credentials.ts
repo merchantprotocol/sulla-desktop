@@ -1,7 +1,7 @@
-import { BaseTool, ToolResponse } from "../base";
-import { getIntegrationService } from "../../services/IntegrationService";
-import { integrations } from "../../integrations/catalog";
-import { getExtensionService } from "@pkg/agent/services/ExtensionService";
+import { BaseTool, ToolResponse } from '../base';
+import { getIntegrationService } from '../../services/IntegrationService';
+import { integrations } from '../../integrations/catalog';
+import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 
 /**
  * Integration Get Credentials Tool - Worker class for execution
@@ -9,14 +9,14 @@ import { getExtensionService } from "@pkg/agent/services/ExtensionService";
  * The default account is marked with ★ DEFAULT.
  */
 export class IntegrationGetCredentialsWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { integration_slug, include_secrets } = input;
 
     try {
       const service = getIntegrationService();
-      let baseIntegrations = integrations;
+      const baseIntegrations = integrations;
 
       const extensionService = getExtensionService();
       await extensionService.initialize();
@@ -31,7 +31,7 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
       if (!catalogEntry) {
         return {
           successBoolean: false,
-          responseString: `Integration "${integration_slug}" not found in the catalog. Available integrations: ${Object.keys(mergedIntegrations).join(', ')}`
+          responseString: `Integration "${ integration_slug }" not found in the catalog. Available integrations: ${ Object.keys(mergedIntegrations).join(', ') }`,
         };
       }
 
@@ -42,12 +42,12 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
       const catalogProperties = catalogEntry.properties ?? [];
       const secretKeys = new Set(catalogProperties.filter(p => p.type === 'password').map(p => p.key));
 
-      let responseString = `Integration: ${integration_slug} (${catalogEntry.name})\n`;
+      let responseString = `Integration: ${ integration_slug } (${ catalogEntry.name })\n`;
 
       if (accounts.length === 0) {
         responseString += `No accounts configured.\n\nExpected credentials:\n`;
         catalogProperties.forEach(prop => {
-          responseString += `- ${prop.title} (${prop.key}): [NOT SET] (${prop.required ? 'Required' : 'Optional'})\n`;
+          responseString += `- ${ prop.title } (${ prop.key }): [NOT SET] (${ prop.required ? 'Required' : 'Optional' })\n`;
         });
 
         return {
@@ -56,7 +56,7 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
         };
       }
 
-      responseString += `Accounts: ${accounts.length}\n\n`;
+      responseString += `Accounts: ${ accounts.length }\n\n`;
 
       for (const acct of accounts) {
         const status = await service.getConnectionStatus(integration_slug, acct.account_id);
@@ -69,10 +69,10 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
         }
 
         const defaultMarker = acct.active ? ' ★ DEFAULT' : '';
-        responseString += `--- Account: ${acct.label} (${acct.account_id})${defaultMarker} ---\n`;
-        responseString += `Enabled: ${status.connected ? 'Yes' : 'No'}\n`;
-        responseString += `Connected at: ${status.connected_at ? new Date(status.connected_at).toLocaleString() : 'Never'}\n`;
-        responseString += `Last sync at: ${status.last_sync_at ? new Date(status.last_sync_at).toLocaleString() : 'Never'}\n`;
+        responseString += `--- Account: ${ acct.label } (${ acct.account_id })${ defaultMarker } ---\n`;
+        responseString += `Enabled: ${ status.connected ? 'Yes' : 'No' }\n`;
+        responseString += `Connected at: ${ status.connected_at ? new Date(status.connected_at).toLocaleString() : 'Never' }\n`;
+        responseString += `Last sync at: ${ status.last_sync_at ? new Date(status.last_sync_at).toLocaleString() : 'Never' }\n`;
         responseString += `Credentials:\n`;
 
         catalogProperties.forEach(prop => {
@@ -86,7 +86,7 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
               displayValue = raw;
             }
           }
-          responseString += `- ${prop.title} (${prop.key}): ${displayValue} (${prop.required ? 'Required' : 'Optional'})\n`;
+          responseString += `- ${ prop.title } (${ prop.key }): ${ displayValue } (${ prop.required ? 'Required' : 'Optional' })\n`;
         });
 
         responseString += `\n`;
@@ -96,18 +96,18 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       if (error instanceof Error) {
         return {
           successBoolean: false,
-          responseString: `Error retrieving integration credentials: ${error.message}`
+          responseString: `Error retrieving integration credentials: ${ error.message }`,
         };
       } else {
         return {
           successBoolean: false,
-          responseString: 'Error retrieving integration credentials: Unknown error'
+          responseString: 'Error retrieving integration credentials: Unknown error',
         };
       }
     }

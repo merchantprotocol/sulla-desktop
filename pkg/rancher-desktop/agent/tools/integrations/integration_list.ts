@@ -1,17 +1,16 @@
-import { BaseTool, ToolResponse } from "../base";
-import { getIntegrationService } from "../../services/IntegrationService";
-import { integrations } from "../../integrations/catalog";
-import { getExtensionService } from "@pkg/agent/services/ExtensionService";
+import { BaseTool, ToolResponse } from '../base';
+import { getIntegrationService } from '../../services/IntegrationService';
+import { integrations } from '../../integrations/catalog';
+import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 
 /**
  * Integration List Tool - Worker class for execution
  */
 export class IntegrationListWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(_input: any): Promise<ToolResponse> {
-
     try {
       const service = getIntegrationService();
       await service.initialize();
@@ -26,7 +25,7 @@ export class IntegrationListWorker extends BaseTool {
       }
 
       // Filter by agent's integrations allowlist
-      const agentIntegrations: string[] | undefined = (this.state?.metadata as any)?.agent?.integrations;
+      const agentIntegrations: string[] | undefined = (this.state?.metadata)?.agent?.integrations;
       const allowAll = agentIntegrations?.includes('*');
       const hasAllowlist = Array.isArray(agentIntegrations) && agentIntegrations.length > 0;
 
@@ -34,14 +33,14 @@ export class IntegrationListWorker extends BaseTool {
         Object.entries(mergedIntegrations)
           .filter(([slug]) => {
             if (!hasAllowlist) return true;  // no allowlist = show all (backwards compat)
-            return allowAll || agentIntegrations!.includes(slug);
+            return allowAll || agentIntegrations.includes(slug);
           })
-          .map(async ([integration_slug, catalogEntry]) => {
+          .map(async([integration_slug, catalogEntry]) => {
             const status = await service.getConnectionStatus(integration_slug);
             return {
               integration_slug,
-              name: catalogEntry.name,
-              enabled: status.connected,
+              name:         catalogEntry.name,
+              enabled:      status.connected,
               connected_at: status.connected_at ? new Date(status.connected_at).toISOString() : null,
               last_sync_at: status.last_sync_at ? new Date(status.last_sync_at).toISOString() : null,
             };
@@ -57,9 +56,9 @@ export class IntegrationListWorker extends BaseTool {
         };
       }
 
-      let responseString = `Integrations (${results.length})\n`;
+      let responseString = `Integrations (${ results.length })\n`;
       results.forEach((integration) => {
-        responseString += `- ${integration.integration_slug} (${integration.name}) | Enabled: ${integration.enabled ? 'Yes' : 'No'} | Connected at: ${integration.connected_at || 'Never'} | Last sync at: ${integration.last_sync_at || 'Never'}\n`;
+        responseString += `- ${ integration.integration_slug } (${ integration.name }) | Enabled: ${ integration.enabled ? 'Yes' : 'No' } | Connected at: ${ integration.connected_at || 'Never' } | Last sync at: ${ integration.last_sync_at || 'Never' }\n`;
       });
 
       return {
@@ -70,7 +69,7 @@ export class IntegrationListWorker extends BaseTool {
       if (error instanceof Error) {
         return {
           successBoolean: false,
-          responseString: `Error listing integrations: ${error.message}`,
+          responseString: `Error listing integrations: ${ error.message }`,
         };
       }
 
@@ -81,4 +80,3 @@ export class IntegrationListWorker extends BaseTool {
     }
   }
 }
-

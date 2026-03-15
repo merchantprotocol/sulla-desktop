@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 const mockActivateWorkflow: any = jest.fn();
 
 jest.unstable_mockModule('../../../services/N8nService', () => ({
-  createN8nService: jest.fn(async () => ({
+  createN8nService: jest.fn(async() => ({
     activateWorkflow: mockActivateWorkflow,
   })),
 }));
@@ -24,19 +24,19 @@ describe('activate_workflow tool payload', () => {
     mockActivateWorkflow.mockReset();
   });
 
-  it('forwards only allowed activation payload fields to service', async () => {
+  it('forwards only allowed activation payload fields to service', async() => {
     const { ActivateWorkflowWorker, activateWorkflowRegistration } = await loadActivateTool();
 
     mockActivateWorkflow.mockResolvedValueOnce({
-      id: 'activation-1',
-      name: 'Workflow Name',
+      id:          'activation-1',
+      name:        'Workflow Name',
       description: 'Workflow Description',
-      createdAt: new Date().toISOString(),
+      createdAt:   new Date().toISOString(),
     });
 
     const worker = configureWorker(new ActivateWorkflowWorker(), activateWorkflowRegistration);
     const result = await worker.invoke({
-      id: 'workflow-123',
+      id:        'workflow-123',
       versionId: 'version-abc',
     });
 
@@ -44,17 +44,17 @@ describe('activate_workflow tool payload', () => {
     expect(mockActivateWorkflow).toHaveBeenCalledWith('workflow-123', { versionId: 'version-abc' });
   });
 
-  it('omits activation options when versionId is empty', async () => {
+  it('omits activation options when versionId is empty', async() => {
     const { ActivateWorkflowWorker, activateWorkflowRegistration } = await loadActivateTool();
 
     mockActivateWorkflow.mockResolvedValueOnce({
-      id: 'activation-2',
+      id:        'activation-2',
       createdAt: new Date().toISOString(),
     });
 
     const worker = configureWorker(new ActivateWorkflowWorker(), activateWorkflowRegistration);
     const result = await worker.invoke({
-      id: 'workflow-123',
+      id:        'workflow-123',
       versionId: '   ',
     });
 

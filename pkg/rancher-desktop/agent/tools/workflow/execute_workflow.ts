@@ -23,11 +23,11 @@ export class ExecuteWorkflowWorker extends BaseTool {
     }
 
     // If scoped to a specific workflow (e.g. from workflow editor), enforce it
-    const scopedWorkflowId = (this.state as any)?.metadata?.scopedWorkflowId;
+    const scopedWorkflowId = (this.state)?.metadata?.scopedWorkflowId;
     if (scopedWorkflowId && workflowId !== scopedWorkflowId) {
       return {
         successBoolean: false,
-        responseString: `You can only execute workflow "${scopedWorkflowId}" in this context. Check your available workflows in the system prompt.`,
+        responseString: `You can only execute workflow "${ scopedWorkflowId }" in this context. Check your available workflows in the system prompt.`,
       };
     }
 
@@ -35,7 +35,7 @@ export class ExecuteWorkflowWorker extends BaseTool {
     let message = input.message || '';
 
     if (!message && this.state) {
-      const messages = (this.state as any).messages;
+      const messages = (this.state).messages;
       if (Array.isArray(messages)) {
         for (let i = messages.length - 1; i >= 0; i--) {
           if (messages[i].role === 'user' && messages[i].content) {
@@ -57,8 +57,8 @@ export class ExecuteWorkflowWorker extends BaseTool {
     const workflowsDir = resolveSullaWorkflowsDir();
     let definition: WorkflowDefinition | null = null;
 
-    const yamlPath = path.join(workflowsDir, `${workflowId}.yaml`);
-    const jsonPath = path.join(workflowsDir, `${workflowId}.json`);
+    const yamlPath = path.join(workflowsDir, `${ workflowId }.yaml`);
+    const jsonPath = path.join(workflowsDir, `${ workflowId }.json`);
 
     try {
       if (fs.existsSync(yamlPath)) {
@@ -69,14 +69,14 @@ export class ExecuteWorkflowWorker extends BaseTool {
     } catch (err) {
       return {
         successBoolean: false,
-        responseString: `Error loading workflow "${workflowId}": ${(err as Error).message}`,
+        responseString: `Error loading workflow "${ workflowId }": ${ (err as Error).message }`,
       };
     }
 
     if (!definition) {
       return {
         successBoolean: false,
-        responseString: `Workflow "${workflowId}" not found. Check your available workflows in the system prompt.`,
+        responseString: `Workflow "${ workflowId }" not found. Check your available workflows in the system prompt.`,
       };
     }
 
@@ -85,25 +85,25 @@ export class ExecuteWorkflowWorker extends BaseTool {
       const playbook = createPlaybookState(definition, message);
 
       if (this.state) {
-        (this.state as any).metadata.activeWorkflow = playbook;
+        (this.state).metadata.activeWorkflow = playbook;
       }
 
-      console.log(`[ExecuteWorkflow] Loaded workflow "${definition.name}" (${workflowId}) as playbook — executionId=${playbook.executionId}, frontier=[${playbook.currentNodeIds.join(', ')}]`);
+      console.log(`[ExecuteWorkflow] Loaded workflow "${ definition.name }" (${ workflowId }) as playbook — executionId=${ playbook.executionId }, frontier=[${ playbook.currentNodeIds.join(', ') }]`);
 
       return {
         successBoolean: true,
         responseString: JSON.stringify({
-          executionId: playbook.executionId,
-          workflowId:  definition.id,
+          executionId:  playbook.executionId,
+          workflowId:   definition.id,
           workflowName: definition.name,
-          status: 'activated',
-          message: `Workflow "${definition.name}" activated. The workflow orchestration system has taken over. Do not respond further — the playbook will drive all subsequent steps.`,
+          status:       'activated',
+          message:      `Workflow "${ definition.name }" activated. The workflow orchestration system has taken over. Do not respond further — the playbook will drive all subsequent steps.`,
         }, null, 2),
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error activating workflow "${workflowId}": ${(error as Error).message}`,
+        responseString: `Error activating workflow "${ workflowId }": ${ (error as Error).message }`,
       };
     }
   }

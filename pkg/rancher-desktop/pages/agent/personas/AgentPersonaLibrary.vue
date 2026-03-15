@@ -67,14 +67,14 @@ function getOutputCost(agentId: string): number {
 
 function getPersonaComponent(templateId: PersonaTemplateId) {
   switch (templateId) {
-    case 'terminal':
-      return PersonaTerminal;
-    case 'industrial':
-      return PersonaIndustrial;
-    case 'biosynthetic':
-      return PersonaBioSynthetic;
-    case 'glass-core':
-      return PersonaGlassCore;
+  case 'terminal':
+    return PersonaTerminal;
+  case 'industrial':
+    return PersonaIndustrial;
+  case 'biosynthetic':
+    return PersonaBioSynthetic;
+  case 'glass-core':
+    return PersonaGlassCore;
   }
 }
 </script>

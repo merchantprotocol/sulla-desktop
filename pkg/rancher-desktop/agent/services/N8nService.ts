@@ -13,8 +13,8 @@ import { postgresClient } from '../database/PostgresClient';
  */
 export class N8nService {
   private baseUrl: string;
-  private apiKey: string;
-  private userId: string;
+  private apiKey:  string;
+  private userId:  string;
 
   constructor() {
     // Initialize with empty defaults - call initialize() to set values
@@ -31,7 +31,7 @@ export class N8nService {
     const { N8nUserApiKeyModel } = await import('../database/models/N8nUserApiKeyModel');
 
     // get the fresh api key
-    const n8nUserId = await SullaSettingsModel.get('serviceAccountUserId'); 
+    const n8nUserId = await SullaSettingsModel.get('serviceAccountUserId');
     const serviceAccount = await N8nUserApiKeyModel.getOrCreateServiceAccount(n8nUserId);
     if (!serviceAccount.attributes.id || !serviceAccount.attributes.apiKey) {
       throw new Error('[N8NService] Failed to get service account ID or API key');
@@ -39,7 +39,7 @@ export class N8nService {
     this.apiKey = serviceAccount.attributes.apiKey;
     this.userId = n8nUserId;
 
-    console.log(`API key ${this.apiKey ? 'generated/retrieved' : 'failed'} with ID ${serviceAccount.attributes.id}, length: ${this.apiKey?.length || 0}`);
+    console.log(`API key ${ this.apiKey ? 'generated/retrieved' : 'failed' } with ID ${ serviceAccount.attributes.id }, length: ${ this.apiKey?.length || 0 }`);
 
     this.baseUrl = 'http://127.0.0.1:30119';
   }
@@ -48,26 +48,26 @@ export class N8nService {
    * Make authenticated request to n8n API
    */
   private async request(endpoint: string, options: RequestInit = {}): Promise<any> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = `${ this.baseUrl }${ endpoint }`;
 
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      'Content-Type':  'application/json',
       'X-N8N-API-KEY': this.apiKey,
-      ...options.headers as Record<string, string>
+      ...options.headers as Record<string, string>,
     };
 
-    console.log(`[N8nService] Requesting: ${url}`);
-    console.log(`[N8nService] Headers:`, { ...headers, 'X-N8N-API-KEY': this.apiKey ? `exists (${this.apiKey.length} chars)` : 'missing' });
+    console.log(`[N8nService] Requesting: ${ url }`);
+    console.log(`[N8nService] Headers:`, { ...headers, 'X-N8N-API-KEY': this.apiKey ? `exists (${ this.apiKey.length } chars)` : 'missing' });
 
     try {
       const response = await fetch(url, {
         ...options,
-        headers
+        headers,
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`N8n API error ${response.status}: ${response.statusText} - ${errorText}`);
+        throw new Error(`N8n API error ${ response.status }: ${ response.statusText } - ${ errorText }`);
       }
 
       // For DELETE requests, may not have body
@@ -77,15 +77,15 @@ export class N8nService {
 
       return await response.json();
     } catch (error) {
-      console.error(`[N8nService] Request failed for ${endpoint}:`, error);
+      console.error(`[N8nService] Request failed for ${ endpoint }:`, error);
       throw error;
     }
   }
 
   private isArchiveSchemaMismatchError(error: unknown): boolean {
     const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-    return message.includes('n8n api error 400')
-      && message.includes('must not have additional properties');
+    return message.includes('n8n api error 400') &&
+      message.includes('must not have additional properties');
   }
 
   // ========== WORKFLOWS ==========
@@ -94,13 +94,13 @@ export class N8nService {
    * Get all workflows
    */
   async getWorkflows(params?: {
-    active?: boolean;
-    tags?: string;
-    name?: string;
-    projectId?: string;
+    active?:            boolean;
+    tags?:              string;
+    name?:              string;
+    projectId?:         string;
     excludePinnedData?: boolean;
-    limit?: number;
-    cursor?: string;
+    limit?:             number;
+    cursor?:            string;
   }): Promise<any[]> {
     let url = '/api/v1/workflows';
 
@@ -149,7 +149,7 @@ export class N8nService {
    * Get workflow by ID
    */
   async getWorkflow(id: string, excludePinnedData?: boolean): Promise<any> {
-    let url = `/api/v1/workflows/${id}`;
+    let url = `/api/v1/workflows/${ id }`;
 
     if (excludePinnedData !== undefined) {
       const queryParams = new URLSearchParams();
@@ -163,14 +163,14 @@ export class N8nService {
     try {
       apiWorkflow = await this.request(url);
     } catch (error) {
-      console.warn(`[N8nService] API getWorkflow failed for ${workflowId}, attempting Postgres fallback:`, error instanceof Error ? error.message : String(error));
+      console.warn(`[N8nService] API getWorkflow failed for ${ workflowId }, attempting Postgres fallback:`, error instanceof Error ? error.message : String(error));
     }
 
     let dbWorkflow: any = null;
     try {
       dbWorkflow = await this.getWorkflowFromPostgres(workflowId);
     } catch (error) {
-      console.warn(`[N8nService] Postgres fallback query failed for ${workflowId}:`, error instanceof Error ? error.message : String(error));
+      console.warn(`[N8nService] Postgres fallback query failed for ${ workflowId }:`, error instanceof Error ? error.message : String(error));
     }
     const hasCompleteGraph = (candidate: any): boolean => {
       return !!candidate && Array.isArray(candidate.nodes) && candidate.nodes.length > 0 && typeof candidate.connections === 'object' && candidate.connections !== null;
@@ -183,16 +183,16 @@ export class N8nService {
       mergedWorkflow = {
         ...dbWorkflow,
         ...mergedWorkflow,
-        nodes: Array.isArray(mergedWorkflow.nodes) && mergedWorkflow.nodes.length > 0 ? mergedWorkflow.nodes : dbWorkflow.nodes,
+        nodes:       Array.isArray(mergedWorkflow.nodes) && mergedWorkflow.nodes.length > 0 ? mergedWorkflow.nodes : dbWorkflow.nodes,
         connections: mergedWorkflow.connections && Object.keys(mergedWorkflow.connections).length > 0 ? mergedWorkflow.connections : dbWorkflow.connections,
-        settings: mergedWorkflow.settings && Object.keys(mergedWorkflow.settings).length > 0 ? mergedWorkflow.settings : dbWorkflow.settings,
-        staticData: mergedWorkflow.staticData ?? dbWorkflow.staticData,
-        pinData: mergedWorkflow.pinData ?? dbWorkflow.pinData,
+        settings:    mergedWorkflow.settings && Object.keys(mergedWorkflow.settings).length > 0 ? mergedWorkflow.settings : dbWorkflow.settings,
+        staticData:  mergedWorkflow.staticData ?? dbWorkflow.staticData,
+        pinData:     mergedWorkflow.pinData ?? dbWorkflow.pinData,
       };
     }
 
     if (!mergedWorkflow) {
-      throw new Error(`Workflow ${workflowId} not found in API or Postgres`);
+      throw new Error(`Workflow ${ workflowId } not found in API or Postgres`);
     }
 
     if (excludePinnedData === true && Object.prototype.hasOwnProperty.call(mergedWorkflow, 'pinData')) {
@@ -225,7 +225,7 @@ export class N8nService {
 
     const row = await postgresClient.queryOne<any>(
       `SELECT * FROM "workflow_entity" WHERE "id" = $1 LIMIT 1`,
-      [workflowId]
+      [workflowId],
     );
 
     if (!row) {
@@ -239,14 +239,14 @@ export class N8nService {
    * Get specific version of a workflow
    */
   async getWorkflowVersion(id: string, versionId: string): Promise<any> {
-    return this.request(`/api/v1/workflows/${id}/${versionId}`);
+    return this.request(`/api/v1/workflows/${ id }/${ versionId }`);
   }
 
   /**
    * Get workflow tags
    */
   async getWorkflowTags(id: string): Promise<any[]> {
-    const result = await this.request(`/api/v1/workflows/${id}/tags`);
+    const result = await this.request(`/api/v1/workflows/${ id }/tags`);
     return result.data || result;
   }
 
@@ -254,9 +254,9 @@ export class N8nService {
    * Update workflow tags
    */
   async updateWorkflowTags(id: string, tags: { id: string }[]): Promise<any> {
-    return this.request(`/api/v1/workflows/${id}/tags`, {
+    return this.request(`/api/v1/workflows/${ id }/tags`, {
       method: 'PUT',
-      body: JSON.stringify(tags)
+      body:   JSON.stringify(tags),
     });
   }
 
@@ -264,24 +264,24 @@ export class N8nService {
    * Create a new workflow
    */
   async createWorkflow(workflowData: {
-    name: string;
-    nodes: any[];
+    name:        string;
+    nodes:       any[];
     connections: any;
     settings?: {
-      saveExecutionProgress?: boolean;
-      saveManualExecutions?: boolean;
-      saveDataErrorExecution?: string;
+      saveExecutionProgress?:    boolean;
+      saveManualExecutions?:     boolean;
+      saveDataErrorExecution?:   string;
       saveDataSuccessExecution?: 'none' | 'all';
-      executionTimeout?: number;
-      errorWorkflow?: string;
-      timezone?: string;
-      executionOrder?: string;
-      callerPolicy?: string;
-      callerIds?: string;
-      timeSavedPerExecution?: number;
-      availableInMCP?: boolean;
+      executionTimeout?:         number;
+      errorWorkflow?:            string;
+      timezone?:                 string;
+      executionOrder?:           string;
+      callerPolicy?:             string;
+      callerIds?:                string;
+      timeSavedPerExecution?:    number;
+      availableInMCP?:           boolean;
     };
-    shared?: any[];
+    shared?:     any[];
     staticData?: any;
   }): Promise<any> {
     const sanitizedSettings = this.sanitizeWorkflowSettings(workflowData?.settings);
@@ -290,8 +290,8 @@ export class N8nService {
     }
 
     const sanitizedPayload = {
-      name: String(workflowData?.name || '').trim(),
-      nodes: Array.isArray(workflowData?.nodes) ? workflowData.nodes : [],
+      name:        String(workflowData?.name || '').trim(),
+      nodes:       Array.isArray(workflowData?.nodes) ? workflowData.nodes : [],
       connections: workflowData?.connections && typeof workflowData.connections === 'object' && !Array.isArray(workflowData.connections)
         ? workflowData.connections
         : {},
@@ -302,7 +302,7 @@ export class N8nService {
 
     return this.request('/api/v1/workflows', {
       method: 'POST',
-      body: JSON.stringify(sanitizedPayload)
+      body:   JSON.stringify(sanitizedPayload),
     });
   }
 
@@ -330,14 +330,14 @@ export class N8nService {
     ]);
 
     return Object.fromEntries(
-      Object.entries(settings).filter(([key]) => allowedSettingKeys.has(key))
+      Object.entries(settings).filter(([key]) => allowedSettingKeys.has(key)),
     );
   }
 
   private sanitizeWorkflowUpdatePayload(workflowData: any): Record<string, any> {
     return {
-      name: workflowData?.name,
-      nodes: Array.isArray(workflowData?.nodes) ? workflowData.nodes : [],
+      name:        workflowData?.name,
+      nodes:       Array.isArray(workflowData?.nodes) ? workflowData.nodes : [],
       connections: workflowData?.connections && typeof workflowData.connections === 'object' && !Array.isArray(workflowData.connections)
         ? workflowData.connections
         : {},
@@ -347,25 +347,25 @@ export class N8nService {
   }
 
   async updateWorkflow(id: string, workflowData: {
-    name: string;
-    active?: boolean;
-    nodes: any[];
+    name:        string;
+    active?:     boolean;
+    nodes:       any[];
     connections: any;
     settings: {
-      saveExecutionProgress?: boolean;
-      saveManualExecutions?: boolean;
-      saveDataErrorExecution?: string;
+      saveExecutionProgress?:    boolean;
+      saveManualExecutions?:     boolean;
+      saveDataErrorExecution?:   string;
       saveDataSuccessExecution?: 'none' | 'all';
-      executionTimeout?: number;
-      errorWorkflow?: string;
-      timezone?: string;
-      executionOrder?: string;
-      callerPolicy?: string;
-      callerIds?: string;
-      timeSavedPerExecution?: number;
-      availableInMCP?: boolean;
+      executionTimeout?:         number;
+      errorWorkflow?:            string;
+      timezone?:                 string;
+      executionOrder?:           string;
+      callerPolicy?:             string;
+      callerIds?:                string;
+      timeSavedPerExecution?:    number;
+      availableInMCP?:           boolean;
     };
-    shared?: any[];
+    shared?:     any[];
     staticData?: any;
   }): Promise<any> {
     const workflowId = String(id || '').trim();
@@ -386,9 +386,9 @@ export class N8nService {
     }
 
     try {
-      const updatedWorkflow = await this.request(`/api/v1/workflows/${workflowId}`, {
+      const updatedWorkflow = await this.request(`/api/v1/workflows/${ workflowId }`, {
         method: 'PUT',
-        body: JSON.stringify(sanitizedPayload)
+        body:   JSON.stringify(sanitizedPayload),
       });
 
       if (wasActive) {
@@ -412,8 +412,8 @@ export class N8nService {
    * Delete a workflow
    */
   async deleteWorkflow(id: string): Promise<any> {
-    return this.request(`/api/v1/workflows/${id}`, {
-      method: 'DELETE'
+    return this.request(`/api/v1/workflows/${ id }`, {
+      method: 'DELETE',
     });
   }
 
@@ -437,9 +437,9 @@ export class N8nService {
     };
 
     try {
-      return await this.request(`/api/v1/workflows/${workflowId}/activate`, {
+      return await this.request(`/api/v1/workflows/${ workflowId }/activate`, {
         method: 'POST',
-        ...(body ? { body: JSON.stringify(body) } : {})
+        ...(body ? { body: JSON.stringify(body) } : {}),
       });
     } catch (error) {
       if (!isNotFoundOrMethodError(error)) {
@@ -448,9 +448,9 @@ export class N8nService {
 
       try {
         // Compatibility fallback for n8n variants that allow direct active state patch.
-        return await this.request(`/api/v1/workflows/${workflowId}`, {
+        return await this.request(`/api/v1/workflows/${ workflowId }`, {
           method: 'PATCH',
-          body: JSON.stringify({ active: true })
+          body:   JSON.stringify({ active: true }),
         });
       } catch (patchError) {
         if (!isNotFoundOrMethodError(patchError)) {
@@ -459,12 +459,12 @@ export class N8nService {
 
         // Final fallback for n8n variants that require full workflow updates via PUT.
         const existingWorkflow = await this.getWorkflow(workflowId);
-        return this.request(`/api/v1/workflows/${workflowId}`, {
+        return this.request(`/api/v1/workflows/${ workflowId }`, {
           method: 'PUT',
-          body: JSON.stringify({
+          body:   JSON.stringify({
             ...existingWorkflow,
             active: true,
-          })
+          }),
         });
       }
     }
@@ -474,8 +474,8 @@ export class N8nService {
    * Deactivate a workflow
    */
   async deactivateWorkflow(id: string): Promise<any> {
-    return this.request(`/api/v1/workflows/${id}/deactivate`, {
-      method: 'POST'
+    return this.request(`/api/v1/workflows/${ id }/deactivate`, {
+      method: 'POST',
     });
   }
 
@@ -497,8 +497,8 @@ export class N8nService {
 
     if (archiveState) {
       try {
-        return await this.request(`/api/v1/workflows/${workflowId}/archive`, {
-          method: 'POST'
+        return await this.request(`/api/v1/workflows/${ workflowId }/archive`, {
+          method: 'POST',
         });
       } catch (error) {
         if (!isNotFoundOrMethodError(error)) {
@@ -507,8 +507,8 @@ export class N8nService {
       }
     } else {
       try {
-        return await this.request(`/api/v1/workflows/${workflowId}/unarchive`, {
-          method: 'POST'
+        return await this.request(`/api/v1/workflows/${ workflowId }/unarchive`, {
+          method: 'POST',
         });
       } catch (error) {
         if (!isNotFoundOrMethodError(error)) {
@@ -519,9 +519,9 @@ export class N8nService {
 
     try {
       // Preferred path for unarchive and fallback for archive on API variants.
-      return await this.request(`/api/v1/workflows/${workflowId}`, {
+      return await this.request(`/api/v1/workflows/${ workflowId }`, {
         method: 'PATCH',
-        body: JSON.stringify({ archived: archiveState })
+        body:   JSON.stringify({ archived: archiveState }),
       });
     } catch (patchError) {
       if (!isNotFoundOrMethodError(patchError) && !this.isArchiveSchemaMismatchError(patchError)) {
@@ -531,12 +531,12 @@ export class N8nService {
       // Final fallback for n8n variants that require full workflow updates via PUT.
       const existingWorkflow = await this.getWorkflow(workflowId);
       const sanitizedExistingWorkflow = this.sanitizeWorkflowUpdatePayload(existingWorkflow);
-      return this.request(`/api/v1/workflows/${workflowId}`, {
+      return this.request(`/api/v1/workflows/${ workflowId }`, {
         method: 'PUT',
-        body: JSON.stringify({
+        body:   JSON.stringify({
           ...sanitizedExistingWorkflow,
           archived: archiveState,
-        })
+        }),
       });
     }
   }
@@ -562,11 +562,11 @@ export class N8nService {
    */
   async getExecutions(params?: {
     includeData?: boolean;
-    status?: 'canceled' | 'error' | 'running' | 'success' | 'waiting';
-    workflowId?: string;
-    projectId?: string;
-    limit?: number;
-    cursor?: string;
+    status?:      'canceled' | 'error' | 'running' | 'success' | 'waiting';
+    workflowId?:  string;
+    projectId?:   string;
+    limit?:       number;
+    cursor?:      string;
   }): Promise<any[]> {
     let url = '/api/v1/executions';
 
@@ -611,7 +611,7 @@ export class N8nService {
    * Get execution by ID
    */
   async getExecution(id: string): Promise<any> {
-    return this.request(`/api/v1/executions/${id}`);
+    return this.request(`/api/v1/executions/${ id }`);
   }
 
   /**
@@ -620,7 +620,7 @@ export class N8nService {
   async createExecution(executionData: any): Promise<any> {
     return this.request('/api/v1/executions', {
       method: 'POST',
-      body: JSON.stringify(executionData)
+      body:   JSON.stringify(executionData),
     });
   }
 
@@ -628,8 +628,8 @@ export class N8nService {
    * Delete an execution
    */
   async deleteExecution(id: string): Promise<any> {
-    return this.request(`/api/v1/executions/${id}`, {
-      method: 'DELETE'
+    return this.request(`/api/v1/executions/${ id }`, {
+      method: 'DELETE',
     });
   }
 
@@ -638,12 +638,12 @@ export class N8nService {
    */
   async retryExecution(id: string, loadWorkflow?: boolean): Promise<any> {
     const retryData = {
-      loadWorkflow: loadWorkflow ?? true
+      loadWorkflow: loadWorkflow ?? true,
     };
 
-    return this.request(`/api/v1/executions/${id}/retry`, {
+    return this.request(`/api/v1/executions/${ id }/retry`, {
       method: 'POST',
-      body: JSON.stringify(retryData)
+      body:   JSON.stringify(retryData),
     });
   }
 
@@ -653,18 +653,18 @@ export class N8nService {
    * Get all credentials
    */
   async getCredentials(params?: {
-    limit?: number;
+    limit?:  number;
     cursor?: string;
   }): Promise<any[]> {
     // Use direct database query instead of API
     const credentials = await N8nCredentialsEntityModel.where({});
-    
+
     // Apply basic limit if specified
     let result = credentials;
     if (params?.limit) {
       result = credentials.slice(0, Math.min(params.limit, 250));
     }
-    
+
     // Return in API-compatible format
     return result.map(cred => cred.attributes);
   }
@@ -681,9 +681,9 @@ export class N8nService {
    * Create a new credential
    */
   async createCredential(credentialData: {
-    name: string;
-    type: string;
-    data: any;
+    name:          string;
+    type:          string;
+    data:          any;
     isResolvable?: boolean;
   }): Promise<any> {
     const dataObj = typeof credentialData.data === 'string'
@@ -692,11 +692,11 @@ export class N8nService {
 
     const credential = new N8nCredentialsEntityModel();
     credential.fill({
-      name: credentialData.name,
-      type: credentialData.type,
-      isResolvable: credentialData.isResolvable ?? false,
-      isManaged: false,
-      isGlobal: false,
+      name:                    credentialData.name,
+      type:                    credentialData.type,
+      isResolvable:            credentialData.isResolvable ?? false,
+      isManaged:               false,
+      isGlobal:                false,
       resolvableAllowFallback: false,
     });
     await credential.encryptData(dataObj);
@@ -708,16 +708,16 @@ export class N8nService {
    * Update a credential
    */
   async updateCredential(id: string, credentialData: {
-    name?: string;
-    type?: string;
-    data?: any;
-    isGlobal?: boolean;
-    isResolvable?: boolean;
+    name?:          string;
+    type?:          string;
+    data?:          any;
+    isGlobal?:      boolean;
+    isResolvable?:  boolean;
     isPartialData?: boolean;
   }): Promise<any> {
     const credential = await N8nCredentialsEntityModel.find(id);
     if (!credential) {
-      throw new Error(`Credential with id ${id} not found`);
+      throw new Error(`Credential with id ${ id } not found`);
     }
 
     // Update attributes with provided data
@@ -750,7 +750,7 @@ export class N8nService {
   async deleteCredential(id: string): Promise<any> {
     const credential = await N8nCredentialsEntityModel.find(id);
     if (!credential) {
-      throw new Error(`Credential with id ${id} not found`);
+      throw new Error(`Credential with id ${ id } not found`);
     }
     await credential.delete();
     return { success: true };
@@ -760,7 +760,7 @@ export class N8nService {
    * Get credential schema by type
    */
   async getCredentialSchema(credentialTypeName: string): Promise<any> {
-    return this.request(`/api/v1/credentials/schema/${credentialTypeName}`);
+    return this.request(`/api/v1/credentials/schema/${ credentialTypeName }`);
   }
 
   // ========== TAGS ==========
@@ -777,7 +777,7 @@ export class N8nService {
    * Get tag by ID
    */
   async getTag(id: string): Promise<any> {
-    return this.request(`/api/v1/tags/${id}`);
+    return this.request(`/api/v1/tags/${ id }`);
   }
 
   /**
@@ -788,7 +788,7 @@ export class N8nService {
   }): Promise<any> {
     return this.request('/api/v1/tags', {
       method: 'POST',
-      body: JSON.stringify(tagData)
+      body:   JSON.stringify(tagData),
     });
   }
 
@@ -796,8 +796,8 @@ export class N8nService {
    * Delete a tag
    */
   async deleteTag(id: string): Promise<any> {
-    return this.request(`/api/v1/tags/${id}`, {
-      method: 'DELETE'
+    return this.request(`/api/v1/tags/${ id }`, {
+      method: 'DELETE',
     });
   }
 
@@ -807,9 +807,9 @@ export class N8nService {
   async updateTag(id: string, tagData: {
     name: string;
   }): Promise<any> {
-    return this.request(`/api/v1/tags/${id}`, {
+    return this.request(`/api/v1/tags/${ id }`, {
       method: 'PUT',
-      body: JSON.stringify(tagData)
+      body:   JSON.stringify(tagData),
     });
   }
 
@@ -844,19 +844,19 @@ export class N8nService {
    * Pull changes from remote repository
    */
   async pullFromSourceControl(options?: {
-    force?: boolean;
+    force?:       boolean;
     autoPublish?: 'none' | 'all' | 'published';
-    variables?: Record<string, any>;
+    variables?:   Record<string, any>;
   }): Promise<any> {
     const pullData = {
-      force: options?.force || false,
+      force:       options?.force || false,
       autoPublish: options?.autoPublish || 'none',
-      variables: options?.variables || {}
+      variables:   options?.variables || {},
     };
 
     return this.request('/api/v1/source-control/pull', {
       method: 'POST',
-      body: JSON.stringify(pullData)
+      body:   JSON.stringify(pullData),
     });
   }
 
@@ -866,10 +866,10 @@ export class N8nService {
    * Get all variables
    */
   async getVariables(params?: {
-    limit?: number;
-    cursor?: string;
+    limit?:     number;
+    cursor?:    string;
     projectId?: string;
-    state?: 'empty';
+    state?:     'empty';
   }): Promise<any[]> {
     let url = '/api/v1/variables';
 
@@ -906,13 +906,13 @@ export class N8nService {
    * Create a variable
    */
   async createVariable(variableData: {
-    key: string;
-    value: string;
+    key:        string;
+    value:      string;
     projectId?: string | null;
   }): Promise<any> {
     return this.request('/api/v1/variables', {
       method: 'POST',
-      body: JSON.stringify(variableData)
+      body:   JSON.stringify(variableData),
     });
   }
 
@@ -920,8 +920,8 @@ export class N8nService {
    * Delete a variable
    */
   async deleteVariable(id: string): Promise<any> {
-    return this.request(`/api/v1/variables/${id}`, {
-      method: 'DELETE'
+    return this.request(`/api/v1/variables/${ id }`, {
+      method: 'DELETE',
     });
   }
 
@@ -929,13 +929,13 @@ export class N8nService {
    * Update a variable
    */
   async updateVariable(id: string, variableData: {
-    key: string;
-    value: string;
+    key:        string;
+    value:      string;
     projectId?: string | null;
   }): Promise<any> {
-    return this.request(`/api/v1/variables/${id}`, {
+    return this.request(`/api/v1/variables/${ id }`, {
       method: 'PUT',
-      body: JSON.stringify(variableData)
+      body:   JSON.stringify(variableData),
     });
   }
 
@@ -945,7 +945,7 @@ export class N8nService {
    * Get all data tables
    */
   async getDataTables(params?: {
-    limit?: number;
+    limit?:  number;
     cursor?: string;
     filter?: any;
     sortBy?: string;
@@ -985,15 +985,15 @@ export class N8nService {
    * Create a new data table
    */
   async createDataTable(tableData: {
-    name: string;
-    columns: Array<{
+    name:    string;
+    columns: {
       name: string;
       type: string;
-    }>;
+    }[];
   }): Promise<any> {
     return this.request('/api/v1/data-tables', {
       method: 'POST',
-      body: JSON.stringify(tableData)
+      body:   JSON.stringify(tableData),
     });
   }
 
@@ -1001,7 +1001,7 @@ export class N8nService {
    * Get a specific data table by ID
    */
   async getDataTable(dataTableId: string): Promise<any> {
-    return this.request(`/api/v1/data-tables/${dataTableId}`);
+    return this.request(`/api/v1/data-tables/${ dataTableId }`);
   }
 
   /**
@@ -1010,9 +1010,9 @@ export class N8nService {
   async updateDataTable(dataTableId: string, tableData: {
     name: string;
   }): Promise<any> {
-    return this.request(`/api/v1/data-tables/${dataTableId}`, {
+    return this.request(`/api/v1/data-tables/${ dataTableId }`, {
       method: 'PATCH',
-      body: JSON.stringify(tableData)
+      body:   JSON.stringify(tableData),
     });
   }
 
@@ -1020,8 +1020,8 @@ export class N8nService {
    * Delete a data table
    */
   async deleteDataTable(dataTableId: string): Promise<any> {
-    return this.request(`/api/v1/data-tables/${dataTableId}`, {
-      method: 'DELETE'
+    return this.request(`/api/v1/data-tables/${ dataTableId }`, {
+      method: 'DELETE',
     });
   }
 
@@ -1029,13 +1029,13 @@ export class N8nService {
    * Get rows from a data table
    */
   async getDataTableRows(dataTableId: string, params?: {
-    limit?: number;
+    limit?:  number;
     cursor?: string;
     filter?: any;
     sortBy?: string;
     search?: string;
   }): Promise<any[]> {
-    let url = `/api/v1/data-tables/${dataTableId}/rows`;
+    let url = `/api/v1/data-tables/${ dataTableId }/rows`;
 
     if (params) {
       const queryParams = new URLSearchParams();
@@ -1074,12 +1074,12 @@ export class N8nService {
    * Create rows in a data table
    */
   async createDataTableRows(dataTableId: string, rowData: {
-    data: any[];
+    data:        any[];
     returnType?: 'count' | 'id' | 'all';
   }): Promise<any> {
-    return this.request(`/api/v1/data-tables/${dataTableId}/rows`, {
+    return this.request(`/api/v1/data-tables/${ dataTableId }/rows`, {
       method: 'POST',
-      body: JSON.stringify(rowData)
+      body:   JSON.stringify(rowData),
     });
   }
 
@@ -1087,14 +1087,14 @@ export class N8nService {
    * Update rows in a data table
    */
   async updateDataTableRows(dataTableId: string, updateData: {
-    filter: any;
-    data: any;
+    filter:      any;
+    data:        any;
     returnData?: boolean;
-    dryRun?: boolean;
+    dryRun?:     boolean;
   }): Promise<any> {
-    return this.request(`/api/v1/data-tables/${dataTableId}/rows/update`, {
+    return this.request(`/api/v1/data-tables/${ dataTableId }/rows/update`, {
       method: 'PATCH',
-      body: JSON.stringify(updateData)
+      body:   JSON.stringify(updateData),
     });
   }
 
@@ -1102,14 +1102,14 @@ export class N8nService {
    * Upsert a row in a data table
    */
   async upsertDataTableRow(dataTableId: string, upsertData: {
-    filter: any;
-    data: any;
+    filter:      any;
+    data:        any;
     returnData?: boolean;
-    dryRun?: boolean;
+    dryRun?:     boolean;
   }): Promise<any> {
-    return this.request(`/api/v1/data-tables/${dataTableId}/rows/upsert`, {
+    return this.request(`/api/v1/data-tables/${ dataTableId }/rows/upsert`, {
       method: 'POST',
-      body: JSON.stringify(upsertData)
+      body:   JSON.stringify(upsertData),
     });
   }
 
@@ -1117,9 +1117,9 @@ export class N8nService {
    * Delete rows from a data table
    */
   async deleteDataTableRows(dataTableId: string, deleteOptions: {
-    filter: any;
+    filter:      any;
     returnData?: boolean;
-    dryRun?: boolean;
+    dryRun?:     boolean;
   }): Promise<any> {
     const queryParams = new URLSearchParams();
     queryParams.append('filter', JSON.stringify(deleteOptions.filter));
@@ -1132,13 +1132,13 @@ export class N8nService {
       queryParams.append('dryRun', deleteOptions.dryRun.toString());
     }
 
-    const url = `/api/v1/data-tables/${dataTableId}/rows?${queryParams.toString()}`;
+    const url = `/api/v1/data-tables/${ dataTableId }/rows?${ queryParams.toString() }`;
 
     return this.request(url, {
-      method: 'DELETE'
+      method: 'DELETE',
     });
   }
-  
+
   /**
    * Refresh the API key by deleting the current one and creating a new one
    */
@@ -1188,24 +1188,24 @@ export class N8nService {
    * Make a request to the public n8n template API (no auth required)
    */
   private async publicRequest(endpoint: string): Promise<any> {
-    const url = `${N8nService.PUBLIC_API_BASE}${endpoint}`;
+    const url = `${ N8nService.PUBLIC_API_BASE }${ endpoint }`;
 
-    console.log(`[N8nService] Public API request: ${url}`);
+    console.log(`[N8nService] Public API request: ${ url }`);
 
     try {
       const response = await fetch(url, {
-        method: 'GET',
+        method:  'GET',
         headers: { 'Content-Type': 'application/json' },
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`N8n public API error ${response.status}: ${response.statusText} - ${errorText}`);
+        throw new Error(`N8n public API error ${ response.status }: ${ response.statusText } - ${ errorText }`);
       }
 
       return await response.json();
     } catch (error) {
-      console.error(`[N8nService] Public API request failed for ${endpoint}:`, error);
+      console.error(`[N8nService] Public API request failed for ${ endpoint }:`, error);
       throw error;
     }
   }
@@ -1214,11 +1214,11 @@ export class N8nService {
    * Search n8n workflow templates
    */
   async searchTemplates(params?: {
-    search?: string;
+    search?:   string;
     category?: string;
-    nodes?: string;
-    page?: number;
-    limit?: number;
+    nodes?:    string;
+    page?:     number;
+    limit?:    number;
   }): Promise<any> {
     let url = '/templates/search';
 
@@ -1260,7 +1260,7 @@ export class N8nService {
   async getTemplateWorkflow(id: number): Promise<any> {
     const templateId = Number(id);
     if (!Number.isFinite(templateId) || templateId <= 0) {
-      throw new Error(`Invalid template workflow ID: ${id}`);
+      throw new Error(`Invalid template workflow ID: ${ id }`);
     }
 
     const unwrapTemplatePayload = (payload: any): any | null => {
@@ -1285,8 +1285,8 @@ export class N8nService {
     };
 
     const endpoints = [
-      `/templates/workflows/${templateId}`,
-      `/templates/${templateId}`,
+      `/templates/workflows/${ templateId }`,
+      `/templates/${ templateId }`,
     ];
 
     let lastError: Error | null = null;
@@ -1298,25 +1298,25 @@ export class N8nService {
           return template;
         }
 
-        console.warn(`[N8nService] Empty template workflow payload from ${endpoint}`);
+        console.warn(`[N8nService] Empty template workflow payload from ${ endpoint }`);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        console.warn(`[N8nService] Failed to fetch template workflow via ${endpoint}: ${lastError.message}`);
+        console.warn(`[N8nService] Failed to fetch template workflow via ${ endpoint }: ${ lastError.message }`);
       }
     }
 
     if (lastError) {
-      throw new Error(`Unable to fetch template workflow ${templateId}: ${lastError.message}`);
+      throw new Error(`Unable to fetch template workflow ${ templateId }: ${ lastError.message }`);
     }
 
-    throw new Error(`Template workflow ${templateId} returned empty payload from all public endpoints.`);
+    throw new Error(`Template workflow ${ templateId } returned empty payload from all public endpoints.`);
   }
 
   /**
    * Browse n8n template collections
    */
   async getTemplateCollections(params?: {
-    page?: number;
+    page?:  number;
     limit?: number;
   }): Promise<any> {
     let url = '/templates/collections';
@@ -1353,18 +1353,18 @@ export class N8nService {
    */
   async createAudit(options: {
     daysAbandonedWorkflow?: number;
-    categories?: string[];
+    categories?:            string[];
   }): Promise<any> {
     const auditData = {
       additionalOptions: {
         daysAbandonedWorkflow: options.daysAbandonedWorkflow || 1,
-        categories: options.categories || ['credentials']
-      }
+        categories:            options.categories || ['credentials'],
+      },
     };
 
     return this.request('/api/v1/audit', {
       method: 'POST',
-      body: JSON.stringify(auditData)
+      body:   JSON.stringify(auditData),
     });
   }
 }

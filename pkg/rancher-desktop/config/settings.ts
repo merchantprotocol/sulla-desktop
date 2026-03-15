@@ -81,7 +81,7 @@ export const defaultSettings = {
     autoStart:              false,
     startInBackground:      false,
     hideNotificationIcon:   false,
-    window:                 { quitOnClose: false }
+    window:                 { quitOnClose: false },
   },
   containerEngine: {
     allowedImages: {
@@ -133,51 +133,51 @@ export const defaultSettings = {
    * Experimental settings
    */
   experimental: {
-    containerEngine: { webAssembly: { enabled: false } },
+    containerEngine:           { webAssembly: { enabled: false } },
     /** can only be enabled if containerEngine.webAssembly.enabled is true */
-    kubernetes:      { options: { spinkube: false } },
+    kubernetes:                { options: { spinkube: false } },
     /** Override for agent/prompts/soul.md (empty string uses default soul.md). */
-    soulPrompt:      '',
+    soulPrompt:                '',
     /** Bot name (default: Sulla) */
-    botName:         'Sulla',
+    botName:                   'Sulla',
     /** Human name (optional) */
-    primaryUserName: '',
+    primaryUserName:           '',
     /** Model mode: local (Ollama) or remote (API) */
-    modelMode:       'local' as 'local' | 'remote',
+    modelMode:                 'local' as 'local' | 'remote',
     /** Remote API provider (grok, openai, anthropic, google) */
-    remoteProvider:  'grok',
+    remoteProvider:            'grok',
     /** Remote model ID */
-    remoteModel:     'grok-4-1-fast-reasoning',
+    remoteModel:               'grok-4-1-fast-reasoning',
     /** Remote API key */
-    remoteApiKey:    '',
+    remoteApiKey:              '',
     /** Number of retries before falling back to local LLM */
-    remoteRetryCount: 3,
-    remoteTimeoutSeconds: 60,
+    remoteRetryCount:          3,
+    remoteTimeoutSeconds:      60,
     /** Local Ollama timeout in seconds */
-    localTimeoutSeconds: 120,
+    localTimeoutSeconds:       120,
     /** Local Ollama retry count */
-    localRetryCount: 2,
+    localRetryCount:           2,
     /** Heartbeat settings */
-    heartbeatEnabled: false,
-    heartbeatDelayMinutes: 15,
-    heartbeatPrompt: heartbeatPrompt,
+    heartbeatEnabled:          false,
+    heartbeatDelayMinutes:     15,
+    heartbeatPrompt,
     /** Heartbeat provider: 'default' uses primary provider, or a specific provider id like 'grok', 'anthropic', 'ollama' */
-    heartbeatProvider: 'default',
+    heartbeatProvider:         'default',
     /** Sulla username for authentication */
-    sullaUsername: '',
+    sullaUsername:             '',
     /** Sulla password for authentication */
-    sullaPassword: '',
+    sullaPassword:             '',
     /** Sulla email for authentication */
-    sullaEmail: '',
+    sullaEmail:                '',
     /** Generated service password for PostgreSQL and N8N */
-    sullaServicePassword: '',
+    sullaServicePassword:      '',
     /** Generated N8N encryption key */
-    sullaN8nEncryptionKey: '',
+    sullaN8nEncryptionKey:     '',
     /** Service account user ID created during seeding */
     sullaServiceAccountUserId: '',
     /** Subscribe to updates and newsletters */
-    sullaSubscribeToUpdates: true,
-    virtualMachine:  {
+    sullaSubscribeToUpdates:   true,
+    virtualMachine:            {
       diskSize: '100GiB',
       mount:    {
         '9p': {

@@ -23,9 +23,9 @@ async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
     const { getActiveAgentsRegistry } = await import('../services/ActiveAgentsRegistry');
     const registry = getActiveAgentsRegistry();
     const block = await registry.buildContextBlock();
-    return `${block}\n\nYou run on the **${wsChannel}** WebSocket channel. Your \`sender_id\` and \`sender_channel\` are both \`${wsChannel}\`.`;
+    return `${ block }\n\nYou run on the **${ wsChannel }** WebSocket channel. Your \`sender_id\` and \`sender_channel\` are both \`${ wsChannel }\`.`;
   } catch {
-    return `## Inter-Agent Communication\n\nYou run on the **${wsChannel}** WebSocket channel. Agent registry unavailable.`;
+    return `## Inter-Agent Communication\n\nYou run on the **${ wsChannel }** WebSocket channel. Agent registry unavailable.`;
   }
 }
 
@@ -132,13 +132,13 @@ export class AgentNode extends BaseNode {
     // ----------------------------------------------------------------
     const wsChannel = String(state.metadata.wsChannel || 'sulla-desktop');
     const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
-    const systemPrompt = `${AGENT_PROMPT_BASE}\n\n${channelAwareness}\n\n${AGENT_PROMPT_DIRECTIVE}\n\n${AGENT_PROMPT_COMPLETION_WRAPPERS}`;
+    const systemPrompt = `${ AGENT_PROMPT_BASE }\n\n${ channelAwareness }\n\n${ AGENT_PROMPT_DIRECTIVE }\n\n${ AGENT_PROMPT_COMPLETION_WRAPPERS }`;
 
     const enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
-      includeSoul: true,
-      includeAwareness: true,
+      includeSoul:        true,
+      includeAwareness:   true,
       includeEnvironment: true,
-      includeMemory: false,
+      includeMemory:      false,
     });
 
     // Training data: capture the full assembled system prompt (once per session)
@@ -149,7 +149,7 @@ export class AgentNode extends BaseNode {
         const tl = getTrainingDataLogger();
         if (tl.hasSession(trainingConvId)) {
           const existing = tl.getSessionMessages(trainingConvId);
-          if (!existing || !existing.some(m => m.role === 'system')) {
+          if (!existing?.some(m => m.role === 'system')) {
             tl.logSystemPrompt(trainingConvId, enrichedPrompt);
           }
         }
@@ -175,21 +175,21 @@ export class AgentNode extends BaseNode {
 
     // Store outcome on metadata
     const statusNote = this.toOneLineStatusNote(
-      agentOutcome.statusReport
-      || agentOutcome.blockerReason
-      || agentOutcome.summary
-      || '',
+      agentOutcome.statusReport ||
+      agentOutcome.blockerReason ||
+      agentOutcome.summary ||
+      '',
     );
 
     (state.metadata as any).agent = {
       ...((state.metadata as any).agent || {}),
-      status: agentOutcome.status,
-      status_report: agentOutcome.statusReport,
-      blocker_reason: agentOutcome.blockerReason,
+      status:               agentOutcome.status,
+      status_report:        agentOutcome.statusReport,
+      blocker_reason:       agentOutcome.blockerReason,
       unblock_requirements: agentOutcome.unblockRequirements,
-      status_note: statusNote,
-      response: agentOutcome.status === 'done' ? agentResultText : null,
-      updatedAt: Date.now(),
+      status_note:          statusNote,
+      response:             agentOutcome.status === 'done' ? agentResultText : null,
+      updatedAt:            Date.now(),
     };
 
     // When the agent reports done or blocked, mark the cycle as complete
@@ -206,7 +206,7 @@ export class AgentNode extends BaseNode {
       if (state.metadata.isSubAgent) {
         // Sub-agent: don't wait for user — the orchestrator will read
         // blocker_reason / unblock_requirements from agent metadata
-        console.log(`[AgentNode] Sub-agent blocked — deferring to orchestrator. Reason: ${agentOutcome.blockerReason}`);
+        console.log(`[AgentNode] Sub-agent blocked — deferring to orchestrator. Reason: ${ agentOutcome.blockerReason }`);
       } else {
         state.metadata.waitingForUser = true;
       }
@@ -245,12 +245,12 @@ export class AgentNode extends BaseNode {
 
       if (normalizedUserVisibleResult && !alreadyStored) {
         state.messages.push({
-          role: 'assistant',
-          content: normalizedUserVisibleResult,
+          role:     'assistant',
+          content:  normalizedUserVisibleResult,
           metadata: {
-            nodeId: this.id,
-            nodeName: this.name,
-            kind: 'agent_result',
+            nodeId:    this.id,
+            nodeName:  this.name,
+            kind:      'agent_result',
             timestamp: Date.now(),
           },
         } as ChatMessage);
@@ -263,7 +263,7 @@ export class AgentNode extends BaseNode {
     // 3. LOG
     // ----------------------------------------------------------------
     const executionTimeMs = Date.now() - startTime;
-    console.log(`[AgentNode] Complete — status: ${agentOutcome.status} in ${executionTimeMs}ms`);
+    console.log(`[AgentNode] Complete — status: ${ agentOutcome.status } in ${ executionTimeMs }ms`);
 
     return { state, decision: { type: 'next' } };
   }
@@ -278,12 +278,12 @@ export class AgentNode extends BaseNode {
   ): Promise<string | null> {
     try {
       const policy: Required<NodeRunPolicy> = {
-        messageSource: 'graph',
+        messageSource:           'graph',
         persistAssistantToGraph: true,
       };
 
       const chatResult = await this.chat(state, systemPrompt, {
-        temperature: 0.2,
+        temperature:   0.2,
         nodeRunPolicy: policy,
       });
 
@@ -296,16 +296,16 @@ export class AgentNode extends BaseNode {
       console.error('[AgentNode] Execution failed:', errorMsg);
 
       // Surface the error to the user instead of silently dying
-      const userMessage = `⚠️ I encountered an error and couldn't complete the request: ${errorMsg}. Please try again or switch to a different model.`;
+      const userMessage = `⚠️ I encountered an error and couldn't complete the request: ${ errorMsg }. Please try again or switch to a different model.`;
 
       // Push error as assistant message so user sees it in the chat
       state.messages.push({
-        role: 'assistant',
-        content: userMessage,
+        role:     'assistant',
+        content:  userMessage,
         metadata: {
-          nodeId: this.id,
-          nodeName: this.name,
-          kind: 'agent_error',
+          nodeId:    this.id,
+          nodeName:  this.name,
+          kind:      'agent_error',
           timestamp: Date.now(),
         },
       } as ChatMessage);
@@ -316,9 +316,9 @@ export class AgentNode extends BaseNode {
       // Mark as blocked so graph takes the clean exit path (not the ambiguous in_progress path)
       (state.metadata as any).agent = {
         ...((state.metadata as any).agent || {}),
-        status: 'blocked',
+        status:         'blocked',
         blocker_reason: errorMsg,
-        updatedAt: Date.now(),
+        updatedAt:      Date.now(),
       };
 
       return userMessage;
@@ -347,7 +347,7 @@ export class AgentNode extends BaseNode {
 
         console.log('[AgentNode] DOM event received:', {
           assetId: event.assetId,
-          type: event.type,
+          type:    event.type,
           message: content.slice(0, 120),
         });
       });
@@ -372,7 +372,7 @@ export class AgentNode extends BaseNode {
 
     metadataAny.__domLiveEvent = {
       lastContent: content,
-      lastAt: now,
+      lastAt:      now,
     };
 
     return true;
@@ -384,16 +384,16 @@ export class AgentNode extends BaseNode {
     event: { assetId: string; type: string; timestamp: number },
   ): void {
     const message: ChatMessage = {
-      role: 'assistant',
+      role:     'assistant',
       content,
       metadata: {
-        nodeId: this.id,
-        nodeName: this.name,
-        kind: 'agent_live_dom_event',
-        source: 'dom_event_stream',
+        nodeId:    this.id,
+        nodeName:  this.name,
+        kind:      'agent_live_dom_event',
+        source:    'dom_event_stream',
         transport: 'ipc',
         eventType: event.type,
-        assetId: event.assetId,
+        assetId:   event.assetId,
         timestamp: event.timestamp,
       },
     };
@@ -407,10 +407,10 @@ export class AgentNode extends BaseNode {
   // ======================================================================
 
   private extractAgentOutcome(resultText: string): {
-    status: 'done' | 'blocked' | 'continue' | 'in_progress';
-    summary: string | null;
-    statusReport: string | null;
-    blockerReason: string | null;
+    status:              'done' | 'blocked' | 'continue' | 'in_progress';
+    summary:             string | null;
+    statusReport:        string | null;
+    blockerReason:       string | null;
     unblockRequirements: string | null;
   } {
     // Check BLOCKED first
@@ -427,8 +427,8 @@ export class AgentNode extends BaseNode {
         .find(Boolean) || null;
 
       return {
-        status: 'blocked',
-        summary: blockerReason || fallbackSummary,
+        status:       'blocked',
+        summary:      blockerReason || fallbackSummary,
         statusReport: null,
         blockerReason,
         unblockRequirements,
@@ -445,10 +445,10 @@ export class AgentNode extends BaseNode {
         : doneBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
 
       return {
-        status: 'done',
+        status:              'done',
         summary,
-        statusReport: null,
-        blockerReason: null,
+        statusReport:        null,
+        blockerReason:       null,
         unblockRequirements: null,
       };
     }
@@ -463,23 +463,23 @@ export class AgentNode extends BaseNode {
         ? String(statusReportMatch[1] || '').trim() || null
         : statusMessageMatch
           ? String(statusMessageMatch[1] || '').trim() || null
-        : continueBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
+          : continueBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
 
       return {
-        status: 'continue',
-        summary: statusReport,
+        status:              'continue',
+        summary:             statusReport,
         statusReport,
-        blockerReason: null,
+        blockerReason:       null,
         unblockRequirements: null,
       };
     }
 
     // No wrapper found — treat as in_progress (legacy fallback)
     return {
-      status: 'in_progress',
-      summary: null,
-      statusReport: null,
-      blockerReason: null,
+      status:              'in_progress',
+      summary:             null,
+      statusReport:        null,
+      blockerReason:       null,
       unblockRequirements: null,
     };
   }
@@ -487,10 +487,10 @@ export class AgentNode extends BaseNode {
   private toUserVisibleAgentMessage(
     rawResultText: string,
     outcome: {
-      status: 'done' | 'blocked' | 'continue' | 'in_progress';
-      summary: string | null;
-      statusReport: string | null;
-      blockerReason: string | null;
+      status:              'done' | 'blocked' | 'continue' | 'in_progress';
+      summary:             string | null;
+      statusReport:        string | null;
+      blockerReason:       string | null;
       unblockRequirements: string | null;
     },
   ): string {

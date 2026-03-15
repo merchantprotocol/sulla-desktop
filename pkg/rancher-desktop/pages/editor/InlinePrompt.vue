@@ -1,8 +1,17 @@
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="inline-prompt-overlay" @mousedown.self="cancel">
-      <div class="inline-prompt-dialog" :class="{ dark: isDark }">
-        <div class="inline-prompt-title">{{ title }}</div>
+    <div
+      v-if="visible"
+      class="inline-prompt-overlay"
+      @mousedown.self="cancel"
+    >
+      <div
+        class="inline-prompt-dialog"
+        :class="{ dark: isDark }"
+      >
+        <div class="inline-prompt-title">
+          {{ title }}
+        </div>
         <input
           ref="inputRef"
           v-model="inputValue"
@@ -11,10 +20,22 @@
           :placeholder="placeholder"
           @keydown.enter="confirm"
           @keydown.escape="cancel"
-        />
+        >
         <div class="inline-prompt-actions">
-          <button class="inline-prompt-btn cancel" :class="{ dark: isDark }" @click="cancel">Cancel</button>
-          <button class="inline-prompt-btn confirm" :class="{ dark: isDark }" @click="confirm">OK</button>
+          <button
+            class="inline-prompt-btn cancel"
+            :class="{ dark: isDark }"
+            @click="cancel"
+          >
+            Cancel
+          </button>
+          <button
+            class="inline-prompt-btn confirm"
+            :class="{ dark: isDark }"
+            @click="confirm"
+          >
+            OK
+          </button>
         </div>
       </div>
     </div>

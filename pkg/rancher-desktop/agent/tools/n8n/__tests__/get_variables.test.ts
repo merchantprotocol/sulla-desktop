@@ -5,7 +5,7 @@ const mockInitialize: any = jest.fn();
 const mockQuery: any = jest.fn();
 
 jest.unstable_mockModule('../../../services/N8nService', () => ({
-  createN8nService: jest.fn(async () => ({
+  createN8nService: jest.fn(async() => ({
     getVariables: mockGetVariables,
   })),
 }));
@@ -13,7 +13,7 @@ jest.unstable_mockModule('../../../services/N8nService', () => ({
 jest.unstable_mockModule('../../../database/PostgresClient', () => ({
   postgresClient: {
     initialize: mockInitialize,
-    query: mockQuery,
+    query:      mockQuery,
   },
 }));
 
@@ -35,18 +35,18 @@ describe('get_variables tool fallback behavior', () => {
     mockQuery.mockReset();
   });
 
-  it('falls back to postgres when n8n variables endpoint is blocked by license', async () => {
+  it('falls back to postgres when n8n variables endpoint is blocked by license', async() => {
     const { GetVariablesWorker, getVariablesRegistration } = await loadGetVariablesTool();
 
     mockGetVariables.mockRejectedValueOnce(
-      new Error('N8n API error 403: Forbidden - {"message":"Your license does not allow for feat:variables"}')
+      new Error('N8n API error 403: Forbidden - {"message":"Your license does not allow for feat:variables"}'),
     );
     mockInitialize.mockResolvedValueOnce(undefined);
     mockQuery.mockResolvedValueOnce([
       {
-        id: 'var-1',
-        key: 'API_TOKEN',
-        value: 'secret',
+        id:        'var-1',
+        key:       'API_TOKEN',
+        value:     'secret',
         projectId: null,
         createdAt: null,
         updatedAt: null,
@@ -63,7 +63,7 @@ describe('get_variables tool fallback behavior', () => {
     expect(result.result).toContain('Key: API_TOKEN');
   });
 
-  it('returns service error when failure is not a variables license error', async () => {
+  it('returns service error when failure is not a variables license error', async() => {
     const { GetVariablesWorker, getVariablesRegistration } = await loadGetVariablesTool();
 
     mockGetVariables.mockRejectedValueOnce(new Error('N8n API error 500: Internal Server Error'));

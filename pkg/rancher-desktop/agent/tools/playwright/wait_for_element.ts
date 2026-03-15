@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { resolveBridge, isBridgeResolved } from "./resolve_bridge";
+import { BaseTool, ToolResponse } from '../base';
+import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
  * Wait For Element Tool - Waits for a CSS selector to become visible on a website asset.
  */
 export class WaitForElementWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { selector, timeout = 5000 } = input;
@@ -18,20 +18,19 @@ export class WaitForElementWorker extends BaseTool {
       if (found) {
         return {
           successBoolean: true,
-          responseString: `[${result.assetId}] Element matching "${selector}" is now visible.`,
+          responseString: `[${ result.assetId }] Element matching "${ selector }" is now visible.`,
         };
       }
 
       return {
         successBoolean: false,
-        responseString: `[${result.assetId}] Timed out after ${timeout}ms waiting for "${selector}" to become visible.`,
+        responseString: `[${ result.assetId }] Timed out after ${ timeout }ms waiting for "${ selector }" to become visible.`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error waiting for element: ${(error as Error).message}`,
+        responseString: `Error waiting for element: ${ (error as Error).message }`,
       };
     }
   }
 }
-

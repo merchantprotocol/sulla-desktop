@@ -1,5 +1,8 @@
 <template>
-  <div class="font-sans page-root" :class="{ dark: isDark }">
+  <div
+    class="font-sans page-root"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="AgentFilesystem" />
     <EditorHeader
       :is-dark="isDark"
@@ -13,7 +16,7 @@
     />
 
     <div class="flex flex-1 min-h-0 overflow-hidden">
-        <div class="main-content">
+      <div class="main-content">
         <!-- Icon Panel -->
         <IconPanel
           :is-dark="isDark"
@@ -36,598 +39,1082 @@
           @toggle-training="toggleTraining"
           @toggle-monitor="toggleMonitor"
         />
+      </div>
+
+      <!-- Left sidebar: File tree -->
+      <div
+        v-show="leftPaneVisible"
+        class="left-pane"
+        :class="{ dark: isDark }"
+        :style="{ width: leftPaneWidth + 'px' }"
+      >
+        <div class="file-tree-wrapper">
+          <!-- Search -->
+          <FileSearch
+            v-show="searchMode"
+            v-model="searchQuery"
+            v-model:search-path="searchPath"
+            :is-dark="isDark"
+            :results="searchResults"
+            :indexing="qmdIndexing"
+            :searching="qmdSearching"
+            @file-selected="onFileSelected"
+            @close="leftPaneVisible = false"
+          />
+
+          <!-- Git pane -->
+          <GitPane
+            v-show="gitMode"
+            :root-path="rootPath"
+            :is-dark="isDark"
+            @file-selected="onFileSelected"
+            @open-diff="onOpenDiff"
+            @close="leftPaneVisible = false"
+          />
+
+          <!-- Docker pane -->
+          <DockerPane
+            v-show="dockerMode"
+            :is-dark="isDark"
+            @open-container-port="openContainerPort"
+            @docker-logs="openDockerLogs"
+            @docker-exec="openDockerExec"
+            @close="leftPaneVisible = false"
+          />
+
+          <!-- Agent pane -->
+          <AgentPane
+            v-show="agentMode"
+            ref="agentPaneRef"
+            :is-dark="isDark"
+            @close="leftPaneVisible = false"
+            @file-selected="onFileSelected"
+            @open-new-agent-tab="onNewAgentTab"
+            @edit-agent="onEditAgent"
+          />
+
+          <!-- Integrations pane -->
+          <IntegrationsPane
+            v-show="integrationsMode"
+            :is-dark="isDark"
+            @file-selected="onFileSelected"
+            @open-api-test="openApiTest"
+            @close="leftPaneVisible = false"
+          />
+
+          <!-- Workflow pane -->
+          <WorkflowPane
+            v-show="workflowMode"
+            ref="workflowPaneRef"
+            :is-dark="isDark"
+            @close="leftPaneVisible = false"
+            @workflow-activated="onWorkflowActivated"
+            @workflow-closed="onWorkflowClosed"
+            @workflow-created="onWorkflowCreated"
+            @workflow-deleted="onWorkflowDeleted"
+          />
+
+          <!-- Training file tree -->
+          <TrainingFileTreePane
+            v-show="trainingMode"
+            :is-dark="isDark"
+            :current-step="trainingStep"
+            @close="leftPaneVisible = false"
+            @step-change="trainingStep = $event"
+          />
+
+          <!-- Monitor pane -->
+          <MonitorPane
+            v-show="monitorMode"
+            :is-dark="isDark"
+            :active-section="monitorSection"
+            @close="toggleMonitor"
+            @section-change="monitorSection = $event"
+            @refresh="monitorDashboardRef?.refreshAll?.()"
+          />
+
+          <!-- File tree -->
+          <FileTreeSidebar
+            v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode && !monitorMode"
+            ref="fileTreeRef"
+            :root-path="rootPath"
+            :highlight-path="highlightPath"
+            :is-dark="isDark"
+            @file-selected="onFileSelected"
+            @close="leftPaneVisible = false"
+          />
         </div>
+      </div>
 
-        <!-- Left sidebar: File tree -->
-        <div class="left-pane" v-show="leftPaneVisible" :class="{ dark: isDark }" :style="{ width: leftPaneWidth + 'px' }">
-          <div class="file-tree-wrapper">
-            <!-- Search -->
-            <FileSearch
-              v-show="searchMode"
-              v-model="searchQuery"
-              v-model:search-path="searchPath"
-              :is-dark="isDark"
-              :results="searchResults"
-              :indexing="qmdIndexing"
-              :searching="qmdSearching"
-              @file-selected="onFileSelected"
-              @close="leftPaneVisible = false"
-            />
+      <!-- Resize handle: left pane -->
+      <div
+        v-show="leftPaneVisible"
+        class="resize-handle resize-handle-v"
+        :class="{ dark: isDark }"
+        @mousedown="startResize('left', $event)"
+      />
 
-            <!-- Git pane -->
-            <GitPane
-              v-show="gitMode"
-              :root-path="rootPath"
-              :is-dark="isDark"
-              @file-selected="onFileSelected"
-              @open-diff="onOpenDiff"
-              @close="leftPaneVisible = false"
-            />
-
-            <!-- Docker pane -->
-            <DockerPane
-              v-show="dockerMode"
-              :is-dark="isDark"
-              @open-container-port="openContainerPort"
-              @docker-logs="openDockerLogs"
-              @docker-exec="openDockerExec"
-              @close="leftPaneVisible = false"
-            />
-
-            <!-- Agent pane -->
-            <AgentPane
-              ref="agentPaneRef"
-              v-show="agentMode"
-              :is-dark="isDark"
-              @close="leftPaneVisible = false"
-              @file-selected="onFileSelected"
-              @open-new-agent-tab="onNewAgentTab"
-              @edit-agent="onEditAgent"
-            />
-
-            <!-- Integrations pane -->
-            <IntegrationsPane
-              v-show="integrationsMode"
-              :is-dark="isDark"
-              @file-selected="onFileSelected"
-              @open-api-test="openApiTest"
-              @close="leftPaneVisible = false"
-            />
-
-            <!-- Workflow pane -->
-            <WorkflowPane
-              ref="workflowPaneRef"
-              v-show="workflowMode"
-              :is-dark="isDark"
-              @close="leftPaneVisible = false"
-              @workflow-activated="onWorkflowActivated"
-              @workflow-closed="onWorkflowClosed"
-              @workflow-created="onWorkflowCreated"
-              @workflow-deleted="onWorkflowDeleted"
-            />
-
-            <!-- Training file tree -->
-            <TrainingFileTreePane
-              v-show="trainingMode"
-              :is-dark="isDark"
-              :current-step="trainingStep"
-              @close="leftPaneVisible = false"
-              @step-change="trainingStep = $event"
-            />
-
-            <!-- Monitor pane -->
-            <MonitorPane
-              v-show="monitorMode"
-              :is-dark="isDark"
-              :active-section="monitorSection"
-              @close="toggleMonitor"
-              @section-change="monitorSection = $event"
-              @refresh="monitorDashboardRef?.refreshAll?.()"
-            />
-
-            <!-- File tree -->
-            <FileTreeSidebar
-              ref="fileTreeRef"
-              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode && !monitorMode"
-              :root-path="rootPath"
-              :highlight-path="highlightPath"
-              :is-dark="isDark"
-              @file-selected="onFileSelected"
-              @close="leftPaneVisible = false"
-            />
-          </div>
-        </div>
-
-        <!-- Resize handle: left pane -->
+      <!-- Right content: Editor area -->
+      <div
+        v-show="centerPaneVisible"
+        class="editor-panel"
+        :class="{ dark: isDark }"
+      >
+        <!-- Monitor dashboard (replaces editor area when monitor mode is active) -->
+        <MonitorDashboard
+          v-if="monitorMode"
+          ref="monitorDashboardRef"
+          :is-dark="isDark"
+          :active-section="monitorSection"
+          @refresh="monitorDashboardRef?.refreshAll?.()"
+          @open-detail="openMonitorDetail"
+        />
+        <!-- Training full-screen (replaces everything when training mode is active) -->
+        <TrainingPane
+          v-if="trainingMode"
+          ref="trainingPaneRef"
+          :is-dark="isDark"
+          :current-step="trainingStep"
+          @env-ready="leftPaneVisible = true"
+          @step-change="trainingStep = $event"
+          @content-scale="trainingContentScale = $event"
+          @open-training-log="openTrainingLog"
+        />
+        <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
+        <WorkflowEditor
+          v-if="workflowMode"
+          ref="workflowEditorRef"
+          :is-dark="isDark"
+          :workflow-data="activeWorkflowData"
+          @node-selected="onWorkflowNodeSelected"
+          @workflow-changed="onWorkflowChanged"
+        />
+        <!-- Workflow save toolbar -->
         <div
-          v-show="leftPaneVisible"
-          class="resize-handle resize-handle-v"
+          v-if="workflowMode && activeWorkflowData"
+          class="workflow-save-bar"
           :class="{ dark: isDark }"
-          @mousedown="startResize('left', $event)"
-        ></div>
+        >
+          <span
+            v-if="workflowSaveStatus === 'saving'"
+            class="workflow-save-status saving"
+          >
+            <svg
+              class="workflow-save-spinner"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            ><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+            Saving…
+          </span>
+          <span
+            v-else-if="workflowSaveStatus === 'saved'"
+            class="workflow-save-status saved"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            ><polyline points="20 6 9 17 4 12" /></svg>
+            Saved
+          </span>
+          <span
+            v-else-if="workflowSaveStatus === 'unsaved'"
+            class="workflow-save-status unsaved"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            ><circle
+              cx="12"
+              cy="12"
+              r="10"
+            /><path d="M12 8v4" /><path d="M12 16h.01" /></svg>
+            Unsaved
+          </span>
+          <button
+            class="workflow-save-btn"
+            :class="{ dark: isDark }"
+            title="Save workflow (⌘S)"
+            @click="saveWorkflowNow"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
+            </svg>
+            Save
+          </button>
+          <button
+            class="workflow-save-btn"
+            :class="{ dark: isDark }"
+            title="Workflow settings"
+            @click="toggleWorkflowSettings"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="3"
+              />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          <button
+            class="workflow-enable-btn"
+            :class="{ dark: isDark, enabled: activeWorkflowData?.enabled }"
+            :title="activeWorkflowData?.enabled ? 'Disable workflow (live)' : 'Enable workflow (go live)'"
+            @click="toggleWorkflowEnabled"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+              <line
+                x1="12"
+                y1="2"
+                x2="12"
+                y2="12"
+              />
+            </svg>
+            {{ activeWorkflowData?.enabled ? 'Live' : 'Disabled' }}
+          </button>
+          <div
+            class="workflow-save-divider"
+            :class="{ dark: isDark }"
+          />
+          <button
+            class="workflow-run-btn"
+            :class="{ dark: isDark }"
+            title="Run workflow (opens chat)"
+            @click="runWorkflow"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            Run
+          </button>
+        </div>
 
-        <!-- Right content: Editor area -->
-        <div class="editor-panel" v-show="centerPaneVisible" :class="{ dark: isDark }">
-          <!-- Monitor dashboard (replaces editor area when monitor mode is active) -->
-          <MonitorDashboard v-if="monitorMode" ref="monitorDashboardRef" :is-dark="isDark" :active-section="monitorSection" @refresh="monitorDashboardRef?.refreshAll?.()" @open-detail="openMonitorDetail" />
-          <!-- Training full-screen (replaces everything when training mode is active) -->
-          <TrainingPane ref="trainingPaneRef" v-if="trainingMode" :is-dark="isDark" :current-step="trainingStep" @env-ready="leftPaneVisible = true" @step-change="trainingStep = $event" @content-scale="trainingContentScale = $event" @open-training-log="openTrainingLog" />
-          <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
-          <WorkflowEditor v-if="workflowMode" ref="workflowEditorRef" :is-dark="isDark" :workflow-data="activeWorkflowData" @node-selected="onWorkflowNodeSelected" @workflow-changed="onWorkflowChanged" />
-          <!-- Workflow save toolbar -->
-          <div v-if="workflowMode && activeWorkflowData" class="workflow-save-bar" :class="{ dark: isDark }">
-            <span v-if="workflowSaveStatus === 'saving'" class="workflow-save-status saving">
-              <svg class="workflow-save-spinner" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              Saving…
-            </span>
-            <span v-else-if="workflowSaveStatus === 'saved'" class="workflow-save-status saved">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-              Saved
-            </span>
-            <span v-else-if="workflowSaveStatus === 'unsaved'" class="workflow-save-status unsaved">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-              Unsaved
-            </span>
-            <button class="workflow-save-btn" :class="{ dark: isDark }" title="Save workflow (⌘S)" @click="saveWorkflowNow">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                <polyline points="17 21 17 13 7 13 7 21"/>
-                <polyline points="7 3 7 8 15 8"/>
-              </svg>
-              Save
-            </button>
-            <button class="workflow-save-btn" :class="{ dark: isDark }" title="Workflow settings" @click="toggleWorkflowSettings">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </svg>
-            </button>
-            <button
-              class="workflow-enable-btn"
-              :class="{ dark: isDark, enabled: activeWorkflowData?.enabled }"
-              :title="activeWorkflowData?.enabled ? 'Disable workflow (live)' : 'Enable workflow (go live)'"
-              @click="toggleWorkflowEnabled"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
-                <line x1="12" y1="2" x2="12" y2="12"/>
-              </svg>
-              {{ activeWorkflowData?.enabled ? 'Live' : 'Disabled' }}
-            </button>
-            <div class="workflow-save-divider" :class="{ dark: isDark }"></div>
-            <button
-              class="workflow-run-btn"
+        <!-- Top editor area -->
+        <div
+          v-show="!workflowMode && !trainingMode && !monitorMode"
+          class="editor-top"
+        >
+          <!-- Tab bar (always visible) -->
+          <div
+            class="tab-bar"
+            :class="{ dark: isDark, empty: openTabs.length === 0 }"
+          >
+            <div class="tab-bar-tabs">
+              <div
+                v-for="tab in openTabs"
+                :key="`${tab.path}-${tab.editorType || 'code'}`"
+                class="tab"
+                :class="{ active: activeTabKey === `${tab.path}-${tab.editorType || 'code'}`, dark: isDark }"
+                @click="switchTab(tab)"
+                @contextmenu.prevent="$emit('tab-context-menu', $event, tab)"
+              >
+                <span class="tab-icon">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                  >
+                    <path
+                      d="M3.5 1C2.94772 1 2.5 1.44772 2.5 2V14C2.5 14.5523 2.94772 15 3.5 15H12.5C13.0523 15 13.5 14.5523 13.5 14V5L9.5 1H3.5Z"
+                      :fill="getIconColor(tab.ext)"
+                      stroke-width="0.5"
+                      :stroke="getIconColor(tab.ext)"
+                    />
+                    <path
+                      d="M9.5 1V5H13.5"
+                      :stroke="getIconColor(tab.ext)"
+                      stroke-width="0.8"
+                      fill="none"
+                    />
+                  </svg>
+                </span>
+                <span class="tab-label">{{ tab.name }}{{ tab.editorType === 'diff' ? ' (diff)' : '' }}</span>
+                <span
+                  v-if="tab.dirty"
+                  class="tab-dirty-dot"
+                />
+                <span
+                  class="tab-close"
+                  @click.stop="closeTab(tab)"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                  >
+                    <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z" />
+                  </svg>
+                </span>
+              </div>
+            </div>
+            <!-- Tab bar actions (right side) -->
+            <div class="tab-bar-actions">
+              <button
+                class="tab-bar-action-btn"
+                :class="{ dark: isDark }"
+                title="More actions"
+                @click.stop="editorMenu.visible = !editorMenu.visible"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <circle
+                    cx="12"
+                    cy="5"
+                    r="2"
+                  />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="2"
+                  />
+                  <circle
+                    cx="12"
+                    cy="19"
+                    r="2"
+                  />
+                </svg>
+              </button>
+            </div>
+            <!-- Editor dropdown menu -->
+            <div
+              v-if="editorMenu.visible"
+              ref="editorDropdownRef"
+              class="editor-dropdown"
               :class="{ dark: isDark }"
-              title="Run workflow (opens chat)"
-              @click="runWorkflow"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
-              Run
-            </button>
+              <button
+                class="editor-dropdown-item"
+                :class="{ dark: isDark }"
+                @click="createNewUntitledTab"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line
+                    x1="12"
+                    y1="18"
+                    x2="12"
+                    y2="12"
+                  />
+                  <line
+                    x1="9"
+                    y1="15"
+                    x2="15"
+                    y2="15"
+                  />
+                </svg>
+                <span>New File</span>
+              </button>
+            </div>
           </div>
 
-          <!-- Top editor area -->
-          <div class="editor-top" v-show="!workflowMode && !trainingMode && !monitorMode">
-            <!-- Tab bar (always visible) -->
-            <div class="tab-bar" :class="{ dark: isDark, empty: openTabs.length === 0 }">
-              <div class="tab-bar-tabs">
+          <!-- Empty state (no tabs open) -->
+          <div
+            v-if="openTabs.length === 0"
+            class="empty-state"
+          >
+            <img
+              :src="sullaMutedIconUrl"
+              alt="Sulla"
+              class="empty-icon-img"
+            >
+            <p class="empty-text">
+              Agent Workbench
+            </p>
+            <p class="empty-hint">
+              an editor built for vibe coders
+            </p>
+          </div>
+
+          <!-- Active tab content -->
+          <template v-if="activeTab">
+            <!-- Loading state -->
+            <div
+              v-if="activeTab?.loading"
+              class="empty-state"
+            >
+              <div class="loading-spinner" />
+              <p class="empty-text">
+                Loading {{ activeTab?.name }}…
+              </p>
+            </div>
+
+            <!-- Error state -->
+            <div
+              v-else-if="activeTab?.error"
+              class="empty-state"
+            >
+              <p class="error-text">
+                {{ activeTab?.error }}
+              </p>
+            </div>
+
+            <!-- Editor content -->
+            <template v-else>
+              <!-- Breadcrumb and Save Button Row -->
+              <div
+                class="editor-header"
+                :class="{ dark: isDark }"
+              >
                 <div
-                  v-for="tab in openTabs"
-                  :key="`${tab.path}-${tab.editorType || 'code'}`"
-                  class="tab"
-                  :class="{ active: activeTabKey === `${tab.path}-${tab.editorType || 'code'}`, dark: isDark }"
-                  @click="switchTab(tab)"
-                  @contextmenu.prevent="$emit('tab-context-menu', $event, tab)"
+                  class="breadcrumb-bar"
+                  :class="{ dark: isDark }"
                 >
-                  <span class="tab-icon">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                      <path d="M3.5 1C2.94772 1 2.5 1.44772 2.5 2V14C2.5 14.5523 2.94772 15 3.5 15H12.5C13.0523 15 13.5 14.5523 13.5 14V5L9.5 1H3.5Z" :fill="getIconColor(tab.ext)" stroke-width="0.5" :stroke="getIconColor(tab.ext)"/>
-                      <path d="M9.5 1V5H13.5" :stroke="getIconColor(tab.ext)" stroke-width="0.8" fill="none"/>
-                    </svg>
-                  </span>
-                  <span class="tab-label">{{ tab.name }}{{ tab.editorType === 'diff' ? ' (diff)' : '' }}</span>
-                  <span v-if="tab.dirty" class="tab-dirty-dot"></span>
-                  <span class="tab-close" @click.stop="closeTab(tab)">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z"/>
-                    </svg>
+                  <span
+                    v-for="(segment, idx) in activeBreadcrumbs"
+                    :key="idx"
+                    class="breadcrumb-segment"
+                  >
+                    <span
+                      v-if="idx > 0"
+                      class="breadcrumb-sep"
+                    >›</span>
+                    {{ segment }}
                   </span>
                 </div>
-              </div>
-              <!-- Tab bar actions (right side) -->
-              <div class="tab-bar-actions">
-                <button class="tab-bar-action-btn" :class="{ dark: isDark }" title="More actions" @click.stop="editorMenu.visible = !editorMenu.visible">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                    <circle cx="12" cy="5" r="2"/>
-                    <circle cx="12" cy="12" r="2"/>
-                    <circle cx="12" cy="19" r="2"/>
+                <span
+                  v-if="agentMode && activeTab && !activeTab.loading"
+                  class="token-estimate"
+                  :class="{ dark: isDark }"
+                >
+                  ~{{ estimatedTokens }} tokens
+                </span>
+                <button
+                  v-if="activeTab?.dirty"
+                  class="save-button"
+                  :class="{ dark: isDark }"
+                  :disabled="activeTab?.loading"
+                  @click="saveActiveTab"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                    <polyline points="17,21 17,13 7,13 7,21" />
+                    <polyline points="7,3 7,8 15,8" />
                   </svg>
+                  Save
                 </button>
-              </div>
-              <!-- Editor dropdown menu -->
-              <div v-if="editorMenu.visible" ref="editorDropdownRef" class="editor-dropdown" :class="{ dark: isDark }">
-                <button class="editor-dropdown-item" :class="{ dark: isDark }" @click="createNewUntitledTab">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                    <line x1="12" y1="18" x2="12" y2="12"/>
-                    <line x1="9" y1="15" x2="15" y2="15"/>
-                  </svg>
-                  <span>New File</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Empty state (no tabs open) -->
-            <div v-if="openTabs.length === 0" class="empty-state">
-              <img :src="sullaMutedIconUrl" alt="Sulla" class="empty-icon-img">
-              <p class="empty-text">Agent Workbench</p>
-              <p class="empty-hint">an editor built for vibe coders</p>
-            </div>
-
-            <!-- Active tab content -->
-            <template v-if="activeTab">
-              <!-- Loading state -->
-              <div v-if="activeTab?.loading" class="empty-state">
-                <div class="loading-spinner"></div>
-                <p class="empty-text">Loading {{ activeTab?.name }}…</p>
-              </div>
-
-              <!-- Error state -->
-              <div v-else-if="activeTab?.error" class="empty-state">
-                <p class="error-text">{{ activeTab?.error }}</p>
               </div>
 
               <!-- Editor content -->
-              <template v-else>
-                <!-- Breadcrumb and Save Button Row -->
-                <div class="editor-header" :class="{ dark: isDark }">
-                  <div class="breadcrumb-bar" :class="{ dark: isDark }">
-                    <span
-                      v-for="(segment, idx) in activeBreadcrumbs"
-                      :key="idx"
-                      class="breadcrumb-segment"
-                    >
-                      <span v-if="idx > 0" class="breadcrumb-sep">›</span>
-                      {{ segment }}
-                    </span>
-                  </div>
-                  <span v-if="agentMode && activeTab && !activeTab.loading" class="token-estimate" :class="{ dark: isDark }">
-                    ~{{ estimatedTokens }} tokens
-                  </span>
-                  <button
-                    v-if="activeTab?.dirty"
-                    class="save-button"
-                    :class="{ dark: isDark }"
-                    @click="saveActiveTab"
-                    :disabled="activeTab?.loading"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                      <polyline points="17,21 17,13 7,13 7,21"/>
-                      <polyline points="7,3 7,8 15,8"/>
-                    </svg>
-                    Save
-                  </button>
-                </div>
+              <div
+                class="editor-content"
+                @contextmenu="onEditorContextMenu"
+              >
+                <component
+                  :is="activeEditorComponent"
+                  :key="activeTab?.path || ''"
+                  ref="editorRef"
+                  :content="activeTab?.content || ''"
+                  :original-content="activeTab?.originalContent || ''"
+                  :file-path="activeTab?.path || ''"
+                  :file-ext="activeTab?.ext || ''"
+                  :is-dark="isDark"
+                  :line="activeTab?.line"
+                  :read-only="activeTab?.editorType === 'preview' || activeTab?.editorType === 'diff' || activeTab?.editorType === 'terminal'"
+                  @dirty="markActiveTabDirty"
+                  @saved="onAgentFormSaved"
+                />
+              </div>
 
-                <!-- Editor content -->
-                <div class="editor-content" @contextmenu="onEditorContextMenu">
-                  <component
-                    :is="activeEditorComponent"
-                    :key="activeTab?.path || ''"
-                    ref="editorRef"
-                    :content="activeTab?.content || ''"
-                    :original-content="activeTab?.originalContent || ''"
-                    :file-path="activeTab?.path || ''"
-                    :file-ext="activeTab?.ext || ''"
-                    :is-dark="isDark"
-                    :line="activeTab?.line"
-                    :read-only="activeTab?.editorType === 'preview' || activeTab?.editorType === 'diff' || activeTab?.editorType === 'terminal'"
-                    @dirty="markActiveTabDirty"
-                    @saved="onAgentFormSaved"
-                  />
-                </div>
-
-                <!-- Inject Variable context menu -->
-                <Teleport to="body">
-                  <div
-                    v-if="injectMenu.visible"
-                    class="inject-menu"
-                    :class="{ dark: isDark }"
-                    :style="{ top: injectMenu.y + 'px', left: injectMenu.x + 'px' }"
-                    @contextmenu.prevent
-                  >
-                    <div class="inject-menu-header">Inject Variable</div>
-                    <button
-                      v-for="v in injectMenu.variables"
-                      :key="v.key"
-                      class="inject-menu-item"
-                      :class="{ dark: isDark }"
-                      @click="doInjectVariable(v.key)"
-                    >
-                      <span class="inject-var-label">{{ v.label }}</span>
-                      <span class="inject-var-key">{{ v.key }}</span>
-                    </button>
-                  </div>
-                </Teleport>
-              </template>
-            </template>
-          </div>
-
-          <!-- Resize handle: bottom pane -->
-          <div
-            v-show="bottomPaneVisible"
-            class="resize-handle resize-handle-h"
-            :class="{ dark: isDark }"
-            @mousedown="startResize('bottom', $event)"
-          ></div>
-
-          <!-- Bottom center pane -->
-          <div v-show="bottomPaneVisible" class="editor-bottom" :class="{ dark: isDark }" :style="{ height: bottomPaneHeight + 'px' }">
-            <!-- Terminal tabs header -->
-            <div class="terminal-tabs-header" :class="{ dark: isDark }">
-              <div class="terminal-tabs">
+              <!-- Inject Variable context menu -->
+              <Teleport to="body">
                 <div
-                  v-for="tab in terminalTabs"
-                  :key="tab.id"
-                  class="terminal-tab"
-                  :class="{ active: bottomPaneTab === 'terminal' && activeTerminalTab === tab.id, dark: isDark }"
-                  @click="bottomPaneTab = 'terminal'; switchTerminalTab(tab.id)"
+                  v-if="injectMenu.visible"
+                  class="inject-menu"
+                  :class="{ dark: isDark }"
+                  :style="{ top: injectMenu.y + 'px', left: injectMenu.x + 'px' }"
+                  @contextmenu.prevent
                 >
-                  <span>{{ tab.name }}</span>
+                  <div class="inject-menu-header">
+                    Inject Variable
+                  </div>
                   <button
-                    v-if="terminalTabs.length > 1"
-                    class="terminal-tab-close"
+                    v-for="v in injectMenu.variables"
+                    :key="v.key"
+                    class="inject-menu-item"
                     :class="{ dark: isDark }"
-                    @click.stop="closeTerminalTab(tab.id)"
+                    @click="doInjectVariable(v.key)"
                   >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18"></line>
-                      <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
+                    <span class="inject-var-label">{{ v.label }}</span>
+                    <span class="inject-var-key">{{ v.key }}</span>
                   </button>
                 </div>
-              </div>
-              <!-- API Test tabs -->
-              <div
-                v-for="atab in apiTabs"
-                :key="atab.id"
-                class="terminal-tab"
-                :class="{ active: bottomPaneTab === 'api' && activeApiTab === atab.id, dark: isDark }"
-                @click="bottomPaneTab = 'api'; activeApiTab = atab.id"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
-                  <path d="M4 6h16M4 12h16M4 18h16"/>
-                </svg>
-                <span>API:{{ atab.slug }}</span>
-                <button
-                  class="terminal-tab-close"
-                  :class="{ dark: isDark }"
-                  @click.stop="closeApiTab(atab.id)"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              </div>
-              <!-- Monitor detail tabs -->
-              <div
-                v-for="mtab in monitorTabs"
-                :key="mtab.id"
-                class="terminal-tab"
-                :class="{ active: bottomPaneTab === 'monitor' && activeMonitorTab === mtab.id, dark: isDark }"
-                @click="bottomPaneTab = 'monitor'; activeMonitorTab = mtab.id"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
-                  <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                </svg>
-                <span>{{ mtab.label }}</span>
-                <button
-                  class="terminal-tab-close"
-                  :class="{ dark: isDark }"
-                  @click.stop="closeMonitorTab(mtab.id)"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              </div>
-              <!-- Training log tab -->
-              <div
-                v-if="trainingLogFilename"
-                class="terminal-tab"
-                :class="{ active: bottomPaneTab === 'training', dark: isDark }"
-                @click="bottomPaneTab = 'training'"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/>
-                  <line x1="16" y1="17" x2="8" y2="17"/>
-                </svg>
-                <span>Training Log</span>
-                <button
-                  class="terminal-tab-close"
-                  :class="{ dark: isDark }"
-                  @click.stop="trainingLogFilename = ''; bottomPaneTab = 'terminal'"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              </div>
-              <button
-                class="terminal-tab-add"
-                :class="{ dark: isDark }"
-                @click="createNewTerminalTab"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-              </button>
-              <div style="flex:1"></div>
-              <button class="pane-close-btn" :class="{ dark: isDark }" title="Close" @click="bottomPaneVisible = false">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
-            
-            <!-- Terminal content -->
-            <div v-show="bottomPaneTab === 'terminal'" class="terminal-content">
+              </Teleport>
+            </template>
+          </template>
+        </div>
+
+        <!-- Resize handle: bottom pane -->
+        <div
+          v-show="bottomPaneVisible"
+          class="resize-handle resize-handle-h"
+          :class="{ dark: isDark }"
+          @mousedown="startResize('bottom', $event)"
+        />
+
+        <!-- Bottom center pane -->
+        <div
+          v-show="bottomPaneVisible"
+          class="editor-bottom"
+          :class="{ dark: isDark }"
+          :style="{ height: bottomPaneHeight + 'px' }"
+        >
+          <!-- Terminal tabs header -->
+          <div
+            class="terminal-tabs-header"
+            :class="{ dark: isDark }"
+          >
+            <div class="terminal-tabs">
               <div
                 v-for="tab in terminalTabs"
                 :key="tab.id"
-                v-show="activeTerminalTab === tab.id"
-                class="terminal-pane"
+                class="terminal-tab"
+                :class="{ active: bottomPaneTab === 'terminal' && activeTerminalTab === tab.id, dark: isDark }"
+                @click="bottomPaneTab = 'terminal'; switchTerminalTab(tab.id)"
               >
-                <XTermTerminal :is-dark="isDark" :session-id="tab.sessionId" :command="tab.command || ''" :read-only="tab.readOnly || false" />
-              </div>
-            </div>
-
-            <!-- API Test Panels -->
-            <div v-show="bottomPaneTab === 'api'" class="terminal-content">
-              <div
-                v-for="atab in apiTabs"
-                :key="atab.id"
-                v-show="activeApiTab === atab.id"
-                style="height: 100%"
-              >
-                <ApiTestPanel :is-dark="isDark" :initial-slug="atab.slug" />
-              </div>
-            </div>
-
-            <!-- Training Log -->
-            <div v-show="bottomPaneTab === 'training'" class="terminal-content">
-              <TrainingLogViewer v-if="trainingLogFilename" :is-dark="isDark" :log-filename="trainingLogFilename" />
-            </div>
-
-            <!-- Monitor Detail Panels -->
-            <div v-show="bottomPaneTab === 'monitor'" class="terminal-content">
-              <div
-                v-for="mtab in monitorTabs"
-                :key="mtab.id"
-                v-show="activeMonitorTab === mtab.id"
-                style="height: 100%"
-              >
-                <MonitorDetailPanel :is-dark="isDark" :tab-type="mtab.type" :tab-id="mtab.tabId" :error-data="mtab.errorData" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Resize handle: right pane -->
-        <div
-          v-show="rightPaneVisible"
-          class="resize-handle resize-handle-v"
-          :class="{ dark: isDark }"
-          @mousedown="startResize('right', $event)"
-        ></div>
-
-        <!-- Right pane -->
-        <div class="right-pane" v-show="rightPaneVisible" :class="{ dark: isDark }" :style="{ width: rightPaneWidth + 'px' }">
-          <!-- Workflow settings panel -->
-          <div v-if="workflowMode && workflowSettingsOpen && activeWorkflowData" class="workflow-settings-panel" :class="{ dark: isDark }">
-            <div class="workflow-settings-header">
-              <span class="workflow-settings-title">Workflow Settings</span>
-              <button class="workflow-settings-close" @click="onWorkflowSettingsClose" title="Close">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <div class="workflow-settings-body">
-              <label class="workflow-settings-label">Name</label>
-              <input
-                class="workflow-settings-input"
-                :class="{ dark: isDark }"
-                type="text"
-                :value="activeWorkflowData.name"
-                @input="onWorkflowNameUpdate(($event.target as HTMLInputElement).value)"
-                placeholder="Workflow name"
-              />
-              <label class="workflow-settings-label">Description</label>
-              <textarea
-                class="workflow-settings-textarea"
-                :class="{ dark: isDark }"
-                :value="activeWorkflowData.description"
-                @input="onWorkflowDescriptionUpdate(($event.target as HTMLTextAreaElement).value)"
-                placeholder="Describe what this workflow does…"
-                rows="4"
-              />
-              <div class="workflow-settings-danger-zone">
+                <span>{{ tab.name }}</span>
                 <button
-                  class="workflow-delete-btn"
+                  v-if="terminalTabs.length > 1"
+                  class="terminal-tab-close"
                   :class="{ dark: isDark }"
-                  @click="deleteActiveWorkflow"
+                  @click.stop="closeTerminalTab(tab.id)"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line
+                      x1="18"
+                      y1="6"
+                      x2="6"
+                      y2="18"
+                    />
+                    <line
+                      x1="6"
+                      y1="6"
+                      x2="18"
+                      y2="18"
+                    />
                   </svg>
-                  Delete Workflow
                 </button>
               </div>
             </div>
-          </div>
-          <!-- Workflow node properties panel -->
-          <WorkflowNodePanel
-            v-else-if="workflowMode && selectedWorkflowNode"
-            :is-dark="isDark"
-            :node="selectedWorkflowNode"
-            :upstream-nodes="selectedNodeUpstream"
-            @close="onWorkflowNodePanelClose"
-            @update-label="onWorkflowNodeLabelUpdate"
-            @update-trigger="() => {}"
-            @update-node-config="onWorkflowNodeConfigUpdate"
-          />
-          <!-- Training mode: tabbed right pane (Chat / Help) -->
-          <template v-else-if="trainingMode">
-            <div class="rp-tabs" :class="{ dark: isDark }">
+            <!-- API Test tabs -->
+            <div
+              v-for="atab in apiTabs"
+              :key="atab.id"
+              class="terminal-tab"
+              :class="{ active: bottomPaneTab === 'api' && activeApiTab === atab.id, dark: isDark }"
+              @click="bottomPaneTab = 'api'; activeApiTab = atab.id"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="margin-right: 3px; flex-shrink: 0;"
+              >
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+              <span>API:{{ atab.slug }}</span>
               <button
-                class="rp-tab"
-                :class="{ active: rightPaneTab === 'chat', dark: isDark }"
-                @click="rightPaneTab = 'chat'"
-              >Chat</button>
-              <button
-                class="rp-tab"
-                :class="{ active: rightPaneTab === 'help', dark: isDark }"
-                @click="rightPaneTab = 'help'"
-              >Help</button>
+                class="terminal-tab-close"
+                :class="{ dark: isDark }"
+                @click.stop="closeApiTab(atab.id)"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line
+                    x1="18"
+                    y1="6"
+                    x2="6"
+                    y2="18"
+                  />
+                  <line
+                    x1="6"
+                    y1="6"
+                    x2="18"
+                    y2="18"
+                  />
+                </svg>
+              </button>
             </div>
-            <EditorChat
-              v-show="rightPaneTab === 'chat'"
+            <!-- Monitor detail tabs -->
+            <div
+              v-for="mtab in monitorTabs"
+              :key="mtab.id"
+              class="terminal-tab"
+              :class="{ active: bottomPaneTab === 'monitor' && activeMonitorTab === mtab.id, dark: isDark }"
+              @click="bottomPaneTab = 'monitor'; activeMonitorTab = mtab.id"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="margin-right: 3px; flex-shrink: 0;"
+              >
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              <span>{{ mtab.label }}</span>
+              <button
+                class="terminal-tab-close"
+                :class="{ dark: isDark }"
+                @click.stop="closeMonitorTab(mtab.id)"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line
+                    x1="18"
+                    y1="6"
+                    x2="6"
+                    y2="18"
+                  />
+                  <line
+                    x1="6"
+                    y1="6"
+                    x2="18"
+                    y2="18"
+                  />
+                </svg>
+              </button>
+            </div>
+            <!-- Training log tab -->
+            <div
+              v-if="trainingLogFilename"
+              class="terminal-tab"
+              :class="{ active: bottomPaneTab === 'training', dark: isDark }"
+              @click="bottomPaneTab = 'training'"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="margin-right: 3px; flex-shrink: 0;"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line
+                  x1="16"
+                  y1="13"
+                  x2="8"
+                  y2="13"
+                />
+                <line
+                  x1="16"
+                  y1="17"
+                  x2="8"
+                  y2="17"
+                />
+              </svg>
+              <span>Training Log</span>
+              <button
+                class="terminal-tab-close"
+                :class="{ dark: isDark }"
+                @click.stop="trainingLogFilename = ''; bottomPaneTab = 'terminal'"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line
+                    x1="18"
+                    y1="6"
+                    x2="6"
+                    y2="18"
+                  />
+                  <line
+                    x1="6"
+                    y1="6"
+                    x2="18"
+                    y2="18"
+                  />
+                </svg>
+              </button>
+            </div>
+            <button
+              class="terminal-tab-add"
+              :class="{ dark: isDark }"
+              @click="createNewTerminalTab"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line
+                  x1="12"
+                  y1="5"
+                  x2="12"
+                  y2="19"
+                />
+                <line
+                  x1="5"
+                  y1="12"
+                  x2="19"
+                  y2="12"
+                />
+              </svg>
+            </button>
+            <div style="flex:1" />
+            <button
+              class="pane-close-btn"
+              :class="{ dark: isDark }"
+              title="Close"
+              @click="bottomPaneVisible = false"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line
+                  x1="18"
+                  y1="6"
+                  x2="6"
+                  y2="18"
+                />
+                <line
+                  x1="6"
+                  y1="6"
+                  x2="18"
+                  y2="18"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Terminal content -->
+          <div
+            v-show="bottomPaneTab === 'terminal'"
+            class="terminal-content"
+          >
+            <div
+              v-for="tab in terminalTabs"
+              v-show="activeTerminalTab === tab.id"
+              :key="tab.id"
+              class="terminal-pane"
+            >
+              <XTermTerminal
+                :is-dark="isDark"
+                :session-id="tab.sessionId"
+                :command="tab.command || ''"
+                :read-only="tab.readOnly || false"
+              />
+            </div>
+          </div>
+
+          <!-- API Test Panels -->
+          <div
+            v-show="bottomPaneTab === 'api'"
+            class="terminal-content"
+          >
+            <div
+              v-for="atab in apiTabs"
+              v-show="activeApiTab === atab.id"
+              :key="atab.id"
+              style="height: 100%"
+            >
+              <ApiTestPanel
+                :is-dark="isDark"
+                :initial-slug="atab.slug"
+              />
+            </div>
+          </div>
+
+          <!-- Training Log -->
+          <div
+            v-show="bottomPaneTab === 'training'"
+            class="terminal-content"
+          >
+            <TrainingLogViewer
+              v-if="trainingLogFilename"
               :is-dark="isDark"
-              :messages="chatMessages"
-              :query="chatQuery"
-              :loading="chatLoading"
-              :graph-running="chatGraphRunning"
-              :waiting-for-user="chatWaitingForUser"
-              :model-selector="modelSelector"
-              :agent-registry="agentRegistry"
-              :hide-agent-selector="false"
-              :total-tokens-used="chatTotalTokensUsed"
-              @update:query="chatUpdateQuery"
-              @send="chatSend()"
-              @stop="chatStop()"
-              @close="rightPaneVisible = false"
+              :log-filename="trainingLogFilename"
             />
-            <TrainingHelpPane
-              v-show="rightPaneTab === 'help'"
-              :is-dark="isDark"
-              :current-step="trainingStep"
-              :content-scale="trainingContentScale"
+          </div>
+
+          <!-- Monitor Detail Panels -->
+          <div
+            v-show="bottomPaneTab === 'monitor'"
+            class="terminal-content"
+          >
+            <div
+              v-for="mtab in monitorTabs"
+              v-show="activeMonitorTab === mtab.id"
+              :key="mtab.id"
+              style="height: 100%"
+            >
+              <MonitorDetailPanel
+                :is-dark="isDark"
+                :tab-type="mtab.type"
+                :tab-id="mtab.tabId"
+                :error-data="mtab.errorData"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resize handle: right pane -->
+      <div
+        v-show="rightPaneVisible"
+        class="resize-handle resize-handle-v"
+        :class="{ dark: isDark }"
+        @mousedown="startResize('right', $event)"
+      />
+
+      <!-- Right pane -->
+      <div
+        v-show="rightPaneVisible"
+        class="right-pane"
+        :class="{ dark: isDark }"
+        :style="{ width: rightPaneWidth + 'px' }"
+      >
+        <!-- Workflow settings panel -->
+        <div
+          v-if="workflowMode && workflowSettingsOpen && activeWorkflowData"
+          class="workflow-settings-panel"
+          :class="{ dark: isDark }"
+        >
+          <div class="workflow-settings-header">
+            <span class="workflow-settings-title">Workflow Settings</span>
+            <button
+              class="workflow-settings-close"
+              title="Close"
+              @click="onWorkflowSettingsClose"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              ><line
+                x1="18"
+                y1="6"
+                x2="6"
+                y2="18"
+              /><line
+                x1="6"
+                y1="6"
+                x2="18"
+                y2="18"
+              /></svg>
+            </button>
+          </div>
+          <div class="workflow-settings-body">
+            <label class="workflow-settings-label">Name</label>
+            <input
+              class="workflow-settings-input"
+              :class="{ dark: isDark }"
+              type="text"
+              :value="activeWorkflowData.name"
+              placeholder="Workflow name"
+              @input="onWorkflowNameUpdate(($event.target as HTMLInputElement).value)"
+            >
+            <label class="workflow-settings-label">Description</label>
+            <textarea
+              class="workflow-settings-textarea"
+              :class="{ dark: isDark }"
+              :value="activeWorkflowData.description"
+              placeholder="Describe what this workflow does…"
+              rows="4"
+              @input="onWorkflowDescriptionUpdate(($event.target as HTMLTextAreaElement).value)"
             />
-          </template>
-          <!-- Chat (default / workflow mode) -->
+            <div class="workflow-settings-danger-zone">
+              <button
+                class="workflow-delete-btn"
+                :class="{ dark: isDark }"
+                @click="deleteActiveWorkflow"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                Delete Workflow
+              </button>
+            </div>
+          </div>
+        </div>
+        <!-- Workflow node properties panel -->
+        <WorkflowNodePanel
+          v-else-if="workflowMode && selectedWorkflowNode"
+          :is-dark="isDark"
+          :node="selectedWorkflowNode"
+          :upstream-nodes="selectedNodeUpstream"
+          @close="onWorkflowNodePanelClose"
+          @update-label="onWorkflowNodeLabelUpdate"
+          @update-trigger="() => {}"
+          @update-node-config="onWorkflowNodeConfigUpdate"
+        />
+        <!-- Training mode: tabbed right pane (Chat / Help) -->
+        <template v-else-if="trainingMode">
+          <div
+            class="rp-tabs"
+            :class="{ dark: isDark }"
+          >
+            <button
+              class="rp-tab"
+              :class="{ active: rightPaneTab === 'chat', dark: isDark }"
+              @click="rightPaneTab = 'chat'"
+            >
+              Chat
+            </button>
+            <button
+              class="rp-tab"
+              :class="{ active: rightPaneTab === 'help', dark: isDark }"
+              @click="rightPaneTab = 'help'"
+            >
+              Help
+            </button>
+          </div>
           <EditorChat
-            v-else
+            v-show="rightPaneTab === 'chat'"
             :is-dark="isDark"
             :messages="chatMessages"
             :query="chatQuery"
@@ -636,45 +1123,114 @@
             :waiting-for-user="chatWaitingForUser"
             :model-selector="modelSelector"
             :agent-registry="agentRegistry"
-            :hide-agent-selector="!agentMode && !workflowMode"
+            :hide-agent-selector="false"
             :total-tokens-used="chatTotalTokensUsed"
             @update:query="chatUpdateQuery"
             @send="chatSend()"
             @stop="chatStop()"
             @close="rightPaneVisible = false"
           />
-        </div>
+          <TrainingHelpPane
+            v-show="rightPaneTab === 'help'"
+            :is-dark="isDark"
+            :current-step="trainingStep"
+            :content-scale="trainingContentScale"
+          />
+        </template>
+        <!-- Chat (default / workflow mode) -->
+        <EditorChat
+          v-else
+          :is-dark="isDark"
+          :messages="chatMessages"
+          :query="chatQuery"
+          :loading="chatLoading"
+          :graph-running="chatGraphRunning"
+          :waiting-for-user="chatWaitingForUser"
+          :model-selector="modelSelector"
+          :agent-registry="agentRegistry"
+          :hide-agent-selector="!agentMode && !workflowMode"
+          :total-tokens-used="chatTotalTokensUsed"
+          @update:query="chatUpdateQuery"
+          @send="chatSend()"
+          @stop="chatStop()"
+          @close="rightPaneVisible = false"
+        />
       </div>
-
-      <!-- Editor Status Bar Footer -->
-      <footer class="editor-footer" :class="{ dark: isDark }">
-        <div class="editor-footer-left">
-          <span class="footer-item" :title="`${formatBytes(footerStats.availableBytes)} free on disk`">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M16 2v20"/><path d="M2 12h14"/></svg>
-            {{ formatBytes(footerStats.availableBytes) }} free
-          </span>
-          <span class="footer-item" :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-            {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
-          </span>
-          <span v-if="activeTab" class="footer-item footer-lang">{{ extToLanguage(activeTab.ext) }}</span>
-        </div>
-        <div class="editor-footer-right">
-          <span v-if="backendProgressDesc" class="footer-item footer-progress-text">
-            {{ backendProgressDesc }}
-          </span>
-          <span v-if="backendProgressActive" class="footer-progress-bar-wrapper">
-            <span
-              class="footer-progress-bar-fill"
-              :class="{ indeterminate: backendProgressPct < 0 }"
-              :style="backendProgressPct >= 0 ? { width: backendProgressPct + '%' } : {}"
-            />
-          </span>
-          <span class="footer-item footer-state" :class="backendStateClass">{{ backendStateLabel }}</span>
-        </div>
-      </footer>
     </div>
 
+    <!-- Editor Status Bar Footer -->
+    <footer
+      class="editor-footer"
+      :class="{ dark: isDark }"
+    >
+      <div class="editor-footer-left">
+        <span
+          class="footer-item"
+          :title="`${formatBytes(footerStats.availableBytes)} free on disk`"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><rect
+            x="2"
+            y="2"
+            width="20"
+            height="20"
+            rx="2"
+          /><path d="M16 2v20" /><path d="M2 12h14" /></svg>
+          {{ formatBytes(footerStats.availableBytes) }} free
+        </span>
+        <span
+          class="footer-item"
+          :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></svg>
+          {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
+        </span>
+        <span
+          v-if="activeTab"
+          class="footer-item footer-lang"
+        >{{ extToLanguage(activeTab.ext) }}</span>
+      </div>
+      <div class="editor-footer-right">
+        <span
+          v-if="backendProgressDesc"
+          class="footer-item footer-progress-text"
+        >
+          {{ backendProgressDesc }}
+        </span>
+        <span
+          v-if="backendProgressActive"
+          class="footer-progress-bar-wrapper"
+        >
+          <span
+            class="footer-progress-bar-fill"
+            :class="{ indeterminate: backendProgressPct < 0 }"
+            :style="backendProgressPct >= 0 ? { width: backendProgressPct + '%' } : {}"
+          />
+        </span>
+        <span
+          class="footer-item footer-state"
+          :class="backendStateClass"
+        >{{ backendStateLabel }}</span>
+      </div>
+    </footer>
+  </div>
 
   <!-- Tab Context Menu -->
   <TabContextMenu
@@ -690,7 +1246,6 @@
     @close-others="closeOtherTabs"
     @close-all="closeAllTabs"
   />
-
 </template>
 
 <script lang="ts">
@@ -734,16 +1289,16 @@ import { getAgentPersonaRegistry } from '@pkg/agent';
 import type { FileEntry } from './filesystem/FileTreeSidebar.vue';
 
 interface TabState {
-  path: string;
-  name: string;
-  ext: string;
-  content: string;
-  loading: boolean;
-  error: string;
-  dirty: boolean;
-  editorType?: 'code' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
+  path:             string;
+  name:             string;
+  ext:              string;
+  content:          string;
+  loading:          boolean;
+  error:            string;
+  dirty:            boolean;
+  editorType?:      'code' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
   originalContent?: string; // For diff editor: the HEAD version
-  line?: number; // Navigate to this line when opening
+  line?:            number; // Navigate to this line when opening
 }
 
 const MARKDOWN_EXTS = new Set(['.md', '.markdown', '.mdx']);
@@ -769,9 +1324,9 @@ const EXT_ICON_COLORS: Record<string, string> = {
  * Extensible: add new entries here to support more file types.
  */
 const editorRegistry: Record<string, Component> = {
-  code:      markRaw(CodeEditor),
-  webview:   markRaw(WebViewTab),
-  terminal:  markRaw(TerminalTab),
+  code:         markRaw(CodeEditor),
+  webview:      markRaw(WebViewTab),
+  terminal:     markRaw(TerminalTab),
   diff:         markRaw(DiffEditor),
   'agent-form': markRaw(AgentFormTab),
 };
@@ -781,14 +1336,42 @@ function resolveEditorType(_ext: string): NonNullable<TabState['editorType']> {
 }
 
 const EXT_LANG_MAP: Record<string, string> = {
-  '.ts': 'TypeScript', '.tsx': 'TypeScript React', '.js': 'JavaScript', '.jsx': 'JavaScript React',
-  '.vue': 'Vue', '.json': 'JSON', '.md': 'Markdown', '.markdown': 'Markdown', '.mdx': 'MDX',
-  '.py': 'Python', '.yaml': 'YAML', '.yml': 'YAML', '.sh': 'Shell', '.bash': 'Bash',
-  '.css': 'CSS', '.scss': 'SCSS', '.less': 'Less', '.html': 'HTML', '.xml': 'XML',
-  '.go': 'Go', '.rs': 'Rust', '.java': 'Java', '.rb': 'Ruby', '.php': 'PHP',
-  '.c': 'C', '.cpp': 'C++', '.h': 'C Header', '.swift': 'Swift', '.kt': 'Kotlin',
-  '.sql': 'SQL', '.graphql': 'GraphQL', '.proto': 'Protobuf', '.toml': 'TOML',
-  '.env': 'Environment', '.dockerfile': 'Dockerfile', '.txt': 'Plain Text',
+  '.ts':         'TypeScript',
+  '.tsx':        'TypeScript React',
+  '.js':         'JavaScript',
+  '.jsx':        'JavaScript React',
+  '.vue':        'Vue',
+  '.json':       'JSON',
+  '.md':         'Markdown',
+  '.markdown':   'Markdown',
+  '.mdx':        'MDX',
+  '.py':         'Python',
+  '.yaml':       'YAML',
+  '.yml':        'YAML',
+  '.sh':         'Shell',
+  '.bash':       'Bash',
+  '.css':        'CSS',
+  '.scss':       'SCSS',
+  '.less':       'Less',
+  '.html':       'HTML',
+  '.xml':        'XML',
+  '.go':         'Go',
+  '.rs':         'Rust',
+  '.java':       'Java',
+  '.rb':         'Ruby',
+  '.php':        'PHP',
+  '.c':          'C',
+  '.cpp':        'C++',
+  '.h':          'C Header',
+  '.swift':      'Swift',
+  '.kt':         'Kotlin',
+  '.sql':        'SQL',
+  '.graphql':    'GraphQL',
+  '.proto':      'Protobuf',
+  '.toml':       'TOML',
+  '.env':        'Environment',
+  '.dockerfile': 'Dockerfile',
+  '.txt':        'Plain Text',
 };
 
 function extToLanguage(ext: string): string {
@@ -923,8 +1506,8 @@ export default defineComponent({
     const bottomPaneVisible = ref(true);
     const bottomPaneTab = ref<'terminal' | 'api' | 'monitor' | 'training'>('terminal');
     const trainingLogFilename = ref('');
-    const apiTabs = ref<Array<{ id: string; slug: string }>>([]);
-    const monitorTabs = ref<Array<{ id: string; type: 'ws' | 'service' | 'agent' | 'error'; tabId: string; label: string; errorData?: any }>>([]);
+    const apiTabs = ref<{ id: string; slug: string }[]>([]);
+    const monitorTabs = ref<{ id: string; type: 'ws' | 'service' | 'agent' | 'error'; tabId: string; label: string; errorData?: any }[]>([]);
     const activeMonitorTab = ref('');
     let monitorTabCounter = 0;
     const activeApiTab = ref('');
@@ -946,7 +1529,7 @@ export default defineComponent({
         return;
       }
       apiTabCounter++;
-      const newTab = { id: `api-${apiTabCounter}`, slug };
+      const newTab = { id: `api-${ apiTabCounter }`, slug };
       apiTabs.value.push(newTab);
       activeApiTab.value = newTab.id;
       bottomPaneVisible.value = true;
@@ -969,7 +1552,7 @@ export default defineComponent({
     const chatWaitingForUser = editorChat.waitingForUser;
     const chatSend = () => editorChat.send();
     const chatStop = () => editorChat.stop();
-    const chatUpdateQuery = (val: string) => { editorChat.query.value = val; };
+    const chatUpdateQuery = (val: string) => { editorChat.query.value = val };
 
     // Listen for workflow playbook events and update the canvas
     editorChat.onWorkflowEvent((event) => {
@@ -977,58 +1560,58 @@ export default defineComponent({
 
       const nodeId = event.nodeId;
       switch (event.type) {
-        case 'workflow_started':
-          // Reset canvas for fresh execution — de-animate all edges so they light up as traversed
-          workflowEditorRef.value.clearAllExecution();
-          break;
-        case 'node_started':
-          if (nodeId) {
-            workflowEditorRef.value.updateNodeExecution(nodeId, {
-              status: 'running',
-              startedAt: event.timestamp,
-            });
-          }
-          break;
-        case 'node_completed':
-          if (nodeId) {
-            workflowEditorRef.value.updateNodeExecution(nodeId, {
-              status: 'completed',
-              output: event.output,
-              threadId: event.threadId,
-              completedAt: event.timestamp,
-            });
-          }
-          break;
-        case 'node_failed':
-          if (nodeId) {
-            workflowEditorRef.value.updateNodeExecution(nodeId, {
-              status: 'failed',
-              error: event.error,
-              completedAt: event.timestamp,
-            });
-          }
-          break;
-        case 'node_thinking':
-          if (nodeId && event.content) {
-            workflowEditorRef.value.pushNodeThinking(nodeId, {
-              content: event.content,
-              role: event.role || 'assistant',
-              kind: event.kind || 'progress',
-              timestamp: event.timestamp,
-            });
-          }
-          break;
-        case 'edge_activated':
-          // Animate the edge connecting two nodes during workflow traversal
-          if (event.sourceId && event.targetId) {
-            workflowEditorRef.value.setEdgeAnimated(event.sourceId, event.targetId, true);
-          }
-          break;
-        case 'workflow_completed':
-        case 'workflow_failed':
-        case 'workflow_aborted':
-          // Canvas nodes already show their individual states — nothing extra needed
-          break;
+      case 'workflow_started':
+        // Reset canvas for fresh execution — de-animate all edges so they light up as traversed
+        workflowEditorRef.value.clearAllExecution();
+        break;
+      case 'node_started':
+        if (nodeId) {
+          workflowEditorRef.value.updateNodeExecution(nodeId, {
+            status:    'running',
+            startedAt: event.timestamp,
+          });
+        }
+        break;
+      case 'node_completed':
+        if (nodeId) {
+          workflowEditorRef.value.updateNodeExecution(nodeId, {
+            status:      'completed',
+            output:      event.output,
+            threadId:    event.threadId,
+            completedAt: event.timestamp,
+          });
+        }
+        break;
+      case 'node_failed':
+        if (nodeId) {
+          workflowEditorRef.value.updateNodeExecution(nodeId, {
+            status:      'failed',
+            error:       event.error,
+            completedAt: event.timestamp,
+          });
+        }
+        break;
+      case 'node_thinking':
+        if (nodeId && event.content) {
+          workflowEditorRef.value.pushNodeThinking(nodeId, {
+            content:   event.content,
+            role:      event.role || 'assistant',
+            kind:      event.kind || 'progress',
+            timestamp: event.timestamp,
+          });
+        }
+        break;
+      case 'edge_activated':
+        // Animate the edge connecting two nodes during workflow traversal
+        if (event.sourceId && event.targetId) {
+          workflowEditorRef.value.setEdgeAnimated(event.sourceId, event.targetId, true);
+        }
+        break;
+      case 'workflow_completed':
+      case 'workflow_failed':
+      case 'workflow_aborted':
+        // Canvas nodes already show their individual states — nothing extra needed
+        break;
       }
     });
 
@@ -1081,7 +1664,7 @@ export default defineComponent({
     const savedSizes = (() => {
       try {
         return JSON.parse(localStorage.getItem(PANE_STORAGE_KEY) || '{}');
-      } catch { return {}; }
+      } catch { return {} }
     })();
     const leftPaneWidth = ref<number>(savedSizes.left ?? 280);
     const rightPaneWidth = ref<number>(savedSizes.right ?? 280);
@@ -1165,13 +1748,13 @@ export default defineComponent({
     let workflowSavedResetTimer: ReturnType<typeof setTimeout> | null = null;
     const searchQuery = ref('');
     const searchPath = ref('');
-    const searchResults = ref<Array<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }>>([]);
+    const searchResults = ref<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }[]>([]);
     const qmdIndexing = ref(false);
     const qmdSearching = ref(false);
 
     // Terminal tabs state
-    const terminalTabs = ref<Array<{ id: string; name: string; sessionId: string; command?: string; readOnly?: boolean }>>([
-      { id: 'terminal-1', name: 'Terminal 1', sessionId: '' }
+    const terminalTabs = ref<{ id: string; name: string; sessionId: string; command?: string; readOnly?: boolean }[]>([
+      { id: 'terminal-1', name: 'Terminal 1', sessionId: '' },
     ]);
     const activeTerminalTab = ref('terminal-1');
     let terminalCounter = 1;
@@ -1180,9 +1763,9 @@ export default defineComponent({
     function createNewTerminalTab() {
       terminalCounter++;
       const newTab = {
-        id: `terminal-${terminalCounter}`,
-        name: `Terminal ${terminalCounter}`,
-        sessionId: ''
+        id:        `terminal-${ terminalCounter }`,
+        name:      `Terminal ${ terminalCounter }`,
+        sessionId: '',
       };
       terminalTabs.value.push(newTab);
       activeTerminalTab.value = newTab.id;
@@ -1190,13 +1773,13 @@ export default defineComponent({
 
     function closeTerminalTab(tabId: string) {
       if (terminalTabs.value.length <= 1) return; // Don't close last tab
-      
+
       const index = terminalTabs.value.findIndex(tab => tab.id === tabId);
       if (index === -1) return;
-      
+
       const wasActive = activeTerminalTab.value === tabId;
       terminalTabs.value.splice(index, 1);
-      
+
       if (wasActive) {
         // Switch to the last tab
         const lastTab = terminalTabs.value[terminalTabs.value.length - 1];
@@ -1230,7 +1813,7 @@ export default defineComponent({
         return;
       }
       monitorTabCounter++;
-      const newTab = { id: `mon-${monitorTabCounter}`, type, tabId: id, label, errorData };
+      const newTab = { id: `mon-${ monitorTabCounter }`, type, tabId: id, label, errorData };
       monitorTabs.value.push(newTab);
       activeMonitorTab.value = newTab.id;
       bottomPaneVisible.value = true;
@@ -1256,7 +1839,7 @@ export default defineComponent({
       activeTerminalTab.value = tabId;
     }
 
-    onMounted(async () => {
+    onMounted(async() => {
       // Start footer stats polling (every 30s)
       refreshFooterStats();
       footerStatsTimer = setInterval(refreshFooterStats, 30_000);
@@ -1449,7 +2032,7 @@ export default defineComponent({
 
     function onWorkflowNodeLabelUpdate(nodeId: string, label: string) {
       workflowEditorRef.value?.updateNodeLabel(nodeId, label);
-      if (selectedWorkflowNode.value && selectedWorkflowNode.value.id === nodeId) {
+      if (selectedWorkflowNode.value?.id === nodeId) {
         selectedWorkflowNode.value = { ...selectedWorkflowNode.value, label };
       }
     }
@@ -1575,7 +2158,7 @@ export default defineComponent({
       // Delete via IPC
       try {
         await ipcRenderer.invoke('workflow-delete', wfId);
-        console.log(`[AgentEditor] Deleted workflow: ${wfName} (${wfId})`);
+        console.log(`[AgentEditor] Deleted workflow: ${ wfName } (${ wfId })`);
       } catch (err) {
         console.error('[AgentEditor] Failed to delete workflow:', err);
       }
@@ -1619,9 +2202,14 @@ export default defineComponent({
       } catch {
         // New workflow not yet saved — start with empty canvas
         activeWorkflowData.value = {
-          id: workflowId, name: workflowId, description: '', version: 1,
-          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-          nodes: [], edges: [],
+          id:          workflowId,
+          name:        workflowId,
+          description: '',
+          version:     1,
+          createdAt:   new Date().toISOString(),
+          updatedAt:   new Date().toISOString(),
+          nodes:       [],
+          edges:       [],
         };
       }
     }
@@ -1638,9 +2226,14 @@ export default defineComponent({
 
     async function onWorkflowCreated(workflowId: string, workflowName: string) {
       const newWorkflow = {
-        id: workflowId, name: workflowName, description: '', version: 1,
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-        nodes: [], edges: [],
+        id:          workflowId,
+        name:        workflowName,
+        description: '',
+        version:     1,
+        createdAt:   new Date().toISOString(),
+        updatedAt:   new Date().toISOString(),
+        nodes:       [],
+        edges:       [],
       };
       try {
         await ipcRenderer.invoke('workflow-save', newWorkflow);
@@ -1657,9 +2250,9 @@ export default defineComponent({
         workflowSaveStatus.value = 'saving';
         const toSave = {
           ...activeWorkflowData.value,
-          nodes:    serialized.nodes,
-          edges:    serialized.edges,
-          viewport: serialized.viewport,
+          nodes:     serialized.nodes,
+          edges:     serialized.edges,
+          viewport:  serialized.viewport,
           updatedAt: new Date().toISOString(),
         };
         ipcRenderer.invoke('workflow-save', toSave).then(() => {
@@ -1738,7 +2331,7 @@ export default defineComponent({
     });
 
     const activeTab = computed(() => {
-      return openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === activeTabKey.value) || null;
+      return openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === activeTabKey.value) || null;
     });
 
     const activeEditorComponent = computed(() => {
@@ -1762,7 +2355,7 @@ export default defineComponent({
       const content = activeTab.value?.content || '';
       const count = Math.ceil(content.length / 4);
       if (count >= 1000) {
-        return `${(count / 1000).toFixed(1)}k`;
+        return `${ (count / 1000).toFixed(1) }k`;
       }
       return String(count);
     });
@@ -1786,8 +2379,8 @@ export default defineComponent({
       const editorType = entry.editorType === 'markdown' ? 'code' : (entry.editorType || resolveEditorType(entry.ext));
 
       // Check if tab already open with same path and editorType
-      const key = `${entry.path}-${editorType}`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ entry.path }-${ editorType }`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         if (entry.line) {
@@ -1821,8 +2414,8 @@ export default defineComponent({
 
     async function onOpenDiff(repoRoot: string, file: string, staged: boolean) {
       const fullPath = repoRoot + '/' + file;
-      const key = `${fullPath}-diff`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ fullPath }-diff`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
@@ -1833,8 +2426,8 @@ export default defineComponent({
 
       const tab: TabState = reactive({
         path:            fullPath,
-        name:            name,
-        ext:             ext,
+        name,
+        ext,
         content:         '',
         originalContent: '',
         loading:         true,
@@ -1879,14 +2472,14 @@ export default defineComponent({
     }
 
     function switchTab(tab: TabState) {
-      activeTabKey.value = `${tab.path}-${tab.editorType || 'code'}`;
+      activeTabKey.value = `${ tab.path }-${ tab.editorType || 'code' }`;
     }
 
     function closeTab(tab: TabState) {
       const index = openTabs.value.findIndex(t => t === tab);
       if (index === -1) return;
 
-      const wasActive = `${tab.path}-${tab.editorType || 'code'}` === activeTabKey.value;
+      const wasActive = `${ tab.path }-${ tab.editorType || 'code' }` === activeTabKey.value;
       openTabs.value.splice(index, 1);
 
       if (wasActive) {
@@ -1895,14 +2488,14 @@ export default defineComponent({
         } else {
           // Switch to the last tab
           const lastTab = openTabs.value[openTabs.value.length - 1];
-          activeTabKey.value = `${lastTab.path}-${lastTab.editorType || 'code'}`;
+          activeTabKey.value = `${ lastTab.path }-${ lastTab.editorType || 'code' }`;
         }
       }
     }
 
     function closeOtherTabs(tab: TabState) {
       openTabs.value = openTabs.value.filter(t => t === tab);
-      activeTabKey.value = `${tab.path}-${tab.editorType || 'code'}`;
+      activeTabKey.value = `${ tab.path }-${ tab.editorType || 'code' }`;
     }
 
     function closeAllTabs() {
@@ -1914,21 +2507,21 @@ export default defineComponent({
 
     const tabContextMenu = ref<{
       visible: boolean;
-      x: number;
-      y: number;
-      tab: TabState | null;
+      x:       number;
+      y:       number;
+      tab:     TabState | null;
     }>({
       visible: false,
-      x: 0,
-      y: 0,
-      tab: null,
+      x:       0,
+      y:       0,
+      tab:     null,
     });
 
     function onTabContextMenu(event: MouseEvent, tab: TabState) {
       tabContextMenu.value = {
         visible: true,
-        x: event.clientX,
-        y: event.clientY,
+        x:       event.clientX,
+        y:       event.clientY,
         tab,
       };
     }
@@ -1945,12 +2538,12 @@ export default defineComponent({
     function createNewUntitledTab() {
       editorMenu.visible = false;
       untitledCounter++;
-      const name = `Untitled-${untitledCounter}`;
-      const key = `untitled://${name}-code`;
+      const name = `Untitled-${ untitledCounter }`;
+      const key = `untitled://${ name }-code`;
 
       const tab: TabState = reactive({
-        path:       `untitled://${name}`,
-        name:       name,
+        path:       `untitled://${ name }`,
+        name,
         ext:        '.txt',
         content:    '',
         loading:    false,
@@ -1973,9 +2566,9 @@ export default defineComponent({
     // ─── Inject Variable context menu ─────────────────────────
     interface TemplateVar { key: string; label: string; preview: string }
     const injectMenu = reactive({
-      visible: false,
-      x: 0,
-      y: 0,
+      visible:   false,
+      x:         0,
+      y:         0,
       variables: [] as TemplateVar[],
     });
 
@@ -2022,8 +2615,8 @@ export default defineComponent({
 
     function openWithEditor(tab: TabState, editorType: 'code' | 'preview') {
       // Check if tab with same path and editorType already exists
-      const key = `${tab.path}-${editorType}`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ tab.path }-${ editorType }`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         hideTabContextMenu();
@@ -2039,7 +2632,7 @@ export default defineComponent({
         loading:    true,
         error:      '',
         dirty:      false,
-        editorType: editorType,
+        editorType,
       });
 
       openTabs.value = [...openTabs.value, newTab];
@@ -2064,7 +2657,7 @@ export default defineComponent({
 
     function onNewAgentTab() {
       const key = 'agent-form://new-agent-form';
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
@@ -2110,9 +2703,9 @@ export default defineComponent({
       // Activate this agent: ensure it exists in registry, connect its WS, and set active
       activateAgentInRegistry(agent);
 
-      const editPath = `agent-form://edit/${agent.id}`;
-      const key = `${editPath}-agent-form`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const editPath = `agent-form://edit/${ agent.id }`;
+      const key = `${ editPath }-agent-form`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
@@ -2121,12 +2714,12 @@ export default defineComponent({
       // Read agent.yaml content so form can pre-fill
       let yamlContent = '';
       try {
-        yamlContent = await ipcRenderer.invoke('filesystem-read-file', `${agent.path}/agent.yaml`);
+        yamlContent = await ipcRenderer.invoke('filesystem-read-file', `${ agent.path }/agent.yaml`);
       } catch { /* ignore */ }
 
       const tab: TabState = reactive({
         path:       editPath,
-        name:       `Edit: ${agent.name}`,
+        name:       `Edit: ${ agent.name }`,
         ext:        '',
         content:    yamlContent,
         loading:    false,
@@ -2153,7 +2746,7 @@ export default defineComponent({
 
     async function saveActiveTab() {
       const tab = activeTab.value;
-      if (!tab || !tab.dirty) return;
+      if (!tab?.dirty) return;
 
       try {
         let content = tab.content;
@@ -2186,7 +2779,7 @@ export default defineComponent({
           tab.path = savePath;
           tab.name = fileName;
           tab.ext = ext;
-          activeTabKey.value = `${tab.path}-${tab.editorType || 'code'}`;
+          activeTabKey.value = `${ tab.path }-${ tab.editorType || 'code' }`;
         }
 
         await ipcRenderer.invoke('filesystem-write-file', tab.path, content);
@@ -2217,8 +2810,8 @@ export default defineComponent({
     // Tab context menu removed - now in FileTree component
 
     function openContainerPort({ url, name }: { url: string; name: string }) {
-      const key = `${url}-webview`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ url }-webview`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
@@ -2240,7 +2833,7 @@ export default defineComponent({
     function openDockerTerminalTab(name: string, command: string, readOnly: boolean) {
       terminalCounter++;
       const newTab = {
-        id: `terminal-${terminalCounter}`,
+        id:        `terminal-${ terminalCounter }`,
         name,
         sessionId: '',
         command,
@@ -2252,16 +2845,16 @@ export default defineComponent({
     }
 
     function openDockerLogs(containerName: string) {
-      const command = `docker logs -f ${containerName}`;
-      const key = `${command}-terminal`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const command = `docker logs -f ${ containerName }`;
+      const key = `${ command }-terminal`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
       }
       const tab: TabState = reactive({
         path:       command,
-        name:       `Logs: ${containerName}`,
+        name:       `Logs: ${ containerName }`,
         ext:        '',
         content:    command,
         loading:    false,
@@ -2275,8 +2868,8 @@ export default defineComponent({
 
     function openDockerExec(containerName: string) {
       openDockerTerminalTab(
-        `Shell: ${containerName}`,
-        `docker exec -it ${containerName} sh`,
+        `Shell: ${ containerName }`,
+        `docker exec -it ${ containerName } sh`,
         false,
       );
     }
@@ -3296,8 +3889,6 @@ html, body, #app {
   border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
 }
-
-
 
 .workflow-settings-textarea {
   resize: vertical;

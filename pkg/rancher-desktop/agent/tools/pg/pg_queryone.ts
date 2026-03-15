@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { postgresClient } from "../../database/PostgresClient";
+import { BaseTool, ToolResponse } from '../base';
+import { postgresClient } from '../../database/PostgresClient';
 
 /**
  * Pg Query One Tool - Worker class for execution
  */
 export class PgQueryOneWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { sql, params = [] } = input;
 
@@ -15,18 +15,18 @@ export class PgQueryOneWorker extends BaseTool {
       const rowJson = result ? JSON.stringify(result, null, 2) : 'null';
 
       const responseString = `PostgreSQL QueryOne Result:
-Row Returned: ${result ? 'Yes' : 'No'}
-Row: ${rowJson}
+Row Returned: ${ result ? 'Yes' : 'No' }
+Row: ${ rowJson }
 Query Executed Successfully`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing PostgreSQL queryOne: ${(error as Error).message}`
+        responseString: `Error executing PostgreSQL queryOne: ${ (error as Error).message }`,
       };
     }
   }

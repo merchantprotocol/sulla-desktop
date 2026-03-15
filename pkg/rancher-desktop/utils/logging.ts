@@ -82,7 +82,7 @@ export class Log {
     delete this._fdStream;
 
     // Write a session separator so log sessions are distinguishable
-    this.realStream.write(`\n${'='.repeat(80)}\n=== SESSION START: ${new Date().toISOString()} (PID ${process.pid}) ===\n${'='.repeat(80)}\n`);
+    this.realStream.write(`\n${ '='.repeat(80) }\n=== SESSION START: ${ new Date().toISOString() } (PID ${ process.pid }) ===\n${ '='.repeat(80) }\n`);
 
     // If we're running unit tests, output to the console rather than file.
     // However, _don't_ do so for end-to-end tests in Playwright.

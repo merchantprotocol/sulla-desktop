@@ -4,21 +4,21 @@ import { BaseModel } from '../BaseModel';
 import { SullaSettingsModel } from './SullaSettingsModel';
 
 interface N8nUserAttributes {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  password: string;
+  id:                     string;
+  email:                  string;
+  firstName:              string;
+  lastName:               string;
+  password:               string;
   personalizationAnswers: any;
-  createdAt: Date;
-  updatedAt: Date;
-  settings: any;
-  disabled: boolean;
-  mfaEnabled: boolean;
-  mfaSecret: string;
-  mfaRecoveryCodes: string;
-  lastActiveAt: Date;
-  roleSlug: string;
+  createdAt:              Date;
+  updatedAt:              Date;
+  settings:               any;
+  disabled:               boolean;
+  mfaEnabled:             boolean;
+  mfaSecret:              string;
+  mfaRecoveryCodes:       string;
+  lastActiveAt:           Date;
+  roleSlug:               string;
 }
 
 export class N8nUserModel extends BaseModel<N8nUserAttributes> {
@@ -46,10 +46,10 @@ export class N8nUserModel extends BaseModel<N8nUserAttributes> {
    */
   protected readonly casts: Record<string, string> = {
     personalizationAnswers: 'json',
-    settings: 'json',
-    lastActiveAt: 'timestamp',
-    disabled: 'boolean',
-    mfaEnabled: 'boolean',
+    settings:               'json',
+    lastActiveAt:           'timestamp',
+    disabled:               'boolean',
+    mfaEnabled:             'boolean',
   };
 
   public static async getOrCreateServiceAccount(): Promise<N8nUserModel> {
@@ -76,7 +76,7 @@ export class N8nUserModel extends BaseModel<N8nUserAttributes> {
       user.attributes.firstName = 'Sulla';
       user.attributes.lastName = 'Desktop';
       user.attributes.personalizationAnswers = {};
-      user.attributes.settings = {"userActivated": true};
+      user.attributes.settings = { userActivated: true };
       user.attributes.disabled = false;
       user.attributes.mfaEnabled = false;
       user.attributes.mfaSecret = '';
@@ -100,8 +100,8 @@ export class N8nUserModel extends BaseModel<N8nUserAttributes> {
   }
 
   /**
-   * 
-   * @returns 
+   *
+   * @returns
    */
   public static async getServiceAccountEmail(): Promise<string> {
     // Get user registration details from SullaSettingsModel
@@ -116,8 +116,8 @@ export class N8nUserModel extends BaseModel<N8nUserAttributes> {
   }
 
   /**
-   * 
-   * @returns 
+   *
+   * @returns
    */
   public static async getServiceAccountPassword(): Promise<string> {
     // Get user registration details from SullaSettingsModel
@@ -166,7 +166,7 @@ export class N8nUserModel extends BaseModel<N8nUserAttributes> {
   static async where<T extends BaseModel>(
     this: new (...args: any[]) => T,
     conditions: any,
-    value?: any
+    value?: any,
   ): Promise<T[]> {
     const serviceAccountId = await N8nUserModel.getServiceAccountUserId();
     if (!serviceAccountId) {

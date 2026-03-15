@@ -35,15 +35,15 @@ const SCORING_CONFIG = {
   /** Threshold score above which messages become candidates for summarization */
   SUMMARIZATION_THRESHOLD: 0.7,
   /** Weight for age factor (0-1) */
-  AGE_WEIGHT: 0.6,
+  AGE_WEIGHT:              0.6,
   /** Weight for relevancy factor (0-1) */
-  RELEVANCY_WEIGHT: 0.4,
+  RELEVANCY_WEIGHT:        0.4,
   /** Maximum number of recent messages to use for relevancy context */
-  RELEVANCY_CONTEXT_SIZE: 10,
+  RELEVANCY_CONTEXT_SIZE:  10,
   /** Minimum batch size for summarization */
-  MIN_BATCH_SIZE: 3,
+  MIN_BATCH_SIZE:          3,
   /** Maximum batch size for summarization */
-  MAX_BATCH_SIZE: 40
+  MAX_BATCH_SIZE:          40,
 };
 
 // ============================================================================
@@ -69,7 +69,7 @@ Rules:
 - 🟡 Valuable = decisions, patterns, progress markers
 - ⚪ Low = minor items (use sparingly)
 
-${JSON_ONLY_RESPONSE_INSTRUCTIONS}
+${ JSON_ONLY_RESPONSE_INSTRUCTIONS }
 {
   "observations": [
     {
@@ -89,22 +89,22 @@ ${JSON_ONLY_RESPONSE_INSTRUCTIONS}
 
 interface ObservationEntry {
   priority: string;
-  content: string;
+  content:  string;
 }
 
 interface MessageScore {
-  message: ChatMessage;
-  index: number;
-  ageScore: number;
+  message:        ChatMessage;
+  index:          number;
+  ageScore:       number;
   relevancyScore: number;
-  combinedScore: number;
+  combinedScore:  number;
 }
 
 export class ConversationSummaryService {
   private static instance: ConversationSummaryService | null = null;
   private static isProcessing = false;
   private static processingQueue = new Set<string>();
-  
+
   public readonly id = 'conversation_summary_service';
   public readonly name = 'Conversation Summary Service';
 
@@ -133,7 +133,7 @@ export class ConversationSummaryService {
   private calculateAgeScore(messageIndex: number, totalMessages: number, message: ChatMessage): number {
     // Position-based age (older position = higher score)
     const positionScore = (totalMessages - 1 - messageIndex) / Math.max(totalMessages - 1, 1);
-    
+
     // Time-based age (if timestamp available)
     let timeScore = 0;
     const messageTimestamp = (message.metadata as any)?.timestamp;
@@ -143,7 +143,7 @@ export class ConversationSummaryService {
       const maxAge = 24 * 60 * 60 * 1000; // 24 hours in ms
       timeScore = Math.min(age / maxAge, 1);
     }
-    
+
     // Combine position and time scores (favor position if no timestamp)
     return messageTimestamp ? (positionScore * 0.7 + timeScore * 0.3) : positionScore;
   }
@@ -153,23 +153,23 @@ export class ConversationSummaryService {
    * Returns 0-1 where 1 means very irrelevant (high candidate for summarization)
    */
   private calculateRelevancyScore(message: ChatMessage, recentContext: string[]): number {
-    const messageContent = typeof message.content === 'string' 
-      ? message.content.toLowerCase() 
+    const messageContent = typeof message.content === 'string'
+      ? message.content.toLowerCase()
       : JSON.stringify(message.content).toLowerCase();
-    
+
     if (messageContent.length < 10) return 0.8; // Very short messages are likely less relevant
-    
+
     // Extract key terms from recent context
     const contextTerms = recentContext.join(' ').toLowerCase()
       .split(/\s+/)
       .filter(term => term.length > 3)
       .slice(0, 50); // Limit terms to avoid noise
-    
+
     // Count overlapping terms
     const messageTerms = messageContent.split(/\s+/).filter(term => term.length > 3);
     const overlap = messageTerms.filter(term => contextTerms.includes(term)).length;
     const relevancyRatio = overlap / Math.max(messageTerms.length, 1);
-    
+
     // Invert score (high overlap = low summarization score)
     return Math.max(0, 1 - relevancyRatio * 2);
   }
@@ -179,37 +179,37 @@ export class ConversationSummaryService {
    */
   private scoreMessages(workingMessages: ChatMessage[]): MessageScore[] {
     if (workingMessages.length === 0) return [];
-    
+
     // Get recent context for relevancy scoring
     const recentMessages = workingMessages.slice(-SCORING_CONFIG.RELEVANCY_CONTEXT_SIZE);
     const recentContext = recentMessages
       .filter(m => typeof m.content === 'string')
-      .map(m => m.content as string);
-    
+      .map(m => m.content);
+
     return workingMessages.map((message, index) => {
       // Skip system messages and latest user message
-      if (message.role === 'system' || 
+      if (message.role === 'system' ||
           (message.role === 'user' && index === workingMessages.length - 1)) {
         return {
           message,
           index,
-          ageScore: 0,
+          ageScore:       0,
           relevancyScore: 0,
-          combinedScore: 0
+          combinedScore:  0,
         };
       }
-      
+
       const ageScore = this.calculateAgeScore(index, workingMessages.length, message);
       const relevancyScore = this.calculateRelevancyScore(message, recentContext);
-      const combinedScore = (ageScore * SCORING_CONFIG.AGE_WEIGHT) + 
+      const combinedScore = (ageScore * SCORING_CONFIG.AGE_WEIGHT) +
                            (relevancyScore * SCORING_CONFIG.RELEVANCY_WEIGHT);
-      
+
       return {
         message,
         index,
         ageScore,
         relevancyScore,
-        combinedScore
+        combinedScore,
       };
     });
   }
@@ -241,7 +241,7 @@ export class ConversationSummaryService {
 
       observations.push({
         priority: '🟡',
-        content: `${(message.role || 'unknown').toUpperCase()}: ${content.slice(0, 220)}`,
+        content:  `${ (message.role || 'unknown').toUpperCase() }: ${ content.slice(0, 220) }`,
       });
 
       if (observations.length >= 8) {
@@ -257,11 +257,11 @@ export class ConversationSummaryService {
    * This is the mandatory path when callers must enforce message trimming before continuing.
    */
   static async summarizeNow(state: BaseThreadState): Promise<void> {
-    const threadId = state.metadata.threadId as string;
+    const threadId = state.metadata.threadId;
 
     if (ConversationSummaryService.isProcessing ||
         ConversationSummaryService.processingQueue.has(threadId)) {
-      console.log(`[ConversationSummary] Skipping - already processing thread ${threadId}`);
+      console.log(`[ConversationSummary] Skipping - already processing thread ${ threadId }`);
       return;
     }
 
@@ -283,8 +283,8 @@ export class ConversationSummaryService {
    */
   static triggerBackgroundSummarization(state: BaseThreadState): void {
     void ConversationSummaryService.summarizeNow(state).catch(err => {
-      const threadId = state.metadata.threadId as string;
-      console.error(`[ConversationSummary] Fatal error for thread ${threadId}:`, err);
+      const threadId = state.metadata.threadId;
+      console.error(`[ConversationSummary] Fatal error for thread ${ threadId }:`, err);
     });
   }
 
@@ -299,15 +299,15 @@ export class ConversationSummaryService {
       while (attempts < MAX_RETRY_ATTEMPTS) {
         try {
           await this.performSummarization(state);
-          console.log(`[ConversationSummary] Successfully summarized thread ${threadId} on attempt ${attempts + 1}`);
+          console.log(`[ConversationSummary] Successfully summarized thread ${ threadId } on attempt ${ attempts + 1 }`);
           break;
         } catch (err) {
           attempts++;
-          console.warn(`[ConversationSummary] Attempt ${attempts} failed for thread ${threadId}:`, 
+          console.warn(`[ConversationSummary] Attempt ${ attempts } failed for thread ${ threadId }:`,
             err instanceof Error ? err.message : String(err));
 
           if (attempts >= MAX_RETRY_ATTEMPTS) {
-            console.error(`[ConversationSummary] All retry attempts exhausted for thread ${threadId}`);
+            console.error(`[ConversationSummary] All retry attempts exhausted for thread ${ threadId }`);
             throw err;
           }
 
@@ -330,9 +330,9 @@ export class ConversationSummaryService {
     // 1. Check if oldest message is existing summary and extract its observations
     let existingObservations: ObservationEntry[] = [];
     let hasExistingSummary = false;
-    
-    if (messages.length > 0 && 
-        messages[0].role === 'assistant' && 
+
+    if (messages.length > 0 &&
+        messages[0].role === 'assistant' &&
         (messages[0].metadata as any)?._conversationSummary) {
       hasExistingSummary = true;
       // Extract observations from metadata if available
@@ -344,7 +344,7 @@ export class ConversationSummaryService {
 
     // 2. Remove existing summary from messages before collecting batch
     const workingMessages = hasExistingSummary ? messages.slice(1) : messages;
-    
+
     // 3. Score all messages for age and relevancy
     const messageScores = this.scoreMessages(workingMessages);
 
@@ -370,26 +370,26 @@ export class ConversationSummaryService {
       .sort((a, b) => a.index - b.index) // Oldest first
       .slice(0, requiredRemovalCount);
     const forcedOverflowSet = new Set(forcedOverflowScores);
-    
+
     // 4. Select messages that exceed the summarization threshold
     const candidateMessages = summarizableScores
       .filter(score => score.combinedScore >= SCORING_CONFIG.SUMMARIZATION_THRESHOLD)
       .filter(score => !forcedOverflowSet.has(score))
       .sort((a, b) => b.combinedScore - a.combinedScore) // Sort by score descending
       .slice(0, SCORING_CONFIG.MAX_BATCH_SIZE); // Cap at max batch size
-    
+
     // 5. Ensure we have minimum batch size, add oldest messages if needed
     const messagesToSummarize: ChatMessage[] = forcedOverflowScores.map(score => score.message);
     messagesToSummarize.push(...candidateMessages.map(score => score.message));
-    
+
     if (messagesToSummarize.length < SCORING_CONFIG.MIN_BATCH_SIZE) {
       // Add oldest non-protected messages to reach minimum batch size
-      const remainingMessages = workingMessages.filter(msg => 
+      const remainingMessages = workingMessages.filter(msg =>
         !messagesToSummarize.includes(msg) &&
-        msg.role !== 'system' && 
-        workingMessages.indexOf(msg) !== latestUserIndex
+        msg.role !== 'system' &&
+        workingMessages.indexOf(msg) !== latestUserIndex,
       );
-      
+
       const additionalNeeded = SCORING_CONFIG.MIN_BATCH_SIZE - messagesToSummarize.length;
       messagesToSummarize.push(...remainingMessages.slice(0, additionalNeeded));
     }
@@ -400,10 +400,10 @@ export class ConversationSummaryService {
     for (let i = 0; i < workingMessages.length - 1; i++) {
       const msg = workingMessages[i];
       const next = workingMessages[i + 1];
-      const isToolUse = msg.role === 'assistant' && Array.isArray(msg.content)
-        && msg.content.some((b: any) => b?.type === 'tool_use');
-      const isToolResult = next.role === 'user' && Array.isArray(next.content)
-        && next.content.some((b: any) => b?.type === 'tool_result');
+      const isToolUse = msg.role === 'assistant' && Array.isArray(msg.content) &&
+        msg.content.some((b: any) => b?.type === 'tool_use');
+      const isToolResult = next.role === 'user' && Array.isArray(next.content) &&
+        next.content.some((b: any) => b?.type === 'tool_result');
       if (isToolUse && isToolResult) {
         if (summarizeSet.has(msg) && !summarizeSet.has(next)) {
           messagesToSummarize.push(next);
@@ -420,17 +420,17 @@ export class ConversationSummaryService {
       return;
     }
 
-    console.log(`[ConversationSummary] Selected ${messagesToSummarize.length} messages for summarization (${forcedOverflowScores.length} forced overflow, ${candidateMessages.length} exceeded threshold)`);
-    
+    console.log(`[ConversationSummary] Selected ${ messagesToSummarize.length } messages for summarization (${ forcedOverflowScores.length } forced overflow, ${ candidateMessages.length } exceeded threshold)`);
+
     // Log scoring details for debugging
     if (candidateMessages.length > 0) {
       const avgScore = candidateMessages.reduce((sum, s) => sum + s.combinedScore, 0) / candidateMessages.length;
-      console.log(`[ConversationSummary] Average score: ${avgScore.toFixed(3)}, threshold: ${SCORING_CONFIG.SUMMARIZATION_THRESHOLD}`);
+      console.log(`[ConversationSummary] Average score: ${ avgScore.toFixed(3) }, threshold: ${ SCORING_CONFIG.SUMMARIZATION_THRESHOLD }`);
     }
 
     // 4. Generate new summary observations using LLM
     const newObservations = await this.summarizeBatch(state, messagesToSummarize);
-    
+
     const effectiveObservations = newObservations.length > 0
       ? newObservations
       : this.buildFallbackObservations(messagesToSummarize);
@@ -460,7 +460,7 @@ export class ConversationSummaryService {
     metadata.conversationSummaries = allObservations;
     this.appendConversationSummary(state, allObservations);
 
-    console.log(`[ConversationSummary] Updated state: removed ${messagesToRemove.size} messages, combined ${existingObservations.length} existing + ${effectiveObservations.length} new observations`);
+    console.log(`[ConversationSummary] Updated state: removed ${ messagesToRemove.size } messages, combined ${ existingObservations.length } existing + ${ effectiveObservations.length } new observations`);
   }
 
   /**
@@ -469,7 +469,7 @@ export class ConversationSummaryService {
   private async summarizeBatch(state: BaseThreadState, messages: ChatMessage[]): Promise<ObservationEntry[]> {
     // Build transcript from batch
     const transcript = messages
-      .map(m => `${(m.role || 'unknown').toUpperCase()}: ${
+      .map(m => `${ (m.role || 'unknown').toUpperCase() }: ${
         typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
       }`)
       .join('\n')
@@ -477,24 +477,24 @@ export class ConversationSummaryService {
 
     // Get primary LLM service
     const llmService = await getPrimaryService();
-    
+
     // Prepare messages for LLM
     const llmMessages: ChatMessage[] = [
       {
-        role: 'system',
-        content: BATCH_SUMMARY_PROMPT
+        role:    'system',
+        content: BATCH_SUMMARY_PROMPT,
       },
       {
-        role: 'user', 
-        content: `Here are the conversation messages to extract observations from:\n\n${transcript}`
-      }
+        role:    'user',
+        content: `Here are the conversation messages to extract observations from:\n\n${ transcript }`,
+      },
     ];
 
     const response = await llmService.chat(llmMessages, {
       temperature: 0.1, // Low temperature for consistent extraction
-      maxTokens: 1000,
-      format: 'json',
-      tools: [] // No tools needed for conversation summarization
+      maxTokens:   1000,
+      format:      'json',
+      tools:       [], // No tools needed for conversation summarization
     });
 
     if (!response) {
@@ -504,10 +504,10 @@ export class ConversationSummaryService {
 
     const data = parseJson(response.content) as { observations?: ObservationEntry[] } | null;
     const observations = Array.isArray(data?.observations) ? data.observations : [];
-    
+
     // Validate and return observations
     return observations
-      .filter(obs => obs.priority && obs.content && typeof obs.content === 'string')
+      .filter((obs: ObservationEntry) => obs.priority && obs.content && typeof obs.content === 'string')
       .slice(0, 8); // Cap at 8 observations
   }
 
@@ -516,45 +516,45 @@ export class ConversationSummaryService {
    */
   private appendConversationSummary(state: BaseThreadState, allObservations: ObservationEntry[]): void {
     if (!allObservations.length) return;
-    
+
     // Group observations by priority
     const critical = allObservations.filter(obs => obs.priority === '🔴');
     const valuable = allObservations.filter(obs => obs.priority === '🟡');
     const low = allObservations.filter(obs => obs.priority === '⚪');
-    
+
     const sections = [];
-    
+
     if (critical.length > 0) {
-      sections.push(`**Critical Context:**\n${critical.map(obs => `• ${obs.content}`).join('\n')}`);
+      sections.push(`**Critical Context:**\n${ critical.map(obs => `• ${ obs.content }`).join('\n') }`);
     }
-    
+
     if (valuable.length > 0) {
-      sections.push(`**Key Context:**\n${valuable.map(obs => `• ${obs.content}`).join('\n')}`);
+      sections.push(`**Key Context:**\n${ valuable.map(obs => `• ${ obs.content }`).join('\n') }`);
     }
-    
+
     if (low.length > 0) {
-      sections.push(`**Background:**\n${low.map(obs => `• ${obs.content}`).join('\n')}`);
+      sections.push(`**Background:**\n${ low.map(obs => `• ${ obs.content }`).join('\n') }`);
     }
-    
-    const summaryContent = `## Conversation Summary\n\n${sections.join('\n\n')}`;
-    
+
+    const summaryContent = `## Conversation Summary\n\n${ sections.join('\n\n') }`;
+
     // Add summary message to state as the oldest message
     state.messages.unshift({
-      role: 'assistant',
-      content: summaryContent,
+      role:     'assistant',
+      content:  summaryContent,
       metadata: {
-        nodeId: this.id,
-        timestamp: Date.now(),
+        nodeId:               this.id,
+        timestamp:            Date.now(),
         _conversationSummary: true, // Flag for identification
-      }
+      },
     });
 
     // Guard against consecutive assistant messages after unshift.
     // If the first remaining message is also assistant-role, insert a
     // synthetic user message to satisfy the alternating-role requirement.
-    if (state.messages.length >= 2
-        && state.messages[0]?.role === 'assistant'
-        && state.messages[1]?.role === 'assistant') {
+    if (state.messages.length >= 2 &&
+        state.messages[0]?.role === 'assistant' &&
+        state.messages[1]?.role === 'assistant') {
       state.messages.splice(1, 0, {
         role:     'user',
         content:  '(continued)',

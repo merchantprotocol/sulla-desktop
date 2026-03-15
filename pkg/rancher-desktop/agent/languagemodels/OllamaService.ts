@@ -52,7 +52,7 @@ export class OllamaService extends BaseLanguageModel {
    */
   protected async healthCheck(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.baseUrl}/health`, {
+      const res = await fetch(`${ this.baseUrl }/health`, {
         signal: AbortSignal.timeout(4000),
       });
       return res.ok;
@@ -71,12 +71,12 @@ export class OllamaService extends BaseLanguageModel {
 
     const timeoutMs = this.localTimeoutSeconds * 1000;
     const signal = this.combinedSignal(options.signal, timeoutMs);
-    const res = await fetch(`${this.baseUrl}/v1/chat/completions`, this.buildFetchOptions(body, signal));
+    const res = await fetch(`${ this.baseUrl }/v1/chat/completions`, this.buildFetchOptions(body, signal));
     console.log('[OllamaService] Response from llama-server:', res.status);
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
-      throw new Error(`llama-server chat failed: ${res.status} ${res.statusText} — ${errBody}`);
+      throw new Error(`llama-server chat failed: ${ res.status } ${ res.statusText } — ${ errBody }`);
     }
 
     const responseText = await res.text();
@@ -86,7 +86,7 @@ export class OllamaService extends BaseLanguageModel {
 
       return parsed;
     } catch (e) {
-      throw new Error(`Failed to parse llama-server response as JSON: ${e}`);
+      throw new Error(`Failed to parse llama-server response as JSON: ${ e }`);
     }
   }
 
@@ -153,15 +153,15 @@ export class OllamaService extends BaseLanguageModel {
     }
 
     if (trimmed.length < nonSystemMsgs.length) {
-      console.log(`[OllamaService] Trimmed ${nonSystemMsgs.length - trimmed.length} oldest messages to fit ctx limit (${ctxLimit} tokens, ~${systemTokens + conversationTokens} used)`);
+      console.log(`[OllamaService] Trimmed ${ nonSystemMsgs.length - trimmed.length } oldest messages to fit ctx limit (${ ctxLimit } tokens, ~${ systemTokens + conversationTokens } used)`);
     }
 
     const cleanMessages = [...systemMsgs, ...trimmed];
 
     const body: Record<string, any> = {
-      model: options.model ?? this.model,
+      model:    options.model ?? this.model,
       messages: cleanMessages,
-      stream: false,
+      stream:   false,
     };
 
     if (options.format === 'json') {

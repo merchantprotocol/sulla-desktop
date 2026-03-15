@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { getExtensionService } from "../../services/ExtensionService";
+import { BaseTool, ToolResponse } from '../base';
+import { getExtensionService } from '../../services/ExtensionService';
 
 /**
  * Uninstall an extension. By default preserves the data/ directory.
  */
 export class UninstallExtensionWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { id, deleteData } = input;
 
@@ -26,7 +26,7 @@ export class UninstallExtensionWorker extends BaseTool {
       if (!result.ok) {
         return {
           successBoolean: false,
-          responseString: `Failed to uninstall ${id}: ${result.error}`,
+          responseString: `Failed to uninstall ${ id }: ${ result.error }`,
         };
       }
 
@@ -34,12 +34,12 @@ export class UninstallExtensionWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Extension ${id} uninstalled successfully.${dataNote}`,
+        responseString: `Extension ${ id } uninstalled successfully.${ dataNote }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error uninstalling extension: ${(error as Error).message}`,
+        responseString: `Error uninstalling extension: ${ (error as Error).message }`,
       };
     }
   }

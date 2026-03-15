@@ -2,41 +2,73 @@
   <div
     class="workflow-custom-node"
     :class="{
-      selected: selected,
-      'exec-running':   data.execution?.status === 'running',
+      selected,
+      'exec-running': data.execution?.status === 'running',
       'exec-completed': data.execution?.status === 'completed',
-      'exec-failed':    data.execution?.status === 'failed',
-      'exec-waiting':   data.execution?.status === 'waiting',
-      'exec-skipped':   data.execution?.status === 'skipped',
+      'exec-failed': data.execution?.status === 'failed',
+      'exec-waiting': data.execution?.status === 'waiting',
+      'exec-skipped': data.execution?.status === 'skipped',
     }"
   >
     <!-- Loop node: 4 custom handles with labels -->
     <template v-if="data.subtype === 'loop'">
       <!-- In (top): label above the dot -->
       <div class="loop-handle-top">
-        <span class="loop-handle-label loop-label-in" :class="{ dark: isDark }">In</span>
-        <Handle type="target" id="loop-entry" :position="Position.Top" class="node-handle" />
+        <span
+          class="loop-handle-label loop-label-in"
+          :class="{ dark: isDark }"
+        >In</span>
+        <Handle
+          id="loop-entry"
+          type="target"
+          :position="Position.Top"
+          class="node-handle"
+        />
       </div>
 
       <!-- Start (bottom): dot then label below, like condition True/False -->
       <div class="loop-handles-bottom">
         <div class="route-handle-col">
-          <Handle type="source" id="loop-start" :position="Position.Bottom" class="node-handle route-handle-dot" />
-          <span class="route-handle-label" :class="{ dark: isDark }">Start</span>
+          <Handle
+            id="loop-start"
+            type="source"
+            :position="Position.Bottom"
+            class="node-handle route-handle-dot"
+          />
+          <span
+            class="route-handle-label"
+            :class="{ dark: isDark }"
+          >Start</span>
         </div>
       </div>
 
       <!-- Back (right): dot with label below it, left-aligned -->
       <div class="loop-handle-right">
-        <Handle type="target" id="loop-back" :position="Position.Right" class="node-handle" />
-        <span class="loop-handle-label loop-label-back" :class="{ dark: isDark }">Back</span>
+        <Handle
+          id="loop-back"
+          type="target"
+          :position="Position.Right"
+          class="node-handle"
+        />
+        <span
+          class="loop-handle-label loop-label-back"
+          :class="{ dark: isDark }"
+        >Back</span>
       </div>
 
       <!-- Exit (left): dot then label below, right-aligned so "t" is at the dot -->
       <div class="loop-handle-left">
         <div class="route-handle-col loop-exit-col">
-          <Handle type="source" id="loop-exit" :position="Position.Left" class="node-handle route-handle-dot" />
-          <span class="route-handle-label" :class="{ dark: isDark }">Exit</span>
+          <Handle
+            id="loop-exit"
+            type="source"
+            :position="Position.Left"
+            class="node-handle route-handle-dot"
+          />
+          <span
+            class="route-handle-label"
+            :class="{ dark: isDark }"
+          >Exit</span>
         </div>
       </div>
     </template>
@@ -56,8 +88,12 @@
         :src="sullaIconUrl"
         class="node-icon-img"
         alt="Agent"
+      >
+      <span
+        v-else
+        class="node-icon-svg"
+        v-html="iconSvg"
       />
-      <span v-else class="node-icon-svg" v-html="iconSvg"></span>
     </div>
 
     <!-- Thinking bubble — appears when agent node is running and has thinking messages -->
@@ -68,46 +104,132 @@
       @click.stop="thinkingExpanded = !thinkingExpanded"
     >
       <!-- Collapsed: small bubble with animated dots -->
-      <div v-if="!thinkingExpanded" class="thinking-bubble-collapsed nodrag nowheel nopan">
+      <div
+        v-if="!thinkingExpanded"
+        class="thinking-bubble-collapsed nodrag nowheel nopan"
+      >
         <span class="thinking-dots">
-          <span class="dot"></span>
-          <span class="dot"></span>
-          <span class="dot"></span>
+          <span class="dot" />
+          <span class="dot" />
+          <span class="dot" />
         </span>
       </div>
 
       <!-- Expanded: scrollable conversation panel -->
-      <div v-else class="thinking-bubble-expanded nodrag nowheel nopan" @click.stop>
+      <div
+        v-else
+        class="thinking-bubble-expanded nodrag nowheel nopan"
+        @click.stop
+      >
         <div class="thinking-bubble-header">
           <span class="thinking-bubble-title">Agent Thinking</span>
-          <button class="thinking-bubble-close" @click.stop="thinkingExpanded = false">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          <button
+            class="thinking-bubble-close"
+            @click.stop="thinkingExpanded = false"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <line
+                x1="18"
+                y1="6"
+                x2="6"
+                y2="18"
+              /><line
+                x1="6"
+                y1="6"
+                x2="18"
+                y2="18"
+              />
             </svg>
           </button>
         </div>
-        <div class="thinking-bubble-messages" ref="messagesContainer" @wheel.stop>
+        <div
+          ref="messagesContainer"
+          class="thinking-bubble-messages"
+          @wheel.stop
+        >
           <div
             v-for="(msg, idx) in thinkingMessages"
             :key="idx"
             class="thinking-msg"
             :class="msg.role"
           >
-            <div class="thinking-msg-content">{{ msg.content }}</div>
+            <div class="thinking-msg-content">
+              {{ msg.content }}
+            </div>
           </div>
         </div>
       </div>
     </div>
 
     <!-- Label -->
-    <div class="node-label">{{ data.label }}</div>
+    <div class="node-label">
+      {{ data.label }}
+    </div>
 
     <!-- Execution status badge -->
-    <div v-if="data.execution" class="node-exec-badge" :class="data.execution.status">
-      <svg v-if="data.execution.status === 'running'" class="exec-spinner" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-      <svg v-else-if="data.execution.status === 'completed'" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-      <svg v-else-if="data.execution.status === 'failed'" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      <svg v-else-if="data.execution.status === 'waiting'" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+    <div
+      v-if="data.execution"
+      class="node-exec-badge"
+      :class="data.execution.status"
+    >
+      <svg
+        v-if="data.execution.status === 'running'"
+        class="exec-spinner"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+      ><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+      <svg
+        v-else-if="data.execution.status === 'completed'"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+      ><polyline points="20 6 9 17 4 12" /></svg>
+      <svg
+        v-else-if="data.execution.status === 'failed'"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+      ><line
+        x1="18"
+        y1="6"
+        x2="6"
+        y2="18"
+      /><line
+        x1="6"
+        y1="6"
+        x2="18"
+        y2="18"
+      /></svg>
+      <svg
+        v-else-if="data.execution.status === 'waiting'"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+      ><circle
+        cx="12"
+        cy="12"
+        r="10"
+      /><path d="M12 6v6l4 2" /></svg>
     </div>
 
     <!-- Source handle (bottom) — hidden when node has route handles or custom handles (loop) -->
@@ -119,19 +241,25 @@
     />
 
     <!-- Route output handles (bottom) — one per configured route -->
-    <div v-if="routeHandles.length > 0" class="route-handles-bar">
+    <div
+      v-if="routeHandles.length > 0"
+      class="route-handles-bar"
+    >
       <div
         v-for="route in routeHandles"
         :key="route.id"
         class="route-handle-col"
       >
         <Handle
-          type="source"
           :id="route.id"
+          type="source"
           :position="Position.Bottom"
           class="node-handle route-handle-dot"
         />
-        <span class="route-handle-label" :class="{ dark: isDark }">{{ route.label }}</span>
+        <span
+          class="route-handle-label"
+          :class="{ dark: isDark }"
+        >{{ route.label }}</span>
       </div>
     </div>
   </div>
@@ -144,10 +272,10 @@ import { getNodeDefinition } from './nodeRegistry';
 import type { WorkflowNodeData, NodeThinkingMessage } from './types';
 
 const props = defineProps<{
-  id: string;
-  data: WorkflowNodeData;
+  id:       string;
+  data:     WorkflowNodeData;
   selected: boolean;
-  isDark: boolean;
+  isDark:   boolean;
 }>();
 
 const sullaIconUrl = new URL('../../../../../resources/icons/robot-512-nobg.png', import.meta.url).href;
@@ -184,7 +312,7 @@ const routeHandles = computed(() => {
   // Condition nodes always have True/False outputs
   if (props.data.subtype === 'condition') {
     return [
-      { id: 'condition-true',  label: 'True' },
+      { id: 'condition-true', label: 'True' },
       { id: 'condition-false', label: 'False' },
     ];
   }
@@ -193,8 +321,8 @@ const routeHandles = computed(() => {
   const routes = props.data.config?.routes;
   if (!Array.isArray(routes) || routes.length === 0) return [];
   return routes.map((r: any, idx: number) => ({
-    id:    `route-${idx}`,
-    label: r.label || `Route ${idx + 1}`,
+    id:    `route-${ idx }`,
+    label: r.label || `Route ${ idx + 1 }`,
   }));
 });
 

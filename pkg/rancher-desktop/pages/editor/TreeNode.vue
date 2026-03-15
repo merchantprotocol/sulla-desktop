@@ -11,7 +11,10 @@
         :class="{ open: expandedDirs.has(node.path), empty: !node.hasChildren }"
         @click="$emit('toggle-dir', node.path)"
       />
-      <span v-else class="tft-arrow-spacer" />
+      <span
+        v-else
+        class="tft-arrow-spacer"
+      />
       <input
         type="checkbox"
         class="tft-checkbox"
@@ -31,9 +34,15 @@
         v-if="!node.isDir && node.size > 0"
         class="tft-size"
       >{{ fmtSize(node.size) }}</span>
-      <span v-if="treeLoading === node.path" class="tft-spinner" />
+      <span
+        v-if="treeLoading === node.path"
+        class="tft-spinner"
+      />
     </div>
-    <div v-if="node.isDir && expandedDirs.has(node.path) && treeChildren[node.path]" class="tft-children">
+    <div
+      v-if="node.isDir && expandedDirs.has(node.path) && treeChildren[node.path]"
+      class="tft-children"
+    >
       <TreeNode
         v-for="child in treeChildren[node.path]"
         :key="child.path"
@@ -57,22 +66,22 @@
 import { defineComponent } from 'vue';
 
 interface TreeEntry {
-  path: string;
-  name: string;
-  isDir: boolean;
+  path:        string;
+  name:        string;
+  isDir:       boolean;
   hasChildren: boolean;
-  size: number;
-  ext: string;
+  size:        number;
+  ext:         string;
 }
 
 function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024) return `${ bytes } B`;
+  if (bytes < 1024 * 1024) return `${ (bytes / 1024).toFixed(1) } KB`;
+  return `${ (bytes / (1024 * 1024)).toFixed(1) } MB`;
 }
 
 export default defineComponent({
-  name: 'TreeNode',
+  name:  'TreeNode',
   props: {
     node:            { type: Object as () => TreeEntry, required: true },
     depth:           { type: Number, default: 0 },
@@ -83,7 +92,7 @@ export default defineComponent({
     selectedFolders: { type: Array as () => string[], required: true },
     selectedFiles:   { type: Array as () => string[], required: true },
   },
-  emits: ['toggle-dir', 'toggle-folder', 'toggle-file'],
+  emits:    ['toggle-dir', 'toggle-folder', 'toggle-file'],
   computed: {
     isSelected(): boolean {
       if (this.node.isDir) return this.selectedFolders.includes(this.node.path);
