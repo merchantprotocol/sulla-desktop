@@ -41,8 +41,13 @@ export class ChatInterface {
     this.registry = getAgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(channelId, tabId);
 
-    // Restore threadId from localStorage so the next message reuses the same backend thread
+    // Restore threadId from localStorage so the next message reuses the same backend thread.
+    // If none exists, generate one immediately so thread-ID filtering works from the start
+    // and messages from other tabs don't leak into this persona.
     this.persona.restoreThreadId();
+    if (!this.persona.getThreadId()) {
+      this.persona.setThreadId(`thread_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`);
+    }
 
     // Restore persisted messages from localStorage
     this.restoreMessages();
@@ -127,6 +132,9 @@ export class ChatInterface {
   newChat(): void {
     // Clear backend thread reference
     this.persona.clearThreadId();
+    // Generate a fresh threadId immediately so thread-ID filtering works
+    // from the very first message and other tabs don't receive our responses.
+    this.persona.setThreadId(`thread_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`);
     // Clear in-memory messages
     this.persona.clearMessages();
     this.messages.value = [];
