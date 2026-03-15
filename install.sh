@@ -396,38 +396,19 @@ ensure_xcode_clt() {
     return
   fi
 
-  start_spinner "Installing Xcode Command Line Tools (this may take a few minutes)..."
+  # Trigger the macOS GUI installer dialog
+  xcode-select --install >/dev/null 2>&1 || true
+  step_warn "User authorization needed for Xcode Command Line Tools — approve the dialog to continue"
 
-  # Silent install: create the trigger file, find the CLT package via softwareupdate, install it
-  local placeholder="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress"
-  touch "$placeholder"
-
-  local clt_pkg
-  clt_pkg="$(softwareupdate -l 2>/dev/null \
-    | grep -o '.*Command Line Tools.*' \
-    | grep -v 'Finding' \
-    | sed 's/^[* ]*//' \
-    | sed 's/^ *Label: //' \
-    | sort -rV \
-    | head -1)"
-
-  if [ -n "$clt_pkg" ]; then
-    run_silent "xcode-clt" softwareupdate --install "$clt_pkg" --agree-to-license
-  else
-    # Fallback: use the GUI installer if softwareupdate can't find the package
-    xcode-select --install >/dev/null 2>&1 || true
-    local waited=0
-    while ! /usr/bin/xcrun --find clang >/dev/null 2>&1; do
-      sleep 5
-      waited=$((waited + 5))
-      if [ "$waited" -ge 1800 ]; then
-        rm -f "$placeholder"
-        step_fail "Xcode CLT installation timed out — please install manually and re-run"
-      fi
-    done
-  fi
-
-  rm -f "$placeholder"
+  # Wait for the user to approve and installation to finish
+  local waited=0
+  while ! /usr/bin/xcrun --find clang >/dev/null 2>&1; do
+    sleep 5
+    waited=$((waited + 5))
+    if [ "$waited" -ge 1800 ]; then
+      step_fail "Xcode CLT installation timed out — please install manually and re-run"
+    fi
+  done
 
   if /usr/bin/xcrun --find clang >/dev/null 2>&1; then
     step_ok "Xcode Command Line Tools installed"
