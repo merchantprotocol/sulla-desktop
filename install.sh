@@ -1016,36 +1016,126 @@ verify_build_artifacts() {
   return 0
 }
 
-# Report which install artifacts are missing (for error messages)
-report_missing_install_artifacts() {
-  local missing=""
-  [ -f "node_modules/.yarn-integrity" ] || missing="${missing} node_modules"
-  [ -d "node_modules/electron" ]        || missing="${missing} electron"
-  [ -f "resources/preload.js" ]         || missing="${missing} preload.js"
+# Dump full verification results — shows every check with pass/fail
+dump_install_verification() {
+  echo ""
+  printf "  ${WHITE}${BOLD}Install Verification Report${RESET}\n"
+  printf "  ${DIM}──────────────────────────${RESET}\n"
+
+  local all_ok=true
+
+  # node_modules integrity
+  if [ -f "node_modules/.yarn-integrity" ]; then
+    printf "  ${CHECK}  node_modules/.yarn-integrity\n"
+  else
+    printf "  ${CROSS}  node_modules/.yarn-integrity ${RED}MISSING${RESET}\n"
+    all_ok=false
+  fi
+
+  # Electron
+  if [ -d "node_modules/electron" ]; then
+    printf "  ${CHECK}  node_modules/electron/\n"
+  else
+    printf "  ${CROSS}  node_modules/electron/ ${RED}MISSING${RESET}\n"
+    all_ok=false
+  fi
+
+  # Preload script
+  if [ -f "resources/preload.js" ]; then
+    printf "  ${CHECK}  resources/preload.js\n"
+  else
+    printf "  ${CROSS}  resources/preload.js ${RED}MISSING${RESET}\n"
+    all_ok=false
+  fi
+
+  # Platform binaries
+  local bin_dir=""
   case "$OS" in
-    macos)
-      [ -x "resources/darwin/bin/rdctl" ]   || missing="${missing} rdctl"
-      [ -x "resources/darwin/bin/docker" ]  || missing="${missing} docker"
-      [ -x "resources/darwin/bin/kubectl" ] || missing="${missing} kubectl"
-      ;;
-    linux)
-      [ -x "resources/linux/bin/rdctl" ]   || missing="${missing} rdctl"
-      [ -x "resources/linux/bin/docker" ]  || missing="${missing} docker"
-      [ -x "resources/linux/bin/kubectl" ] || missing="${missing} kubectl"
-      ;;
+    macos)  bin_dir="resources/darwin/bin" ;;
+    linux)  bin_dir="resources/linux/bin" ;;
   esac
-  echo "$missing"
+
+  if [ -n "$bin_dir" ]; then
+    for bin in rdctl docker kubectl; do
+      if [ -x "$bin_dir/$bin" ]; then
+        printf "  ${CHECK}  %s/%s\n" "$bin_dir" "$bin"
+      else
+        printf "  ${CROSS}  %s/%s ${RED}MISSING${RESET}\n" "$bin_dir" "$bin"
+        all_ok=false
+      fi
+    done
+
+    # Show what IS in the bin dir so we can see what succeeded
+    echo ""
+    printf "  ${DIM}Contents of %s/:${RESET}\n" "$bin_dir"
+    if [ -d "$bin_dir" ]; then
+      ls -la "$bin_dir" 2>/dev/null | while IFS= read -r line; do
+        printf "  ${DIM}  %s${RESET}\n" "$line"
+      done
+    else
+      printf "  ${DIM}  (directory does not exist)${RESET}\n"
+    fi
+  fi
+
+  # Show last 30 lines of install log for context
+  echo ""
+  printf "  ${DIM}Last 30 lines of %s:${RESET}\n" "$INSTALL_LOG"
+  tail -30 "$INSTALL_LOG" 2>/dev/null | while IFS= read -r line; do
+    printf "  ${DIM}  %s${RESET}\n" "$line"
+  done
+  echo ""
+
+  if [ "$all_ok" = true ]; then
+    return 0
+  else
+    return 1
+  fi
 }
 
-# Report which build artifacts are missing (for error messages)
-report_missing_build_artifacts() {
-  local missing=""
-  [ -f "dist/app/background.js" ] || missing="${missing} background.js"
-  [ -f "dist/app/index.html" ]    || missing="${missing} index.html"
+# Dump full build verification results
+dump_build_verification() {
+  echo ""
+  printf "  ${WHITE}${BOLD}Build Verification Report${RESET}\n"
+  printf "  ${DIM}────────────────────────${RESET}\n"
+
+  if [ -f "dist/app/background.js" ]; then
+    printf "  ${CHECK}  dist/app/background.js\n"
+  else
+    printf "  ${CROSS}  dist/app/background.js ${RED}MISSING${RESET}\n"
+  fi
+
+  if [ -f "dist/app/index.html" ]; then
+    printf "  ${CHECK}  dist/app/index.html\n"
+  else
+    printf "  ${CROSS}  dist/app/index.html ${RED}MISSING${RESET}\n"
+  fi
+
   local js_count
   js_count="$(find dist/app/js -name '*.js' 2>/dev/null | head -5 | wc -l)"
-  [ "${js_count:-0}" -ge 1 ]      || missing="${missing} js-bundles"
-  echo "$missing"
+  if [ "${js_count:-0}" -ge 1 ]; then
+    printf "  ${CHECK}  dist/app/js/ (%s bundles)\n" "$js_count"
+  else
+    printf "  ${CROSS}  dist/app/js/ ${RED}NO BUNDLES${RESET}\n"
+  fi
+
+  # Show what IS in dist/app so we can see what succeeded
+  echo ""
+  printf "  ${DIM}Contents of dist/app/:${RESET}\n"
+  if [ -d "dist/app" ]; then
+    ls -la dist/app/ 2>/dev/null | while IFS= read -r line; do
+      printf "  ${DIM}  %s${RESET}\n" "$line"
+    done
+  else
+    printf "  ${DIM}  (directory does not exist)${RESET}\n"
+  fi
+
+  # Show last 30 lines of install log for context
+  echo ""
+  printf "  ${DIM}Last 30 lines of %s:${RESET}\n" "$INSTALL_LOG"
+  tail -30 "$INSTALL_LOG" 2>/dev/null | while IFS= read -r line; do
+    printf "  ${DIM}  %s${RESET}\n" "$line"
+  done
+  echo ""
 }
 
 # ---------------------------------------------------------------------------
@@ -1080,33 +1170,14 @@ install_deps() {
 
   start_spinner "Installing packages..."
   run_with_status "Installing packages" yarn install --ignore-engines || true
+  stop_spinner
 
   # Don't trust the exit code — verify artifacts instead.
-  # postinstall scripts like trivy can fail without affecting the actual build.
   if verify_install_artifacts; then
     step_ok "Packages installed"
-    return
-  fi
-
-  # Something critical is missing. Retry without nuking node_modules first —
-  # the JS packages are likely fine, just a postinstall download may have failed.
-  start_spinner "Retrying package install..."
-  run_with_status "Installing packages (retry)" yarn install --ignore-engines || true
-
-  if verify_install_artifacts; then
-    step_ok "Packages installed (retry succeeded)"
-    return
-  fi
-
-  # Last resort: clean slate
-  start_spinner "Retrying with clean state..."
-  rm -rf node_modules
-  run_with_status "Installing packages (clean retry)" yarn install --ignore-engines || true
-
-  if verify_install_artifacts; then
-    step_ok "Packages installed (clean retry succeeded)"
   else
-    step_fail "Package installation incomplete — missing:$(report_missing_install_artifacts)"
+    dump_install_verification
+    step_fail "Package installation incomplete — see report above"
   fi
 }
 
@@ -1146,13 +1217,15 @@ build_app() {
 
   start_spinner "Compiling desktop application..."
   run_with_status "Compiling" env NODE_OPTIONS="--max-old-space-size=$heap_mb" yarn build || true
+  stop_spinner
 
   # Verify by artifacts, not exit code
   if verify_build_artifacts; then
     echo "$INSTALL_REF" > dist/.build-ref
     step_ok "Desktop application compiled"
   else
-    step_fail "Compilation failed — missing:$(report_missing_build_artifacts)"
+    dump_build_verification
+    step_fail "Compilation failed — see report above"
   fi
 }
 
