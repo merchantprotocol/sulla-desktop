@@ -276,24 +276,34 @@ run_with_status() {
   echo "=== [$label] $(date) ===" >> "$INSTALL_LOG"
   echo "CMD: $*" >> "$INSTALL_LOG"
 
+  local last_update=0
+
   "$@" 2>&1 | while IFS= read -r line; do
     echo "$line" >> "$INSTALL_LOG"
+
+    # Throttle spinner updates to at most once per second to avoid flicker
+    [ "$SECONDS" = "$last_update" ] && continue
+
     case "$line" in
       *"Resolving"*|*"Fetching"*|*"Linking"*|*"Building"*)
         stop_spinner 2>/dev/null
         start_spinner "${label}: ${line:0:60}"
+        last_update="$SECONDS"
         ;;
       *"step "*)
         stop_spinner 2>/dev/null
         start_spinner "${label}: ${line:0:60}"
+        last_update="$SECONDS"
         ;;
       *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
         stop_spinner 2>/dev/null
         start_spinner "${label}: compiling native modules..."
+        last_update="$SECONDS"
         ;;
       *"webpack"*|*"ts-loader"*|*"babel"*)
         stop_spinner 2>/dev/null
         start_spinner "${label}: ${line:0:60}"
+        last_update="$SECONDS"
         ;;
     esac
   done
@@ -958,7 +968,88 @@ ensure_repo() {
 }
 
 # ---------------------------------------------------------------------------
-# Install deps & build — with progress indication
+# Artifact verification — check real files, not exit codes
+# ---------------------------------------------------------------------------
+
+# Verify that yarn install produced a working node_modules tree.
+# Returns 0 if all critical artifacts are present.
+verify_install_artifacts() {
+  # Core: node_modules integrity marker
+  [ -f "node_modules/.yarn-integrity" ] || return 1
+
+  # Electron must be present — it's the runtime
+  [ -d "node_modules/electron" ] || return 1
+
+  # The preload script must have been built by postinstall
+  [ -f "resources/preload.js" ] || return 1
+
+  # Platform-specific binaries from postinstall
+  case "$OS" in
+    macos)
+      [ -x "resources/darwin/bin/rdctl" ]   || return 1
+      [ -x "resources/darwin/bin/docker" ]  || return 1
+      [ -x "resources/darwin/bin/kubectl" ] || return 1
+      ;;
+    linux)
+      [ -x "resources/linux/bin/rdctl" ]   || return 1
+      [ -x "resources/linux/bin/docker" ]  || return 1
+      [ -x "resources/linux/bin/kubectl" ] || return 1
+      ;;
+  esac
+
+  return 0
+}
+
+# Verify that yarn build produced a launchable application.
+verify_build_artifacts() {
+  # Electron main entry — this is what package.json "main" points to
+  [ -f "dist/app/background.js" ] || return 1
+
+  # Renderer HTML — at least the primary window
+  [ -f "dist/app/index.html" ] || return 1
+
+  # JS bundles must exist
+  local js_count
+  js_count="$(find dist/app/js -name '*.js' 2>/dev/null | head -5 | wc -l)"
+  [ "${js_count:-0}" -ge 1 ] || return 1
+
+  return 0
+}
+
+# Report which install artifacts are missing (for error messages)
+report_missing_install_artifacts() {
+  local missing=""
+  [ -f "node_modules/.yarn-integrity" ] || missing="${missing} node_modules"
+  [ -d "node_modules/electron" ]        || missing="${missing} electron"
+  [ -f "resources/preload.js" ]         || missing="${missing} preload.js"
+  case "$OS" in
+    macos)
+      [ -x "resources/darwin/bin/rdctl" ]   || missing="${missing} rdctl"
+      [ -x "resources/darwin/bin/docker" ]  || missing="${missing} docker"
+      [ -x "resources/darwin/bin/kubectl" ] || missing="${missing} kubectl"
+      ;;
+    linux)
+      [ -x "resources/linux/bin/rdctl" ]   || missing="${missing} rdctl"
+      [ -x "resources/linux/bin/docker" ]  || missing="${missing} docker"
+      [ -x "resources/linux/bin/kubectl" ] || missing="${missing} kubectl"
+      ;;
+  esac
+  echo "$missing"
+}
+
+# Report which build artifacts are missing (for error messages)
+report_missing_build_artifacts() {
+  local missing=""
+  [ -f "dist/app/background.js" ] || missing="${missing} background.js"
+  [ -f "dist/app/index.html" ]    || missing="${missing} index.html"
+  local js_count
+  js_count="$(find dist/app/js -name '*.js' 2>/dev/null | head -5 | wc -l)"
+  [ "${js_count:-0}" -ge 1 ]      || missing="${missing} js-bundles"
+  echo "$missing"
+}
+
+# ---------------------------------------------------------------------------
+# Install deps & build — with artifact verification
 # ---------------------------------------------------------------------------
 install_deps() {
   [ -f "package-lock.json" ] && rm -f package-lock.json
@@ -971,24 +1062,71 @@ install_deps() {
     nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
 
+  # Re-establish Go PATH in case audit set it but the subshell lost it
+  if ! command_exists go; then
+    for go_path in /usr/local/go/bin /c/Go/bin "$HOME/go/bin"; do
+      if [ -x "$go_path/go" ]; then
+        export PATH="$go_path:$PATH"
+        break
+      fi
+    done
+  fi
+
+  # Idempotent: if all install artifacts already exist, skip entirely
+  if verify_install_artifacts; then
+    step_ok "Packages already installed — verified"
+    return
+  fi
+
   start_spinner "Installing packages..."
-  if run_with_status "Installing packages" yarn install --ignore-engines; then
+  run_with_status "Installing packages" yarn install --ignore-engines || true
+
+  # Don't trust the exit code — verify artifacts instead.
+  # postinstall scripts like trivy can fail without affecting the actual build.
+  if verify_install_artifacts; then
     step_ok "Packages installed"
+    return
+  fi
+
+  # Something critical is missing. Retry without nuking node_modules first —
+  # the JS packages are likely fine, just a postinstall download may have failed.
+  start_spinner "Retrying package install..."
+  run_with_status "Installing packages (retry)" yarn install --ignore-engines || true
+
+  if verify_install_artifacts; then
+    step_ok "Packages installed (retry succeeded)"
+    return
+  fi
+
+  # Last resort: clean slate
+  start_spinner "Retrying with clean state..."
+  rm -rf node_modules
+  run_with_status "Installing packages (clean retry)" yarn install --ignore-engines || true
+
+  if verify_install_artifacts; then
+    step_ok "Packages installed (clean retry succeeded)"
   else
-    start_spinner "Retrying with clean state..."
-    rm -rf node_modules
-    if run_with_status "Installing packages (retry)" yarn install --ignore-engines; then
-      step_ok "Packages installed (retry succeeded)"
-    else
-      step_fail "Package installation failed"
-    fi
+    step_fail "Package installation incomplete — missing:$(report_missing_install_artifacts)"
   fi
 }
 
 build_app() {
-  if [ -d "dist" ] && [ -f "dist/app/background.js" ]; then
-    step_ok "Build artifacts present (cached)"
-    return
+  # Idempotent: if build artifacts are already valid for this ref, skip
+  if verify_build_artifacts; then
+    local build_ref=""
+    [ -f "dist/.build-ref" ] && build_ref="$(cat dist/.build-ref 2>/dev/null)"
+    if [ "$build_ref" = "$INSTALL_REF" ]; then
+      step_ok "Build up to date (${INSTALL_REF})"
+      return
+    fi
+    if [ -z "$build_ref" ]; then
+      # No ref marker but valid build — accept it
+      step_ok "Build artifacts present (cached)"
+      return
+    fi
+    # Stale build from a different ref — rebuild
+    step_warn "Stale build (${build_ref}) — rebuilding for ${INSTALL_REF}"
+    rm -rf dist
   fi
 
   if [ -d "dist" ]; then
@@ -1007,13 +1145,14 @@ build_app() {
   fi
 
   start_spinner "Compiling desktop application..."
-  if run_with_status "Compiling" env NODE_OPTIONS="--max-old-space-size=$heap_mb" yarn build; then
-    if [ ! -f "dist/app/background.js" ]; then
-      step_fail "Build produced no output"
-    fi
+  run_with_status "Compiling" env NODE_OPTIONS="--max-old-space-size=$heap_mb" yarn build || true
+
+  # Verify by artifacts, not exit code
+  if verify_build_artifacts; then
+    echo "$INSTALL_REF" > dist/.build-ref
     step_ok "Desktop application compiled"
   else
-    step_fail "Compilation failed"
+    step_fail "Compilation failed — missing:$(report_missing_build_artifacts)"
   fi
 }
 
