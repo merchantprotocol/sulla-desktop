@@ -492,12 +492,9 @@ interface HeaderTab {
 const allTabsById = computed(() => {
   const map = new Map<string, HeaderTab>();
 
-  // Static tabs
+  // Static tabs (Calendar, Integrations, Extensions are now on-demand via new-tab welcome page)
   const staticTabs: { id: string; label: string; route: string; matchPrefix?: boolean }[] = [
     { id: 'chat', label: 'Chat', route: '/Chat' },
-    { id: 'calendar', label: 'Calendar', route: '/Calendar' },
-    { id: 'integrations', label: 'Integrations', route: '/Integrations', matchPrefix: true },
-    { id: 'extensions', label: 'Extensions', route: '/Extensions' },
   ];
 
   for (const s of staticTabs) {
@@ -519,9 +516,12 @@ const allTabsById = computed(() => {
     });
   }
 
-  // Browser tabs
+  // Browser tabs — non-browser modes (calendar, integrations, extensions) get pill style
+  const pillModes = new Set(['chat', 'calendar', 'integrations', 'extensions']);
+
   for (const bt of browserTabs) {
     const id = `browser-${ bt.id }`;
+    const isPill = pillModes.has(bt.mode);
 
     map.set(id, {
       id,
@@ -531,6 +531,7 @@ const allTabsById = computed(() => {
       favicon:   bt.favicon,
       closeable: true,
       browserId: bt.id,
+      native:    isPill,
     });
   }
 

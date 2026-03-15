@@ -1,11 +1,12 @@
 <template>
   <div
-    class="h-screen overflow-hidden font-sans flex flex-col page-root"
-    :class="{ dark: isDark }"
+    class="overflow-hidden font-sans flex flex-col page-root"
+    :class="[{ dark: isDark }, embedded ? 'h-full' : 'h-screen']"
   >
     <PostHogTracker page-name="AgentCalendar" />
     <div class="flex flex-1 min-h-0 flex-col">
       <AgentHeader
+        v-if="!embedded"
         :is-dark="isDark"
         :toggle-theme="toggleTheme"
       />
@@ -358,6 +359,8 @@
 import AgentHeader from './agent/AgentHeader.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { useTheme } from '@pkg/composables/useTheme';
+
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
 import { onMounted, ref, watch } from 'vue';
 import { ScheduleXCalendar } from '@schedule-x/vue';
 import { createCalendar, createViewMonthGrid, createViewMonthAgenda, createViewWeek, createViewDay } from '@schedule-x/calendar';

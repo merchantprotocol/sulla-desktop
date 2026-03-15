@@ -1,11 +1,12 @@
 <template>
   <div
-    class="min-h-screen text-sm font-sans page-root"
-    :class="{ dark: isDark }"
+    class="text-sm font-sans page-root"
+    :class="[{ dark: isDark }, embedded ? 'h-full' : 'min-h-screen']"
   >
     <PostHogTracker page-name="AgentIntegrations" />
-    <div class="flex min-h-screen flex-col">
+    <div class="flex flex-col" :class="embedded ? 'h-full' : 'min-h-screen'">
       <AgentHeader
+        v-if="!embedded"
         :is-dark="isDark"
         :toggle-theme="toggleTheme"
       />
@@ -257,6 +258,8 @@
 <script setup lang="ts">
 import AgentHeader from './agent/AgentHeader.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
 import type { Integration } from '@pkg/agent/integrations/types';
 import { popularIntegrations } from '@pkg/agent/integrations/popular';
 import { integrations as fullCatalog } from '@pkg/agent/integrations/catalog';

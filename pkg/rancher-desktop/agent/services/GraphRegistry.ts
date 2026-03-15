@@ -3,6 +3,7 @@ import type { HeartbeatThreadState } from '../nodes/HeartbeatNode';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel, getCurrentMode } from '../languagemodels';
 import { resolveSullaAgentsDir } from '../utils/sullaPaths';
+import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -73,6 +74,17 @@ export const GraphRegistry = {
     if (registry.has(threadId)) {
       console.log(`[GraphRegistry] getOrCreate() — cache HIT for threadId="${ threadId }"`);
       return Promise.resolve(registry.get(threadId)!);
+    }
+
+    // Try to restore from ThreadStateStore (Redis / in-memory fallback)
+    const saved = await loadThreadState(threadId);
+    if (saved) {
+      console.log(`[GraphRegistry] getOrCreate() — restored from ThreadStateStore for threadId="${ threadId }", messages=${ saved.messages.length }`);
+      const graph = createAgentGraph();
+      // Ensure wsChannel is current (may have changed)
+      saved.metadata.wsChannel = wsChannel;
+      registry.set(threadId, { graph, state: saved });
+      return { graph, state: saved as AgentGraphState };
     }
 
     console.log(`[GraphRegistry] getOrCreate() — cache MISS, creating new graph for agentId="${ wsChannel }", threadId="${ threadId }"`);

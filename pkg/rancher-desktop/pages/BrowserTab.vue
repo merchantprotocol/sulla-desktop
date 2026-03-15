@@ -8,82 +8,124 @@
       :toggle-theme="toggleTheme"
     />
 
-    <!-- Browser toolbar -->
-    <div class="flex items-center gap-2 px-4 py-2 browser-toolbar">
-      <button
-        class="browser-nav-btn"
-        type="button"
-        aria-label="Go back"
-        :disabled="!canGoBack"
-        @click="goBack"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
-          <path d="M15 18l-6-6 6-6" />
-        </svg>
-      </button>
-      <button
-        class="browser-nav-btn"
-        type="button"
-        aria-label="Go forward"
-        :disabled="!canGoForward"
-        @click="goForward"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
-          <path d="M9 18l6-6-6-6" />
-        </svg>
-      </button>
-      <button
-        class="browser-nav-btn"
-        type="button"
-        :aria-label="loading ? 'Stop loading' : 'Reload'"
-        @click="loading ? stop() : reload()"
-      >
-        <svg v-if="loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
-          <path d="M18 6L6 18M6 6l12 12" />
-        </svg>
-        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
-          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-          <path d="M3 3v5h5" />
-          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-          <path d="M16 16h5v5" />
-        </svg>
-      </button>
-
-      <form
-        class="flex-1"
-        @submit.prevent="navigate"
-      >
-        <input
-          ref="addressInput"
-          v-model="addressBarUrl"
-          type="text"
-          class="address-bar"
-          placeholder="Search or enter URL"
-          @focus="($event.target as HTMLInputElement).select()"
-          @keydown.meta.l.prevent="focusAddressBar"
+    <!-- Welcome / New Tab page -->
+    <template v-if="tabMode === 'welcome'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <NewTabWelcome
+          @start-chat="onStartChat"
+          @set-mode="onSetMode"
         />
-      </form>
-    </div>
+      </div>
+    </template>
 
-    <!-- Iframe content -->
-    <div class="iframe-container">
-      <iframe
-        ref="iframeRef"
-        :src="currentUrl"
-        class="browser-frame"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
-        referrerpolicy="no-referrer-when-downgrade"
-        @load="onFrameLoad"
-      />
-    </div>
+    <!-- Browser mode: toolbar + iframe -->
+    <template v-else-if="tabMode === 'browser'">
+      <div class="flex items-center gap-2 px-4 py-2 browser-toolbar">
+        <button
+          class="browser-nav-btn"
+          type="button"
+          aria-label="Go back"
+          :disabled="!canGoBack"
+          @click="goBack"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+        <button
+          class="browser-nav-btn"
+          type="button"
+          aria-label="Go forward"
+          :disabled="!canGoForward"
+          @click="goForward"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+        </button>
+        <button
+          class="browser-nav-btn"
+          type="button"
+          :aria-label="loading ? 'Stop loading' : 'Reload'"
+          @click="loading ? stop() : reload()"
+        >
+          <svg v-if="loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+            <path d="M16 16h5v5" />
+          </svg>
+        </button>
+
+        <form
+          class="flex-1"
+          @submit.prevent="navigate"
+        >
+          <input
+            ref="addressInput"
+            v-model="addressBarUrl"
+            type="text"
+            class="address-bar"
+            placeholder="Search or enter URL"
+            @focus="($event.target as HTMLInputElement).select()"
+            @keydown.meta.l.prevent="focusAddressBar"
+          />
+        </form>
+      </div>
+
+      <div class="iframe-container">
+        <iframe
+          ref="iframeRef"
+          :src="currentUrl"
+          class="browser-frame"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+          referrerpolicy="no-referrer-when-downgrade"
+          @load="onFrameLoad"
+        />
+      </div>
+    </template>
+
+    <!-- Embedded page modes -->
+    <template v-else-if="tabMode === 'calendar'">
+      <div class="flex-1 min-h-0 overflow-auto">
+        <AgentCalendar embedded />
+      </div>
+    </template>
+
+    <template v-else-if="tabMode === 'integrations'">
+      <div class="flex-1 min-h-0 overflow-auto">
+        <AgentIntegrations embedded />
+      </div>
+    </template>
+
+    <template v-else-if="tabMode === 'extensions'">
+      <div class="flex-1 min-h-0 overflow-auto">
+        <AgentExtensions embedded />
+      </div>
+    </template>
+
+    <!-- Chat mode: for now, navigate to /Chat -->
+    <template v-else-if="tabMode === 'chat'">
+      <div class="flex-1 min-h-0 overflow-auto flex items-center justify-center">
+        <p class="text-content-secondary text-sm">Chat tab — coming soon (multi-instance chat requires Phase 2)</p>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 
 import AgentHeader from './agent/AgentHeader.vue';
-import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import NewTabWelcome from './NewTabWelcome.vue';
+import AgentCalendar from './AgentCalendar.vue';
+import AgentIntegrations from './AgentIntegrations.vue';
+import AgentExtensions from './AgentExtensions.vue';
+import { useRouter } from 'vue-router';
+import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
 import {
   BRIDGE_CHANNEL,
@@ -94,13 +136,34 @@ import {
 } from '@pkg/agent/scripts/injected';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+const MODE_TITLES: Record<BrowserTabMode, string> = {
+  welcome:      'New Tab',
+  browser:      'New Tab',
+  chat:         'Chat',
+  calendar:     'Calendar',
+  integrations: 'Integrations',
+  extensions:   'Extensions',
+};
+
 const props = defineProps<{
   tabId:     string;
   isVisible: boolean;
 }>();
 
 const { isDark, toggleTheme } = useTheme();
+const router = useRouter();
 const { updateTab, getTab } = useBrowserTabs();
+
+const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
+
+function onSetMode(mode: BrowserTabMode) {
+  updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
+}
+
+function onStartChat(_query: string) {
+  // For now, navigate to the main Chat tab
+  router.push('/Chat');
+}
 
 /** Bridge ID: use the agent's asset ID if this tab was created by manage_active_asset */
 const bridgeId = () => {
@@ -241,6 +304,11 @@ function normalizeUrl(input: string): string {
 function navigate() {
   const url = normalizeUrl(addressBarUrl.value);
 
+  // If we were in welcome mode, switch to browser
+  if (tabMode.value === 'welcome') {
+    onSetMode('browser');
+  }
+
   // Push to history
   if (navIndex < navHistory.length - 1) {
     navHistory.splice(navIndex + 1);
@@ -332,8 +400,10 @@ watch(() => props.isVisible, (visible) => {
   if (visible) {
     window.addEventListener('keydown', onKeydown);
     window.addEventListener('message', onBridgeMessage);
-    hostBridgeRegistry.setActiveBridge(bridgeId());
-    setActiveHostBridge(hostBridge);
+    if (tabMode.value === 'browser') {
+      hostBridgeRegistry.setActiveBridge(bridgeId());
+      setActiveHostBridge(hostBridge);
+    }
   } else {
     window.removeEventListener('keydown', onKeydown);
     window.removeEventListener('message', onBridgeMessage);
@@ -354,6 +424,10 @@ onMounted(() => {
     addressBarUrl.value = url;
     navHistory.push(url);
     navIndex = 0;
+    // If URL was set, ensure mode is browser
+    if (tab?.mode === 'welcome') {
+      onSetMode('browser');
+    }
   }
 
   setupBridge();

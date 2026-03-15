@@ -1,11 +1,14 @@
 import { reactive, readonly } from 'vue';
 
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions';
+
 export interface BrowserTab {
   id:       string;
   url:      string;
   title:    string;
   favicon:  string;
   loading:  boolean;
+  mode:     BrowserTabMode;
   assetId?: string;
 }
 
@@ -18,12 +21,14 @@ function generateId(): string {
 
 export function useBrowserTabs() {
   function createTab(url = 'about:blank'): BrowserTab {
+    const mode: BrowserTabMode = url === 'about:blank' ? 'welcome' : 'browser';
     const tab: BrowserTab = {
       id:      generateId(),
       url,
-      title:   'New Tab',
+      title:   mode === 'welcome' ? 'New Tab' : 'New Tab',
       favicon: '',
       loading: false,
+      mode,
     };
 
     tabs.push(tab);

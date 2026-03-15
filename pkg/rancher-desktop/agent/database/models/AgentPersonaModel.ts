@@ -449,17 +449,43 @@ export class AgentPersonaService {
     return delivered;
   }
 
+  private threadStorageKey(): string {
+    return `chat_threadId_${ this.state.agentId }`;
+  }
+
   setThreadId(threadId: string): void {
     this.state.threadId = threadId;
+    try {
+      localStorage.setItem(this.threadStorageKey(), threadId);
+    } catch { /* storage full or unavailable */ }
   }
 
   getThreadId(): string | undefined {
     return this.state.threadId;
   }
 
+  restoreThreadId(): string | undefined {
+    try {
+      const saved = localStorage.getItem(this.threadStorageKey());
+      if (saved) {
+        this.state.threadId = saved;
+        return saved;
+      }
+    } catch { /* unavailable */ }
+    return undefined;
+  }
+
   clearThreadId(): void {
     this.state.threadId = undefined;
     this.waitingForUser.value = false;
+    try {
+      localStorage.removeItem(this.threadStorageKey());
+    } catch { /* unavailable */ }
+  }
+
+  clearMessages(): void {
+    this.messages.splice(0, this.messages.length);
+    this.toolRunIdToMessageId.clear();
   }
 
   async emitContinueRun(): Promise<boolean> {
@@ -753,6 +779,26 @@ export class AgentPersonaService {
 
       if (threadId && typeof threadId === 'string') {
         this.setThreadId(threadId);
+      }
+      return;
+    }
+    case 'thread_restored': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
+      const restoredMessages = Array.isArray(data.messages) ? data.messages : [];
+
+      if (restoredMessages.length > 0 && this.messages.length === 0) {
+        console.log(`[AgentPersonaModel] Restoring ${ restoredMessages.length } messages from thread ${ data.threadId }`);
+        for (const msg of restoredMessages) {
+          const role = msg.role === 'user' ? 'user' : 'assistant';
+          const content = typeof msg.content === 'string' ? msg.content : '';
+          if (!content.trim()) continue;
+          this.messages.push({
+            id:        msg.id || `restored_${ Date.now() }_${ Math.random().toString(36).slice(2, 6) }`,
+            channelId: agentId,
+            role,
+            content,
+          });
+        }
       }
       return;
     }
