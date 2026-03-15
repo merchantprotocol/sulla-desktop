@@ -4,6 +4,7 @@ import { getWebSocketClientService, type WebSocketMessage } from './WebSocketCli
 import { AbortService } from './AbortService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { saveThreadState } from '../nodes/ThreadStateStore';
 
 const DEFAULT_CHANNEL_ID = 'sulla-desktop';
 
@@ -136,6 +137,20 @@ export class FrontendGraphWebSocketService {
     // Get or create persistent AgentGraph for this thread using the default agent
     const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
 
+    // If this thread was restored from persistence and has prior messages,
+    // emit them back to the frontend so the UI can hydrate the chat history.
+    const priorMessageCount = state.messages.length;
+    if (!isNewThread && priorMessageCount > 0) {
+      this.wsService.send(channelId, {
+        type:      'thread_restored',
+        data:      {
+          threadId,
+          messages: state.messages,
+        },
+        timestamp: Date.now(),
+      });
+    }
+
     // Create a fresh AbortService for this run and wire it into state.
     // Set state first so stop_run can't race between activeAbort and state.
     const abort = new AbortService();
@@ -211,6 +226,9 @@ export class FrontendGraphWebSocketService {
       state.metadata.iterations = 0;
       (state.metadata as any).agentLoopCount = 0;
       this.activeAbort = null;
+
+      // Persist thread state so it survives page reloads
+      saveThreadState(state).catch(err => console.warn('[FrontendGraphWS] Failed to save thread state:', err));
     }
   }
 
@@ -259,6 +277,9 @@ export class FrontendGraphWebSocketService {
       state.metadata.iterations = 0;
       (state.metadata as any).agentLoopCount = 0;
       this.activeAbort = null;
+
+      // Persist thread state so it survives page reloads
+      saveThreadState(state).catch(err => console.warn('[FrontendGraphWS] Failed to save thread state:', err));
     }
   }
 

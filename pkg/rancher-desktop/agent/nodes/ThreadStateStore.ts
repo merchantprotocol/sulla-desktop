@@ -14,7 +14,6 @@ function getRedisClient(): Redis {
       password:             process.env.REDIS_PASSWORD,
       db:                   parseInt(process.env.REDIS_DB || '0'),
       keyPrefix:            'sulla:threadstate:',
-      retryDelayOnFailover: 100,
       maxRetriesPerRequest: 3,
     });
   }
