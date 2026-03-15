@@ -40,7 +40,13 @@ export class Lima extends GlobalDependency(GitHubDependency) {
     }
 
     const url = `${ baseUrl }/v${ context.versions.lima }/lima.${ platform }.tar.gz`;
-    const expectedChecksum = (await getResource(`${ url }.sha512sum`)).split(/\s+/)[0];
+    let expectedChecksum: string | undefined;
+
+    try {
+      expectedChecksum = (await getResource(`${ url }.sha512sum`)).split(/\s+/)[0];
+    } catch (e: any) {
+      console.warn(`WARNING: Could not fetch lima checksum: ${ e.message ?? e }`);
+    }
     const limaDir = path.join(context.resourcesDir, context.platform, 'lima');
     const tarPath = path.join(context.resourcesDir, context.platform, `lima.${ platform }.v${ context.versions.lima }.tgz`);
 
@@ -84,7 +90,13 @@ export class Qemu extends GlobalDependency(GitHubDependency) {
     const arch = isArm64 ? 'aarch64' : 'x86_64';
 
     const url = `${ baseUrl }/v${ context.versions.qemu }/qemu-${ context.versions.qemu }-${ context.platform }-${ arch }.tar.gz`;
-    const expectedChecksum = (await getResource(`${ url }.sha512sum`)).split(/\s+/)[0];
+    let expectedChecksum: string | undefined;
+
+    try {
+      expectedChecksum = (await getResource(`${ url }.sha512sum`)).split(/\s+/)[0];
+    } catch (e: any) {
+      console.warn(`WARNING: Could not fetch qemu checksum: ${ e.message ?? e }`);
+    }
     const limaDir = path.join(context.resourcesDir, context.platform, 'lima');
     const tarPath = path.join(context.resourcesDir, context.platform, `qemu.v${ context.versions.qemu }.tgz`);
 
@@ -133,7 +145,13 @@ export class AlpineLimaISO extends GlobalDependency(GitHubDependency) {
     const isoName = `alpine-lima-${ edition }-${ version.alpineVersion }-${ arch }.iso`;
     const url = `${ baseUrl }/v${ version.isoVersion }/${ isoName }`;
     const destPath = path.join(process.cwd(), 'resources', os.platform(), `alpine-lima-v${ version.isoVersion }-${ edition }-${ version.alpineVersion }-${ arch }.iso`);
-    const expectedChecksum = (await getResource(`${ url }.sha512sum`)).split(/\s+/)[0];
+    let expectedChecksum: string | undefined;
+
+    try {
+      expectedChecksum = (await getResource(`${ url }.sha512sum`)).split(/\s+/)[0];
+    } catch (e: any) {
+      console.warn(`WARNING: Could not fetch alpine-lima checksum: ${ e.message ?? e }`);
+    }
 
     await download(url, destPath, {
       expectedChecksum, checksumAlgorithm: 'sha512', access: fs.constants.W_OK,
