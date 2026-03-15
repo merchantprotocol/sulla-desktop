@@ -944,6 +944,11 @@ ensure_repo() {
 
   local target="$HOME/$REPO_DIR"
 
+  # Nightly: wipe and fresh clone every time to guarantee clean state
+  if [ "$USE_NIGHTLY" = true ] && [ -d "$target" ]; then
+    rm -rf "$target"
+  fi
+
   if [ -d "$target" ] && [ -d "$target/.git" ]; then
     cd "$target"
     REPO_DIR="$(pwd)"
@@ -1113,13 +1118,8 @@ build_app() {
       step_ok "Build up to date (${INSTALL_REF})"
       return
     fi
-    if [ -z "$build_ref" ]; then
-      # No ref marker but valid build — accept it
-      step_ok "Build artifacts present (cached)"
-      return
-    fi
-    # Stale build from a different ref — rebuild
-    step_warn "Stale build (${build_ref}) — rebuilding for ${INSTALL_REF}"
+    # Stale or unmarked build — rebuild for current ref
+    step_warn "Stale build — rebuilding for ${INSTALL_REF}"
     rm -rf dist
   fi
 
