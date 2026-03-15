@@ -151,9 +151,46 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
+  alibaba: {
+    id:          'alibaba',
+    sort:        6,
+    paid:        true,
+    beta:        false,
+    comingSoon:  false,
+    name:        'Alibaba Cloud',
+    description: 'Connect to Alibaba Cloud Model Studio (DashScope) for MiniMax, Kimi K2.5, and Qwen models.',
+    category:    'AI Infrastructure',
+    icon:        'alibaba.svg',
+    connected:   false,
+    version:     '1.0.0',
+    lastUpdated: '2026-03-15 00:00:00',
+    developer:   'Alibaba Cloud',
+    formGuide:   'Paste your Alibaba Cloud DashScope API key to enable access to MiniMax, Kimi K2.5, Qwen, and other models.',
+    properties:  [
+      {
+        key:         'api_key',
+        title:       'DashScope API Key',
+        hint:        'Generate this in your Alibaba Cloud Model Studio console (bailian.console.alibabacloud.com).',
+        type:        'password',
+        required:    true,
+        placeholder: 'sk-...',
+      },
+      {
+        key:             'model',
+        title:           'Model',
+        hint:            'Select a model to use for completions.',
+        type:            'select',
+        required:        true,
+        placeholder:     'Select a model...',
+        selectBoxId:     'alibaba_models',
+        selectDependsOn: ['api_key'],
+      },
+    ],
+  },
+
   nvidia: {
     id:          'nvidia',
-    sort:        6,
+    sort:        7,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -190,7 +227,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
 
   ollama: {
     id:          'ollama',
-    sort:        7,
+    sort:        8,
     paid:        false,
     beta:        false,
     comingSoon:  false,
@@ -237,7 +274,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
 
   custom: {
     id:          'custom',
-    sort:        8,
+    sort:        9,
     paid:        false,
     beta:        false,
     comingSoon:  false,

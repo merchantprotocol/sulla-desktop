@@ -81,4 +81,19 @@ export const REMOTE_PROVIDERS = [
       { id: 'meta/llama-3.1-70b-instruct', name: 'Llama 3.1 70B', description: 'Meta Llama 3.1' },
     ],
   },
+  {
+    id:          'alibaba',
+    name:        'Alibaba Cloud (DashScope)',
+    description: 'Access MiniMax, Kimi K2.5, Qwen, and other models via Alibaba Cloud Model Studio',
+    baseUrl:     'https://coding-intl.dashscope.aliyuncs.com/v1',
+    signupUrl:   'https://bailian.console.alibabacloud.com/',
+    signupText:  'Get API key from Alibaba Cloud Model Studio',
+    models:      [
+      { id: 'minimax-m2.5', name: 'MiniMax M2.5', description: '200K context, advanced reasoning' },
+      { id: 'kimi-k2.5', name: 'Kimi K2.5', description: '256K context, long-context reasoning' },
+      { id: 'qwen-plus', name: 'Qwen Plus', description: '128K context, balanced performance' },
+      { id: 'qwen-max', name: 'Qwen Max', description: '128K context, most capable Qwen model' },
+      { id: 'qwen-turbo', name: 'Qwen Turbo', description: '128K context, fast and affordable' },
+    ],
+  },
 ];

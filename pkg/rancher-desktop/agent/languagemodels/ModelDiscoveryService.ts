@@ -118,6 +118,17 @@ export class ModelDiscoveryService {
         provider: 'nvidia',
       })) || [],
     },
+
+    alibaba: {
+      baseUrl:        'https://coding-intl.dashscope.aliyuncs.com/v1',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => data.data?.map((model: any) => ({
+        id:       model.id,
+        name:     model.id,
+        provider: 'alibaba',
+      })) || [],
+    },
   };
 
   /**
