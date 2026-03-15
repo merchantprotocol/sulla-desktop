@@ -20,19 +20,19 @@ async function loadN8nTools() {
 }
 
 const validPayload = {
-  name: 'workflow-payload-tool-test',
+  name:  'workflow-payload-tool-test',
   nodes: [
     {
-      id: 'node-1',
-      name: 'Manual Trigger',
-      type: 'n8n-nodes-base.manualTrigger',
+      id:          'node-1',
+      name:        'Manual Trigger',
+      type:        'n8n-nodes-base.manualTrigger',
       typeVersion: 1,
-      position: [220, 280],
-      parameters: {},
+      position:    [220, 280],
+      parameters:  {},
     },
   ],
   connections: {},
-  settings: {},
+  settings:    {},
 };
 
 describe('n8n workflow payload tools', () => {
@@ -41,7 +41,7 @@ describe('n8n workflow payload tools', () => {
     (globalThis as any).TextDecoder = TextDecoder;
   });
 
-  it('validate_workflow_payload accepts object-form payloads', async () => {
+  it('validate_workflow_payload accepts object-form payloads', async() => {
     const { validateModule } = await loadN8nTools();
     const worker = configureWorker(new validateModule.ValidateWorkflowPayloadWorker(), validateModule.validateWorkflowPayloadRegistration);
 
@@ -58,15 +58,15 @@ describe('n8n workflow payload tools', () => {
     expect(parsed.nodeCount).toBe(1);
   });
 
-  it('validate_workflow_payload accepts JSON-string payloads', async () => {
+  it('validate_workflow_payload accepts JSON-string payloads', async() => {
     const { validateModule } = await loadN8nTools();
     const worker = configureWorker(new validateModule.ValidateWorkflowPayloadWorker(), validateModule.validateWorkflowPayloadRegistration);
 
     const result = await worker.invoke({
-      name: validPayload.name,
-      nodes: JSON.stringify(validPayload.nodes),
-      connections: JSON.stringify(validPayload.connections),
-      settings: JSON.stringify(validPayload.settings),
+      name:            validPayload.name,
+      nodes:           JSON.stringify(validPayload.nodes),
+      connections:     JSON.stringify(validPayload.connections),
+      settings:        JSON.stringify(validPayload.settings),
       checkConnection: false,
     });
 
@@ -78,7 +78,7 @@ describe('n8n workflow payload tools', () => {
     expect(parsed.connectionKeys).toEqual([]);
   });
 
-  it('create_workflow no longer fails upfront schema validation for object payload fields', async () => {
+  it('create_workflow no longer fails upfront schema validation for object payload fields', async() => {
     const { createModule } = await loadN8nTools();
     const worker = configureWorker(new createModule.CreateWorkflowWorker(), createModule.createWorkflowRegistration);
 
@@ -93,7 +93,7 @@ describe('n8n workflow payload tools', () => {
     }
   });
 
-  it('create_workflow does not require settings at schema layer', async () => {
+  it('create_workflow does not require settings at schema layer', async() => {
     const { createModule } = await loadN8nTools();
     const worker = configureWorker(new createModule.CreateWorkflowWorker(), createModule.createWorkflowRegistration);
 
@@ -107,7 +107,7 @@ describe('n8n workflow payload tools', () => {
     }
   });
 
-  it('update_workflow no longer fails upfront schema validation for object payload fields', async () => {
+  it('update_workflow no longer fails upfront schema validation for object payload fields', async() => {
     const { updateModule } = await loadN8nTools();
     const worker = configureWorker(new updateModule.UpdateWorkflowWorker(), updateModule.updateWorkflowRegistration);
 
@@ -124,7 +124,7 @@ describe('n8n workflow payload tools', () => {
     }
   });
 
-  it('update_workflow does not require settings at schema layer', async () => {
+  it('update_workflow does not require settings at schema layer', async() => {
     const { updateModule } = await loadN8nTools();
     const worker = configureWorker(new updateModule.UpdateWorkflowWorker(), updateModule.updateWorkflowRegistration);
 
@@ -141,12 +141,12 @@ describe('n8n workflow payload tools', () => {
     }
   });
 
-  it('update_workflow preserves active field in validated payload', async () => {
+  it('update_workflow preserves active field in validated payload', async() => {
     const { updateModule } = await loadN8nTools();
-    const worker = configureWorker(new updateModule.UpdateWorkflowWorker(), updateModule.updateWorkflowRegistration) as any;
+    const worker = configureWorker(new updateModule.UpdateWorkflowWorker(), updateModule.updateWorkflowRegistration);
 
     const parsed = worker.parseInput({
-      id: 'workflow-id-placeholder',
+      id:     'workflow-id-placeholder',
       active: true,
       ...validPayload,
     });
@@ -154,9 +154,9 @@ describe('n8n workflow payload tools', () => {
     expect(parsed.active).toBe(true);
   });
 
-  it('update_workflow accepts minimal payload at schema layer (id only)', async () => {
+  it('update_workflow accepts minimal payload at schema layer (id only)', async() => {
     const { updateModule } = await loadN8nTools();
-    const worker = configureWorker(new updateModule.UpdateWorkflowWorker(), updateModule.updateWorkflowRegistration) as any;
+    const worker = configureWorker(new updateModule.UpdateWorkflowWorker(), updateModule.updateWorkflowRegistration);
 
     const parsed = worker.parseInput({
       id: 'workflow-id-placeholder',
@@ -167,9 +167,9 @@ describe('n8n workflow payload tools', () => {
     expect(parsed.connections).toBeUndefined();
   });
 
-  it('create_workflow normalizes non-none saveDataSuccessExecution values to all', async () => {
+  it('create_workflow normalizes non-none saveDataSuccessExecution values to all', async() => {
     const { createModule } = await loadN8nTools();
-    const worker = configureWorker(new createModule.CreateWorkflowWorker(), createModule.createWorkflowRegistration) as any;
+    const worker = configureWorker(new createModule.CreateWorkflowWorker(), createModule.createWorkflowRegistration);
 
     const normalizedAll = worker.normalizeWorkflowPayload({
       ...validPayload,
@@ -188,23 +188,23 @@ describe('n8n workflow payload tools', () => {
     expect(normalizedFromLegacyValue.settings.saveDataSuccessExecution).toBe('all');
   });
 
-  it('update_workflow normalizes non-none saveDataSuccessExecution values to all', async () => {
+  it('update_workflow normalizes non-none saveDataSuccessExecution values to all', async() => {
     const { updateModule } = await loadN8nTools();
-    const worker = configureWorker(new updateModule.UpdateWorkflowWorker(), updateModule.updateWorkflowRegistration) as any;
+    const worker = configureWorker(new updateModule.UpdateWorkflowWorker(), updateModule.updateWorkflowRegistration);
 
     const stubService = {
-      getWorkflow: async () => ({
-        id: 'workflow-id-placeholder',
-        name: 'Existing Workflow',
-        active: false,
-        nodes: validPayload.nodes,
+      getWorkflow: async() => ({
+        id:          'workflow-id-placeholder',
+        name:        'Existing Workflow',
+        active:      false,
+        nodes:       validPayload.nodes,
         connections: validPayload.connections,
-        settings: {},
+        settings:    {},
       }),
     };
 
     const normalizedNone = await worker.normalizeWorkflowPayload({
-      id: 'workflow-id-placeholder',
+      id:       'workflow-id-placeholder',
       settings: {
         saveDataSuccessExecution: 'none',
       },
@@ -212,7 +212,7 @@ describe('n8n workflow payload tools', () => {
     expect(normalizedNone.workflowData.settings.saveDataSuccessExecution).toBe('none');
 
     const normalizedFromLegacyValue = await worker.normalizeWorkflowPayload({
-      id: 'workflow-id-placeholder',
+      id:       'workflow-id-placeholder',
       settings: {
         saveDataSuccessExecution: 'last',
       },

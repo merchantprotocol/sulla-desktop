@@ -1,16 +1,16 @@
-import { BaseTool, ToolResponse } from "../base";
-import { resolveBridge, isBridgeResolved } from "./resolve_bridge";
+import { BaseTool, ToolResponse } from '../base';
+import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
  * Scroll To Element Tool - Scrolls a matching element into view on a website asset.
  */
 export class ScrollToElementWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { selector } = input;
-    const result = resolveBridge(input.assetId);
+    const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
 
     try {
@@ -18,20 +18,19 @@ export class ScrollToElementWorker extends BaseTool {
       if (scrolled) {
         return {
           successBoolean: true,
-          responseString: `[${result.assetId}] Scrolled to element matching "${selector}".`,
+          responseString: `[${ result.assetId }] Scrolled to element matching "${ selector }".`,
         };
       }
 
       return {
         successBoolean: false,
-        responseString: `[${result.assetId}] Element not found: "${selector}".`,
+        responseString: `[${ result.assetId }] Element not found: "${ selector }".`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error scrolling to element: ${(error as Error).message}`,
+        responseString: `Error scrolling to element: ${ (error as Error).message }`,
       };
     }
   }
 }
-

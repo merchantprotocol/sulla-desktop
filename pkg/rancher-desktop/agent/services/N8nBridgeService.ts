@@ -4,11 +4,11 @@ import path from 'path';
 
 type JsonRecord = Record<string, unknown>;
 
-type N8nBridgeLogEvent = {
+interface N8nBridgeLogEvent {
   direction: 'lifecycle' | 'inbound' | 'error';
-  action: string;
-  payload?: unknown;
-};
+  action:    string;
+  payload?:  unknown;
+}
 
 const N8N_BRIDGE_LOG_DIR = path.join(process.cwd(), 'log');
 const N8N_BRIDGE_LOG_FILE = path.join(N8N_BRIDGE_LOG_DIR, 'agent-n8n-bridge.log');
@@ -22,7 +22,7 @@ function createPushRef(): string {
     // Fall through to deterministic fallback.
   }
 
-  return `rd-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  return `rd-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 12) }`;
 }
 
 function writeN8nBridgeEvent(event: N8nBridgeLogEvent): void {
@@ -37,9 +37,9 @@ function writeN8nBridgeEvent(event: N8nBridgeLogEvent): void {
     fs.mkdirSync(N8N_BRIDGE_LOG_DIR, { recursive: true });
     fs.appendFileSync(N8N_BRIDGE_LOG_FILE, [
       '---',
-      `timestamp: ${new Date().toISOString()}`,
-      `direction: ${event.direction}`,
-      `action: ${event.action}`,
+      `timestamp: ${ new Date().toISOString() }`,
+      `direction: ${ event.direction }`,
+      `action: ${ event.action }`,
       'payload:',
       payloadText,
       '',
@@ -50,57 +50,57 @@ function writeN8nBridgeEvent(event: N8nBridgeLogEvent): void {
 }
 
 export interface N8nBridgeConfig {
-  baseUrl?: string;
-  wsPath?: string;
+  baseUrl?:              string;
+  wsPath?:               string;
   reconnectBaseDelayMs?: number;
-  reconnectMaxDelayMs?: number;
+  reconnectMaxDelayMs?:  number;
 }
 
 export interface WorkflowUpdatedEvent {
   workflowId?: string;
-  workflow?: JsonRecord;
-  raw: unknown;
+  workflow?:   JsonRecord;
+  raw:         unknown;
 }
 
 export interface ExecutionStartedEvent {
   executionId?: string;
-  workflowId?: string;
-  raw: unknown;
+  workflowId?:  string;
+  raw:          unknown;
 }
 
 export interface NodeExecutedEvent {
   executionId?: string;
-  workflowId?: string;
-  nodeName?: string;
-  raw: unknown;
+  workflowId?:  string;
+  nodeName?:    string;
+  raw:          unknown;
 }
 
 export interface ErrorOccurredEvent {
   message: string;
-  code?: string | number;
-  raw: unknown;
+  code?:   string | number;
+  raw:     unknown;
 }
 
 export interface N8nBridgeEventMap {
-  connected: { url: string };
-  disconnected: { code: number; reason: string };
-  workflowUpdated: WorkflowUpdatedEvent;
+  connected:        { url: string };
+  disconnected:     { code: number; reason: string };
+  workflowUpdated:  WorkflowUpdatedEvent;
   executionStarted: ExecutionStartedEvent;
-  nodeExecuted: NodeExecutedEvent;
-  errorOccurred: ErrorOccurredEvent;
-  rawMessage: unknown;
+  nodeExecuted:     NodeExecutedEvent;
+  errorOccurred:    ErrorOccurredEvent;
+  rawMessage:       unknown;
 }
 
 type EventHandler<K extends keyof N8nBridgeEventMap> = (payload: N8nBridgeEventMap[K]) => void;
 
 export class N8nBridgeService {
-  private readonly baseUrl: string;
-  private readonly wsPath: string;
+  private readonly baseUrl:              string;
+  private readonly wsPath:               string;
   private readonly reconnectBaseDelayMs: number;
-  private readonly reconnectMaxDelayMs: number;
-  private readonly pushRef: string;
+  private readonly reconnectMaxDelayMs:  number;
+  private readonly pushRef:              string;
 
-  private socket: WebSocket | null = null;
+  private socket:         WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private manuallyStopped = false;
@@ -119,8 +119,8 @@ export class N8nBridgeService {
 
   private async isSessionAuthenticated(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/rest/workflows?limit=1`, {
-        method: 'GET',
+      const response = await fetch(`${ this.baseUrl }/rest/workflows?limit=1`, {
+        method:      'GET',
         credentials: 'include',
       });
 
@@ -143,8 +143,8 @@ export class N8nBridgeService {
     await this.ensureAuthenticatedSession();
     writeN8nBridgeEvent({
       direction: 'lifecycle',
-      action: 'bridge_start',
-      payload: { baseUrl: this.baseUrl, wsPath: this.wsPath },
+      action:    'bridge_start',
+      payload:   { baseUrl: this.baseUrl, wsPath: this.wsPath },
     });
     await this.connectPush();
   }
@@ -169,7 +169,7 @@ export class N8nBridgeService {
   }
 
   on<K extends keyof N8nBridgeEventMap>(event: K, handler: EventHandler<K>): () => void {
-    const bucket = (this.listeners[event] || new Set()) as Set<EventHandler<K>>;
+    const bucket = (this.listeners[event] || new Set());
     bucket.add(handler);
     this.listeners[event] = bucket as (typeof this.listeners)[K];
 
@@ -177,21 +177,21 @@ export class N8nBridgeService {
   }
 
   off<K extends keyof N8nBridgeEventMap>(event: K, handler: EventHandler<K>): void {
-    const bucket = this.listeners[event] as Set<EventHandler<K>> | undefined;
+    const bucket = this.listeners[event];
     bucket?.delete(handler);
   }
 
   getAppRootUrl(): string {
     try {
       const parsed = new URL(this.baseUrl);
-      return `${parsed.origin}/`;
+      return `${ parsed.origin }/`;
     } catch {
       const trimmed = this.baseUrl.trim();
       if (!trimmed) {
         return '';
       }
 
-      return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
+      return trimmed.endsWith('/') ? trimmed : `${ trimmed }/`;
     }
   }
 
@@ -203,10 +203,10 @@ export class N8nBridgeService {
       throw new Error('Cannot refresh n8n-auth token: missing credentials in settings');
     }
 
-    const response = await fetch(`${this.baseUrl}/rest/login`, {
-      method: 'POST',
+    const response = await fetch(`${ this.baseUrl }/rest/login`, {
+      method:      'POST',
       credentials: 'include',
-      headers: {
+      headers:     {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -219,20 +219,20 @@ export class N8nBridgeService {
     if (!response.ok) {
       const text = await response.text();
       if (response.status === 429) {
-        throw new Error(`n8n login rate limited (429): ${text || 'Too many requests, please try again later.'}`);
+        throw new Error(`n8n login rate limited (429): ${ text || 'Too many requests, please try again later.' }`);
       }
-      throw new Error(`n8n login failed ${response.status} ${response.statusText}: ${text}`);
+      throw new Error(`n8n login failed ${ response.status } ${ response.statusText }: ${ text }`);
     }
   }
 
   async getWorkflow(workflowId: string): Promise<unknown> {
-    return this.request(`/rest/workflows/${encodeURIComponent(workflowId)}`);
+    return this.request(`/rest/workflows/${ encodeURIComponent(workflowId) }`);
   }
 
   async updateWorkflow(workflowId: string, workflow: JsonRecord): Promise<unknown> {
-    return this.request(`/rest/workflows/${encodeURIComponent(workflowId)}`, {
+    return this.request(`/rest/workflows/${ encodeURIComponent(workflowId) }`, {
       method: 'PUT',
-      body: JSON.stringify(workflow),
+      body:   JSON.stringify(workflow),
     });
   }
 
@@ -240,14 +240,14 @@ export class N8nBridgeService {
     const payload = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
 
     try {
-      return await this.request(`/rest/workflows/${encodeURIComponent(workflowId)}/run`, {
+      return await this.request(`/rest/workflows/${ encodeURIComponent(workflowId) }/run`, {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body:   JSON.stringify(payload),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const needsWorkflowDataFallback = message.includes("Cannot read properties of undefined (reading 'id')")
-        || message.includes("Cannot read properties of undefined (reading 'nodeName')");
+      const needsWorkflowDataFallback = message.includes("Cannot read properties of undefined (reading 'id')") ||
+        message.includes("Cannot read properties of undefined (reading 'nodeName')");
       if (!needsWorkflowDataFallback) {
         throw error;
       }
@@ -271,15 +271,15 @@ export class N8nBridgeService {
       };
 
       try {
-        return await this.request(`/rest/workflows/${encodeURIComponent(workflowId)}/run`, {
+        return await this.request(`/rest/workflows/${ encodeURIComponent(workflowId) }/run`, {
           method: 'POST',
-          body: JSON.stringify(runWithWorkflowDataPayload),
+          body:   JSON.stringify(runWithWorkflowDataPayload),
         });
       } catch (retryError) {
         const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
         const isNotFound = retryMessage.includes(' 404 ') || retryMessage.includes('Cannot POST');
-        const retryNeedsWorkflowDataFallback = retryMessage.includes("Cannot read properties of undefined (reading 'id')")
-          || retryMessage.includes("Cannot read properties of undefined (reading 'nodeName')");
+        const retryNeedsWorkflowDataFallback = retryMessage.includes("Cannot read properties of undefined (reading 'id')") ||
+          retryMessage.includes("Cannot read properties of undefined (reading 'nodeName')");
         if (!isNotFound && !retryNeedsWorkflowDataFallback) {
           throw retryError;
         }
@@ -287,14 +287,14 @@ export class N8nBridgeService {
 
       return this.request('/rest/workflows/run', {
         method: 'POST',
-        body: JSON.stringify(runWithWorkflowDataPayload),
+        body:   JSON.stringify(runWithWorkflowDataPayload),
       });
     }
   }
 
   async request(endpoint: string, options: {
-    method?: string;
-    body?: string;
+    method?:  string;
+    body?:    string;
     headers?: Record<string, string>;
   } = {}): Promise<unknown> {
     await this.ensureAuthenticatedSession();
@@ -304,12 +304,12 @@ export class N8nBridgeService {
       ...(options.headers || {}),
     };
 
-    const url = `${this.baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const url = `${ this.baseUrl }${ endpoint.startsWith('/') ? endpoint : `/${ endpoint }` }`;
     const requestInit: RequestInit = {
-      method: options.method || 'GET',
+      method:      options.method || 'GET',
       credentials: 'include',
       headers,
-      body: options.body,
+      body:        options.body,
     };
 
     let response = await fetch(url, requestInit);
@@ -321,7 +321,7 @@ export class N8nBridgeService {
 
     if (!response.ok) {
       const text = await response.text();
-      const error = `n8n request failed ${response.status} ${response.statusText}: ${text}`;
+      const error = `n8n request failed ${ response.status } ${ response.statusText }: ${ text }`;
       this.emit('errorOccurred', { message: error, code: response.status, raw: text });
       throw new Error(error);
     }
@@ -334,7 +334,7 @@ export class N8nBridgeService {
   }
 
   private emit<K extends keyof N8nBridgeEventMap>(event: K, payload: N8nBridgeEventMap[K]): void {
-    const bucket = this.listeners[event] as Set<EventHandler<K>> | undefined;
+    const bucket = this.listeners[event];
     if (!bucket) {
       return;
     }
@@ -343,7 +343,7 @@ export class N8nBridgeService {
       try {
         handler(payload);
       } catch (error) {
-        console.error(`[N8nBridgeService] Event handler failed for ${String(event)}:`, error);
+        console.error(`[N8nBridgeService] Event handler failed for ${ String(event) }:`, error);
       }
     }
   }
@@ -368,7 +368,7 @@ export class N8nBridgeService {
     }
 
     const wsBaseUrl = this.baseUrl.replace(/^http/i, 'ws');
-    const wsUrl = this.getPushWebSocketUrl(`${wsBaseUrl}${this.wsPath}`);
+    const wsUrl = this.getPushWebSocketUrl(`${ wsBaseUrl }${ this.wsPath }`);
 
     this.socket = new WebSocket(wsUrl);
 
@@ -376,8 +376,8 @@ export class N8nBridgeService {
       this.reconnectAttempt = 0;
       writeN8nBridgeEvent({
         direction: 'lifecycle',
-        action: 'ws_connected',
-        payload: { url: wsUrl },
+        action:    'ws_connected',
+        payload:   { url: wsUrl },
       });
       this.emit('connected', { url: wsUrl });
     };
@@ -390,16 +390,16 @@ export class N8nBridgeService {
       writeN8nBridgeEvent({ direction: 'error', action: 'ws_error' });
       this.emit('errorOccurred', {
         message: 'n8n push websocket error',
-        raw: null,
+        raw:     null,
       });
     };
 
     this.socket.onclose = (event: CloseEvent) => {
       writeN8nBridgeEvent({
         direction: 'lifecycle',
-        action: 'ws_closed',
-        payload: {
-          code: event.code,
+        action:    'ws_closed',
+        payload:   {
+          code:   event.code,
           reason: event.reason || '',
         },
       });
@@ -425,7 +425,7 @@ export class N8nBridgeService {
         .catch((error) => {
           this.emit('errorOccurred', {
             message: error instanceof Error ? error.message : String(error),
-            raw: error,
+            raw:     error,
           });
           this.scheduleReconnect();
         });
@@ -439,15 +439,15 @@ export class N8nBridgeService {
       return url.toString();
     } catch {
       const separator = baseWsUrl.includes('?') ? '&' : '?';
-      return `${baseWsUrl}${separator}pushRef=${encodeURIComponent(this.pushRef)}`;
+      return `${ baseWsUrl }${ separator }pushRef=${ encodeURIComponent(this.pushRef) }`;
     }
   }
 
   private handleIncomingMessage(rawText: string): void {
     writeN8nBridgeEvent({
       direction: 'inbound',
-      action: 'ws_raw_message',
-      payload: { rawText },
+      action:    'ws_raw_message',
+      payload:   { rawText },
     });
 
     let payload: unknown = rawText;
@@ -460,7 +460,7 @@ export class N8nBridgeService {
 
     writeN8nBridgeEvent({
       direction: 'inbound',
-      action: 'ws_parsed_message',
+      action:    'ws_parsed_message',
       payload,
     });
 
@@ -483,8 +483,8 @@ export class N8nBridgeService {
     if (type.includes('execution') && (type.includes('start') || type.includes('created'))) {
       this.emit('executionStarted', {
         executionId: this.pickString(message, ['executionId', 'id']),
-        workflowId: this.pickString(message, ['workflowId']),
-        raw: payload,
+        workflowId:  this.pickString(message, ['workflowId']),
+        raw:         payload,
       });
       return;
     }
@@ -492,9 +492,9 @@ export class N8nBridgeService {
     if (type.includes('node') && (type.includes('executed') || type.includes('finished'))) {
       this.emit('nodeExecuted', {
         executionId: this.pickString(message, ['executionId']),
-        workflowId: this.pickString(message, ['workflowId']),
-        nodeName: this.pickString(message, ['nodeName', 'name']),
-        raw: payload,
+        workflowId:  this.pickString(message, ['workflowId']),
+        nodeName:    this.pickString(message, ['nodeName', 'name']),
+        raw:         payload,
       });
       return;
     }
@@ -502,8 +502,8 @@ export class N8nBridgeService {
     if (type.includes('error')) {
       this.emit('errorOccurred', {
         message: this.pickString(message, ['message', 'error']) || 'n8n push event error',
-        code: this.pickString(message, ['code']) || undefined,
-        raw: payload,
+        code:    this.pickString(message, ['code']) || undefined,
+        raw:     payload,
       });
     }
   }

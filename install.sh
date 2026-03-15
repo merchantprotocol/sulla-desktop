@@ -383,6 +383,48 @@ ensure_curl() {
   step_ok "curl installed"
 }
 
+ensure_xcode_clt() {
+  # macOS only — must run before anything that needs git or build tools
+  [ "$OS" != "macos" ] && return
+  if xcode-select -p >/dev/null 2>&1; then
+    step_ok "Xcode Command Line Tools"
+    return
+  fi
+  start_spinner "Installing Xcode Command Line Tools (this may take a few minutes)..."
+  # Silent install: create the trigger file, find the CLT package via softwareupdate, install it
+  local placeholder="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress"
+  touch "$placeholder"
+  local clt_pkg
+  clt_pkg="$(softwareupdate -l 2>/dev/null \
+    | grep -o '.*Command Line Tools.*' \
+    | grep -v 'Finding' \
+    | sed 's/^[* ]*//' \
+    | sed 's/^ *Label: //' \
+    | sort -rV \
+    | head -1)"
+  if [ -n "$clt_pkg" ]; then
+    run_silent "xcode-clt" softwareupdate --install "$clt_pkg" --agree-to-license
+  else
+    # Fallback: use the GUI installer if softwareupdate can't find the package
+    xcode-select --install >/dev/null 2>&1 || true
+    local waited=0
+    while ! xcode-select -p >/dev/null 2>&1; do
+      sleep 5
+      waited=$((waited + 5))
+      if [ "$waited" -ge 1800 ]; then
+        rm -f "$placeholder"
+        step_fail "Xcode CLT installation timed out — please install manually and re-run"
+      fi
+    done
+  fi
+  rm -f "$placeholder"
+  if xcode-select -p >/dev/null 2>&1; then
+    step_ok "Xcode Command Line Tools installed"
+  else
+    step_fail "Xcode Command Line Tools installation failed"
+  fi
+}
+
 ensure_git() {
   if command_exists git; then
     step_ok "git ($(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'))"
@@ -390,7 +432,15 @@ ensure_git() {
   fi
   start_spinner "Installing git..."
   case "$OS" in
-    macos)   run_silent "git" xcode-select --install 2>/dev/null || true ;;
+    macos)
+      # Xcode CLT should already be installed by ensure_xcode_clt
+      # but if somehow git is still missing, try brew
+      if command_exists brew; then
+        run_silent "git" brew install git
+      else
+        step_fail "git not available — please install Xcode Command Line Tools and re-run"
+      fi
+      ;;
     linux)
       case "$(detect_pkg_manager)" in
         apt)    run_silent "git" sudo apt-get update -qq && run_silent "git" sudo apt-get install -yqq git ;;
@@ -481,13 +531,8 @@ ensure_yarn() {
 ensure_build_tools() {
   case "$OS" in
     macos)
-      if xcode-select -p >/dev/null 2>&1; then
-        step_ok "Xcode Command Line Tools"
-      else
-        start_spinner "Installing Xcode Command Line Tools..."
-        xcode-select --install 2>/dev/null || true
-        step_warn "Xcode CLT — finish dialog if prompted, then re-run"
-      fi
+      # Already handled by ensure_xcode_clt earlier
+      step_ok "Build tools (Xcode CLT)"
       ;;
     linux)
       local pkgs_needed=""
@@ -610,6 +655,7 @@ check_python() {
 
 install_dependencies() {
   section "Dependencies"
+  ensure_xcode_clt
   ensure_curl
   ensure_git
   ensure_node

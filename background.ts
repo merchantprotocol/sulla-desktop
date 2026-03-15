@@ -257,13 +257,13 @@ function writeSullaWebRequestEvent(event: SullaWebRequestLogEvent): void {
     ].join('\n') + '\n', { encoding: 'utf-8' });
 
     console.log('[SullaWebRequest]', {
-      timestamp: new Date().toISOString(),
-      direction: event.direction,
-      method: event.method || 'unknown',
-      statusCode: typeof event.statusCode === 'number' ? event.statusCode : 'n/a',
+      timestamp:    new Date().toISOString(),
+      direction:    event.direction,
+      method:       event.method || 'unknown',
+      statusCode:   typeof event.statusCode === 'number' ? event.statusCode : 'n/a',
       resourceType: event.resourceType || 'unknown',
-      url: event.url || 'unknown',
-      payload: event.payload ?? {},
+      url:          event.url || 'unknown',
+      payload:      event.payload ?? {},
     });
   } catch (error) {
     console.error('[SullaWebRequestLogger] Failed to write event:', error);
@@ -275,17 +275,11 @@ Electron.app.whenReady().then(() => {
 
   const fixer = new SullaWebRequestFixer(writeSullaWebRequestEvent);
   fixer.attachToSession(session);
-
 });
 
-////////////////////////////////////////////////////////////////////////////////
+/// /////////////////////////////////////////////////////////////////////////////
 // SULLA DESKTOP - END
-////////////////////////////////////////////////////////////////////////////////
-
-
-
-
-
+/// /////////////////////////////////////////////////////////////////////////////
 
 Electron.app.whenReady().then(async() => {
   try {
@@ -417,7 +411,6 @@ Electron.app.whenReady().then(async() => {
     // Training deps are NOT installed at startup.
     // They are installed on-demand when the user opens the Model Training
     // window and clicks "Install Training Environment".
-
   } catch (ex: any) {
     console.error(`Error starting up: ${ ex }`, ex.stack);
     gone = true;
@@ -734,7 +727,10 @@ mainEvents.on('restarting', () => {
 });
 
 Electron.app.on('before-quit', async(event) => {
-  console.log(`[Shutdown] before-quit fired — gone=${gone}, isRestarting=${isRestarting}`);
+  const triggerStack = new Error('before-quit trigger trace').stack;
+
+  console.log(`[Shutdown] before-quit fired — gone=${ gone }, isRestarting=${ isRestarting }`);
+  console.log(`[Shutdown] before-quit call stack:\n${ triggerStack }`);
   if (gone) {
     console.log('[Shutdown] before-quit: already gone, emitting "quit" and returning');
     mainEvents.emit('quit');
@@ -746,19 +742,18 @@ Electron.app.on('before-quit', async(event) => {
   httpCommandServer?.closeServer();
   httpCredentialHelperServer.closeServer();
 
+  /// /////////////////////////////////////////////////////////////////////////////
+  // SULLA DESKTOP - START
+  // Commands to shut down database connections
+  /// /////////////////////////////////////////////////////////////////////////////
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // SULLA DESKTOP - START
-    // Commands to shut down database connections
-    ////////////////////////////////////////////////////////////////////////////////
+  console.log('[Shutdown] before-quit: calling sullaEnd()');
+  await sullaEnd(event);
+  console.log('[Shutdown] before-quit: sullaEnd() complete');
 
-      console.log('[Shutdown] before-quit: calling sullaEnd()');
-      await sullaEnd(event);
-      console.log('[Shutdown] before-quit: sullaEnd() complete');
-
-    ////////////////////////////////////////////////////////////////////////////////
-    // SULLA DESKTOP - END
-    ////////////////////////////////////////////////////////////////////////////////
+  /// /////////////////////////////////////////////////////////////////////////////
+  // SULLA DESKTOP - END
+  /// /////////////////////////////////////////////////////////////////////////////
 
   if (isRestarting) {
     // Restart: skip container/VM teardown so the app relaunches fast
@@ -844,14 +839,9 @@ ipcMainProxy.handle('start-backend' as any, () => {
   }
 });
 
-
-
-
-////////////////////////////////////////////////////////////////////////////////
+/// /////////////////////////////////////////////////////////////////////////////
 // SULLA DESKTOP
-////////////////////////////////////////////////////////////////////////////////
-
-
+/// /////////////////////////////////////////////////////////////////////////////
 
 await onMainProxyLoad(ipcMainProxy);
 
@@ -876,7 +866,7 @@ ipcMainProxy.handle('error-report/invoke' as any, async(_event: any, report: any
 
 ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
   console.log('Starting Sulla custom environment...');
-  
+
   const firstKubernetesIsInstalled = await SullaSettingsModel.get('firstKubernetesIsInstalled', false);
   if (firstKubernetesIsInstalled !== true) {
     console.log('Sulla custom environment: Lima/Kubernetes not yet installed, skipping.');
@@ -899,14 +889,9 @@ ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
   }
 });
 
-
-
-
-////////////////////////////////////////////////////////////////////////////////
+/// /////////////////////////////////////////////////////////////////////////////
 // SULLA DESKTOP
-////////////////////////////////////////////////////////////////////////////////
-
-
+/// /////////////////////////////////////////////////////////////////////////////
 
 ipcMainProxy.on('images-namespaces-read', (event) => {
   if ([K8s.State.STARTED, K8s.State.DISABLED].includes(k8smanager.state)) {
@@ -1948,5 +1933,9 @@ async function runRdctlSetup(newSettings: settings.Settings): Promise<void> {
   const rdctlPath = executable('rdctl');
   const args = ['setup', `--auto-start=${ newSettings.application.autoStart }`];
 
-  await spawnFile(rdctlPath, args);
+  try {
+    await spawnFile(rdctlPath, args);
+  } catch (err: any) {
+    console.error(`[Startup] rdctl setup failed (exit code ${ err.code }): ${ err.message }`);
+  }
 }

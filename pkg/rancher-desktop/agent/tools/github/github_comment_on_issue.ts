@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { Octokit } from "@octokit/rest";
+import { BaseTool, ToolResponse } from '../base';
+import { Octokit } from '@octokit/rest';
 import { getIntegrationService } from '../../services/IntegrationService';
 /**
  * GitHub Comment on Issue Tool - Worker class for execution
  */
 export class GitHubCommentOnIssueWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { owner, repo, issue_number, body } = input;
@@ -16,7 +16,7 @@ export class GitHubCommentOnIssueWorker extends BaseTool {
     if (!tokenValue) {
       return {
         successBoolean: false,
-        responseString: "Error: GitHub token not configured."
+        responseString: 'Error: GitHub token not configured.',
       };
     }
 
@@ -30,21 +30,21 @@ export class GitHubCommentOnIssueWorker extends BaseTool {
         body,
       });
 
-      const responseString = `Comment added to issue #${issue_number} in ${owner}/${repo}:
-Comment ID: ${response.data.id}
-URL: ${response.data.html_url}
-Created by: ${response.data.user?.login || 'Unknown'}
-Created at: ${new Date(response.data.created_at).toLocaleString()}
-Body: ${response.data.body}`;
+      const responseString = `Comment added to issue #${ issue_number } in ${ owner }/${ repo }:
+Comment ID: ${ response.data.id }
+URL: ${ response.data.html_url }
+Created by: ${ response.data.user?.login || 'Unknown' }
+Created at: ${ new Date(response.data.created_at).toLocaleString() }
+Body: ${ response.data.body }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error commenting on issue: ${(error as Error).message}`
+        responseString: `Error commenting on issue: ${ (error as Error).message }`,
       };
     }
   }

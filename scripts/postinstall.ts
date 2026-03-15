@@ -264,7 +264,7 @@ const keepScriptAlive = setTimeout(() => { }, 24 * 3600 * 1000);
         const helper = path.join(ptyPrebuildsDir, dir, 'spawn-helper');
         if (fs.existsSync(helper)) {
           fs.chmodSync(helper, 0o755);
-          console.log(`Fixed execute permission: ${helper}`);
+          console.log(`Fixed execute permission: ${ helper }`);
         }
       }
     }

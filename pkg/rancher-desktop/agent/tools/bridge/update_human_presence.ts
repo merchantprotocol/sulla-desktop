@@ -16,20 +16,20 @@ export class UpdateHumanPresenceWorker extends BaseTool {
       const bridge = getHumanHeartbeatBridge();
 
       await bridge.updatePresence({
-        available: available !== undefined ? available : true,
-        currentView: current_view || 'unknown',
+        available:       available !== undefined ? available : true,
+        currentView:     current_view || 'unknown',
         currentActivity: current_activity || 'unknown',
-        activeChannel: active_channel || '',
+        activeChannel:   active_channel || '',
       });
 
       return {
         successBoolean: true,
-        responseString: `Human presence updated. Available: ${available !== undefined ? available : true}, View: ${current_view || 'unknown'}, Activity: ${current_activity || 'unknown'}, Channel: ${active_channel || 'none'}`,
+        responseString: `Human presence updated. Available: ${ available !== undefined ? available : true }, View: ${ current_view || 'unknown' }, Activity: ${ current_activity || 'unknown' }, Channel: ${ active_channel || 'none' }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Failed to update human presence: ${error instanceof Error ? error.message : String(error)}`,
+        responseString: `Failed to update human presence: ${ error instanceof Error ? error.message : String(error) }`,
       };
     }
   }

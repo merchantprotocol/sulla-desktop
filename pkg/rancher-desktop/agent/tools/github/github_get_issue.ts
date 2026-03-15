@@ -1,13 +1,13 @@
-import { BaseTool, ToolResponse } from "../base";
-import { Octokit } from "@octokit/rest";
+import { BaseTool, ToolResponse } from '../base';
+import { Octokit } from '@octokit/rest';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * GitHub Get Issue Tool - Worker class for execution
  */
 export class GitHubGetIssueWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { owner, repo, issue_number } = input;
 
@@ -16,7 +16,7 @@ export class GitHubGetIssueWorker extends BaseTool {
     if (!tokenValue) {
       return {
         successBoolean: false,
-        responseString: "Error: GitHub token not configured."
+        responseString: 'Error: GitHub token not configured.',
       };
     }
 
@@ -38,26 +38,26 @@ export class GitHubGetIssueWorker extends BaseTool {
       const updatedDate = new Date(issue.updated_at).toLocaleString();
       const closedDate = issue.closed_at ? new Date(issue.closed_at).toLocaleString() : 'N/A';
 
-      const responseString = `Issue #${issue.number}: ${issue.title}
-State: ${issue.state}
-Created by: ${issue.user?.login || 'Unknown'}
-Labels: ${labels || 'None'}
-Assignees: ${assignees}
-Created: ${createdDate}
-Updated: ${updatedDate}
-Closed: ${closedDate}
-Comments: ${issue.comments}
+      const responseString = `Issue #${ issue.number }: ${ issue.title }
+State: ${ issue.state }
+Created by: ${ issue.user?.login || 'Unknown' }
+Labels: ${ labels || 'None' }
+Assignees: ${ assignees }
+Created: ${ createdDate }
+Updated: ${ updatedDate }
+Closed: ${ closedDate }
+Comments: ${ issue.comments }
 Body:
-${issue.body || 'No description provided.'}`;
+${ issue.body || 'No description provided.' }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting issue: ${(error as Error).message}`
+        responseString: `Error getting issue: ${ (error as Error).message }`,
       };
     }
   }

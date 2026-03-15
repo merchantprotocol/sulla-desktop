@@ -9,39 +9,39 @@ let createN8nServiceFn: any;
 const baseWorkflowGraph = {
   nodes: [
     {
-      id: '1',
-      name: 'Manual Trigger',
-      type: 'n8n-nodes-base.manualTrigger',
+      id:          '1',
+      name:        'Manual Trigger',
+      type:        'n8n-nodes-base.manualTrigger',
       typeVersion: 1,
-      position: [240, 300],
-      parameters: {},
+      position:    [240, 300],
+      parameters:  {},
     },
   ],
   connections: {},
-  settings: {},
+  settings:    {},
 };
 
 const createActivatableGraph = (suffix: string) => ({
   nodes: [
     {
-      id: '1',
-      name: 'Webhook Trigger',
-      type: 'n8n-nodes-base.webhook',
+      id:          '1',
+      name:        'Webhook Trigger',
+      type:        'n8n-nodes-base.webhook',
       typeVersion: 2,
-      position: [240, 300],
-      parameters: {
-        httpMethod: 'GET',
-        path: `it-update-workflow-${suffix}`,
+      position:    [240, 300],
+      parameters:  {
+        httpMethod:   'GET',
+        path:         `it-update-workflow-${ suffix }`,
         responseMode: 'onReceived',
       },
     },
   ],
   connections: {},
-  settings: {},
+  settings:    {},
 });
 
 describe('N8nService.updateWorkflow', () => {
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
 
@@ -66,10 +66,10 @@ describe('N8nService.updateWorkflow', () => {
     await bootstrapService.refreshApiKey();
   });
 
-  it('updates inactive workflow in live environment', async () => {
+  it('updates inactive workflow in live environment', async() => {
     const service = await createN8nServiceFn();
-    const workflowName = `it-update-inactive-${Date.now()}`;
-    const updatedName = `${workflowName}-updated`;
+    const workflowName = `it-update-inactive-${ Date.now() }`;
+    const updatedName = `${ workflowName }-updated`;
 
     const created = await service.createWorkflow({
       name: workflowName,
@@ -78,11 +78,11 @@ describe('N8nService.updateWorkflow', () => {
 
     try {
       const result = await service.updateWorkflow(created.id, {
-        name: updatedName,
-        active: true,
-        nodes: created.nodes,
+        name:        updatedName,
+        active:      true,
+        nodes:       created.nodes,
         connections: created.connections,
-        settings: created.settings || {},
+        settings:    created.settings || {},
       });
 
       const fetched = await service.getWorkflow(created.id, true);
@@ -95,10 +95,10 @@ describe('N8nService.updateWorkflow', () => {
     }
   }, 30000);
 
-  it('deactivates, updates, and reactivates active workflow in live environment', async () => {
+  it('deactivates, updates, and reactivates active workflow in live environment', async() => {
     const service = await createN8nServiceFn();
-    const workflowName = `it-update-active-${Date.now()}`;
-    const updatedName = `${workflowName}-updated`;
+    const workflowName = `it-update-active-${ Date.now() }`;
+    const updatedName = `${ workflowName }-updated`;
     const activatableGraph = createActivatableGraph(String(Date.now()));
 
     const created = await service.createWorkflow({
@@ -110,10 +110,10 @@ describe('N8nService.updateWorkflow', () => {
       await service.activateWorkflow(created.id);
 
       const result = await service.updateWorkflow(created.id, {
-        name: updatedName,
-        nodes: created.nodes,
+        name:        updatedName,
+        nodes:       created.nodes,
         connections: created.connections,
-        settings: created.settings || {},
+        settings:    created.settings || {},
       });
 
       const fetched = await service.getWorkflow(created.id, true);

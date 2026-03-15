@@ -4,8 +4,8 @@ const mockGetWorkflow: any = jest.fn();
 const mockUpdateWorkflow: any = jest.fn();
 
 jest.unstable_mockModule('../../../services/N8nService', () => ({
-  createN8nService: jest.fn(async () => ({
-    getWorkflow: mockGetWorkflow,
+  createN8nService: jest.fn(async() => ({
+    getWorkflow:    mockGetWorkflow,
     updateWorkflow: mockUpdateWorkflow,
   })),
 }));
@@ -27,28 +27,28 @@ describe('update_workflow tool payload sanitization', () => {
     mockUpdateWorkflow.mockReset();
   });
 
-  it('does not include shared by default when caller only updates name', async () => {
+  it('does not include shared by default when caller only updates name', async() => {
     const { UpdateWorkflowWorker, updateWorkflowRegistration } = await loadUpdateTool();
 
     mockGetWorkflow.mockResolvedValueOnce({
-      id: 'wf-1',
-      name: 'Existing Name',
-      active: false,
-      nodes: [{ id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+      id:          'wf-1',
+      name:        'Existing Name',
+      active:      false,
+      nodes:       [{ id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
       connections: {},
-      settings: {},
-      shared: [{ project: { id: 'proj-1', name: 'Default Project' } }],
+      settings:    {},
+      shared:      [{ project: { id: 'proj-1', name: 'Default Project' } }],
     });
 
     mockUpdateWorkflow.mockResolvedValueOnce({
-      id: 'wf-1',
-      name: 'Updated Name',
-      active: false,
-      updatedAt: new Date().toISOString(),
-      nodes: [],
+      id:          'wf-1',
+      name:        'Updated Name',
+      active:      false,
+      updatedAt:   new Date().toISOString(),
+      nodes:       [],
       connections: {},
-      tags: [],
-      owner: null,
+      tags:        [],
+      owner:       null,
     });
 
     const worker = configureWorker(new UpdateWorkflowWorker(), updateWorkflowRegistration);
@@ -57,39 +57,39 @@ describe('update_workflow tool payload sanitization', () => {
     expect(result.success).toBe(true);
     expect(mockUpdateWorkflow).toHaveBeenCalledWith(
       'wf-1',
-      expect.not.objectContaining({ shared: expect.anything() })
+      expect.not.objectContaining({ shared: expect.anything() }),
     );
   });
 
-  it('strips shared[].project.id when shared is explicitly provided', async () => {
+  it('strips shared[].project.id when shared is explicitly provided', async() => {
     const { UpdateWorkflowWorker, updateWorkflowRegistration } = await loadUpdateTool();
 
     mockGetWorkflow.mockResolvedValueOnce({
-      id: 'wf-2',
-      name: 'Existing',
-      active: false,
-      nodes: [{ id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+      id:          'wf-2',
+      name:        'Existing',
+      active:      false,
+      nodes:       [{ id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
       connections: {},
-      settings: {},
+      settings:    {},
     });
 
     mockUpdateWorkflow.mockResolvedValueOnce({
-      id: 'wf-2',
-      name: 'Existing',
-      active: false,
-      updatedAt: new Date().toISOString(),
-      nodes: [],
+      id:          'wf-2',
+      name:        'Existing',
+      active:      false,
+      updatedAt:   new Date().toISOString(),
+      nodes:       [],
       connections: {},
-      tags: [],
-      owner: null,
+      tags:        [],
+      owner:       null,
     });
 
     const worker = configureWorker(new UpdateWorkflowWorker(), updateWorkflowRegistration);
     const result = await worker.invoke({
-      id: 'wf-2',
+      id:     'wf-2',
       shared: [
         {
-          role: 'workflow:owner',
+          role:    'workflow:owner',
           project: { id: 'proj-readonly', name: 'Main' },
         },
       ],
@@ -101,11 +101,11 @@ describe('update_workflow tool payload sanitization', () => {
       expect.objectContaining({
         shared: [
           {
-            role: 'workflow:owner',
+            role:    'workflow:owner',
             project: { name: 'Main' },
           },
         ],
-      })
+      }),
     );
   });
 });

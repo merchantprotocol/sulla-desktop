@@ -31,7 +31,7 @@ describe('pg_query / pg_execute sql field handling', () => {
   let originalQueryOne: any;
   let originalQueryWithResult: any;
 
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
 
@@ -50,16 +50,16 @@ describe('pg_query / pg_execute sql field handling', () => {
     postgresClient.queryWithResult = originalQueryWithResult;
   });
 
-  it('pg_query accepts query alias and long SQL strings without schema rejection', async () => {
+  it('pg_query accepts query alias and long SQL strings without schema rejection', async() => {
     const { pgQueryModule } = await loadPgModules();
 
-    postgresClient.query = jest.fn(async () => [{ id: 1, name: 'alpha' }]);
+    postgresClient.query = jest.fn(async() => [{ id: 1, name: 'alpha' }]);
 
     const worker = configureWorker(new pgQueryModule.PgQueryWorker(), pgQueryModule.pgQueryRegistration);
-    const longSql = `SELECT 1 AS one -- ${'x'.repeat(12000)}`;
+    const longSql = `SELECT 1 AS one -- ${ 'x'.repeat(12000) }`;
 
     const result = await worker.invoke({
-      query: longSql,
+      query:  longSql,
       params: [],
     });
 
@@ -71,10 +71,10 @@ describe('pg_query / pg_execute sql field handling', () => {
     expect(result.result as string).toContain('"name": "alpha"');
   });
 
-  it('pg_query safely handles undefined query results without crashing', async () => {
+  it('pg_query safely handles undefined query results without crashing', async() => {
     const { pgQueryModule } = await loadPgModules();
 
-    postgresClient.query = jest.fn(async () => undefined);
+    postgresClient.query = jest.fn(async() => undefined);
 
     const worker = configureWorker(new pgQueryModule.PgQueryWorker(), pgQueryModule.pgQueryRegistration);
     const result = await worker.invoke({ sql: 'SELECT 1', params: [] });
@@ -84,10 +84,10 @@ describe('pg_query / pg_execute sql field handling', () => {
     expect(result.result as string).toContain('Rows: []');
   });
 
-  it('pg_queryall includes result rows in output', async () => {
+  it('pg_queryall includes result rows in output', async() => {
     const { pgQueryAllModule } = await loadPgModules();
 
-    postgresClient.queryAll = jest.fn(async () => [
+    postgresClient.queryAll = jest.fn(async() => [
       { id: 1, value: 'a' },
       { id: 2, value: 'b' },
     ]);
@@ -101,10 +101,10 @@ describe('pg_query / pg_execute sql field handling', () => {
     expect(result.result as string).toContain('"value": "b"');
   });
 
-  it('pg_queryone includes returned row in output', async () => {
+  it('pg_queryone includes returned row in output', async() => {
     const { pgQueryOneModule } = await loadPgModules();
 
-    postgresClient.queryOne = jest.fn(async () => ({ id: 42, status: 'ok' }));
+    postgresClient.queryOne = jest.fn(async() => ({ id: 42, status: 'ok' }));
 
     const worker = configureWorker(new pgQueryOneModule.PgQueryOneWorker(), pgQueryOneModule.pgQueryOneRegistration);
     const result = await worker.invoke({ sql: 'SELECT id, status FROM table_x LIMIT 1', params: [] });
@@ -115,14 +115,14 @@ describe('pg_query / pg_execute sql field handling', () => {
     expect(result.result as string).toContain('"status": "ok"');
   });
 
-  it('pg_execute accepts statement alias in nested input payloads', async () => {
+  it('pg_execute accepts statement alias in nested input payloads', async() => {
     const { pgExecuteModule } = await loadPgModules();
 
-    postgresClient.queryWithResult = jest.fn(async () => ({
-      command: 'UPDATE',
+    postgresClient.queryWithResult = jest.fn(async() => ({
+      command:  'UPDATE',
       rowCount: 1,
-      rows: [{ id: 1, touched: true }],
-      oid: null,
+      rows:     [{ id: 1, touched: true }],
+      oid:      null,
     }));
 
     const worker = configureWorker(new pgExecuteModule.PgExecuteWorker(), pgExecuteModule.pgExecuteRegistration);
@@ -130,7 +130,7 @@ describe('pg_query / pg_execute sql field handling', () => {
     const result = await worker.invoke({
       input: {
         statement: 'UPDATE test_table SET touched = true WHERE id = 1',
-        params: [],
+        params:    [],
       },
     });
 
@@ -141,7 +141,7 @@ describe('pg_query / pg_execute sql field handling', () => {
     expect(result.result as string).toContain('"touched": true');
   });
 
-  it('pg_execute reports clear SQL error only when no alias field is present', async () => {
+  it('pg_execute reports clear SQL error only when no alias field is present', async() => {
     const { pgExecuteModule } = await loadPgModules();
 
     const worker = configureWorker(new pgExecuteModule.PgExecuteWorker(), pgExecuteModule.pgExecuteRegistration);

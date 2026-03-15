@@ -2,8 +2,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { createN8nService } from '../../services/N8nService';
 
 export class SetWorkflowActiveWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
@@ -30,16 +30,15 @@ export class SetWorkflowActiveWorker extends BaseTool {
         responseString: JSON.stringify({
           workflowId,
           active,
-          result: result ?? null,
+          result:    result ?? null,
           toggledAt: new Date().toISOString(),
         }, null, 2),
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error toggling workflow active state: ${(error as Error).message}`,
+        responseString: `Error toggling workflow active state: ${ (error as Error).message }`,
       };
     }
   }
 }
-

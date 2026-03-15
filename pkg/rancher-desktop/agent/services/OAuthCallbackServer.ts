@@ -6,7 +6,7 @@ import http from 'http';
 import { URL } from 'url';
 
 export interface OAuthCallbackResult {
-  code: string;
+  code:  string;
   state: string;
 }
 
@@ -44,13 +44,13 @@ const ERROR_HTML = (msg: string) => `<!DOCTYPE html>
 
 export interface OAuthCallbackServerOptions {
   /** The `state` value we sent in the authorize URL — used to validate the callback. */
-  expectedState: string;
+  expectedState:         string;
   /** How long to wait before rejecting (default 5 min). */
-  timeoutMs?: number;
+  timeoutMs?:            number;
   /** Fixed port to listen on (default: random available port). */
-  fixedPort?: number;
+  fixedPort?:            number;
   /** Path to match for the callback (default: '/oauth/callback'). */
-  callbackPath?: string;
+  callbackPath?:         string;
   /** Use 'localhost' instead of '127.0.0.1' in the redirect URI (some providers require this). */
   useLocalhostHostname?: boolean;
 }

@@ -1,210 +1,331 @@
 <template>
-  <div class="h-screen overflow-hidden font-sans page-root" :class="{ dark: isDark }">
+  <div
+    class="h-screen overflow-hidden font-sans page-root"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="Agent" />
     <div class="flex h-screen flex-col">
+      <AgentHeader
+        :is-dark="isDark"
+        :toggle-theme="toggleTheme"
+      />
 
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+      <!-- Loading overlay while system boots -->
+      <StartupOverlay
+        @overlay-visible="showOverlay = $event"
+        @system-ready="systemReady = $event"
+      />
 
-    <!-- Loading overlay while system boots -->
-    <StartupOverlay
-      @overlay-visible="showOverlay = $event"
-      @system-ready="systemReady = $event"
-    />
-
-    <!-- Main agent interface -->
-    <div v-if="hasMessages" ref="chatScrollContainer" id="chat-scroll-container" class="min-h-0 flex-1 overflow-y-auto" :class="{ 'blur-sm pointer-events-none select-none': showOverlay }">
-      <div class="relative mx-auto flex w-full max-w-8xl xl:px-12 sm:px-2 lg:px-8 justify-center">
-        <div
-          class="min-w-0 py-16 max-w-2xl flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16"
-        >
-          <div ref="transcriptEl" id="chat-messages-list" class="pb-8">
+      <!-- Main agent interface -->
+      <div
+        v-if="hasMessages"
+        id="chat-scroll-container"
+        ref="chatScrollContainer"
+        class="min-h-0 flex-1 overflow-y-auto"
+        :class="{ 'blur-sm pointer-events-none select-none': showOverlay }"
+      >
+        <div class="relative mx-auto flex w-full max-w-8xl xl:px-12 sm:px-2 lg:px-8 justify-center">
+          <div
+            class="min-w-0 py-16 max-w-2xl flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16"
+          >
             <div
-              v-for="m in displayMessages"
-              :key="m.id"
-              class="mb-8"
+              id="chat-messages-list"
+              ref="transcriptEl"
+              class="pb-8"
             >
-              <div v-if="m.role === 'user'" class="flex justify-end">
-                <div class="max-w-[min(760px,92%)] rounded-3xl p-6 bg-surface-alt ring-1 ring-edge-subtle">
-                  <div class="whitespace-pre-wrap text-content">{{ m.content }}</div>
-                </div>
-              </div>
-
-              <div v-else-if="m.kind === 'tool'" class="max-w-[min(760px,92%)]">
-                <div v-if="m.toolCard" class="tool-card-cc" :class="{ expanded: isToolCardExpanded(m.id) }">
-                  <!-- Header row: status dot + tool name + description -->
-                  <button
-                    type="button"
-                    class="tool-card-cc-header"
-                    @click="toggleToolCard(m.id)"
-                  >
-                    <span
-                      class="tool-card-cc-dot"
-                      :class="m.toolCard.status"
-                    ></span>
-                    <span class="tool-card-cc-name">{{ toolCardLabel(m.toolCard) }}</span>
-                    <span v-if="m.toolCard.description" class="tool-card-cc-desc">{{ m.toolCard.description }}</span>
-                    <svg
-                      width="14" height="14" viewBox="0 0 15 15" fill="none"
-                      class="tool-card-cc-chevron"
-                      :class="{ open: isToolCardExpanded(m.id) }"
-                    >
-                      <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
-                    </svg>
-                  </button>
-                  <!-- Command line preview (always visible for exec-like tools) -->
-                  <div v-if="toolCardCommand(m.toolCard)" class="tool-card-cc-cmd">
-                    <span class="tool-card-cc-cmd-label">IN</span>
-                    <code class="tool-card-cc-cmd-text">{{ toolCardCommand(m.toolCard) }}</code>
-                  </div>
-                  <!-- Exit code row (visible when result available) -->
-                  <div v-if="m.toolCard.status !== 'running' && toolCardCommand(m.toolCard)" class="tool-card-cc-cmd">
-                    <span class="tool-card-cc-cmd-label">OUT</span>
-                    <code class="tool-card-cc-cmd-text tool-card-cc-exit" :class="m.toolCard.status">{{ m.toolCard.status === 'success' ? '0' : '1' }}</code>
-                  </div>
-                  <!-- Expanded details -->
-                  <div v-show="isToolCardExpanded(m.id)" class="tool-card-cc-body">
-                    <div v-if="toolCardOutput(m.toolCard)" class="tool-card-cc-output">
-                      <pre>{{ toolCardOutput(m.toolCard) }}</pre>
-                    </div>
-                    <div v-if="!toolCardCommand(m.toolCard) && m.toolCard.args && Object.keys(m.toolCard.args).length > 0" class="tool-card-cc-output">
-                      <div class="tool-card-cc-section-label">Arguments</div>
-                      <pre>{{ JSON.stringify(m.toolCard.args, null, 2) }}</pre>
-                    </div>
-                    <div v-if="!toolCardCommand(m.toolCard) && m.toolCard.result !== undefined" class="tool-card-cc-output">
-                      <div class="tool-card-cc-section-label">Result</div>
-                      <pre>{{ typeof m.toolCard.result === 'string' ? m.toolCard.result : JSON.stringify(m.toolCard.result, null, 2) }}</pre>
-                    </div>
-                    <div v-if="m.toolCard.error" class="tool-card-cc-error">
-                      {{ m.toolCard.error }}
-                    </div>
-                  </div>
-                </div>
-                <pre v-else class="prism-code language-shell"><code><span class="token plain">{{ m.content }}</span>
- </code></pre>
-              </div>
-
-              <div v-else-if="m.kind === 'channel_message'" class="max-w-[min(760px,92%)]">
-                <div class="rounded border border-indigo-200 dark:border-indigo-800/50 bg-indigo-50/50 dark:bg-indigo-950/20">
-                  <button
-                    type="button"
-                    class="w-full px-4 py-2 flex items-center justify-between text-left transition-colors hover:bg-indigo-100/50 dark:hover:bg-indigo-900/20"
-                    @click="toggleToolCard(m.id)"
-                  >
-                    <div class="flex items-center gap-2">
-                      <span class="rounded-full bg-indigo-100 dark:bg-indigo-900/40 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
-                        {{ m.channelMeta?.senderId || 'agent' }}
-                      </span>
-                      <span class="text-xs text-slate-500 dark:text-slate-400">channel message</span>
-                    </div>
-                    <svg
-                      width="16" height="16" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"
-                      class="text-slate-400 transition-transform"
-                      :class="isToolCardExpanded(m.id) ? 'rotate-180' : ''"
-                    >
-                      <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
-                    </svg>
-                  </button>
-                  <div v-show="isToolCardExpanded(m.id)" class="px-4 pb-3 text-sm text-slate-700 dark:text-slate-300" v-html="renderMarkdown(m.content)" />
-                </div>
-              </div>
-
-              <div v-else-if="m.kind === 'thinking'" class="thinking-bubble max-w-[min(760px,92%)]">
-                <div class="thinking-bubble-inner">
-                  <div class="thinking-bubble-content text-xs text-content-muted italic" v-html="renderMarkdown(m.content)" />
-                </div>
-              </div>
-
-              <div v-else class="max-w-[min(760px,92%)]">
-                <div v-if="m.image" class="space-y-2">
-                  <img
-                    :src="m.image.dataUrl"
-                    :alt="m.image.alt || ''"
-                    class="block h-auto max-w-full rounded-xl border border-black/10 dark:border-white/10"
-                  >
-                  <div v-if="m.image.alt" class="text-xs text-content-secondary">
-                    {{ m.image.alt }}
-                  </div>
-                </div>
-                <div v-else class="flex gap-3">
-                  <div class="sulla-avatar" aria-hidden="true">S</div>
-                  <div>
-                    <div class="sulla-name">Sulla</div>
-                    <div class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert" v-html="renderMarkdown(m.content)" />
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div
-              v-if="loading"
-              class="mb-3 flex justify-start"
-            >
-              <div class="relative max-w-[min(760px,92%)] whitespace-pre-wrap rounded-xl px-4 py-3 text-sm leading-6 text-content">
-                <div class="absolute -inset-px rounded-xl border-2 border-transparent [background:linear-gradient(var(--quick-links-hover-bg,var(--color-sky-50)),var(--quick-links-hover-bg,var(--color-sky-50)))_padding-box,linear-gradient(to_top,var(--color-indigo-400),var(--color-cyan-400),var(--color-sky-500))_border-box] dark:[--quick-links-hover-bg:var(--color-slate-800)]"></div>
-                <div class="relative">Thinking...</div>
-              </div>
-            </div>
-            <div v-if="showContinueButton" class="flex justify-end mb-3">
-              <button
-                type="button"
-                class="rounded-lg bg-content px-4 py-2 text-sm font-medium text-page shadow-sm hover:bg-surface-hover transition-colors"
-                @click="continueRun"
+              <div
+                v-for="m in displayMessages"
+                :key="m.id"
+                class="mb-8"
               >
-                Continue
-              </button>
+                <div
+                  v-if="m.role === 'user'"
+                  class="flex justify-end"
+                >
+                  <div class="max-w-[min(760px,92%)] rounded-3xl p-6 bg-surface-alt ring-1 ring-edge-subtle">
+                    <div class="whitespace-pre-wrap text-content">
+                      {{ m.content }}
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  v-else-if="m.kind === 'tool'"
+                  class="max-w-[min(760px,92%)]"
+                >
+                  <div
+                    v-if="m.toolCard"
+                    class="tool-card-cc"
+                    :class="{ expanded: isToolCardExpanded(m.id) }"
+                  >
+                    <!-- Header row: status dot + tool name + description -->
+                    <button
+                      type="button"
+                      class="tool-card-cc-header"
+                      @click="toggleToolCard(m.id)"
+                    >
+                      <span
+                        class="tool-card-cc-dot"
+                        :class="m.toolCard.status"
+                      />
+                      <span class="tool-card-cc-name">{{ toolCardLabel(m.toolCard) }}</span>
+                      <span
+                        v-if="m.toolCard.description"
+                        class="tool-card-cc-desc"
+                      >{{ m.toolCard.description }}</span>
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 15 15"
+                        fill="none"
+                        class="tool-card-cc-chevron"
+                        :class="{ open: isToolCardExpanded(m.id) }"
+                      >
+                        <path
+                          d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z"
+                          fill="currentColor"
+                          fill-rule="evenodd"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                    </button>
+                    <!-- Command line preview (always visible for exec-like tools) -->
+                    <div
+                      v-if="toolCardCommand(m.toolCard)"
+                      class="tool-card-cc-cmd"
+                    >
+                      <span class="tool-card-cc-cmd-label">IN</span>
+                      <code class="tool-card-cc-cmd-text">{{ toolCardCommand(m.toolCard) }}</code>
+                    </div>
+                    <!-- Exit code row (visible when result available) -->
+                    <div
+                      v-if="m.toolCard.status !== 'running' && toolCardCommand(m.toolCard)"
+                      class="tool-card-cc-cmd"
+                    >
+                      <span class="tool-card-cc-cmd-label">OUT</span>
+                      <code
+                        class="tool-card-cc-cmd-text tool-card-cc-exit"
+                        :class="m.toolCard.status"
+                      >{{ m.toolCard.status === 'success' ? '0' : '1' }}</code>
+                    </div>
+                    <!-- Expanded details -->
+                    <div
+                      v-show="isToolCardExpanded(m.id)"
+                      class="tool-card-cc-body"
+                    >
+                      <div
+                        v-if="toolCardOutput(m.toolCard)"
+                        class="tool-card-cc-output"
+                      >
+                        <pre>{{ toolCardOutput(m.toolCard) }}</pre>
+                      </div>
+                      <div
+                        v-if="!toolCardCommand(m.toolCard) && m.toolCard.args && Object.keys(m.toolCard.args).length > 0"
+                        class="tool-card-cc-output"
+                      >
+                        <div class="tool-card-cc-section-label">
+                          Arguments
+                        </div>
+                        <pre>{{ JSON.stringify(m.toolCard.args, null, 2) }}</pre>
+                      </div>
+                      <div
+                        v-if="!toolCardCommand(m.toolCard) && m.toolCard.result !== undefined"
+                        class="tool-card-cc-output"
+                      >
+                        <div class="tool-card-cc-section-label">
+                          Result
+                        </div>
+                        <pre>{{ typeof m.toolCard.result === 'string' ? m.toolCard.result : JSON.stringify(m.toolCard.result, null, 2) }}</pre>
+                      </div>
+                      <div
+                        v-if="m.toolCard.error"
+                        class="tool-card-cc-error"
+                      >
+                        {{ m.toolCard.error }}
+                      </div>
+                    </div>
+                  </div>
+                  <pre
+                    v-else
+                    class="prism-code language-shell"
+                  ><code><span class="token plain">{{ m.content }}</span>
+ </code></pre>
+                </div>
+
+                <div
+                  v-else-if="m.kind === 'channel_message'"
+                  class="max-w-[min(760px,92%)]"
+                >
+                  <div class="rounded border border-indigo-200 dark:border-indigo-800/50 bg-indigo-50/50 dark:bg-indigo-950/20">
+                    <button
+                      type="button"
+                      class="w-full px-4 py-2 flex items-center justify-between text-left transition-colors hover:bg-indigo-100/50 dark:hover:bg-indigo-900/20"
+                      @click="toggleToolCard(m.id)"
+                    >
+                      <div class="flex items-center gap-2">
+                        <span class="rounded-full bg-indigo-100 dark:bg-indigo-900/40 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                          {{ m.channelMeta?.senderId || 'agent' }}
+                        </span>
+                        <span class="text-xs text-slate-500 dark:text-slate-400">channel message</span>
+                      </div>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 15 15"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                        class="text-slate-400 transition-transform"
+                        :class="isToolCardExpanded(m.id) ? 'rotate-180' : ''"
+                      >
+                        <path
+                          d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z"
+                          fill="currentColor"
+                          fill-rule="evenodd"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                    </button>
+                    <div
+                      v-show="isToolCardExpanded(m.id)"
+                      class="px-4 pb-3 text-sm text-slate-700 dark:text-slate-300"
+                      v-html="renderMarkdown(m.content)"
+                    />
+                  </div>
+                </div>
+
+                <div
+                  v-else-if="m.kind === 'thinking'"
+                  class="thinking-bubble max-w-[min(760px,92%)]"
+                >
+                  <div class="thinking-bubble-inner">
+                    <div
+                      class="thinking-bubble-content text-xs text-content-muted italic"
+                      v-html="renderMarkdown(m.content)"
+                    />
+                  </div>
+                </div>
+
+                <div
+                  v-else
+                  class="max-w-[min(760px,92%)]"
+                >
+                  <div
+                    v-if="m.image"
+                    class="space-y-2"
+                  >
+                    <img
+                      :src="m.image.dataUrl"
+                      :alt="m.image.alt || ''"
+                      class="block h-auto max-w-full rounded-xl border border-black/10 dark:border-white/10"
+                    >
+                    <div
+                      v-if="m.image.alt"
+                      class="text-xs text-content-secondary"
+                    >
+                      {{ m.image.alt }}
+                    </div>
+                  </div>
+                  <div
+                    v-else
+                    class="flex gap-3"
+                  >
+                    <div
+                      class="sulla-avatar"
+                      aria-hidden="true"
+                    >
+                      S
+                    </div>
+                    <div>
+                      <div class="sulla-name">
+                        Sulla
+                      </div>
+                      <div
+                        class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
+                        v-html="renderMarkdown(m.content)"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div
+                v-if="loading"
+                class="mb-3 flex justify-start"
+              >
+                <div class="relative max-w-[min(760px,92%)] whitespace-pre-wrap rounded-xl px-4 py-3 text-sm leading-6 text-content">
+                  <div class="absolute -inset-px rounded-xl border-2 border-transparent [background:linear-gradient(var(--quick-links-hover-bg,var(--color-sky-50)),var(--quick-links-hover-bg,var(--color-sky-50)))_padding-box,linear-gradient(to_top,var(--color-indigo-400),var(--color-cyan-400),var(--color-sky-500))_border-box] dark:[--quick-links-hover-bg:var(--color-slate-800)]" />
+                  <div class="relative">
+                    Thinking...
+                  </div>
+                </div>
+              </div>
+              <div
+                v-if="showContinueButton"
+                class="flex justify-end mb-3"
+              >
+                <button
+                  type="button"
+                  class="rounded-lg bg-content px-4 py-2 text-sm font-medium text-page shadow-sm hover:bg-surface-hover transition-colors"
+                  @click="continueRun"
+                >
+                  Continue
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Composer: in-flow below chat (not fixed) when messages exist -->
-    <div
-      v-if="hasMessages"
-      class="flex-none border-t border-edge bg-page/80 backdrop-blur"
-      :class="{ 'blur-sm pointer-events-none select-none': showOverlay }"
-    >
-      <div class="relative mx-auto flex w-full max-w-8xl justify-center sm:px-2 lg:px-8 xl:px-12">
-        <div class="max-w-2xl min-w-0 flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16">
-          <div class="pb-3">
-            <div class="flex h-full flex-col items-center">
-              <AgentComposer
-                v-model="query"
-                :loading="loading"
-                :show-overlay="showOverlay"
-                :has-messages="hasMessages"
-                :graph-running="graphRunning"
-                :model-selector="modelSelector"
-                @send="send"
-                @stop="stop"
-                @primary-action="handlePrimaryAction"
-              />
+      <!-- Composer: in-flow below chat (not fixed) when messages exist -->
+      <div
+        v-if="hasMessages"
+        class="flex-none border-t border-edge bg-page/80 backdrop-blur"
+        :class="{ 'blur-sm pointer-events-none select-none': showOverlay }"
+      >
+        <div class="relative mx-auto flex w-full max-w-8xl justify-center sm:px-2 lg:px-8 xl:px-12">
+          <div class="max-w-2xl min-w-0 flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16">
+            <div class="pb-3">
+              <div class="flex h-full flex-col items-center">
+                <AgentComposer
+                  v-model="query"
+                  :loading="loading"
+                  :show-overlay="showOverlay"
+                  :has-messages="hasMessages"
+                  :graph-running="graphRunning"
+                  :model-selector="modelSelector"
+                  @send="send"
+                  @stop="stop"
+                  @primary-action="handlePrimaryAction"
+                />
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Empty state: centered composer -->
-    <div v-else class="flex min-h-0 flex-1 items-center justify-center bg-page" :class="{ 'blur-sm pointer-events-none select-none': showOverlay }">
-      <div class="w-full px-4">
-        <div class="flex h-full flex-col items-center justify-center">
-          <AgentComposer
-            v-model="query"
-            form-class="group/composer mx-auto mb-3 w-full max-w-3xl"
-            panel-class="z-10"
-            :loading="loading"
-            :show-overlay="showOverlay"
-            :has-messages="hasMessages"
-            :graph-running="graphRunning"
-            :model-selector="modelSelector"
-            @send="send"
-            @stop="stop"
-            @primary-action="handlePrimaryAction"
-          />
+      <!-- Empty state: centered composer -->
+      <div
+        v-else
+        class="flex min-h-0 flex-1 items-center justify-center bg-page"
+        :class="{ 'blur-sm pointer-events-none select-none': showOverlay }"
+      >
+        <div class="w-full px-4">
+          <div class="flex h-full flex-col items-center justify-center">
+            <AgentComposer
+              v-model="query"
+              form-class="group/composer mx-auto mb-3 w-full max-w-3xl"
+              panel-class="z-10"
+              :loading="loading"
+              :show-overlay="showOverlay"
+              :has-messages="hasMessages"
+              :graph-running="graphRunning"
+              :model-selector="modelSelector"
+              @send="send"
+              @stop="stop"
+              @primary-action="handlePrimaryAction"
+            />
+          </div>
         </div>
       </div>
-    </div>
-
     </div>
   </div>
 </template>
@@ -227,7 +348,6 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import './assets/AgentModelSelector.css';
 
-
 const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|flac|m4a|aac|webm)$/i;
 
 const audioRenderer: marked.RendererObject = {
@@ -235,15 +355,20 @@ const audioRenderer: marked.RendererObject = {
     if (href && AUDIO_EXTENSIONS.test(href)) {
       const fileName = text || href.split('/').pop() || 'audio';
       const mimeMap: Record<string, string> = {
-        mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg',
-        flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm',
+        mp3:  'audio/mpeg',
+        wav:  'audio/wav',
+        ogg:  'audio/ogg',
+        flac: 'audio/flac',
+        m4a:  'audio/mp4',
+        aac:  'audio/aac',
+        webm: 'audio/webm',
       };
-      const ext = (href.match(AUDIO_EXTENSIONS)?.[1] || 'mp3').toLowerCase();
+      const ext = ((AUDIO_EXTENSIONS.exec(href))?.[1] || 'mp3').toLowerCase();
       const mime = mimeMap[ext] || 'audio/mpeg';
       return `<div class="sulla-audio-player">
-        <div class="sulla-audio-label">${fileName}</div>
+        <div class="sulla-audio-label">${ fileName }</div>
         <audio controls preload="metadata">
-          <source src="${href}" type="${mime}">
+          <source src="${ href }" type="${ mime }">
         </audio>
       </div>`;
     }
@@ -257,9 +382,9 @@ const renderMarkdown = (markdown: string): string => {
   const raw = typeof markdown === 'string' ? markdown : String(markdown || '');
   const html = (marked(raw) as string) || '';
   return DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    ADD_TAGS: ['audio', 'source'],
-    ADD_ATTR: ['controls', 'preload', 'src', 'type'],
+    USE_PROFILES:       { html: true },
+    ADD_TAGS:           ['audio', 'source'],
+    ADD_ATTR:           ['controls', 'preload', 'src', 'type'],
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|file):|data:image\/(?:png|gif|jpe?g|webp);base64,|\/|\.|#)/i,
   });
 };
@@ -314,7 +439,7 @@ const continueRun = () => {
   chatController.continueRun();
 };
 
-const handleModelChanged = async (event: Electron.IpcRendererEvent, data: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string }) => {
+const handleModelChanged = async(event: Electron.IpcRendererEvent, data: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string }) => {
   modelName.value = data.model;
   modelMode.value = data.type;
   // Reload model selector so its internal remote refs stay in sync
@@ -414,7 +539,7 @@ function attachScrollListeners(container: HTMLElement): void {
 
     if (wasEnabled !== autoScrollEnabled.value) {
       console.log('[Auto-Scroll] State changed:', autoScrollEnabled.value ? 'ENABLED' : 'DISABLED',
-                  `(${Math.round(distanceFromBottom)}px from bottom)`);
+        `(${ Math.round(distanceFromBottom) }px from bottom)`);
     }
   }, { passive: true });
 }
@@ -433,18 +558,18 @@ onMounted(() => {
 });
 
 // Auto-scroll to bottom when messages change (only if enabled)
-watch(() => messages.value.length, async () => {
+watch(() => messages.value.length, async() => {
   await nextTick();
   const container = chatScrollContainer.value;
   if (!container) {
     return;
   }
-  
+
   if (!autoScrollEnabled.value) {
     console.log('[Auto-Scroll] SKIPPED - user scrolled up, messages count:', messages.value.length);
     return;
   }
-  
+
   console.log('[Auto-Scroll] Scrolling to bottom, messages count:', messages.value.length);
   container.scrollTop = container.scrollHeight; // Instant scroll, no smooth behavior
 }, { flush: 'post' });
@@ -459,7 +584,7 @@ const modelSelector = new AgentModelSelectorController({
   isRunning,
 });
 
-onMounted(async () => {
+onMounted(async() => {
   const n8nVueBridgeService = getN8nVueBridgeService();
   n8nVueBridgeService.markInitialized('Agent.vue:onMounted');
 
@@ -479,7 +604,7 @@ onMounted(async () => {
 });
 
 // Re-sync settings when system is fully ready (bootstrap may have updated values)
-watch(systemReady, async (ready) => {
+watch(systemReady, async(ready) => {
   if (ready) {
     await settingsController.start();
     await modelSelector.start();
@@ -503,7 +628,6 @@ const stop = () => {
 const handlePrimaryAction = () => {
   if (query.value.trim()) {
     send();
-    return;
   }
   // Voice mode is a UI affordance for now; actual voice wiring can be added later.
 };

@@ -16,7 +16,7 @@ import { FsPathInfoWorker, fsPathInfoRegistration } from '../path_info';
 
 function configureWorker<T extends { name: string; description: string; schemaDef: any }>(
   worker: T,
-  registration: { name: string; description: string; schemaDef: any }
+  registration: { name: string; description: string; schemaDef: any },
 ): T {
   worker.name = registration.name;
   worker.description = registration.description;
@@ -25,12 +25,12 @@ function configureWorker<T extends { name: string; description: string; schemaDe
 }
 
 describe('fs tool category', () => {
-  it('manages files end-to-end in a created workspace (mkdir, write, append, copy, move, list, info, delete)', async () => {
-    const workspaceName = `jest-fs-workspace-${Date.now()}`;
+  it('manages files end-to-end in a created workspace (mkdir, write, append, copy, move, list, info, delete)', async() => {
+    const workspaceName = `jest-fs-workspace-${ Date.now() }`;
     const workspaceRoot = path.join(
       os.homedir(),
       'workspaces',
-      workspaceName
+      workspaceName,
     );
     const projectDir = path.join(workspaceRoot, 'project');
     const docsDir = path.join(projectDir, 'docs');
@@ -55,7 +55,7 @@ describe('fs tool category', () => {
 
     const createWorkspaceResult = await createWorkspaceWorker.invoke({ name: workspaceName });
     expect(createWorkspaceResult.success).toBe(true);
-    expect(createWorkspaceResult.result).toContain(`workspaces/${workspaceName}`);
+    expect(createWorkspaceResult.result).toContain(`workspaces/${ workspaceName }`);
     expect(fs.existsSync(workspaceRoot)).toBe(true);
 
     const mkdirResult = await mkdirWorker.invoke({ path: docsDir });

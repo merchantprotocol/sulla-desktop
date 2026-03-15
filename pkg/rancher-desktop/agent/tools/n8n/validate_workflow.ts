@@ -4,32 +4,32 @@ import { postgresClient } from '../../database/PostgresClient';
 
 type JsonRecord = Record<string, any>;
 
-type ConnectionEdge = {
-  sourceNode: string;
+interface ConnectionEdge {
+  sourceNode:        string;
   sourceOutputIndex: number;
-  sourceType: string;
-  targetNode: string;
-  targetInputIndex: number;
-  targetType: string;
-};
+  sourceType:        string;
+  targetNode:        string;
+  targetInputIndex:  number;
+  targetType:        string;
+}
 
-type WebhookIssue = {
-  nodeId: string;
-  nodeName: string;
-  issue: 'webhook_path_naming' | 'webhook_not_registered' | 'webhook_path_collision';
-  severity: 'critical' | 'high' | 'medium';
-  expectedPath: string;
+interface WebhookIssue {
+  nodeId:               string;
+  nodeName:             string;
+  issue:                'webhook_path_naming' | 'webhook_not_registered' | 'webhook_path_collision';
+  severity:             'critical' | 'high' | 'medium';
+  expectedPath:         string;
   actualRegisteredPath: string | null;
-  problem: string;
-  recommendation: string;
-};
+  problem:              string;
+  recommendation:       string;
+}
 
-type WebhookEntityRow = {
+interface WebhookEntityRow {
   webhookPath: string;
-  method: string;
-  node: string | null;
-  workflowId: string;
-};
+  method:      string;
+  node:        string | null;
+  workflowId:  string;
+}
 
 function toKebabCase(value: string): string {
   const trimmed = String(value || '').trim();
@@ -84,11 +84,11 @@ function asEdgeArray(value: unknown): JsonRecord[] {
 }
 
 function collectEdges(connectionsRaw: unknown): {
-  edges: ConnectionEdge[];
-  brokenConnections: Array<{ sourceNode: string; issue: string; detail?: string }>;
+  edges:             ConnectionEdge[];
+  brokenConnections: { sourceNode: string; issue: string; detail?: string }[];
 } {
   const edges: ConnectionEdge[] = [];
-  const brokenConnections: Array<{ sourceNode: string; issue: string; detail?: string }> = [];
+  const brokenConnections: { sourceNode: string; issue: string; detail?: string }[] = [];
   const connections = asRecord(connectionsRaw);
 
   for (const [sourceNode, byTypeRaw] of Object.entries(connections)) {
@@ -103,8 +103,8 @@ function collectEdges(connectionsRaw: unknown): {
         if (!Array.isArray(targetsRaw)) {
           brokenConnections.push({
             sourceNode,
-            issue: 'malformed_output_bucket',
-            detail: `Expected array at ${sourceType}[${sourceOutputIndex}]`,
+            issue:  'malformed_output_bucket',
+            detail: `Expected array at ${ sourceType }[${ sourceOutputIndex }]`,
           });
           return;
         }
@@ -115,8 +115,8 @@ function collectEdges(connectionsRaw: unknown): {
           if (!targetNode) {
             brokenConnections.push({
               sourceNode,
-              issue: 'missing_target_node',
-              detail: `Missing target node at ${sourceType}[${sourceOutputIndex}]`,
+              issue:  'missing_target_node',
+              detail: `Missing target node at ${ sourceType }[${ sourceOutputIndex }]`,
             });
             continue;
           }
@@ -124,10 +124,10 @@ function collectEdges(connectionsRaw: unknown): {
           edges.push({
             sourceNode,
             sourceOutputIndex,
-            sourceType: String(sourceType || 'main'),
+            sourceType:       String(sourceType || 'main'),
             targetNode,
             targetInputIndex: Number(target.index ?? 0),
-            targetType: String(target.type || 'main'),
+            targetType:       String(target.type || 'main'),
           });
         }
       });
@@ -156,14 +156,14 @@ export class ValidateWorkflowWorker extends BaseTool {
       const credentials = Array.isArray(workflow?.credentials) ? workflow.credentials : [];
 
       const nodeNames = new Set(
-        nodes.map((node: any) => String(node?.name || '').trim()).filter(Boolean)
+        nodes.map((node: any) => String(node?.name || '').trim()).filter(Boolean),
       );
 
       const credentialIds = new Set(
-        credentials.map((cred: any) => String(cred?.id || '').trim()).filter(Boolean)
+        credentials.map((cred: any) => String(cred?.id || '').trim()).filter(Boolean),
       );
       const credentialNames = new Set(
-        credentials.map((cred: any) => String(cred?.name || '').trim()).filter(Boolean)
+        credentials.map((cred: any) => String(cred?.name || '').trim()).filter(Boolean),
       );
 
       const { edges, brokenConnections } = collectEdges(connections);
@@ -172,15 +172,15 @@ export class ValidateWorkflowWorker extends BaseTool {
         if (!nodeNames.has(edge.sourceNode)) {
           brokenConnections.push({
             sourceNode: edge.sourceNode,
-            issue: 'source_node_missing',
-            detail: `Source node ${edge.sourceNode} not found in workflow nodes`,
+            issue:      'source_node_missing',
+            detail:     `Source node ${ edge.sourceNode } not found in workflow nodes`,
           });
         }
         if (!nodeNames.has(edge.targetNode)) {
           brokenConnections.push({
             sourceNode: edge.sourceNode,
-            issue: 'target_node_missing',
-            detail: `Target node ${edge.targetNode} not found`,
+            issue:      'target_node_missing',
+            detail:     `Target node ${ edge.targetNode } not found`,
           });
         }
       }
@@ -201,7 +201,7 @@ export class ValidateWorkflowWorker extends BaseTool {
           return (inboundCount.get(name) || 0) === 0 && (outboundCount.get(name) || 0) === 0;
         })
         .map((node: any) => ({
-          id: String(node?.id || '').trim(),
+          id:   String(node?.id || '').trim(),
           name: String(node?.name || '').trim(),
           type: String(node?.type || '').trim(),
         }));
@@ -209,7 +209,7 @@ export class ValidateWorkflowWorker extends BaseTool {
       const nodesWithNoTypeConfigured = nodes
         .filter((node: any) => !String(node?.type || '').trim())
         .map((node: any) => ({
-          id: String(node?.id || '').trim(),
+          id:   String(node?.id || '').trim(),
           name: String(node?.name || '').trim(),
         }));
 
@@ -224,7 +224,7 @@ export class ValidateWorkflowWorker extends BaseTool {
             const name = String(credentialRef.name || '').trim();
 
             if (!id && !name) {
-              missing.push(`${credentialType}:missing_reference`);
+              missing.push(`${ credentialType }:missing_reference`);
               continue;
             }
 
@@ -232,7 +232,7 @@ export class ValidateWorkflowWorker extends BaseTool {
             const nameExists = name ? credentialNames.has(name) : false;
 
             if (!idExists && !nameExists) {
-              missing.push(`${credentialType}:${id || name}`);
+              missing.push(`${ credentialType }:${ id || name }`);
             }
           }
 
@@ -241,7 +241,7 @@ export class ValidateWorkflowWorker extends BaseTool {
           }
 
           return {
-            nodeId: String(node?.id || '').trim(),
+            nodeId:   String(node?.id || '').trim(),
             nodeName: String(node?.name || '').trim(),
             nodeType: String(node?.type || '').trim(),
             missing,
@@ -251,7 +251,7 @@ export class ValidateWorkflowWorker extends BaseTool {
 
       const webhookIssues: WebhookIssue[] = [];
       const webhookNodes = nodes.filter((node: any) => String(node?.type || '').trim() === 'n8n-nodes-base.webhook');
-      const workflowActive = Boolean((workflow as any)?.active);
+      const workflowActive = Boolean((workflow)?.active);
 
       let webhookRowsByWorkflow: WebhookEntityRow[] = [];
       if (webhookNodes.length > 0) {
@@ -269,7 +269,7 @@ export class ValidateWorkflowWorker extends BaseTool {
         const nodeName = String(webhookNode?.name || '').trim();
         const kebabNodeName = toKebabCase(nodeName);
         const customPath = normalizeWebhookPath(webhookNode?.parameters?.path);
-        const expectedPath = `${workflowId}/${kebabNodeName}/${customPath}`;
+        const expectedPath = `${ workflowId }/${ kebabNodeName }/${ customPath }`;
         const method = normalizeMethod(webhookNode?.parameters?.httpMethod);
 
         const matchingRegistration = webhookRowsByWorkflow.find((row) => {
@@ -287,12 +287,12 @@ export class ValidateWorkflowWorker extends BaseTool {
           webhookIssues.push({
             nodeId,
             nodeName,
-            issue: 'webhook_path_naming',
-            severity: 'high',
+            issue:          'webhook_path_naming',
+            severity:       'high',
             expectedPath,
             actualRegisteredPath,
-            problem: `Node name '${nodeName}' may produce unexpected webhook registration path segments after normalization.`,
-            recommendation: `Rename node to kebab-case '${kebabNodeName || 'webhook-trigger'}' to avoid casing/special character path mismatches.`,
+            problem:        `Node name '${ nodeName }' may produce unexpected webhook registration path segments after normalization.`,
+            recommendation: `Rename node to kebab-case '${ kebabNodeName || 'webhook-trigger' }' to avoid casing/special character path mismatches.`,
           });
         }
 
@@ -300,11 +300,11 @@ export class ValidateWorkflowWorker extends BaseTool {
           webhookIssues.push({
             nodeId,
             nodeName,
-            issue: 'webhook_not_registered',
-            severity: 'critical',
+            issue:          'webhook_not_registered',
+            severity:       'critical',
             expectedPath,
             actualRegisteredPath,
-            problem: 'Workflow is active but no webhook_entity registration was found for this webhook node/path.',
+            problem:        'Workflow is active but no webhook_entity registration was found for this webhook node/path.',
             recommendation: 'Restart n8n container; webhook registrations are applied at startup and may not refresh on API activation alone.',
           });
         }
@@ -322,27 +322,27 @@ export class ValidateWorkflowWorker extends BaseTool {
           webhookIssues.push({
             nodeId,
             nodeName,
-            issue: 'webhook_path_collision',
-            severity: 'critical',
+            issue:          'webhook_path_collision',
+            severity:       'critical',
             expectedPath,
             actualRegisteredPath,
-            problem: `Multiple workflows share webhookPath + method (${expectedPath} ${method}), which prevents reliable webhook registration/routing.`,
+            problem:        `Multiple workflows share webhookPath + method (${ expectedPath } ${ method }), which prevents reliable webhook registration/routing.`,
             recommendation: 'Use a unique webhook path per workflow/node (for example include workflow purpose or node slug in path).',
           });
         }
       }
 
       const report = {
-        workflowId: String(workflow?.id || workflowId),
+        workflowId:   String(workflow?.id || workflowId),
         workflowName: String(workflow?.name || ''),
-        summary: {
-          nodeCount: nodes.length,
-          edgeCount: edges.length,
-          floatingNodeCount: floatingNodes.length,
+        summary:      {
+          nodeCount:                  nodes.length,
+          edgeCount:                  edges.length,
+          floatingNodeCount:          floatingNodes.length,
           missingCredentialNodeCount: missingCredentials.length,
-          brokenConnectionCount: brokenConnections.length,
-          nodesWithNoTypeCount: nodesWithNoTypeConfigured.length,
-          webhookIssueCount: webhookIssues.length,
+          brokenConnectionCount:      brokenConnections.length,
+          nodesWithNoTypeCount:       nodesWithNoTypeConfigured.length,
+          webhookIssueCount:          webhookIssues.length,
         },
         floatingNodes,
         missingCredentials,
@@ -350,11 +350,11 @@ export class ValidateWorkflowWorker extends BaseTool {
         nodesWithNoTypeConfigured,
         webhookIssues,
         valid:
-          floatingNodes.length === 0
-          && missingCredentials.length === 0
-          && brokenConnections.length === 0
-          && nodesWithNoTypeConfigured.length === 0
-          && webhookIssues.length === 0,
+          floatingNodes.length === 0 &&
+          missingCredentials.length === 0 &&
+          brokenConnections.length === 0 &&
+          nodesWithNoTypeConfigured.length === 0 &&
+          webhookIssues.length === 0,
       };
 
       return {
@@ -364,9 +364,8 @@ export class ValidateWorkflowWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error validating workflow: ${(error as Error).message}`,
+        responseString: `Error validating workflow: ${ (error as Error).message }`,
       };
     }
   }
 }
-

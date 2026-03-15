@@ -45,7 +45,7 @@ export class IntegrationConfigLoader {
     this.clients.clear();
 
     if (!fs.existsSync(this.integrationsDir)) {
-      console.warn(`${LOG} Integrations directory not found: ${this.integrationsDir}`);
+      console.warn(`${ LOG } Integrations directory not found: ${ this.integrationsDir }`);
       return;
     }
 
@@ -58,14 +58,14 @@ export class IntegrationConfigLoader {
         if (loaded) {
           this.integrations.set(dir.name, loaded);
           this.clients.set(dir.name, new ConfigApiClient(loaded, dir.name));
-          console.log(`${LOG} Loaded integration: ${dir.name} (${loaded.endpoints.size} endpoints)`);
+          console.log(`${ LOG } Loaded integration: ${ dir.name } (${ loaded.endpoints.size } endpoints)`);
         }
       } catch (err) {
-        console.error(`${LOG} Failed to load integration "${dir.name}":`, err);
+        console.error(`${ LOG } Failed to load integration "${ dir.name }":`, err);
       }
     }
 
-    console.log(`${LOG} Loaded ${this.integrations.size} integration(s): ${[...this.integrations.keys()].join(', ')}`);
+    console.log(`${ LOG } Loaded ${ this.integrations.size } integration(s): ${ [...this.integrations.keys()].join(', ') }`);
   }
 
   /** Get a client by integration name (directory name) */
@@ -107,7 +107,7 @@ export class IntegrationConfigLoader {
     // Find auth config file
     const authFile = files.find(f => AUTH_FILE_PATTERN.test(f));
     if (!authFile) {
-      console.warn(`${LOG} No auth config found in ${dir} (expected *-auth.yaml)`);
+      console.warn(`${ LOG } No auth config found in ${ dir } (expected *-auth.yaml)`);
       return null;
     }
 
@@ -115,7 +115,7 @@ export class IntegrationConfigLoader {
     const authConfig = yaml.parse(authRaw) as IntegrationAuthConfig;
 
     if (!authConfig?.api?.base_url) {
-      console.warn(`${LOG} Auth config in ${dir}/${authFile} missing api.base_url`);
+      console.warn(`${ LOG } Auth config in ${ dir }/${ authFile } missing api.base_url`);
       return null;
     }
 
@@ -131,10 +131,10 @@ export class IntegrationConfigLoader {
         if (epConfig?.endpoint?.name && epConfig?.endpoint?.path) {
           endpoints.set(epConfig.endpoint.name, epConfig);
         } else {
-          console.warn(`${LOG} Skipping ${dir}/${epFile}: missing endpoint.name or endpoint.path`);
+          console.warn(`${ LOG } Skipping ${ dir }/${ epFile }: missing endpoint.name or endpoint.path`);
         }
       } catch (err) {
-        console.error(`${LOG} Failed to parse ${dir}/${epFile}:`, err);
+        console.error(`${ LOG } Failed to parse ${ dir }/${ epFile }:`, err);
       }
     }
 

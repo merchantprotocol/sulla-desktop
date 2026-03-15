@@ -10,11 +10,11 @@ import { skillsRegistry } from './registry/SkillsRegistry';
 import { projectRegistry } from './registry/ProjectRegistry';
 
 const MIGRATIONS_TABLE = 'sulla_migrations';
-const SEEDERS_TABLE   = 'sulla_seeders';
+const SEEDERS_TABLE = 'sulla_seeders';
 
 interface TrackedItem {
-  id: number;
-  name: string;
+  id:          number;
+  name:        string;
   executed_at: Date;
 }
 
@@ -42,7 +42,7 @@ export class DatabaseManager {
       const delay = INITIAL_DELAY * Math.pow(1.5, attempt - 1); // ~3s → ~30s backoff
 
       try {
-        console.log(`[DB] Attempt ${attempt}/${MAX_ATTEMPTS} — connecting...`);
+        console.log(`[DB] Attempt ${ attempt }/${ MAX_ATTEMPTS } — connecting...`);
 
         // Fresh client each attempt — prevents poisoning
         const client = new PostgresClient(); // create fresh instance
@@ -52,7 +52,6 @@ export class DatabaseManager {
         await client.query('SELECT 1');
         console.log('[DB] Connection healthy');
         this.initialized = true;
-
 
         // One-time setup
         await this.runMigrations();
@@ -79,9 +78,8 @@ export class DatabaseManager {
 
         console.log('[DB] Database fully initialized');
         return;
-
       } catch (err: any) {
-        console.debug(`[DB] Attempt ${attempt} failed: ${err.message || err}`);
+        console.debug(`[DB] Attempt ${ attempt } failed: ${ err.message || err }`);
 
         if (attempt === MAX_ATTEMPTS) {
           console.error('[DB] Gave up after max attempts — database unavailable');
@@ -107,7 +105,7 @@ export class DatabaseManager {
   }
 
   private async getExecuted(table: string): Promise<Set<string>> {
-    const res = await postgresClient.query(`SELECT name FROM ${table}`);
+    const res = await postgresClient.query(`SELECT name FROM ${ table }`);
     return new Set(res.map((r: TrackedItem) => r.name));
   }
 
@@ -117,7 +115,7 @@ export class DatabaseManager {
     // Ensure migrations table exists
     try {
       await postgresClient.query(`
-        CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
+        CREATE TABLE IF NOT EXISTS ${ MIGRATIONS_TABLE } (
           id SERIAL PRIMARY KEY,
           name VARCHAR(255) UNIQUE NOT NULL,
           executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -134,33 +132,33 @@ export class DatabaseManager {
     }
 
     const executed = await this.getExecuted(MIGRATIONS_TABLE);
-    
+
     // Log migration counts
     const totalMigrations = migrationsRegistry.length;
-    const alreadyRunCount = Array.from(executed).filter(name => 
-      migrationsRegistry.some(mig => mig.name === name)
+    const alreadyRunCount = Array.from(executed).filter(name =>
+      migrationsRegistry.some(mig => mig.name === name),
     ).length;
     const needToRunCount = totalMigrations - alreadyRunCount;
-    
-    console.log(`[DB] ${alreadyRunCount} migrations already run, ${needToRunCount} migrations need to be run`);
+
+    console.log(`[DB] ${ alreadyRunCount } migrations already run, ${ needToRunCount } migrations need to be run`);
 
     for (const mig of migrationsRegistry) {
       if (executed.has(mig.name)) {
-        console.log(`[DB] Skip migration (already run): ${mig.name}`);
+        console.log(`[DB] Skip migration (already run): ${ mig.name }`);
         continue;
       }
 
       try {
-        console.log(`[DB] Running migration: ${mig.name}`);
+        console.log(`[DB] Running migration: ${ mig.name }`);
         await postgresClient.query(mig.up);
 
         await postgresClient.query(
-          `INSERT INTO ${MIGRATIONS_TABLE} (name) VALUES ($1) ON CONFLICT DO NOTHING`,
-          [mig.name]
+          `INSERT INTO ${ MIGRATIONS_TABLE } (name) VALUES ($1) ON CONFLICT DO NOTHING`,
+          [mig.name],
         );
-        console.log(`[DB] Migration completed: ${mig.name}`);
+        console.log(`[DB] Migration completed: ${ mig.name }`);
       } catch (err) {
-        console.error(`Migration failed: ${mig.name}`, err);
+        console.error(`Migration failed: ${ mig.name }`, err);
         throw err; // fail fast on migrations
       }
     }
@@ -175,20 +173,20 @@ export class DatabaseManager {
 
     for (const seeder of seedersRegistry) {
       if (executed.has(seeder.name)) {
-        console.log(`[DB] Skip seeder (already run): ${seeder.name}`);
+        console.log(`[DB] Skip seeder (already run): ${ seeder.name }`);
         continue;
       }
 
       try {
-        console.log(`[DB] Running seeder: ${seeder.name}`);
+        console.log(`[DB] Running seeder: ${ seeder.name }`);
         await seeder.run();
 
         await postgresClient.query(
-          `INSERT INTO ${SEEDERS_TABLE} (name) VALUES ($1) ON CONFLICT DO NOTHING`,
-          [seeder.name]
+          `INSERT INTO ${ SEEDERS_TABLE } (name) VALUES ($1) ON CONFLICT DO NOTHING`,
+          [seeder.name],
         );
       } catch (err) {
-        console.error(`Seeder failed: ${seeder.name}`, err);
+        console.error(`Seeder failed: ${ seeder.name }`, err);
         // seeders usually non-fatal → continue
       }
     }

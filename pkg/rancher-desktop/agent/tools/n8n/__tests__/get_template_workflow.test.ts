@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from '@jest/globals';
 let N8nServiceClass: any;
 
 describe('get_template_workflow production integration', () => {
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
 
@@ -17,7 +17,7 @@ describe('get_template_workflow production integration', () => {
     N8nServiceClass = mod.N8nService;
   });
 
-  it('returns non-empty template workflow payload for a real template id from public search', async () => {
+  it('returns non-empty template workflow payload for a real template id from public search', async() => {
     const service = new N8nServiceClass();
 
     const searchResult = await service.searchTemplates({ search: 'news', limit: 10 });
@@ -44,10 +44,10 @@ describe('get_template_workflow production integration', () => {
     expect(Object.keys(templateWorkflow).length).toBeGreaterThan(0);
 
     const hasUsefulFields = Boolean(
-      templateWorkflow.id
-      || templateWorkflow.name
-      || templateWorkflow.description
-      || (Array.isArray(templateWorkflow.nodes) && templateWorkflow.nodes.length > 0),
+      templateWorkflow.id ||
+      templateWorkflow.name ||
+      templateWorkflow.description ||
+      (Array.isArray(templateWorkflow.nodes) && templateWorkflow.nodes.length > 0),
     );
 
     expect(hasUsefulFields).toBe(true);

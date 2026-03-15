@@ -1,8 +1,14 @@
 <template>
-  <div class="h-screen overflow-hidden font-sans flex flex-col page-root" :class="{ dark: isDark }">
+  <div
+    class="h-screen overflow-hidden font-sans flex flex-col page-root"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="AgentCalendar" />
     <div class="flex flex-1 min-h-0 flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+      <AgentHeader
+        :is-dark="isDark"
+        :toggle-theme="toggleTheme"
+      />
 
       <div class="flex items-center justify-end px-4 py-3">
         <button
@@ -10,7 +16,17 @@
           class="flex h-10 items-center gap-2 rounded-full border border-black/10 bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
           @click="showAddEventModal = true"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M12 5v14M5 12h14" />
           </svg>
           Add Event
@@ -23,9 +39,15 @@
     </div>
 
     <!-- Add Event Modal -->
-    <div v-if="showAddEventModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="closeModal">
+    <div
+      v-if="showAddEventModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      @click.self="closeModal"
+    >
       <div class="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-neutral-900">
-        <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">Add Event</h2>
+        <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">
+          Add Event
+        </h2>
 
         <div class="mt-4 space-y-4">
           <div>
@@ -35,7 +57,7 @@
               type="text"
               class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 placeholder-neutral-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white dark:placeholder-neutral-500"
               placeholder="Event title"
-            />
+            >
           </div>
 
           <div>
@@ -44,7 +66,7 @@
               v-model="newEventDate"
               type="date"
               class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white"
-            />
+            >
           </div>
 
           <div class="grid grid-cols-2 gap-4">
@@ -54,7 +76,7 @@
                 v-model="newEventStartTime"
                 type="time"
                 class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white"
-              />
+              >
             </div>
             <div>
               <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300">End Time</label>
@@ -62,7 +84,7 @@
                 v-model="newEventEndTime"
                 type="time"
                 class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white"
-              />
+              >
             </div>
           </div>
 
@@ -73,7 +95,7 @@
               type="text"
               class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 placeholder-neutral-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white dark:placeholder-neutral-500"
               placeholder="Location (optional)"
-            />
+            >
           </div>
 
           <div>
@@ -83,7 +105,7 @@
               rows="3"
               class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 placeholder-neutral-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white dark:placeholder-neutral-500"
               placeholder="Description (optional)"
-            ></textarea>
+            />
           </div>
         </div>
 
@@ -108,18 +130,34 @@
     </div>
 
     <!-- Event Info Modal -->
-    <div v-if="showEventInfoModal && selectedEvent" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="showEventInfoModal = false">
+    <div
+      v-if="showEventInfoModal && selectedEvent"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      @click.self="showEventInfoModal = false"
+    >
       <div class="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-neutral-900">
         <div class="flex items-start justify-between">
-          <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">{{ selectedEvent.title }}</h2>
+          <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">
+            {{ selectedEvent.title }}
+          </h2>
           <div class="flex items-center gap-1">
             <button
               type="button"
               class="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
-              @click="openEditModal"
               title="Edit event"
+              @click="openEditModal"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
                 <path d="m15 5 4 4" />
               </svg>
@@ -129,7 +167,17 @@
               class="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
               @click="showEventInfoModal = false"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>
             </button>
@@ -138,22 +186,56 @@
 
         <div class="mt-4 space-y-3">
           <div class="flex items-center gap-3 text-sm text-neutral-600 dark:text-neutral-400">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+              />
               <polyline points="12 6 12 12 16 14" />
             </svg>
             <span>{{ selectedEvent.start }} – {{ selectedEvent.end }}</span>
           </div>
 
-          <div v-if="selectedEvent.location" class="flex items-center gap-3 text-sm text-neutral-600 dark:text-neutral-400">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <div
+            v-if="selectedEvent.location"
+            class="flex items-center gap-3 text-sm text-neutral-600 dark:text-neutral-400"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
               <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
-              <circle cx="12" cy="10" r="3" />
+              <circle
+                cx="12"
+                cy="10"
+                r="3"
+              />
             </svg>
             <span>{{ selectedEvent.location }}</span>
           </div>
 
-          <div v-if="selectedEvent.description" class="pt-2 text-sm text-neutral-700 dark:text-neutral-300">
+          <div
+            v-if="selectedEvent.description"
+            class="pt-2 text-sm text-neutral-700 dark:text-neutral-300"
+          >
             {{ selectedEvent.description }}
           </div>
         </div>
@@ -171,9 +253,15 @@
     </div>
 
     <!-- Edit Event Modal -->
-    <div v-if="showEditEventModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="closeEditModal">
+    <div
+      v-if="showEditEventModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      @click.self="closeEditModal"
+    >
       <div class="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-neutral-900">
-        <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">Edit Event</h2>
+        <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">
+          Edit Event
+        </h2>
 
         <div class="mt-4 space-y-4">
           <div>
@@ -183,7 +271,7 @@
               type="text"
               class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 placeholder-neutral-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white dark:placeholder-neutral-500"
               placeholder="Event title"
-            />
+            >
           </div>
 
           <div>
@@ -192,7 +280,7 @@
               v-model="editEventDate"
               type="date"
               class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white"
-            />
+            >
           </div>
 
           <div class="grid grid-cols-2 gap-4">
@@ -202,7 +290,7 @@
                 v-model="editEventStartTime"
                 type="time"
                 class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white"
-              />
+              >
             </div>
             <div>
               <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300">End Time</label>
@@ -210,7 +298,7 @@
                 v-model="editEventEndTime"
                 type="time"
                 class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white"
-              />
+              >
             </div>
           </div>
 
@@ -221,7 +309,7 @@
               type="text"
               class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 placeholder-neutral-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white dark:placeholder-neutral-500"
               placeholder="Location (optional)"
-            />
+            >
           </div>
 
           <div>
@@ -231,7 +319,7 @@
               rows="3"
               class="mt-1 block w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-neutral-900 placeholder-neutral-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-neutral-800 dark:text-white dark:placeholder-neutral-500"
               placeholder="Description (optional)"
-            ></textarea>
+            />
           </div>
         </div>
 
@@ -291,12 +379,12 @@ const previewEventId = ref<string | null>(null);
 const skipNextCallback = ref(false);
 
 interface SelectedEvent {
-  id: number;
-  title: string;
-  start: string;
-  end: string;
+  id:           number;
+  title:        string;
+  start:        string;
+  end:          string;
   description?: string;
-  location?: string;
+  location?:    string;
 }
 const selectedEvent = ref<SelectedEvent | null>(null);
 const showEventInfoModal = ref(false);
@@ -335,7 +423,7 @@ const parseCalendarInstant = (value: unknown): Temporal.Instant => {
         return Temporal.Instant.fromEpochMilliseconds(parsedMs);
       }
 
-      console.warn(`[AgentCalendar] Unable to parse timestamp: ${timestamp}`);
+      console.warn(`[AgentCalendar] Unable to parse timestamp: ${ timestamp }`);
       return Temporal.Now.instant();
     }
   }
@@ -345,13 +433,13 @@ const systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const todayInLocalTz = Temporal.Now.zonedDateTimeISO(systemTimezone).toPlainDate();
 
 const calendar = createCalendar({
-  views: [createViewMonthGrid(), createViewMonthAgenda(), createViewWeek(), createViewDay()],
+  views:        [createViewMonthGrid(), createViewMonthAgenda(), createViewWeek(), createViewDay()],
   selectedDate: todayInLocalTz,
-  locale: 'en-US',
-  timezone: systemTimezone,
-  events: [],
-  plugins: [eventsService],
-  callbacks: {
+  locale:       'en-US',
+  timezone:     systemTimezone,
+  events:       [],
+  plugins:      [eventsService],
+  callbacks:    {
     onEventClick(calendarEvent) {
       if (String(calendarEvent.id).startsWith('preview-')) return;
 
@@ -361,57 +449,57 @@ const calendar = createCalendar({
       const endPlain = endZdt.toPlainDateTime();
 
       selectedEvent.value = {
-        id: Number(calendarEvent.id),
-        title: calendarEvent.title || '',
-        start: startPlain.toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
-        end: endPlain.toLocaleString('en-US', { timeStyle: 'short' }),
+        id:          Number(calendarEvent.id),
+        title:       calendarEvent.title || '',
+        start:       startPlain.toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
+        end:         endPlain.toLocaleString('en-US', { timeStyle: 'short' }),
         description: calendarEvent.description,
-        location: calendarEvent.location,
+        location:    calendarEvent.location,
       };
       showEventInfoModal.value = true;
     },
     onClickDateTime(dateTime) {
-      const clickedZdt = dateTime as Temporal.ZonedDateTime;
+      const clickedZdt = dateTime;
       const clickedPlain = clickedZdt.toPlainDateTime();
 
       newEventDate.value = clickedPlain.toPlainDate().toString();
       const hour = clickedPlain.hour.toString().padStart(2, '0');
       const minute = clickedPlain.minute.toString().padStart(2, '0');
-      newEventStartTime.value = `${hour}:${minute}`;
+      newEventStartTime.value = `${ hour }:${ minute }`;
 
       const endHour = (clickedPlain.hour + 1).toString().padStart(2, '0');
-      newEventEndTime.value = `${endHour}:${minute}`;
+      newEventEndTime.value = `${ endHour }:${ minute }`;
 
-      const previewId = `preview-${Date.now()}`;
+      const previewId = `preview-${ Date.now() }`;
       previewEventId.value = previewId;
 
       const endZdt = clickedZdt.add({ hours: 1 });
       eventsService.add({
-        id: previewId,
+        id:    previewId,
         title: '(New Event)',
         start: clickedZdt,
-        end: endZdt,
+        end:   endZdt,
       });
 
       showAddEventModal.value = true;
     },
     onClickDate(date) {
-      const clickedDate = date as Temporal.PlainDate;
+      const clickedDate = date;
       newEventDate.value = clickedDate.toString();
       newEventStartTime.value = '09:00';
       newEventEndTime.value = '10:00';
 
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const previewId = `preview-${Date.now()}`;
+      const previewId = `preview-${ Date.now() }`;
       previewEventId.value = previewId;
 
-      const startZdt = Temporal.PlainDateTime.from(`${clickedDate.toString()}T09:00:00`).toZonedDateTime(timezone);
+      const startZdt = Temporal.PlainDateTime.from(`${ clickedDate.toString() }T09:00:00`).toZonedDateTime(timezone);
       const endZdt = startZdt.add({ hours: 1 });
       eventsService.add({
-        id: previewId,
+        id:    previewId,
         title: '(New Event)',
         start: startZdt,
-        end: endZdt,
+        end:   endZdt,
       });
 
       showAddEventModal.value = true;
@@ -419,7 +507,7 @@ const calendar = createCalendar({
   },
 });
 
-const loadEvents = async () => {
+const loadEvents = async() => {
   try {
     const events = await CalendarEvent.getAllEvents();
     console.log('[AgentCalendar] Raw events from database:', events);
@@ -430,16 +518,16 @@ const loadEvents = async () => {
       console.log('[AgentCalendar] Processing event:', e.id, 'timestamps:', attrs.start_time, attrs.end_time);
 
       return {
-        id: e.id,
-        title: attrs.title,
-        start: parseCalendarInstant(attrs.start_time).toZonedDateTimeISO(timezone),
-        end: parseCalendarInstant(attrs.end_time).toZonedDateTimeISO(timezone),
+        id:          e.id,
+        title:       attrs.title,
+        start:       parseCalendarInstant(attrs.start_time).toZonedDateTimeISO(timezone),
+        end:         parseCalendarInstant(attrs.end_time).toZonedDateTimeISO(timezone),
         description: attrs.description,
-        location: attrs.location,
+        location:    attrs.location,
       };
     });
     eventsService.set(scheduleXEvents);
-    console.log(`[AgentCalendar] Loaded ${scheduleXEvents.length} events`);
+    console.log(`[AgentCalendar] Loaded ${ scheduleXEvents.length } events`);
   } catch (err) {
     console.warn('[AgentCalendar] Error loading events:', err);
   }
@@ -449,7 +537,7 @@ watch(isDark, (dark) => {
   calendar.setTheme(dark ? 'dark' : 'light');
 });
 
-onMounted(async () => {
+onMounted(async() => {
   calendar.setTheme(isDark.value ? 'dark' : 'light');
 
   await loadEvents();
@@ -477,25 +565,25 @@ const closeModal = () => {
   resetEventForm();
 };
 
-const saveEvent = async () => {
+const saveEvent = async() => {
   if (!newEventTitle.value.trim() || !newEventDate.value) return;
 
   savingEvent.value = true;
   try {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const startZdt = Temporal.PlainDateTime.from(`${newEventDate.value}T${newEventStartTime.value}:00`).toZonedDateTime(timezone);
-    const endZdt = Temporal.PlainDateTime.from(`${newEventDate.value}T${newEventEndTime.value}:00`).toZonedDateTime(timezone);
+    const startZdt = Temporal.PlainDateTime.from(`${ newEventDate.value }T${ newEventStartTime.value }:00`).toZonedDateTime(timezone);
+    const endZdt = Temporal.PlainDateTime.from(`${ newEventDate.value }T${ newEventEndTime.value }:00`).toZonedDateTime(timezone);
 
     skipNextCallback.value = true; // Skip callback since UI will update eventsService directly
     const event = await CalendarEvent.create({
-      title: newEventTitle.value.trim(),
-      start_time: startZdt.toInstant().toString(),
-      end_time: endZdt.toInstant().toString(),
-      location: newEventLocation.value || undefined,
+      title:       newEventTitle.value.trim(),
+      start_time:  startZdt.toInstant().toString(),
+      end_time:    endZdt.toInstant().toString(),
+      location:    newEventLocation.value || undefined,
       description: newEventDescription.value || undefined,
-      people: [],
+      people:      [],
       calendar_id: 'primary',
-      all_day: false,
+      all_day:     false,
     });
 
     if (previewEventId.value) {
@@ -507,12 +595,12 @@ const saveEvent = async () => {
     const addEndZdt = parseCalendarInstant(event.attributes.end_time).toZonedDateTimeISO(timezone);
 
     eventsService.add({
-      id: event.id,
-      title: event.attributes.title,
-      start: addStartZdt,
-      end: addEndZdt,
+      id:          event.id,
+      title:       event.attributes.title,
+      start:       addStartZdt,
+      end:         addEndZdt,
       description: event.attributes.description,
-      location: event.attributes.location,
+      location:    event.attributes.location,
     });
 
     console.log('[AgentCalendar] Created event:', event.id);
@@ -530,14 +618,14 @@ const updatePreviewEvent = () => {
 
   try {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const startZdt = Temporal.PlainDateTime.from(`${newEventDate.value}T${newEventStartTime.value}:00`).toZonedDateTime(timezone);
-    const endZdt = Temporal.PlainDateTime.from(`${newEventDate.value}T${newEventEndTime.value}:00`).toZonedDateTime(timezone);
+    const startZdt = Temporal.PlainDateTime.from(`${ newEventDate.value }T${ newEventStartTime.value }:00`).toZonedDateTime(timezone);
+    const endZdt = Temporal.PlainDateTime.from(`${ newEventDate.value }T${ newEventEndTime.value }:00`).toZonedDateTime(timezone);
 
     eventsService.update({
-      id: previewEventId.value,
+      id:    previewEventId.value,
       title: newEventTitle.value.trim() || '(New Event)',
       start: startZdt,
-      end: endZdt,
+      end:   endZdt,
     });
   } catch {
     // Ignore parse errors while typing
@@ -548,7 +636,7 @@ watch([newEventDate, newEventStartTime, newEventEndTime, newEventTitle], () => {
   updatePreviewEvent();
 });
 
-const openEditModal = async () => {
+const openEditModal = async() => {
   if (!selectedEvent.value) return;
 
   const eventData = await CalendarEvent.find(selectedEvent.value.id);
@@ -561,8 +649,8 @@ const openEditModal = async () => {
   editEventId.value = eventData.id;
   editEventTitle.value = eventData.attributes.title!;
   editEventDate.value = startZdt.toPlainDate().toString();
-  editEventStartTime.value = `${startZdt.hour.toString().padStart(2, '0')}:${startZdt.minute.toString().padStart(2, '0')}`;
-  editEventEndTime.value = `${endZdt.hour.toString().padStart(2, '0')}:${endZdt.minute.toString().padStart(2, '0')}`;
+  editEventStartTime.value = `${ startZdt.hour.toString().padStart(2, '0') }:${ startZdt.minute.toString().padStart(2, '0') }`;
+  editEventEndTime.value = `${ endZdt.hour.toString().padStart(2, '0') }:${ endZdt.minute.toString().padStart(2, '0') }`;
   editEventDescription.value = eventData.attributes.description || '';
   editEventLocation.value = eventData.attributes.location || '';
 
@@ -581,34 +669,34 @@ const closeEditModal = () => {
   editEventLocation.value = '';
 };
 
-const updateEvent = async () => {
+const updateEvent = async() => {
   if (!editEventId.value || !editEventTitle.value.trim() || !editEventDate.value) return;
 
   savingEditEvent.value = true;
   try {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const startZdt = Temporal.PlainDateTime.from(`${editEventDate.value}T${editEventStartTime.value}:00`).toZonedDateTime(timezone);
-    const endZdt = Temporal.PlainDateTime.from(`${editEventDate.value}T${editEventEndTime.value}:00`).toZonedDateTime(timezone);
+    const startZdt = Temporal.PlainDateTime.from(`${ editEventDate.value }T${ editEventStartTime.value }:00`).toZonedDateTime(timezone);
+    const endZdt = Temporal.PlainDateTime.from(`${ editEventDate.value }T${ editEventEndTime.value }:00`).toZonedDateTime(timezone);
 
     skipNextCallback.value = true;
     const updatedEvent = await CalendarEvent.find(editEventId.value);
     if (updatedEvent) {
       Object.assign(updatedEvent.attributes, {
-        title: editEventTitle.value.trim(),
-        start_time: startZdt.toInstant().toString(),
-        end_time: endZdt.toInstant().toString(),
+        title:       editEventTitle.value.trim(),
+        start_time:  startZdt.toInstant().toString(),
+        end_time:    endZdt.toInstant().toString(),
         description: editEventDescription.value || undefined,
-        location: editEventLocation.value || undefined,
+        location:    editEventLocation.value || undefined,
       });
       await updatedEvent.save();
 
       eventsService.update({
-        id: updatedEvent.id,
-        title: updatedEvent.attributes.title,
-        start: parseCalendarInstant(updatedEvent.attributes.start_time).toZonedDateTimeISO(timezone),
-        end: parseCalendarInstant(updatedEvent.attributes.end_time).toZonedDateTimeISO(timezone),
+        id:          updatedEvent.id,
+        title:       updatedEvent.attributes.title,
+        start:       parseCalendarInstant(updatedEvent.attributes.start_time).toZonedDateTimeISO(timezone),
+        end:         parseCalendarInstant(updatedEvent.attributes.end_time).toZonedDateTimeISO(timezone),
         description: updatedEvent.attributes.description,
-        location: updatedEvent.attributes.location,
+        location:    updatedEvent.attributes.location,
       });
 
       console.log('[AgentCalendar] Updated event:', updatedEvent.id);
@@ -621,7 +709,7 @@ const updateEvent = async () => {
   }
 };
 
-const deleteEvent = async () => {
+const deleteEvent = async() => {
   if (!editEventId.value) return;
 
   const confirmed = confirm('Are you sure you want to delete this event?');

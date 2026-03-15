@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from "../base";
-import { getIntegrationService } from "../../services/IntegrationService";
+import { BaseTool, ToolResponse } from '../base';
+import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * Set Active Integration Account Tool
@@ -8,8 +8,8 @@ import { getIntegrationService } from "../../services/IntegrationService";
  * will automatically use the active account's credentials.
  */
 export class SetActiveIntegrationAccountWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { integration_slug, account_id } = input;
@@ -30,10 +30,10 @@ export class SetActiveIntegrationAccountWorker extends BaseTool {
       const account = accounts.find(a => a.account_id === account_id);
 
       if (!account) {
-        const available = accounts.map(a => `${a.account_id} (${a.label})`).join(', ');
+        const available = accounts.map(a => `${ a.account_id } (${ a.label })`).join(', ');
         return {
           successBoolean: false,
-          responseString: `Account "${account_id}" not found for integration "${integration_slug}". Available accounts: ${available || 'none'}`,
+          responseString: `Account "${ account_id }" not found for integration "${ integration_slug }". Available accounts: ${ available || 'none' }`,
         };
       }
 
@@ -41,12 +41,12 @@ export class SetActiveIntegrationAccountWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Active account for "${integration_slug}" set to "${account.label}" (${account_id}). All subsequent tool calls for this integration will use this account's credentials.`,
+        responseString: `Active account for "${ integration_slug }" set to "${ account.label }" (${ account_id }). All subsequent tool calls for this integration will use this account's credentials.`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error setting active account: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        responseString: `Error setting active account: ${ error instanceof Error ? error.message : 'Unknown error' }`,
       };
     }
   }

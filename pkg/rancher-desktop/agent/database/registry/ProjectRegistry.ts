@@ -21,8 +21,8 @@ export class ProjectRegistry {
   private static instance: ProjectRegistry | null = null;
   private readonly projectsBySlug = new Map<string, ProjectService>();
   private initialized = false;
-  private initPromise: Promise<void> | null = null;
-  private refreshPromise: Promise<void> | null = null;
+  private initPromise:     Promise<void> | null = null;
+  private refreshPromise:  Promise<void> | null = null;
   private cachedSummaries: ProjectSummarySchema[] | null = null;
   private cachedAtSeconds = 0;
   private cacheHydrated = false;
@@ -68,7 +68,7 @@ export class ProjectRegistry {
     this.cacheHydrated = true;
     await this.writeSummariesToCache(this.cachedSummaries, this.cachedAtSeconds);
 
-    console.log(`[ProjectRegistry] initialized with ${this.projectsBySlug.size} projects`);
+    console.log(`[ProjectRegistry] initialized with ${ this.projectsBySlug.size } projects`);
   }
 
   async refresh(options: ProjectRegistryInitOptions = {}): Promise<void> {
@@ -148,9 +148,9 @@ export class ProjectRegistry {
 
       const lines = Array.from(this.projectsBySlug.values())
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map(p => `${p.name} (slug: ${p.slug}, status: ${p.status}): ${p.description}`);
+        .map(p => `${ p.name } (slug: ${ p.slug }, status: ${ p.status }): ${ p.description }`);
 
-      return `All projects:\n${lines.join('\n')}`;
+      return `All projects:\n${ lines.join('\n') }`;
     }
 
     if (specialMode === 'active') {
@@ -177,7 +177,7 @@ export class ProjectRegistry {
       // Try to get parsed project from registry cache first
       const cached = this.projectsBySlug.get(slug);
       if (cached) {
-        results.push(`${cached.name} (slug: ${cached.slug}, status: ${cached.status}): ${cached.description}`);
+        results.push(`${ cached.name } (slug: ${ cached.slug }, status: ${ cached.status }): ${ cached.description }`);
         continue;
       }
 
@@ -186,18 +186,18 @@ export class ProjectRegistry {
         const raw = await readFile(hit.filePath, 'utf8');
         const service = ProjectService.fromRaw('filesystem', slug, raw);
         if (service) {
-          results.push(`${service.name} (slug: ${service.slug}, status: ${service.status}): ${service.description}`);
+          results.push(`${ service.name } (slug: ${ service.slug }, status: ${ service.status }): ${ service.description }`);
         } else {
-          results.push(`${slug}: (matched file: ${hit.filePath})`);
+          results.push(`${ slug }: (matched file: ${ hit.filePath })`);
         }
       } catch {
-        results.push(`${slug}: (matched file: ${hit.filePath})`);
+        results.push(`${ slug }: (matched file: ${ hit.filePath })`);
       }
     }
 
     return results.length > 0
-      ? `Projects:\n${results.join('\n')}`
-      : `No matching projects after searching terms: ${grepResult.attemptedTerms.map(term => `'${term}'`).join(', ') || '(none)'} (0 projects found). You can create one with create_project.`;
+      ? `Projects:\n${ results.join('\n') }`
+      : `No matching projects after searching terms: ${ grepResult.attemptedTerms.map(term => `'${ term }'`).join(', ') || '(none)' } (0 projects found). You can create one with create_project.`;
   }
 
   async loadProject(projectName: string): Promise<string> {
@@ -224,7 +224,7 @@ export class ProjectRegistry {
     }
 
     const available = Array.from(this.projectsBySlug.keys()).join(', ') || '(none)';
-    return `Project '${name}' not found. Available: ${available}`;
+    return `Project '${ name }' not found. Available: ${ available }`;
   }
 
   async createProject(projectName: string, content?: string, customDir?: string): Promise<string> {
@@ -258,9 +258,9 @@ export class ProjectRegistry {
         await this.addToActiveProjects(service);
       }
 
-      return `Project '${name}' created successfully.\nProject directory: ${projectDir}\nPRD file: ${projectFile}\nREADME: ${path.join(projectDir, 'README.md')}`;
+      return `Project '${ name }' created successfully.\nProject directory: ${ projectDir }\nPRD file: ${ projectFile }\nREADME: ${ path.join(projectDir, 'README.md') }`;
     } catch (error: any) {
-      return `Failed to create project '${name}': ${error.message}`;
+      return `Failed to create project '${ name }': ${ error.message }`;
     }
   }
 
@@ -272,7 +272,7 @@ export class ProjectRegistry {
 
     const projectFile = this.resolveProjectFile(name);
     if (!projectFile) {
-      return `Project '${name}' not found. Use create_project to create it first.`;
+      return `Project '${ name }' not found. Use create_project to create it first.`;
     }
 
     try {
@@ -286,9 +286,9 @@ export class ProjectRegistry {
       }
 
       const projectDir = path.dirname(projectFile);
-      return `Project '${name}' updated successfully.\nProject directory: ${projectDir}\nPRD file: ${projectFile}`;
+      return `Project '${ name }' updated successfully.\nProject directory: ${ projectDir }\nPRD file: ${ projectFile }`;
     } catch (error: any) {
-      return `Failed to update project '${name}': ${error.message}`;
+      return `Failed to update project '${ name }': ${ error.message }`;
     }
   }
 
@@ -300,13 +300,13 @@ export class ProjectRegistry {
 
     const existing = this.resolveProjectService(name);
     if (!existing) {
-      return `Project '${name}' not found. Use create_project to create it first.`;
+      return `Project '${ name }' not found. Use create_project to create it first.`;
     }
 
     const canonicalSlug = existing.slug;
     const projectFile = this.resolveProjectFile(canonicalSlug);
     if (!projectFile) {
-      return `Project '${name}' file not found on disk.`;
+      return `Project '${ name }' file not found on disk.`;
     }
 
     try {
@@ -320,9 +320,9 @@ export class ProjectRegistry {
         await this.addToActiveProjects(service);
       }
 
-      return `Project '${name}' section '${section}' updated successfully.\nPRD file: ${projectFile}`;
+      return `Project '${ name }' section '${ section }' updated successfully.\nPRD file: ${ projectFile }`;
     } catch (error: any) {
-      return `Failed to patch project '${name}': ${error.message}`;
+      return `Failed to patch project '${ name }': ${ error.message }`;
     }
   }
 
@@ -344,9 +344,9 @@ export class ProjectRegistry {
       this.cachedSummaries = this.buildSummariesFromCurrentMap();
       await this.removeFromActiveProjects(name);
 
-      return `Project '${name}' deleted successfully. Removed: ${projectDir}`;
+      return `Project '${ name }' deleted successfully. Removed: ${ projectDir }`;
     } catch (error: any) {
-      return `Failed to delete project '${name}': ${error.message}`;
+      return `Failed to delete project '${ name }': ${ error.message }`;
     }
   }
 
@@ -415,7 +415,7 @@ export class ProjectRegistry {
     }
   }
 
-  private async writeActiveProjectsFile(entries: Array<{ slug: string; name: string; description: string }>): Promise<void> {
+  private async writeActiveProjectsFile(entries: { slug: string; name: string; description: string }[]): Promise<void> {
     const filePath = this.getActiveProjectsFilePath();
     const lines = ['# Active Projects', ''];
 
@@ -425,7 +425,7 @@ export class ProjectRegistry {
       lines.push('| Project | Folder | Description |');
       lines.push('|---------|--------|-------------|');
       for (const entry of entries) {
-        lines.push(`| ${entry.name} | \`${entry.slug}\` | ${entry.description} |`);
+        lines.push(`| ${ entry.name } | \`${ entry.slug }\` | ${ entry.description } |`);
       }
     }
 
@@ -463,20 +463,20 @@ export class ProjectRegistry {
     }
   }
 
-  private async parseActiveProjectEntries(): Promise<Array<{ slug: string; name: string; description: string }>> {
+  private async parseActiveProjectEntries(): Promise<{ slug: string; name: string; description: string }[]> {
     const content = await this.readActiveProjectsFile();
     if (!content) return [];
 
-    const entries: Array<{ slug: string; name: string; description: string }> = [];
+    const entries: { slug: string; name: string; description: string }[] = [];
     const lines = content.split('\n');
 
     for (const line of lines) {
       // Parse markdown table rows: | Name | `slug` | Description |
-      const match = line.match(/^\|\s*(.+?)\s*\|\s*`(.+?)`\s*\|\s*(.*?)\s*\|\s*$/);
+      const match = /^\|\s*(.+?)\s*\|\s*`(.+?)`\s*\|\s*(.*?)\s*\|\s*$/.exec(line);
       if (match && match[1] !== 'Project' && match[1] !== '-') {
         entries.push({
-          name: match[1].trim(),
-          slug: match[2].trim(),
+          name:        match[1].trim(),
+          slug:        match[2].trim(),
           description: match[3].trim(),
         });
       }
@@ -505,9 +505,9 @@ export class ProjectRegistry {
     const title = service?.name || 'Untitled Project';
     const description = service?.description || '';
 
-    return `# ${title}
+    return `# ${ title }
 
-${description}
+${ description }
 
 ## Getting Started
 ...
@@ -533,12 +533,12 @@ ${description}
 
     return `---
 schemaversion: 1
-slug: ${projectName}
-title: "${title}"
+slug: ${ projectName }
+title: "${ title }"
 section: Projects
 status: active
-created_at: "${now}"
-updated_at: "${now}"
+created_at: "${ now }"
+updated_at: "${ now }"
 ---
 
 ## Description
@@ -642,11 +642,11 @@ updated_at: "${now}"
 
   private getSourcePriority(source: string): number {
     switch (String(source || '').toLowerCase()) {
-      case 'filesystem':
-        return 2;
-      case 'database':
-      default:
-        return 1;
+    case 'filesystem':
+      return 2;
+    case 'database':
+    default:
+      return 1;
     }
   }
 

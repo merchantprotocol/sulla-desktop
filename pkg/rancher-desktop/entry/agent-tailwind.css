@@ -5,6 +5,11 @@
 @import "tailwindcss";
 @import "../assets/styles/themes.css";
 
+/* Prevent white body background from bleeding through the macOS titlebar area */
+html, body {
+  background: var(--bg-page, #0d1117);
+}
+
 @theme {
   /* Backgrounds */
   --color-page: var(--bg-page);

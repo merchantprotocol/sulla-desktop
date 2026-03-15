@@ -14,23 +14,23 @@ export type HeartbeatEventType =
   | 'heartbeat_already_running';
 
 export interface HeartbeatEvent {
-  ts: number;
-  type: HeartbeatEventType;
-  message: string;
+  ts:          number;
+  type:        HeartbeatEventType;
+  message:     string;
   durationMs?: number;
-  error?: string;
-  meta?: Record<string, unknown>;
+  error?:      string;
+  meta?:       Record<string, unknown>;
 }
 
 export interface HeartbeatStatus {
-  initialized: boolean;
-  isExecuting: boolean;
-  lastTriggerMs: number;
+  initialized:      boolean;
+  isExecuting:      boolean;
+  lastTriggerMs:    number;
   schedulerRunning: boolean;
-  totalTriggers: number;
-  totalErrors: number;
-  totalSkips: number;
-  uptimeMs: number;
+  totalTriggers:    number;
+  totalErrors:      number;
+  totalSkips:       number;
+  uptimeMs:         number;
 }
 
 const MAX_EVENT_HISTORY = 200;
@@ -116,21 +116,21 @@ export class HeartbeatService {
       }
 
       const delayMin = Math.max(1, await SullaSettingsModel.get('heartbeatDelayMinutes', 30));
-      const delayMs  = delayMin * 60_000;
+      const delayMs = delayMin * 60_000;
 
       if (Date.now() - this.lastTriggerMs >= delayMs) {
-        console.log(`[HeartbeatService] ⏰ Heartbeat due (${delayMin} min) — triggering`);
-        this.recordEvent('scheduler_check', `Heartbeat due (${delayMin}min interval) — triggering`);
+        console.log(`[HeartbeatService] ⏰ Heartbeat due (${ delayMin } min) — triggering`);
+        this.recordEvent('scheduler_check', `Heartbeat due (${ delayMin }min interval) — triggering`);
         await this.triggerHeartbeat();
         this.lastTriggerMs = Date.now();
       } else {
         const remainingMs = delayMs - (Date.now() - this.lastTriggerMs);
-        this.recordEvent('scheduler_check', `Next heartbeat in ${Math.ceil(remainingMs / 60000)}min`);
+        this.recordEvent('scheduler_check', `Next heartbeat in ${ Math.ceil(remainingMs / 60000) }min`);
       }
     } catch (err) {
       this.totalErrors++;
       const msg = err instanceof Error ? err.message : String(err);
-      this.recordEvent('heartbeat_error', `Scheduler check failed: ${msg}`, { error: msg });
+      this.recordEvent('heartbeat_error', `Scheduler check failed: ${ msg }`, { error: msg });
       console.error('[HeartbeatService] Scheduler check failed:', err);
     }
   }
@@ -167,8 +167,8 @@ export class HeartbeatService {
 
       // Inject the prompt as a fresh user message
       state.messages = [{
-        role: 'user',
-        content: fullPrompt,
+        role:     'user',
+        content:  fullPrompt,
         metadata: { source: 'heartbeat' },
       }];
 
@@ -176,7 +176,7 @@ export class HeartbeatService {
       const durationMs = Date.now() - triggerStart;
       const cycleCount = (state.metadata as any).heartbeatCycleCount || 0;
       const status = (state.metadata as any).heartbeatStatus || 'unknown';
-      this.recordEvent('heartbeat_completed', `Completed in ${Math.round(durationMs / 1000)}s — ${cycleCount} cycles, status: ${status}`, {
+      this.recordEvent('heartbeat_completed', `Completed in ${ Math.round(durationMs / 1000) }s — ${ cycleCount } cycles, status: ${ status }`, {
         durationMs,
         meta: { cycleCount, status, focus: (state.metadata as any).currentFocus || '' },
       });
@@ -185,7 +185,7 @@ export class HeartbeatService {
       this.totalErrors++;
       const durationMs = Date.now() - triggerStart;
       const msg = err instanceof Error ? err.message : String(err);
-      this.recordEvent('heartbeat_error', `Execution failed after ${Math.round(durationMs / 1000)}s: ${msg}`, { durationMs, error: msg });
+      this.recordEvent('heartbeat_error', `Execution failed after ${ Math.round(durationMs / 1000) }s: ${ msg }`, { durationMs, error: msg });
       console.error('[HeartbeatService] Heartbeat execution failed:', err);
     } finally {
       this.isExecuting = false;
@@ -197,16 +197,16 @@ export class HeartbeatService {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const timeStr = now.toLocaleString('en-US', {
       timeZone: tz,
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
+      weekday:  'long',
+      year:     'numeric',
+      month:    'long',
+      day:      'numeric',
+      hour:     '2-digit',
+      minute:   '2-digit',
+      hour12:   true,
     });
 
-    return `\nCurrent time: ${timeStr}\nTimezone: ${tz}\n\n${base}`;
+    return `\nCurrent time: ${ timeStr }\nTimezone: ${ tz }\n\n${ base }`;
   }
 
   /** Call from UI after settings change to force immediate check */

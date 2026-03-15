@@ -1,4 +1,4 @@
-import { BaseTool, ToolResponse } from "../base";
+import { BaseTool, ToolResponse } from '../base';
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { parseJson } from '../../services/JsonParseService';
 
@@ -16,9 +16,9 @@ function generateTinyId(): string {
  * Add Observational Memory Tool - Worker class for execution
  */
 export class AddObservationalMemoryWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
-  
+  name = '';
+  description = '';
+
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { priority, content } = input;
 
@@ -36,8 +36,8 @@ export class AddObservationalMemoryWorker extends BaseTool {
     } catch (e: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to parse observational memory: ${e?.message}`
-      }
+        responseString: `Failed to parse observational memory: ${ e?.message }`,
+      };
     }
 
     // Dedup: check if a substantially similar observation already exists
@@ -64,13 +64,13 @@ export class AddObservationalMemoryWorker extends BaseTool {
       await SullaSettingsModel.set('observationalMemory', JSON.stringify(memoryArray));
       return {
         successBoolean: true,
-        responseString: `Updated existing observation: ${content}`,
+        responseString: `Updated existing observation: ${ content }`,
       };
     }
 
     // Add new memory
     const newMemory = {
-      id: generateTinyId(),
+      id:        generateTinyId(),
       priority,
       content,
       timestamp: new Date().toISOString(),
@@ -90,8 +90,8 @@ export class AddObservationalMemoryWorker extends BaseTool {
     } catch (e: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to parse observational memory: ${e?.message}`
-      }
+        responseString: `Failed to parse observational memory: ${ e?.message }`,
+      };
     }
 
     // Save back to settings
@@ -99,7 +99,7 @@ export class AddObservationalMemoryWorker extends BaseTool {
 
     return {
       successBoolean: true,
-      responseString: Object.values(newMemory).join(' ')
+      responseString: Object.values(newMemory).join(' '),
     };
   }
 }

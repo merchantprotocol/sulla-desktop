@@ -6,14 +6,14 @@ import { N8nUserModel } from '../models/N8nUserModel';
 import { SullaSettingsModel } from './SullaSettingsModel';
 
 interface UserApiKeyAttributes {
-  id: string;
-  userId: string;
-  label: string;
-  apiKey: string;
+  id:        string;
+  userId:    string;
+  label:     string;
+  apiKey:    string;
   createdAt: Date;
   updatedAt: Date;
-  scopes: string[];
-  audience: string;
+  scopes:    string[];
+  audience:  string;
 }
 
 export class N8nUserApiKeyModel extends BaseModel<UserApiKeyAttributes> {
@@ -53,7 +53,6 @@ export class N8nUserApiKeyModel extends BaseModel<UserApiKeyAttributes> {
    * Generate JWT token for API key (simplified version)
    */
   public static async createNewApiKeyToken(userId:string): Promise<string> {
-    
     const jwtPayload = {
       sub: userId,
       iss: 'n8n',
@@ -70,8 +69,8 @@ export class N8nUserApiKeyModel extends BaseModel<UserApiKeyAttributes> {
   }
 
   /**
-   * 
-   * @returns 
+   *
+   * @returns
    */
   public static async getOrCreateServiceAccount(userId: string | undefined): Promise<N8nUserApiKeyModel> {
     let _userId;
@@ -85,68 +84,68 @@ export class N8nUserApiKeyModel extends BaseModel<UserApiKeyAttributes> {
     // First check if an API key already exists for this user
     const existingApiKeys = await N8nUserApiKeyModel.where('userId', _userId);
     if (existingApiKeys.length > 0) {
-      console.log(`[N8nUserApiKeyModel] Found existing API key for user ${_userId}`);
+      console.log(`[N8nUserApiKeyModel] Found existing API key for user ${ _userId }`);
       return existingApiKeys[0];
     }
 
-    console.log(`[N8nUserApiKeyModel] Creating new API key for user ${_userId}`);
+    console.log(`[N8nUserApiKeyModel] Creating new API key for user ${ _userId }`);
 
     // @ts-ignore
     const apiKeyToken = await N8nUserApiKeyModel.createNewApiKeyToken(_userId);
     const apiKeyId = SullaSettingsModel.generateId();
 
     const apiKeyTokenModel = await N8nUserApiKeyModel.create({
-      id: apiKeyId,
+      id:     apiKeyId,
       userId: _userId,
-      label: 'Sulla Integration',
+      label:  'Sulla Integration',
       apiKey: apiKeyToken,
       scopes: [
-        "credential:list",
-        "credential:read",
-        "credential:move",
-        "credential:create",
-        "credential:update",
-        "credential:delete",
-        "project:create",
-        "project:update",
-        "project:delete",
-        "project:list",
-        "securityAudit:generate",
-        "sourceControl:pull",
-        "tag:create",
-        "tag:read",
-        "tag:update",
-        "tag:delete",
-        "tag:list",
-        "user:changeRole",
-        "user:enforceMfa",
-        "user:create",
-        "user:read",
-        "user:delete",
-        "user:list",
-        "workflow:execute",
-        "workflow:read",
-        "workflow:create",
-        "workflow:update",
-        "workflow:delete",
-        "workflow:list",
-        "workflow:share",
-        "workflow:share:read",
-        "workflow:share:create",
-        "workflow:share:update",
-        "workflow:share:delete",
-        "workflow:share:list",
-        "variable:read",
-        "variable:create",
-        "variable:update",
-        "variable:delete",
-        "execution:read",
-        "execution:create",
-        "execution:delete",
-        "dataTable:read",
-        "dataTable:create",
-        "dataTable:update",
-        "dataTable:delete",
+        'credential:list',
+        'credential:read',
+        'credential:move',
+        'credential:create',
+        'credential:update',
+        'credential:delete',
+        'project:create',
+        'project:update',
+        'project:delete',
+        'project:list',
+        'securityAudit:generate',
+        'sourceControl:pull',
+        'tag:create',
+        'tag:read',
+        'tag:update',
+        'tag:delete',
+        'tag:list',
+        'user:changeRole',
+        'user:enforceMfa',
+        'user:create',
+        'user:read',
+        'user:delete',
+        'user:list',
+        'workflow:execute',
+        'workflow:read',
+        'workflow:create',
+        'workflow:update',
+        'workflow:delete',
+        'workflow:list',
+        'workflow:share',
+        'workflow:share:read',
+        'workflow:share:create',
+        'workflow:share:update',
+        'workflow:share:delete',
+        'workflow:share:list',
+        'variable:read',
+        'variable:create',
+        'variable:update',
+        'variable:delete',
+        'execution:read',
+        'execution:create',
+        'execution:delete',
+        'dataTable:read',
+        'dataTable:create',
+        'dataTable:update',
+        'dataTable:delete',
       ],
       audience: 'public-api',
     });

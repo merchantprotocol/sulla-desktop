@@ -8,9 +8,10 @@ import { SlackApiCommandWorker, slackApiMethodToolRegistrations } from '../slack
 const SLACK_ID = 'slack';
 const service = getIntegrationService();
 
-async function invokeTool(name: string, input: Record<string, any>) { const registration = slackApiMethodToolRegistrations.find(r => r.name === name);
+async function invokeTool(name: string, input: Record<string, any>) {
+  const registration = slackApiMethodToolRegistrations.find(r => r.name === name);
   if (!registration) {
-    throw new Error(`Missing registration for ${name }`);
+    throw new Error(`Missing registration for ${ name }`);
   }
 
   const tool = new SlackApiCommandWorker();
@@ -21,7 +22,7 @@ async function invokeTool(name: string, input: Record<string, any>) { const regi
 }
 
 describe('Slack command tools (production path)', () => {
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
 
@@ -47,11 +48,11 @@ describe('Slack command tools (production path)', () => {
     await SullaIntegrations();
   }, 60000);
 
-  afterAll(async () => {
+  afterAll(async() => {
     await registry.invalidate(SLACK_ID);
   }, 30000);
 
-  it('slack_cmd_channels_read works against Slack API', async () => {
+  it('slack_cmd_channels_read works against Slack API', async() => {
     const result = await invokeTool('slack_cmd_channels_read', {
       params: {
         types: 'public_channel',
@@ -64,14 +65,14 @@ describe('Slack command tools (production path)', () => {
     expect(String(result.result)).not.toContain('Slack integration is not initialized');
   }, 45000);
 
-  it('slack_cmd_team_info works against Slack API', async () => {
+  it('slack_cmd_team_info works against Slack API', async() => {
     const result = await invokeTool('slack_cmd_team_info', { params: {} });
 
     expect(result.success).toBe(true);
     expect(String(result.result)).toContain('team.info');
   }, 45000);
 
-  it('slack_cmd_users_list works against Slack API', async () => {
+  it('slack_cmd_users_list works against Slack API', async() => {
     const result = await invokeTool('slack_cmd_users_list', {
       params: {
         limit: 25,

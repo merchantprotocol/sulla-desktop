@@ -1,30 +1,43 @@
 <template>
-  <div class="min-h-screen text-sm font-sans overflow-y-auto page-root" :class="{ dark: isDark }">
+  <div
+    class="min-h-screen text-sm font-sans overflow-y-auto page-root"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="Extension" />
     <div class="flex flex-col min-h-screen">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+      <AgentHeader
+        :is-dark="isDark"
+        :toggle-theme="toggleTheme"
+      />
 
       <!-- Iframe Mode -->
-      <iframe v-if="extensionDisplayMode === 'iframe'" 
+      <iframe
+        v-if="extensionDisplayMode === 'iframe'"
         ref="iframeRef"
-        :src="extensionContentUrl" 
-        @load="onIframeLoad"
+        :src="extensionContentUrl"
         scrolling="no"
         class="w-full border-0"
-        style="height: 100vh; overflow: hidden;">
-      </iframe>
+        style="height: 100vh; overflow: hidden;"
+        @load="onIframeLoad"
+      />
 
       <!-- Embedded Mode -->
-      <div v-else-if="extensionDisplayMode === 'embedded'" 
-        v-html="extensionContentHtml" 
-        class="w-full flex-1">
-      </div>
+      <div
+        v-else-if="extensionDisplayMode === 'embedded'"
+        class="w-full flex-1"
+        v-html="extensionContentHtml"
+      />
 
       <!-- Loading State -->
-      <div v-else class="flex h-64 items-center justify-center">
+      <div
+        v-else
+        class="flex h-64 items-center justify-center"
+      >
         <div class="text-center">
-          <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600"></div>
-          <p class="text-sm text-slate-600 dark:text-slate-400">Loading {{ extensionMetadata?.title || 'extension' }} details...</p>
+          <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" />
+          <p class="text-sm text-slate-600 dark:text-slate-400">
+            Loading {{ extensionMetadata?.title || 'extension' }} details...
+          </p>
         </div>
       </div>
     </div>
@@ -52,20 +65,20 @@ const extensionContentUrl = ref<string>('');
 const extensionContentHtml = ref<string>('');
 
 const onIframeLoad = () => {
-  const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+  const iframe = document.querySelector('iframe')!;
   if (iframe && iframe.contentWindow) {
     iframe.contentWindow.postMessage({ type: 'theme', isDark: isDark.value }, '*');
   }
 };
 
 watch(isDark, (newVal) => {
-  const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+  const iframe = document.querySelector('iframe')!;
   if (iframe && iframe.contentWindow) {
     iframe.contentWindow.postMessage({ type: 'theme', isDark: newVal }, '*');
   }
 });
 
-onMounted(async () => {
+onMounted(async() => {
   const name = route.params.name as string;
   const path = (route.params.path as string[]).join('/');
   const metadata = extensionService.getExtensionMetadata(name) ?? null;
@@ -76,7 +89,7 @@ onMounted(async () => {
   }
 
   const extensionHex = hexEncode(metadata.id);
-  const headerMenuItem = extensionService.getHeaderMenuItemByLink(`/Extension/${metadata.name}/ui/${path}`);
+  const headerMenuItem = extensionService.getHeaderMenuItemByLink(`/Extension/${ metadata.name }/ui/${ path }`);
 
   extensionMetadata.value = metadata;
   extensionIcon.value = `x-rd-extension://${ extensionHex }/icon.svg`;

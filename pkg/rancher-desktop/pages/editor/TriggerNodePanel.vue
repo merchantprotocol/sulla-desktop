@@ -1,6 +1,11 @@
 <template>
-  <div class="trigger-panel" :class="{ dark: isDark }">
-    <div class="trigger-section-label">Trigger Type</div>
+  <div
+    class="trigger-panel"
+    :class="{ dark: isDark }"
+  >
+    <div class="trigger-section-label">
+      Trigger Type
+    </div>
     <div class="trigger-options">
       <button
         v-for="trigger in triggers"
@@ -9,10 +14,17 @@
         :class="{ active: selectedTrigger === trigger.id, dark: isDark }"
         @click="selectTrigger(trigger.id)"
       >
-        <div class="trigger-option-icon" v-html="trigger.icon"></div>
+        <div
+          class="trigger-option-icon"
+          v-html="trigger.icon"
+        />
         <div class="trigger-option-info">
-          <div class="trigger-option-name">{{ trigger.name }}</div>
-          <div class="trigger-option-desc">{{ trigger.description }}</div>
+          <div class="trigger-option-name">
+            {{ trigger.name }}
+          </div>
+          <div class="trigger-option-desc">
+            {{ trigger.description }}
+          </div>
         </div>
       </button>
     </div>
@@ -126,7 +138,6 @@ function selectTrigger(id: string) {
 .trigger-option.active .trigger-option-icon {
   color: var(--accent-primary);
 }
-
 
 .trigger-option-info {
   flex: 1;

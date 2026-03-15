@@ -2,17 +2,17 @@ import { BaseModel } from '../BaseModel';
 import { postgresClient } from '../PostgresClient';
 
 interface WorkflowCheckpointAttributes {
-  id: number;
-  execution_id: string;
-  workflow_id: string;
-  workflow_name: string;
-  node_id: string;
-  node_label: string;
-  node_subtype: string;
-  sequence: number;
+  id:             number;
+  execution_id:   string;
+  workflow_id:    string;
+  workflow_name:  string;
+  node_id:        string;
+  node_label:     string;
+  node_subtype:   string;
+  sequence:       number;
   playbook_state: Record<string, unknown>;
-  node_output: unknown;
-  created_at: Date;
+  node_output:    unknown;
+  created_at:     Date;
 }
 
 export class WorkflowCheckpointModel extends BaseModel<WorkflowCheckpointAttributes> {
@@ -96,7 +96,7 @@ export class WorkflowCheckpointModel extends BaseModel<WorkflowCheckpointAttribu
     const targetCheckpoint = await WorkflowCheckpointModel.findByNode(executionId, nodeId);
     if (!targetCheckpoint) return null;
 
-    const targetSeq = targetCheckpoint.attributes.sequence as number;
+    const targetSeq = targetCheckpoint.attributes.sequence!;
     if (targetSeq <= 1) return null;
 
     const row = await postgresClient.queryOne(
@@ -116,15 +116,15 @@ export class WorkflowCheckpointModel extends BaseModel<WorkflowCheckpointAttribu
    * Save a checkpoint for a completed node.
    */
   static async saveCheckpoint(params: {
-    executionId: string;
-    workflowId: string;
-    workflowName: string;
-    nodeId: string;
-    nodeLabel: string;
-    nodeSubtype: string;
-    sequence: number;
+    executionId:   string;
+    workflowId:    string;
+    workflowName:  string;
+    nodeId:        string;
+    nodeLabel:     string;
+    nodeSubtype:   string;
+    sequence:      number;
     playbookState: Record<string, unknown>;
-    nodeOutput: unknown;
+    nodeOutput:    unknown;
   }): Promise<WorkflowCheckpointModel> {
     const checkpoint = new WorkflowCheckpointModel();
     checkpoint.attributes = {

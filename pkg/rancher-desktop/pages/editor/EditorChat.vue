@@ -1,99 +1,228 @@
 <template>
-  <div class="editor-chat" :class="{ dark: isDark }">
+  <div
+    class="editor-chat"
+    :class="{ dark: isDark }"
+  >
     <!-- Header -->
-    <div class="chat-header" :class="{ dark: isDark }">
+    <div
+      class="chat-header"
+      :class="{ dark: isDark }"
+    >
       <span class="chat-header-title">Chat</span>
-      <button class="chat-close-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
+      <button
+        class="chat-close-btn"
+        :class="{ dark: isDark }"
+        title="Close Panel"
+        @click="$emit('close')"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <line
+            x1="18"
+            y1="6"
+            x2="6"
+            y2="18"
+          />
+          <line
+            x1="6"
+            y1="6"
+            x2="18"
+            y2="18"
+          />
         </svg>
       </button>
     </div>
 
     <!-- Messages -->
-    <div ref="messagesEl" class="chat-messages" :class="{ dark: isDark }">
+    <div
+      ref="messagesEl"
+      class="chat-messages"
+      :class="{ dark: isDark }"
+    >
       <!-- Empty state -->
-      <div v-if="messages.length === 0 && !loading" class="chat-empty">
-        <p class="chat-empty-text">Ask anything about your code</p>
+      <div
+        v-if="messages.length === 0 && !loading"
+        class="chat-empty"
+      >
+        <p class="chat-empty-text">
+          Ask anything about your code
+        </p>
       </div>
 
       <!-- Spacer pushes messages to bottom when few messages -->
-      <div v-if="messages.length > 0" class="chat-messages-spacer"></div>
+      <div
+        v-if="messages.length > 0"
+        class="chat-messages-spacer"
+      />
 
-      <div v-for="msg in messages" :key="msg.id" class="chat-message" :class="[msg.role]">
+      <div
+        v-for="msg in messages"
+        :key="msg.id"
+        class="chat-message"
+        :class="[msg.role]"
+      >
         <!-- User bubble -->
-        <div v-if="msg.role === 'user'" class="bubble user-bubble" :class="{ dark: isDark }">
-          <div class="bubble-content">{{ msg.content }}</div>
+        <div
+          v-if="msg.role === 'user'"
+          class="bubble user-bubble"
+          :class="{ dark: isDark }"
+        >
+          <div class="bubble-content">
+            {{ msg.content }}
+          </div>
         </div>
 
         <!-- Tool card (expandable, Claude Code style) -->
-        <div v-else-if="msg.kind === 'tool' && msg.toolCard" class="tool-card-cc" :class="{ dark: isDark, expanded: expandedToolCards.has(msg.id) }">
-          <button class="tool-card-cc-header" @click="toggleToolCard(msg.id)">
-            <span class="tool-card-cc-dot" :class="msg.toolCard.status"></span>
+        <div
+          v-else-if="msg.kind === 'tool' && msg.toolCard"
+          class="tool-card-cc"
+          :class="{ dark: isDark, expanded: expandedToolCards.has(msg.id) }"
+        >
+          <button
+            class="tool-card-cc-header"
+            @click="toggleToolCard(msg.id)"
+          >
+            <span
+              class="tool-card-cc-dot"
+              :class="msg.toolCard.status"
+            />
             <span class="tool-card-cc-name">{{ toolCardLabel(msg.toolCard) }}</span>
-            <span v-if="msg.toolCard.description" class="tool-card-cc-desc">{{ msg.toolCard.description }}</span>
+            <span
+              v-if="msg.toolCard.description"
+              class="tool-card-cc-desc"
+            >{{ msg.toolCard.description }}</span>
             <svg
-              width="12" height="12" viewBox="0 0 15 15" fill="none"
-              class="tool-card-cc-chevron" :class="{ open: expandedToolCards.has(msg.id) }"
+              width="12"
+              height="12"
+              viewBox="0 0 15 15"
+              fill="none"
+              class="tool-card-cc-chevron"
+              :class="{ open: expandedToolCards.has(msg.id) }"
             >
-              <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+              <path
+                d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z"
+                fill="currentColor"
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+              />
             </svg>
           </button>
-          <div v-if="toolCardCommand(msg.toolCard)" class="tool-card-cc-cmd">
+          <div
+            v-if="toolCardCommand(msg.toolCard)"
+            class="tool-card-cc-cmd"
+          >
             <span class="tool-card-cc-cmd-label">IN</span>
             <code class="tool-card-cc-cmd-text">{{ toolCardCommand(msg.toolCard) }}</code>
           </div>
-          <div v-if="msg.toolCard.status !== 'running' && toolCardCommand(msg.toolCard)" class="tool-card-cc-cmd">
+          <div
+            v-if="msg.toolCard.status !== 'running' && toolCardCommand(msg.toolCard)"
+            class="tool-card-cc-cmd"
+          >
             <span class="tool-card-cc-cmd-label">OUT</span>
-            <code class="tool-card-cc-cmd-text tool-card-cc-exit" :class="msg.toolCard.status">{{ msg.toolCard.status === 'success' ? '0' : '1' }}</code>
+            <code
+              class="tool-card-cc-cmd-text tool-card-cc-exit"
+              :class="msg.toolCard.status"
+            >{{ msg.toolCard.status === 'success' ? '0' : '1' }}</code>
           </div>
-          <div v-show="expandedToolCards.has(msg.id)" class="tool-card-cc-body">
-            <div v-if="toolCardOutput(msg.toolCard)" class="tool-card-cc-output">
+          <div
+            v-show="expandedToolCards.has(msg.id)"
+            class="tool-card-cc-body"
+          >
+            <div
+              v-if="toolCardOutput(msg.toolCard)"
+              class="tool-card-cc-output"
+            >
               <pre>{{ toolCardOutput(msg.toolCard) }}</pre>
             </div>
-            <div v-if="!toolCardCommand(msg.toolCard) && msg.toolCard.args && Object.keys(msg.toolCard.args).length > 0" class="tool-card-cc-output">
-              <div class="tool-card-cc-section-label">Arguments</div>
+            <div
+              v-if="!toolCardCommand(msg.toolCard) && msg.toolCard.args && Object.keys(msg.toolCard.args).length > 0"
+              class="tool-card-cc-output"
+            >
+              <div class="tool-card-cc-section-label">
+                Arguments
+              </div>
               <pre>{{ JSON.stringify(msg.toolCard.args, null, 2) }}</pre>
             </div>
-            <div v-if="!toolCardCommand(msg.toolCard) && msg.toolCard.result !== undefined" class="tool-card-cc-output">
-              <div class="tool-card-cc-section-label">Result</div>
+            <div
+              v-if="!toolCardCommand(msg.toolCard) && msg.toolCard.result !== undefined"
+              class="tool-card-cc-output"
+            >
+              <div class="tool-card-cc-section-label">
+                Result
+              </div>
               <pre>{{ typeof msg.toolCard.result === 'string' ? msg.toolCard.result : JSON.stringify(msg.toolCard.result, null, 2) }}</pre>
             </div>
-            <div v-if="msg.toolCard.error" class="tool-card-cc-error">
+            <div
+              v-if="msg.toolCard.error"
+              class="tool-card-cc-error"
+            >
               {{ msg.toolCard.error }}
             </div>
           </div>
         </div>
 
         <!-- Thinking -->
-        <div v-else-if="msg.kind === 'thinking'" class="bubble thinking-bubble" :class="{ dark: isDark }">
-          <div class="bubble-content thinking-text">{{ msg.content }}</div>
+        <div
+          v-else-if="msg.kind === 'thinking'"
+          class="bubble thinking-bubble"
+          :class="{ dark: isDark }"
+        >
+          <div class="bubble-content thinking-text">
+            {{ msg.content }}
+          </div>
         </div>
 
         <!-- Assistant / system bubble -->
-        <div v-else class="bubble assistant-bubble" :class="{ dark: isDark }">
-          <div class="bubble-content prose-content" v-html="renderMarkdown(msg.content)"></div>
+        <div
+          v-else
+          class="bubble assistant-bubble"
+          :class="{ dark: isDark }"
+        >
+          <div
+            class="bubble-content prose-content"
+            v-html="renderMarkdown(msg.content)"
+          />
         </div>
       </div>
 
       <!-- Loading indicator -->
-      <div v-if="loading" class="chat-message assistant">
-        <div class="bubble assistant-bubble loading-bubble" :class="{ dark: isDark }">
+      <div
+        v-if="loading"
+        class="chat-message assistant"
+      >
+        <div
+          class="bubble assistant-bubble loading-bubble"
+          :class="{ dark: isDark }"
+        >
           <span class="loading-dots">Thinking<span class="dot-anim">...</span></span>
         </div>
       </div>
 
       <!-- Waiting for user indicator -->
-      <div v-if="waitingForUser && !loading && !graphRunning" class="waiting-for-user" :class="{ dark: isDark }">
-        <span class="waiting-dot"></span>
+      <div
+        v-if="waitingForUser && !loading && !graphRunning"
+        class="waiting-for-user"
+        :class="{ dark: isDark }"
+      >
+        <span class="waiting-dot" />
         <span class="waiting-text">Waiting for your response</span>
       </div>
     </div>
 
     <!-- Composer card -->
     <div class="chat-composer-wrapper">
-      <div class="chat-composer-card" :class="{ dark: isDark }">
+      <div
+        class="chat-composer-card"
+        :class="{ dark: isDark }"
+      >
         <textarea
           ref="inputEl"
           :value="query"
@@ -103,7 +232,7 @@
           rows="1"
           @input="onInput"
           @keydown.enter.exact.prevent="onSend"
-        ></textarea>
+        />
         <!-- Stop button when graph is running -->
         <button
           v-if="graphRunning"
@@ -111,8 +240,19 @@
           :class="{ dark: isDark }"
           @click="$emit('stop')"
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-            <rect x="3" y="3" width="10" height="10" rx="1"/>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+          >
+            <rect
+              x="3"
+              y="3"
+              width="10"
+              height="10"
+              rx="1"
+            />
           </svg>
         </button>
         <!-- Send button -->
@@ -123,38 +263,88 @@
           :disabled="!query.trim()"
           @click="onSend"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M1.724 1.053a.5.5 0 0 1 .54-.068l12 6a.5.5 0 0 1 0 .894l-12 6A.5.5 0 0 1 1.5 13.5v-4.9l7-1.1-7-1.1V1.5a.5.5 0 0 1 .224-.447Z"/>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+          >
+            <path d="M1.724 1.053a.5.5 0 0 1 .54-.068l12 6a.5.5 0 0 1 0 .894l-12 6A.5.5 0 0 1 1.5 13.5v-4.9l7-1.1-7-1.1V1.5a.5.5 0 0 1 .224-.447Z" />
           </svg>
         </button>
       </div>
 
       <!-- Agent selector + Model selector + token info -->
-      <div class="chat-footer-bar" :class="{ dark: isDark }">
+      <div
+        class="chat-footer-bar"
+        :class="{ dark: isDark }"
+      >
         <!-- Agent selector -->
-        <div v-if="!hideAgentSelector" class="agent-selector-wrap">
+        <div
+          v-if="!hideAgentSelector"
+          class="agent-selector-wrap"
+        >
           <button
             type="button"
             class="agent-trigger"
             :class="{ dark: isDark }"
             @click="toggleAgentMenu"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="8" r="4"/>
-              <path d="M20 21a8 8 0 0 0-16 0"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle
+                cx="12"
+                cy="8"
+                r="4"
+              />
+              <path d="M20 21a8 8 0 0 0-16 0" />
             </svg>
             <span class="agent-label">{{ activeAgentName }}</span>
-            <svg width="10" height="10" viewBox="0 0 15 15" fill="currentColor">
-              <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill-rule="evenodd" clip-rule="evenodd"/>
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 15 15"
+              fill="currentColor"
+            >
+              <path
+                d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z"
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+              />
             </svg>
           </button>
 
-          <div v-if="showAgentMenu" class="agent-menu" :class="{ dark: isDark }">
-            <div class="agent-menu-header" :class="{ dark: isDark }">
+          <div
+            v-if="showAgentMenu"
+            class="agent-menu"
+            :class="{ dark: isDark }"
+          >
+            <div
+              class="agent-menu-header"
+              :class="{ dark: isDark }"
+            >
               <span>Agents</span>
-              <button type="button" class="agent-menu-close" :class="{ dark: isDark }" @click="showAgentMenu = false">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z"/>
+              <button
+                type="button"
+                class="agent-menu-close"
+                :class="{ dark: isDark }"
+                @click="showAgentMenu = false"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                >
+                  <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z" />
                 </svg>
               </button>
             </div>
@@ -167,53 +357,123 @@
               @click="selectAgent(agent.agentId)"
             >
               <span class="agent-option-label">{{ agent.agentName }}</span>
-              <span class="agent-option-status" :class="agent.status">{{ agent.status }}</span>
+              <span
+                class="agent-option-status"
+                :class="agent.status"
+              >{{ agent.status }}</span>
             </button>
           </div>
         </div>
 
         <!-- Model selector -->
-        <div class="model-selector-wrap" :ref="(el: any) => { if (modelSelector) modelSelector.modelMenuEl.value = el }">
+        <div
+          :ref="(el: any) => { if (modelSelector) modelSelector.modelMenuEl.value = el }"
+          class="model-selector-wrap"
+        >
           <button
+            :ref="(el: any) => { if (modelSelector) modelSelector.buttonRef.value = el }"
             type="button"
             class="model-trigger"
             :class="{ dark: isDark }"
-            :ref="(el: any) => { if (modelSelector) modelSelector.buttonRef.value = el }"
             @click="toggleModelMenu"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 8V4"/><path d="M8 4h8"/>
-              <rect x="6" y="8" width="12" height="10" rx="2"/>
-              <path d="M9 18v2"/><path d="M15 18v2"/>
-              <path d="M9.5 12h.01"/><path d="M14.5 12h.01"/>
-              <path d="M10 15h4"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 8V4" /><path d="M8 4h8" />
+              <rect
+                x="6"
+                y="8"
+                width="12"
+                height="10"
+                rx="2"
+              />
+              <path d="M9 18v2" /><path d="M15 18v2" />
+              <path d="M9.5 12h.01" /><path d="M14.5 12h.01" />
+              <path d="M10 15h4" />
             </svg>
             <span class="model-label">{{ modelSelector?.activeModelLabelValue || 'Select model' }}</span>
-            <svg width="10" height="10" viewBox="0 0 15 15" fill="currentColor">
-              <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill-rule="evenodd" clip-rule="evenodd"/>
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 15 15"
+              fill="currentColor"
+            >
+              <path
+                d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z"
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+              />
             </svg>
           </button>
 
           <!-- Dropdown menu -->
-          <div v-if="modelSelector?.showModelMenuValue" class="model-menu" :class="{ dark: isDark }">
-            <div class="model-menu-header" :class="{ dark: isDark }">
+          <div
+            v-if="modelSelector?.showModelMenuValue"
+            class="model-menu"
+            :class="{ dark: isDark }"
+          >
+            <div
+              class="model-menu-header"
+              :class="{ dark: isDark }"
+            >
               <span>Models</span>
-              <button type="button" class="model-menu-close" :class="{ dark: isDark }" @click="modelSelector?.hideModelMenu()">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z"/>
+              <button
+                type="button"
+                class="model-menu-close"
+                :class="{ dark: isDark }"
+                @click="modelSelector?.hideModelMenu()"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                >
+                  <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z" />
                 </svg>
               </button>
             </div>
 
-            <div v-if="modelSelector?.loadingProvidersValue" class="model-menu-loading">Loading providers...</div>
+            <div
+              v-if="modelSelector?.loadingProvidersValue"
+              class="model-menu-loading"
+            >
+              Loading providers...
+            </div>
 
-            <template v-for="(group, gIdx) in (modelSelector?.providerGroupsValue || [])" :key="group.providerId">
-              <div v-if="gIdx > 0" class="model-menu-divider" :class="{ dark: isDark }"></div>
-              <div class="model-group-header" :class="{ dark: isDark }">
+            <template
+              v-for="(group, gIdx) in (modelSelector?.providerGroupsValue || [])"
+              :key="group.providerId"
+            >
+              <div
+                v-if="gIdx > 0"
+                class="model-menu-divider"
+                :class="{ dark: isDark }"
+              />
+              <div
+                class="model-group-header"
+                :class="{ dark: isDark }"
+              >
                 {{ group.providerName }}
-                <span v-if="group.isActiveProvider" class="model-primary-badge">Primary</span>
+                <span
+                  v-if="group.isActiveProvider"
+                  class="model-primary-badge"
+                >Primary</span>
               </div>
-              <div v-if="group.loading" class="model-menu-loading">Loading models...</div>
+              <div
+                v-if="group.loading"
+                class="model-menu-loading"
+              >
+                Loading models...
+              </div>
               <button
                 v-for="m in group.models"
                 :key="`${group.providerId}-${m.modelId}`"
@@ -223,14 +483,20 @@
                 @click="modelSelector?.selectModel(m)"
               >
                 <span class="model-option-label">{{ m.modelLabel }}</span>
-                <span v-if="m.isActiveModel" class="model-option-active">Active</span>
+                <span
+                  v-if="m.isActiveModel"
+                  class="model-option-active"
+                >Active</span>
               </button>
             </template>
           </div>
         </div>
 
         <!-- Token info -->
-        <span class="token-info" :class="{ dark: isDark }">{{ tokenLabel }}</span>
+        <span
+          class="token-info"
+          :class="{ dark: isDark }"
+        >{{ tokenLabel }}</span>
       </div>
     </div>
   </div>
@@ -245,15 +511,15 @@ import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSe
 import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 
 const props = defineProps<{
-  isDark: boolean;
-  messages: ChatMessage[];
-  query: string;
-  loading: boolean;
-  graphRunning: boolean;
-  waitingForUser?: boolean;
-  modelSelector?: AgentModelSelectorController;
-  agentRegistry?: AgentPersonaRegistry;
-  totalTokensUsed?: number;
+  isDark:             boolean;
+  messages:           ChatMessage[];
+  query:              string;
+  loading:            boolean;
+  graphRunning:       boolean;
+  waitingForUser?:    boolean;
+  modelSelector?:     AgentModelSelectorController;
+  agentRegistry?:     AgentPersonaRegistry;
+  totalTokensUsed?:   number;
   hideAgentSelector?: boolean;
 }>();
 
@@ -303,16 +569,16 @@ function selectAgent(agentId: string) {
 
 const emit = defineEmits<{
   'update:query': [value: string];
-  'send': [];
-  'stop': [];
-  'close': [];
+  send:           [];
+  stop:           [];
+  close:          [];
 }>();
 
 const tokenLabel = computed(() => {
   const t = props.totalTokensUsed || 0;
   if (t === 0) return '';
-  if (t >= 1000) return `${(t / 1000).toFixed(1)}k tokens`;
-  return `${t} tokens`;
+  if (t >= 1000) return `${ (t / 1000).toFixed(1) }k tokens`;
+  return `${ t } tokens`;
 });
 
 function toggleModelMenu() {
@@ -473,7 +739,6 @@ watch(() => props.messages.length, () => scrollToBottom());
   background: var(--bg-surface-alt);
   color: var(--text-secondary);
 }
-
 
 /* ── Claude Code-style tool card ── */
 .tool-card-cc {

@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { redisClient } from "../../database/RedisClient";
+import { BaseTool, ToolResponse } from '../base';
+import { redisClient } from '../../database/RedisClient';
 
 /**
  * Redis Ttl Tool - Worker class for execution
  */
 export class RedisTtlWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { key } = input;
 
@@ -15,12 +15,12 @@ export class RedisTtlWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Redis TTL for ${key}: ${seconds === -2 ? 'Key does not exist' : seconds === -1 ? 'No expiration' : `${seconds} seconds`}`
+        responseString: `Redis TTL for ${ key }: ${ seconds === -2 ? 'Key does not exist' : seconds === -1 ? 'No expiration' : `${ seconds } seconds` }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting Redis key TTL: ${(error as Error).message}`
+        responseString: `Error getting Redis key TTL: ${ (error as Error).message }`,
       };
     }
   }

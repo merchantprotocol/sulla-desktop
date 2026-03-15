@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { createN8nService } from "../../services/N8nService";
+import { BaseTool, ToolResponse } from '../base';
+import { createN8nService } from '../../services/N8nService';
 
 /**
  * Validate Workflow Payload Tool - checks create/update payload compatibility with n8n API.
  */
 export class ValidateWorkflowPayloadWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   private parseJsonIfString(value: any, field: string): any {
     if (typeof value !== 'string') {
@@ -16,7 +16,7 @@ export class ValidateWorkflowPayloadWorker extends BaseTool {
     try {
       return JSON.parse(value);
     } catch (error) {
-      throw new Error(`Invalid JSON for ${field}: ${(error as Error).message}`);
+      throw new Error(`Invalid JSON for ${ field }: ${ (error as Error).message }`);
     }
   }
 
@@ -34,12 +34,12 @@ export class ValidateWorkflowPayloadWorker extends BaseTool {
     }
 
     payload.nodes = payload.nodes.map((node: any, index: number) => {
-      const parsedNode = this.parseJsonIfString(node, `nodes[${index}]`);
+      const parsedNode = this.parseJsonIfString(node, `nodes[${ index }]`);
       if (typeof parsedNode !== 'object' || parsedNode === null || Array.isArray(parsedNode)) {
-        throw new Error(`Invalid workflow payload: nodes[${index}] must be an object.`);
+        throw new Error(`Invalid workflow payload: nodes[${ index }] must be an object.`);
       }
       if (!parsedNode.name || !parsedNode.type || !Array.isArray(parsedNode.position)) {
-        throw new Error(`Invalid workflow payload: nodes[${index}] must include name, type, and position.`);
+        throw new Error(`Invalid workflow payload: nodes[${ index }] must include name, type, and position.`);
       }
       return parsedNode;
     });
@@ -71,14 +71,14 @@ export class ValidateWorkflowPayloadWorker extends BaseTool {
       }
 
       const response = {
-        valid: true,
-        name: payload.name,
-        nodeCount: payload.nodes.length,
+        valid:          true,
+        name:           payload.name,
+        nodeCount:      payload.nodes.length,
         connectionKeys: Object.keys(payload.connections || {}),
-        hasSettings: Object.keys(payload.settings || {}).length > 0,
-        hasShared: Array.isArray(payload.shared),
-        hasStaticData: payload.staticData !== undefined,
-        n8nConnection: n8nReachable,
+        hasSettings:    Object.keys(payload.settings || {}).length > 0,
+        hasShared:      Array.isArray(payload.shared),
+        hasStaticData:  payload.staticData !== undefined,
+        n8nConnection:  n8nReachable,
       };
 
       return {
@@ -88,9 +88,8 @@ export class ValidateWorkflowPayloadWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Workflow payload validation failed: ${(error as Error).message}`,
+        responseString: `Workflow payload validation failed: ${ (error as Error).message }`,
       };
     }
   }
 }
-

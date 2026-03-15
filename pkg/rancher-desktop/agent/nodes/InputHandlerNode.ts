@@ -72,7 +72,7 @@ Rules:
 - 🟡 Valuable = decisions, patterns, progress markers
 - ⚪ Low = minor items (use sparingly)
 
-${JSON_ONLY_RESPONSE_INSTRUCTIONS}
+${ JSON_ONLY_RESPONSE_INSTRUCTIONS }
 {
   "observations": [
     {
@@ -98,10 +98,9 @@ function estimateTokens(text: string): number {
 /** Estimate total tokens across all messages */
 function estimateTotalTokens(messages: ChatMessage[]): number {
   return messages.reduce((sum, m) => sum + estimateTokens(
-    typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+    typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
   ), 0);
 }
-
 
 // ============================================================================
 // SANITIZATION PATTERNS
@@ -163,17 +162,16 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
   }
 
   async execute(state: TState): Promise<NodeResult<TState>> {
-
     // Initialize diagnostics metadata
     const diagnostics: Record<string, any> = {
-      sanitized: false,
-      rateLimited: false,
-      spamDetected: false,
-      injectionDetected: false,
-      messagesEvicted: 0,
-      tokensBefore: 0,
-      tokensAfter: 0,
-      relevanceScored: false,
+      sanitized:          false,
+      rateLimited:        false,
+      spamDetected:       false,
+      injectionDetected:  false,
+      messagesEvicted:    0,
+      tokensBefore:       0,
+      tokensAfter:        0,
+      relevanceScored:    false,
       evictionSummarized: false,
     };
 
@@ -189,13 +187,13 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
     const latestUserMsg = this.findLatestUserMessage(state.messages);
 
     if (latestUserMsg) {
-      const original = latestUserMsg.content as string;
-      let sanitized = this.sanitizeMessage(original);
+      const original = latestUserMsg.content;
+      const sanitized = this.sanitizeMessage(original);
 
       // Check for injection patterns (flag but don't block — downstream decides)
       if (this.detectInjection(original)) {
         diagnostics.injectionDetected = true;
-        console.warn(`[InputHandler] Injection pattern detected in thread ${state.metadata.threadId}`);
+        console.warn(`[InputHandler] Injection pattern detected in thread ${ state.metadata.threadId }`);
       }
 
       if (sanitized !== original) {
@@ -211,12 +209,12 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
     if (rateCheck.limited) {
       diagnostics.rateLimited = true;
       diagnostics.rateLimitReason = rateCheck.reason;
-      console.warn(`[InputHandler] Rate limited: ${rateCheck.reason}`);
+      console.warn(`[InputHandler] Rate limited: ${ rateCheck.reason }`);
     }
 
-    if (latestUserMsg && this.isSpam(latestUserMsg.content as string)) {
+    if (latestUserMsg && this.isSpam(latestUserMsg.content)) {
       diagnostics.spamDetected = true;
-      console.warn(`[InputHandler] Spam detected in thread ${state.metadata.threadId}`);
+      console.warn(`[InputHandler] Spam detected in thread ${ state.metadata.threadId }`);
     }
 
     // ----------------------------------------------------------------
@@ -228,7 +226,7 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
 
     if (needsBatchSummarization) {
       diagnostics.summaryServiceTriggered = true;
-      console.log(`[InputHandler] Triggered background summarization for ${state.messages.length} messages`);
+      console.log(`[InputHandler] Triggered background summarization for ${ state.messages.length } messages`);
     }
 
     // ----------------------------------------------------------------
@@ -332,7 +330,7 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
     const windowStart = now - RATE_LIMIT_BURST_WINDOW_MS;
     const recentCount = timestamps.filter(t => t >= windowStart).length;
     if (recentCount >= RATE_LIMIT_BURST_MAX) {
-      return { limited: true, reason: `Burst limit exceeded (${recentCount} in ${RATE_LIMIT_BURST_WINDOW_MS / 1000}s)` };
+      return { limited: true, reason: `Burst limit exceeded (${ recentCount } in ${ RATE_LIMIT_BURST_WINDOW_MS / 1000 }s)` };
     }
 
     return { limited: false };
@@ -362,19 +360,19 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
    */
   private enforceTokenBudget(state: BaseThreadState): void {
     const latest = this.findLatestUserMessage(state.messages);
-    let totalTokens = estimateTotalTokens(state.messages);
+    const totalTokens = estimateTotalTokens(state.messages);
 
     if (totalTokens <= MAX_TOKEN_BUDGET) return;
 
     // Walk from oldest, evict non-protected until under budget
     const surviving: ChatMessage[] = [];
-    let runningTokens = 0;
+    const runningTokens = 0;
 
     // First pass: calculate tokens for protected messages
     const protectedTokens = state.messages
       .filter(m => m.role === 'system' || m === latest)
       .reduce((sum, m) => sum + estimateTokens(
-        typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+        typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
       ), 0);
 
     const budgetForNonProtected = MAX_TOKEN_BUDGET - protectedTokens;
@@ -392,7 +390,7 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
     for (const m of reversed) {
       if (kept.has(m)) continue;
       const tokens = estimateTokens(
-        typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+        typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
       );
       if (usedBudget + tokens <= budgetForNonProtected) {
         kept.add(m);
@@ -401,7 +399,7 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
     }
 
     state.messages = state.messages.filter(m => kept.has(m));
-    console.log(`[InputHandler] Token budget enforcement: ${totalTokens} → ${estimateTotalTokens(state.messages)} tokens`);
+    console.log(`[InputHandler] Token budget enforcement: ${ totalTokens } → ${ estimateTotalTokens(state.messages) } tokens`);
   }
 
   // ======================================================================

@@ -1,51 +1,51 @@
 type JsonRecord = Record<string, unknown>;
 
 export interface N8nRouteSnapshot {
-  name?: string;
-  path?: string;
+  name?:     string;
+  path?:     string;
   fullPath?: string;
-  params?: JsonRecord;
-  query?: JsonRecord;
-  title?: string;
+  params?:   JsonRecord;
+  query?:    JsonRecord;
+  title?:    string;
   timestamp: number;
 }
 
 export interface N8nSocketEventSnapshot {
-  type: string;
-  channel?: string;
-  pushRef?: string;
-  payload: unknown;
+  type:      string;
+  channel?:  string;
+  pushRef?:  string;
+  payload:   unknown;
   timestamp: number;
 }
 
 export interface N8nClickSnapshot {
-  text?: string;
-  classList: string[];
+  text?:       string;
+  classList:   string[];
   dataTestId?: string;
-  disabled: boolean;
-  timestamp: number;
+  disabled:    boolean;
+  timestamp:   number;
 }
 
 export interface N8nVueBridgeEventMap {
-  injected: { url: string; timestamp: number };
+  injected:     { url: string; timestamp: number };
   routeChanged: N8nRouteSnapshot;
-  socketEvent: N8nSocketEventSnapshot;
-  click: N8nClickSnapshot;
-  bridgeError: { message: string; raw?: unknown; timestamp: number };
+  socketEvent:  N8nSocketEventSnapshot;
+  click:        N8nClickSnapshot;
+  bridgeError:  { message: string; raw?: unknown; timestamp: number };
 }
 
 type EventHandler<K extends keyof N8nVueBridgeEventMap> = (payload: N8nVueBridgeEventMap[K]) => void;
 
 export interface N8nWebviewLike {
-  src?: string;
-  getURL?: () => string;
-  executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
-  addEventListener: (event: 'dom-ready' | 'ipc-message', listener: (event: unknown) => void) => void;
+  src?:                 string;
+  getURL?:              () => string;
+  executeJavaScript:    (code: string, userGesture?: boolean) => Promise<unknown>;
+  addEventListener:     (event: 'dom-ready' | 'ipc-message', listener: (event: unknown) => void) => void;
   removeEventListener?: (event: 'dom-ready' | 'ipc-message', listener: (event: unknown) => void) => void;
 }
 
 export interface N8nVueBridgeConfig {
-  n8nPort?: number;
+  n8nPort?:       number;
   injectDelayMs?: number;
 }
 
@@ -53,26 +53,26 @@ const BRIDGE_CHANNEL = 'sulla:n8n:bridge';
 const LOG_PREFIX = '[SULLA_N8N_VUE_BRIDGE]';
 
 export class N8nVueBridgeService {
-  private readonly n8nPort: number;
+  private readonly n8nPort:       number;
   private readonly injectDelayMs: number;
   private readonly listeners: {
     [K in keyof N8nVueBridgeEventMap]?: Set<EventHandler<K>>;
   } = {};
 
-  private webview: N8nWebviewLike | null = null;
-  private boundDomReady: ((event: unknown) => void) | null = null;
+  private webview:         N8nWebviewLike | null = null;
+  private boundDomReady:   ((event: unknown) => void) | null = null;
   private boundIpcMessage: ((event: unknown) => void) | null = null;
   private lastInjectedForUrl = '';
   private readonly createdAt = Date.now();
-  private themeMode: 'light' | 'dark' | null = null;
+  private themeMode:       'light' | 'dark' | null = null;
 
   constructor(config: N8nVueBridgeConfig = {}) {
     this.n8nPort = config.n8nPort ?? 30119;
     this.injectDelayMs = config.injectDelayMs ?? 700;
     console.log(`${ LOG_PREFIX } constructor`, {
-      n8nPort: this.n8nPort,
+      n8nPort:       this.n8nPort,
       injectDelayMs: this.injectDelayMs,
-      createdAt: this.createdAt,
+      createdAt:     this.createdAt,
     });
     this.markInitialized('constructor');
   }
@@ -80,10 +80,10 @@ export class N8nVueBridgeService {
   markInitialized(source: string): void {
     console.log(`${ LOG_PREFIX } initialized`, {
       source,
-      createdAt: this.createdAt,
-      hasAttachedWebview: !!this.webview,
+      createdAt:                 this.createdAt,
+      hasAttachedWebview:        !!this.webview,
       isWaitingForWebviewAttach: !this.webview,
-      lastInjectedForUrl: this.lastInjectedForUrl,
+      lastInjectedForUrl:        this.lastInjectedForUrl,
     });
   }
 
@@ -103,7 +103,7 @@ export class N8nVueBridgeService {
     webview.addEventListener('ipc-message', this.boundIpcMessage);
     console.log(`${ LOG_PREFIX } attach:done`, {
       hasGetURL: typeof webview.getURL === 'function',
-      src: typeof webview.src === 'string' ? webview.src : '',
+      src:       typeof webview.src === 'string' ? webview.src : '',
     });
   }
 
@@ -130,7 +130,7 @@ export class N8nVueBridgeService {
   }
 
   on<K extends keyof N8nVueBridgeEventMap>(event: K, handler: EventHandler<K>): () => void {
-    const bucket = (this.listeners[event] || new Set()) as Set<EventHandler<K>>;
+    const bucket = (this.listeners[event] || new Set());
     bucket.add(handler);
     this.listeners[event] = bucket as (typeof this.listeners)[K];
 
@@ -143,13 +143,13 @@ export class N8nVueBridgeService {
   }
 
   off<K extends keyof N8nVueBridgeEventMap>(event: K, handler: EventHandler<K>): void {
-    const bucket = this.listeners[event] as Set<EventHandler<K>> | undefined;
+    const bucket = this.listeners[event];
     const before = bucket?.size || 0;
     bucket?.delete(handler);
     console.log(`${ LOG_PREFIX } off`, {
       event,
       listenerCountBefore: before,
-      listenerCountAfter: bucket?.size || 0,
+      listenerCountAfter:  bucket?.size || 0,
     });
   }
 
@@ -164,7 +164,7 @@ export class N8nVueBridgeService {
     const pageJson = JSON.stringify(page);
     const navigationResult = await this.webview.executeJavaScript(`
       (() => {
-        const targetPage = ${pageJson};
+        const targetPage = ${ pageJson };
         const router = window.__VUE_APP__?.config?.globalProperties?.$router || window.vueRouter || null;
         if (router && typeof router.push === 'function') {
           router.push(targetPage);
@@ -198,7 +198,7 @@ export class N8nVueBridgeService {
     const selectorValue = JSON.stringify(textOrId);
     const clickResult = await this.webview.executeJavaScript(`
       (() => {
-        const target = ${selectorValue};
+        const target = ${ selectorValue };
         const byDataTestId = document.querySelector('[data-test-id="' + target + '"]');
         if (byDataTestId && typeof byDataTestId.click === 'function') {
           byDataTestId.click();
@@ -240,7 +240,7 @@ export class N8nVueBridgeService {
   }
 
   private emit<K extends keyof N8nVueBridgeEventMap>(event: K, payload: N8nVueBridgeEventMap[K]): void {
-    const bucket = this.listeners[event] as Set<EventHandler<K>> | undefined;
+    const bucket = this.listeners[event];
     if (!bucket) {
       console.log(`${ LOG_PREFIX } emit:skip_no_listeners`, { event });
       return;
@@ -311,8 +311,8 @@ export class N8nVueBridgeService {
     const isDark = mode === 'dark';
     const script = `
       (() => {
-        const mode = ${JSON.stringify(mode)};
-        const isDark = ${isDark ? 'true' : 'false'};
+        const mode = ${ JSON.stringify(mode) };
+        const isDark = ${ isDark ? 'true' : 'false' };
         const html = document.documentElement;
         const body = document.body;
 
@@ -362,12 +362,12 @@ export class N8nVueBridgeService {
     if (type === 'sulla:routeChanged') {
       const rec = this.asRecord(data);
       this.emit('routeChanged', {
-        name: typeof rec.name === 'string' ? rec.name : undefined,
-        path: typeof rec.path === 'string' ? rec.path : undefined,
-        fullPath: typeof rec.fullPath === 'string' ? rec.fullPath : undefined,
-        params: this.asRecord(rec.params),
-        query: this.asRecord(rec.query),
-        title: typeof rec.title === 'string' ? rec.title : undefined,
+        name:      typeof rec.name === 'string' ? rec.name : undefined,
+        path:      typeof rec.path === 'string' ? rec.path : undefined,
+        fullPath:  typeof rec.fullPath === 'string' ? rec.fullPath : undefined,
+        params:    this.asRecord(rec.params),
+        query:     this.asRecord(rec.query),
+        title:     typeof rec.title === 'string' ? rec.title : undefined,
         timestamp: this.asTimestamp(rec.timestamp),
       });
       return;
@@ -376,10 +376,10 @@ export class N8nVueBridgeService {
     if (type === 'sulla:socketEvent') {
       const rec = this.asRecord(data);
       this.emit('socketEvent', {
-        type: String(rec.type || 'push'),
-        channel: typeof rec.channel === 'string' ? rec.channel : undefined,
-        pushRef: typeof rec.pushRef === 'string' ? rec.pushRef : undefined,
-        payload: rec.payload,
+        type:      String(rec.type || 'push'),
+        channel:   typeof rec.channel === 'string' ? rec.channel : undefined,
+        pushRef:   typeof rec.pushRef === 'string' ? rec.pushRef : undefined,
+        payload:   rec.payload,
         timestamp: this.asTimestamp(rec.timestamp),
       });
       return;
@@ -392,11 +392,11 @@ export class N8nVueBridgeService {
         : [];
 
       this.emit('click', {
-        text: typeof rec.text === 'string' ? rec.text : undefined,
+        text:       typeof rec.text === 'string' ? rec.text : undefined,
         classList,
         dataTestId: typeof rec.dataTestId === 'string' ? rec.dataTestId : undefined,
-        disabled: rec.disabled === true,
-        timestamp: this.asTimestamp(rec.timestamp),
+        disabled:   rec.disabled === true,
+        timestamp:  this.asTimestamp(rec.timestamp),
       });
       return;
     }
@@ -404,8 +404,8 @@ export class N8nVueBridgeService {
     if (type === 'sulla:bridgeError') {
       const rec = this.asRecord(data);
       this.emit('bridgeError', {
-        message: typeof rec.message === 'string' ? rec.message : 'Unknown n8n bridge error',
-        raw: rec.raw,
+        message:   typeof rec.message === 'string' ? rec.message : 'Unknown n8n bridge error',
+        raw:       rec.raw,
         timestamp: this.asTimestamp(rec.timestamp),
       });
       return;
@@ -429,7 +429,7 @@ export class N8nVueBridgeService {
       }
     }
 
-    const maybeTypedChannel = this.asRecord((e as JsonRecord).channel);
+    const maybeTypedChannel = this.asRecord((e).channel);
     if (typeof maybeTypedChannel.type === 'string') {
       console.log(`${ LOG_PREFIX } parseBridgePayload:matched_typed_channel`, {
         type: maybeTypedChannel.type,
@@ -481,7 +481,7 @@ export class N8nVueBridgeService {
       });
       return isMatch;
     } catch {
-      const isMatch = rawUrl.includes(`:${this.n8nPort}`);
+      const isMatch = rawUrl.includes(`:${ this.n8nPort }`);
       console.log(`${ LOG_PREFIX } isN8nAssetUrl:fallback`, {
         rawUrl,
         targetPort: String(this.n8nPort),
@@ -518,7 +518,7 @@ export class N8nVueBridgeService {
     return `
       (() => {
         if (window.__sullaN8nBridgeInjected) {
-          console.log('${LOG_PREFIX} injectScript:skip_already_injected');
+          console.log('${ LOG_PREFIX } injectScript:skip_already_injected');
           return;
         }
         window.__sullaN8nBridgeInjected = true;
@@ -532,13 +532,13 @@ export class N8nVueBridgeService {
         const emitHost = (type, data) => {
           const payload = { type, data };
           try {
-            console.log('${LOG_PREFIX} injectScript:emitHost', payload);
+            console.log('${ LOG_PREFIX } injectScript:emitHost', payload);
           } catch {}
           try {
             if (window?.electron?.ipcRenderer?.sendToHost) {
-              window.electron.ipcRenderer.sendToHost('${BRIDGE_CHANNEL}', payload);
+              window.electron.ipcRenderer.sendToHost('${ BRIDGE_CHANNEL }', payload);
             } else if (window?.ipcRenderer?.sendToHost) {
-              window.ipcRenderer.sendToHost('${BRIDGE_CHANNEL}', payload);
+              window.ipcRenderer.sendToHost('${ BRIDGE_CHANNEL }', payload);
             }
           } catch {}
 
@@ -560,11 +560,11 @@ export class N8nVueBridgeService {
         };
 
         const observeRoute = () => {
-          console.log('${LOG_PREFIX} injectScript:observeRoute:start');
+          console.log('${ LOG_PREFIX } injectScript:observeRoute:start');
           try {
             const router = window.__VUE_APP__?.config?.globalProperties?.$router || window.vueRouter || null;
             if (router && typeof router.afterEach === 'function') {
-              console.log('${LOG_PREFIX} injectScript:observeRoute:router_found');
+              console.log('${ LOG_PREFIX } injectScript:observeRoute:router_found');
               router.afterEach((to) => {
                 bridgeState.currentRoute = safeRoutePayload(to);
                 emitHost('sulla:routeChanged', bridgeState.currentRoute);
@@ -581,7 +581,7 @@ export class N8nVueBridgeService {
             }
           } catch {}
 
-          console.log('${LOG_PREFIX} injectScript:observeRoute:fallback_mode');
+          console.log('${ LOG_PREFIX } injectScript:observeRoute:fallback_mode');
 
           const sendFallbackRoute = () => {
             bridgeState.currentRoute = {
@@ -606,7 +606,7 @@ export class N8nVueBridgeService {
 
         const OriginalWebSocket = window.WebSocket;
         if (typeof OriginalWebSocket === 'function') {
-          console.log('${LOG_PREFIX} injectScript:websocket_hook:enabled');
+          console.log('${ LOG_PREFIX } injectScript:websocket_hook:enabled');
           const WrappedWebSocket = function(url, protocols) {
             const ws = protocols === undefined
               ? new OriginalWebSocket(url)
@@ -642,7 +642,7 @@ export class N8nVueBridgeService {
         }
 
         if (typeof window.EventSource === 'function') {
-          console.log('${LOG_PREFIX} injectScript:eventsource_hook:enabled');
+          console.log('${ LOG_PREFIX } injectScript:eventsource_hook:enabled');
           const OriginalEventSource = window.EventSource;
           const WrappedEventSource = function(url, configuration) {
             const es = new OriginalEventSource(url, configuration);
@@ -698,7 +698,7 @@ export class N8nVueBridgeService {
 
           emitHost('sulla:click', action);
         }, true);
-        console.log('${LOG_PREFIX} injectScript:click_listener:enabled');
+        console.log('${ LOG_PREFIX } injectScript:click_listener:enabled');
 
         observeRoute();
         emitHost('sulla:routeChanged', {
@@ -706,7 +706,7 @@ export class N8nVueBridgeService {
           title: document.title,
           timestamp: Date.now(),
         });
-        console.log('${LOG_PREFIX} injectScript:done');
+        console.log('${ LOG_PREFIX } injectScript:done');
       })();
     `;
   }
@@ -717,9 +717,9 @@ let n8nVueBridgeServiceInstance: N8nVueBridgeService | null = null;
 export function getN8nVueBridgeService(): N8nVueBridgeService {
   if (!n8nVueBridgeServiceInstance) {
     n8nVueBridgeServiceInstance = new N8nVueBridgeService();
-    console.log(`${LOG_PREFIX} singleton:created`);
+    console.log(`${ LOG_PREFIX } singleton:created`);
   } else {
-    console.log(`${LOG_PREFIX} singleton:reused`);
+    console.log(`${ LOG_PREFIX } singleton:reused`);
   }
 
   n8nVueBridgeServiceInstance.markInitialized('getN8nVueBridgeService');

@@ -1,18 +1,52 @@
 <template>
-  <div class="td-dashboard" :class="{ dark: isDark }">
+  <div
+    class="td-dashboard"
+    :class="{ dark: isDark }"
+  >
     <div class="td-scroll">
-
       <!-- Auto-training toggle notice -->
-      <div class="td-notice" :class="{ dark: isDark, enabled: autoTrainEnabled, disabled: !autoTrainEnabled }">
+      <div
+        class="td-notice"
+        :class="{ dark: isDark, enabled: autoTrainEnabled, disabled: !autoTrainEnabled }"
+      >
         <div class="td-notice-content">
           <div class="td-notice-icon">
-            <svg v-if="autoTrainEnabled" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-              <polyline points="22 4 12 14.01 9 11.01"/>
+            <svg
+              v-if="autoTrainEnabled"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
             </svg>
-            <svg v-else width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+            <svg
+              v-else
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+              />
+              <line
+                x1="4.93"
+                y1="4.93"
+                x2="19.07"
+                y2="19.07"
+              />
             </svg>
           </div>
           <div class="td-notice-text">
@@ -31,16 +65,28 @@
             </div>
           </div>
         </div>
-        <label class="td-toggle" :class="{ dark: isDark }">
-          <input type="checkbox" :checked="autoTrainEnabled" @change="toggleAutoTrain">
+        <label
+          class="td-toggle"
+          :class="{ dark: isDark }"
+        >
+          <input
+            type="checkbox"
+            :checked="autoTrainEnabled"
+            @change="toggleAutoTrain"
+          >
           <span class="td-toggle-slider" />
         </label>
       </div>
 
       <!-- Schedule info -->
       <div class="td-info-cards">
-        <div class="td-card" :class="{ dark: isDark }">
-          <div class="td-card-label">Scheduled For</div>
+        <div
+          class="td-card"
+          :class="{ dark: isDark }"
+        >
+          <div class="td-card-label">
+            Scheduled For
+          </div>
           <div class="td-card-value">
             <template v-if="autoTrainEnabled && scheduleHour != null">
               {{ formatTime(scheduleHour, scheduleMinute) }}
@@ -50,8 +96,13 @@
             </template>
           </div>
         </div>
-        <div class="td-card" :class="{ dark: isDark }">
-          <div class="td-card-label">Last Run</div>
+        <div
+          class="td-card"
+          :class="{ dark: isDark }"
+        >
+          <div class="td-card-label">
+            Last Run
+          </div>
           <div class="td-card-value">
             <template v-if="lastRun">
               {{ formatDate(lastRun.createdAt) }}
@@ -61,8 +112,13 @@
             </template>
           </div>
         </div>
-        <div class="td-card" :class="{ dark: isDark }">
-          <div class="td-card-label">Duration</div>
+        <div
+          class="td-card"
+          :class="{ dark: isDark }"
+        >
+          <div class="td-card-label">
+            Duration
+          </div>
           <div class="td-card-value">
             <template v-if="lastRun?.durationMs">
               {{ formatDuration(lastRun.durationMs) }}
@@ -75,23 +131,48 @@
       </div>
 
       <!-- Quick action -->
-      <div class="td-action-bar" :class="{ dark: isDark }">
+      <div
+        class="td-action-bar"
+        :class="{ dark: isDark }"
+      >
         <div class="td-action-row">
           <button
             class="td-btn-primary"
             :disabled="trainingNow || !autoTrainEnabled"
             @click="trainConversationsNow"
           >
-            <span v-if="trainingNow" class="td-btn-spinner" />
-            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3"/>
+            <span
+              v-if="trainingNow"
+              class="td-btn-spinner"
+            />
+            <svg
+              v-else
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
             </svg>
             {{ trainingNow ? 'Training...' : 'Train on Conversations Now' }}
           </button>
-          <p class="td-action-hint" v-if="!autoTrainEnabled">Enable automatic training above to use this.</p>
+          <p
+            v-if="!autoTrainEnabled"
+            class="td-action-hint"
+          >
+            Enable automatic training above to use this.
+          </p>
         </div>
         <!-- Progress bar -->
-        <div v-if="trainingNow || trainingProgress > 0" class="td-progress-wrap" :class="{ dark: isDark }">
+        <div
+          v-if="trainingNow || trainingProgress > 0"
+          class="td-progress-wrap"
+          :class="{ dark: isDark }"
+        >
           <div class="td-progress-bar">
             <div
               class="td-progress-fill"
@@ -108,29 +189,74 @@
 
       <!-- Scheduled training configs -->
       <div class="td-section">
-        <h3 class="td-section-title" :class="{ dark: isDark }">Scheduled Training Configs</h3>
-        <div v-if="scheduledConfigs.length === 0" class="td-empty" :class="{ dark: isDark }">
+        <h3
+          class="td-section-title"
+          :class="{ dark: isDark }"
+        >
+          Scheduled Training Configs
+        </h3>
+        <div
+          v-if="scheduledConfigs.length === 0"
+          class="td-empty"
+          :class="{ dark: isDark }"
+        >
           No scheduled configs yet. Use "Schedule Nightly Training" in the Create Training Data wizard to add one.
         </div>
-        <div v-else class="td-configs-list">
+        <div
+          v-else
+          class="td-configs-list"
+        >
           <div
             v-for="cfg in scheduledConfigs"
             :key="cfg.id"
-            class="td-config" :class="{ dark: isDark }"
+            class="td-config"
+            :class="{ dark: isDark }"
           >
             <div class="td-config-details">
-              <div class="td-config-name">{{ cfg.name }}</div>
+              <div class="td-config-name">
+                {{ cfg.name }}
+              </div>
               <div class="td-config-meta">
                 <span class="td-config-source">{{ cfg.source }}</span>
                 <span class="td-config-model">{{ cfg.modelKey }}</span>
-                <span v-if="cfg.outputFilename" class="td-config-output">{{ cfg.outputFilename }}.jsonl</span>
-                <span v-if="cfg.files?.length" class="td-config-files">{{ cfg.files.length }} file{{ cfg.files.length !== 1 ? 's' : '' }}</span>
+                <span
+                  v-if="cfg.outputFilename"
+                  class="td-config-output"
+                >{{ cfg.outputFilename }}.jsonl</span>
+                <span
+                  v-if="cfg.files?.length"
+                  class="td-config-files"
+                >{{ cfg.files.length }} file{{ cfg.files.length !== 1 ? 's' : '' }}</span>
               </div>
             </div>
-            <button class="td-config-remove" :class="{ dark: isDark }" title="Remove" @click="removeConfig(cfg.id)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"/>
-                <line x1="6" y1="6" x2="18" y2="18"/>
+            <button
+              class="td-config-remove"
+              :class="{ dark: isDark }"
+              title="Remove"
+              @click="removeConfig(cfg.id)"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line
+                  x1="18"
+                  y1="6"
+                  x2="6"
+                  y2="18"
+                />
+                <line
+                  x1="6"
+                  y1="6"
+                  x2="18"
+                  y2="18"
+                />
               </svg>
             </button>
           </div>
@@ -139,32 +265,67 @@
 
       <!-- Training runs history -->
       <div class="td-section">
-        <h3 class="td-section-title" :class="{ dark: isDark }">Training Runs</h3>
-        <div v-if="loading" class="td-loading">Loading history...</div>
-        <div v-else-if="runs.length === 0" class="td-empty" :class="{ dark: isDark }">
+        <h3
+          class="td-section-title"
+          :class="{ dark: isDark }"
+        >
+          Training Runs
+        </h3>
+        <div
+          v-if="loading"
+          class="td-loading"
+        >
+          Loading history...
+        </div>
+        <div
+          v-else-if="runs.length === 0"
+          class="td-empty"
+          :class="{ dark: isDark }"
+        >
           No training runs yet. Training will appear here once the system has processed conversations.
         </div>
-        <div v-else class="td-runs-list">
+        <div
+          v-else
+          class="td-runs-list"
+        >
           <div
             v-for="run in runs"
             :key="run.filename"
-            class="td-run clickable" :class="{ dark: isDark }"
+            class="td-run clickable"
+            :class="{ dark: isDark }"
             @click="openRunLog(run)"
           >
             <div class="td-run-status">
-              <span class="td-status-dot" :class="run.status" />
+              <span
+                class="td-status-dot"
+                :class="run.status"
+              />
             </div>
             <div class="td-run-details">
-              <div class="td-run-date">{{ formatDate(run.createdAt) }}</div>
+              <div class="td-run-date">
+                {{ formatDate(run.createdAt) }}
+              </div>
               <div class="td-run-meta">
-                <span v-if="run.model" class="td-run-model">{{ run.model }}</span>
-                <span v-if="run.durationMs" class="td-run-duration">{{ formatDuration(run.durationMs) }}</span>
-                <span v-if="run.conversationsProcessed" class="td-run-convos">
+                <span
+                  v-if="run.model"
+                  class="td-run-model"
+                >{{ run.model }}</span>
+                <span
+                  v-if="run.durationMs"
+                  class="td-run-duration"
+                >{{ formatDuration(run.durationMs) }}</span>
+                <span
+                  v-if="run.conversationsProcessed"
+                  class="td-run-convos"
+                >
                   {{ run.conversationsProcessed }} conversation{{ run.conversationsProcessed !== 1 ? 's' : '' }}
                 </span>
               </div>
             </div>
-            <div class="td-run-status-label" :class="run.status">
+            <div
+              class="td-run-status-label"
+              :class="run.status"
+            >
               {{ run.status === 'completed' ? 'Completed' : run.status === 'running' ? 'Running' : 'Failed' }}
             </div>
           </div>
@@ -180,18 +341,18 @@ import { defineComponent, ref, computed, onMounted, onBeforeUnmount } from 'vue'
 const { ipcRenderer } = require('electron');
 
 interface TrainingRun {
-  filename: string;
-  size: number;
-  createdAt: string;
-  modifiedAt: string;
-  model?: string;
-  durationMs?: number;
+  filename:                string;
+  size:                    number;
+  createdAt:               string;
+  modifiedAt:              string;
+  model?:                  string;
+  durationMs?:             number;
   conversationsProcessed?: number;
-  status: 'completed' | 'running' | 'failed';
+  status:                  'completed' | 'running' | 'failed';
 }
 
 export default defineComponent({
-  name: 'TrainingDashboard',
+  name:  'TrainingDashboard',
   props: {
     isDark: { type: Boolean, default: false },
   },
@@ -255,29 +416,29 @@ export default defineComponent({
       const h = hour % 12 || 12;
       const ampm = hour >= 12 ? 'PM' : 'AM';
       const m = String(minute).padStart(2, '0');
-      return `${h}:${m} ${ampm}`;
+      return `${ h }:${ m } ${ ampm }`;
     }
 
     function formatDate(iso: string): string {
       const d = new Date(iso);
       return d.toLocaleDateString(undefined, {
-        month: 'short',
-        day:   'numeric',
-        year:  'numeric',
-        hour:  'numeric',
+        month:  'short',
+        day:    'numeric',
+        year:   'numeric',
+        hour:   'numeric',
         minute: '2-digit',
       });
     }
 
     function formatDuration(ms: number): string {
       const sec = Math.floor(ms / 1000);
-      if (sec < 60) return `${sec}s`;
+      if (sec < 60) return `${ sec }s`;
       const min = Math.floor(sec / 60);
       const remSec = sec % 60;
-      if (min < 60) return `${min}m ${remSec}s`;
+      if (min < 60) return `${ min }m ${ remSec }s`;
       const hr = Math.floor(min / 60);
       const remMin = min % 60;
-      return `${hr}h ${remMin}m`;
+      return `${ hr }h ${ remMin }m`;
     }
 
     function openRunLog(run: TrainingRun) {
@@ -305,7 +466,7 @@ export default defineComponent({
       trainingPhase.value = data.phase;
       trainingProgress.value = data.progress;
       if (data.progress >= 100) {
-        setTimeout(async () => {
+        setTimeout(async() => {
           trainingNow.value = false;
           await loadHistory();
           setTimeout(() => {
@@ -334,7 +495,7 @@ export default defineComponent({
       }
     }
 
-    onMounted(async () => {
+    onMounted(async() => {
       ipcRenderer.on('training-run-progress' as any, handleRunProgress);
       // Restore progress state if training is already running (e.g. after page navigation)
       try {

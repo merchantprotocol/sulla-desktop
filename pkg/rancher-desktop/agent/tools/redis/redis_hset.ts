@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { redisClient } from "../../database/RedisClient";
+import { BaseTool, ToolResponse } from '../base';
+import { redisClient } from '../../database/RedisClient';
 
 /**
  * Redis Hset Tool - Worker class for execution
  */
 export class RedisHsetWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { key, field, value } = input;
 
@@ -15,12 +15,12 @@ export class RedisHsetWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Redis HSET ${key} ${field} = "${value}" (${count === 1 ? 'new field' : 'existing field updated'})`
+        responseString: `Redis HSET ${ key } ${ field } = "${ value }" (${ count === 1 ? 'new field' : 'existing field updated' })`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error setting Redis hash field: ${(error as Error).message}`
+        responseString: `Error setting Redis hash field: ${ (error as Error).message }`,
       };
     }
   }

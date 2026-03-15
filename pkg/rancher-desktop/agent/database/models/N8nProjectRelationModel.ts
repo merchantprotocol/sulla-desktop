@@ -4,8 +4,8 @@ import { BaseModel } from '../BaseModel';
 
 interface N8nProjectRelationAttributes {
   projectId: string;
-  userId: string;
-  role: string;
+  userId:    string;
+  role:      string;
   createdAt: Date;
   updatedAt: Date;
 }

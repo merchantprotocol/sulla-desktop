@@ -5,30 +5,30 @@ import { CalendarEvent } from '../database/models/CalendarEvent';
 import { getWebSocketClientService } from './WebSocketClientService';
 
 export interface CalendarEventData {
-  id: number;
-  title: string;
-  start: string;          // ISO string
-  end: string;            // ISO string
+  id:           number;
+  title:        string;
+  start:        string;          // ISO string
+  end:          string;            // ISO string
   description?: string;
-  location?: string;
-  people?: string[];
-  calendarId?: string;
-  allDay?: boolean;
-  status?: 'active' | 'cancelled' | 'completed';
-  createdAt?: Date;
-  updatedAt?: Date;
+  location?:    string;
+  people?:      string[];
+  calendarId?:  string;
+  allDay?:      boolean;
+  status?:      'active' | 'cancelled' | 'completed';
+  createdAt?:   Date;
+  updatedAt?:   Date;
 }
 
 export interface CalendarEventInput {
-  title: string;
-  start: string;
-  end: string;
+  title:        string;
+  start:        string;
+  end:          string;
   description?: string;
-  location?: string;
-  people?: string[];
-  calendarId?: string;
-  allDay?: boolean;
-  status?: 'active' | 'cancelled' | 'completed';
+  location?:    string;
+  people?:      string[];
+  calendarId?:  string;
+  allDay?:      boolean;
+  status?:      'active' | 'cancelled' | 'completed';
 }
 
 export class CalendarClient {
@@ -42,15 +42,15 @@ export class CalendarClient {
 
   async create(input: CalendarEventInput): Promise<CalendarEventData> {
     const event = await CalendarEvent.create({
-      title: input.title,
-      start_time: input.start,
-      end_time: input.end,
+      title:       input.title,
+      start_time:  input.start,
+      end_time:    input.end,
       description: input.description,
-      location: input.location,
-      people: input.people,
+      location:    input.location,
+      people:      input.people,
       calendar_id: input.calendarId,
-      all_day: input.allDay,
-      status: input.status ?? 'active',
+      all_day:     input.allDay,
+      status:      input.status ?? 'active',
     });
 
     if (!event?.id) throw new Error('Failed to create calendar event');
@@ -65,15 +65,15 @@ export class CalendarClient {
     if (!event) return null;
 
     event.updateAttributes({
-      title: updates.title,
-      start_time: updates.start,
-      end_time: updates.end,
+      title:       updates.title,
+      start_time:  updates.start,
+      end_time:    updates.end,
       description: updates.description,
-      location: updates.location,
-      people: updates.people,
+      location:    updates.location,
+      people:      updates.people,
       calendar_id: updates.calendarId,
-      all_day: updates.allDay,
-      status: updates.status,
+      all_day:     updates.allDay,
+      status:      updates.status,
     });
 
     await event.save();
@@ -121,7 +121,7 @@ export class CalendarClient {
 
   async getEvents(options: {
     startAfter?: string;
-    endBefore?: string;
+    endBefore?:  string;
     calendarId?: string;
   }): Promise<CalendarEventData[]> {
     const events = await CalendarEvent.findWithFilters(options);
@@ -130,25 +130,25 @@ export class CalendarClient {
 
   private toData(event: CalendarEvent): CalendarEventData {
     return {
-      id: event.id!,
-      title: event.attributes.title || '',
-      start: event.attributes.start_time || '',
-      end: event.attributes.end_time || '',
+      id:          event.id!,
+      title:       event.attributes.title || '',
+      start:       event.attributes.start_time || '',
+      end:         event.attributes.end_time || '',
       description: event.attributes.description,
-      location: event.attributes.location,
-      people: event.attributes.people,
-      calendarId: event.attributes.calendar_id,
-      allDay: event.attributes.all_day,
-      status: event.attributes.status,
-      createdAt: event.attributes.created_at ? new Date(event.attributes.created_at) : undefined,
-      updatedAt: event.attributes.updated_at ? new Date(event.attributes.updated_at) : undefined,
+      location:    event.attributes.location,
+      people:      event.attributes.people,
+      calendarId:  event.attributes.calendar_id,
+      allDay:      event.attributes.all_day,
+      status:      event.attributes.status,
+      createdAt:   event.attributes.created_at ? new Date(event.attributes.created_at) : undefined,
+      updatedAt:   event.attributes.updated_at ? new Date(event.attributes.updated_at) : undefined,
     };
   }
 
   private notify(data: CalendarEventData, action: 'created' | 'updated' | 'deleted') {
     const ws = getWebSocketClientService();
     ws.send('calendar_event', {
-      type: action === 'created' ? 'scheduled' : action === 'deleted' ? 'cancel' : 'updated',
+      type:  action === 'created' ? 'scheduled' : action === 'deleted' ? 'cancel' : 'updated',
       event: data,
     });
   }

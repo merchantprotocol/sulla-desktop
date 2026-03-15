@@ -16,10 +16,10 @@ export class GrokService extends OpenAICompatibleService {
     }
 
     return new GrokService({
-      id: 'grok',
-      model: valMap.model || '',
+      id:      'grok',
+      model:   valMap.model || '',
       baseUrl: 'https://api.x.ai/v1',
-      apiKey: valMap.api_key || '',
+      apiKey:  valMap.api_key || '',
     });
   }
 

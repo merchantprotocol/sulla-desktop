@@ -1,34 +1,34 @@
-import { BaseTool, ToolResponse } from "../base";
-import { createN8nService } from "../../services/N8nService";
-import { postgresClient } from "../../database/PostgresClient";
+import { BaseTool, ToolResponse } from '../base';
+import { createN8nService } from '../../services/N8nService';
+import { postgresClient } from '../../database/PostgresClient';
 
-type WebhookNode = {
-  nodeId: string;
-  nodeName: string;
-  method: string;
-  customPath: string;
+interface WebhookNode {
+  nodeId:       string;
+  nodeName:     string;
+  method:       string;
+  customPath:   string;
   expectedPath: string;
-  fullUrl: string;
+  fullUrl:      string;
   namingIssue?: {
-    severity: 'high' | 'medium';
-    problem: string;
-    recommendation: string;
+    severity:            'high' | 'medium';
+    problem:             string;
+    recommendation:      string;
     expectedUrlAfterFix: string;
   };
-};
+}
 
-type RegisteredWebhookRow = {
+interface RegisteredWebhookRow {
   webhookPath: string;
-  method: string;
-  node: string;
-};
+  method:      string;
+  node:        string;
+}
 
 /**
  * Activate Workflow Tool - Worker class for execution
  */
 export class ActivateWorkflowWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   private normalizeMethod(raw: unknown): string {
     const normalized = String(raw || '').trim().toUpperCase();
@@ -93,24 +93,24 @@ export class ActivateWorkflowWorker extends BaseTool {
         ? node.parameters
         : {};
       const nodeName = String(node?.name || '').trim();
-      const customPath = this.normalizePath((parameters as any).path || (parameters as any).webhookPath || '');
+      const customPath = this.normalizePath((parameters).path || (parameters).webhookPath || '');
       const kebabNodeName = this.toKebabCase(nodeName);
-      const expectedPath = `${workflowId}/${kebabNodeName}${customPath ? `/${customPath}` : ''}`;
-      const fullUrl = `${baseUrl}/webhook/${expectedPath}`;
+      const expectedPath = `${ workflowId }/${ kebabNodeName }${ customPath ? `/${ customPath }` : '' }`;
+      const fullUrl = `${ baseUrl }/webhook/${ expectedPath }`;
 
       const namingIssue = this.hasNamingIssue(nodeName)
         ? {
-            severity: /\s|[^a-zA-Z0-9\s-]/.test(nodeName) ? 'high' as const : 'medium' as const,
-            problem: `Node name '${nodeName}' contains characters that may lead to URL encoding or unexpected webhook path normalization.`,
-            recommendation: `Rename node to kebab-case '${kebabNodeName}'.`,
-            expectedUrlAfterFix: `${baseUrl}/webhook/${workflowId}/${kebabNodeName}${customPath ? `/${customPath}` : ''}`,
-          }
+          severity:            /\s|[^a-zA-Z0-9\s-]/.test(nodeName) ? 'high' as const : 'medium' as const,
+          problem:             `Node name '${ nodeName }' contains characters that may lead to URL encoding or unexpected webhook path normalization.`,
+          recommendation:      `Rename node to kebab-case '${ kebabNodeName }'.`,
+          expectedUrlAfterFix: `${ baseUrl }/webhook/${ workflowId }/${ kebabNodeName }${ customPath ? `/${ customPath }` : '' }`,
+        }
         : undefined;
 
       webhookNodes.push({
         nodeId: String(node?.id || '').trim(),
         nodeName,
-        method: this.normalizeMethod((parameters as any).httpMethod),
+        method: this.normalizeMethod((parameters).httpMethod),
         customPath,
         expectedPath,
         fullUrl,
@@ -134,8 +134,8 @@ export class ActivateWorkflowWorker extends BaseTool {
 
     return rows.map((row) => ({
       webhookPath: String(row.webhookPath || '').trim(),
-      method: String(row.method || 'POST').trim().toUpperCase() || 'POST',
-      node: String(row.node || '').trim(),
+      method:      String(row.method || 'POST').trim().toUpperCase() || 'POST',
+      node:        String(row.node || '').trim(),
     })).filter((row) => row.webhookPath.length > 0);
   }
 
@@ -169,26 +169,26 @@ export class ActivateWorkflowWorker extends BaseTool {
 
       const webhooks = webhookNodes.map((node) => {
         const dbRow = registeredRows.find((row) => {
-          const byPathAndMethod = this.normalizePath(row.webhookPath) === this.normalizePath(node.expectedPath)
-            && this.normalizeMethod(row.method) === node.method;
-          const byNodeAndMethod = row.node
-            && node.nodeName
-            && row.node === node.nodeName
-            && this.normalizeMethod(row.method) === node.method;
+          const byPathAndMethod = this.normalizePath(row.webhookPath) === this.normalizePath(node.expectedPath) &&
+            this.normalizeMethod(row.method) === node.method;
+          const byNodeAndMethod = row.node &&
+            node.nodeName &&
+            row.node === node.nodeName &&
+            this.normalizeMethod(row.method) === node.method;
           return byPathAndMethod || byNodeAndMethod;
         });
 
         const testCommand = node.method === 'GET'
-          ? `curl -X GET ${node.fullUrl}`
-          : `curl -X ${node.method} ${node.fullUrl} -H 'Content-Type: application/json' -d '{"test": true}'`;
+          ? `curl -X GET ${ node.fullUrl }`
+          : `curl -X ${ node.method } ${ node.fullUrl } -H 'Content-Type: application/json' -d '{"test": true}'`;
 
         return {
-          nodeId: node.nodeId,
-          nodeName: node.nodeName,
-          method: node.method,
-          customPath: node.customPath,
-          expectedPath: node.expectedPath,
-          fullUrl: node.fullUrl,
+          nodeId:               node.nodeId,
+          nodeName:             node.nodeName,
+          method:               node.method,
+          customPath:           node.customPath,
+          expectedPath:         node.expectedPath,
+          fullUrl:              node.fullUrl,
           registeredInDatabase: Boolean(dbRow),
           testCommand,
           ...(node.namingIssue ? { namingIssue: node.namingIssue } : {}),
@@ -200,22 +200,22 @@ export class ActivateWorkflowWorker extends BaseTool {
       const hasUnregisteredWebhook = webhooks.some((w) => w.registeredInDatabase === false);
       const webhookWarning = hasUnregisteredWebhook
         ? {
-            critical: true,
-            message: registeredCount === 0
-              ? '⚠️ Webhooks activated via API do NOT register until n8n container restart'
-              : '⚠️ Some webhook triggers are not registered yet and may return 404 until n8n restart',
-            registeredCount,
-            expectedCount,
-            action: 'docker restart sulla_n8n',
-            verifyCommand: `docker exec sulla_postgres psql -U sulla -d sulla -c "SELECT \"webhookPath\", \"method\" FROM webhook_entity WHERE \"workflowId\" = '${workflowId}';"`,
-          }
+          critical: true,
+          message:  registeredCount === 0
+            ? '⚠️ Webhooks activated via API do NOT register until n8n container restart'
+            : '⚠️ Some webhook triggers are not registered yet and may return 404 until n8n restart',
+          registeredCount,
+          expectedCount,
+          action:        'docker restart sulla_n8n',
+          verifyCommand: `docker exec sulla_postgres psql -U sulla -d sulla -c "SELECT \"webhookPath\", \"method\" FROM webhook_entity WHERE \"workflowId\" = '${ workflowId }';"`,
+        }
         : null;
 
       const payload = {
         workflowId,
         workflowName: String(workflow?.name || result?.name || ''),
-        activated: true,
-        versionId: String(result?.versionId || input?.versionId || ''),
+        activated:    true,
+        versionId:    String(result?.versionId || input?.versionId || ''),
         webhooks,
         webhookWarning,
       };
@@ -227,7 +227,7 @@ export class ActivateWorkflowWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error activating workflow: ${(error as Error).message}`
+        responseString: `Error activating workflow: ${ (error as Error).message }`,
       };
     }
   }

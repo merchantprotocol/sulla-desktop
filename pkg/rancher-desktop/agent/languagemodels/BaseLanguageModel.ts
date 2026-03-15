@@ -9,30 +9,30 @@ export enum FinishReason {
 }
 
 export interface ChatMessage {
-  id?: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
-  content: string;
-  name?: string;
+  id?:           string;
+  role:          'user' | 'assistant' | 'system' | 'tool';
+  content:       string;
+  name?:         string;
   tool_call_id?: string;
-  timestamp?: number;
-  metadata?: Record<string, any>;
+  timestamp?:    number;
+  metadata?:     Record<string, any>;
 }
 
 /**
  * Normalized response that all LLM services return
  */
 export interface NormalizedResponse {
-  content: string;
+  content:  string;
   metadata: {
-    tokens_used: number;
-    time_spent: number;           // milliseconds
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    model?: string;
-    tool_calls?: Array<{ id?: string; name: string; args: any }>;
-    finish_reason?: FinishReason;
-    reasoning?: string;
-    parsed_content?: any;
+    tokens_used:         number;
+    time_spent:          number;           // milliseconds
+    prompt_tokens?:      number;
+    completion_tokens?:  number;
+    model?:              string;
+    tool_calls?:         { id?: string; name: string; args: any }[];
+    finish_reason?:      FinishReason;
+    reasoning?:          string;
+    parsed_content?:     any;
     rawProviderContent?: any;
   };
 }
@@ -42,8 +42,8 @@ export interface NormalizedResponse {
  * Provider-specific services extend this with their own fields.
  */
 export interface LLMServiceConfig {
-  id: string;
-  model: string;
+  id:      string;
+  model:   string;
   baseUrl: string;
   apiKey?: string;
 }
@@ -52,32 +52,32 @@ export interface LLMServiceConfig {
  * Remote provider configuration (back-compat alias)
  */
 export interface RemoteProviderConfig {
-  id: string;
-  name: string;
+  id:      string;
+  name:    string;
   baseUrl: string;
-  apiKey: string;
-  model: string;
+  apiKey:  string;
+  model:   string;
 }
 
 /**
  * Overall LLM configuration (legacy — used by OllamaService)
  */
 export interface LLMConfig {
-  mode: 'local' | 'remote';
+  mode:                  'local' | 'remote';
   // Local
-  localModel: string;
-  ollamaBase: string;
-  localTimeoutSeconds?: number;
-  localRetryCount?: number;
+  localModel:            string;
+  ollamaBase:            string;
+  localTimeoutSeconds?:  number;
+  localRetryCount?:      number;
   // Remote
-  remoteProvider?: string;
-  remoteModel?: string;
-  remoteApiKey?: string;
-  remoteBaseUrl?: string;
-  remoteRetryCount?: number;
+  remoteProvider?:       string;
+  remoteModel?:          string;
+  remoteApiKey?:         string;
+  remoteBaseUrl?:        string;
+  remoteRetryCount?:     number;
   remoteTimeoutSeconds?: number;
   // Backend heartbeat provider selection
-  heartbeatProvider?: string;
+  heartbeatProvider?:    string;
 }
 
 /**
@@ -121,8 +121,8 @@ export interface LLMConfig {
  * @see {@link LLMConfig} - Constructor config shapes
  */
 export abstract class BaseLanguageModel {
-  protected config: LLMServiceConfig | LLMConfig | RemoteProviderConfig;
-  protected model: string;
+  protected config:  LLMServiceConfig | LLMConfig | RemoteProviderConfig;
+  protected model:   string;
   protected baseUrl: string;
   protected apiKey?: string;
   protected isInitialized = false;
@@ -133,14 +133,14 @@ export abstract class BaseLanguageModel {
     if ('mode' in config) {
       // Legacy local config (Ollama)
       this.model = config.localModel;
-      this.baseUrl = config.ollamaBase.endsWith('/') 
-        ? config.ollamaBase.slice(0, -1) 
+      this.baseUrl = config.ollamaBase.endsWith('/')
+        ? config.ollamaBase.slice(0, -1)
         : config.ollamaBase;
     } else {
       // LLMServiceConfig or RemoteProviderConfig
       this.model = config.model;
-      this.baseUrl = config.baseUrl.endsWith('/') 
-        ? config.baseUrl.slice(0, -1) 
+      this.baseUrl = config.baseUrl.endsWith('/')
+        ? config.baseUrl.slice(0, -1)
         : config.baseUrl;
       this.apiKey = config.apiKey;
     }
@@ -187,19 +187,20 @@ export abstract class BaseLanguageModel {
   pullModel(modelName: string, onProgress?: (status: string) => void): Promise<boolean> {
     return Promise.resolve(false);
   }
+
   async chat(
     messages: ChatMessage[],
     options: {
-      model?: string;
-      maxTokens?: number;
-      format?: 'json' | undefined;
-      temperature?: number;
-      signal?: AbortSignal;
+      model?:          string;
+      maxTokens?:      number;
+      format?:         'json' | undefined;
+      temperature?:    number;
+      signal?:         AbortSignal;
       timeoutSeconds?: number;
-      tools?: any;
+      tools?:          any;
       conversationId?: string;
-      nodeName?: string;
-    } = {}
+      nodeName?:       string;
+    } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
     const convId = options.conversationId;
@@ -281,7 +282,7 @@ export abstract class BaseLanguageModel {
           });
         } catch { /* best-effort */ }
       }
-      console.error(`[${this.getProviderName()}] Chat failed:`, error);
+      console.error(`[${ this.getProviderName() }] Chat failed:`, error);
       return null;
     }
   }
@@ -316,24 +317,24 @@ export abstract class BaseLanguageModel {
 
     // Provider aliases (Anthropic/OpenAI-compatible variants)
     const normalizedAliases: Record<string, FinishReason> = {
-      end_turn: FinishReason.Stop,
+      end_turn:   FinishReason.Stop,
       max_tokens: FinishReason.Length,
-      tool_use: FinishReason.ToolCalls,
+      tool_use:   FinishReason.ToolCalls,
     };
 
     if (normalizedAliases[rawReason]) {
       return normalizedAliases[rawReason];
     }
-    
+
     // Check if the raw reason matches any enum value
     for (const reason of Object.values(FinishReason)) {
       if (reason === rawReason) {
         return reason as FinishReason;
       }
     }
-    
+
     // If no match, return undefined or log a warning
-    console.warn(`Unknown finish reason: ${rawReason}`);
+    console.warn(`Unknown finish reason: ${ rawReason }`);
     return undefined;
   }
 
@@ -366,23 +367,23 @@ export abstract class BaseLanguageModel {
 
     // OpenAI / Grok / most compatible providers
     let content = raw.choices?.[0]?.message?.content?.message ?? raw.choices?.[0]?.message?.content ?? '';
-    let reasoning = raw.choices?.[0]?.message?.content?.reasoning 
-            || raw.choices?.[0]?.message?.reasoning 
-            || raw.reasoning 
-            || '';
-    let toolCalls: Array<{ id?: string; name: string; args: any }> = [];
+    let reasoning = raw.choices?.[0]?.message?.content?.reasoning ||
+            raw.choices?.[0]?.message?.reasoning ||
+            raw.reasoning ||
+            '';
+    let toolCalls: { id?: string; name: string; args: any }[] = [];
 
     // ── Attempt to parse content as JSON for structured data ──
     const parsedContent = this.parseJson(content);
     if (parsedContent && typeof parsedContent === 'object') {
       // Anthropic-style tool_use block encoded directly as JSON object
       if (
-        !Array.isArray(parsedContent)
-        && parsedContent.type === 'tool_use'
-        && typeof parsedContent.name === 'string'
+        !Array.isArray(parsedContent) &&
+        parsedContent.type === 'tool_use' &&
+        typeof parsedContent.name === 'string'
       ) {
         toolCalls.push({
-          id: parsedContent.id,
+          id:   parsedContent.id,
           name: parsedContent.name,
           args: parsedContent.input ?? {},
         });
@@ -399,7 +400,7 @@ export abstract class BaseLanguageModel {
         const parsedToolUses = parsedContent
           .filter((b: any) => b?.type === 'tool_use' && typeof b?.name === 'string')
           .map((b: any) => ({
-            id: b.id,
+            id:   b.id,
             name: b.name,
             args: b.input ?? {},
           }));
@@ -415,17 +416,19 @@ export abstract class BaseLanguageModel {
       }
       if (parsedContent.tool_calls && Array.isArray(parsedContent.tool_calls)) {
         const extractedToolCalls = parsedContent.tool_calls.map((tc: any) => ({
-          id: tc.id,
+          id:   tc.id,
           name: tc.function?.name || tc.name,
-          args: tc.function?.arguments ? (() => {
-            try {
-              return typeof tc.function.arguments === 'string' 
-                ? JSON.parse(tc.function.arguments) 
-                : tc.function.arguments;
-            } catch {
-              return tc.function.arguments || {};
-            }
-          })() : tc.args || {},
+          args: tc.function?.arguments
+            ? (() => {
+              try {
+                return typeof tc.function.arguments === 'string'
+                  ? JSON.parse(tc.function.arguments)
+                  : tc.function.arguments;
+              } catch {
+                return tc.function.arguments || {};
+              }
+            })()
+            : tc.args || {},
         }));
         toolCalls.push(...extractedToolCalls);
       }
@@ -464,7 +467,7 @@ export abstract class BaseLanguageModel {
     const toolCallsArray = message?.tool_calls || message?.content?.tool_calls;
     if (toolCallsArray) {
       toolCalls = toolCallsArray.map((tc: any) => ({
-        id: tc.id,
+        id:   tc.id,
         name: tc.function?.name,
         args: (() => {
           try {
@@ -472,7 +475,7 @@ export abstract class BaseLanguageModel {
           } catch {
             return tc.function?.arguments || {};
           }
-        })()
+        })(),
       }));
     }
 
@@ -487,9 +490,9 @@ export abstract class BaseLanguageModel {
       }
       for (const tc of toolCalls) {
         blocks.push({
-          type: 'tool_use',
-          id: tc.id,
-          name: tc.name,
+          type:  'tool_use',
+          id:    tc.id,
+          name:  tc.name,
           input: tc.args ?? {},
         });
       }
@@ -497,18 +500,18 @@ export abstract class BaseLanguageModel {
     }
 
     return {
-      content: content.trim(),
+      content:  content.trim(),
       metadata: {
-        tokens_used: (usage.total_tokens ?? usage.output_tokens ?? 0) + 
+        tokens_used: (usage.total_tokens ?? usage.output_tokens ?? 0) +
                     (usage.prompt_tokens ?? usage.input_tokens ?? 0),
-        time_spent: 0,
-        prompt_tokens: usage.prompt_tokens ?? usage.input_tokens ?? 0,
+        time_spent:        0,
+        prompt_tokens:     usage.prompt_tokens ?? usage.input_tokens ?? 0,
         completion_tokens: usage.completion_tokens ?? usage.output_tokens ?? 0,
-        model: this.model,
-        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-        finish_reason: this.normalizeFinishReason(finishReason),
-        reasoning: reasoning.trim() || undefined,
-        parsed_content: parsedContent,
+        model:             this.model,
+        tool_calls:        toolCalls.length > 0 ? toolCalls : undefined,
+        finish_reason:     this.normalizeFinishReason(finishReason),
+        reasoning:         reasoning.trim() || undefined,
+        parsed_content:    parsedContent,
         rawProviderContent,
       },
     };
@@ -521,8 +524,8 @@ export abstract class BaseLanguageModel {
    *   <tool_code>await exec({"command":"echo hi"})</tool_code>
    *   <function_call>{"name":"exec","parameters":{...}}</function_call>
    */
-  private extractToolCallsFromXmlTags(content: string): Array<{ id?: string; name: string; args: any }> {
-    const results: Array<{ id?: string; name: string; args: any }> = [];
+  private extractToolCallsFromXmlTags(content: string): { id?: string; name: string; args: any }[] {
+    const results: { id?: string; name: string; args: any }[] = [];
 
     // Pattern 1: <tool_call>JSON</tool_call> or <function_call>JSON</function_call>
     const jsonTagPattern = /<(?:tool_call|function_call)\s*>([\s\S]*?)<\/(?:tool_call|function_call)\s*>/gi;
@@ -534,7 +537,7 @@ export abstract class BaseLanguageModel {
         if (name) {
           let args = parsed.arguments || parsed.parameters || parsed.input || parsed.function?.arguments || {};
           if (typeof args === 'string') {
-            try { args = JSON.parse(args); } catch { /* keep as string */ }
+            try { args = JSON.parse(args) } catch { /* keep as string */ }
           }
           results.push({ id: parsed.id, name, args });
         }
@@ -569,7 +572,7 @@ export abstract class BaseLanguageModel {
   private parseLooseJson(str: string): any | null {
     const trimmed = str.trim();
     // Try strict JSON first
-    try { return JSON.parse(trimmed); } catch { /* continue */ }
+    try { return JSON.parse(trimmed) } catch { /* continue */ }
     // Quote unquoted keys and convert single quotes to double
     try {
       const fixed = trimmed
@@ -580,7 +583,7 @@ export abstract class BaseLanguageModel {
     } catch { /* continue */ }
     // Last resort: eval-safe subset using Function constructor
     try {
-      const fn = new Function(`return (${trimmed})`);
+      const fn = new Function(`return (${ trimmed })`);
       const result = fn();
       if (result && typeof result === 'object') return result;
     } catch { /* give up */ }
@@ -617,19 +620,17 @@ export abstract class BaseLanguageModel {
     };
 
     if (this.apiKey) {
-      headers.Authorization = `Bearer ${this.apiKey}`;
+      headers.Authorization = `Bearer ${ this.apiKey }`;
     }
 
     return {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body:   JSON.stringify(body),
       signal,
     };
   }
 }
-
-
 
 /**
  * ILLMService - Common interface for LLM services
@@ -641,10 +642,10 @@ export interface ILLMService {
   getModel(): string;
   getContextWindow(): number;
   chat(messages: ChatMessage[], options?: {
-    model?: string;
+    model?:     string;
     maxTokens?: number;
-    format?: 'json' | undefined;
-    signal?: AbortSignal;
+    format?:    'json' | undefined;
+    signal?:    AbortSignal;
   }): Promise<string | null>;
   healthCheck(): Promise<boolean>;
   pullModel?(modelName: string, onProgress?: (status: string) => void): Promise<boolean>;

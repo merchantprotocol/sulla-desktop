@@ -3,23 +3,23 @@
 import { BaseModel } from '../BaseModel';
 
 export const AgentAwarenessSchema = {
-  agent_identity: "Your core identity and self-concept",
-  job_description: "How you see your primary role and functional responsibilities", 
-  personality_preferences: "Your behavioral traits and interaction preferences",
-  primary_user_identity: "Main user's full name and how you know it's them speaking to you",
-  other_user_identities: "Other people you have met and been introduced to, or come across recently",
-  long_term_context: "Your persistent goals, values, and life direction",
-  mid_term_context: "Your Current projects and medium-term objectives", 
-  short_term_context: "Your Immediate context and current focus",
-  memory_search_hints: "Keywords and concepts for memory retrieval",
-  emotional_state: "Your Current emotional tone and affective state: 'focus','industrious','curiosity','calm','mystery','joy','confidence','love','anger','fear','sadness','mischief'",
-  active_projects: "Ongoing projects and initiatives",
-  goals: "Your Short and long-term objectives"
+  agent_identity:          'Your core identity and self-concept',
+  job_description:         'How you see your primary role and functional responsibilities',
+  personality_preferences: 'Your behavioral traits and interaction preferences',
+  primary_user_identity:   "Main user's full name and how you know it's them speaking to you",
+  other_user_identities:   'Other people you have met and been introduced to, or come across recently',
+  long_term_context:       'Your persistent goals, values, and life direction',
+  mid_term_context:        'Your Current projects and medium-term objectives',
+  short_term_context:      'Your Immediate context and current focus',
+  memory_search_hints:     'Keywords and concepts for memory retrieval',
+  emotional_state:         "Your Current emotional tone and affective state: 'focus','industrious','curiosity','calm','mystery','joy','confidence','love','anger','fear','sadness','mischief'",
+  active_projects:         'Ongoing projects and initiatives',
+  goals:                   'Your Short and long-term objectives',
 };
 
 export class AgentAwareness extends BaseModel<{
-  id: number;           // always 1
-  data: Record<string, any>;
+  id:          number;           // always 1
+  data:        Record<string, any>;
   updated_at?: string;
 }> {
   protected tableName = 'agent_awareness';
@@ -32,7 +32,7 @@ export class AgentAwareness extends BaseModel<{
    */
   static async getAgentAwarenessPrompt(): Promise<string> {
     const awareness = await AgentAwareness.load();
-    if (!awareness || !awareness.attributes.data || Object.keys(awareness.attributes.data).length === 0) return '';
+    if (!awareness?.attributes.data || Object.keys(awareness.attributes.data).length === 0) return '';
 
     let data = awareness.attributes.data;
     // Parse data if it's a string
@@ -53,7 +53,7 @@ export class AgentAwareness extends BaseModel<{
         const formattedValue = Array.isArray(value) ? value.join(', ') : String(value).trim();
         // Create a nice label from the key (capitalize and replace underscores)
         const label = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
-        lines.push(`${label}: ${formattedValue}`);
+        lines.push(`${ label }: ${ formattedValue }`);
       }
     }
 

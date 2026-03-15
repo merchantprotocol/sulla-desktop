@@ -12,8 +12,8 @@ function asRecord(value: unknown): JsonRecord {
 }
 
 export class GetExecutionLogWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
@@ -35,12 +35,12 @@ export class GetExecutionLogWorker extends BaseTool {
             const runRecord = asRecord(run);
             const runError = asRecord(runRecord.error);
             return {
-              runIndex: index,
-              startTime: runRecord.startTime || null,
+              runIndex:      index,
+              startTime:     runRecord.startTime || null,
               executionTime: runRecord.executionTime ?? null,
-              error: runRecord.error || (Object.keys(runError).length ? runError : null),
-              data: runRecord.data ?? null,
-              source: runRecord.source ?? null,
+              error:         runRecord.error || (Object.keys(runError).length ? runError : null),
+              data:          runRecord.data ?? null,
+              source:        runRecord.source ?? null,
             };
           })
           : [];
@@ -54,16 +54,16 @@ export class GetExecutionLogWorker extends BaseTool {
 
       const response = {
         executionId: String(executionRecord.id || executionId),
-        workflowId: String(executionRecord.workflowId || '').trim() || null,
-        status: String(executionRecord.status || '').trim() || 'unknown',
-        startedAt: executionRecord.startedAt || null,
-        stoppedAt: executionRecord.stoppedAt || null,
-        mode: executionRecord.mode || null,
-        finished: executionRecord.finished ?? null,
-        retryOf: executionRecord.retryOf ?? null,
-        waitTill: executionRecord.waitTill || null,
+        workflowId:  String(executionRecord.workflowId || '').trim() || null,
+        status:      String(executionRecord.status || '').trim() || 'unknown',
+        startedAt:   executionRecord.startedAt || null,
+        stoppedAt:   executionRecord.stoppedAt || null,
+        mode:        executionRecord.mode || null,
+        finished:    executionRecord.finished ?? null,
+        retryOf:     executionRecord.retryOf ?? null,
+        waitTill:    executionRecord.waitTill || null,
         globalError: resultData.error || null,
-        nodeCount: nodes.length,
+        nodeCount:   nodes.length,
         nodes,
       };
 
@@ -74,9 +74,8 @@ export class GetExecutionLogWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting execution log: ${(error as Error).message}`,
+        responseString: `Error getting execution log: ${ (error as Error).message }`,
       };
     }
   }
 }
-

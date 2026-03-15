@@ -24,11 +24,11 @@ describe('slack_send_message tool', () => {
     mockGet.mockReset();
   });
 
-  it('returns success when Slack API confirms message post', async () => {
+  it('returns success when Slack API confirms message post', async() => {
     const { SlackSendMessageWorker, slackSendMessageRegistration } = await loadSlackSendMessageTool();
 
     mockGet.mockResolvedValueOnce({
-      sendMessage: jest.fn(async () => ({ ok: true, ts: '1234.5678' })),
+      sendMessage: jest.fn(async() => ({ ok: true, ts: '1234.5678' })),
     });
 
     const worker = configureWorker(new SlackSendMessageWorker(), slackSendMessageRegistration);
@@ -39,11 +39,11 @@ describe('slack_send_message tool', () => {
     expect(result.result).toContain('1234.5678');
   });
 
-  it('returns failure when Slack API returns ok=false', async () => {
+  it('returns failure when Slack API returns ok=false', async() => {
     const { SlackSendMessageWorker, slackSendMessageRegistration } = await loadSlackSendMessageTool();
 
     mockGet.mockResolvedValueOnce({
-      sendMessage: jest.fn(async () => ({ ok: false, error: 'channel_not_found' })),
+      sendMessage: jest.fn(async() => ({ ok: false, error: 'channel_not_found' })),
     });
 
     const worker = configureWorker(new SlackSendMessageWorker(), slackSendMessageRegistration);

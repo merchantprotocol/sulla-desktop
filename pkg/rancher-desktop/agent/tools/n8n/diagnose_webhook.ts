@@ -2,16 +2,16 @@ import { BaseTool, ToolResponse } from '../base';
 import { postgresClient } from '../../database/PostgresClient';
 import { runCommand } from '../util/CommandRunner';
 
-type DiagnoseWebhookInput = {
-  workflowId: string;
-  container?: string;
+interface DiagnoseWebhookInput {
+  workflowId:         string;
+  container?:         string;
   endpointTimeoutMs?: number;
-};
+}
 
-type WebhookRow = {
+interface WebhookRow {
   webhookPath: string;
-  method: string;
-};
+  method:      string;
+}
 
 const DEFAULT_N8N_CONTAINER = 'sulla_n8n';
 const DEFAULT_ENDPOINT_TIMEOUT_MS = 15_000;
@@ -70,13 +70,13 @@ export class DiagnoseWebhookWorker extends BaseTool {
 
     return {
       webhookPath: String(row.webhookPath).trim(),
-      method: String(row.method || 'POST').trim() || 'POST',
+      method:      String(row.method || 'POST').trim() || 'POST',
     };
   }
 
   private async testEndpoint(webhookPath: string, method: string, timeoutMs: number): Promise<{ status: number | null; error: string | null; testedUrl: string }> {
     const cleanPath = webhookPath.replace(/^\/+/, '');
-    const testedUrl = `${N8N_BASE_URL}/webhook/${cleanPath}`;
+    const testedUrl = `${ N8N_BASE_URL }/webhook/${ cleanPath }`;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -97,13 +97,13 @@ export class DiagnoseWebhookWorker extends BaseTool {
       const response = await fetch(testedUrl, init);
       return {
         status: response.status,
-        error: null,
+        error:  null,
         testedUrl,
       };
     } catch (error) {
       return {
         status: null,
-        error: error instanceof Error ? error.message : String(error),
+        error:  error instanceof Error ? error.message : String(error),
         testedUrl,
       };
     } finally {
@@ -118,7 +118,7 @@ export class DiagnoseWebhookWorker extends BaseTool {
       { timeoutMs: 20_000, maxOutputChars: 160_000 },
     );
 
-    const raw = `${logs.stdout || ''}\n${logs.stderr || ''}`;
+    const raw = `${ logs.stdout || '' }\n${ logs.stderr || '' }`;
     if (!raw.trim()) {
       return [];
     }
@@ -135,7 +135,7 @@ export class DiagnoseWebhookWorker extends BaseTool {
       .slice(-5);
   }
 
-  protected async _validatedCall(input: DiagnoseWebhookInput): Promise<ToolResponse> {
+  protected async _validatedCall(input: any): Promise<ToolResponse> {
     const workflowId = String(input?.workflowId || '').trim();
     if (!workflowId) {
       return {
@@ -164,12 +164,12 @@ export class DiagnoseWebhookWorker extends BaseTool {
         workflowId,
         workflowActive,
         databaseRegistered,
-        webhookPath: webhook?.webhookPath ?? null,
+        webhookPath:  webhook?.webhookPath ?? null,
         endpointTest: {
-          status: endpointTest.status,
-          error: endpointTest.error,
+          status:    endpointTest.status,
+          error:     endpointTest.error,
           testedUrl: endpointTest.testedUrl,
-          method: webhook ? inferHttpMethod(webhook.method) : null,
+          method:    webhook ? inferHttpMethod(webhook.method) : null,
         },
         n8nLogs,
       };

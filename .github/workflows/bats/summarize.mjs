@@ -1,7 +1,7 @@
 // This file creates the summary table at the end of the run.
 //
 // Inputs:
-//   */version.txt   -- The version of Rancher Desktop tested
+//   */version.txt   -- The version of Sulla Desktop tested
 //   */name.txt      -- The test suite that was ran
 //   */os.txt        -- The OS the test was run on
 //   */engine.txt    -- The container engine used
@@ -52,7 +52,7 @@ class Run {
   /** Version string for this run. */
   get version() {
     let v = this.versionData;
-    for (const prefix of ['Rancher Desktop-', 'rancher-desktop-', 'Rancher.Desktop.Setup.']) {
+    for (const prefix of ['Sulla Desktop-', 'Sulla-Desktop-', 'sulla-desktop-', 'Sulla.Desktop.Setup.', 'Rancher Desktop-', 'rancher-desktop-', 'Rancher.Desktop.Setup.']) {
       if (v.startsWith(prefix)) {
         v = v.substring(prefix.length);
       }

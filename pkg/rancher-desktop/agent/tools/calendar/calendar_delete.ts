@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { calendarClient } from "../../services/CalendarClient";
+import { BaseTool, ToolResponse } from '../base';
+import { calendarClient } from '../../services/CalendarClient';
 
 /**
  * Calendar Delete Tool - Worker class for execution
  */
 export class CalendarDeleteWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { eventId } = input;
 
@@ -15,18 +15,18 @@ export class CalendarDeleteWorker extends BaseTool {
       if (success) {
         return {
           successBoolean: true,
-          responseString: `Event with ID ${eventId} deleted successfully.`
+          responseString: `Event with ID ${ eventId } deleted successfully.`,
         };
       } else {
         return {
           successBoolean: false,
-          responseString: `Event with ID ${eventId} not found.`
+          responseString: `Event with ID ${ eventId } not found.`,
         };
       }
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error deleting calendar event: ${(error as Error).message}`
+        responseString: `Error deleting calendar event: ${ (error as Error).message }`,
       };
     }
   }

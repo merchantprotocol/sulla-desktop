@@ -4,8 +4,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { resolveFsPath } from './path_utils';
 
 export class FsDeletePathWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const targetPath = resolveFsPath(input.path);
@@ -16,14 +16,13 @@ export class FsDeletePathWorker extends BaseTool {
       fs.rmSync(targetPath, { recursive, force });
       return {
         successBoolean: true,
-        responseString: `Deleted path ${targetPath}`,
+        responseString: `Deleted path ${ targetPath }`,
       };
     } catch (error: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to delete path "${targetPath}": ${error.message}`,
+        responseString: `Failed to delete path "${ targetPath }": ${ error.message }`,
       };
     }
   }
 }
-

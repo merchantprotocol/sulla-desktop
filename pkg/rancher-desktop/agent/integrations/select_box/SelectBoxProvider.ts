@@ -1,14 +1,14 @@
 export interface SelectOption {
-  value: string;
-  label: string;
+  value:        string;
+  label:        string;
   description?: string;
 }
 
 export interface SelectBoxContext {
   integrationId: string;
-  accountId: string;
+  accountId:     string;
   /** Current form values for sibling properties (keyed by property key) */
-  formValues: Record<string, string>;
+  formValues:    Record<string, string>;
 }
 
 /**

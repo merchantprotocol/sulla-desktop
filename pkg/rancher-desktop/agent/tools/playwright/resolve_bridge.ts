@@ -1,57 +1,72 @@
 /**
  * resolve_bridge.ts
  *
- * Shared helper for all playwright tools. Resolves a WebviewHostBridge
- * from the multi-asset registry by optional assetId, falling back to
- * the currently active asset.
+ * Shared helper for all playwright tools. Resolves a bridge from the
+ * main-process proxy by optional assetId, falling back to the currently
+ * active asset.
+ *
+ * Because the real bridges live in the renderer, every call goes through
+ * HostBridgeProxy which forwards via WebSocket.
  */
 
-import { hostBridgeRegistry } from '../../scripts/injected/HostBridgeRegistry';
-import type { WebviewHostBridge } from '../../scripts/injected/WebviewHostBridge';
+import { hostBridgeProxy, ProxyBridge } from '../../scripts/injected/HostBridgeProxy';
 import type { ToolResponse } from '../base';
 
 export interface BridgeResolution {
-  bridge: WebviewHostBridge;
+  bridge:  ProxyBridge;
   assetId: string;
 }
 
 /**
- * Resolves a bridge from the registry.
+ * Resolves a bridge from the proxy.
  * Returns either a successful BridgeResolution or a ToolResponse error.
+ *
+ * NOTE: This is async because it queries the renderer via WebSocket.
  */
-export function resolveBridge(assetId?: string): BridgeResolution | ToolResponse {
-  const targetId = (assetId && assetId.trim()) || hostBridgeRegistry.getActiveAssetId() || '';
-  console.log('[SULLA_RESOLVE_BRIDGE]', { requestedAssetId: assetId, resolvedTargetId: targetId, registrySize: hostBridgeRegistry.size(), activeAssetId: hostBridgeRegistry.getActiveAssetId() });
-  const bridge = hostBridgeRegistry.resolve(targetId || undefined);
-  console.log('[SULLA_RESOLVE_BRIDGE] resolve result', { found: !!bridge, injected: bridge?.isInjected?.() });
+export async function resolveBridge(assetId?: string): Promise<BridgeResolution | ToolResponse> {
+  const targetId = (assetId?.trim()) || (await hostBridgeProxy.getActiveAssetId()) || '';
+  const allAssets = await hostBridgeProxy.getAllAssetInfo();
 
-  if (!bridge) {
-    const count = hostBridgeRegistry.size();
-    if (count === 0) {
+  console.log('[SULLA_RESOLVE_BRIDGE]', {
+    requestedAssetId: assetId,
+    resolvedTargetId: targetId,
+    registrySize:     allAssets.length,
+    activeAssetId:    await hostBridgeProxy.getActiveAssetId(),
+  });
+
+  // Find the target asset in the registry
+  const found = targetId
+    ? allAssets.find(a => a.assetId === targetId)
+    : allAssets.find(a => a.isInjected); // fallback: first injected asset
+
+  if (!found) {
+    if (allAssets.length === 0) {
       return {
         successBoolean: false,
         responseString: 'No active website assets. Ensure at least one iframe asset is open and active.',
       };
     }
 
-    const available = hostBridgeRegistry.getAllEntries()
-      .map(e => `  - ${e.assetId} "${e.title}" (${e.url})`)
+    const available = allAssets
+      .map(e => `  - ${ e.assetId } "${ e.title }" (${ e.url })`)
       .join('\n');
 
     return {
       successBoolean: false,
-      responseString: `Asset "${assetId}" not found. Available assets:\n${available}\nUse list_active_pages to see all open websites.`,
+      responseString: `Asset "${ assetId }" not found. Available assets:\n${ available }\nUse list_active_pages to see all open websites.`,
     };
   }
 
-  if (!bridge.isInjected()) {
+  if (!found.isInjected) {
     return {
       successBoolean: false,
-      responseString: `Guest bridge for "${targetId}" not yet injected. The page may still be loading.`,
+      responseString: `Guest bridge for "${ found.assetId }" not yet injected. The page may still be loading.`,
     };
   }
 
-  return { bridge, assetId: targetId };
+  console.log('[SULLA_RESOLVE_BRIDGE] resolved', { assetId: found.assetId, injected: found.isInjected });
+
+  return { bridge: hostBridgeProxy.resolve(found.assetId), assetId: found.assetId };
 }
 
 /**

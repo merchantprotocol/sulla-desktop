@@ -1,8 +1,14 @@
 <template>
-  <div class="min-h-screen text-sm font-sans page-root" :class="{ dark: isDark }">
+  <div
+    class="min-h-screen text-sm font-sans page-root"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="AgentExtensions" />
     <div class="flex min-h-screen flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+      <AgentHeader
+        :is-dark="isDark"
+        :toggle-theme="toggleTheme"
+      />
 
       <div class="flex w-full flex-col">
         <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
@@ -22,8 +28,12 @@
               <div class="relative">
                 <div class="flex flex-col gap-4">
                   <div class="relative">
-                    <svg aria-hidden="true" viewBox="0 0 20 20" class="pointer-events-none absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 fill-slate-400 dark:fill-slate-500">
-                      <path d="M16.293 17.707a1 1 0 0 0 1.414-1.414l-1.414 1.414ZM9 14a5 5 0 0 1-5-5H2a7 7 0 0 0 7 7v-2ZM4 9a5 5 0 0 1 5-5V2a7 7 0 0 0-7 7h2Zm5-5a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7v2Zm8.707 12.293-3.757-3.757-1.414 1.414 3.757 3.757 1.414-1.414ZM14 9a4.98 4.98 0 0 1-1.464 3.536l1.414 1.414A6.98 6.98 0 0 0 16 9h-2Zm-1.464 3.536A4.98 4.98 0 0 1 9 14v2a6.98 6.98 0 0 0 4.95-2.05l-1.414-1.414Z"></path>
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 20 20"
+                      class="pointer-events-none absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 fill-slate-400 dark:fill-slate-500"
+                    >
+                      <path d="M16.293 17.707a1 1 0 0 0 1.414-1.414l-1.414 1.414ZM9 14a5 5 0 0 1-5-5H2a7 7 0 0 0 7 7v-2ZM4 9a5 5 0 0 1 5-5V2a7 7 0 0 0-7 7h2Zm5-5a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7v2Zm8.707 12.293-3.757-3.757-1.414 1.414 3.757 3.757 1.414-1.414ZM14 9a4.98 4.98 0 0 1-1.464 3.536l1.414 1.414A6.98 6.98 0 0 0 16 9h-2Zm-1.464 3.536A4.98 4.98 0 0 1 9 14v2a6.98 6.98 0 0 0 4.95-2.05l-1.414-1.414Z" />
                     </svg>
 
                     <input
@@ -41,7 +51,10 @@
                       :class="activeTab === 'catalog' ? 'bg-linear-to-r from-sky-400/30 via-sky-400 to-sky-400/30 text-sky-300' : 'text-slate-500 bg-slate-800/60 ring-1 ring-white/5'"
                       @click="activeTab = 'catalog'"
                     >
-                      <span class="flex items-center rounded-full px-2.5" :class="activeTab === 'catalog' ? 'bg-slate-800' : ''">Catalog</span>
+                      <span
+                        class="flex items-center rounded-full px-2.5"
+                        :class="activeTab === 'catalog' ? 'bg-slate-800' : ''"
+                      >Catalog</span>
                     </button>
                     <button
                       type="button"
@@ -49,13 +62,19 @@
                       :class="activeTab === 'installed' ? 'bg-linear-to-r from-sky-400/30 via-sky-400 to-sky-400/30 text-sky-300' : 'text-slate-500 bg-slate-800/60 ring-1 ring-white/5'"
                       @click="activeTab = 'installed'"
                     >
-                      <span class="flex items-center rounded-full px-2.5" :class="activeTab === 'installed' ? 'bg-slate-800' : ''">
+                      <span
+                        class="flex items-center rounded-full px-2.5"
+                        :class="activeTab === 'installed' ? 'bg-slate-800' : ''"
+                      >
                         Installed
-                        <span v-if="installedExtensions.length" class="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-500/20 px-1 text-[10px] text-sky-300">{{ installedExtensions.length }}</span>
+                        <span
+                          v-if="installedExtensions.length"
+                          class="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-500/20 px-1 text-[10px] text-sky-300"
+                        >{{ installedExtensions.length }}</span>
                       </span>
                     </button>
                     <template v-if="activeTab === 'catalog'">
-                      <span class="mx-1 h-4 w-px bg-slate-700"></span>
+                      <span class="mx-1 h-4 w-px bg-slate-700" />
                       <button
                         v-for="category in categories"
                         :key="category"
@@ -64,7 +83,10 @@
                         :class="activeCategory === category ? 'bg-linear-to-r from-sky-400/30 via-sky-400 to-sky-400/30 text-sky-300' : 'text-slate-500 bg-slate-800/60 ring-1 ring-white/5'"
                         @click="activeCategory = activeCategory === category ? null : category"
                       >
-                        <span class="flex items-center rounded-full px-2.5" :class="activeCategory === category ? 'bg-slate-800' : ''">{{ category }}</span>
+                        <span
+                          class="flex items-center rounded-full px-2.5"
+                          :class="activeCategory === category ? 'bg-slate-800' : ''"
+                        >{{ category }}</span>
                       </button>
                     </template>
                   </div>
@@ -81,9 +103,25 @@
               v-if="loading"
               class="flex h-40 items-center justify-center text-sm text-white/60"
             >
-              <svg class="mr-2 h-5 w-5 animate-spin text-sky-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              <svg
+                class="mr-2 h-5 w-5 animate-spin text-sky-400"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  class="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                />
+                <path
+                  class="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
               </svg>
               Loading extensions...
             </div>
@@ -115,7 +153,10 @@
                           :alt="ext.title"
                           class="h-8 w-8 object-contain"
                         >
-                        <span v-else class="text-2xl">📦</span>
+                        <span
+                          v-else
+                          class="text-2xl"
+                        >📦</span>
                       </div>
                       <div class="flex items-center gap-2">
                         <span class="text-xs text-slate-500 dark:text-slate-400">v{{ ext.version }}</span>
@@ -165,9 +206,32 @@
                             class="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700"
                             @click.stop="toggleUrlDropdown(ext.slug)"
                           >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              class="h-3.5 w-3.5"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            ><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line
+                              x1="10"
+                              y1="14"
+                              x2="21"
+                              y2="3"
+                            /></svg>
                             Open
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              class="h-3 w-3"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            ><polyline points="6 9 12 15 18 9" /></svg>
                           </button>
                           <div
                             v-if="openDropdown === ext.slug"
@@ -180,7 +244,21 @@
                               class="flex items-center gap-2 px-3 py-2 text-xs text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-600"
                               @click.prevent="openExternalUrl(link.url)"
                             >
-                              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-3.5 w-3.5 shrink-0 text-emerald-500"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              ><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line
+                                x1="10"
+                                y1="14"
+                                x2="21"
+                                y2="3"
+                              /></svg>
                               {{ link.label }}
                             </a>
                           </div>
@@ -224,9 +302,25 @@
                           v-if="busy[ext.slug]"
                           class="inline-flex items-center gap-1.5 text-xs text-slate-400"
                         >
-                          <svg class="h-4 w-4 animate-spin text-sky-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          <svg
+                            class="h-4 w-4 animate-spin text-sky-400"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              class="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              stroke-width="4"
+                            />
+                            <path
+                              class="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            />
                           </svg>
                           {{ busy[ext.slug] }}...
                         </span>
@@ -270,7 +364,10 @@
                           :alt="extensionTitle(ext)"
                           class="h-8 w-8 object-contain"
                         >
-                        <span v-else class="text-2xl">📦</span>
+                        <span
+                          v-else
+                          class="text-2xl"
+                        >📦</span>
                       </div>
                       <div class="flex items-center gap-2">
                         <span class="text-xs text-slate-500 dark:text-slate-400">v{{ ext.version }}</span>
@@ -308,9 +405,32 @@
                             class="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700"
                             @click="toggleUrlDropdown(ext.id)"
                           >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              class="h-3.5 w-3.5"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            ><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line
+                              x1="10"
+                              y1="14"
+                              x2="21"
+                              y2="3"
+                            /></svg>
                             Open
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              class="h-3 w-3"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            ><polyline points="6 9 12 15 18 9" /></svg>
                           </button>
                           <div
                             v-if="openDropdown === ext.id"
@@ -323,7 +443,21 @@
                               class="flex items-center gap-2 px-3 py-2 text-xs text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-600"
                               @click.prevent="openExternalUrl(link.url)"
                             >
-                              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-3.5 w-3.5 shrink-0 text-emerald-500"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              ><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line
+                                x1="10"
+                                y1="14"
+                                x2="21"
+                                y2="3"
+                              /></svg>
                               {{ link.label }}
                             </a>
                           </div>
@@ -361,9 +495,25 @@
                           v-if="busy[ext.id]"
                           class="inline-flex items-center gap-1.5 text-xs text-slate-400"
                         >
-                          <svg class="h-4 w-4 animate-spin text-sky-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          <svg
+                            class="h-4 w-4 animate-spin text-sky-400"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              class="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              stroke-width="4"
+                            />
+                            <path
+                              class="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            />
                           </svg>
                           {{ busy[ext.id] }}...
                         </span>
@@ -443,9 +593,9 @@ const errors = reactive<Record<string, string | null>>({});
 const openDropdown = ref<string | null>(null);
 
 const uninstallDialog = reactive<{
-  open: boolean;
-  id: string;
-  name: string;
+  open:         boolean;
+  id:           string;
+  name:         string;
   preserveData: boolean;
 }>({
   open: false, id: '', name: '', preserveData: true,
@@ -503,7 +653,7 @@ const filteredCatalog = computed(() => {
       if (!q) {
         return true;
       }
-      const hay = `${ext.title} ${ext.short_description} ${ext.publisher} ${ext.slug}`.toLowerCase();
+      const hay = `${ ext.title } ${ ext.short_description } ${ ext.publisher } ${ ext.slug }`.toLowerCase();
       return hay.includes(q);
     })
     .sort((a, b) => a.title.localeCompare(b.title));
@@ -523,7 +673,7 @@ function getExtensionStatus(slug: string): 'running' | 'stopped' | 'not_installe
   return ext?.status ?? 'not_installed';
 }
 
-function getInstalledExtraUrls(slug: string): Array<{ label: string; url: string }> {
+function getInstalledExtraUrls(slug: string): { label: string; url: string }[] {
   const ext = installedExtensions.value.find(e => e.id === slug);
 
   return ext?.extraUrls ?? [];
@@ -580,7 +730,7 @@ async function stopExtension(id: string) {
 }
 
 async function install(ext: MarketplaceEntry) {
-  const id = `${ext.slug}:${ext.version}`;
+  const id = `${ ext.slug }:${ ext.version }`;
   busy[ext.slug] = 'Installing';
   errors[ext.slug] = null;
 
@@ -595,7 +745,7 @@ async function install(ext: MarketplaceEntry) {
 }
 
 async function upgrade(ext: MarketplaceEntry) {
-  const id = `${ext.slug}:${ext.version}`;
+  const id = `${ ext.slug }:${ ext.version }`;
   busy[ext.slug] = 'Upgrading';
   errors[ext.slug] = null;
 
@@ -651,7 +801,7 @@ function uninstallById(id: string) {
 async function upgradeInstalled(ext: InstalledExtension) {
   if (!ext.availableVersion) return;
 
-  const id = `${ext.id}:${ext.availableVersion}`;
+  const id = `${ ext.id }:${ ext.availableVersion }`;
   busy[ext.id] = 'Upgrading';
 
   await extensionService.installExtension(id);
@@ -660,7 +810,7 @@ async function upgradeInstalled(ext: InstalledExtension) {
   await refreshData();
 }
 
-onMounted(async () => {
+onMounted(async() => {
   try {
     await extensionService.initialize();
     await refreshData();

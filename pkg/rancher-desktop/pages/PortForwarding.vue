@@ -2,21 +2,21 @@
   <div>
     <PostHogTracker page-name="PortForwarding" />
     <PortForwarding
-    class="content"
-    :services="services"
-    :include-kubernetes-services="settings.portForwarding.includeKubernetesServices"
-    :k8s-state="state"
-    :kubernetes-is-disabled="!settings.kubernetes.enabled"
-    :service-being-edited="serviceBeingEdited"
-    :error-message="errorMessage"
-    @update-port="handleUpdatePort"
-    @toggled-service-filter="onIncludeK8sServicesChanged"
-    @edit-port-forward="handleEditPortForward"
-    @cancel-port-forward="handleCancelPortForward"
-    @cancel-edit-port-forward="handleCancelEditPortForward"
-    @update-port-forward="handleUpdatePortForward"
-    @close-error="handleCloseError"
-  />
+      class="content"
+      :services="services"
+      :include-kubernetes-services="settings.portForwarding.includeKubernetesServices"
+      :k8s-state="state"
+      :kubernetes-is-disabled="!settings.kubernetes.enabled"
+      :service-being-edited="serviceBeingEdited"
+      :error-message="errorMessage"
+      @update-port="handleUpdatePort"
+      @toggled-service-filter="onIncludeK8sServicesChanged"
+      @edit-port-forward="handleEditPortForward"
+      @cancel-port-forward="handleCancelPortForward"
+      @cancel-edit-port-forward="handleCancelEditPortForward"
+      @update-port-forward="handleUpdatePortForward"
+      @close-error="handleCloseError"
+    />
   </div>
 </template>
 

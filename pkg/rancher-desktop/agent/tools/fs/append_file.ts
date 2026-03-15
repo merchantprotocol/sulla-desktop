@@ -5,8 +5,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { resolveFsPath } from './path_utils';
 
 export class FsAppendFileWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const targetPath = resolveFsPath(input.path);
@@ -20,14 +20,13 @@ export class FsAppendFileWorker extends BaseTool {
       fs.appendFileSync(targetPath, content, 'utf8');
       return {
         successBoolean: true,
-        responseString: `Appended ${content.length} bytes to ${targetPath}`,
+        responseString: `Appended ${ content.length } bytes to ${ targetPath }`,
       };
     } catch (error: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to append file at "${targetPath}": ${error.message}`,
+        responseString: `Failed to append file at "${ targetPath }": ${ error.message }`,
       };
     }
   }
 }
-

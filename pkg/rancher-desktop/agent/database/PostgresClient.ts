@@ -14,13 +14,13 @@ export class PostgresClient {
     const password = await SullaSettingsModel.get('sullaServicePassword', 'sulla_dev_password');
 
     this.pool = new Pool({
-      host: '127.0.0.1',
-      port: 30116,
-      user: 'sulla',
-      password: password,
-      database: 'sulla',
-      max: 20,                    // max connections in pool
-      idleTimeoutMillis: 30000,   // close idle after 30s
+      host:                    '127.0.0.1',
+      port:                    30116,
+      user:                    'sulla',
+      password,
+      database:                'sulla',
+      max:                     20,                    // max connections in pool
+      idleTimeoutMillis:       30000,   // close idle after 30s
       connectionTimeoutMillis: 2000,
     });
 

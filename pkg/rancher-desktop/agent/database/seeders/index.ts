@@ -12,15 +12,15 @@ import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteC
 export const seedersRegistry = [
   {
     name: 'n8n-user-seeder',
-    run: n8nUserSeeder,
+    run:  n8nUserSeeder,
   },
   {
     name: 'n8n-settings-seeder',
-    run: n8nSettingsSeeder,
+    run:  n8nSettingsSeeder,
   },
   {
     name: 'firstrun-remote-credentials-seeder',
-    run: firstRunRemoteCredentialsSeeder,
+    run:  firstRunRemoteCredentialsSeeder,
   },
   // {
   //   name: 'core-data-seed',

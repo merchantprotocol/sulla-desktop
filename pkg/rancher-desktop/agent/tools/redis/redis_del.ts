@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { redisClient } from "../../database/RedisClient";
+import { BaseTool, ToolResponse } from '../base';
+import { redisClient } from '../../database/RedisClient';
 
 /**
  * Redis Del Tool - Worker class for execution
  */
 export class RedisDelWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { keys } = input;
 
@@ -15,12 +15,12 @@ export class RedisDelWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Redis DEL: ${count} key(s) deleted (${keys.join(', ')})`
+        responseString: `Redis DEL: ${ count } key(s) deleted (${ keys.join(', ') })`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error deleting Redis keys: ${(error as Error).message}`
+        responseString: `Error deleting Redis keys: ${ (error as Error).message }`,
       };
     }
   }

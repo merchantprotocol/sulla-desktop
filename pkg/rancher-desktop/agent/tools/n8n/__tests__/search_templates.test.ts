@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from '@jest/globals';
 let N8nServiceClass: any;
 
 describe('search_templates production integration', () => {
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
 
@@ -17,7 +17,7 @@ describe('search_templates production integration', () => {
     N8nServiceClass = mod.N8nService;
   });
 
-  it('returns real templates for a simple "news" query', async () => {
+  it('returns real templates for a simple "news" query', async() => {
     const service = new N8nServiceClass();
     const result = await service.searchTemplates({ search: 'news', limit: 10 });
 

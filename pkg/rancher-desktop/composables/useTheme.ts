@@ -6,16 +6,16 @@ export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocea
 export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol';
 
 export interface ThemeOption {
-  id: ThemeName;
+  id:     ThemeName;
   scheme: ThemeScheme;
-  mode: 'light' | 'dark';
-  label: string;
+  mode:   'light' | 'dark';
+  label:  string;
   isDark: boolean;
 }
 
 export interface ThemeGroup {
   scheme: ThemeScheme;
-  label: string;
+  label:  string;
   themes: ThemeOption[];
 }
 
@@ -40,8 +40,8 @@ const validThemeIds = new Set<string>(availableThemes.map(t => t.id));
 
 /** Map legacy theme names to new IDs for backward compatibility. */
 const legacyThemeMap: Record<string, ThemeName> = {
-  light:  'default-light',
-  dark:   'default-dark',
+  light:    'default-light',
+  dark:     'default-dark',
   ocean:    'ocean-dark',
   nord:     'nord-dark',
   protocol: 'protocol-dark',
@@ -69,9 +69,9 @@ let initialized = false;
 function applyThemeClass(theme: ThemeName): void {
   const root = document.documentElement;
   // Remove all theme classes
-  availableThemes.forEach(t => root.classList.remove(`theme-${t.id}`));
+  availableThemes.forEach(t => root.classList.remove(`theme-${ t.id }`));
   // Add current theme class
-  root.classList.add(`theme-${theme}`);
+  root.classList.add(`theme-${ theme }`);
   // Toggle Tailwind dark class for backward compatibility
   const themeInfo = availableThemes.find(t => t.id === theme);
   if (themeInfo?.isDark) {
@@ -141,8 +141,8 @@ export function useTheme() {
     const current = availableThemes.find(t => t.id === currentTheme.value);
     const preferredMode = current?.mode ?? 'dark';
     // Try to find the variant matching the current mode, fall back to any variant
-    const match = availableThemes.find(t => t.scheme === scheme && t.mode === preferredMode)
-      ?? availableThemes.find(t => t.scheme === scheme);
+    const match = availableThemes.find(t => t.scheme === scheme && t.mode === preferredMode) ??
+      availableThemes.find(t => t.scheme === scheme);
     if (match) {
       setTheme(match.id);
     }
@@ -168,7 +168,7 @@ export function useTheme() {
     applyThemeClass(theme);
   });
 
-  onMounted(async () => {
+  onMounted(async() => {
     if (!initialized) {
       initialized = true;
       currentTheme.value = await loadThemeFromSettings();

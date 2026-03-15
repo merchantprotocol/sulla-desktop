@@ -109,10 +109,10 @@ export class ListWorkflowExecutionsWorker extends BaseTool {
       const summary = executions.map((item: any) => {
         const execution = asRecord(item);
         return {
-          id: String(execution.id || '').trim(),
-          status: String(execution.status || '').trim() || 'unknown',
-          startedAt: toIso(execution.startedAt || execution.startTime),
-          durationMs: computeDurationMs(execution),
+          id:           String(execution.id || '').trim(),
+          status:       String(execution.status || '').trim() || 'unknown',
+          startedAt:    toIso(execution.startedAt || execution.startTime),
+          durationMs:   computeDurationMs(execution),
           errorMessage: extractErrorMessage(execution),
         };
       });
@@ -122,16 +122,15 @@ export class ListWorkflowExecutionsWorker extends BaseTool {
         responseString: JSON.stringify({
           workflowId,
           limit,
-          count: summary.length,
+          count:      summary.length,
           executions: summary,
         }, null, 2),
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error listing workflow executions: ${(error as Error).message}`,
+        responseString: `Error listing workflow executions: ${ (error as Error).message }`,
       };
     }
   }
 }
-

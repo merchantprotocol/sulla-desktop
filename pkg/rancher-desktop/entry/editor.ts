@@ -3,7 +3,6 @@
  */
 // hoping this is the absolute earliest we can run in the renderer context
 import { initiateWindowContext } from '@pkg/sulla';
-await initiateWindowContext();
 
 import Cookies from 'cookie-universal';
 import { createApp } from 'vue';
@@ -15,10 +14,11 @@ import usePlugins from './plugins';
 import store from './store';
 
 import AgentEditor from '../pages/AgentEditor.vue';
+await initiateWindowContext();
 
 const router = createRouter({
   history: createWebHashHistory(),
-  routes: [
+  routes:  [
     { path: '/', component: AgentEditor },
     { path: '/Chat', redirect: '/' },
     { path: '/Calendar', redirect: '/' },

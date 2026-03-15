@@ -52,8 +52,8 @@ function describeReason(reasonId: reqMessageId, ...extras: any[]): string {
 }
 
 export default defineComponent({
-  name:   'unmet-prerequisites-dialog',
-  layout: 'dialog',
+  name:       'unmet-prerequisites-dialog',
+  layout:     'dialog',
   components: { PostHogTracker },
   data() {
     return {

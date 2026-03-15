@@ -78,9 +78,9 @@ export class Tray {
     },
     { type: 'separator' },
     {
-      id:    'help',
-      label: 'Help',
-      icon:  path.join(paths.resources, 'icons', 'help-circle-16.png'),
+      id:      'help',
+      label:   'Help',
+      icon:    path.join(paths.resources, 'icons', 'help-circle-16.png'),
       submenu: [
         {
           id:    'premium-support',
@@ -184,7 +184,7 @@ export class Tray {
           fs.accessSync(filepath);
           return true;
         } catch {
-          console.debug(`Skipping watch for non-existent kubeconfig: ${filepath}`);
+          console.debug(`Skipping watch for non-existent kubeconfig: ${ filepath }`);
           return false;
         }
       })
@@ -510,10 +510,10 @@ export class Tray {
       }
 
       const data: Record<string, {
-        version: string;
-        metadata: any;
-        labels: Record<string, string>;
-        extraUrls?: Array<{ label: string; url: string }>;
+        version:    string;
+        metadata:   any;
+        labels:     Record<string, string>;
+        extraUrls?: { label: string; url: string }[];
       }> = await response.json();
 
       const extensionsMenu = this.contextMenuItems.find(item => item.id === 'extensions');

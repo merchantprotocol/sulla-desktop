@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { createN8nService } from "../../services/N8nService";
+import { BaseTool, ToolResponse } from '../base';
+import { createN8nService } from '../../services/N8nService';
 
 /**
  * Search Templates Tool - Worker class for execution
  */
 export class SearchTemplatesWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   private getTemplatesFromResult(result: any): any[] {
     if (Array.isArray(result?.workflows)) {
@@ -65,7 +65,7 @@ export class SearchTemplatesWorker extends BaseTool {
       .filter((word: string) => word.length > 2);
 
     for (let i = 0; i < words.length - 1; i++) {
-      addCandidate(`${words[i]} ${words[i + 1]}`);
+      addCandidate(`${ words[i] } ${ words[i + 1] }`);
     }
 
     for (const word of words) {
@@ -76,16 +76,16 @@ export class SearchTemplatesWorker extends BaseTool {
   }
 
   private async searchTemplatesWithFallback(service: any, input: any): Promise<{
-    templates: any[];
-    totalCount: number;
-    fallbackUsed: boolean;
+    templates:          any[];
+    totalCount:         number;
+    fallbackUsed:       boolean;
     matchedSearchTerm?: string;
   }> {
     const baseParams = {
       category: input.category,
-      nodes: input.nodes,
-      page: input.page,
-      limit: input.limit,
+      nodes:    input.nodes,
+      page:     input.page,
+      limit:    input.limit,
     };
 
     const originalSearch = typeof input.search === 'string' ? input.search.trim() : '';
@@ -118,7 +118,7 @@ export class SearchTemplatesWorker extends BaseTool {
         return {
           templates,
           totalCount,
-          fallbackUsed: true,
+          fallbackUsed:      true,
           matchedSearchTerm: term,
         };
       }
@@ -134,7 +134,7 @@ export class SearchTemplatesWorker extends BaseTool {
       fallbackUsed: true,
     };
   }
-  
+
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
       const service = await createN8nService();
@@ -149,13 +149,13 @@ export class SearchTemplatesWorker extends BaseTool {
       const displayLimit = Number.isFinite(requestedLimit) && requestedLimit > 0
         ? Math.floor(requestedLimit)
         : 10;
-      
-      let message = `Found ${totalCount} n8n workflow templates`;
-      if (input.search) message += ` matching "${input.search}"`;
-      if (input.category) message += ` in category "${input.category}"`;
+
+      let message = `Found ${ totalCount } n8n workflow templates`;
+      if (input.search) message += ` matching "${ input.search }"`;
+      if (input.category) message += ` in category "${ input.category }"`;
 
       if (fallbackUsed && matchedSearchTerm) {
-        message += ` (fallback match via "${matchedSearchTerm}")`;
+        message += ` (fallback match via "${ matchedSearchTerm }")`;
       } else if (fallbackUsed) {
         message += ` (fallback match via broad template search)`;
       }
@@ -163,25 +163,25 @@ export class SearchTemplatesWorker extends BaseTool {
       message += `:\n\n`;
 
       if (templates.length === 0) {
-        message += "No templates found matching your criteria.";
+        message += 'No templates found matching your criteria.';
       } else {
-        message += templates.slice(0, displayLimit).map((template: any, index: number) => 
-          `${index + 1}. **${template.name}**\n   ${template.description || 'No description available'}\n   Category: ${template.categories?.[0]?.name || template.category || 'Uncategorized'}\n   ID: ${template.id}`
+        message += templates.slice(0, displayLimit).map((template: any, index: number) =>
+          `${ index + 1 }. **${ template.name }**\n   ${ template.description || 'No description available' }\n   Category: ${ template.categories?.[0]?.name || template.category || 'Uncategorized' }\n   ID: ${ template.id }`,
         ).join('\n\n');
-        
+
         if (templates.length > displayLimit) {
-          message += `\n\n... and ${templates.length - displayLimit} more templates`;
+          message += `\n\n... and ${ templates.length - displayLimit } more templates`;
         }
       }
 
       return {
         successBoolean: true,
-        responseString: message
+        responseString: message,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error searching n8n templates: ${(error as Error).message}`
+        responseString: `Error searching n8n templates: ${ (error as Error).message }`,
       };
     }
   }

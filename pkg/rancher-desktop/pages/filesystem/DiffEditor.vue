@@ -1,5 +1,8 @@
 <template>
-  <div ref="containerRef" class="diff-editor-container"></div>
+  <div
+    ref="containerRef"
+    class="diff-editor-container"
+  />
 </template>
 
 <script lang="ts">
@@ -8,19 +11,45 @@ import * as monaco from 'monaco-editor';
 import { applyMonacoTheme } from './monacoThemeBridge';
 
 const EXT_LANGUAGE_MAP: Record<string, string> = {
-  '.ts': 'typescript', '.tsx': 'typescript',
-  '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
-  '.json': 'json', '.jsonc': 'json',
-  '.html': 'html', '.htm': 'html',
-  '.css': 'css', '.scss': 'scss', '.less': 'less',
-  '.xml': 'xml', '.svg': 'xml',
-  '.yaml': 'yaml', '.yml': 'yaml',
-  '.py': 'python', '.sh': 'shell', '.bash': 'shell', '.zsh': 'shell',
-  '.sql': 'sql', '.go': 'go', '.rs': 'rust', '.rb': 'ruby',
-  '.php': 'php', '.java': 'java', '.c': 'c', '.cpp': 'cpp', '.h': 'cpp',
-  '.cs': 'csharp', '.swift': 'swift', '.kt': 'kotlin', '.lua': 'lua',
-  '.vue': 'html', '.md': 'markdown',
-  '.txt': 'plaintext', '.log': 'plaintext', '.gitignore': 'plaintext',
+  '.ts':        'typescript',
+  '.tsx':       'typescript',
+  '.js':        'javascript',
+  '.jsx':       'javascript',
+  '.mjs':       'javascript',
+  '.cjs':       'javascript',
+  '.json':      'json',
+  '.jsonc':     'json',
+  '.html':      'html',
+  '.htm':       'html',
+  '.css':       'css',
+  '.scss':      'scss',
+  '.less':      'less',
+  '.xml':       'xml',
+  '.svg':       'xml',
+  '.yaml':      'yaml',
+  '.yml':       'yaml',
+  '.py':        'python',
+  '.sh':        'shell',
+  '.bash':      'shell',
+  '.zsh':       'shell',
+  '.sql':       'sql',
+  '.go':        'go',
+  '.rs':        'rust',
+  '.rb':        'ruby',
+  '.php':       'php',
+  '.java':      'java',
+  '.c':         'c',
+  '.cpp':       'cpp',
+  '.h':         'cpp',
+  '.cs':        'csharp',
+  '.swift':     'swift',
+  '.kt':        'kotlin',
+  '.lua':       'lua',
+  '.vue':       'html',
+  '.md':        'markdown',
+  '.txt':       'plaintext',
+  '.log':       'plaintext',
+  '.gitignore': 'plaintext',
 };
 
 function getLanguage(ext: string): string {
@@ -66,21 +95,21 @@ export default defineComponent({
       applyMonacoTheme(props.isDark);
 
       diffEditor = monaco.editor.createDiffEditor(containerRef.value, {
-        automaticLayout:      true,
-        readOnly:             props.readOnly,
-        originalEditable:     false,
-        renderSideBySide:     true,
-        renderIndicators:     true,
+        automaticLayout:        true,
+        readOnly:               props.readOnly,
+        originalEditable:       false,
+        renderSideBySide:       true,
+        renderIndicators:       true,
         renderMarginRevertIcon: false,
-        renderOverviewRuler:  true,
-        minimap:              { enabled: false },
-        renderLineHighlight: 'line',
-        scrollBeyondLastLine: false,
-        fontSize:             13,
-        lineNumbers:          'on',
-        padding:              { top: 8 },
-        hover:                { enabled: false },
-        diffAlgorithm:        'advanced',
+        renderOverviewRuler:    true,
+        minimap:                { enabled: false },
+        renderLineHighlight:    'line',
+        scrollBeyondLastLine:   false,
+        fontSize:               13,
+        lineNumbers:            'on',
+        padding:                { top: 8 },
+        hover:                  { enabled: false },
+        diffAlgorithm:          'advanced',
       });
 
       diffEditor.setModel({

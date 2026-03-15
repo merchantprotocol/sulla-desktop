@@ -13,6 +13,7 @@
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Roboto Mono', monospace;
 
   /* Backgrounds — noir terminal palette (design guide gray ramp) */
+  --body-bg: #0d1117;            /* Override legacy token so body/wrapper match */
   --bg-page: #0d1117;            /* Level 0 — deepest page background */
   --bg-surface: #161b22;         /* Level 100 — cards, panels, sidebar */
   --bg-surface-alt: #1c2128;     /* Level 200 — nested panels, terminal bars */
@@ -160,7 +161,7 @@
 }
 
 .theme-protocol-dark ::-webkit-scrollbar-track {
-  background: #161b22;
+  background: #0d1117;
 }
 
 .theme-protocol-dark ::-webkit-scrollbar-thumb {
@@ -200,10 +201,7 @@
 
 /* ── Header: noir nav with backdrop blur ── */
 .theme-protocol-dark header {
-  background: #161b22 !important;  /* Level 100 — elevated from Level 0 page */
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border-default);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  background: #0d1117 !important;
 }
 
 .theme-protocol-dark header nav a {
@@ -392,7 +390,7 @@
 }
 
 .theme-protocol-dark .prose table tr:hover {
-  background: #161b22;
+  background: #1c2128;
 }
 
 /* ── "Thinking..." indicator: subtle, no flashy gradient ── */
@@ -632,14 +630,14 @@
 
 /* ── Model selector menu ── */
 .theme-protocol-dark .agent-model-selector-menu {
-  background: #161b22;
+  background: #0d1117;
   border-color: var(--border-default);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(80, 150, 179, 0.05);
 }
 
 /* ── Audio player ── */
 .theme-protocol-dark .sulla-audio-player {
-  background: #161b22;
+  background: #0d1117;
   border-color: var(--border-default);
 }
 
@@ -680,7 +678,7 @@
 }
 
 .theme-protocol-dark .dark\:bg-neutral-800 {
-  background: #161b22 !important;
+  background: #0d1117 !important;
 }
 
 .theme-protocol-dark .dark\:border-white\/10 {
@@ -708,7 +706,7 @@
 }
 
 .theme-protocol-dark .dark\:hover\:bg-neutral-800:hover {
-  background: #161b22 !important;
+  background: #0d1117 !important;
 }
 
 .theme-protocol-dark .dark\:hover\:text-neutral-300:hover {
@@ -736,7 +734,7 @@
 .theme-protocol-dark .fixed.inset-0.z-50 input,
 .theme-protocol-dark .fixed.inset-0.z-50 textarea {
   font-family: var(--font-mono) !important;
-  background: #161b22 !important;
+  background: #0d1117 !important;
   color: #e6edf3 !important;
   border-color: var(--border-default) !important;
 }
@@ -779,14 +777,14 @@
   --sx-color-on-secondary: #fff !important;
   --sx-color-secondary-container: #21262d !important;
   --sx-color-on-secondary-container: #e6edf3 !important;
-  --sx-color-surface: #161b22 !important;
+  --sx-color-surface: #0d1117 !important;
   --sx-color-surface-dim: #0d1117 !important;
   --sx-color-surface-bright: #21262d !important;
   --sx-color-on-surface: #e6edf3 !important;
-  --sx-color-surface-container: #161b22 !important;
+  --sx-color-surface-container: #0d1117 !important;
   --sx-color-surface-container-low: #0d1117 !important;
   --sx-color-surface-container-high: #21262d !important;
-  --sx-color-background: #161b22 !important;
+  --sx-color-background: #0d1117 !important;
   --sx-color-on-background: #e6edf3 !important;
   --sx-color-outline: var(--border-default) !important;
   --sx-color-outline-variant: var(--border-subtle) !important;
@@ -795,7 +793,7 @@
   --sx-color-neutral-variant: #6e7681 !important;
   --sx-internal-color-text: #e6edf3 !important;
   --sx-internal-color-gray-ripple-background: #21262d !important;
-  --sx-internal-color-light-gray: #161b22 !important;
+  --sx-internal-color-light-gray: #0d1117 !important;
 }
 
 /* ── ScheduleX calendar widget: dark terminal look ── */
@@ -804,14 +802,14 @@
 .theme-protocol-dark .sx__month-grid-wrapper,
 .theme-protocol-dark .sx__week-grid,
 .theme-protocol-dark .sx__day-grid {
-  background: #161b22 !important;
+  background: #0d1117 !important;
   color: #e6edf3 !important;
   font-family: var(--font-mono) !important;
 }
 
 /* Calendar header/toolbar */
 .theme-protocol-dark .sx__calendar-header {
-  background: #161b22 !important;
+  background: #0d1117 !important;
   border-color: var(--border-default) !important;
   font-family: var(--font-mono) !important;
 }
@@ -945,7 +943,7 @@
 
 /* Search input */
 .theme-protocol-dark .dark\:bg-slate-800\/75 {
-  background: #161b22 !important;
+  background: #0d1117 !important;
 }
 
 .theme-protocol-dark .dark\:ring-white\/5 {
@@ -1092,7 +1090,7 @@
 /* ── Editor header bar (title bar) ── */
 .theme-protocol-dark .editor-header-bar,
 .theme-protocol-dark .editor-header-bar.dark {
-  background: #161b22 !important;
+  background: #0d1117 !important;
   border-bottom-color: var(--border-default) !important;
 }
 
@@ -1152,7 +1150,7 @@
 /* ── Icon Panel (left sidebar) ── */
 .theme-protocol-dark .icon-panel,
 .theme-protocol-dark .icon-panel.dark {
-  background: #161b22 !important;
+  background: #0d1117 !important;
   border-right-color: var(--border-default) !important;
 }
 
@@ -1197,7 +1195,7 @@
 /* ── Left pane (file tree, git, docker, etc.) ── */
 .theme-protocol-dark .left-pane,
 .theme-protocol-dark .left-pane.dark {
-  background: #161b22 !important;
+  background: #0d1117 !important;
   border-right-color: var(--border-default) !important;
 }
 
@@ -1210,7 +1208,7 @@
 /* ── Tab bar ── */
 .theme-protocol-dark .tab-bar,
 .theme-protocol-dark .tab-bar.dark {
-  background: #161b22 !important;
+  background: #0d1117 !important;
   border-bottom-color: var(--border-default) !important;
 }
 
@@ -1222,7 +1220,7 @@
 /* Inactive tabs */
 .theme-protocol-dark .tab,
 .theme-protocol-dark .tab.dark {
-  background: #161b22 !important;
+  background: #0d1117 !important;
   color: #6e7681 !important;
   border-right-color: var(--border-default) !important;
   font-family: var(--font-mono) !important;
@@ -1319,18 +1317,18 @@
 /* ── Bottom pane (terminal area) ── */
 .theme-protocol-dark .editor-bottom,
 .theme-protocol-dark .editor-bottom.dark {
-  background: var(--bg-surface-alt) !important;
+  background: #0d1117 !important;
   border-top-color: var(--border-default) !important;
 }
 
 .theme-protocol-dark .terminal-tabs-header,
 .theme-protocol-dark .terminal-tabs-header.dark {
-  background: var(--bg-surface-alt) !important;
+  background: #0d1117 !important;
   border-bottom-color: var(--border-default) !important;
 }
 
 .theme-protocol-dark .terminal-tab {
-  background: var(--bg-surface-alt) !important;
+  background: #0d1117 !important;
   color: var(--text-secondary) !important;
   font-family: var(--font-mono) !important;
 }
@@ -1349,13 +1347,13 @@
 /* ── Right pane ── */
 .theme-protocol-dark .right-pane,
 .theme-protocol-dark .right-pane.dark {
-  background: #161b22 !important;
+  background: #0d1117 !important;
   border-left-color: var(--border-default) !important;
 }
 
 /* Right pane tabs */
 .theme-protocol-dark .rp-tab-bar {
-  background: #161b22 !important;
+  background: #0d1117 !important;
   border-bottom-color: var(--border-default) !important;
 }
 

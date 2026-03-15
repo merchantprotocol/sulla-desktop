@@ -9,24 +9,24 @@ import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientSe
 const WORKBENCH_CHANNEL = 'workbench';
 
 export type WorkflowExecutionEventHandler = (event: {
-  type: string;
-  nodeId?: string;
+  type:       string;
+  nodeId?:    string;
   nodeLabel?: string;
-  output?: unknown;
-  error?: string;
-  threadId?: string;
-  sourceId?: string;
-  targetId?: string;
+  output?:    unknown;
+  error?:     string;
+  threadId?:  string;
+  sourceId?:  string;
+  targetId?:  string;
   /** Present on node_thinking events */
-  content?: string;
-  role?: 'assistant' | 'system';
-  kind?: string;
-  timestamp: string;
+  content?:   string;
+  role?:      'assistant' | 'system';
+  kind?:      string;
+  timestamp:  string;
 }) => void;
 
 export class EditorChatInterface {
   private readonly registry: AgentPersonaRegistry;
-  private readonly persona: AgentPersonaService;
+  private readonly persona:  AgentPersonaService;
 
   readonly query = ref('');
   readonly messages = ref<ChatMessage[]>([]);
@@ -37,8 +37,8 @@ export class EditorChatInterface {
   /** When set, overrides which agent handles messages on the backend */
   readonly activeAgentId = ref<string | null>(null);
 
-  private watcher: ReturnType<typeof watch> | null = null;
-  private wsUnsub: (() => void) | null = null;
+  private watcher:              ReturnType<typeof watch> | null = null;
+  private wsUnsub:              (() => void) | null = null;
   private workflowEventHandler: WorkflowExecutionEventHandler | null = null;
 
   readonly graphRunning = computed(() => {
@@ -90,7 +90,7 @@ export class EditorChatInterface {
     this.query.value = '';
     await this.persona.addUserMessage('', text, {
       workflowId: this.activeWorkflowId.value || undefined,
-      agentId: this.activeAgentId.value || undefined,
+      agentId:    this.activeAgentId.value || undefined,
     });
   }
 
@@ -107,8 +107,8 @@ export class EditorChatInterface {
     if (oldThreadId) {
       const ws = getWebSocketClientService();
       ws.send(WORKBENCH_CHANNEL, {
-        type: 'new_conversation',
-        data: { threadId: oldThreadId },
+        type:      'new_conversation',
+        data:      { threadId: oldThreadId },
         timestamp: Date.now(),
       });
     }

@@ -1,17 +1,40 @@
 <template>
-  <div class="monitor-dashboard" :class="{ dark: isDark }">
+  <div
+    class="monitor-dashboard"
+    :class="{ dark: isDark }"
+  >
     <!-- Health Section -->
-    <div v-if="activeSection === 'health'" class="dashboard-content">
+    <div
+      v-if="activeSection === 'health'"
+      class="dashboard-content"
+    >
       <div class="dashboard-header">
-        <h2 class="dashboard-title">System Health</h2>
-        <button class="refresh-btn" @click="$emit('refresh')">Refresh</button>
+        <h2 class="dashboard-title">
+          System Health
+        </h2>
+        <button
+          class="refresh-btn"
+          @click="$emit('refresh')"
+        >
+          Refresh
+        </button>
       </div>
 
       <!-- Active Agents -->
       <div class="panel">
-        <h3 class="panel-title">Active Agents</h3>
-        <div v-if="activeAgents.length === 0" class="empty-msg">No agents registered</div>
-        <div v-else class="table-wrap">
+        <h3 class="panel-title">
+          Active Agents
+        </h3>
+        <div
+          v-if="activeAgents.length === 0"
+          class="empty-msg"
+        >
+          No agents registered
+        </div>
+        <div
+          v-else
+          class="table-wrap"
+        >
           <table class="data-table">
             <thead>
               <tr>
@@ -23,16 +46,32 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="agent in activeAgents" :key="agent.agentId" class="clickable" @click="emit('open-detail', 'agent', agent.agentId, agent.name || agent.agentId)">
-                <td class="cell-name">{{ agent.name || agent.agentId }}</td>
-                <td class="cell-mono">{{ agent.channel }}</td>
+              <tr
+                v-for="agent in activeAgents"
+                :key="agent.agentId"
+                class="clickable"
+                @click="emit('open-detail', 'agent', agent.agentId, agent.name || agent.agentId)"
+              >
+                <td class="cell-name">
+                  {{ agent.name || agent.agentId }}
+                </td>
+                <td class="cell-mono">
+                  {{ agent.channel }}
+                </td>
                 <td>
-                  <span class="status-badge" :class="agent.status === 'running' ? 'badge-ok' : agent.status === 'idle' ? 'badge-neutral' : 'badge-err'">
+                  <span
+                    class="status-badge"
+                    :class="agent.status === 'running' ? 'badge-ok' : agent.status === 'idle' ? 'badge-neutral' : 'badge-err'"
+                  >
                     {{ agent.status }}
                   </span>
                 </td>
-                <td class="cell-detail">{{ agent.statusNote || '-' }}</td>
-                <td class="cell-detail">{{ formatAge(agent.lastActiveAt) }}</td>
+                <td class="cell-detail">
+                  {{ agent.statusNote || '-' }}
+                </td>
+                <td class="cell-detail">
+                  {{ formatAge(agent.lastActiveAt) }}
+                </td>
               </tr>
             </tbody>
           </table>
@@ -49,13 +88,24 @@
           @click="emit('open-detail', 'service', String(key), svc.name)"
         >
           <div class="health-card-inner">
-            <div class="health-dot" :class="svc.ok ? 'dot-ok' : 'dot-err'"></div>
+            <div
+              class="health-dot"
+              :class="svc.ok ? 'dot-ok' : 'dot-err'"
+            />
             <div>
-              <div class="health-name">{{ svc.name }}</div>
+              <div class="health-name">
+                {{ svc.name }}
+              </div>
               <div class="health-detail">
                 <span v-if="svc.port">Port {{ svc.port }}</span>
-                <span v-if="svc.error" class="text-err"> {{ svc.error }}</span>
-                <span v-else-if="svc.ok" class="text-ok">Healthy</span>
+                <span
+                  v-if="svc.error"
+                  class="text-err"
+                > {{ svc.error }}</span>
+                <span
+                  v-else-if="svc.ok"
+                  class="text-ok"
+                >Healthy</span>
               </div>
             </div>
           </div>
@@ -64,19 +114,45 @@
 
       <!-- WebSocket Connections -->
       <div class="panel">
-        <h3 class="panel-title">WebSocket Connections</h3>
-        <div v-if="Object.keys(wsStats).length === 0" class="empty-msg">No connections</div>
-        <div v-else class="ws-list">
-          <div v-for="(stat, channel) in wsStats" :key="channel" class="ws-row clickable" @click="emit('open-detail', 'ws', String(channel), `WS: ${channel}`)">
+        <h3 class="panel-title">
+          WebSocket Connections
+        </h3>
+        <div
+          v-if="Object.keys(wsStats).length === 0"
+          class="empty-msg"
+        >
+          No connections
+        </div>
+        <div
+          v-else
+          class="ws-list"
+        >
+          <div
+            v-for="(stat, channel) in wsStats"
+            :key="channel"
+            class="ws-row clickable"
+            @click="emit('open-detail', 'ws', String(channel), `WS: ${channel}`)"
+          >
             <div>
               <span class="ws-channel">{{ channel }}</span>
-              <div class="ws-subs">{{ stat.subscribedChannels?.join(', ') || 'no subscriptions' }}</div>
+              <div class="ws-subs">
+                {{ stat.subscribedChannels?.join(', ') || 'no subscriptions' }}
+              </div>
             </div>
             <div class="ws-status">
-              <div class="ws-dot" :class="stat.connected ? 'dot-ok' : 'dot-err'"></div>
+              <div
+                class="ws-dot"
+                :class="stat.connected ? 'dot-ok' : 'dot-err'"
+              />
               <span>{{ stat.connected ? 'Connected' : 'Disconnected' }}</span>
-              <span v-if="stat.reconnectAttempts > 0" class="text-warn">{{ stat.reconnectAttempts }} reconnects</span>
-              <span v-if="stat.pendingMessages > 0" class="text-info">{{ stat.pendingMessages }} pending</span>
+              <span
+                v-if="stat.reconnectAttempts > 0"
+                class="text-warn"
+              >{{ stat.reconnectAttempts }} reconnects</span>
+              <span
+                v-if="stat.pendingMessages > 0"
+                class="text-info"
+              >{{ stat.pendingMessages }} pending</span>
             </div>
           </div>
         </div>
@@ -84,53 +160,102 @@
     </div>
 
     <!-- Heartbeat Section -->
-    <div v-if="activeSection === 'heartbeat'" class="dashboard-content hb-layout">
+    <div
+      v-if="activeSection === 'heartbeat'"
+      class="dashboard-content hb-layout"
+    >
       <!-- Top: Status + Schedule -->
       <div class="hb-top">
         <div class="dashboard-header">
-          <h2 class="dashboard-title">Heartbeat</h2>
-          <button class="refresh-btn" @click="$emit('refresh')">Refresh</button>
+          <h2 class="dashboard-title">
+            Heartbeat
+          </h2>
+          <button
+            class="refresh-btn"
+            @click="$emit('refresh')"
+          >
+            Refresh
+          </button>
         </div>
 
         <!-- Status Cards -->
         <div class="card-grid-6">
           <div class="stat-card">
-            <div class="stat-label">Status</div>
+            <div class="stat-label">
+              Status
+            </div>
             <div class="stat-value-row">
-              <div class="health-dot" :class="heartbeatStatus.initialized && heartbeatStatus.schedulerRunning ? 'dot-ok' : 'dot-err'"></div>
+              <div
+                class="health-dot"
+                :class="heartbeatStatus.initialized && heartbeatStatus.schedulerRunning ? 'dot-ok' : 'dot-err'"
+              />
               <span class="stat-value">{{ heartbeatStatus.isExecuting ? 'Running' : heartbeatStatus.schedulerRunning ? 'Idle' : 'Stopped' }}</span>
             </div>
           </div>
           <div class="stat-card">
-            <div class="stat-label">Enabled</div>
+            <div class="stat-label">
+              Enabled
+            </div>
             <div class="stat-value-row">
-              <div class="health-dot" :class="heartbeatSchedule.enabled ? 'dot-ok' : 'dot-err'"></div>
+              <div
+                class="health-dot"
+                :class="heartbeatSchedule.enabled ? 'dot-ok' : 'dot-err'"
+              />
               <span class="stat-value">{{ heartbeatSchedule.enabled ? 'Yes' : 'No' }}</span>
             </div>
           </div>
           <div class="stat-card">
-            <div class="stat-label">Interval</div>
-            <div class="stat-value">{{ heartbeatSchedule.delayMinutes }}m</div>
+            <div class="stat-label">
+              Interval
+            </div>
+            <div class="stat-value">
+              {{ heartbeatSchedule.delayMinutes }}m
+            </div>
           </div>
           <div class="stat-card">
-            <div class="stat-label">Next Fire</div>
-            <div class="stat-value stat-value-sm">{{ heartbeatSchedule.nextTriggerMs ? formatCountdown(heartbeatSchedule.nextTriggerMs) : '-' }}</div>
+            <div class="stat-label">
+              Next Fire
+            </div>
+            <div class="stat-value stat-value-sm">
+              {{ heartbeatSchedule.nextTriggerMs ? formatCountdown(heartbeatSchedule.nextTriggerMs) : '-' }}
+            </div>
           </div>
           <div class="stat-card">
-            <div class="stat-label">Total Triggers</div>
-            <div class="stat-value">{{ heartbeatStatus.totalTriggers }}</div>
+            <div class="stat-label">
+              Total Triggers
+            </div>
+            <div class="stat-value">
+              {{ heartbeatStatus.totalTriggers }}
+            </div>
           </div>
           <div class="stat-card">
-            <div class="stat-label">Errors</div>
-            <div class="stat-value" :class="heartbeatStatus.totalErrors > 0 ? 'text-err' : ''">{{ heartbeatStatus.totalErrors }}</div>
+            <div class="stat-label">
+              Errors
+            </div>
+            <div
+              class="stat-value"
+              :class="heartbeatStatus.totalErrors > 0 ? 'text-err' : ''"
+            >
+              {{ heartbeatStatus.totalErrors }}
+            </div>
           </div>
         </div>
 
         <!-- Execution Runs -->
         <div class="panel">
-          <h3 class="panel-title">Execution Runs</h3>
-          <div v-if="heartbeatRuns.length === 0" class="empty-msg">No executions yet</div>
-          <div v-else class="table-wrap">
+          <h3 class="panel-title">
+            Execution Runs
+          </h3>
+          <div
+            v-if="heartbeatRuns.length === 0"
+            class="empty-msg"
+          >
+            No executions yet
+          </div>
+          <div
+            v-else
+            class="table-wrap"
+          >
             <table class="data-table">
               <thead>
                 <tr>
@@ -142,16 +267,31 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(run, i) in heartbeatRuns" :key="i" :class="run.status === 'error' ? 'row-err' : run.status === 'completed' ? 'row-ok' : 'row-info'">
-                  <td class="cell-mono cell-nowrap">{{ formatTime(run.triggeredAt) }}</td>
+                <tr
+                  v-for="(run, i) in heartbeatRuns"
+                  :key="i"
+                  :class="run.status === 'error' ? 'row-err' : run.status === 'completed' ? 'row-ok' : 'row-info'"
+                >
+                  <td class="cell-mono cell-nowrap">
+                    {{ formatTime(run.triggeredAt) }}
+                  </td>
                   <td>
-                    <span class="status-badge" :class="run.status === 'completed' ? 'badge-ok' : run.status === 'error' ? 'badge-err' : 'badge-info'">
+                    <span
+                      class="status-badge"
+                      :class="run.status === 'completed' ? 'badge-ok' : run.status === 'error' ? 'badge-err' : 'badge-info'"
+                    >
                       {{ run.status }}
                     </span>
                   </td>
-                  <td class="cell-mono">{{ run.durationMs ? formatDuration(run.durationMs) : 'running...' }}</td>
-                  <td class="cell-mono">{{ run.cycles ?? '-' }}</td>
-                  <td class="cell-detail cell-truncate">{{ run.focus || '-' }}</td>
+                  <td class="cell-mono">
+                    {{ run.durationMs ? formatDuration(run.durationMs) : 'running...' }}
+                  </td>
+                  <td class="cell-mono">
+                    {{ run.cycles ?? '-' }}
+                  </td>
+                  <td class="cell-detail cell-truncate">
+                    {{ run.focus || '-' }}
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -160,9 +300,19 @@
 
         <!-- Event History -->
         <div class="panel">
-          <h3 class="panel-title">Event History</h3>
-          <div v-if="heartbeatHistory.length === 0" class="empty-msg">No events recorded yet</div>
-          <div v-else class="event-scroll">
+          <h3 class="panel-title">
+            Event History
+          </h3>
+          <div
+            v-if="heartbeatHistory.length === 0"
+            class="empty-msg"
+          >
+            No events recorded yet
+          </div>
+          <div
+            v-else
+            class="event-scroll"
+          >
             <div
               v-for="(evt, i) in heartbeatHistory"
               :key="i"
@@ -170,9 +320,15 @@
               :class="eventRowClass(evt.type)"
             >
               <span class="event-time">{{ formatTime(evt.ts) }}</span>
-              <span class="event-badge" :class="eventBadgeClass(evt.type)">{{ evt.type }}</span>
+              <span
+                class="event-badge"
+                :class="eventBadgeClass(evt.type)"
+              >{{ evt.type }}</span>
               <span class="event-msg">{{ evt.message }}</span>
-              <span v-if="evt.durationMs" class="event-dur">{{ formatDuration(evt.durationMs) }}</span>
+              <span
+                v-if="evt.durationMs"
+                class="event-dur"
+              >{{ formatDuration(evt.durationMs) }}</span>
             </div>
           </div>
         </div>
@@ -181,19 +337,46 @@
       <!-- Bottom Pane: WebSocket Messages -->
       <div class="hb-ws-pane panel">
         <div class="hb-ws-header">
-          <h3 class="panel-title" style="margin-bottom: 0;">WebSocket Messages (heartbeat)</h3>
+          <h3
+            class="panel-title"
+            style="margin-bottom: 0;"
+          >
+            WebSocket Messages (heartbeat)
+          </h3>
           <div class="hb-ws-controls">
-            <button class="refresh-btn" :class="{ 'btn-active': wsTapEnabled }" @click="toggleWsTap">
+            <button
+              class="refresh-btn"
+              :class="{ 'btn-active': wsTapEnabled }"
+              @click="toggleWsTap"
+            >
               {{ wsTapEnabled ? 'Stop Tap' : 'Start Tap' }}
             </button>
-            <button class="refresh-btn" @click="fetchWsMessages">Refresh</button>
+            <button
+              class="refresh-btn"
+              @click="fetchWsMessages"
+            >
+              Refresh
+            </button>
           </div>
         </div>
-        <div v-if="!wsTapEnabled" class="empty-msg" style="margin-top: 10px;">
+        <div
+          v-if="!wsTapEnabled"
+          class="empty-msg"
+          style="margin-top: 10px;"
+        >
           Tap is off. Click "Start Tap" to capture WebSocket messages on the heartbeat channel.
         </div>
-        <div v-else-if="wsMessages.length === 0" class="empty-msg" style="margin-top: 10px;">No messages captured yet</div>
-        <div v-else class="ws-msg-scroll">
+        <div
+          v-else-if="wsMessages.length === 0"
+          class="empty-msg"
+          style="margin-top: 10px;"
+        >
+          No messages captured yet
+        </div>
+        <div
+          v-else
+          class="ws-msg-scroll"
+        >
           <div
             v-for="(msg, i) in wsMessages"
             :key="i"
@@ -201,7 +384,10 @@
             :class="msg.direction === 'in' ? 'row-info' : 'row-ok'"
           >
             <span class="event-time">{{ formatTime(msg.ts) }}</span>
-            <span class="event-badge" :class="msg.direction === 'in' ? 'badge-info' : 'badge-ok'">{{ msg.direction === 'in' ? 'IN' : 'OUT' }}</span>
+            <span
+              class="event-badge"
+              :class="msg.direction === 'in' ? 'badge-info' : 'badge-ok'"
+            >{{ msg.direction === 'in' ? 'IN' : 'OUT' }}</span>
             <span class="ws-msg-type">{{ msg.message?.type || 'unknown' }}</span>
             <span class="event-msg ws-msg-data">{{ formatWsData(msg.message) }}</span>
           </div>
@@ -210,14 +396,27 @@
     </div>
 
     <!-- Live Conversations Section -->
-    <div v-if="activeSection === 'live'" class="dashboard-content live-layout">
+    <div
+      v-if="activeSection === 'live'"
+      class="dashboard-content live-layout"
+    >
       <div class="dashboard-header">
-        <h2 class="dashboard-title">Live Conversations</h2>
+        <h2 class="dashboard-title">
+          Live Conversations
+        </h2>
         <div style="display: flex; gap: 8px; align-items: center;">
-          <span v-if="livePolling" class="live-indicator">
-            <span class="live-dot"></span> LIVE
+          <span
+            v-if="livePolling"
+            class="live-indicator"
+          >
+            <span class="live-dot" /> LIVE
           </span>
-          <button class="refresh-btn" @click="fetchConversations">Refresh</button>
+          <button
+            class="refresh-btn"
+            @click="fetchConversations"
+          >
+            Refresh
+          </button>
         </div>
       </div>
 
@@ -228,7 +427,13 @@
             <span class="live-sessions-title">Sessions</span>
             <span class="live-sessions-count">{{ activeConversations.length }} active</span>
           </div>
-          <div v-if="liveConversations.length === 0" class="empty-msg" style="padding: 16px;">No conversations</div>
+          <div
+            v-if="liveConversations.length === 0"
+            class="empty-msg"
+            style="padding: 16px;"
+          >
+            No conversations
+          </div>
           <div
             v-for="conv in liveConversations"
             :key="conv.id"
@@ -238,13 +443,22 @@
           >
             <div class="live-session-top">
               <span class="live-session-status">
-                <span class="live-status-dot" :class="conv.status === 'running' ? 'dot-running' : conv.status === 'completed' ? 'dot-ok' : 'dot-err'"></span>
+                <span
+                  class="live-status-dot"
+                  :class="conv.status === 'running' ? 'dot-running' : conv.status === 'completed' ? 'dot-ok' : 'dot-err'"
+                />
               </span>
               <span class="live-session-name">{{ conv.name || conv.id.slice(0, 16) }}</span>
             </div>
             <div class="live-session-meta">
-              <span v-if="conv.channel" class="live-session-channel">{{ conv.channel }}</span>
-              <span v-if="conv.agentId" class="live-session-agent">{{ conv.agentId }}</span>
+              <span
+                v-if="conv.channel"
+                class="live-session-channel"
+              >{{ conv.channel }}</span>
+              <span
+                v-if="conv.agentId"
+                class="live-session-agent"
+              >{{ conv.agentId }}</span>
               <span class="live-session-time">{{ formatTimestamp(conv.startedAt) }}</span>
             </div>
           </div>
@@ -252,14 +466,22 @@
 
         <!-- Thread View (right) -->
         <div class="live-thread">
-          <div v-if="!liveSelectedConv" class="live-thread-empty">
-            <p class="empty-msg">Select a conversation to watch</p>
+          <div
+            v-if="!liveSelectedConv"
+            class="live-thread-empty"
+          >
+            <p class="empty-msg">
+              Select a conversation to watch
+            </p>
           </div>
           <template v-else>
             <div class="live-thread-header">
               <div class="live-thread-info">
                 <span class="live-thread-name">{{ liveSelectedConvMeta?.name || liveSelectedConv?.slice(0, 20) }}</span>
-                <span v-if="liveSelectedConvMeta" class="live-thread-detail">
+                <span
+                  v-if="liveSelectedConvMeta"
+                  class="live-thread-detail"
+                >
                   {{ liveSelectedConvMeta.channel || '' }} · {{ liveSelectedConvMeta.agentId || '' }}
                 </span>
               </div>
@@ -273,102 +495,216 @@
                 </span>
               </div>
             </div>
-            <div ref="liveThreadScroll" class="live-thread-messages">
-              <div v-if="liveEventsLoading && liveThreadEvents.length === 0" class="empty-msg" style="padding: 20px;">Loading...</div>
-              <div v-else-if="liveThreadEvents.length === 0" class="empty-msg" style="padding: 20px;">No events yet</div>
+            <div
+              ref="liveThreadScroll"
+              class="live-thread-messages"
+            >
+              <div
+                v-if="liveEventsLoading && liveThreadEvents.length === 0"
+                class="empty-msg"
+                style="padding: 20px;"
+              >
+                Loading...
+              </div>
+              <div
+                v-else-if="liveThreadEvents.length === 0"
+                class="empty-msg"
+                style="padding: 20px;"
+              >
+                No events yet
+              </div>
               <template v-else>
-                <div class="live-thread-spacer"></div>
-                <template v-for="(evt, i) in liveThreadEvents" :key="i">
+                <div class="live-thread-spacer" />
+                <template
+                  v-for="(evt, i) in liveThreadEvents"
+                  :key="i"
+                >
                   <!-- User message -->
-                  <div v-if="evt.type === 'message' && evt.role === 'user'" class="live-msg live-msg-user">
+                  <div
+                    v-if="evt.type === 'message' && evt.role === 'user'"
+                    class="live-msg live-msg-user"
+                  >
                     <div class="live-bubble live-bubble-user">
-                      <div class="live-bubble-content">{{ evt.content }}</div>
+                      <div class="live-bubble-content">
+                        {{ evt.content }}
+                      </div>
                     </div>
-                    <div class="live-msg-time">{{ formatTimestamp(evt.ts) }}</div>
+                    <div class="live-msg-time">
+                      {{ formatTimestamp(evt.ts) }}
+                    </div>
                   </div>
 
                   <!-- Assistant message -->
-                  <div v-else-if="evt.type === 'message' && evt.role === 'assistant'" class="live-msg live-msg-assistant">
+                  <div
+                    v-else-if="evt.type === 'message' && evt.role === 'assistant'"
+                    class="live-msg live-msg-assistant"
+                  >
                     <div class="live-bubble live-bubble-assistant">
-                      <div class="live-bubble-content prose-content" v-html="renderMarkdown(String(evt.content || ''))"></div>
+                      <div
+                        class="live-bubble-content prose-content"
+                        v-html="renderMarkdown(String(evt.content || ''))"
+                      />
                     </div>
-                    <div class="live-msg-time">{{ formatTimestamp(evt.ts) }}</div>
+                    <div class="live-msg-time">
+                      {{ formatTimestamp(evt.ts) }}
+                    </div>
                   </div>
 
                   <!-- System message -->
-                  <div v-else-if="evt.type === 'message' && evt.role === 'system'" class="live-msg live-msg-system">
+                  <div
+                    v-else-if="evt.type === 'message' && evt.role === 'system'"
+                    class="live-msg live-msg-system"
+                  >
                     <div class="live-bubble live-bubble-system">
-                      <div class="live-bubble-content">{{ truncateText(String(evt.content || ''), 500) }}</div>
+                      <div class="live-bubble-content">
+                        {{ truncateText(String(evt.content || ''), 500) }}
+                      </div>
                     </div>
-                    <div class="live-msg-time">{{ formatTimestamp(evt.ts) }}</div>
+                    <div class="live-msg-time">
+                      {{ formatTimestamp(evt.ts) }}
+                    </div>
                   </div>
 
                   <!-- Tool call -->
-                  <div v-else-if="evt.type === 'tool_call'" class="live-msg live-msg-tool">
-                    <div class="live-bubble live-bubble-tool" @click="toggleLiveToolCard(i)">
+                  <div
+                    v-else-if="evt.type === 'tool_call'"
+                    class="live-msg live-msg-tool"
+                  >
+                    <div
+                      class="live-bubble live-bubble-tool"
+                      @click="toggleLiveToolCard(i)"
+                    >
                       <div class="live-tool-header">
                         <span class="live-tool-icon">
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          ><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
                         </span>
                         <span class="live-tool-name">{{ evt.toolName }}</span>
                         <span
                           v-if="evt.result && typeof evt.result === 'object' && (evt.result as any).error"
                           class="live-tool-status-badge badge-err"
                         >error</span>
-                        <span v-else class="live-tool-status-badge badge-ok">ok</span>
+                        <span
+                          v-else
+                          class="live-tool-status-badge badge-ok"
+                        >ok</span>
                         <svg
-                          width="10" height="10" viewBox="0 0 15 15" fill="currentColor"
-                          class="live-tool-chevron" :class="{ expanded: liveExpandedTools.has(i) }"
+                          width="10"
+                          height="10"
+                          viewBox="0 0 15 15"
+                          fill="currentColor"
+                          class="live-tool-chevron"
+                          :class="{ expanded: liveExpandedTools.has(i) }"
                         >
-                          <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill-rule="evenodd" clip-rule="evenodd"/>
+                          <path
+                            d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z"
+                            fill-rule="evenodd"
+                            clip-rule="evenodd"
+                          />
                         </svg>
                       </div>
-                      <div v-if="liveExpandedTools.has(i)" class="live-tool-details">
-                        <div v-if="evt.args" class="live-tool-section">
-                          <div class="live-tool-label">Args</div>
+                      <div
+                        v-if="liveExpandedTools.has(i)"
+                        class="live-tool-details"
+                      >
+                        <div
+                          v-if="evt.args"
+                          class="live-tool-section"
+                        >
+                          <div class="live-tool-label">
+                            Args
+                          </div>
                           <pre class="live-tool-pre"><code>{{ typeof evt.args === 'string' ? evt.args : JSON.stringify(evt.args, null, 2) }}</code></pre>
                         </div>
-                        <div v-if="evt.result !== undefined" class="live-tool-section">
-                          <div class="live-tool-label">Result</div>
+                        <div
+                          v-if="evt.result !== undefined"
+                          class="live-tool-section"
+                        >
+                          <div class="live-tool-label">
+                            Result
+                          </div>
                           <pre class="live-tool-pre"><code>{{ typeof evt.result === 'string' ? evt.result : JSON.stringify(evt.result, null, 2) }}</code></pre>
                         </div>
                       </div>
                     </div>
-                    <div class="live-msg-time">{{ formatTimestamp(evt.ts) }}</div>
+                    <div class="live-msg-time">
+                      {{ formatTimestamp(evt.ts) }}
+                    </div>
                   </div>
 
                   <!-- LLM call (thinking) -->
-                  <div v-else-if="evt.type === 'llm_call'" class="live-msg live-msg-thinking">
+                  <div
+                    v-else-if="evt.type === 'llm_call'"
+                    class="live-msg live-msg-thinking"
+                  >
                     <div class="live-bubble live-bubble-thinking">
                       <span class="live-thinking-icon">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        ><circle
+                          cx="12"
+                          cy="12"
+                          r="10"
+                        /><path d="M12 6v6l4 2" /></svg>
                       </span>
                       <span class="live-thinking-text">
                         {{ evt.direction === 'request' ? 'Thinking...' : 'Response received' }}
-                        <span v-if="evt.model" class="live-thinking-model">{{ evt.model }}</span>
+                        <span
+                          v-if="evt.model"
+                          class="live-thinking-model"
+                        >{{ evt.model }}</span>
                       </span>
                     </div>
                   </div>
 
                   <!-- Node events -->
-                  <div v-else-if="evt.type === 'node_event'" class="live-msg live-msg-node">
+                  <div
+                    v-else-if="evt.type === 'node_event'"
+                    class="live-msg live-msg-node"
+                  >
                     <div class="live-bubble live-bubble-node">
                       <span class="live-node-label">{{ evt.nodeLabel || evt.nodeId || 'node' }}</span>
-                      <span v-if="evt.data" class="live-node-data">{{ truncateText(JSON.stringify(evt.data), 200) }}</span>
+                      <span
+                        v-if="evt.data"
+                        class="live-node-data"
+                      >{{ truncateText(JSON.stringify(evt.data), 200) }}</span>
                     </div>
                   </div>
 
                   <!-- Graph lifecycle events -->
-                  <div v-else-if="evt.type && (evt.type.includes('started') || evt.type.includes('completed'))" class="live-msg live-msg-lifecycle">
-                    <div class="live-lifecycle-badge" :class="evt.type.includes('completed') ? 'lifecycle-completed' : 'lifecycle-started'">
+                  <div
+                    v-else-if="evt.type && (evt.type.includes('started') || evt.type.includes('completed'))"
+                    class="live-msg live-msg-lifecycle"
+                  >
+                    <div
+                      class="live-lifecycle-badge"
+                      :class="evt.type.includes('completed') ? 'lifecycle-completed' : 'lifecycle-started'"
+                    >
                       {{ evt.type.replace(/_/g, ' ') }}
-                      <span v-if="(evt as any).durationMs" class="live-lifecycle-dur">{{ formatDuration((evt as any).durationMs) }}</span>
+                      <span
+                        v-if="(evt as any).durationMs"
+                        class="live-lifecycle-dur"
+                      >{{ formatDuration((evt as any).durationMs) }}</span>
                     </div>
                   </div>
                 </template>
 
                 <!-- Thinking indicator for running conversations -->
-                <div v-if="liveSelectedConvMeta?.status === 'running' && isLiveThinking" class="live-msg live-msg-assistant">
+                <div
+                  v-if="liveSelectedConvMeta?.status === 'running' && isLiveThinking"
+                  class="live-msg live-msg-assistant"
+                >
                   <div class="live-bubble live-bubble-thinking-active">
                     <span class="live-thinking-anim">Sulla is thinking<span class="dot-anim">...</span></span>
                   </div>
@@ -381,10 +717,20 @@
     </div>
 
     <!-- Conversations Section -->
-    <div v-if="activeSection === 'conversations'" class="dashboard-content">
+    <div
+      v-if="activeSection === 'conversations'"
+      class="dashboard-content"
+    >
       <div class="dashboard-header">
-        <h2 class="dashboard-title">Conversations</h2>
-        <button class="refresh-btn" @click="$emit('refresh')">Refresh</button>
+        <h2 class="dashboard-title">
+          Conversations
+        </h2>
+        <button
+          class="refresh-btn"
+          @click="$emit('refresh')"
+        >
+          Refresh
+        </button>
       </div>
 
       <!-- Filter -->
@@ -394,33 +740,83 @@
           type="text"
           placeholder="Search conversations..."
           class="filter-input"
-        />
-        <select v-model="convTypeFilter" class="filter-select">
-          <option value="">All Types</option>
-          <option value="graph">Graph</option>
-          <option value="workflow">Workflow</option>
+        >
+        <select
+          v-model="convTypeFilter"
+          class="filter-select"
+        >
+          <option value="">
+            All Types
+          </option>
+          <option value="graph">
+            Graph
+          </option>
+          <option value="workflow">
+            Workflow
+          </option>
         </select>
-        <select v-model="convStatusFilter" class="filter-select">
-          <option value="">All Statuses</option>
-          <option value="running">Running</option>
-          <option value="completed">Completed</option>
-          <option value="error">Error</option>
+        <select
+          v-model="convStatusFilter"
+          class="filter-select"
+        >
+          <option value="">
+            All Statuses
+          </option>
+          <option value="running">
+            Running
+          </option>
+          <option value="completed">
+            Completed
+          </option>
+          <option value="error">
+            Error
+          </option>
         </select>
-        <select v-model="convWorkflowFilter" class="filter-select">
-          <option value="">All Workflows</option>
-          <option v-for="wf in uniqueWorkflows" :key="wf" :value="wf">{{ wf }}</option>
+        <select
+          v-model="convWorkflowFilter"
+          class="filter-select"
+        >
+          <option value="">
+            All Workflows
+          </option>
+          <option
+            v-for="wf in uniqueWorkflows"
+            :key="wf"
+            :value="wf"
+          >
+            {{ wf }}
+          </option>
         </select>
-        <select v-model="convThreadFilter" class="filter-select">
-          <option value="">All Threads</option>
-          <option v-for="tid in uniqueThreadIds" :key="tid" :value="tid">{{ tid.slice(0, 12) }}...</option>
+        <select
+          v-model="convThreadFilter"
+          class="filter-select"
+        >
+          <option value="">
+            All Threads
+          </option>
+          <option
+            v-for="tid in uniqueThreadIds"
+            :key="tid"
+            :value="tid"
+          >
+            {{ tid.slice(0, 12) }}...
+          </option>
         </select>
       </div>
 
       <!-- Conversation List -->
-      <div v-if="filteredConversations.length === 0" class="panel empty-panel">
-        <p class="empty-msg">No conversations found</p>
+      <div
+        v-if="filteredConversations.length === 0"
+        class="panel empty-panel"
+      >
+        <p class="empty-msg">
+          No conversations found
+        </p>
       </div>
-      <div v-else class="conv-list">
+      <div
+        v-else
+        class="conv-list"
+      >
         <div
           v-for="conv in filteredConversations"
           :key="conv.id"
@@ -429,24 +825,55 @@
         >
           <div class="conv-header">
             <div class="conv-left">
-              <span class="conv-type-badge" :class="conv.type === 'graph' ? 'badge-info' : 'badge-purple'">{{ conv.type }}</span>
+              <span
+                class="conv-type-badge"
+                :class="conv.type === 'graph' ? 'badge-info' : 'badge-purple'"
+              >{{ conv.type }}</span>
               <span class="conv-name">{{ conv.name }}</span>
-              <span v-if="conv.channel" class="conv-channel">{{ conv.channel }}</span>
+              <span
+                v-if="conv.channel"
+                class="conv-channel"
+              >{{ conv.channel }}</span>
             </div>
             <div class="conv-right">
               <span :class="conv.status === 'error' || conv.status === 'failed' ? 'text-err' : conv.status === 'running' ? 'text-info' : 'text-ok'">
                 {{ conv.status || 'unknown' }}
               </span>
               <span class="conv-time">{{ formatTimestamp(conv.startedAt) }}</span>
-              <svg class="conv-chevron" :class="{ open: expandedConv === conv.id }" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+              <svg
+                class="conv-chevron"
+                :class="{ open: expandedConv === conv.id }"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              ><path d="M19 9l-7 7-7-7" /></svg>
             </div>
           </div>
 
           <!-- Expanded: Event Timeline -->
-          <div v-if="expandedConv === conv.id" class="conv-events">
-            <div v-if="convEventsLoading" class="empty-msg">Loading events...</div>
-            <div v-else-if="convEvents.length === 0" class="empty-msg">No events</div>
-            <div v-else class="conv-event-scroll">
+          <div
+            v-if="expandedConv === conv.id"
+            class="conv-events"
+          >
+            <div
+              v-if="convEventsLoading"
+              class="empty-msg"
+            >
+              Loading events...
+            </div>
+            <div
+              v-else-if="convEvents.length === 0"
+              class="empty-msg"
+            >
+              No events
+            </div>
+            <div
+              v-else
+              class="conv-event-scroll"
+            >
               <div
                 v-for="(evt, i) in convEvents"
                 :key="i"
@@ -454,18 +881,30 @@
                 :class="convEventRowClass(evt.type)"
               >
                 <span class="event-time">{{ formatTimestamp(evt.ts) }}</span>
-                <span class="event-badge" :class="convEventBadgeClass(evt.type)">{{ evt.type }}</span>
+                <span
+                  class="event-badge"
+                  :class="convEventBadgeClass(evt.type)"
+                >{{ evt.type }}</span>
                 <span class="event-msg">
                   <template v-if="evt.type === 'message'">
-                    <span class="msg-role" :class="evt.role === 'user' ? 'text-info' : evt.role === 'assistant' ? 'text-ok' : ''">{{ evt.role }}:</span>
+                    <span
+                      class="msg-role"
+                      :class="evt.role === 'user' ? 'text-info' : evt.role === 'assistant' ? 'text-ok' : ''"
+                    >{{ evt.role }}:</span>
                     {{ truncateText(String(evt.content || ''), 300) }}
                   </template>
                   <template v-else-if="evt.type === 'tool_call'">
                     <span class="text-warn-strong">{{ evt.toolName }}</span>
-                    <span v-if="evt.result && typeof evt.result === 'object' && (evt.result as any).error" class="text-err"> ERROR: {{ (evt.result as any).error }}</span>
+                    <span
+                      v-if="evt.result && typeof evt.result === 'object' && (evt.result as any).error"
+                      class="text-err"
+                    > ERROR: {{ (evt.result as any).error }}</span>
                   </template>
                   <template v-else-if="evt.type === 'llm_call'">
-                    LLM {{ evt.direction }} <span v-if="evt.model" class="cell-detail">model={{ evt.model }}</span>
+                    LLM {{ evt.direction }} <span
+                      v-if="evt.model"
+                      class="cell-detail"
+                    >model={{ evt.model }}</span>
                   </template>
                   <template v-else>
                     {{ JSON.stringify(Object.fromEntries(Object.entries(evt).filter(([k]) => !['ts', 'type'].includes(k))), null, 0).slice(0, 200) }}
@@ -479,17 +918,40 @@
     </div>
 
     <!-- Errors Section -->
-    <div v-if="activeSection === 'errors'" class="dashboard-content">
+    <div
+      v-if="activeSection === 'errors'"
+      class="dashboard-content"
+    >
       <div class="dashboard-header">
-        <h2 class="dashboard-title">Errors</h2>
-        <button class="refresh-btn" @click="$emit('refresh')">Refresh</button>
+        <h2 class="dashboard-title">
+          Errors
+        </h2>
+        <button
+          class="refresh-btn"
+          @click="$emit('refresh')"
+        >
+          Refresh
+        </button>
       </div>
 
-      <div v-if="errors.length === 0" class="panel empty-panel">
-        <p class="empty-msg text-ok" style="font-size: var(--fs-body); font-weight: var(--weight-medium);">No errors found</p>
-        <p class="empty-msg">System is running clean</p>
+      <div
+        v-if="errors.length === 0"
+        class="panel empty-panel"
+      >
+        <p
+          class="empty-msg text-ok"
+          style="font-size: var(--fs-body); font-weight: var(--weight-medium);"
+        >
+          No errors found
+        </p>
+        <p class="empty-msg">
+          System is running clean
+        </p>
       </div>
-      <div v-else class="panel">
+      <div
+        v-else
+        class="panel"
+      >
         <table class="data-table">
           <thead>
             <tr>
@@ -500,11 +962,22 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(err, i) in errors" :key="i" class="clickable" @click="emit('open-detail', 'error', err.conversationId || String(i), err.name, err)">
-              <td class="cell-mono cell-nowrap">{{ formatTimestamp(err.startedAt) }}</td>
-              <td class="cell-name">{{ err.name }}</td>
+            <tr
+              v-for="(err, i) in errors"
+              :key="i"
+              class="clickable"
+              @click="emit('open-detail', 'error', err.conversationId || String(i), err.name, err)"
+            >
+              <td class="cell-mono cell-nowrap">
+                {{ formatTimestamp(err.startedAt) }}
+              </td>
+              <td class="cell-name">
+                {{ err.name }}
+              </td>
               <td><span class="status-badge badge-err">{{ err.type }}</span></td>
-              <td class="cell-detail text-err cell-truncate">{{ err.error }}</td>
+              <td class="cell-detail text-err cell-truncate">
+                {{ err.error }}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -521,12 +994,12 @@ import { marked } from 'marked';
 const { ipcRenderer } = window.require('electron');
 
 const props = defineProps<{
-  isDark: boolean;
+  isDark:        boolean;
   activeSection: string;
 }>();
 
 const emit = defineEmits<{
-  refresh: [];
+  refresh:       [];
   'open-detail': [type: 'ws' | 'service' | 'agent' | 'error', id: string, label: string, errorData?: any];
 }>();
 
@@ -621,7 +1094,7 @@ function onLiveConversation(_ipcEvent: any, data: any) {
 }
 
 function onLiveEvent(_ipcEvent: any, data: any) {
-  if (!data || !data.conversationId || !data.event) return;
+  if (!data?.conversationId || !data.event) return;
   // Only append to the thread we're currently watching
   if (data.conversationId === liveSelectedConv.value) {
     liveThreadEvents.value.push(data.event);
@@ -815,7 +1288,7 @@ onMounted(() => {
   timer = setInterval(refreshAll, 15000);
   if (props.activeSection === 'live') startLiveStream();
 });
-onUnmounted(() => { if (timer) clearInterval(timer); stopLiveStream(); });
+onUnmounted(() => { if (timer) clearInterval(timer); stopLiveStream() });
 
 // Refresh when section changes; start/stop live stream
 watch(() => props.activeSection, (section) => {
@@ -847,10 +1320,10 @@ function formatAge(ts: number): string {
   if (!ts) return 'never';
   const mins = Math.floor((Date.now() - ts) / 60000);
   if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return `${ mins }m ago`;
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  if (hours < 24) return `${ hours }h ago`;
+  return `${ Math.floor(hours / 24) }d ago`;
 }
 
 // ── Heartbeat runs (derived from event history) ──
@@ -870,8 +1343,8 @@ const heartbeatRuns = computed(() => {
             triggeredAt: evt.ts,
             status:      next.type === 'heartbeat_completed' ? 'completed' : 'error',
             durationMs:  next.durationMs,
-            cycles:      (next.meta as any)?.cycleCount,
-            focus:       (next.meta as any)?.focus,
+            cycles:      (next.meta)?.cycleCount,
+            focus:       (next.meta)?.focus,
           });
           matched = true;
           break;
@@ -887,21 +1360,21 @@ const heartbeatRuns = computed(() => {
 });
 
 function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
+  if (ms < 1000) return `${ ms }ms`;
   const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
+  if (s < 60) return `${ s.toFixed(1) }s`;
   const m = Math.floor(s / 60);
   const rem = Math.round(s % 60);
-  return `${m}m ${rem}s`;
+  return `${ m }m ${ rem }s`;
 }
 
 function formatCountdown(targetMs: number): string {
   const diff = targetMs - Date.now();
   if (diff <= 0) return 'now';
   const mins = Math.ceil(diff / 60000);
-  if (mins < 60) return `${mins}m`;
+  if (mins < 60) return `${ mins }m`;
   const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
+  return `${ hrs }h ${ mins % 60 }m`;
 }
 
 function formatWsData(msg: any): string {

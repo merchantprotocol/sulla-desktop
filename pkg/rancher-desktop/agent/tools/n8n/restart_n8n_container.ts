@@ -3,12 +3,12 @@ import { runCommand } from '../util/CommandRunner';
 import { createN8nService } from '../../services/N8nService';
 import { postgresClient } from '../../database/PostgresClient';
 
-type RestartInput = {
-  container?: string;
-  timeoutMs?: number;
+interface RestartInput {
+  container?:      string;
+  timeoutMs?:      number;
   pollIntervalMs?: number;
-  includeLogs?: boolean;
-};
+  includeLogs?:    boolean;
+}
 
 const DEFAULT_CONTAINER = 'sulla_n8n';
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -57,10 +57,10 @@ export class RestartN8nContainerWorker extends BaseTool {
   }
 
   private async getWebhookRegistrationStatus(): Promise<{
-    totalRegistered: number;
+    totalRegistered:            number;
     activeWorkflowWebhookCount: number;
-    gatewayWebhookRegistered: boolean;
-    sampleWebhookPaths: string[];
+    gatewayWebhookRegistered:   boolean;
+    sampleWebhookPaths:         string[];
   }> {
     await postgresClient.initialize();
 
@@ -88,10 +88,10 @@ export class RestartN8nContainerWorker extends BaseTool {
     );
 
     return {
-      totalRegistered: Number(totalRow?.count || 0),
+      totalRegistered:            Number(totalRow?.count || 0),
       activeWorkflowWebhookCount: Number(activeWorkflowRow?.count || 0),
-      gatewayWebhookRegistered: Number(gatewayRow?.count || 0) > 0,
-      sampleWebhookPaths: sampleRows.map((row) => String(row.webhookPath || '')).filter(Boolean),
+      gatewayWebhookRegistered:   Number(gatewayRow?.count || 0) > 0,
+      sampleWebhookPaths:         sampleRows.map((row) => String(row.webhookPath || '')).filter(Boolean),
     };
   }
 
@@ -129,10 +129,10 @@ export class RestartN8nContainerWorker extends BaseTool {
         return {
           successBoolean: false,
           responseString: JSON.stringify({
-            error: 'Failed to restart n8n container',
+            error:    'Failed to restart n8n container',
             container,
             exitCode: restartResult.exitCode,
-            details: (restartResult.stderr || restartResult.stdout || '').trim(),
+            details:  (restartResult.stderr || restartResult.stdout || '').trim(),
           }, null, 2),
         };
       }
@@ -163,10 +163,10 @@ export class RestartN8nContainerWorker extends BaseTool {
       const recentLogs = includeLogs ? await this.getRecentContainerLogs(container, startedAtIso) : '';
 
       let webhookRegistrationStatus: {
-        totalRegistered: number;
+        totalRegistered:            number;
         activeWorkflowWebhookCount: number;
-        gatewayWebhookRegistered: boolean;
-        sampleWebhookPaths: string[];
+        gatewayWebhookRegistered:   boolean;
+        sampleWebhookPaths:         string[];
       } | null = null;
       let webhookRegistrationError: string | null = null;
 
@@ -186,7 +186,7 @@ export class RestartN8nContainerWorker extends BaseTool {
         container,
         ready,
         checks: {
-          containerRunning: running,
+          containerRunning:   running,
           healthCheckPassing: health,
           elapsedMs,
           timeoutMs,
@@ -219,7 +219,7 @@ export class RestartN8nContainerWorker extends BaseTool {
       return {
         successBoolean: false,
         responseString: JSON.stringify({
-          error: 'Unexpected failure while restarting n8n container',
+          error:   'Unexpected failure while restarting n8n container',
           container,
           details: error instanceof Error ? error.message : String(error),
         }, null, 2),

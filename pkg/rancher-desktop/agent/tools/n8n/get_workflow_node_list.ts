@@ -2,8 +2,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { createN8nService } from '../../services/N8nService';
 import { countNodeConnections } from './workflow_node_utils';
 
-function collectConnectionEdges(connections: Record<string, any>): Array<{ fromNode: string; toNode: string }> {
-  const edges: Array<{ fromNode: string; toNode: string }> = [];
+function collectConnectionEdges(connections: Record<string, any>): { fromNode: string; toNode: string }[] {
+  const edges: { fromNode: string; toNode: string }[] = [];
   const seen = new Set<string>();
 
   const walk = (value: any, sourceName?: string) => {
@@ -19,7 +19,7 @@ function collectConnectionEdges(connections: Record<string, any>): Array<{ fromN
     }
 
     if (sourceName && typeof value.node === 'string') {
-      const key = `${sourceName}=>${value.node}`;
+      const key = `${ sourceName }=>${ value.node }`;
       if (!seen.has(key)) {
         seen.add(key);
         edges.push({ fromNode: sourceName, toNode: value.node });
@@ -39,8 +39,8 @@ function collectConnectionEdges(connections: Record<string, any>): Array<{ fromN
 }
 
 export class GetWorkflowNodeListWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
@@ -60,22 +60,22 @@ export class GetWorkflowNodeListWorker extends BaseTool {
         const connectionCounts = countNodeConnections(connections, nodeName);
 
         return {
-          nodeId: String(node?.id || ''),
+          nodeId:              String(node?.id || ''),
           nodeName,
-          nodeType: String(node?.type || ''),
+          nodeType:            String(node?.type || ''),
           nodeIndex,
-          position: Array.isArray(node?.position) ? node.position : undefined,
-          inboundConnections: connectionCounts.inbound,
+          position:            Array.isArray(node?.position) ? node.position : undefined,
+          inboundConnections:  connectionCounts.inbound,
           outboundConnections: connectionCounts.outbound,
         };
       });
 
       const response = {
-        workflowId: String(workflow?.id || ''),
+        workflowId:   String(workflow?.id || ''),
         workflowName: String(workflow?.name || ''),
-        nodeCount: nodeList.length,
-        nodes: nodeList,
-        edges: collectConnectionEdges(connections),
+        nodeCount:    nodeList.length,
+        nodes:        nodeList,
+        edges:        collectConnectionEdges(connections),
       };
 
       return {
@@ -85,9 +85,8 @@ export class GetWorkflowNodeListWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting workflow node list: ${(error as Error).message}`,
+        responseString: `Error getting workflow node list: ${ (error as Error).message }`,
       };
     }
   }
 }
-

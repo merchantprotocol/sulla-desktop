@@ -1,16 +1,32 @@
 <template>
-  <div class="tl-viewer" :class="{ dark: isDark }">
+  <div
+    class="tl-viewer"
+    :class="{ dark: isDark }"
+  >
     <div class="tl-header">
       <span class="tl-title">Training Log</span>
-      <span v-if="logFilename" class="tl-filename">{{ logFilename }}</span>
-      <span v-if="running" class="tl-running-badge">Running</span>
-      <div style="flex:1"></div>
+      <span
+        v-if="logFilename"
+        class="tl-filename"
+      >{{ logFilename }}</span>
+      <span
+        v-if="running"
+        class="tl-running-badge"
+      >Running</span>
+      <div style="flex:1" />
       <label class="tl-autoscroll">
-        <input type="checkbox" v-model="autoScroll" />
+        <input
+          v-model="autoScroll"
+          type="checkbox"
+        >
         Auto-scroll
       </label>
     </div>
-    <div ref="logContainer" class="tl-log-container" @scroll="onScroll">
+    <div
+      ref="logContainer"
+      class="tl-log-container"
+      @scroll="onScroll"
+    >
       <pre class="tl-log-content">{{ logContent || 'Waiting for output…' }}</pre>
     </div>
   </div>
@@ -22,7 +38,7 @@ import { defineComponent, ref, watch, onMounted, onBeforeUnmount, nextTick } fro
 const { ipcRenderer } = require('electron');
 
 export default defineComponent({
-  name: 'TrainingLogViewer',
+  name:  'TrainingLogViewer',
   props: {
     isDark:      { type: Boolean, default: false },
     logFilename: { type: String, default: '' },

@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { getExtensionService } from "../../services/ExtensionService";
+import { BaseTool, ToolResponse } from '../base';
+import { getExtensionService } from '../../services/ExtensionService';
 
 /**
  * Install an extension from the marketplace catalog.
  */
 export class InstallExtensionWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { id } = input;
 
@@ -26,18 +26,18 @@ export class InstallExtensionWorker extends BaseTool {
       if (!result.ok) {
         return {
           successBoolean: false,
-          responseString: `Failed to install ${id}: ${result.error}`,
+          responseString: `Failed to install ${ id }: ${ result.error }`,
         };
       }
 
       return {
         successBoolean: true,
-        responseString: `Extension ${id} installed successfully. It has been started automatically.`,
+        responseString: `Extension ${ id } installed successfully. It has been started automatically.`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error installing extension: ${(error as Error).message}`,
+        responseString: `Error installing extension: ${ (error as Error).message }`,
       };
     }
   }

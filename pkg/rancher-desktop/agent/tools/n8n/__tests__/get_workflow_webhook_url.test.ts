@@ -5,7 +5,7 @@ const mockInitialize: any = jest.fn();
 const mockQuery: any = jest.fn();
 
 jest.unstable_mockModule('../../../services/N8nService', () => ({
-  createN8nService: jest.fn(async () => ({
+  createN8nService: jest.fn(async() => ({
     getWorkflow: mockGetWorkflow,
   })),
 }));
@@ -13,7 +13,7 @@ jest.unstable_mockModule('../../../services/N8nService', () => ({
 jest.unstable_mockModule('../../../database/PostgresClient', () => ({
   postgresClient: {
     initialize: mockInitialize,
-    query: mockQuery,
+    query:      mockQuery,
   },
 }));
 
@@ -28,20 +28,20 @@ describe('get_workflow_webhook_url tool', () => {
     mockQuery.mockReset();
   });
 
-  it('returns webhook URLs and registration status for webhook nodes', async () => {
+  it('returns webhook URLs and registration status for webhook nodes', async() => {
     const { GetWorkflowWebhookUrlWorker } = await loadTool();
 
     mockGetWorkflow.mockResolvedValueOnce({
-      id: 'V1VkT6m5PNBTNATH',
-      name: 'GitHub API Test - Auto-configured Credential',
+      id:    'V1VkT6m5PNBTNATH',
+      name:  'GitHub API Test - Auto-configured Credential',
       nodes: [
         {
-          id: 'webhook-1',
-          name: 'WebhookTrigger',
-          type: 'n8n-nodes-base.webhook',
+          id:         'webhook-1',
+          name:       'WebhookTrigger',
+          type:       'n8n-nodes-base.webhook',
           parameters: {
             httpMethod: 'POST',
-            path: 'test-github-auto-cred',
+            path:       'test-github-auto-cred',
           },
         },
       ],
@@ -51,8 +51,8 @@ describe('get_workflow_webhook_url tool', () => {
     mockQuery.mockResolvedValueOnce([
       {
         webhookPath: 'V1VkT6m5PNBTNATH/webhooktrigger/test-github-auto-cred',
-        method: 'POST',
-        workflowId: 'V1VkT6m5PNBTNATH',
+        method:      'POST',
+        workflowId:  'V1VkT6m5PNBTNATH',
       },
     ]);
 
@@ -61,7 +61,7 @@ describe('get_workflow_webhook_url tool', () => {
     worker.description = 'Get workflow webhook URLs';
     worker.schemaDef = {
       workflowId: { type: 'string', optional: true },
-      id: { type: 'string', optional: true },
+      id:         { type: 'string', optional: true },
     } as any;
 
     const result = await worker.invoke({ workflowId: 'V1VkT6m5PNBTNATH' });
@@ -77,20 +77,20 @@ describe('get_workflow_webhook_url tool', () => {
     expect(payload.webhookWarning).toBeNull();
   });
 
-  it('includes webhookWarning when any webhook is unregistered', async () => {
+  it('includes webhookWarning when any webhook is unregistered', async() => {
     const { GetWorkflowWebhookUrlWorker } = await loadTool();
 
     mockGetWorkflow.mockResolvedValueOnce({
-      id: 'wf-2',
-      name: 'Workflow 2',
+      id:    'wf-2',
+      name:  'Workflow 2',
       nodes: [
         {
-          id: 'webhook-1',
-          name: 'Webhook Trigger',
-          type: 'n8n-nodes-base.webhook',
+          id:         'webhook-1',
+          name:       'Webhook Trigger',
+          type:       'n8n-nodes-base.webhook',
           parameters: {
             httpMethod: 'POST',
-            path: 'start',
+            path:       'start',
           },
         },
       ],
@@ -104,7 +104,7 @@ describe('get_workflow_webhook_url tool', () => {
     worker.description = 'Get workflow webhook URLs';
     worker.schemaDef = {
       workflowId: { type: 'string', optional: true },
-      id: { type: 'string', optional: true },
+      id:         { type: 'string', optional: true },
     } as any;
 
     const result = await worker.invoke({ id: 'wf-2' });

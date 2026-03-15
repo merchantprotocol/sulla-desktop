@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { getExtensionService } from "../../services/ExtensionService";
+import { BaseTool, ToolResponse } from '../base';
+import { getExtensionService } from '../../services/ExtensionService';
 
 /**
  * List all currently installed extensions.
  */
 export class ListInstalledWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(_input: any): Promise<ToolResponse> {
     try {
       const svc = getExtensionService();
@@ -22,19 +22,19 @@ export class ListInstalledWorker extends BaseTool {
 
       const lines = installed.map(ext => {
         const title = ext.labels?.['org.opencontainers.image.title'] ?? ext.id;
-        const urls = ext.extraUrls.map(u => `${u.label}: ${u.url}`).join(', ');
-        const upgrade = ext.canUpgrade ? ` (upgrade available: v${ext.availableVersion})` : '';
-        return `- **${title}** (${ext.id}) v${ext.version}${upgrade}${urls ? ` — URLs: ${urls}` : ''}`;
+        const urls = ext.extraUrls.map(u => `${ u.label }: ${ u.url }`).join(', ');
+        const upgrade = ext.canUpgrade ? ` (upgrade available: v${ ext.availableVersion })` : '';
+        return `- **${ title }** (${ ext.id }) v${ ext.version }${ upgrade }${ urls ? ` — URLs: ${ urls }` : '' }`;
       });
 
       return {
         successBoolean: true,
-        responseString: `Installed Extensions (${installed.length}):\n${lines.join('\n')}`,
+        responseString: `Installed Extensions (${ installed.length }):\n${ lines.join('\n') }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error fetching installed extensions: ${(error as Error).message}`,
+        responseString: `Error fetching installed extensions: ${ (error as Error).message }`,
       };
     }
   }

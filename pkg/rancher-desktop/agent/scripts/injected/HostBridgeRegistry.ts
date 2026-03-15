@@ -14,20 +14,20 @@
 import type { WebviewHostBridge } from './WebviewHostBridge';
 
 export interface BridgeEntry {
-  assetId: string;
-  bridge: WebviewHostBridge;
-  title: string;
-  url: string;
-  registeredAt: number;
-  lastSnapshot: string;
+  assetId:        string;
+  bridge:         WebviewHostBridge;
+  title:          string;
+  url:            string;
+  registeredAt:   number;
+  lastSnapshot:   string;
   lastSnapshotAt: number;
-  unsubs: Array<() => void>;
+  unsubs:         (() => void)[];
 }
 
 export interface RegistryDomEvent {
-  assetId: string;
-  type: 'domChange' | 'dialog' | 'routeChanged' | 'click';
-  message: string;
+  assetId:   string;
+  type:      'domChange' | 'dialog' | 'routeChanged' | 'click';
+  message:   string;
   timestamp: number;
 }
 
@@ -48,24 +48,24 @@ class HostBridgeRegistryImpl {
       this.unregisterBridge(assetId);
     }
 
-    const unsubs: Array<() => void> = [];
+    const unsubs: (() => void)[] = [];
 
     // Auto-subscribe to bridge events and forward as RegistryDomEvents
     unsubs.push(bridge.on('domChange', (payload) => {
       this.emitRegistryEvent({
         assetId,
-        type: 'domChange',
-        message: `[DOM ${assetId}] ${payload.summary}`,
+        type:      'domChange',
+        message:   `[DOM ${ assetId }] ${ payload.summary }`,
         timestamp: payload.timestamp,
       });
     }));
 
     unsubs.push(bridge.on('dialog', (payload) => {
-      const extra = payload.defaultValue ? ` (default: "${payload.defaultValue}")` : '';
+      const extra = payload.defaultValue ? ` (default: "${ payload.defaultValue }")` : '';
       this.emitRegistryEvent({
         assetId,
-        type: 'dialog',
-        message: `[DIALOG ${assetId}] ${payload.dialogType}: ${payload.message}${extra}`,
+        type:      'dialog',
+        message:   `[DIALOG ${ assetId }] ${ payload.dialogType }: ${ payload.message }${ extra }`,
         timestamp: payload.timestamp,
       });
     }));
@@ -73,8 +73,8 @@ class HostBridgeRegistryImpl {
     unsubs.push(bridge.on('routeChanged', (payload) => {
       this.emitRegistryEvent({
         assetId,
-        type: 'routeChanged',
-        message: `[NAV ${assetId}] Navigated to ${payload.path} — "${payload.title}"`,
+        type:      'routeChanged',
+        message:   `[NAV ${ assetId }] Navigated to ${ payload.path } — "${ payload.title }"`,
         timestamp: payload.timestamp,
       });
     }));
@@ -83,8 +83,8 @@ class HostBridgeRegistryImpl {
       const handle = payload.dataTestId || payload.id || payload.text.slice(0, 40);
       this.emitRegistryEvent({
         assetId,
-        type: 'click',
-        message: `[CLICK ${assetId}] ${payload.tagName.toLowerCase()} "${handle}"`,
+        type:      'click',
+        message:   `[CLICK ${ assetId }] ${ payload.tagName.toLowerCase() } "${ handle }"`,
         timestamp: payload.timestamp,
       });
     }));
@@ -92,10 +92,10 @@ class HostBridgeRegistryImpl {
     this.bridges.set(assetId, {
       assetId,
       bridge,
-      title: meta?.title ?? '',
-      url: meta?.url ?? '',
-      registeredAt: Date.now(),
-      lastSnapshot: '',
+      title:          meta?.title ?? '',
+      url:            meta?.url ?? '',
+      registeredAt:   Date.now(),
+      lastSnapshot:   '',
       lastSnapshotAt: 0,
       unsubs,
     });
@@ -110,7 +110,7 @@ class HostBridgeRegistryImpl {
     const entry = this.bridges.get(assetId);
     if (entry) {
       for (const unsub of entry.unsubs) {
-        try { unsub(); } catch { /* no-op */ }
+        try { unsub() } catch { /* no-op */ }
       }
     }
     this.bridges.delete(assetId);
@@ -171,7 +171,7 @@ class HostBridgeRegistryImpl {
   clear(): void {
     for (const entry of this.bridges.values()) {
       for (const unsub of entry.unsubs) {
-        try { unsub(); } catch { /* no-op */ }
+        try { unsub() } catch { /* no-op */ }
       }
     }
     this.bridges.clear();
@@ -188,7 +188,7 @@ class HostBridgeRegistryImpl {
    */
   onDomEvent(handler: RegistryEventHandler): () => void {
     this.eventHandlers.add(handler);
-    return () => { this.eventHandlers.delete(handler); };
+    return () => { this.eventHandlers.delete(handler) };
   }
 
   private emitRegistryEvent(event: RegistryDomEvent): void {
@@ -249,20 +249,20 @@ class HostBridgeRegistryImpl {
 
     const lines: string[] = [];
     lines.push('### Active Website Assets');
-    lines.push(`You have ${this.bridges.size} website(s) open that you can interact with using the playwright tools (click_element, set_field, scroll_to_element, get_form_values, get_page_text). Each tool accepts an optional assetId parameter to target a specific website. DOM changes, navigation, clicks, and dialog alerts are streamed to you automatically — you do NOT need to poll for page state.\n`);
+    lines.push(`You have ${ this.bridges.size } website(s) open that you can interact with using the playwright tools (click_element, set_field, scroll_to_element, get_form_values, get_page_text). Each tool accepts an optional assetId parameter to target a specific website. DOM changes, navigation, clicks, and dialog alerts are streamed to you automatically — you do NOT need to poll for page state.\n`);
 
     for (const entry of this.bridges.values()) {
       const isActive = entry.assetId === this.activeAssetId;
       const status = entry.bridge.isInjected() ? 'ready' : 'loading';
       const marker = isActive ? ' (active)' : '';
 
-      lines.push(`#### ${entry.title || entry.assetId}${marker}`);
-      lines.push(`- **assetId**: \`${entry.assetId}\``);
-      lines.push(`- **url**: ${entry.url}`);
-      lines.push(`- **status**: ${status}`);
+      lines.push(`#### ${ entry.title || entry.assetId }${ marker }`);
+      lines.push(`- **assetId**: \`${ entry.assetId }\``);
+      lines.push(`- **url**: ${ entry.url }`);
+      lines.push(`- **status**: ${ status }`);
 
       if (entry.lastSnapshot.trim()) {
-        lines.push(`\n<page_state asset="${entry.assetId}">`);
+        lines.push(`\n<page_state asset="${ entry.assetId }">`);
         lines.push(entry.lastSnapshot);
         lines.push('</page_state>');
       }

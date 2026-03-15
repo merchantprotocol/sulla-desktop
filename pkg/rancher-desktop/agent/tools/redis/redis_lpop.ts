@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { redisClient } from "../../database/RedisClient";
+import { BaseTool, ToolResponse } from '../base';
+import { redisClient } from '../../database/RedisClient';
 
 /**
  * Redis Lpop Tool - Worker class for execution
  */
 export class RedisLpopWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { key } = input;
 
@@ -15,12 +15,12 @@ export class RedisLpopWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Redis LPOP ${key}: ${value || '(nil)'}`
+        responseString: `Redis LPOP ${ key }: ${ value || '(nil)' }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error popping from Redis list: ${(error as Error).message}`
+        responseString: `Error popping from Redis list: ${ (error as Error).message }`,
       };
     }
   }

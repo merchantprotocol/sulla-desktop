@@ -20,9 +20,9 @@ jobs:
       - uses: ./.github/actions/yarn-install
       - name: Disable admin-access before start up
         run: |
-          mkdir -p $HOME/Library/Preferences/rancher-desktop
-          touch $HOME/Library/Preferences/rancher-desktop/settings.json
-          cat <<EOF > $HOME/Library/Preferences/rancher-desktop/settings.json
+          mkdir -p $HOME/Library/Preferences/sulla-desktop
+          touch $HOME/Library/Preferences/sulla-desktop/settings.json
+          cat <<EOF > $HOME/Library/Preferences/sulla-desktop/settings.json
           {
             "version": 5,
             "application": {
@@ -35,7 +35,7 @@ jobs:
             "pathManagementStrategy": "rcfiles"
           }
           EOF
-      - name: Run Rancher Desktop in dev
+      - name: Run Sulla Desktop in dev
         run: |
           yarn dev -- --no-modal-dialogs &
           sleep 200
@@ -57,14 +57,14 @@ jobs:
         run: |
           #set -x
           cd $HOME/Library
-          pushd Logs/rancher-desktop
+          pushd Logs/sulla-desktop
           for x in *.log ; do
            echo -n '' > $x
           done
           popd
-          rm -fr "Application Support/rancher-desktop"
-          rm -fr Preferences/rancher-desktop
-          rm -fr Caches/rancher-desktop/k3s-versions.json
+          rm -fr "Application Support/sulla-desktop"
+          rm -fr Preferences/sulla-desktop
+          rm -fr Caches/sulla-desktop/k3s-versions.json
           cd $HOME/.rd/bin
           for x in helm kubectl nerdctl docker ; do
            if [[ -L $x ]] ; then # && $(readlink $x):]] ; then
@@ -75,5 +75,5 @@ jobs:
       - name: End stray processes
         run: |
           ps auxww | grep qemu
-          ps auxww | grep rancher | grep -vi -e goland
+          ps auxww | grep sulla | grep -vi -e goland
         if: always()

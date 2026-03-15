@@ -95,7 +95,7 @@ export interface Extension {
    * Extra URLs registered by this extension (e.g. dashboards, webmail).
    * Legacy extensions return an empty array.
    */
-  readonly extraUrls: Promise<Array<{ label: string; url: string }>>;
+  readonly extraUrls: Promise<{ label: string; url: string }[]>;
 
   /**
    * Install this extension.

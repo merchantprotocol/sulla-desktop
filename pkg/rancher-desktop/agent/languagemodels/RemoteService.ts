@@ -13,10 +13,10 @@ import type { RemoteProviderConfig } from './BaseLanguageModel';
 export class RemoteModelService extends OpenAICompatibleService {
   constructor(config: RemoteProviderConfig) {
     super({
-      id: config.id,
-      model: config.model,
+      id:      config.id,
+      model:   config.model,
       baseUrl: config.baseUrl,
-      apiKey: config.apiKey,
+      apiKey:  config.apiKey,
     });
   }
 }

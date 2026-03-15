@@ -16,10 +16,10 @@ export class KimiService extends OpenAICompatibleService {
     }
 
     return new KimiService({
-      id: 'kimi',
-      model: valMap.model || 'moonshot-v1-128k',
+      id:      'kimi',
+      model:   valMap.model || 'moonshot-v1-128k',
       baseUrl: 'https://api.moonshot.cn/v1',
-      apiKey: valMap.api_key || '',
+      apiKey:  valMap.api_key || '',
     });
   }
 

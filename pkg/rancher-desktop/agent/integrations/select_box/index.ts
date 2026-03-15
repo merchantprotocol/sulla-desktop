@@ -1,6 +1,3 @@
-export { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
-export { registerSelectBoxProvider, getSelectBoxProvider, getAllSelectBoxProviders } from './registry';
-
 import { registerSelectBoxProvider } from './registry';
 import { GrokModels } from './GrokModels';
 import { AnthropicModels } from './AnthropicModels';
@@ -9,6 +6,9 @@ import { KimiModels } from './KimiModels';
 import { NvidiaModels } from './NvidiaModels';
 import { CustomModels } from './CustomModels';
 import { OllamaModels, OllamaEmbedTextModels } from './OllamaModels';
+
+export { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
+export { registerSelectBoxProvider, getSelectBoxProvider, getAllSelectBoxProviders } from './registry';
 
 // Auto-register all providers on import
 registerSelectBoxProvider(new GrokModels());

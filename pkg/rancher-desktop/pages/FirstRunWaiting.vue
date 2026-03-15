@@ -1,16 +1,25 @@
 <template>
   <div class="max-w-lg mx-0 p-6 bg-white dark:bg-gray-800/30">
-    <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">Congratulations!</h2>
+    <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">
+      Congratulations!
+    </h2>
     <p class="mb-6 text-gray-600 dark:text-gray-400">
       Now the hard part is just waiting. This process may take a while depending on your Internet connection speed. If this process is interrupted it may make using the software very difficult. lol.
     </p>
 
     <div class="mt-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
-      <h4 class="text-sm font-semibold mb-2 text-gray-900 dark:text-gray-100">Startup Progress</h4>
+      <h4 class="text-sm font-semibold mb-2 text-gray-900 dark:text-gray-100">
+        Startup Progress
+      </h4>
       <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mb-2">
-        <div class="h-2.5 rounded-full" :style="{ width: `${progressPercent}%`, backgroundColor: '#30a5e9' }"></div>
+        <div
+          class="h-2.5 rounded-full"
+          :style="{ width: `${progressPercent}%`, backgroundColor: '#30a5e9' }"
+        />
       </div>
-      <p class="text-xs text-gray-600 dark:text-gray-400">{{ progressDescription || startupController.state.progressDescription }}</p>
+      <p class="text-xs text-gray-600 dark:text-gray-400">
+        {{ progressDescription || startupController.state.progressDescription }}
+      </p>
     </div>
   </div>
 </template>

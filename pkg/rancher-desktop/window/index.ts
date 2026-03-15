@@ -108,7 +108,6 @@ export function createWindow(name: string, url: string, options: Electron.Browse
 const mainUrl = `${ webRoot }/agent.html`;
 const dockerDashboardUrl = `${ webRoot }/index.html`;
 const languageModelSettingsUrl = `${ webRoot }/lm-settings.html`;
-const modelTrainingUrl = `${ webRoot }/model-training.html`;
 const editorUrl = `${ webRoot }/editor.html`;
 
 console.log('[window/index] URLs configured:', { webRoot, mainUrl, dockerDashboardUrl });
@@ -119,10 +118,11 @@ console.log('[window/index] URLs configured:', { webRoot, mainUrl, dockerDashboa
 export function openMain() {
   console.log('[openMain] Called. mainUrl:', mainUrl, 'webRoot:', webRoot);
 
-  const { height } = screen.getPrimaryDisplay().workAreaSize;
+  const fullSize = screen.getPrimaryDisplay().size;
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
 
-  const defaultWidth = 769;
-  const defaultHeight = Math.min(Math.trunc(height * 0.8), 900); // 720 (692)
+  const defaultWidth = Math.trunc(fullSize.width * 0.9);
+  const defaultHeight = workArea.height;
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
   const window = createWindow(
@@ -130,15 +130,20 @@ export function openMain() {
     mainUrl,
     {
       title:          'Sulla Agent',
+      x:              0,
+      y:              0,
       width:          defaultWidth,
       height:         defaultHeight,
-      resizable:      !process.env.RD_MOCK_FOR_SCREENSHOTS, // remove window's shadows while taking screenshots
+      resizable:      true,
       icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      backgroundColor: '#0d1117',
       // macOS: hide native title bar, keep traffic lights overlaid on content
-      ...(os.platform() === 'darwin' ? {
-        titleBarStyle:        'hiddenInset',
-        trafficLightPosition: { x: 16, y: 16 },
-      } : {}),
+      ...(os.platform() === 'darwin'
+        ? {
+          titleBarStyle:        'hiddenInset',
+          trafficLightPosition: { x: 16, y: 14 },
+        }
+        : {}),
       webPreferences: {
         devTools:         !app.isPackaged,
         nodeIntegration:  true,
@@ -278,43 +283,6 @@ export function openLanguageModelSettings() {
 }
 
 /**
- * Open the Model Training window; if it is already open, focus it.
- */
-export function openModelTraining() {
-  console.log('[openModelTraining] Called.');
-
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-
-  const defaultWidth = Math.min(Math.trunc(width * 0.7), 1000);
-  const defaultHeight = Math.min(Math.trunc(height * 0.7), 700);
-
-  const window = createWindow(
-    'model-training',
-    modelTrainingUrl,
-    {
-      title:          'Sulla Desktop - Model Training',
-      width:          defaultWidth,
-      height:         defaultHeight,
-      resizable:      true,
-      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
-      webPreferences: {
-        devTools:         !app.isPackaged,
-        nodeIntegration:  true,
-        contextIsolation: false,
-        webSecurity:      false,
-      },
-    });
-
-  window.on('closed', () => {
-    delete windowMapping['model-training'];
-  });
-
-  app.dock?.show();
-
-  return window;
-}
-
-/**
  * Open the Editor window; if it is already open, focus it.
  */
 export function openEditor() {
@@ -338,10 +306,12 @@ export function openEditor() {
       resizable:      true,
       icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
       // macOS: hide native title bar, keep traffic lights overlaid on content
-      ...(os.platform() === 'darwin' ? {
-        titleBarStyle:        'hiddenInset',
-        trafficLightPosition: { x: 16, y: 8 },
-      } : {}),
+      ...(os.platform() === 'darwin'
+        ? {
+          titleBarStyle:        'hiddenInset',
+          trafficLightPosition: { x: 16, y: 8 },
+        }
+        : {}),
       webPreferences: {
         devTools:         !app.isPackaged,
         nodeIntegration:  true,
@@ -767,10 +737,10 @@ export async function openFirstRunDialog() {
   const defaultWidth = Math.min(Math.trunc(width * 0.8), 1280);
   const defaultHeight = Math.min(Math.trunc(height * 0.8), 900);
 
-  console.log('[openFirstRunDialog] Creating window with name: first-run, url:', `${mainUrl}#FirstRun`);
+  console.log('[openFirstRunDialog] Creating window with name: first-run, url:', `${ mainUrl }#FirstRun`);
   const window = createWindow(
     'first-run',
-    `${mainUrl}#FirstRun`,
+    `${ mainUrl }#FirstRun`,
     {
       title:          'Sulla Desktop - First Run',
       width:          defaultWidth,

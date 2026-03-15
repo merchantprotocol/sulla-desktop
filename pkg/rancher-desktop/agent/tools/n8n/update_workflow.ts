@@ -1,13 +1,13 @@
-import { BaseTool, ToolResponse } from "../base";
-import { createN8nService } from "../../services/N8nService";
-import { getN8nRuntime } from "../../services/N8nRuntimeService";
+import { BaseTool, ToolResponse } from '../base';
+import { createN8nService } from '../../services/N8nService';
+import { getN8nRuntime } from '../../services/N8nRuntimeService';
 
 /**
  * Update Workflow Tool - Worker class for execution
  */
 export class UpdateWorkflowWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   private readonly webhookNodeType = 'n8n-nodes-base.webhook';
   private readonly respondNodeType = 'n8n-nodes-base.respondToWebhook';
@@ -31,7 +31,7 @@ export class UpdateWorkflowWorker extends BaseTool {
     try {
       return JSON.parse(value);
     } catch (error) {
-      throw new Error(`Invalid JSON for ${field}: ${(error as Error).message}`);
+      throw new Error(`Invalid JSON for ${ field }: ${ (error as Error).message }`);
     }
   }
 
@@ -45,7 +45,7 @@ export class UpdateWorkflowWorker extends BaseTool {
         return entry;
       }
 
-      const cloned = { ...entry } as any;
+      const cloned = { ...entry };
       if (cloned.project && typeof cloned.project === 'object' && !Array.isArray(cloned.project)) {
         const { id: _projectId, ...projectWithoutId } = cloned.project;
         cloned.project = projectWithoutId;
@@ -129,14 +129,14 @@ export class UpdateWorkflowWorker extends BaseTool {
 
       if (currentMode === 'lastNode' && hasRiskyDownstream) {
         parameters.responseMode = 'responseNode';
-        warnings.push(`Auto-fixed webhook responseMode from 'lastNode' to 'responseNode' for reliability (node: ${webhookName || webhookNode?.id || 'unknown'}).`);
+        warnings.push(`Auto-fixed webhook responseMode from 'lastNode' to 'responseNode' for reliability (node: ${ webhookName || webhookNode?.id || 'unknown' }).`);
       }
 
       // Ensure webhookId is set to match path for clean URL registration
       const webhookPath = String(parameters.path || '').trim();
       if (webhookPath && !webhookNode.webhookId) {
         webhookNode.webhookId = webhookPath;
-        warnings.push(`Auto-set webhookId to '${webhookPath}' for clean URL registration (node: ${webhookName || webhookNode?.id || 'unknown'}).`);
+        warnings.push(`Auto-set webhookId to '${ webhookPath }' for clean URL registration (node: ${ webhookName || webhookNode?.id || 'unknown' }).`);
       }
     }
 
@@ -165,7 +165,7 @@ export class UpdateWorkflowWorker extends BaseTool {
     return Object.keys(runData).length > 0;
   }
 
-  private async buildWebhookValidation(service: any, workflow: any): Promise<{ tested: boolean; endpoints: Array<{ url: string; testResult: string; executionId: string | null; issue: string | null }> }> {
+  private async buildWebhookValidation(service: any, workflow: any): Promise<{ tested: boolean; endpoints: { url: string; testResult: string; executionId: string | null; issue: string | null }[] }> {
     const nodes = Array.isArray(workflow?.nodes) ? workflow.nodes : [];
     const webhookNodes = this.extractWebhookNodes(nodes);
     const isActive = !!workflow?.active;
@@ -179,7 +179,7 @@ export class UpdateWorkflowWorker extends BaseTool {
       return { tested: false, endpoints: [] };
     }
 
-    const endpoints: Array<{ url: string; testResult: string; executionId: string | null; issue: string | null }> = [];
+    const endpoints: { url: string; testResult: string; executionId: string | null; issue: string | null }[] = [];
     const baselineExecutions = await service.getExecutions({ workflowId: String(workflow.id || ''), includeData: false, limit: 20 });
     const baselineExecutionIds = new Set((baselineExecutions || []).map((execution: any) => String(execution?.id || '')));
 
@@ -187,22 +187,22 @@ export class UpdateWorkflowWorker extends BaseTool {
       const path = String(webhookNode?.parameters?.path || webhookNode?.parameters?.webhookPath || '').trim();
       if (!path) {
         endpoints.push({
-          url: '',
-          testResult: 'failed',
+          url:         '',
+          testResult:  'failed',
           executionId: null,
-          issue: `Webhook node ${String(webhookNode?.name || webhookNode?.id || 'unknown')} is missing path/webhookPath`,
+          issue:       `Webhook node ${ String(webhookNode?.name || webhookNode?.id || 'unknown') } is missing path/webhookPath`,
         });
         continue;
       }
 
-      const url = new URL(`webhook/${path}`, appRootUrl).toString();
+      const url = new URL(`webhook/${ path }`, appRootUrl).toString();
       let parsedBody: unknown = null;
 
       try {
         const response = await fetch(url, {
-          method: 'POST',
+          method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ __sullaWebhookValidation: true, timestamp: new Date().toISOString() }),
+          body:    JSON.stringify({ __sullaWebhookValidation: true, timestamp: new Date().toISOString() }),
         });
 
         const responseText = await response.text();
@@ -224,7 +224,7 @@ export class UpdateWorkflowWorker extends BaseTool {
           issue = 'Webhook returns empty response despite node execution - likely responseMode mismatch';
           testResult = 'warning';
         } else if (!response.ok) {
-          issue = `HTTP ${response.status} ${response.statusText}`;
+          issue = `HTTP ${ response.status } ${ response.statusText }`;
         }
 
         endpoints.push({ url, testResult, executionId, issue });
@@ -234,9 +234,9 @@ export class UpdateWorkflowWorker extends BaseTool {
       } catch (error) {
         endpoints.push({
           url,
-          testResult: 'failed',
+          testResult:  'failed',
           executionId: null,
-          issue: error instanceof Error ? error.message : String(error),
+          issue:       error instanceof Error ? error.message : String(error),
         });
       }
     }
@@ -281,9 +281,9 @@ export class UpdateWorkflowWorker extends BaseTool {
     }
 
     const normalizedNodes = nodes.map((node: any, index: number) => {
-      const parsedNode = this.parseJsonIfString(node, `nodes[${index}]`);
+      const parsedNode = this.parseJsonIfString(node, `nodes[${ index }]`);
       if (typeof parsedNode !== 'object' || parsedNode === null || Array.isArray(parsedNode)) {
-        throw new Error(`Invalid workflow payload: nodes[${index}] must be an object.`);
+        throw new Error(`Invalid workflow payload: nodes[${ index }] must be an object.`);
       }
       return parsedNode;
     });
@@ -296,8 +296,8 @@ export class UpdateWorkflowWorker extends BaseTool {
       throw new Error('Invalid workflow payload: settings must be an object.');
     }
 
-    if ((settings as any).saveDataSuccessExecution !== undefined) {
-      (settings as any).saveDataSuccessExecution = this.normalizeSaveDataSuccessExecution((settings as any).saveDataSuccessExecution);
+    if ((settings).saveDataSuccessExecution !== undefined) {
+      (settings).saveDataSuccessExecution = this.normalizeSaveDataSuccessExecution((settings).saveDataSuccessExecution);
     }
 
     if (shared !== undefined && !Array.isArray(shared)) {
@@ -337,13 +337,13 @@ export class UpdateWorkflowWorker extends BaseTool {
         : { tested: false, endpoints: [] };
 
       const responseString = JSON.stringify({
-        message: 'Workflow updated successfully',
+        message:  'Workflow updated successfully',
         workflow: {
-          id: workflow.id,
-          name: workflow.name,
-          active: !!workflow.active,
-          updatedAt: workflow.updatedAt,
-          nodeCount: workflow.nodes?.length || 0,
+          id:              workflow.id,
+          name:            workflow.name,
+          active:          !!workflow.active,
+          updatedAt:       workflow.updatedAt,
+          nodeCount:       workflow.nodes?.length || 0,
           connectionCount: Object.keys(workflow.connections || {}).length,
         },
         warnings,
@@ -352,12 +352,12 @@ export class UpdateWorkflowWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error updating workflow: ${(error as Error).message}`
+        responseString: `Error updating workflow: ${ (error as Error).message }`,
       };
     }
   }

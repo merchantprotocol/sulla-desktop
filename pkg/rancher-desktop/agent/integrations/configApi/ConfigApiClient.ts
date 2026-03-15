@@ -10,26 +10,26 @@ const LOG = '[ConfigApiClient]';
 export interface CallOptions {
   pageToken?: string;
   /** Return raw JSON instead of extracting items */
-  raw?: boolean;
+  raw?:       boolean;
   /** Override auth token for this request */
-  token?: string;
+  token?:     string;
   /** Override API key for this request */
-  apiKey?: string;
+  apiKey?:    string;
   /** Request body for POST/PUT/PATCH */
-  body?: unknown;
+  body?:      unknown;
   /** Extra headers merged into the request */
-  headers?: Record<string, string>;
+  headers?:   Record<string, string>;
   /** AbortSignal for cancellation */
-  signal?: AbortSignal;
+  signal?:    AbortSignal;
   /** Account ID for credential lookup (overrides active account) */
   accountId?: string;
 }
 
 export interface PaginatedResult<T = any> {
-  items: T[];
+  items:          T[];
   nextPageToken?: string;
   prevPageToken?: string;
-  raw: any;
+  raw:            any;
 }
 
 /**
@@ -45,9 +45,9 @@ export interface PaginatedResult<T = any> {
  *   const result = await client.call('search', { q: 'funny cats', maxResults: 10 });
  */
 export class ConfigApiClient {
-  private integration: LoadedIntegration;
-  private slug: string;
-  private baseUrl: string;
+  private integration:    LoadedIntegration;
+  private slug:           string;
+  private baseUrl:        string;
   private defaultHeaders: Record<string, string> = {};
 
   constructor(integration: LoadedIntegration, slug: string) {
@@ -92,7 +92,7 @@ export class ConfigApiClient {
     const epConfig = this.integration.endpoints.get(endpointName);
     if (!epConfig) {
       const available = this.endpointNames.join(', ');
-      throw new Error(`${LOG} Endpoint "${endpointName}" not found. Available: ${available}`);
+      throw new Error(`${ LOG } Endpoint "${ endpointName }" not found. Available: ${ available }`);
     }
 
     const ep = epConfig.endpoint;
@@ -111,13 +111,13 @@ export class ConfigApiClient {
       (fetchInit.headers as Record<string, string>)['Content-Type'] = 'application/json';
     }
 
-    console.log(`${LOG} ${ep.method} ${url.toString()}`);
+    console.log(`${ LOG } ${ ep.method } ${ url.toString() }`);
 
     const res = await fetch(url.toString(), fetchInit);
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => 'Unknown error');
-      throw new Error(`${LOG} ${ep.method} ${ep.path} returned ${res.status}: ${errBody}`);
+      throw new Error(`${ LOG } ${ ep.method } ${ ep.path } returned ${ res.status }: ${ errBody }`);
     }
 
     const data = await res.json();
@@ -136,7 +136,7 @@ export class ConfigApiClient {
   /**
    * Async generator that auto-paginates through all pages.
    */
-  async *paginate<T = any>(
+  async * paginate<T = any>(
     endpointName: string,
     params: Record<string, any> = {},
     options: Omit<CallOptions, 'pageToken' | 'raw'> = {},
@@ -207,10 +207,10 @@ export class ConfigApiClient {
       for (const [key, def] of Object.entries(epConfig.path_params)) {
         const value = params[key];
         if (value == null && def.required) {
-          throw new Error(`${LOG} Required path param "${key}" missing`);
+          throw new Error(`${ LOG } Required path param "${ key }" missing`);
         }
         if (value != null) {
-          urlPath = urlPath.replace(`{${key}}`, encodeURIComponent(String(value)));
+          urlPath = urlPath.replace(`{${ key }}`, encodeURIComponent(String(value)));
         }
       }
     }
@@ -228,7 +228,7 @@ export class ConfigApiClient {
             url.searchParams.set(key, String(value));
           }
         } else if (def.required) {
-          throw new Error(`${LOG} Required query param "${key}" missing`);
+          throw new Error(`${ LOG } Required query param "${ key }" missing`);
         }
       }
     }
@@ -256,17 +256,17 @@ export class ConfigApiClient {
     const authConfig = this.integration.auth.auth;
 
     if (options.token) {
-      headers.Authorization = `Bearer ${options.token}`;
+      headers.Authorization = `Bearer ${ options.token }`;
     } else if (authConfig.type === 'oauth2') {
       // Try to get a valid OAuth token from the credential store
       const token = await this.getOAuthToken(accountId);
       if (token) {
-        headers.Authorization = `Bearer ${token}`;
+        headers.Authorization = `Bearer ${ token }`;
       }
     } else if (authConfig.type === 'bearer') {
       const token = await this.resolveCredential('bearer_token', authConfig.client_secret, accountId);
       if (token) {
-        headers.Authorization = `Bearer ${token}`;
+        headers.Authorization = `Bearer ${ token }`;
       }
     } else if (authConfig.type === 'apiKey' && authConfig.header) {
       const key = await this.resolveCredential('api_key', authConfig.client_secret, accountId);
@@ -296,7 +296,7 @@ export class ConfigApiClient {
   }
 
   private resolveEnvValue(value: string): string {
-    const match = value.match(/^\$\{(.+)\}$/);
+    const match = /^\$\{(.+)\}$/.exec(value);
     if (match) {
       return process.env[match[1]] || '';
     }

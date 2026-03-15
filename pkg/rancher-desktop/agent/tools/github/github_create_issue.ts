@@ -1,13 +1,13 @@
-import { BaseTool, ToolResponse } from "../base";
-import { Octokit } from "@octokit/rest";
+import { BaseTool, ToolResponse } from '../base';
+import { Octokit } from '@octokit/rest';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * GitHub Create Issue Tool
  */
 export class GitHubCreateIssueWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { owner, repo, title, body } = input;
@@ -19,7 +19,7 @@ export class GitHubCreateIssueWorker extends BaseTool {
     if (!tokenValue) {
       return {
         successBoolean: false,
-        responseString: "Error: GitHub token not configured.",
+        responseString: 'Error: GitHub token not configured.',
       };
     }
 
@@ -30,20 +30,20 @@ export class GitHubCreateIssueWorker extends BaseTool {
         owner,
         repo,
         title,
-        body: body || '',
-        labels: labels.length > 0 ? labels : undefined,
+        body:      body || '',
+        labels:    labels.length > 0 ? labels : undefined,
         assignees: assignees.length > 0 ? assignees : undefined,
       });
 
       const issue = response.data;
       return {
         successBoolean: true,
-        responseString: `Issue created: #${issue.number} "${issue.title}"\nURL: ${issue.html_url}\nState: ${issue.state}`,
+        responseString: `Issue created: #${ issue.number } "${ issue.title }"\nURL: ${ issue.html_url }\nState: ${ issue.state }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error creating issue: ${(error as Error).message}`,
+        responseString: `Error creating issue: ${ (error as Error).message }`,
       };
     }
   }

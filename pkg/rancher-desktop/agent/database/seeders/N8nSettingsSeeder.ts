@@ -30,7 +30,7 @@ async function initialize(): Promise<void> {
 
   for (const workflow of workflows) {
     const currentSettings = workflow.attributes.settings && typeof workflow.attributes.settings === 'object'
-      ? { ...(workflow.attributes.settings as Record<string, any>) }
+      ? { ...(workflow.attributes.settings) }
       : {};
 
     if (currentSettings.availableInMCP === true) {
@@ -43,7 +43,7 @@ async function initialize(): Promise<void> {
     updatedCount += 1;
   }
 
-  console.log(`[N8nSettingsSeeder] Updated workflows for MCP visibility: ${updatedCount}`);
+  console.log(`[N8nSettingsSeeder] Updated workflows for MCP visibility: ${ updatedCount }`);
 }
 
 export { initialize };

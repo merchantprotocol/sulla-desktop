@@ -6,8 +6,8 @@ import { resolveWorkspacePath } from './workspace_paths';
  * Delete Workspace Tool - Worker class for execution
  */
 export class DeleteWorkspaceWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { name } = input;
@@ -16,12 +16,12 @@ export class DeleteWorkspaceWorker extends BaseTool {
       fs.rmSync(absoluteWorkspacePath, { recursive: true, force: true });
       return {
         successBoolean: true,
-        responseString: `Workspace "${name}" deleted successfully from ${absoluteWorkspacePath}`
+        responseString: `Workspace "${ name }" deleted successfully from ${ absoluteWorkspacePath }`,
       };
     } catch (error: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to delete workspace "${name}": ${error.message}`
+        responseString: `Failed to delete workspace "${ name }": ${ error.message }`,
       };
     }
   }

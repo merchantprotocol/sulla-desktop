@@ -3,11 +3,11 @@ import * as crypto from 'crypto';
 
 interface WebhookEntityAttributes {
   webhookPath: string;
-  method: string;
-  node: string;
-  webhookId?: string | null;
+  method:      string;
+  node:        string;
+  webhookId?:  string | null;
   pathLength?: number | null;
-  workflowId: string;
+  workflowId:  string;
 }
 
 type FindOrCreateWebhookEntityParams = Partial<WebhookEntityAttributes> & {
@@ -72,13 +72,13 @@ export class WebhookEntityModel extends BaseModel<WebhookEntityAttributes> {
 
     const webhookPath = providedWebhookPath || crypto.randomUUID();
     const method = String(params.method || 'POST').trim() || 'POST';
-    const node = String(params.node || '').trim() || `node_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const node = String(params.node || '').trim() || `node_${ Date.now() }_${ Math.random().toString(36).slice(2, 10) }`;
 
     const attributes: WebhookEntityAttributes = {
       webhookPath,
       method,
       node,
-      webhookId: params.webhookId ?? null,
+      webhookId:  params.webhookId ?? null,
       pathLength: webhookPath.length,
       workflowId,
     };

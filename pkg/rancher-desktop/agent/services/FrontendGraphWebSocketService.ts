@@ -7,13 +7,13 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 const DEFAULT_CHANNEL_ID = 'sulla-desktop';
 
-export type FrontendGraphWebSocketDeps = {
+export interface FrontendGraphWebSocketDeps {
   currentThreadId: Ref<string | null>;
-};
+}
 
 export class FrontendGraphWebSocketService {
   private readonly wsService = getWebSocketClientService();
-  private channelId: string;
+  private channelId:   string;
   private unsubscribe: (() => void) | null = null;
   private activeAbort: AbortService | null = null;
 
@@ -75,14 +75,14 @@ export class FrontendGraphWebSocketService {
     const registry = getActiveAgentsRegistry();
     await registry.register({
       agentId:      this.channelId,
-      name:         this.channelId === DEFAULT_CHANNEL_ID ? 'Sulla' : `Sulla (${this.channelId})`,
+      name:         this.channelId === DEFAULT_CHANNEL_ID ? 'Sulla' : `Sulla (${ this.channelId })`,
       role:         'Frontend chat agent',
       channel:      this.channelId,
       type:         'frontend',
       status:       'running',
       startedAt:    Date.now(),
       lastActiveAt: Date.now(),
-      description:  `Frontend chat agent on channel ${this.channelId}`,
+      description:  `Frontend chat agent on channel ${ this.channelId }`,
     });
   }
 
@@ -115,8 +115,8 @@ export class FrontendGraphWebSocketService {
     // Scheduler ack
     if (metadata?.origin === 'scheduler' && typeof metadata?.eventId === 'number') {
       this.wsService.send(this.channelId, {
-        type: 'scheduler_ack',
-        data: { eventId: metadata.eventId },
+        type:      'scheduler_ack',
+        data:      { eventId: metadata.eventId },
         timestamp: Date.now(),
       });
     }
@@ -151,15 +151,14 @@ export class FrontendGraphWebSocketService {
       : await SullaSettingsModel.get('sullaModel', '');
 
     try {
-
       // Notify AgentPersonaService about the threadId so it stores it
       if (isNewThread) {
         this.wsService.send(channelId, {
           type: 'thread_created',
           data: {
-            threadId: state.metadata.threadId
+            threadId: state.metadata.threadId,
           },
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
       }
 
@@ -172,11 +171,11 @@ export class FrontendGraphWebSocketService {
 
       // Append new user message
       const newMsg = {
-        id: nextMessageId(),
-        role: 'user',
-        content: userText,
+        id:        nextMessageId(),
+        role:      'user',
+        content:   userText,
         timestamp: Date.now(),
-        metadata: { source: 'user' }
+        metadata:  { source: 'user' },
       };
       state.messages.push(newMsg as any);
 
@@ -184,13 +183,13 @@ export class FrontendGraphWebSocketService {
       const resumeNodeId = state.metadata.waitingForUser === true
         ? String(state.metadata.currentNodeId || '').trim()
         : '';
-      const shouldResumeFromCurrentNode = !!resumeNodeId
-        && resumeNodeId !== 'input_handler'
-        && resumeNodeId !== 'output';
+      const shouldResumeFromCurrentNode = !!resumeNodeId &&
+        resumeNodeId !== 'input_handler' &&
+        resumeNodeId !== 'output';
 
       state.metadata.consecutiveSameNode = 0;
       state.metadata.iterations = 0;
-      state.metadata.agentLoopCount = 0;   
+      state.metadata.agentLoopCount = 0;
       state.metadata.cycleComplete = false;
       state.metadata.waitingForUser = false;
 
@@ -204,7 +203,7 @@ export class FrontendGraphWebSocketService {
         this.emitSystemMessage('Execution stopped.');
       } else {
         console.error('[FrontendGraphWS] Error:', err?.message);
-        this.emitSystemMessage(`Error: ${err.message || String(err)}`);
+        this.emitSystemMessage(`Error: ${ err.message || String(err) }`);
       }
     } finally {
       // Reset here — after graph run completes this is fine
@@ -253,7 +252,7 @@ export class FrontendGraphWebSocketService {
         this.emitSystemMessage('Execution stopped.');
       } else {
         console.error('[FrontendGraphWS] Continue error:', err?.message);
-        this.emitSystemMessage(`Error: ${err.message || String(err)}`);
+        this.emitSystemMessage(`Error: ${ err.message || String(err) }`);
       }
     } finally {
       state.metadata.consecutiveSameNode = 0;
@@ -265,16 +264,16 @@ export class FrontendGraphWebSocketService {
 
   private emitAssistantMessage(content: string): void {
     this.wsService.send(this.channelId, {
-      type: 'assistant_message',
-      data: { role: 'assistant', content },
+      type:      'assistant_message',
+      data:      { role: 'assistant', content },
       timestamp: Date.now(),
     });
   }
 
   private emitSystemMessage(content: string): void {
     this.wsService.send(this.channelId, {
-      type: 'system_message',
-      data: content,
+      type:      'system_message',
+      data:      content,
       timestamp: Date.now(),
     });
   }

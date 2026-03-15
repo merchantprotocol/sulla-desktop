@@ -1,60 +1,180 @@
 <template>
-  <div class="integrations-pane" :class="{ dark: isDark }">
+  <div
+    class="integrations-pane"
+    :class="{ dark: isDark }"
+  >
     <!-- Header -->
-    <div class="integrations-header" :class="{ dark: isDark }">
+    <div
+      class="integrations-header"
+      :class="{ dark: isDark }"
+    >
       <span class="integrations-header-title">Integrations</span>
       <div class="integrations-header-actions">
-        <button class="integrations-header-btn" :class="{ dark: isDark }" title="Pull latest" @click="gitPull">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="8 17 12 21 16 17"/>
-            <line x1="12" y1="12" x2="12" y2="21"/>
-            <path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/>
+        <button
+          class="integrations-header-btn"
+          :class="{ dark: isDark }"
+          title="Pull latest"
+          @click="gitPull"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="8 17 12 21 16 17" />
+            <line
+              x1="12"
+              y1="12"
+              x2="12"
+              y2="21"
+            />
+            <path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29" />
           </svg>
         </button>
-        <button class="integrations-header-btn" :class="{ dark: isDark }" title="Refresh" @click="loadIntegrations">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"/>
-            <polyline points="1 20 1 14 7 14"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        <button
+          class="integrations-header-btn"
+          :class="{ dark: isDark }"
+          title="Refresh"
+          @click="loadIntegrations"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
           </svg>
         </button>
-        <button class="integrations-header-btn" :class="{ dark: isDark }" title="Close Panel" @click="$emit('close')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
+        <button
+          class="integrations-header-btn"
+          :class="{ dark: isDark }"
+          title="Close Panel"
+          @click="$emit('close')"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="18"
+              y1="6"
+              x2="6"
+              y2="18"
+            />
+            <line
+              x1="6"
+              y1="6"
+              x2="18"
+              y2="18"
+            />
           </svg>
         </button>
       </div>
     </div>
 
     <!-- Git info bar -->
-    <div v-if="branch" class="integrations-git-bar" :class="{ dark: isDark }">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="6" y1="3" x2="6" y2="15"/>
-        <circle cx="18" cy="6" r="3"/>
-        <circle cx="6" cy="18" r="3"/>
-        <path d="M18 9a9 9 0 0 1-9 9"/>
+    <div
+      v-if="branch"
+      class="integrations-git-bar"
+      :class="{ dark: isDark }"
+    >
+      <svg
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <line
+          x1="6"
+          y1="3"
+          x2="6"
+          y2="15"
+        />
+        <circle
+          cx="18"
+          cy="6"
+          r="3"
+        />
+        <circle
+          cx="6"
+          cy="18"
+          r="3"
+        />
+        <path d="M18 9a9 9 0 0 1-9 9" />
       </svg>
       <span>{{ branch }}</span>
-      <span v-if="gitStatus" class="integrations-git-status">{{ gitStatus }}</span>
+      <span
+        v-if="gitStatus"
+        class="integrations-git-status"
+      >{{ gitStatus }}</span>
     </div>
 
     <div class="integrations-content">
       <!-- Loading -->
-      <div v-if="loading" class="integrations-status">Loading integrations...</div>
+      <div
+        v-if="loading"
+        class="integrations-status"
+      >
+        Loading integrations...
+      </div>
 
       <!-- Empty state -->
-      <div v-else-if="entries.length === 0" class="integrations-empty">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.3">
-          <path d="M4 6h16M4 12h16M4 18h16"/>
+      <div
+        v-else-if="entries.length === 0"
+        class="integrations-empty"
+      >
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          opacity="0.3"
+        >
+          <path d="M4 6h16M4 12h16M4 18h16" />
         </svg>
-        <p class="integrations-empty-text">No integrations found</p>
-        <p class="integrations-empty-hint">Integrations will be cloned from the repository on startup</p>
+        <p class="integrations-empty-text">
+          No integrations found
+        </p>
+        <p class="integrations-empty-hint">
+          Integrations will be cloned from the repository on startup
+        </p>
       </div>
 
       <!-- File tree -->
-      <div v-else class="integrations-list">
-        <template v-for="entry in entries" :key="entry.path">
+      <div
+        v-else
+        class="integrations-list"
+      >
+        <template
+          v-for="entry in entries"
+          :key="entry.path"
+        >
           <!-- Directory -->
           <button
             v-if="entry.isDir"
@@ -63,11 +183,27 @@
             @click="toggleDir(entry)"
             @contextmenu.prevent="showContextMenu($event, entry)"
           >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" :class="{ rotated: expandedDirs.has(entry.path) }">
-              <path d="M3 1l4 4-4 4z"/>
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="currentColor"
+              :class="{ rotated: expandedDirs.has(entry.path) }"
+            >
+              <path d="M3 1l4 4-4 4z" />
             </svg>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              opacity="0.5"
+            >
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
             <span class="integrations-row-name">{{ entry.name }}</span>
             <button
@@ -76,14 +212,26 @@
               title="Open in API tester"
               @click.stop="$emit('open-api-test', entry.name)"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34"/>
-                <polygon points="18 2 22 6 12 16 8 16 8 12 18 2"/>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34" />
+                <polygon points="18 2 22 6 12 16 8 16 8 12 18 2" />
               </svg>
             </button>
           </button>
           <!-- Directory children -->
-          <div v-if="entry.isDir && expandedDirs.has(entry.path) && dirChildren.get(entry.path)" class="integrations-subfiles">
+          <div
+            v-if="entry.isDir && expandedDirs.has(entry.path) && dirChildren.get(entry.path)"
+            class="integrations-subfiles"
+          >
             <button
               v-for="child in dirChildren.get(entry.path)"
               :key="child.path"
@@ -92,12 +240,34 @@
               @click="child.isDir ? toggleDir(child) : openFile(child)"
               @contextmenu.prevent="showContextMenu($event, child)"
             >
-              <svg v-if="child.isDir" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              <svg
+                v-if="child.isDir"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                opacity="0.5"
+              >
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
               </svg>
-              <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
+              <svg
+                v-else
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                opacity="0.5"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
               </svg>
               <span>{{ child.name }}</span>
             </button>
@@ -110,9 +280,20 @@
             @click="openFile(entry)"
             @contextmenu.prevent="showContextMenu($event, entry)"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5" style="margin-left: 14px">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              opacity="0.5"
+              style="margin-left: 14px"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
             </svg>
             <span>{{ entry.name }}</span>
           </button>
@@ -122,26 +303,89 @@
 
     <!-- Context menu -->
     <Teleport to="body">
-      <div v-if="contextMenu.visible" class="integrations-ctx-overlay" @click="contextMenu.visible = false">
+      <div
+        v-if="contextMenu.visible"
+        class="integrations-ctx-overlay"
+        @click="contextMenu.visible = false"
+      >
         <div
           class="integrations-ctx-menu"
           :class="{ dark: isDark }"
           :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
         >
-          <button class="integrations-ctx-item" :class="{ dark: isDark }" @click="ctxNewFile">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+          <button
+            class="integrations-ctx-item"
+            :class="{ dark: isDark }"
+            @click="ctxNewFile"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            ><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line
+              x1="12"
+              y1="18"
+              x2="12"
+              y2="12"
+            /><line
+              x1="9"
+              y1="15"
+              x2="15"
+              y2="15"
+            /></svg>
             <span>New File</span>
           </button>
-          <button class="integrations-ctx-item" :class="{ dark: isDark }" @click="ctxNewFolder">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <button
+            class="integrations-ctx-item"
+            :class="{ dark: isDark }"
+            @click="ctxNewFolder"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            ><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
             <span>New Folder</span>
           </button>
-          <button v-if="!contextMenu.entry?.isDir" class="integrations-ctx-item" :class="{ dark: isDark }" @click="ctxDelete">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <button
+            v-if="!contextMenu.entry?.isDir"
+            class="integrations-ctx-item"
+            :class="{ dark: isDark }"
+            @click="ctxDelete"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            ><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
             <span>Delete</span>
           </button>
-          <button class="integrations-ctx-item" :class="{ dark: isDark }" @click="ctxReveal">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <button
+            class="integrations-ctx-item"
+            :class="{ dark: isDark }"
+            @click="ctxReveal"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            ><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle
+              cx="12"
+              cy="12"
+              r="3"
+            /></svg>
             <span>Reveal in Finder</span>
           </button>
         </div>
@@ -157,10 +401,10 @@ import os from 'os';
 import path from 'path';
 
 interface FileEntry {
-  name: string;
-  path: string;
+  name:  string;
+  path:  string;
   isDir: boolean;
-  ext: string;
+  ext:   string;
 }
 
 export default defineComponent({
@@ -206,7 +450,7 @@ export default defineComponent({
         branch.value = await ipcRenderer.invoke('git-branch', integrationsDir);
         const status = await ipcRenderer.invoke('git-status-full', integrationsDir);
         const changed = (status?.staged?.length || 0) + (status?.unstaged?.length || 0) + (status?.untracked?.length || 0);
-        gitStatus.value = changed > 0 ? `${changed} change${changed !== 1 ? 's' : ''}` : '';
+        gitStatus.value = changed > 0 ? `${ changed } change${ changed !== 1 ? 's' : '' }` : '';
       } catch {
         branch.value = '';
         gitStatus.value = '';
@@ -283,7 +527,7 @@ export default defineComponent({
       if (!contextMenu.entry) return;
       const entryPath = contextMenu.entry.path;
       closeContextMenu();
-      if (!confirm(`Delete ${path.basename(entryPath)}?`)) return;
+      if (!confirm(`Delete ${ path.basename(entryPath) }?`)) return;
       try {
         await ipcRenderer.invoke('filesystem-delete', entryPath);
         await loadIntegrations();

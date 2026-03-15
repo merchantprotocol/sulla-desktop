@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockPersona = {
-  registerIframeAsset: jest.fn(),
+  registerIframeAsset:   jest.fn(),
   registerDocumentAsset: jest.fn(),
-  removeAsset: jest.fn(),
+  removeAsset:           jest.fn(),
 };
 
 const mockRegistry = {
@@ -33,54 +33,54 @@ describe('manage_active_asset tool', () => {
     mockRegistry.getOrCreatePersonaService.mockClear();
   });
 
-  it('upserts workflow iframe asset using stable id and mutable url', async () => {
+  it('upserts workflow iframe asset using stable id and mutable url', async() => {
     const { ManageActiveAssetWorker, manageActiveAssetRegistration } = await loadModule();
     const worker = configureWorker(new ManageActiveAssetWorker(), manageActiveAssetRegistration);
     worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({
-      action: 'upsert',
+      action:    'upsert',
       assetType: 'iframe',
-      assetId: 'sulla_n8n',
+      assetId:   'sulla_n8n',
       skillSlug: 'workflow_automation',
-      url: 'http://127.0.0.1:30119/home/workflows/abc123',
-      title: 'Sulla n8n',
-      active: true,
+      url:       'http://127.0.0.1:30119/home/workflows/abc123',
+      title:     'Sulla n8n',
+      active:    true,
       collapsed: true,
     });
 
     expect(result.success).toBe(true);
     expect(mockRegistry.getOrCreatePersonaService as any).toHaveBeenCalledWith('sulla-desktop');
     expect(mockPersona.registerIframeAsset).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'sulla_n8n',
+      id:        'sulla_n8n',
       skillSlug: 'workflow_automation',
-      url: 'http://127.0.0.1:30119/home/workflows/abc123',
+      url:       'http://127.0.0.1:30119/home/workflows/abc123',
     }));
   });
 
-  it('upserts document active asset content', async () => {
+  it('upserts document active asset content', async() => {
     const { ManageActiveAssetWorker, manageActiveAssetRegistration } = await loadModule();
     const worker = configureWorker(new ManageActiveAssetWorker(), manageActiveAssetRegistration);
     worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({
-      action: 'upsert',
+      action:    'upsert',
       assetType: 'document',
-      assetId: 'planning-prd',
-      title: 'Planning PRD',
-      content: '<h3>Plan</h3><p>Build workflow</p>',
-      active: true,
+      assetId:   'planning-prd',
+      title:     'Planning PRD',
+      content:   '<h3>Plan</h3><p>Build workflow</p>',
+      active:    true,
       collapsed: true,
     });
 
     expect(result.success).toBe(true);
     expect(mockPersona.registerDocumentAsset).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'planning-prd',
+      id:      'planning-prd',
       content: '<h3>Plan</h3><p>Build workflow</p>',
     }));
   });
 
-  it('removes existing active asset by id', async () => {
+  it('removes existing active asset by id', async() => {
     const { ManageActiveAssetWorker, manageActiveAssetRegistration } = await loadModule();
     const worker = configureWorker(new ManageActiveAssetWorker(), manageActiveAssetRegistration);
     worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });

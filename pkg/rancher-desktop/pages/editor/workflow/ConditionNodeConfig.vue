@@ -1,46 +1,79 @@
 <template>
-  <div class="condition-config" :class="{ dark: isDark }">
+  <div
+    class="condition-config"
+    :class="{ dark: isDark }"
+  >
     <div class="node-field">
-      <label class="node-field-label" :class="{ dark: isDark }">Combinator</label>
+      <label
+        class="node-field-label"
+        :class="{ dark: isDark }"
+      >Combinator</label>
       <div class="combinator-toggle">
         <button
           class="combinator-btn"
           :class="{ active: config.combinator === 'and', dark: isDark }"
           @click="setCombinator('and')"
-        >AND</button>
+        >
+          AND
+        </button>
         <button
           class="combinator-btn"
           :class="{ active: config.combinator === 'or', dark: isDark }"
           @click="setCombinator('or')"
-        >OR</button>
+        >
+          OR
+        </button>
       </div>
     </div>
 
     <div class="node-field">
-      <label class="node-field-label" :class="{ dark: isDark }">Rules</label>
+      <label
+        class="node-field-label"
+        :class="{ dark: isDark }"
+      >Rules</label>
       <div class="rules-list">
-        <div v-for="(rule, idx) in config.rules" :key="idx" class="rule-row">
+        <div
+          v-for="(rule, idx) in config.rules"
+          :key="idx"
+          class="rule-row"
+        >
           <input
             class="node-field-input rule-input"
             :class="{ dark: isDark }"
             placeholder="e.g. sentiment"
             :value="rule.field"
             @input="onRuleChange(idx, 'field', ($event.target as HTMLInputElement).value)"
-          />
+          >
           <select
             class="node-field-input rule-operator"
             :class="{ dark: isDark }"
             :value="rule.operator"
             @change="onRuleChange(idx, 'operator', ($event.target as HTMLSelectElement).value)"
           >
-            <option value="equals">equals</option>
-            <option value="not_equals">not equals</option>
-            <option value="contains">contains</option>
-            <option value="not_contains">not contains</option>
-            <option value="greater_than">greater than</option>
-            <option value="less_than">less than</option>
-            <option value="exists">exists</option>
-            <option value="not_exists">not exists</option>
+            <option value="equals">
+              equals
+            </option>
+            <option value="not_equals">
+              not equals
+            </option>
+            <option value="contains">
+              contains
+            </option>
+            <option value="not_contains">
+              not contains
+            </option>
+            <option value="greater_than">
+              greater than
+            </option>
+            <option value="less_than">
+              less than
+            </option>
+            <option value="exists">
+              exists
+            </option>
+            <option value="not_exists">
+              not exists
+            </option>
           </select>
           <input
             class="node-field-input rule-input"
@@ -48,31 +81,91 @@
             placeholder="e.g. positive"
             :value="rule.value"
             @input="onRuleChange(idx, 'value', ($event.target as HTMLInputElement).value)"
-          />
-          <button class="rule-remove-btn" :class="{ dark: isDark }" @click="removeRule(idx)">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
+          >
+          <button
+            class="rule-remove-btn"
+            :class="{ dark: isDark }"
+            @click="removeRule(idx)"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line
+                x1="18"
+                y1="6"
+                x2="6"
+                y2="18"
+              />
+              <line
+                x1="6"
+                y1="6"
+                x2="18"
+                y2="18"
+              />
             </svg>
           </button>
         </div>
-        <button class="rule-add-btn" :class="{ dark: isDark }" @click="addRule">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
+        <button
+          class="rule-add-btn"
+          :class="{ dark: isDark }"
+          @click="addRule"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="12"
+              y1="5"
+              x2="12"
+              y2="19"
+            />
+            <line
+              x1="5"
+              y1="12"
+              x2="19"
+              y2="12"
+            />
           </svg>
           Add Rule
         </button>
       </div>
     </div>
-    <div class="node-field help-section" :class="{ dark: isDark }">
-      <p class="help-title" :class="{ dark: isDark }">How conditions work</p>
-      <p class="help-text" :class="{ dark: isDark }">
+    <div
+      class="node-field help-section"
+      :class="{ dark: isDark }"
+    >
+      <p
+        class="help-title"
+        :class="{ dark: isDark }"
+      >
+        How conditions work
+      </p>
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         Conditions evaluate data fields from the previous node's output.
         If the combined rules evaluate to <strong>true</strong>, flow continues
         down the True output. Otherwise it follows the False output.
       </p>
-      <p class="help-text" :class="{ dark: isDark }">
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         <strong>Field</strong> is the data key to check (e.g. <em>sentiment</em>, <em>message.type</em>, <em>user.role</em>).
         <strong>Value</strong> is what to compare against.
         Use <strong>AND</strong> when all rules must pass, or <strong>OR</strong> when any single rule is enough.

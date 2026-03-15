@@ -1,117 +1,289 @@
 <template>
-  <div class="api-test" :class="{ dark: isDark }">
+  <div
+    class="api-test"
+    :class="{ dark: isDark }"
+  >
     <!-- Top bar: integration + endpoint selector -->
-    <div class="api-bar" :class="{ dark: isDark }">
-      <select class="api-select" :class="{ dark: isDark }" v-model="selectedSlug" @change="onSlugChange">
-        <option value="" disabled>Integration</option>
-        <option v-for="integ in integrations" :key="integ.slug" :value="integ.slug">{{ integ.slug }}</option>
+    <div
+      class="api-bar"
+      :class="{ dark: isDark }"
+    >
+      <select
+        v-model="selectedSlug"
+        class="api-select"
+        :class="{ dark: isDark }"
+        @change="onSlugChange"
+      >
+        <option
+          value=""
+          disabled
+        >
+          Integration
+        </option>
+        <option
+          v-for="integ in integrations"
+          :key="integ.slug"
+          :value="integ.slug"
+        >
+          {{ integ.slug }}
+        </option>
       </select>
-      <select class="api-select" :class="{ dark: isDark }" v-model="selectedEndpoint" @change="onEndpointChange">
-        <option value="" disabled>Endpoint</option>
-        <option v-for="ep in currentEndpoints" :key="ep.name" :value="ep.name">{{ ep.method }} {{ ep.path }}</option>
+      <select
+        v-model="selectedEndpoint"
+        class="api-select"
+        :class="{ dark: isDark }"
+        @change="onEndpointChange"
+      >
+        <option
+          value=""
+          disabled
+        >
+          Endpoint
+        </option>
+        <option
+          v-for="ep in currentEndpoints"
+          :key="ep.name"
+          :value="ep.name"
+        >
+          {{ ep.method }} {{ ep.path }}
+        </option>
       </select>
-      <div class="api-method-badge" :class="[methodClass]">{{ currentMethod }}</div>
+      <div
+        class="api-method-badge"
+        :class="[methodClass]"
+      >
+        {{ currentMethod }}
+      </div>
       <input
+        v-model="fullUrl"
         class="api-url-input"
         :class="{ dark: isDark }"
-        v-model="fullUrl"
         readonly
         placeholder="URL will appear here"
-      />
-      <button class="api-send-btn" :class="{ dark: isDark, loading: sending }" @click="sendRequest" :disabled="sending || !selectedEndpoint">
+      >
+      <button
+        class="api-send-btn"
+        :class="{ dark: isDark, loading: sending }"
+        :disabled="sending || !selectedEndpoint"
+        @click="sendRequest"
+      >
         {{ sending ? 'Sending...' : 'Send' }}
       </button>
     </div>
 
     <div class="api-body-wrapper">
       <!-- Left: params editor -->
-      <div class="api-params" :class="{ dark: isDark }">
-        <div class="api-params-header" :class="{ dark: isDark }">
+      <div
+        class="api-params"
+        :class="{ dark: isDark }"
+      >
+        <div
+          class="api-params-header"
+          :class="{ dark: isDark }"
+        >
           <button
             v-for="tab in paramTabs"
             :key="tab"
             class="api-params-tab"
             :class="{ active: activeParamTab === tab, dark: isDark }"
             @click="activeParamTab = tab"
-          >{{ tab }}</button>
+          >
+            {{ tab }}
+          </button>
         </div>
         <div class="api-params-body">
           <!-- Params tab -->
-          <div v-if="activeParamTab === 'Params'" class="api-kv-list">
-            <div v-if="paramRows.length === 0" class="api-kv-empty">No query parameters defined</div>
-            <div v-for="(row, i) in paramRows" :key="i" class="api-kv-row" :class="{ dark: isDark }">
+          <div
+            v-if="activeParamTab === 'Params'"
+            class="api-kv-list"
+          >
+            <div
+              v-if="paramRows.length === 0"
+              class="api-kv-empty"
+            >
+              No query parameters defined
+            </div>
+            <div
+              v-for="(row, i) in paramRows"
+              :key="i"
+              class="api-kv-row"
+              :class="{ dark: isDark }"
+            >
               <input
+                v-model="row.enabled"
                 class="api-kv-check"
                 type="checkbox"
-                v-model="row.enabled"
-              />
+              >
               <input
+                v-model="row.key"
                 class="api-kv-key"
                 :class="{ dark: isDark }"
-                v-model="row.key"
                 placeholder="Key"
                 readonly
-              />
+              >
               <input
+                v-model="row.value"
                 class="api-kv-value"
                 :class="{ dark: isDark }"
-                v-model="row.value"
                 :placeholder="row.hint || 'Value'"
                 @input="rebuildUrl"
-              />
-              <span v-if="row.required" class="api-kv-req">*</span>
+              >
+              <span
+                v-if="row.required"
+                class="api-kv-req"
+              >*</span>
             </div>
           </div>
           <!-- Headers tab -->
-          <div v-if="activeParamTab === 'Headers'" class="api-kv-list">
-            <div v-for="(row, i) in headerRows" :key="i" class="api-kv-row" :class="{ dark: isDark }">
-              <input class="api-kv-check" type="checkbox" v-model="row.enabled" />
-              <input class="api-kv-key" :class="{ dark: isDark }" v-model="row.key" placeholder="Header name" />
-              <input class="api-kv-value" :class="{ dark: isDark }" v-model="row.value" placeholder="Value" />
-              <button class="api-kv-del" @click="headerRows.splice(i, 1)">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <div
+            v-if="activeParamTab === 'Headers'"
+            class="api-kv-list"
+          >
+            <div
+              v-for="(row, i) in headerRows"
+              :key="i"
+              class="api-kv-row"
+              :class="{ dark: isDark }"
+            >
+              <input
+                v-model="row.enabled"
+                class="api-kv-check"
+                type="checkbox"
+              >
+              <input
+                v-model="row.key"
+                class="api-kv-key"
+                :class="{ dark: isDark }"
+                placeholder="Header name"
+              >
+              <input
+                v-model="row.value"
+                class="api-kv-value"
+                :class="{ dark: isDark }"
+                placeholder="Value"
+              >
+              <button
+                class="api-kv-del"
+                @click="headerRows.splice(i, 1)"
+              >
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                ><line
+                  x1="18"
+                  y1="6"
+                  x2="6"
+                  y2="18"
+                /><line
+                  x1="6"
+                  y1="6"
+                  x2="18"
+                  y2="18"
+                /></svg>
               </button>
             </div>
-            <button class="api-kv-add" :class="{ dark: isDark }" @click="headerRows.push({ key: '', value: '', enabled: true })">+ Add Header</button>
+            <button
+              class="api-kv-add"
+              :class="{ dark: isDark }"
+              @click="headerRows.push({ key: '', value: '', enabled: true })"
+            >
+              + Add Header
+            </button>
           </div>
           <!-- Body tab -->
-          <div v-if="activeParamTab === 'Body'" class="api-body-editor">
+          <div
+            v-if="activeParamTab === 'Body'"
+            class="api-body-editor"
+          >
             <textarea
+              v-model="requestBody"
               class="api-body-textarea"
               :class="{ dark: isDark }"
-              v-model="requestBody"
-              placeholder='{ "key": "value" }'
+              placeholder="{ &quot;key&quot;: &quot;value&quot; }"
               rows="8"
             />
           </div>
           <!-- Auth tab -->
-          <div v-if="activeParamTab === 'Auth'" class="api-auth-section">
-            <div class="api-auth-info" :class="{ dark: isDark }">
+          <div
+            v-if="activeParamTab === 'Auth'"
+            class="api-auth-section"
+          >
+            <div
+              class="api-auth-info"
+              :class="{ dark: isDark }"
+            >
               <span v-if="authType">Type: <strong>{{ authType }}</strong></span>
               <span v-else>No auth configured</span>
             </div>
-            <div class="api-kv-row" :class="{ dark: isDark }">
+            <div
+              class="api-kv-row"
+              :class="{ dark: isDark }"
+            >
               <span class="api-kv-label">API Key</span>
-              <input class="api-kv-value" :class="{ dark: isDark }" v-model="overrideApiKey" placeholder="Override API key (optional)" />
+              <input
+                v-model="overrideApiKey"
+                class="api-kv-value"
+                :class="{ dark: isDark }"
+                placeholder="Override API key (optional)"
+              >
             </div>
-            <div class="api-kv-row" :class="{ dark: isDark }">
+            <div
+              class="api-kv-row"
+              :class="{ dark: isDark }"
+            >
               <span class="api-kv-label">Token</span>
-              <input class="api-kv-value" :class="{ dark: isDark }" v-model="overrideToken" placeholder="Override Bearer token (optional)" />
+              <input
+                v-model="overrideToken"
+                class="api-kv-value"
+                :class="{ dark: isDark }"
+                placeholder="Override Bearer token (optional)"
+              >
             </div>
           </div>
         </div>
       </div>
 
       <!-- Right: response viewer -->
-      <div class="api-response" :class="{ dark: isDark }">
-        <div class="api-response-header" :class="{ dark: isDark }">
+      <div
+        class="api-response"
+        :class="{ dark: isDark }"
+      >
+        <div
+          class="api-response-header"
+          :class="{ dark: isDark }"
+        >
           <span class="api-response-title">Response</span>
-          <span v-if="responseStatus" class="api-response-status" :class="statusClass">{{ responseStatus }}</span>
-          <span v-if="responseTime" class="api-response-time">{{ responseTime }}ms</span>
+          <span
+            v-if="responseStatus"
+            class="api-response-status"
+            :class="statusClass"
+          >{{ responseStatus }}</span>
+          <span
+            v-if="responseTime"
+            class="api-response-time"
+          >{{ responseTime }}ms</span>
         </div>
-        <div v-if="responseError" class="api-response-error">{{ responseError }}</div>
-        <pre v-else-if="responseBody" class="api-response-body" :class="{ dark: isDark }">{{ responseBody }}</pre>
-        <div v-else class="api-response-empty">Send a request to see the response</div>
+        <div
+          v-if="responseError"
+          class="api-response-error"
+        >
+          {{ responseError }}
+        </div>
+        <pre
+          v-else-if="responseBody"
+          class="api-response-body"
+          :class="{ dark: isDark }"
+        >{{ responseBody }}</pre>
+        <div
+          v-else
+          class="api-response-empty"
+        >
+          Send a request to see the response
+        </div>
       </div>
     </div>
   </div>
@@ -122,34 +294,34 @@ import { defineComponent, ref, reactive, computed, onMounted, watch } from 'vue'
 import { ipcRenderer } from 'electron';
 
 interface IntegrationInfo {
-  slug: string;
-  name: string;
-  baseUrl: string;
-  version: string;
+  slug:      string;
+  name:      string;
+  baseUrl:   string;
+  version:   string;
   endpoints: EndpointInfo[];
 }
 
 interface EndpointInfo {
-  name: string;
-  path: string;
-  method: string;
+  name:        string;
+  path:        string;
+  method:      string;
   description: string;
-  auth: string;
-  queryParams: Array<{
-    key: string;
-    type?: string;
-    required?: boolean;
-    default?: any;
+  auth:        string;
+  queryParams: {
+    key:          string;
+    type?:        string;
+    required?:    boolean;
+    default?:     any;
     description?: string;
-    enum?: string[];
-  }>;
+    enum?:        string[];
+  }[];
 }
 
 interface KVRow {
-  key: string;
-  value: string;
-  enabled: boolean;
-  hint?: string;
+  key:       string;
+  value:     string;
+  enabled:   boolean;
+  hint?:     string;
   required?: boolean;
 }
 
@@ -157,7 +329,7 @@ export default defineComponent({
   name: 'ApiTestPanel',
 
   props: {
-    isDark: { type: Boolean, default: false },
+    isDark:      { type: Boolean, default: false },
     initialSlug: { type: String, default: '' },
   },
 
@@ -206,7 +378,7 @@ export default defineComponent({
 
     const methodClass = computed(() => {
       const m = currentMethod.value.toLowerCase();
-      return `method-${m}`;
+      return `method-${ m }`;
     });
 
     const statusClass = computed(() => {
@@ -268,7 +440,7 @@ export default defineComponent({
       let url = integ.baseUrl.replace(/\/+$/, '') + ep.path;
       const enabledParams = paramRows.value.filter(r => r.enabled && r.value);
       if (enabledParams.length > 0) {
-        const qs = enabledParams.map(r => `${encodeURIComponent(r.key)}=${encodeURIComponent(r.value)}`).join('&');
+        const qs = enabledParams.map(r => `${ encodeURIComponent(r.key) }=${ encodeURIComponent(r.value) }`).join('&');
         url += '?' + qs;
       }
       fullUrl.value = url;
@@ -347,7 +519,7 @@ export default defineComponent({
     watch(paramRows, rebuildUrl, { deep: true });
 
     // When parent sets initialSlug, select that integration
-    watch(() => props.initialSlug, async (slug) => {
+    watch(() => props.initialSlug, async(slug) => {
       if (!slug) return;
       // Ensure integrations are loaded
       if (integrations.value.length === 0) {

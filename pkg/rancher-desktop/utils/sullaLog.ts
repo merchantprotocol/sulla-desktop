@@ -5,11 +5,11 @@ import path from 'path';
 const SULLA_LOG_DIR = path.join(os.homedir(), 'sulla', 'logs');
 
 export interface SullaLogEvent {
-  topic:      string;
-  level:      'info' | 'error' | 'debug' | 'warn';
-  message:    string;
-  data?:      unknown;
-  error?:     unknown;
+  topic:   string;
+  level:   'info' | 'error' | 'debug' | 'warn';
+  message: string;
+  data?:   unknown;
+  error?:  unknown;
 }
 
 function ensureLogDir(): void {

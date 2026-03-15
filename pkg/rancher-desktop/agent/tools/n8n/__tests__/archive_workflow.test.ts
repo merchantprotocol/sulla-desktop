@@ -4,7 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals'
 const mockSetWorkflowArchived: any = jest.fn();
 
 jest.unstable_mockModule('../../../services/N8nService', () => ({
-  createN8nService: jest.fn(async () => ({
+  createN8nService: jest.fn(async() => ({
     setWorkflowArchived: mockSetWorkflowArchived,
   })),
 }));
@@ -30,13 +30,13 @@ describe('archive_workflow tool', () => {
     mockSetWorkflowArchived.mockReset();
   });
 
-  it('archives by default when action is omitted', async () => {
+  it('archives by default when action is omitted', async() => {
     const { ArchiveWorkflowWorker, archiveWorkflowRegistration } = await loadArchiveTool();
 
     mockSetWorkflowArchived.mockResolvedValueOnce({
-      id: 'wf-1',
-      name: 'Workflow 1',
-      archived: true,
+      id:        'wf-1',
+      name:      'Workflow 1',
+      archived:  true,
       updatedAt: new Date().toISOString(),
     });
 
@@ -50,13 +50,13 @@ describe('archive_workflow tool', () => {
     expect(mockSetWorkflowArchived).toHaveBeenCalledWith('wf-1', true);
   });
 
-  it('unarchives when action=unarchive', async () => {
+  it('unarchives when action=unarchive', async() => {
     const { ArchiveWorkflowWorker, archiveWorkflowRegistration } = await loadArchiveTool();
 
     mockSetWorkflowArchived.mockResolvedValueOnce({
-      id: 'wf-2',
-      name: 'Workflow 2',
-      archived: false,
+      id:        'wf-2',
+      name:      'Workflow 2',
+      archived:  false,
       updatedAt: new Date().toISOString(),
     });
 
@@ -70,7 +70,7 @@ describe('archive_workflow tool', () => {
     expect(mockSetWorkflowArchived).toHaveBeenCalledWith('wf-2', false);
   });
 
-  it('returns error on invalid action', async () => {
+  it('returns error on invalid action', async() => {
     const { ArchiveWorkflowWorker, archiveWorkflowRegistration } = await loadArchiveTool();
 
     const worker = configureWorker(new ArchiveWorkflowWorker(), archiveWorkflowRegistration);

@@ -33,8 +33,8 @@ describe('docker_exec argument handling', () => {
 
     const message = worker.formatFailure('sulla_redis', {
       exitCode: 1,
-      stderr: '',
-      stdout: '',
+      stderr:   '',
+      stdout:   '',
     });
 
     expect(message).toBe('Error executing command in container sulla_redis (exit 1): (no stderr/stdout output)');
@@ -45,8 +45,8 @@ describe('docker_exec argument handling', () => {
 
     const message = worker.formatFailure('sulla_redis', {
       exitCode: 1,
-      stderr: 'grep: no matches',
-      stdout: '',
+      stderr:   'grep: no matches',
+      stdout:   '',
     });
 
     expect(message).toBe('Error executing command in container sulla_redis (exit 1): grep: no matches');

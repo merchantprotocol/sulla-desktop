@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from "../base";
-import { getIntegrationService } from "../../services/IntegrationService";
+import { BaseTool, ToolResponse } from '../base';
+import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * List Integration Accounts Tool
@@ -7,8 +7,8 @@ import { getIntegrationService } from "../../services/IntegrationService";
  * The LLM can then use set_active_integration_account to switch accounts.
  */
 export class ListIntegrationAccountsWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { integration_slug } = input;
@@ -29,15 +29,15 @@ export class ListIntegrationAccountsWorker extends BaseTool {
       if (accounts.length === 0) {
         return {
           successBoolean: true,
-          responseString: `No accounts configured for integration "${integration_slug}".`,
+          responseString: `No accounts configured for integration "${ integration_slug }".`,
         };
       }
 
-      let responseString = `Accounts for "${integration_slug}" (${accounts.length}):\n`;
+      let responseString = `Accounts for "${ integration_slug }" (${ accounts.length }):\n`;
       for (const acct of accounts) {
         const activeMarker = acct.active ? ' ★ ACTIVE' : '';
         const connStatus = acct.connected ? 'Connected' : 'Disconnected';
-        responseString += `- ${acct.label} (account_id: "${acct.account_id}") | ${connStatus}${activeMarker}\n`;
+        responseString += `- ${ acct.label } (account_id: "${ acct.account_id }") | ${ connStatus }${ activeMarker }\n`;
       }
 
       responseString += `\nTo switch accounts, use set_active_integration_account with integration_slug and account_id.`;
@@ -49,7 +49,7 @@ export class ListIntegrationAccountsWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error listing accounts: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        responseString: `Error listing accounts: ${ error instanceof Error ? error.message : 'Unknown error' }`,
       };
     }
   }

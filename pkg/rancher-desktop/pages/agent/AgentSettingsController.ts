@@ -24,10 +24,10 @@ export class AgentSettingsController {
 
     if (this.modelMode.value === 'remote') {
       this.modelName.value = await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning');
-      console.log(`[Agent] Remote model configured: ${await SullaSettingsModel.get('remoteProvider', 'grok')}/${this.modelName.value}`);
+      console.log(`[Agent] Remote model configured: ${ await SullaSettingsModel.get('remoteProvider', 'grok') }/${ this.modelName.value }`);
     } else {
       this.modelName.value = await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
-      console.log(`[Agent] Local model configured: ${this.modelName.value}`);
+      console.log(`[Agent] Local model configured: ${ this.modelName.value }`);
     }
   }
 }

@@ -4,8 +4,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { resolveFsPath } from './path_utils';
 
 export class FsMkdirWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const targetPath = resolveFsPath(input.path);
@@ -15,14 +15,13 @@ export class FsMkdirWorker extends BaseTool {
       fs.mkdirSync(targetPath, { recursive });
       return {
         successBoolean: true,
-        responseString: `Created directory at ${targetPath}`,
+        responseString: `Created directory at ${ targetPath }`,
       };
     } catch (error: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to create directory at "${targetPath}": ${error.message}`,
+        responseString: `Failed to create directory at "${ targetPath }": ${ error.message }`,
       };
     }
   }
 }
-

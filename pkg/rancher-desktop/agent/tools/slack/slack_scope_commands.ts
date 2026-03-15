@@ -1,11 +1,11 @@
-import { BaseTool, ToolResponse } from "../base";
-import { registry } from "../../integrations";
-import type { SlackClient } from "../../integrations/slack/SlackClient";
+import { BaseTool, ToolResponse } from '../base';
+import { registry } from '../../integrations';
+import type { SlackClient } from '../../integrations/slack/SlackClient';
 
-type ScopeConfig = {
-  scope: string;
+interface ScopeConfig {
+  scope:       string;
   description: string;
-};
+}
 
 const SCOPE_CONFIGS: ScopeConfig[] = [
   { scope: 'app_mentions:read', description: 'View messages that directly mention the app in conversations it has joined.' },
@@ -57,7 +57,7 @@ const SCOPE_CONFIGS: ScopeConfig[] = [
 ];
 
 function scopeToToolName(scope: string): string {
-  return `slack_${scope.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').toLowerCase()}`;
+  return `slack_${ scope.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').toLowerCase() }`;
 }
 
 function inferOperationType(name: string): 'read' | 'create' | 'update' | 'delete' | 'execute' {
@@ -72,12 +72,12 @@ function inferOperationType(name: string): 'read' | 'create' | 'update' | 'delet
 }
 
 const TOOL_TO_SCOPE = new Map<string, ScopeConfig>(
-  SCOPE_CONFIGS.map(scopeConfig => [scopeToToolName(scopeConfig.scope), scopeConfig])
+  SCOPE_CONFIGS.map(scopeConfig => [scopeToToolName(scopeConfig.scope), scopeConfig]),
 );
 
 export class SlackScopeCommandWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   schemaDef: any = {};
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
@@ -85,7 +85,7 @@ export class SlackScopeCommandWorker extends BaseTool {
     if (!scopeConfig) {
       return {
         successBoolean: false,
-        responseString: `Unknown Slack scope command: ${this.name}`,
+        responseString: `Unknown Slack scope command: ${ this.name }`,
       };
     }
 
@@ -95,7 +95,7 @@ export class SlackScopeCommandWorker extends BaseTool {
       if (!slack) {
         return {
           successBoolean: false,
-          responseString: `Slack integration is not initialized for scope ${scopeConfig.scope}`,
+          responseString: `Slack integration is not initialized for scope ${ scopeConfig.scope }`,
         };
       }
 
@@ -105,24 +105,23 @@ export class SlackScopeCommandWorker extends BaseTool {
       return {
         successBoolean: success,
         responseString: success
-          ? `Slack scope command ${scopeConfig.scope} executed via ${apiMethod}:\n${JSON.stringify(result, null, 2)}`
-          : `Slack scope command ${scopeConfig.scope} failed via ${apiMethod}: ${result?.error || 'Unknown error'}`,
+          ? `Slack scope command ${ scopeConfig.scope } executed via ${ apiMethod }:\n${ JSON.stringify(result, null, 2) }`
+          : `Slack scope command ${ scopeConfig.scope } failed via ${ apiMethod }: ${ result?.error || 'Unknown error' }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing Slack scope command ${scopeConfig.scope}: ${(error as Error).message}`,
+        responseString: `Error executing Slack scope command ${ scopeConfig.scope }: ${ (error as Error).message }`,
       };
     }
   }
 }
 
-
-type ApiCommandConfig = {
-  name: string;
-  apiMethod: string;
+interface ApiCommandConfig {
+  name:        string;
+  apiMethod:   string;
   description: string;
-};
+}
 
 const API_COMMAND_CONFIGS: ApiCommandConfig[] = [
   { name: 'slack_cmd_bookmarks_list', apiMethod: 'bookmarks.list', description: 'List bookmarks in a channel.' },
@@ -171,12 +170,12 @@ const API_COMMAND_CONFIGS: ApiCommandConfig[] = [
 ];
 
 const TOOL_TO_API_COMMAND = new Map<string, ApiCommandConfig>(
-  API_COMMAND_CONFIGS.map(command => [command.name, command])
+  API_COMMAND_CONFIGS.map(command => [command.name, command]),
 );
 
 export class SlackApiCommandWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   schemaDef: any = {};
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
@@ -184,7 +183,7 @@ export class SlackApiCommandWorker extends BaseTool {
     if (!command) {
       return {
         successBoolean: false,
-        responseString: `Unknown Slack API command: ${this.name}`,
+        responseString: `Unknown Slack API command: ${ this.name }`,
       };
     }
 
@@ -195,7 +194,7 @@ export class SlackApiCommandWorker extends BaseTool {
       if (!slack) {
         return {
           successBoolean: false,
-          responseString: `Slack integration is not initialized for command ${command.name}`,
+          responseString: `Slack integration is not initialized for command ${ command.name }`,
         };
       }
 
@@ -205,15 +204,14 @@ export class SlackApiCommandWorker extends BaseTool {
       return {
         successBoolean: success,
         responseString: success
-          ? `Slack command ${command.name} executed via ${command.apiMethod}:\n${JSON.stringify(result, null, 2)}`
-          : `Slack command ${command.name} failed via ${command.apiMethod}: ${result?.error || 'Unknown error'}`,
+          ? `Slack command ${ command.name } executed via ${ command.apiMethod }:\n${ JSON.stringify(result, null, 2) }`
+          : `Slack command ${ command.name } failed via ${ command.apiMethod }: ${ result?.error || 'Unknown error' }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing Slack command ${command.name}: ${(error as Error).message}`,
+        responseString: `Error executing Slack command ${ command.name }: ${ (error as Error).message }`,
       };
     }
   }
 }
-

@@ -17,23 +17,23 @@ import {
 type BrowserName = 'chromium' | 'firefox' | 'webkit';
 
 interface PlaywrightClientOptions {
-  browser?: BrowserName;
-  headless?: boolean;
-  slowMo?: number;
-  timeout?: number;
-  userAgent?: string;
-  viewport?: { width: number; height: number };
-  proxy?: { server: string; username?: string; password?: string };
-  extraHTTPHeaders?: Record<string, string>;
-  storageState?: string | { cookies: { name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite: "Strict" | "Lax" | "None"; }[]; origins: { origin: string; localStorage: { name: string; value: string; }[]; }[]; };
-  bypassCSP?: boolean;
+  browser?:           BrowserName;
+  headless?:          boolean;
+  slowMo?:            number;
+  timeout?:           number;
+  userAgent?:         string;
+  viewport?:          { width: number; height: number };
+  proxy?:             { server: string; username?: string; password?: string };
+  extraHTTPHeaders?:  Record<string, string>;
+  storageState?:      string | { cookies: { name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite: 'Strict' | 'Lax' | 'None'; }[]; origins: { origin: string; localStorage: { name: string; value: string; }[]; }[]; };
+  bypassCSP?:         boolean;
   ignoreHTTPSErrors?: boolean;
 }
 
 export class PlaywrightClient {
-  private browser!: Browser;
-  private context!: BrowserContext;
-  private page!: Page;
+  private browser!:    Browser;
+  private context!:    BrowserContext;
+  private page!:       Page;
   private browserType: BrowserType<Browser>;
 
   constructor(private options: PlaywrightClientOptions = {}) {
@@ -44,9 +44,9 @@ export class PlaywrightClient {
   async launch(): Promise<void> {
     const launchOpts: LaunchOptions = {
       headless: this.options.headless ?? true,
-      slowMo: this.options.slowMo,
-      timeout: this.options.timeout ?? 30000,
-      args: [
+      slowMo:   this.options.slowMo,
+      timeout:  this.options.timeout ?? 30000,
+      args:     [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
@@ -61,12 +61,12 @@ export class PlaywrightClient {
     this.browser = await this.browserType.launch(launchOpts);
 
     this.context = await this.browser.newContext({
-      viewport: this.options.viewport ?? { width: 1280, height: 800 },
-      userAgent: this.options.userAgent,
-      extraHTTPHeaders: this.options.extraHTTPHeaders,
-      bypassCSP: this.options.bypassCSP ?? true,
+      viewport:          this.options.viewport ?? { width: 1280, height: 800 },
+      userAgent:         this.options.userAgent,
+      extraHTTPHeaders:  this.options.extraHTTPHeaders,
+      bypassCSP:         this.options.bypassCSP ?? true,
       ignoreHTTPSErrors: this.options.ignoreHTTPSErrors ?? true,
-      storageState: this.options.storageState,
+      storageState:      this.options.storageState,
     });
 
     this.page = await this.context.newPage();

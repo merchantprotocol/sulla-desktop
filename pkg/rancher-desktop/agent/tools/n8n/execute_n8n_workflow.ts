@@ -15,7 +15,7 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
       try {
         return JSON.stringify(value, null, 2);
       } catch (error) {
-        return `[unserializable: ${error instanceof Error ? error.message : String(error)}]`;
+        return `[unserializable: ${ error instanceof Error ? error.message : String(error) }]`;
       }
     };
 
@@ -23,13 +23,13 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
       if (value.length <= limit) {
         return value;
       }
-      return `${value.slice(0, limit)}... [truncated ${value.length - limit} chars]`;
+      return `${ value.slice(0, limit) }... [truncated ${ value.length - limit } chars]`;
     };
 
     const deepClone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
     try {
-      console.log(`${logPrefix} start`, truncate(safeStringify({ input })));
+      console.log(`${ logPrefix } start`, truncate(safeStringify({ input })));
 
       const toRecord = (value: unknown): Record<string, unknown> => (
         value && typeof value === 'object' && !Array.isArray(value)
@@ -97,18 +97,18 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
         const executeMode = String(executeParams.mode || '').trim().toLowerCase();
         const executeWorkflowIdExpr = String(executeParams.workflowId || '').trim();
 
-        return webhookPath !== gatewayWebhookPath
-          || executeMode !== 'id'
-          || !executeWorkflowIdExpr;
+        return webhookPath !== gatewayWebhookPath ||
+          executeMode !== 'id' ||
+          !executeWorkflowIdExpr;
       };
 
       const service = await createN8nService();
       const { bridge } = await getN8nRuntime();
-      console.log(`${logPrefix} runtime acquired`);
+      console.log(`${ logPrefix } runtime acquired`);
 
       const workflowId = String(input.workflowId || '').trim();
       if (!workflowId) {
-        console.warn(`${logPrefix} missing workflowId`);
+        console.warn(`${ logPrefix } missing workflowId`);
         return { successBoolean: false, responseString: 'workflowId is required' };
       }
 
@@ -119,10 +119,10 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
       if (isWorkflowArchived(sourceWorkflow)) {
         const sourceRecord = toRecord(sourceWorkflow);
         const sourceName = String(sourceRecord.name || workflowId).trim();
-        const cloneName = `${sourceName} (Auto copy ${new Date().toISOString()})`;
+        const cloneName = `${ sourceName } (Auto copy ${ new Date().toISOString() })`;
         const clonePayload = {
-          name: cloneName,
-          nodes: Array.isArray(sourceRecord.nodes) ? deepClone(sourceRecord.nodes) : [],
+          name:        cloneName,
+          nodes:       Array.isArray(sourceRecord.nodes) ? deepClone(sourceRecord.nodes) : [],
           connections: sourceRecord.connections && typeof sourceRecord.connections === 'object' && !Array.isArray(sourceRecord.connections)
             ? deepClone(sourceRecord.connections)
             : {},
@@ -132,7 +132,7 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
           ...(sourceRecord.staticData !== undefined ? { staticData: deepClone(sourceRecord.staticData) } : {}),
         };
 
-        console.log(`${logPrefix} source workflow archived, cloning for execution`, {
+        console.log(`${ logPrefix } source workflow archived, cloning for execution`, {
           workflowId,
           cloneName,
         });
@@ -140,7 +140,7 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
         const clonedWorkflow = await service.createWorkflow(clonePayload as any);
         const clonedWorkflowId = getWorkflowId(clonedWorkflow);
         if (!clonedWorkflowId) {
-          throw new Error(`Failed to clone archived workflow ${workflowId}: missing cloned id`);
+          throw new Error(`Failed to clone archived workflow ${ workflowId }: missing cloned id`);
         }
 
         resolvedWorkflowId = clonedWorkflowId;
@@ -149,65 +149,65 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
 
       const mode = String(input.mode || 'async').trim().toLowerCase();
       const waitForCompletion = mode === 'sync';
-      console.log(`${logPrefix} mode resolved`, { mode, waitForCompletion, workflowId: resolvedWorkflowId });
+      console.log(`${ logPrefix } mode resolved`, { mode, waitForCompletion, workflowId: resolvedWorkflowId });
 
       const data = input.data && typeof input.data === 'object' && !Array.isArray(input.data)
         ? input.data
         : {};
-      console.log(`${logPrefix} run payload`, truncate(safeStringify(data)));
+      console.log(`${ logPrefix } run payload`, truncate(safeStringify(data)));
 
       const gatewayPayload = {
-        "name": gatewayWorkflowName,
-        "nodes": [
+        name:  gatewayWorkflowName,
+        nodes: [
           {
-            "parameters": {
-              "httpMethod": "POST",
-              "path": gatewayWebhookPath,
-              "responseMode": "lastNode",
-              "options": {},
+            parameters: {
+              httpMethod:   'POST',
+              path:         gatewayWebhookPath,
+              responseMode: 'lastNode',
+              options:      {},
             },
-            "id": '1',
-            "name": 'Webhook',
-            "type": 'n8n-nodes-base.webhook',
-            "typeVersion": 2,
-            "position": [240, 300],
+            id:          '1',
+            name:        'Webhook',
+            type:        'n8n-nodes-base.webhook',
+            typeVersion: 2,
+            position:    [240, 300],
           },
           {
-            "parameters": {
-              "mode": 'id',
-              "workflowId": '={{ $json.body.workflowId ?? $json.body.id ?? $query.workflowId ?? $query.id ?? $json.workflowId ?? $json.id }}',
-              "source": 'database',
-              "workflowData": '={{ $json.body.data ?? $query.data ?? $json.body ?? $json }}',
-              "options": {
-                "waitForExecution": true,
+            parameters: {
+              mode:         'id',
+              workflowId:   '={{ $json.body.workflowId ?? $json.body.id ?? $query.workflowId ?? $query.id ?? $json.workflowId ?? $json.id }}',
+              source:       'database',
+              workflowData: '={{ $json.body.data ?? $query.data ?? $json.body ?? $json }}',
+              options:      {
+                waitForExecution: true,
               },
             },
-            "id": '2',
-            "name": 'Execute Target Workflow',
-            "type": 'n8n-nodes-base.executeWorkflow',
-            "typeVersion": 1,
-            "position": [460, 300],
+            id:          '2',
+            name:        'Execute Target Workflow',
+            type:        'n8n-nodes-base.executeWorkflow',
+            typeVersion: 1,
+            position:    [460, 300],
           },
         ],
-        "connections": {
-          "Webhook": {
-            "main": [
+        connections: {
+          Webhook: {
+            main: [
               [
                 {
-                  "node": 'Execute Target Workflow',
-                  "type": 'main',
-                  "index": 0,
+                  node:  'Execute Target Workflow',
+                  type:  'main',
+                  index: 0,
                 },
               ],
             ],
           },
         },
-        "settings": {
-          "executionOrder": 'v1',
+        settings: {
+          executionOrder: 'v1',
         },
       };
 
-      console.log(`${logPrefix} finding gateway workflow`, { gatewayWorkflowName });
+      console.log(`${ logPrefix } finding gateway workflow`, { gatewayWorkflowName });
       const workflows = await service.getWorkflows({ limit: 250 });
       const sameNameWorkflows = workflows.filter(workflow => {
         const name = String(workflow.name || '').trim();
@@ -218,7 +218,7 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
 
       let gatewayCreated = false;
       if (!gatewayWorkflow) {
-        console.log(`${logPrefix} gateway workflow not found, creating`, truncate(safeStringify(gatewayPayload)));
+        console.log(`${ logPrefix } gateway workflow not found, creating`, truncate(safeStringify(gatewayPayload)));
         gatewayWorkflow = await service.createWorkflow(gatewayPayload);
         gatewayCreated = true;
       } else {
@@ -226,10 +226,10 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
         if (existingGatewayWorkflowId) {
           const existingGatewayWorkflow = await service.getWorkflow(existingGatewayWorkflowId, true);
           if (workflowNeedsGatewayRepair(existingGatewayWorkflow)) {
-            console.log(`${logPrefix} gateway workflow found but invalid, applying repair`, { gatewayWorkflowId: existingGatewayWorkflowId });
+            console.log(`${ logPrefix } gateway workflow found but invalid, applying repair`, { gatewayWorkflowId: existingGatewayWorkflowId });
             gatewayWorkflow = await service.updateWorkflow(existingGatewayWorkflowId, gatewayPayload as any);
           } else {
-            console.log(`${logPrefix} gateway workflow found and valid, keeping existing definition`, { gatewayWorkflowId: existingGatewayWorkflowId });
+            console.log(`${ logPrefix } gateway workflow found and valid, keeping existing definition`, { gatewayWorkflowId: existingGatewayWorkflowId });
             gatewayWorkflow = existingGatewayWorkflow;
           }
         }
@@ -237,16 +237,16 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
 
       const gatewayWorkflowId = getWorkflowId(gatewayWorkflow);
       if (!gatewayWorkflowId) {
-        throw new Error(`Gateway workflow resolved without id: ${safeStringify(gatewayWorkflow)}`);
+        throw new Error(`Gateway workflow resolved without id: ${ safeStringify(gatewayWorkflow) }`);
       }
 
       await WebhookEntityModel.findOrCreate({
-        workflowId: gatewayWorkflowId,
+        workflowId:  gatewayWorkflowId,
         webhookPath: gatewayWebhookPath,
       });
 
       if (!isWorkflowActive(gatewayWorkflow)) {
-        console.log(`${logPrefix} gateway workflow inactive, activating`, { gatewayWorkflowId });
+        console.log(`${ logPrefix } gateway workflow inactive, activating`, { gatewayWorkflowId });
         await service.activateWorkflow(gatewayWorkflowId);
       }
 
@@ -255,21 +255,21 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
         throw new Error('Unable to resolve n8n app root URL for gateway webhook invocation');
       }
 
-      const webhookUrl = new URL(`webhook/${gatewayWebhookPath}`, webhookBase);
+      const webhookUrl = new URL(`webhook/${ gatewayWebhookPath }`, webhookBase);
       const webhookPayload = {
-        id: resolvedWorkflowId,
+        id:         resolvedWorkflowId,
         workflowId: resolvedWorkflowId,
         data,
       };
 
       const webhookUrlString = webhookUrl.toString();
-      console.log(`${logPrefix} invoking gateway webhook`, { webhookUrl, gatewayWorkflowId, waitForCompletion });
-      console.log(`${logPrefix} gateway webhook payload`, truncate(safeStringify(webhookPayload)));
+      console.log(`${ logPrefix } invoking gateway webhook`, { webhookUrl, gatewayWorkflowId, waitForCompletion });
+      console.log(`${ logPrefix } gateway webhook payload`, truncate(safeStringify(webhookPayload)));
 
       const webhookResponse = await fetch(webhookUrlString, {
-        method: 'POST',
+        method:      'POST',
         credentials: 'include',
-        headers: {
+        headers:     {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(webhookPayload),
@@ -289,9 +289,9 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
         if (webhookResponse.status === 500) {
           try {
             const recentExecutions = await service.getExecutions({
-              workflowId: resolvedWorkflowId,
+              workflowId:  resolvedWorkflowId,
               includeData: true,
-              limit: 5,
+              limit:       5,
             });
 
             const failedExecution = recentExecutions.find((execution: any) => {
@@ -305,25 +305,25 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
 
               targetExecutionError = {
                 executionId: String(failedExecution?.id || ''),
-                status: String(failedExecution?.status || ''),
-                startedAt: failedExecution?.startedAt,
-                stoppedAt: failedExecution?.stoppedAt,
-                finishedAt: failedExecution?.finishedAt,
-                error: executionError,
+                status:      String(failedExecution?.status || ''),
+                startedAt:   failedExecution?.startedAt,
+                stoppedAt:   failedExecution?.stoppedAt,
+                finishedAt:  failedExecution?.finishedAt,
+                error:       executionError,
               };
             }
           } catch (executionLookupError) {
             targetExecutionError = {
               lookupFailed: true,
-              message: executionLookupError instanceof Error ? executionLookupError.message : String(executionLookupError),
+              message:      executionLookupError instanceof Error ? executionLookupError.message : String(executionLookupError),
             };
           }
         }
 
-        console.error(`${logPrefix} gateway webhook failed`, {
-          status: webhookResponse.status,
+        console.error(`${ logPrefix } gateway webhook failed`, {
+          status:     webhookResponse.status,
           statusText: webhookResponse.statusText,
-          body: truncate(responseText),
+          body:       truncate(responseText),
           targetExecutionError,
         });
         return {
@@ -331,16 +331,16 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
           responseString: JSON.stringify(
             webhookResponse.status === 500 && targetExecutionError?.error
               ? {
-                error: 'Target workflow execution failed',
+                error:            'Target workflow execution failed',
                 targetWorkflowId: resolvedWorkflowId,
                 targetExecutionError,
               }
               : {
-                error: `Gateway webhook failed ${webhookResponse.status} ${webhookResponse.statusText}`,
+                error:            `Gateway webhook failed ${ webhookResponse.status } ${ webhookResponse.statusText }`,
                 gatewayWorkflowId,
                 targetWorkflowId: resolvedWorkflowId,
-                webhookUrl: webhookUrlString,
-                responseBody: parsedWebhookResponse,
+                webhookUrl:       webhookUrlString,
+                responseBody:     parsedWebhookResponse,
                 targetExecutionError,
               },
             null,
@@ -349,7 +349,7 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
         };
       }
 
-      console.log(`${logPrefix} gateway webhook success`, {
+      console.log(`${ logPrefix } gateway webhook success`, {
         gatewayWorkflowId,
         gatewayCreated,
         webhookUrl: webhookUrlString,
@@ -358,41 +358,40 @@ export class ExecuteN8nWorkflowBridgeWorker extends BaseTool {
       return {
         successBoolean: true,
         responseString: JSON.stringify({
-          inputWorkflowId: workflowId,
+          inputWorkflowId:    workflowId,
           executedWorkflowId: resolvedWorkflowId,
           clonedFromWorkflowId,
           gatewayWorkflowId,
           gatewayCreated,
-          webhookUrl: webhookUrlString,
+          webhookUrl:         webhookUrlString,
           mode,
-          result: parsedWebhookResponse,
+          result:             parsedWebhookResponse,
         }, null, 2),
       };
     } catch (error) {
       const errorDetails = error instanceof Error
         ? {
           message: error.message,
-          stack: error.stack,
-          cause: error.cause,
+          stack:   error.stack,
+          cause:   error.cause,
         }
         : {
           message: String(error),
-          stack: undefined,
-          cause: undefined,
+          stack:   undefined,
+          cause:   undefined,
         };
 
-      console.error(`${logPrefix} unexpected failure`, {
+      console.error(`${ logPrefix } unexpected failure`, {
         error: errorDetails,
       });
 
       return {
         successBoolean: false,
         responseString: JSON.stringify({
-          error: 'Failed to execute workflow via gateway',
+          error:   'Failed to execute workflow via gateway',
           details: errorDetails,
         }, null, 2),
       };
     }
   }
 }
-

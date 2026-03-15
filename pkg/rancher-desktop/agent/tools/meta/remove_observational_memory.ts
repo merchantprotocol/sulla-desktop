@@ -1,4 +1,4 @@
-import { BaseTool, ToolResponse } from "../base";
+import { BaseTool, ToolResponse } from '../base';
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { parseJson } from '../../services/JsonParseService';
 
@@ -6,8 +6,8 @@ import { parseJson } from '../../services/JsonParseService';
  * Remove Observational Memory Tool - Worker class for execution
  */
 export class RemoveObservationalMemoryWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { id } = input;
@@ -26,7 +26,7 @@ export class RemoveObservationalMemoryWorker extends BaseTool {
     } catch (e: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to parse observational memory: ${e?.message}`
+        responseString: `Failed to parse observational memory: ${ e?.message }`,
       };
     }
 
@@ -35,7 +35,7 @@ export class RemoveObservationalMemoryWorker extends BaseTool {
     if (index === -1) {
       return {
         successBoolean: false,
-        responseString: `Memory with ID "${id}" not found.`
+        responseString: `Memory with ID "${ id }" not found.`,
       };
     }
 
@@ -48,7 +48,7 @@ export class RemoveObservationalMemoryWorker extends BaseTool {
     } catch (e: any) {
       return {
         successBoolean: false,
-        responseString: `Memory data corruption detected, aborting save: ${e?.message}`
+        responseString: `Memory data corruption detected, aborting save: ${ e?.message }`,
       };
     }
 
@@ -58,13 +58,13 @@ export class RemoveObservationalMemoryWorker extends BaseTool {
     } catch (e: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to save memory: ${e?.message}`
+        responseString: `Failed to save memory: ${ e?.message }`,
       };
     }
 
     return {
       successBoolean: true,
-      responseString: `Memory removed: "${removedMemory.content}"`
+      responseString: `Memory removed: "${ removedMemory.content }"`,
     };
   }
 }

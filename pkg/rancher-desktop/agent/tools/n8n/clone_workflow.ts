@@ -6,8 +6,8 @@ function deepClone<T>(value: T): T {
 }
 
 export class CloneWorkflowWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
@@ -25,8 +25,8 @@ export class CloneWorkflowWorker extends BaseTool {
       const source = await service.getWorkflow(workflowId, true);
 
       const payload = {
-        name: newName,
-        nodes: Array.isArray(source?.nodes) ? deepClone(source.nodes) : [],
+        name:        newName,
+        nodes:       Array.isArray(source?.nodes) ? deepClone(source.nodes) : [],
         connections: source?.connections && typeof source.connections === 'object' && !Array.isArray(source.connections)
           ? deepClone(source.connections)
           : {},
@@ -41,20 +41,19 @@ export class CloneWorkflowWorker extends BaseTool {
       return {
         successBoolean: true,
         responseString: JSON.stringify({
-          sourceWorkflowId: workflowId,
+          sourceWorkflowId:   workflowId,
           sourceWorkflowName: String(source?.name || ''),
-          clonedWorkflowId: String(cloned?.id || ''),
+          clonedWorkflowId:   String(cloned?.id || ''),
           clonedWorkflowName: String(cloned?.name || newName),
-          active: !!cloned?.active,
-          nodeCount: Array.isArray(cloned?.nodes) ? cloned.nodes.length : payload.nodes.length,
+          active:             !!cloned?.active,
+          nodeCount:          Array.isArray(cloned?.nodes) ? cloned.nodes.length : payload.nodes.length,
         }, null, 2),
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error cloning workflow: ${(error as Error).message}`,
+        responseString: `Error cloning workflow: ${ (error as Error).message }`,
       };
     }
   }
 }
-

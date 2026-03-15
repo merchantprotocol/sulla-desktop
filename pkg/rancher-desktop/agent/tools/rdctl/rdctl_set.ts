@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { runCommand } from "../util/CommandRunner";
+import { BaseTool, ToolResponse } from '../base';
+import { runCommand } from '../util/CommandRunner';
 
 /**
  * Rdctl Set Tool - Worker class for execution
  */
 export class RdctlSetWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { field, value } = input;
 
@@ -18,18 +18,18 @@ export class RdctlSetWorker extends BaseTool {
       if (res.exitCode !== 0) {
         return {
           successBoolean: false,
-          responseString: `Error setting Sulla Desktop setting: ${res.stderr || res.stdout}`
+          responseString: `Error setting Sulla Desktop setting: ${ res.stderr || res.stdout }`,
         };
       }
 
       return {
         successBoolean: true,
-        responseString: `Sulla Desktop setting updated successfully: ${field} = ${value}\nOutput:\n${res.stdout}`
+        responseString: `Sulla Desktop setting updated successfully: ${ field } = ${ value }\nOutput:\n${ res.stdout }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing rdctl set: ${(error as Error).message}`
+        responseString: `Error executing rdctl set: ${ (error as Error).message }`,
       };
     }
   }

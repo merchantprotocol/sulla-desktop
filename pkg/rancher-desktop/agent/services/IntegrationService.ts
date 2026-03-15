@@ -8,38 +8,38 @@ import { getSelectBoxProvider, type SelectOption } from '../integrations/select_
 const DEFAULT_ACCOUNT_ID = 'default';
 
 export interface IntegrationValue {
-  value_id: number;
+  value_id:       number;
   integration_id: string;
-  account_id: string;
-  property: string;
-  value: string;
-  is_default: boolean;
-  created_at: Date;
-  updated_at: Date;
+  account_id:     string;
+  property:       string;
+  value:          string;
+  is_default:     boolean;
+  created_at:     Date;
+  updated_at:     Date;
 }
 
 export interface IntegrationValueInput {
   integration_id: string;
-  account_id?: string;
-  property: string;
-  value: string;
+  account_id?:    string;
+  property:       string;
+  value:          string;
 }
 
 export interface IntegrationConnectionStatus {
   integration_id: string;
-  account_id: string;
-  connected: boolean;
-  connected_at?: Date;
-  last_sync_at?: Date;
+  account_id:     string;
+  connected:      boolean;
+  connected_at?:  Date;
+  last_sync_at?:  Date;
 }
 
 export interface IntegrationAccount {
   integration_id: string;
-  account_id: string;
-  label: string;
-  active: boolean;
-  connected: boolean;
-  connected_at?: Date;
+  account_id:     string;
+  label:          string;
+  active:         boolean;
+  connected:      boolean;
+  connected_at?:  Date;
 }
 
 // Special properties that are not shown in forms
@@ -86,14 +86,14 @@ export class IntegrationService {
 
   private modelToValue(model: IntegrationValueModel): IntegrationValue {
     return {
-      value_id: model.attributes.value_id as number,
-      integration_id: model.attributes.integration_id as string,
-      account_id: (model.attributes.account_id as string) || DEFAULT_ACCOUNT_ID,
-      property: model.attributes.property as string,
-      value: model.attributes.value as string,
-      is_default: !!model.attributes.is_default,
-      created_at: model.attributes.created_at as Date,
-      updated_at: model.attributes.updated_at as Date,
+      value_id:       model.attributes.value_id!,
+      integration_id: model.attributes.integration_id!,
+      account_id:     (model.attributes.account_id!) || DEFAULT_ACCOUNT_ID,
+      property:       model.attributes.property!,
+      value:          model.attributes.value!,
+      is_default:     !!model.attributes.is_default,
+      created_at:     model.attributes.created_at!,
+      updated_at:     model.attributes.updated_at!,
     };
   }
 
@@ -108,16 +108,16 @@ export class IntegrationService {
    *  Clears is_default on all other accounts, sets it on the target. */
   async setActiveAccount(integrationId: string, accountId: string): Promise<void> {
     await IntegrationValueModel.setDefaultAccount(integrationId, accountId);
-    console.log(`[IntegrationService] Default account for ${integrationId} set to: ${accountId}`);
+    console.log(`[IntegrationService] Default account for ${ integrationId } set to: ${ accountId }`);
   }
 
   /** Set a human-readable label for an account */
   async setAccountLabel(integrationId: string, accountId: string, label: string): Promise<void> {
     await this.setIntegrationValue({
       integration_id: integrationId,
-      account_id: accountId,
-      property: 'account_label',
-      value: label,
+      account_id:     accountId,
+      property:       'account_label',
+      value:          label,
     });
   }
 
@@ -142,11 +142,11 @@ export class IntegrationService {
 
       accounts.push({
         integration_id: integrationId,
-        account_id: accountId,
+        account_id:     accountId,
         label,
-        active: isDefault,
-        connected: status.connected,
-        connected_at: status.connected_at,
+        active:         isDefault,
+        connected:      status.connected,
+        connected_at:   status.connected_at,
       });
     }
 
@@ -166,14 +166,14 @@ export class IntegrationService {
       this.notifyValueChange(value, 'deleted');
     }
 
-    console.log(`[IntegrationService] Deleted account ${accountId} for ${integrationId}`);
+    console.log(`[IntegrationService] Deleted account ${ accountId } for ${ integrationId }`);
 
     // If the deleted account was the default, assign default to the first remaining account
     if (wasDefault) {
       const remainingAccounts = await IntegrationValueModel.getDistinctAccounts(integrationId);
       if (remainingAccounts.length > 0) {
         await IntegrationValueModel.setDefaultAccount(integrationId, remainingAccounts[0]);
-        console.log(`[IntegrationService] Reassigned default to ${remainingAccounts[0]} for ${integrationId}`);
+        console.log(`[IntegrationService] Reassigned default to ${ remainingAccounts[0] } for ${ integrationId }`);
       }
     }
 
@@ -202,7 +202,7 @@ export class IntegrationService {
     }
 
     const action = wasUpdate ? 'updated' : 'created';
-    console.log(`[IntegrationService] ${wasUpdate ? 'Updated' : 'Created'} value: ${input.integration_id}/${accountId}.${input.property}`);
+    console.log(`[IntegrationService] ${ wasUpdate ? 'Updated' : 'Created' } value: ${ input.integration_id }/${ accountId }.${ input.property }`);
 
     const value = this.modelToValue(model);
     this.notifyValueChange(value, action);
@@ -211,12 +211,12 @@ export class IntegrationService {
 
   async setMultipleValues(inputs: IntegrationValueInput[]): Promise<IntegrationValue[]> {
     const values: IntegrationValue[] = [];
-    
+
     for (const input of inputs) {
       const value = await this.setIntegrationValue(input);
       values.push(value);
     }
-    
+
     return values;
   }
 
@@ -227,25 +227,25 @@ export class IntegrationService {
 
     await this.setIntegrationValue({
       integration_id: integrationId,
-      account_id: acctId,
-      property: 'connection_status',
-      value: connected.toString()
+      account_id:     acctId,
+      property:       'connection_status',
+      value:          connected.toString(),
     });
 
     if (connected) {
       await this.setIntegrationValue({
         integration_id: integrationId,
-        account_id: acctId,
-        property: 'connected_at',
-        value: new Date().toISOString()
+        account_id:     acctId,
+        property:       'connected_at',
+        value:          new Date().toISOString(),
       });
     }
 
     await this.setIntegrationValue({
       integration_id: integrationId,
-      account_id: acctId,
-      property: 'last_sync_at',
-      value: new Date().toISOString()
+      account_id:     acctId,
+      property:       'last_sync_at',
+      value:          new Date().toISOString(),
     });
   }
 
@@ -258,10 +258,10 @@ export class IntegrationService {
 
     return {
       integration_id: integrationId,
-      account_id: acctId,
-      connected: statusModel?.attributes.value === 'true',
-      connected_at: connectedAtModel ? new Date(connectedAtModel.attributes.value as string) : undefined,
-      last_sync_at: lastSyncModel ? new Date(lastSyncModel.attributes.value as string) : undefined
+      account_id:     acctId,
+      connected:      statusModel?.attributes.value === 'true',
+      connected_at:   connectedAtModel ? new Date(connectedAtModel.attributes.value!) : undefined,
+      last_sync_at:   lastSyncModel ? new Date(lastSyncModel.attributes.value!) : undefined,
     };
   }
 
@@ -278,7 +278,7 @@ export class IntegrationService {
 
     const models = await IntegrationValueModel.getFormValues(integrationId, acctId, SYSTEM_PROPERTIES);
 
-    console.log(`[IntegrationService] Fetched ${models.length} form values for ${integrationId}/${acctId}`);
+    console.log(`[IntegrationService] Fetched ${ models.length } form values for ${ integrationId }/${ acctId }`);
     return models.map(m => this.modelToValue(m));
   }
 
@@ -305,7 +305,7 @@ export class IntegrationService {
 
   async getAllIntegrationValues(): Promise<IntegrationValue[]> {
     const models = await IntegrationValueModel.all();
-    console.log(`[IntegrationService] Fetched ${models.length} total values`);
+    console.log(`[IntegrationService] Fetched ${ models.length } total values`);
     return models.map(m => this.modelToValue(m));
   }
 
@@ -319,7 +319,7 @@ export class IntegrationService {
 
     const value = this.modelToValue(model);
     await model.delete();
-    console.log(`[IntegrationService] Deleted value: ${integrationId}/${acctId}.${property}`);
+    console.log(`[IntegrationService] Deleted value: ${ integrationId }/${ acctId }.${ property }`);
     this.notifyValueChange(value, 'deleted');
     return true;
   }
@@ -401,7 +401,7 @@ export class IntegrationService {
       this.notifyValueChange(value, 'deleted');
     }
 
-    console.log(`[IntegrationService] Deleted ${models.length} values for ${integrationId}`);
+    console.log(`[IntegrationService] Deleted ${ models.length } values for ${ integrationId }`);
     return true;
   }
 }

@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { runCommand } from "../util/CommandRunner";
+import { BaseTool, ToolResponse } from '../base';
+import { runCommand } from '../util/CommandRunner';
 
 /**
  * Docker Ps Tool - Worker class for execution
  */
 export class DockerPsWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { all, format } = input;
 
@@ -24,18 +24,18 @@ export class DockerPsWorker extends BaseTool {
       if (res.exitCode !== 0) {
         return {
           successBoolean: false,
-          responseString: `Error running docker ps: ${res.stderr || res.stdout}`
+          responseString: `Error running docker ps: ${ res.stderr || res.stdout }`,
         };
       }
 
       return {
         successBoolean: true,
-        responseString: `Docker Containers (${all ? 'All' : 'Running'}):\n${res.stdout}`
+        responseString: `Docker Containers (${ all ? 'All' : 'Running' }):\n${ res.stdout }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing docker ps: ${(error as Error).message}`
+        responseString: `Error executing docker ps: ${ (error as Error).message }`,
       };
     }
   }

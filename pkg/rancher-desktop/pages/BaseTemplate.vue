@@ -4,37 +4,43 @@ entry/index.ts dynamically determines the layout based on the current route's co
 
 -->
 <template>
-  <div class="h-screen overflow-hidden font-sans page-root" :class="{ dark: isDark }">
+  <div
+    class="h-screen overflow-hidden font-sans page-root"
+    :class="{ dark: isDark }"
+  >
     <div class="flex h-screen flex-col">
-
-      <SimpleHeader :is-dark="isDark" :toggle-theme="toggleTheme"/>
+      <SimpleHeader
+        :is-dark="isDark"
+        :toggle-theme="toggleTheme"
+      />
 
       <!-- Main agent interface -->
-      <div ref="chatScrollContainer" id="chat-scroll-container" class="flex min-h-0 flex-1 overflow-y-auto">
+      <div
+        id="chat-scroll-container"
+        ref="chatScrollContainer"
+        class="flex min-h-0 flex-1 overflow-y-auto"
+      >
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
           <div class="relative mx-auto flex w-full max-w-8xl flex-1 justify-center sm:px-2 lg:px-8 xl:px-12">
             <div class="hidden lg:relative lg:block lg:flex-none lg:w-72 xl:w-80 bg-surface">
               <div class="sticky top-[15px] pt-[15px] h-[calc(100vh-5rem-15px)] w-full overflow-x-hidden overflow-y-auto">
-
                 <!-- sidebar slot -->
-
               </div>
             </div>
 
             <div class="max-w-2xl min-w-0 flex-auto px-4 py-16 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16">
-              <div ref="transcriptEl" id="chat-messages-list" class="pb-40">
-
+              <div
+                id="chat-messages-list"
+                ref="transcriptEl"
+                class="pb-40"
+              >
                 <!-- main slot -->
-
               </div>
             </div>
 
             <div class="hidden xl:sticky xl:top-0 xl:-mr-6 xl:block xl:max-h-[calc(100vh-12rem)] xl:flex-none xl:overflow-y-auto xl:pr-6">
-              <div class="w-72">
-
-              </div>
+              <div class="w-72" />
             </div>
-
           </div>
         </div>
       </div>

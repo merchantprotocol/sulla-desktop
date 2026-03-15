@@ -4,8 +4,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { resolveFsPath } from './path_utils';
 
 export class FsReadFileWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const targetPath = resolveFsPath(input.path);
@@ -19,9 +19,8 @@ export class FsReadFileWorker extends BaseTool {
     } catch (error: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to read file at "${targetPath}": ${error.message}`,
+        responseString: `Failed to read file at "${ targetPath }": ${ error.message }`,
       };
     }
   }
 }
-

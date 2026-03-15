@@ -19,22 +19,22 @@ async function initialize(): Promise<void> {
   let user = allUsers.length > 0 ? allUsers[0] : null;
 
   if (user) {
-      user.attributes.email = await N8nUserModel.getServiceAccountEmail();
-      user.attributes.firstName = 'Sulla';
-      user.attributes.lastName = 'Desktop';
-      user.attributes.personalizationAnswers = {};
-      user.attributes.settings = {"userActivated": true};
-      user.attributes.disabled = false;
-      user.attributes.mfaEnabled = false;
-      user.attributes.mfaSecret = '';
-      user.attributes.mfaRecoveryCodes = '';
-      user.attributes.lastActiveAt = new Date();
-      user.attributes.roleSlug = 'global:owner';
-      await user.setPassword(await N8nUserModel.getServiceAccountPassword());
-      await user.save();
+    user.attributes.email = await N8nUserModel.getServiceAccountEmail();
+    user.attributes.firstName = 'Sulla';
+    user.attributes.lastName = 'Desktop';
+    user.attributes.personalizationAnswers = {};
+    user.attributes.settings = { userActivated: true };
+    user.attributes.disabled = false;
+    user.attributes.mfaEnabled = false;
+    user.attributes.mfaSecret = '';
+    user.attributes.mfaRecoveryCodes = '';
+    user.attributes.lastActiveAt = new Date();
+    user.attributes.roleSlug = 'global:owner';
+    await user.setPassword(await N8nUserModel.getServiceAccountPassword());
+    await user.save();
 
-      await SullaSettingsModel.set('serviceAccountUserId', user.attributes.id, 'string');
-      console.log('[N8nUserModel] Settings saved:', user.attributes.id);
+    await SullaSettingsModel.set('serviceAccountUserId', user.attributes.id, 'string');
+    console.log('[N8nUserModel] Settings saved:', user.attributes.id);
   } else {
     user = await N8nUserModel.getOrCreateServiceAccount();
   }
@@ -44,10 +44,9 @@ async function initialize(): Promise<void> {
 
   const serviceAccountApiKey = apiKeyModel.attributes.apiKey;
   await SullaSettingsModel.set('serviceAccountApiKey', serviceAccountApiKey, 'string');
-  
-  console.log(`[N8nUserSeeder] Created N8N User with ID: ${user.attributes.id}`);
-  console.log(`[N8nUserSeeder] Created N8N API key with ID: ${apiKeyModel.attributes.id}`);
 
+  console.log(`[N8nUserSeeder] Created N8N User with ID: ${ user.attributes.id }`);
+  console.log(`[N8nUserSeeder] Created N8N API key with ID: ${ apiKeyModel.attributes.id }`);
 }
 
 export { initialize };

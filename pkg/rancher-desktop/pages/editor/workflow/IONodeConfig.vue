@@ -1,9 +1,15 @@
 <template>
-  <div class="io-config" :class="{ dark: isDark }">
+  <div
+    class="io-config"
+    :class="{ dark: isDark }"
+  >
     <!-- User Input -->
     <template v-if="subtype === 'user-input'">
       <div class="node-field">
-        <label class="node-field-label" :class="{ dark: isDark }">Prompt Text</label>
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Prompt Text</label>
         <textarea
           class="node-field-input node-field-textarea"
           :class="{ dark: isDark }"
@@ -11,10 +17,13 @@
           placeholder="e.g. Please provide your order number so I can look it up"
           :value="config.promptText || ''"
           @input="updateField('promptText', ($event.target as HTMLTextAreaElement).value)"
-        ></textarea>
+        />
       </div>
       <div class="node-field help-section">
-        <p class="help-text" :class="{ dark: isDark }">
+        <p
+          class="help-text"
+          :class="{ dark: isDark }"
+        >
           Pauses the workflow and sends the prompt text to the user. The workflow resumes
           when the user replies, and their response is passed to the next node as input.
         </p>
@@ -24,19 +33,33 @@
     <!-- Transfer -->
     <template v-else-if="subtype === 'transfer'">
       <div class="node-field">
-        <label class="node-field-label" :class="{ dark: isDark }">Target Workflow</label>
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Target Workflow</label>
         <select
           class="node-field-input"
           :class="{ dark: isDark }"
           :value="config.targetWorkflowId || ''"
           @change="updateField('targetWorkflowId', ($event.target as HTMLSelectElement).value || null)"
         >
-          <option value="">-- Select Workflow --</option>
-          <option v-for="wf in workflows" :key="wf.id" :value="wf.id">{{ wf.name }}</option>
+          <option value="">
+            -- Select Workflow --
+          </option>
+          <option
+            v-for="wf in workflows"
+            :key="wf.id"
+            :value="wf.id"
+          >
+            {{ wf.name }}
+          </option>
         </select>
       </div>
       <div class="node-field help-section">
-        <p class="help-text" :class="{ dark: isDark }">
+        <p
+          class="help-text"
+          :class="{ dark: isDark }"
+        >
           Hands off the conversation to another workflow entirely. The current workflow ends
           and the target workflow takes over from this point. Use this for escalation
           or switching between completely different conversation flows.
@@ -48,16 +71,28 @@
     <template v-else-if="subtype === 'response'">
       <div class="node-field">
         <div class="field-header">
-          <label class="node-field-label" :class="{ dark: isDark }">Response Template</label>
+          <label
+            class="node-field-label"
+            :class="{ dark: isDark }"
+          >Response Template</label>
           <button
             class="var-insert-btn"
             :class="{ dark: isDark }"
             title="Insert variable"
             @click="openVarMenu($event)"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="16 18 22 12 16 6"></polyline>
-              <polyline points="8 6 2 12 8 18"></polyline>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
             </svg>
           </button>
         </div>
@@ -70,10 +105,13 @@
           :value="config.responseTemplate || ''"
           @input="updateField('responseTemplate', ($event.target as HTMLTextAreaElement).value)"
           @contextmenu.prevent="onContextMenu($event)"
-        ></textarea>
+        />
       </div>
       <div class="node-field help-section">
-        <p class="help-text" :class="{ dark: isDark }">
+        <p
+          class="help-text"
+          :class="{ dark: isDark }"
+        >
           Sends a response back to the user. Use the template to compose the output from
           upstream variables, or leave it empty to pass through the previous node's output directly.
         </p>
@@ -82,42 +120,80 @@
 
     <!-- Variable picker menu (teleported to body) -->
     <Teleport to="body">
-      <div v-if="varMenu.visible" class="var-menu-overlay" @click="closeVarMenu">
+      <div
+        v-if="varMenu.visible"
+        class="var-menu-overlay"
+        @click="closeVarMenu"
+      >
         <div
           class="var-menu"
           :class="{ dark: isDark }"
           :style="varMenuStyle"
           @click.stop
         >
-          <div class="var-menu-header" :class="{ dark: isDark }">Insert Variable</div>
+          <div
+            class="var-menu-header"
+            :class="{ dark: isDark }"
+          >
+            Insert Variable
+          </div>
 
           <div class="var-menu-group">
-            <div class="var-menu-group-label" :class="{ dark: isDark }">Trigger</div>
-            <button class="var-menu-item" :class="{ dark: isDark }" @click="insertVariable('trigger.result')">
-              <code v-text="varToken('trigger.result')"></code>
+            <div
+              class="var-menu-group-label"
+              :class="{ dark: isDark }"
+            >
+              Trigger
+            </div>
+            <button
+              class="var-menu-item"
+              :class="{ dark: isDark }"
+              @click="insertVariable('trigger.result')"
+            >
+              <code v-text="varToken('trigger.result')" />
               <span class="var-desc">Trigger payload</span>
             </button>
           </div>
 
-          <div v-if="upstreamNodes.length > 0" class="var-menu-group">
-            <div class="var-menu-group-label" :class="{ dark: isDark }">Upstream Nodes</div>
-            <template v-for="node in upstreamNodes" :key="node.nodeId">
-              <button class="var-menu-item" :class="{ dark: isDark }" @click="insertVariable(node.label + '.result')">
-                <code v-text="varToken(node.label + '.result')"></code>
+          <div
+            v-if="upstreamNodes.length > 0"
+            class="var-menu-group"
+          >
+            <div
+              class="var-menu-group-label"
+              :class="{ dark: isDark }"
+            >
+              Upstream Nodes
+            </div>
+            <template
+              v-for="node in upstreamNodes"
+              :key="node.nodeId"
+            >
+              <button
+                class="var-menu-item"
+                :class="{ dark: isDark }"
+                @click="insertVariable(node.label + '.result')"
+              >
+                <code v-text="varToken(node.label + '.result')" />
                 <span class="var-desc">Output from {{ node.label }}</span>
               </button>
               <button
                 v-if="node.category === 'agent'"
-                class="var-menu-item" :class="{ dark: isDark }"
+                class="var-menu-item"
+                :class="{ dark: isDark }"
                 @click="insertVariable(node.label + '.threadId')"
               >
-                <code v-text="varToken(node.label + '.threadId')"></code>
+                <code v-text="varToken(node.label + '.threadId')" />
                 <span class="var-desc">Thread ID from {{ node.label }}</span>
               </button>
             </template>
           </div>
 
-          <div v-if="upstreamNodes.length === 0" class="var-menu-empty" :class="{ dark: isDark }">
+          <div
+            v-if="upstreamNodes.length === 0"
+            class="var-menu-empty"
+            :class="{ dark: isDark }"
+          >
             No upstream nodes connected yet.
           </div>
         </div>
@@ -135,10 +211,10 @@ import type { UpstreamNodeInfo } from './AgentNodeConfig.vue';
 const MENU_WIDTH = 260;
 
 const props = defineProps<{
-  isDark: boolean;
-  nodeId: string;
-  subtype: IONodeSubtype;
-  config: Record<string, any>;
+  isDark:         boolean;
+  nodeId:         string;
+  subtype:        IONodeSubtype;
+  config:         Record<string, any>;
   upstreamNodes?: UpstreamNodeInfo[];
 }>();
 
@@ -151,8 +227,8 @@ const responseTemplateRef = ref<HTMLTextAreaElement | null>(null);
 
 const varMenu = reactive({
   visible: false,
-  rawX: 0,
-  rawY: 0,
+  rawX:    0,
+  rawY:    0,
 });
 
 const varMenuStyle = computed(() => {
@@ -210,11 +286,11 @@ function closeVarMenu() {
 }
 
 function varToken(name: string): string {
-  return `{{${name}}}`;
+  return `{{${ name }}}`;
 }
 
 function insertVariable(varName: string) {
-  const token = `{{${varName}}}`;
+  const token = `{{${ varName }}}`;
   const textarea = responseTemplateRef.value;
 
   if (textarea) {

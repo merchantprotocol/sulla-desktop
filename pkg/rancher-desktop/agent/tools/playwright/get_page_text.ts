@@ -1,15 +1,15 @@
-import { BaseTool, ToolResponse } from "../base";
-import { resolveBridge, isBridgeResolved } from "./resolve_bridge";
+import { BaseTool, ToolResponse } from '../base';
+import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
  * Get Page Text Tool - Returns the visible text content of a website asset.
  */
 export class GetPageTextWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const result = resolveBridge(input.assetId);
+    const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
 
     try {
@@ -20,20 +20,19 @@ export class GetPageTextWorker extends BaseTool {
       if (!text.trim()) {
         return {
           successBoolean: true,
-          responseString: `[${result.assetId}] Page "${title}" (${url}) has no visible text content.`,
+          responseString: `[${ result.assetId }] Page "${ title }" (${ url }) has no visible text content.`,
         };
       }
 
       return {
         successBoolean: true,
-        responseString: `[asset: ${result.assetId}]\n# ${title}\n**URL**: ${url}\n\n${text}`,
+        responseString: `[asset: ${ result.assetId }]\n# ${ title }\n**URL**: ${ url }\n\n${ text }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting page text: ${(error as Error).message}`,
+        responseString: `Error getting page text: ${ (error as Error).message }`,
       };
     }
   }
 }
-
