@@ -126,13 +126,15 @@ install_just() {
     return
   fi
 
+  # Default install location for the curl installer
+  local just_bin="${HOME}/.local/bin"
+
   case "$OS" in
     darwin)
       if command_exists brew; then
         brew install just >/dev/null 2>&1
       else
-        curl -fsSL https://just.systems/install.sh | bash -s -- --to "${HOME}/.local/bin" >/dev/null 2>&1
-        ensure_path "${HOME}/.local/bin"
+        curl -fsSL https://just.systems/install.sh | bash -s -- --to "$just_bin" >/dev/null 2>&1
       fi
       ;;
     linux)
@@ -141,8 +143,7 @@ install_just() {
       elif command_exists snap; then
         sudo snap install --edge --classic just >/dev/null 2>&1
       else
-        curl -fsSL https://just.systems/install.sh | bash -s -- --to "${HOME}/.local/bin" >/dev/null 2>&1
-        ensure_path "${HOME}/.local/bin"
+        curl -fsSL https://just.systems/install.sh | bash -s -- --to "$just_bin" >/dev/null 2>&1
       fi
       ;;
     windows)
@@ -151,8 +152,7 @@ install_just() {
       elif command_exists choco; then
         choco install just >/dev/null 2>&1
       else
-        curl -fsSL https://just.systems/install.sh | bash -s -- --to "${HOME}/.local/bin" >/dev/null 2>&1
-        ensure_path "${HOME}/.local/bin"
+        curl -fsSL https://just.systems/install.sh | bash -s -- --to "$just_bin" >/dev/null 2>&1
       fi
       ;;
     *)
@@ -160,10 +160,20 @@ install_just() {
       ;;
   esac
 
+  # Ensure just is on PATH — check common install locations
+  if ! command_exists just; then
+    for dir in "$just_bin" "/opt/homebrew/bin" "/usr/local/bin" "/snap/bin"; do
+      if [ -x "${dir}/just" ]; then
+        ensure_path "$dir"
+        break
+      fi
+    done
+  fi
+
   if command_exists just; then
     step_ok "just $(just --version 2>/dev/null | head -1)"
   else
-    step_fail "just installation failed"
+    step_fail "just installation failed — could not find just on PATH"
   fi
 }
 
