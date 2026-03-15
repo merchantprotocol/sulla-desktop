@@ -472,13 +472,15 @@ audit_dependencies() {
     dep_missing "git" "not installed"
   fi
 
-  # Node.js — source nvm/fnm if available so we detect managed installs
+  # Node.js — source nvm/fnm and activate the target version if installed
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     . "$NVM_DIR/nvm.sh" 2>/dev/null || true
+    nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
   if command_exists fnm; then
     eval "$(fnm env --shell bash 2>/dev/null)" || true
+    fnm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
   local node_current=""
   command_exists node && node_current="$(node -v 2>/dev/null | sed 's/^v//')"
@@ -522,7 +524,15 @@ audit_dependencies() {
       ;;
   esac
 
-  # Go
+  # Go — check standard install paths that may not be in PATH yet
+  if ! command_exists go; then
+    for go_path in /usr/local/go/bin /c/Go/bin "$HOME/go/bin"; do
+      if [ -x "$go_path/go" ]; then
+        export PATH="$go_path:$PATH"
+        break
+      fi
+    done
+  fi
   if command_exists go; then
     local go_ver go_major go_minor
     go_ver="$(go version 2>/dev/null | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/^go//')"
