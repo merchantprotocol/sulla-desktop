@@ -266,6 +266,26 @@ run_silent() {
   fi
 }
 
+# Prompt the user for sudo access with a clear explanation of why.
+# Pre-authenticates so subsequent sudo calls don't re-prompt.
+# Usage: require_sudo "Installing Go to /usr/local"
+require_sudo() {
+  local reason="$1"
+  # Already authenticated — nothing to do
+  if sudo -n true 2>/dev/null; then
+    return 0
+  fi
+  stop_spinner
+  echo ""
+  printf "  ${ARROW}  ${BOLD}Admin password required${RESET} — %s\n" "$reason"
+  # Let sudo prompt naturally on the terminal (not swallowed by run_silent)
+  if sudo -v 2>/dev/null; then
+    return 0
+  else
+    step_fail "sudo authentication failed — cannot continue without admin access"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Utility helpers (unchanged logic, quiet output)
 # ---------------------------------------------------------------------------
@@ -557,10 +577,11 @@ install_xcode_clt() {
 }
 
 install_curl() {
-  start_spinner "Installing curl..."
   case "$OS" in
     macos) ;;
     linux)
+      require_sudo "installing curl via $(detect_pkg_manager)"
+      start_spinner "Installing curl..."
       case "$(detect_pkg_manager)" in
         apt)    run_silent "curl" sudo apt-get update -qq && run_silent "curl" sudo apt-get install -yqq curl ;;
         dnf)    run_silent "curl" sudo dnf install -y curl ;;
@@ -581,9 +602,9 @@ install_git() {
     return
   fi
 
-  start_spinner "Installing git..."
   case "$OS" in
     macos)
+      start_spinner "Installing git..."
       if command_exists brew; then
         run_silent "git" brew install git
       else
@@ -591,6 +612,8 @@ install_git() {
       fi
       ;;
     linux)
+      require_sudo "installing git via $(detect_pkg_manager)"
+      start_spinner "Installing git..."
       case "$(detect_pkg_manager)" in
         apt)    run_silent "git" sudo apt-get update -qq && run_silent "git" sudo apt-get install -yqq git ;;
         dnf)    run_silent "git" sudo dnf install -y git ;;
@@ -659,12 +682,13 @@ install_yarn() {
 }
 
 install_build_tools() {
-  start_spinner "Installing build tools..."
   case "$OS" in
     linux)
       local pkgs_needed=""
       command_exists make    || pkgs_needed="$pkgs_needed build-essential"
       command_exists python3 || pkgs_needed="$pkgs_needed python3"
+      require_sudo "installing build tools (${pkgs_needed# })"
+      start_spinner "Installing build tools..."
       case "$(detect_pkg_manager)" in
         apt)    run_silent "build-tools" sudo apt-get update -qq && run_silent "build-tools" sudo apt-get install -yqq $pkgs_needed ;;
         dnf)    run_silent "build-tools" sudo dnf install -y gcc gcc-c++ make python3 ;;
@@ -683,15 +707,17 @@ install_build_tools() {
 }
 
 install_go() {
-  start_spinner "Installing Go ${GO_VERSION}..."
   case "$OS" in
     macos)
       if command_exists brew; then
+        start_spinner "Installing Go ${GO_VERSION}..."
         run_silent "go" brew install "go@1.24" 2>/dev/null \
           || run_silent "go" brew install go 2>/dev/null \
           || run_silent "go" brew upgrade go
         run_silent "go" brew link --overwrite "go@1.24" 2>/dev/null || true
       else
+        require_sudo "installing Go ${GO_VERSION} to /usr/local"
+        start_spinner "Installing Go ${GO_VERSION}..."
         local arch go_arch="amd64"
         arch="$(uname -m)"
         [ "$arch" = "arm64" ] && go_arch="arm64"
@@ -703,6 +729,8 @@ install_go() {
       fi
       ;;
     linux)
+      require_sudo "installing Go ${GO_VERSION} to /usr/local"
+      start_spinner "Installing Go ${GO_VERSION}..."
       local arch go_arch="amd64"
       arch="$(uname -m)"
       [ "$arch" = "aarch64" ] && go_arch="arm64"
