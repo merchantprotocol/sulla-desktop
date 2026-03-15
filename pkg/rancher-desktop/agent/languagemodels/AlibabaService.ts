@@ -18,7 +18,7 @@ export class AlibabaService extends OpenAICompatibleService {
 
     return new AlibabaService({
       id:      'alibaba',
-      model:   valMap.model || 'qwen-plus',
+      model:   valMap.model || 'qwen3.5-plus',
       baseUrl: valMap.base_url || 'https://coding-intl.dashscope.aliyuncs.com/v1',
       apiKey:  valMap.api_key || '',
     });

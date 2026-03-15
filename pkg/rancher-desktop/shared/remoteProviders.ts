@@ -89,11 +89,14 @@ export const REMOTE_PROVIDERS = [
     signupUrl:   'https://bailian.console.alibabacloud.com/',
     signupText:  'Get API key from Alibaba Cloud Model Studio',
     models:      [
-      { id: 'minimax-m2.5', name: 'MiniMax M2.5', description: '200K context, advanced reasoning' },
+      { id: 'qwen3.5-plus', name: 'Qwen 3.5 Plus', description: 'Latest Qwen, balanced performance' },
+      { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', description: '200K context, advanced reasoning' },
       { id: 'kimi-k2.5', name: 'Kimi K2.5', description: '256K context, long-context reasoning' },
-      { id: 'qwen-plus', name: 'Qwen Plus', description: '128K context, balanced performance' },
-      { id: 'qwen-max', name: 'Qwen Max', description: '128K context, most capable Qwen model' },
-      { id: 'qwen-turbo', name: 'Qwen Turbo', description: '128K context, fast and affordable' },
+      { id: 'glm-5', name: 'GLM 5', description: 'Zhipu GLM flagship model' },
+      { id: 'qwen3-coder-plus', name: 'Qwen 3 Coder Plus', description: 'Optimized for code generation' },
+      { id: 'qwen3-coder-next', name: 'Qwen 3 Coder Next', description: 'Next-gen code model' },
+      { id: 'qwen3-max-2026-01-23', name: 'Qwen 3 Max', description: 'Most capable Qwen 3 model' },
+      { id: 'glm-4.7', name: 'GLM 4.7', description: 'Zhipu GLM 4.7' },
     ],
   },
 ];

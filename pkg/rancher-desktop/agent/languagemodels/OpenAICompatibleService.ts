@@ -94,20 +94,27 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       }
     }
 
-    // Final fallback to Ollama
-    const ollama = await this.getFallbackLocalService();
-    await ollama.initialize();
-    if (ollama.isAvailable()) {
-      const localModel = ollama.getModel();
-      const fallbackOptions = {
-        ...(options ?? {}),
-        model: localModel,
-      };
+    // Final fallback to Ollama — only if it's actually healthy and has a model
+    try {
+      const ollama = await this.getFallbackLocalService();
+      await ollama.initialize();
+      if (ollama.isAvailable()) {
+        console.log(`[${ this.constructor.name }] Falling back to local Ollama (${ ollama.getModel() })`);
+        const localModel = ollama.getModel();
+        const fallbackOptions = {
+          ...(options ?? {}),
+          model: localModel,
+        };
 
-      const localResponse = await ollama.chat(messages, fallbackOptions);
-      if (localResponse) {
-        return this.toOpenAiCompatibleRawResponse(localResponse, localModel);
+        const localResponse = await ollama.chat(messages, fallbackOptions);
+        if (localResponse) {
+          return this.toOpenAiCompatibleRawResponse(localResponse, localModel);
+        }
+      } else {
+        console.log(`[${ this.constructor.name }] Ollama fallback skipped — not available`);
       }
+    } catch (ollamaErr) {
+      console.warn(`[${ this.constructor.name }] Ollama fallback failed:`, ollamaErr instanceof Error ? ollamaErr.message : String(ollamaErr));
     }
 
     throw lastError ?? new Error('All retries failed and Ollama unavailable');

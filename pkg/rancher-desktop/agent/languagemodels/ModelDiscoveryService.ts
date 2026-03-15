@@ -24,6 +24,7 @@ interface ProviderConfig {
   modelsEndpoint: string;
   authHeader:     string;
   parseResponse:  (data: any) => ModelInfo[];
+  staticModels?:  ModelInfo[]; // Use static list when /models endpoint isn't supported
 }
 
 export class ModelDiscoveryService {
@@ -128,6 +129,17 @@ export class ModelDiscoveryService {
         name:     model.id,
         provider: 'alibaba',
       })) || [],
+      // Coding Plan endpoint doesn't support /models — use static list
+      staticModels: [
+        { id: 'qwen3.5-plus', name: 'Qwen 3.5 Plus', provider: 'alibaba' },
+        { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'alibaba' },
+        { id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'alibaba' },
+        { id: 'glm-5', name: 'GLM 5', provider: 'alibaba' },
+        { id: 'qwen3-coder-plus', name: 'Qwen 3 Coder Plus', provider: 'alibaba' },
+        { id: 'qwen3-coder-next', name: 'Qwen 3 Coder Next', provider: 'alibaba' },
+        { id: 'qwen3-max-2026-01-23', name: 'Qwen 3 Max', provider: 'alibaba' },
+        { id: 'glm-4.7', name: 'GLM 4.7', provider: 'alibaba' },
+      ],
     },
   };
 
@@ -146,6 +158,12 @@ export class ModelDiscoveryService {
     const provider = this.providers[providerId];
     if (!provider) {
       throw new Error(`Unsupported provider: ${ providerId }`);
+    }
+
+    // If provider has a static model list (e.g. endpoint doesn't support /models), use it
+    if (provider.staticModels?.length) {
+      this.cache.set(cacheKey, { models: provider.staticModels, timestamp: Date.now() });
+      return provider.staticModels;
     }
 
     try {

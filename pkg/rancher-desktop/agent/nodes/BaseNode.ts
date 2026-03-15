@@ -1043,11 +1043,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       console.warn(`[${ this.name }:BaseNode] Primary LLM failed:`, err instanceof Error ? err.message : String(err));
 
-      // Fallback to secondary provider
+      // Fallback to secondary provider — only if it's healthy
       try {
         const secondary = await getSecondaryService();
         await secondary.initialize();
         if (secondary.isAvailable()) {
+          console.log(`[${ this.name }:BaseNode] Falling back to secondary provider (${ secondary.getModel() })`);
           const chatMessages = messages.filter(msg =>
             ['system', 'user', 'assistant'].includes(msg.role),
           );
@@ -1064,6 +1065,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             this.triggerBackgroundStateMaintenance(state);
             return reply;
           }
+        } else {
+          console.warn(`[${ this.name }:BaseNode] Secondary provider not available — skipping fallback`);
         }
       } catch (fallbackErr) {
         if ((fallbackErr as any)?.name === 'AbortError') throw fallbackErr;
