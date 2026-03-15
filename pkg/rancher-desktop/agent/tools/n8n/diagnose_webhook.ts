@@ -135,7 +135,7 @@ export class DiagnoseWebhookWorker extends BaseTool {
       .slice(-5);
   }
 
-  protected async _validatedCall(input: DiagnoseWebhookInput): Promise<ToolResponse> {
+  protected async _validatedCall(input: any): Promise<ToolResponse> {
     const workflowId = String(input?.workflowId || '').trim();
     if (!workflowId) {
       return {

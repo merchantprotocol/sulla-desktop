@@ -2,7 +2,6 @@
   <div
     class="workflow-custom-node"
     :class="{
-      dark: isDark,
       selected: selected,
       'exec-running':   data.execution?.status === 'running',
       'exec-completed': data.execution?.status === 'completed',
@@ -257,7 +256,7 @@ const routeHandles = computed(() => {
   color: var(--text-secondary);
 }
 
-.workflow-custom-node.dark .node-icon-svg {
+.workflow-custom-node .node-icon-svg {
   color: var(--text-muted);
 }
 
@@ -265,7 +264,7 @@ const routeHandles = computed(() => {
   color: var(--text-success);
 }
 
-.workflow-custom-node.dark.selected .node-icon-svg {
+.workflow-custom-node.selected .node-icon-svg {
   color: var(--text-success);
 }
 
@@ -281,7 +280,7 @@ const routeHandles = computed(() => {
   line-height: 1.2;
 }
 
-.workflow-custom-node.dark .node-label {
+.workflow-custom-node .node-label {
   color: var(--text-muted);
 }
 
