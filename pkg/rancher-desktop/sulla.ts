@@ -16,7 +16,7 @@ import { initSullaEvents } from '@pkg/main/sullaEvents';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import { getLlamaCppService } from '@pkg/agent/services/LlamaCppService';
 import * as path from 'path';
-import { app } from 'electron';
+import { app, webContents } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import { submitErrorReport } from '@pkg/main/errorReporter';
@@ -290,6 +290,22 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   // Cache it in settings on first request
   ipcMainProxy.handle('get-user-data-path', async() => {
     return app.getPath('userData');
+  });
+
+  // Execute JavaScript in a child frame (used by BrowserTab iframe bridge injection)
+  ipcMainProxy.handle('browser-tab:exec-in-frame', async(event: Electron.IpcMainInvokeEvent, code: string) => {
+    const sender = event.sender;
+    const frames = sender.mainFrame.frames;
+
+    for (const frame of frames) {
+      try {
+        return await frame.executeJavaScript(code, true);
+      } catch (err) {
+        console.warn('[Sulla] browser-tab:exec-in-frame error on frame:', err);
+      }
+    }
+
+    return undefined;
   });
 
   // Handle app quit requests from the UI

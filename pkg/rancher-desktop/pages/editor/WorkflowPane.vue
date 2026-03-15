@@ -10,11 +10,22 @@
     >
       <div class="workflow-tabs-scroll">
         <div
-          v-for="tab in openTabs"
+          v-for="(tab, index) in openTabs"
           :key="tab.id"
           class="workflow-tab"
-          :class="{ active: tab.id === activeTabId, dark: isDark }"
+          :class="{
+            active: tab.id === activeTabId,
+            dark: isDark,
+            'drag-over-left': dragOverIndex === index && dragDirection === 'left',
+            'drag-over-right': dragOverIndex === index && dragDirection === 'right',
+            dragging: dragIndex === index,
+          }"
+          draggable="true"
           @click="activateTab(tab.id)"
+          @dragstart="onDragStart($event, index)"
+          @dragover.prevent="onDragOver($event, index)"
+          @dragend="onDragEnd"
+          @drop.prevent="onDrop(index)"
         >
           <span class="workflow-tab-name">{{ tab.name }}</span>
           <button
@@ -312,6 +323,48 @@ const showingPicker = ref(false);
 const availableWorkflows = ref<WorkflowListItem[]>([]);
 let nextNewId = 1;
 
+// Drag-and-drop state
+const dragIndex = ref<number | null>(null);
+const dragOverIndex = ref<number | null>(null);
+const dragDirection = ref<'left' | 'right' | null>(null);
+
+function onDragStart(event: DragEvent, index: number) {
+  dragIndex.value = index;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(index));
+  }
+}
+
+function onDragOver(event: DragEvent, index: number) {
+  if (dragIndex.value === null || dragIndex.value === index) {
+    dragOverIndex.value = null;
+    dragDirection.value = null;
+
+    return;
+  }
+  dragOverIndex.value = index;
+  dragDirection.value = index < dragIndex.value ? 'left' : 'right';
+}
+
+function onDrop(targetIndex: number) {
+  if (dragIndex.value === null || dragIndex.value === targetIndex) {
+    onDragEnd();
+
+    return;
+  }
+  const [moved] = openTabs.value.splice(dragIndex.value, 1);
+
+  openTabs.value.splice(targetIndex, 0, moved);
+  onDragEnd();
+}
+
+function onDragEnd() {
+  dragIndex.value = null;
+  dragOverIndex.value = null;
+  dragDirection.value = null;
+}
+
 const contextMenu = ref<{ visible: boolean; x: number; y: number; workflow: WorkflowListItem | null }>({
   visible: false, x: 0, y: 0, workflow: null,
 });
@@ -517,6 +570,18 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 
 .workflow-tab.dark.active .workflow-tab-name {
   color: var(--text-info);
+}
+
+.workflow-tab.dragging {
+  opacity: 0.4;
+}
+
+.workflow-tab.drag-over-left {
+  box-shadow: -2px 0 0 0 var(--text-info);
+}
+
+.workflow-tab.drag-over-right {
+  box-shadow: 2px 0 0 0 var(--text-info);
 }
 
 .workflow-tab-close {

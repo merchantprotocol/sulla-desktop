@@ -72,7 +72,6 @@ export class AgentPersonaService {
   private readonly registry:            AgentPersonaRegistry;
   private wsService = getWebSocketClientService();
   private readonly wsUnsub = new Map<string, () => void>();
-  private lastSentN8nLiveEventsEnabled: boolean | null = null;
 
   readonly messages:     ChatMessage[] = reactive([]);
   private readonly toolRunIdToMessageId = new Map<string, string>();
@@ -148,90 +147,30 @@ export class AgentPersonaService {
     collapsed?: boolean;
     refKey?:    string;
   }): void {
-    const stableId = this.resolveWebsiteAssetId(input.id, input.skillSlug);
-    const normalizedUrl = this.normalizeIframeUrlForAsset(stableId, input.skillSlug, input.url);
-    const existingAsset = this.activeAssets.find((asset) => asset.id === stableId && asset.type === 'iframe');
-    const fallbackUrl = existingAsset?.url || '';
-    const effectiveUrl = normalizedUrl || fallbackUrl;
+    const url = String(input.url || '').trim();
 
-    console.log('[AgentPersonaModel] registerIframeAsset', {
-      requestedId:      input.id,
-      stableId,
-      skillSlug:        input.skillSlug || '',
-      requestedUrl:     input.url || '',
-      normalizedUrl,
-      fallbackUrl,
-      effectiveUrl,
-      hadExistingAsset: !!existingAsset,
-    });
-
-    if (!effectiveUrl.trim()) {
-      console.error('[AgentPersonaModel] registerIframeAsset produced empty iframe src', input);
+    if (!url) {
+      console.error('[AgentPersonaModel] registerIframeAsset called with empty url', input);
       return;
     }
 
+    console.log('[AgentPersonaModel] registerIframeAsset', {
+      id:       input.id,
+      url,
+      skillSlug: input.skillSlug || '',
+    });
+
     this.upsertAsset({
-      id:        stableId,
+      id:        input.id,
       type:      'iframe',
       title:     input.title,
-      active:    input.active ?? effectiveUrl.trim().length > 0,
+      active:    input.active ?? true,
       skillSlug: input.skillSlug,
       collapsed: input.collapsed ?? true,
       updatedAt: Date.now(),
-      url:       effectiveUrl,
+      url,
       refKey:    input.refKey,
     });
-  }
-
-  private normalizeSkillSlug(value: unknown): string {
-    if (typeof value !== 'string') {
-      return '';
-    }
-    return value.trim().toLowerCase();
-  }
-
-  private getStableWebsiteAssetIdForSkill(skillSlug: string): string | null {
-    if (!skillSlug) {
-      return null;
-    }
-
-    if (skillSlug.includes('workflow')) {
-      return 'sulla_n8n';
-    }
-
-    return null;
-  }
-
-  private resolveWebsiteAssetId(candidateId: string, skillSlug?: string): string {
-    const normalizedSkillSlug = this.normalizeSkillSlug(skillSlug);
-    const stableSkillId = this.getStableWebsiteAssetIdForSkill(normalizedSkillSlug);
-    if (stableSkillId) {
-      return stableSkillId;
-    }
-    return candidateId;
-  }
-
-  private isN8nWorkflowAsset(assetId: string, skillSlug?: string): boolean {
-    const normalizedSkillSlug = this.normalizeSkillSlug(skillSlug);
-    return assetId === 'sulla_n8n' || normalizedSkillSlug.includes('workflow');
-  }
-
-  private normalizeIframeUrlForAsset(assetId: string, skillSlug: string | undefined, url: string): string {
-    const trimmed = String(url || '').trim();
-    if (!trimmed) {
-      return '';
-    }
-
-    if (!this.isN8nWorkflowAsset(assetId, skillSlug)) {
-      return trimmed;
-    }
-
-    try {
-      const parsed = new URL(trimmed);
-      return `${ parsed.origin }/`;
-    } catch {
-      return trimmed;
-    }
   }
 
   private applyAssetLifecycleUpdate(data: any, phase: string): boolean {
@@ -241,7 +180,8 @@ export class AgentPersonaService {
     }
 
     if (asset?.type === 'iframe') {
-      const skillSlug = this.normalizeSkillSlug(asset.skillSlug ?? asset.selected_skill_slug ?? data?.selected_skill_slug);
+      const rawSlug = asset.skillSlug ?? asset.selected_skill_slug ?? data?.selected_skill_slug;
+      const skillSlug = typeof rawSlug === 'string' ? rawSlug.trim().toLowerCase() : '';
       const requestedId = String(asset.id || `iframe_${ Date.now() }`);
       const requestedUrl = String(asset.url || '');
 
@@ -341,7 +281,6 @@ export class AgentPersonaService {
     const index = this.activeAssets.findIndex((item) => item.id === assetId);
     if (index >= 0) {
       this.activeAssets.splice(index, 1);
-      this.syncGraphRuntimeFlags();
     }
   }
 
@@ -349,43 +288,9 @@ export class AgentPersonaService {
     const existing = this.activeAssets.find((item) => item.id === asset.id);
     if (existing) {
       Object.assign(existing, asset, { updatedAt: Date.now() });
-      this.syncGraphRuntimeFlags();
       return;
     }
     this.activeAssets.push(asset);
-    this.syncGraphRuntimeFlags();
-  }
-
-  private isN8nLiveEventsEnabledForCurrentAssets(): boolean {
-    return this.activeAssets.some((asset) => {
-      if (asset.type !== 'iframe' || asset.active !== true) {
-        return false;
-      }
-
-      return this.isN8nWorkflowAsset(asset.id, asset.skillSlug);
-    });
-  }
-
-  private syncGraphRuntimeFlags(): void {
-    const threadId = String(this.state.threadId || '').trim();
-    if (!threadId) {
-      return;
-    }
-
-    const n8nLiveEventsEnabled = this.isN8nLiveEventsEnabledForCurrentAssets();
-    if (this.lastSentN8nLiveEventsEnabled === n8nLiveEventsEnabled) {
-      return;
-    }
-
-    this.lastSentN8nLiveEventsEnabled = n8nLiveEventsEnabled;
-    void this.wsService.send(this.state.agentId, {
-      type: 'graph_runtime_update',
-      data: {
-        threadId,
-        n8nLiveEventsEnabled,
-      },
-      timestamp: Date.now(),
-    });
   }
 
   private connectAndListen() {
@@ -474,8 +379,6 @@ export class AgentPersonaService {
 
   setThreadId(threadId: string): void {
     this.state.threadId = threadId;
-    this.lastSentN8nLiveEventsEnabled = null;
-    this.syncGraphRuntimeFlags();
   }
 
   getThreadId(): string | undefined {
@@ -484,7 +387,6 @@ export class AgentPersonaService {
 
   clearThreadId(): void {
     this.state.threadId = undefined;
-    this.lastSentN8nLiveEventsEnabled = null;
     this.waitingForUser.value = false;
   }
 

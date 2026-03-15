@@ -1,5 +1,5 @@
 <template>
-  <header class="sticky top-0 z-50 flex flex-none items-end justify-between border-b border-edge bg-page pl-20 pr-4 pt-4 pb-0 shadow-md transition duration-500 backdrop-blur-sm sm:pr-6 lg:pr-8 app-titlebar">
+  <header class="sticky top-0 z-50 flex flex-none items-end justify-between bg-page pl-20 pr-4 pt-1 pb-0 transition duration-500 sm:pr-6 lg:pr-8 app-titlebar">
     <div class="relative flex grow basis-0 items-center pb-2">
       <a
         aria-label="Home page"
@@ -18,50 +18,56 @@
       </a>
     </div>
     <div class="hidden lg:flex items-end gap-0.5 self-stretch">
-      <router-link
-        to="/Chat"
-        class="tab-item"
-        :class="route.path === '/Chat' ? 'tab-active' : 'tab-inactive'"
-      >
-        Chat
-      </router-link>
-      <router-link
-        to="/Calendar"
-        class="tab-item"
-        :class="route.path === '/Calendar' ? 'tab-active' : 'tab-inactive'"
-      >
-        Calendar
-      </router-link>
-      <router-link
-        to="/Integrations"
-        class="tab-item"
-        :class="route.path === '/Integrations' || route.path.startsWith('/Integrations/') ? 'tab-active' : 'tab-inactive'"
-      >
-        Integrations
-      </router-link>
-      <router-link
-        to="/Extensions"
-        class="tab-item"
-        :class="route.path === '/Extensions' ? 'tab-active' : 'tab-inactive'"
-      >
-        Extensions
-      </router-link>
-      <router-link
-        v-for="item in extensionMenuItems"
-        :key="item.link"
-        :to="item.link"
-        class="tab-item"
-        :class="route.path === item.link ? 'tab-active' : 'tab-inactive'"
-      >
-        {{ item.title }}
-      </router-link>
       <button
         class="tab-new"
         type="button"
         aria-label="New tab"
+        @click="openNewBrowserTab"
       >
-        +
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="h-3 w-3">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
       </button>
+      <router-link
+        v-for="(tab, index) in orderedTabs"
+        :key="tab.id"
+        :to="tab.route"
+        class="tab-item"
+        :class="{
+          'tab-native': tab.native,
+          'tab-active': tab.isActive && !tab.native,
+          'tab-active-native': tab.isActive && tab.native,
+          'tab-inactive': !tab.isActive,
+          'tab-dragging': dragIndex === index,
+          'tab-drag-over-left': dragOverIndex === index && dragDirection === 'left',
+          'tab-drag-over-right': dragOverIndex === index && dragDirection === 'right',
+        }"
+        draggable="true"
+        @dragstart="onDragStart($event, index)"
+        @dragover.prevent="onDragOver($event, index)"
+        @dragend="onDragEnd"
+        @drop.prevent="onDrop(index)"
+        @contextmenu.prevent="onTabContextMenu($event, tab, index)"
+      >
+        <img
+          v-if="tab.favicon"
+          :src="tab.favicon"
+          class="h-3.5 w-3.5 rounded-sm"
+          alt=""
+        >
+        <span :class="tab.closeable ? 'max-w-32 truncate' : ''">{{ tab.label }}</span>
+        <button
+          v-if="tab.closeable"
+          class="tab-close"
+          type="button"
+          aria-label="Close tab"
+          @click.prevent.stop="closeAnyTab(tab)"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3 w-3">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </router-link>
     </div>
     <div class="relative flex basis-0 justify-end items-center gap-4 pb-2">
       <div
@@ -219,6 +225,113 @@
     </div>
   </header>
 
+  <!-- Tab context menu -->
+  <Teleport to="body">
+    <div
+      v-if="ctxMenu.visible"
+      class="tab-ctx-overlay"
+      @click="closeCtxMenu"
+      @contextmenu.prevent="closeCtxMenu"
+    />
+    <div
+      v-if="ctxMenu.visible"
+      class="tab-ctx-menu"
+      ref="ctxMenuEl"
+      :style="ctxMenuStyle"
+    >
+      <button
+        v-if="ctxMenu.tab?.closeable"
+        class="tab-ctx-item"
+        @click="ctxCloseTab"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg>
+        Close Tab
+      </button>
+      <button
+        class="tab-ctx-item"
+        @click="ctxCloseOtherTabs"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
+          <path d="M9 3H5a2 2 0 0 0-2 2v4" />
+          <path d="M15 3h4a2 2 0 0 1 2 2v4" />
+          <path d="M9 21H5a2 2 0 0 1-2-2v-4" />
+          <path d="M15 21h4a2 2 0 0 0 2-2v-4" />
+          <path d="M14 10l-4 4M10 10l4 4" />
+        </svg>
+        Close Other Tabs
+      </button>
+      <button
+        class="tab-ctx-item"
+        @click="ctxCloseTabsToRight"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
+          <path d="M9 18l6-6-6-6" />
+          <path d="M18 6L18 18" />
+        </svg>
+        Close Tabs to the Right
+      </button>
+      <div class="tab-ctx-separator" />
+      <button
+        class="tab-ctx-item"
+        @click="ctxDuplicateTab"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
+          <rect x="8" y="8" width="13" height="13" rx="2" />
+          <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
+        </svg>
+        Duplicate Tab
+      </button>
+      <div class="tab-ctx-separator" />
+      <button
+        class="tab-ctx-item"
+        @click="ctxMoveToStart"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
+          <path d="M11 17l-5-5 5-5" />
+          <path d="M18 17l-5-5 5-5" />
+        </svg>
+        Move to Start
+      </button>
+      <button
+        class="tab-ctx-item"
+        @click="ctxMoveToEnd"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
+          <path d="M13 7l5 5-5 5" />
+          <path d="M6 7l5 5-5 5" />
+        </svg>
+        Move to End
+      </button>
+      <template v-if="ctxMenu.tab?.browserId">
+        <div class="tab-ctx-separator" />
+        <button
+          class="tab-ctx-item"
+          @click="ctxReloadTab"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+            <path d="M16 16h5v5" />
+          </svg>
+          Reload
+        </button>
+        <button
+          class="tab-ctx-item"
+          @click="ctxCopyUrl"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+          Copy URL
+        </button>
+      </template>
+    </div>
+  </Teleport>
+
   <!-- Mobile Menu Dropdown (appears below header) -->
   <div
     v-if="isMobileMenuOpen"
@@ -296,12 +409,27 @@
   </div>
 </template>
 
+<script lang="ts">
+import { ref } from 'vue';
+
+// Module-level state: shared across all AgentHeader instances (one per keep-alive'd page)
+const tabOrder = ref<string[]>([]);
+</script>
+
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { computed, nextTick, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { getExtensionService } from '@pkg/agent';
+import { getAgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
+import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 
 const extensionService = getExtensionService();
+const router = useRouter();
+const { tabs: browserTabs, createTab, closeTab } = useBrowserTabs();
+
+// Active assets from the agent persona service
+const personaRegistry = getAgentPersonaRegistry();
+const persona = personaRegistry.getOrCreatePersonaService('sulla-desktop');
 
 defineProps<{
   isDark:      boolean;
@@ -324,6 +452,393 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 const toggleMobileMenu = () => {
   isMobileMenuOpen.value = !isMobileMenuOpen.value;
 };
+
+function openNewBrowserTab() {
+  const tab = createTab();
+
+  router.push(`/Browser/${ tab.id }`);
+}
+
+function closeBrowserTab(id: string) {
+  const isActive = route.path === `/Browser/${ id }`;
+
+  closeTab(id);
+  if (isActive) {
+    router.push('/Chat');
+  }
+}
+
+function closeAssetTab(assetId: string) {
+  const isActive = route.path === `/Asset/${ assetId }`;
+
+  persona.removeAsset(assetId);
+  if (isActive) {
+    router.push('/Chat');
+  }
+}
+
+function closeAnyTab(tab: HeaderTab) {
+  if (tab.assetId) {
+    closeAssetTab(tab.assetId);
+  } else if (tab.browserId) {
+    closeBrowserTab(tab.browserId);
+  }
+}
+
+// ── Data-driven tab list with drag-and-drop reordering ──
+
+interface HeaderTab {
+  id:         string;
+  label:      string;
+  route:      string;
+  isActive:   boolean;
+  native?:    boolean;
+  favicon?:   string;
+  closeable?: boolean;
+  browserId?: string;
+  assetId?:   string;
+}
+
+/** Build the unordered set of all tabs from their sources */
+const allTabsById = computed(() => {
+  const map = new Map<string, HeaderTab>();
+
+  // Static tabs
+  const staticTabs: { id: string; label: string; route: string; matchPrefix?: boolean }[] = [
+    { id: 'chat', label: 'Chat', route: '/Chat' },
+    { id: 'calendar', label: 'Calendar', route: '/Calendar' },
+    { id: 'integrations', label: 'Integrations', route: '/Integrations', matchPrefix: true },
+    { id: 'extensions', label: 'Extensions', route: '/Extensions' },
+  ];
+
+  for (const s of staticTabs) {
+    const isActive = s.matchPrefix
+      ? route.path === s.route || route.path.startsWith(`${ s.route }/`)
+      : route.path === s.route;
+
+    map.set(s.id, {
+      id: s.id, label: s.label, route: s.route, isActive, native: true,
+    });
+  }
+
+  // Extension tabs
+  for (const item of extensionMenuItems.value) {
+    const id = `ext-${ item.link }`;
+
+    map.set(id, {
+      id, label: item.title, route: item.link, isActive: route.path === item.link,
+    });
+  }
+
+  // Browser tabs
+  for (const bt of browserTabs) {
+    const id = `browser-${ bt.id }`;
+
+    map.set(id, {
+      id,
+      label:     bt.title || 'New Tab',
+      route:     `/Browser/${ bt.id }`,
+      isActive:  route.path === `/Browser/${ bt.id }`,
+      favicon:   bt.favicon,
+      closeable: true,
+      browserId: bt.id,
+    });
+  }
+
+  // Active asset tabs (managed by the agent)
+  for (const asset of persona.activeAssets) {
+    if (!asset.active) continue;
+    const id = `asset-${ asset.id }`;
+
+    map.set(id, {
+      id,
+      label:     asset.title || 'Asset',
+      route:     `/Asset/${ asset.id }`,
+      isActive:  route.path === `/Asset/${ asset.id }`,
+      closeable: true,
+      assetId:   asset.id,
+    });
+  }
+
+  return map;
+});
+
+/** Tabs in user-chosen order, with new tabs appended at the end */
+const orderedTabs = computed(() => {
+  const map = allTabsById.value;
+  const seen = new Set<string>();
+  const result: HeaderTab[] = [];
+
+  // First, add tabs in the saved order (skip any that no longer exist)
+  for (const id of tabOrder.value) {
+    const tab = map.get(id);
+
+    if (tab) {
+      result.push(tab);
+      seen.add(id);
+    }
+  }
+
+  // Then append any new tabs not yet in the order
+  for (const [id, tab] of map) {
+    if (!seen.has(id)) {
+      result.push(tab);
+    }
+  }
+
+  return result;
+});
+
+// Keep tabOrder in sync when tabs are added/removed
+watch(
+  () => [...allTabsById.value.keys()],
+  (currentIds) => {
+    const currentSet = new Set(currentIds);
+    // Remove stale IDs
+    const filtered = tabOrder.value.filter(id => currentSet.has(id));
+    // Append new IDs
+    const ordered = new Set(filtered);
+
+    for (const id of currentIds) {
+      if (!ordered.has(id)) {
+        filtered.push(id);
+      }
+    }
+    tabOrder.value = filtered;
+  },
+  { immediate: true },
+);
+
+// Auto-navigate to a new asset tab when the agent registers one
+const knownAssetIds = ref(new Set<string>());
+
+watch(
+  () => persona.activeAssets.filter(a => a.active).map(a => a.id),
+  (currentIds) => {
+    for (const id of currentIds) {
+      if (!knownAssetIds.value.has(id)) {
+        knownAssetIds.value.add(id);
+        router.push(`/Asset/${ id }`);
+      }
+    }
+    // Clean up removed assets
+    for (const id of knownAssetIds.value) {
+      if (!currentIds.includes(id)) {
+        knownAssetIds.value.delete(id);
+      }
+    }
+  },
+  { immediate: true },
+);
+
+// ── Drag-and-drop ──
+
+const dragIndex = ref<number | null>(null);
+const dragOverIndex = ref<number | null>(null);
+const dragDirection = ref<'left' | 'right' | null>(null);
+
+function onDragStart(event: DragEvent, index: number) {
+  dragIndex.value = index;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(index));
+  }
+}
+
+function onDragOver(_event: DragEvent, index: number) {
+  if (dragIndex.value === null || dragIndex.value === index) {
+    dragOverIndex.value = null;
+    dragDirection.value = null;
+
+    return;
+  }
+  dragOverIndex.value = index;
+  dragDirection.value = index < dragIndex.value ? 'left' : 'right';
+}
+
+function onDrop(targetIndex: number) {
+  if (dragIndex.value === null || dragIndex.value === targetIndex) {
+    onDragEnd();
+
+    return;
+  }
+
+  // Reorder the tabOrder array
+  const ids = [...tabOrder.value];
+  const [moved] = ids.splice(dragIndex.value, 1);
+
+  ids.splice(targetIndex, 0, moved);
+  tabOrder.value = ids;
+
+  onDragEnd();
+}
+
+function onDragEnd() {
+  dragIndex.value = null;
+  dragOverIndex.value = null;
+  dragDirection.value = null;
+}
+
+// ── Tab context menu ──
+
+const ctxMenuEl = ref<HTMLElement | null>(null);
+const ctxMenuPos = ref<{ x: number; y: number }>({ x: 0, y: 0 });
+
+const ctxMenu = ref<{ visible: boolean; x: number; y: number; tab: HeaderTab | null; index: number }>({
+  visible: false, x: 0, y: 0, tab: null, index: -1,
+});
+
+const ctxMenuStyle = computed(() => ({
+  top:  `${ ctxMenuPos.value.y }px`,
+  left: `${ ctxMenuPos.value.x }px`,
+}));
+
+function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
+  ctxMenu.value = { visible: true, x: event.clientX, y: event.clientY, tab, index };
+  // Start at click position, then adjust after render
+  ctxMenuPos.value = { x: event.clientX, y: event.clientY };
+  nextTick(() => {
+    if (!ctxMenuEl.value) return;
+    const rect = ctxMenuEl.value.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let { x, y } = ctxMenuPos.value;
+
+    // Flip left if overflowing right edge
+    if (x + rect.width > vw) {
+      x = Math.max(0, x - rect.width);
+    }
+    // Flip up if overflowing bottom edge
+    if (y + rect.height > vh) {
+      y = Math.max(0, y - rect.height);
+    }
+    ctxMenuPos.value = { x, y };
+  });
+}
+
+function closeCtxMenu() {
+  ctxMenu.value = { visible: false, x: 0, y: 0, tab: null, index: -1 };
+}
+
+function ctxCloseTab() {
+  const tab = ctxMenu.value.tab;
+
+  closeCtxMenu();
+  if (tab) {
+    closeAnyTab(tab);
+  }
+}
+
+function ctxCloseOtherTabs() {
+  const keepId = ctxMenu.value.tab?.id;
+
+  closeCtxMenu();
+  if (!keepId) return;
+
+  // Close all closeable browser tabs except the one we right-clicked
+  for (const bt of [...browserTabs]) {
+    const tabId = `browser-${ bt.id }`;
+
+    if (tabId !== keepId) {
+      closeBrowserTab(bt.id);
+    }
+  }
+
+  // Close all asset tabs except the one we right-clicked
+  for (const asset of [...persona.activeAssets]) {
+    const tabId = `asset-${ asset.id }`;
+
+    if (tabId !== keepId) {
+      persona.removeAsset(asset.id);
+    }
+  }
+}
+
+function ctxCloseTabsToRight() {
+  const idx = ctxMenu.value.index;
+
+  closeCtxMenu();
+  const tabs = orderedTabs.value;
+
+  // Close all closeable tabs to the right of the clicked index
+  for (let i = tabs.length - 1; i > idx; i--) {
+    const t = tabs[i];
+
+    if (t.closeable) {
+      closeAnyTab(t);
+    }
+  }
+}
+
+function ctxDuplicateTab() {
+  const tab = ctxMenu.value.tab;
+
+  closeCtxMenu();
+  if (!tab) return;
+
+  if (tab.browserId) {
+    // Duplicate browser tab: open a new browser tab (it starts at about:blank)
+    const newTab = createTab();
+
+    router.push(`/Browser/${ newTab.id }`);
+  } else {
+    // For static/extension tabs, just navigate (can't truly "duplicate")
+    router.push(tab.route);
+  }
+}
+
+function ctxMoveToStart() {
+  const idx = ctxMenu.value.index;
+
+  closeCtxMenu();
+  if (idx <= 0) return;
+
+  const ids = [...tabOrder.value];
+  const [moved] = ids.splice(idx, 1);
+
+  ids.unshift(moved);
+  tabOrder.value = ids;
+}
+
+function ctxMoveToEnd() {
+  const idx = ctxMenu.value.index;
+
+  closeCtxMenu();
+  if (idx < 0 || idx >= tabOrder.value.length - 1) return;
+
+  const ids = [...tabOrder.value];
+  const [moved] = ids.splice(idx, 1);
+
+  ids.push(moved);
+  tabOrder.value = ids;
+}
+
+function ctxReloadTab() {
+  const tab = ctxMenu.value.tab;
+
+  closeCtxMenu();
+  if (!tab?.browserId) return;
+
+  // Navigate away and back to force iframe reload
+  const currentRoute = tab.route;
+
+  router.push('/Chat').then(() => {
+    router.push(currentRoute);
+  });
+}
+
+async function ctxCopyUrl() {
+  const tab = ctxMenu.value.tab;
+
+  closeCtxMenu();
+  if (!tab?.browserId) return;
+
+  const bt = browserTabs.find((t: { id: string }) => t.id === tab.browserId);
+
+  if (bt?.url) {
+    await navigator.clipboard.writeText(bt.url);
+  }
+}
 </script>
 
 <style scoped>
@@ -334,27 +849,90 @@ const toggleMobileMenu = () => {
   padding: 0.5rem 1rem;
   font-size: 0.75rem;
   font-weight: 600;
-  border-top-left-radius: 0.5rem;
-  border-top-right-radius: 0.5rem;
-  border: 1px solid transparent;
-  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  border: none;
   cursor: pointer;
   transition: color 150ms, background-color 150ms;
   position: relative;
   white-space: nowrap;
   text-decoration: none;
+  z-index: 0;
 }
 
-.tab-active {
-  background-color: var(--bg-surface);
+/* Native tabs (Chat, Calendar, Integrations, Extensions): pill style */
+.tab-active-native {
+  background-color: #2a2e34;
   color: var(--text-primary);
-  border-color: var(--border-default);
-  margin-bottom: -1px;
-  padding-bottom: calc(0.5rem + 1px);
+  z-index: 2;
+  border-radius: 8px;
+}
+
+/* Dynamic tabs (extensions, browser): Chrome-style with bottom scoops */
+.tab-active {
+  background-color: #2a2e34;
+  color: var(--text-primary);
+  z-index: 2;
+}
+
+.tab-active::before,
+.tab-active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+}
+
+.tab-active::before {
+  left: -8px;
+  background: radial-gradient(circle at 0 0, transparent 4.5px, #2a2e34 8px);
+}
+
+.tab-active::after {
+  right: -8px;
+  background: radial-gradient(circle at 100% 0, transparent 4.5px, #2a2e34 8px);
+}
+
+.tab-dragging {
+  opacity: 0.4;
+}
+
+.tab-drag-over-left {
+  box-shadow: inset 2px 0 0 0 var(--accent-primary);
+}
+
+.tab-drag-over-right {
+  box-shadow: inset -2px 0 0 0 var(--accent-primary);
 }
 
 .tab-inactive {
   color: var(--text-secondary);
+}
+
+/* Chrome-style separator pipe between inactive tabs */
+.tab-inactive::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 25%;
+  height: 50%;
+  width: 1px;
+  background: #3e3d3d;
+  pointer-events: none;
+}
+
+/* Hide separator next to active tab or when first inactive tab */
+.tab-active + .tab-inactive::before,
+.tab-active-native + .tab-inactive::before,
+.tab-new + .tab-inactive::before {
+  display: none;
+}
+
+/* Hide separator on the tab right before an active one */
+.tab-inactive:has(+ .tab-active)::before,
+.tab-inactive:has(+ .tab-active-native)::before {
+  display: none;
 }
 
 .tab-inactive:hover {
@@ -362,23 +940,128 @@ const toggleMobileMenu = () => {
   background-color: var(--bg-surface-hover);
 }
 
+/* Native tabs hover as pill */
+.tab-native.tab-inactive:hover {
+  border-radius: 8px;
+}
+
+/* Hide separator on hovered tab and its neighbor */
+.tab-inactive:hover::before {
+  display: none;
+}
+
 .tab-new {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.5rem 0.5rem;
-  font-size: 0.75rem;
+  width: 2.25rem;
+  height: 2.25rem;
   color: var(--text-secondary);
-  border-top-left-radius: 0.5rem;
-  border-top-right-radius: 0.5rem;
+  border-radius: 0.5rem;
   cursor: pointer;
   transition: color 150ms, background-color 150ms;
   background: transparent;
   border: none;
+  flex-shrink: 0;
+  margin-bottom: 0.125rem;
+  padding-top: 7px;
 }
 
 .tab-new:hover {
   color: var(--text-primary);
   background-color: var(--bg-surface-hover);
+}
+
+.tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 0.25rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms, color 150ms, background-color 150ms;
+  margin-left: 0.25rem;
+}
+
+.tab-item:hover .tab-close,
+.tab-active .tab-close,
+.tab-active-native .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-surface-hover);
+}
+</style>
+
+<style>
+/* Context menu — unscoped because it's teleported to body */
+@keyframes tabCtxFadeIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.tab-ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.tab-ctx-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 240px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px rgba(63, 185, 80, 0.15);
+  padding: 6px 0;
+  animation: tabCtxFadeIn 0.15s ease-out;
+  font-family: var(--ifm-font-family-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.tab-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 14px;
+  border: none;
+  background: transparent;
+  color: #e6edf3;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.tab-ctx-item:hover {
+  background: rgba(63, 185, 80, 0.1);
+  color: #3fb950;
+}
+
+.tab-ctx-item:hover .tab-ctx-icon {
+  opacity: 1;
+  stroke: #3fb950;
+}
+
+.tab-ctx-icon {
+  width: 14px;
+  height: 14px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.tab-ctx-separator {
+  height: 1px;
+  background: #21262d;
+  margin: 4px 0;
 }
 </style>

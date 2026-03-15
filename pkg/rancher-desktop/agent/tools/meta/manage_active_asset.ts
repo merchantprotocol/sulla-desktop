@@ -44,15 +44,16 @@ export class ManageActiveAssetWorker extends BaseTool {
       };
     }
 
-    const candidateId = typeof input.assetId === 'string' && input.assetId.trim().length > 0
+    const assetId = typeof input.assetId === 'string' && input.assetId.trim().length > 0
       ? input.assetId.trim()
       : `${ assetType }_${ Date.now() }`;
 
     const active = input.active !== false;
     const collapsed = input.collapsed !== false;
     const refKey = typeof input.refKey === 'string' ? input.refKey : undefined;
-    const normalizedSkillSlug = skillSlug.toLowerCase();
-    const effectiveId = normalizedSkillSlug.includes('workflow') ? 'sulla_n8n' : candidateId;
+    const title = typeof input.title === 'string' && input.title.trim().length > 0
+      ? input.title.trim()
+      : (assetType === 'iframe' ? 'Website' : 'Document');
 
     if (assetType === 'iframe') {
       const url = typeof input.url === 'string' ? input.url.trim() : '';
@@ -63,12 +64,8 @@ export class ManageActiveAssetWorker extends BaseTool {
         };
       }
 
-      const title = typeof input.title === 'string' && input.title.trim().length > 0
-        ? input.title.trim()
-        : (skillSlug.toLowerCase().includes('workflow') ? 'Sulla n8n' : 'Website');
-
       persona.registerIframeAsset({
-        id:        effectiveId,
+        id: assetId,
         title,
         url,
         skillSlug: skillSlug || undefined,
@@ -79,17 +76,14 @@ export class ManageActiveAssetWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Upserted iframe active asset id=${ effectiveId } url=${ url }`,
+        responseString: `Upserted iframe active asset id=${ assetId } url=${ url }`,
       };
     }
 
     const content = typeof input.content === 'string' ? input.content : '';
-    const title = typeof input.title === 'string' && input.title.trim().length > 0
-      ? input.title.trim()
-      : 'Document';
 
     persona.registerDocumentAsset({
-      id: effectiveId,
+      id: assetId,
       title,
       content,
       active,
@@ -99,7 +93,7 @@ export class ManageActiveAssetWorker extends BaseTool {
 
     return {
       successBoolean: true,
-      responseString: `Upserted document active asset id=${ effectiveId } contentLength=${ content.length }`,
+      responseString: `Upserted document active asset id=${ assetId } contentLength=${ content.length }`,
     };
   }
 }

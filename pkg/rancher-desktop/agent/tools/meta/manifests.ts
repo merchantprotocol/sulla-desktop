@@ -41,13 +41,13 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'manage_active_asset',
-    description: 'Create, update, or remove active sidebar assets (iframe URLs/documents) attached to the current agent persona. Use stable skill IDs (e.g. workflow skill -> sulla_n8n) to keep URL updates on the same asset.',
+    description: 'Create, update, or remove active asset tabs (iframe URLs or documents). Each asset gets its own tab in the header. Use a stable assetId to update an existing tab instead of creating a new one.',
     category:    'meta',
     schemaDef:   {
       action:    { type: 'enum', enum: ['upsert', 'remove'], default: 'upsert', description: 'upsert creates/updates an asset; remove deletes by assetId.' },
       assetType: { type: 'enum', optional: true, enum: ['iframe', 'document'], description: 'Required for upsert.' },
-      assetId:   { type: 'string', optional: true, description: 'Stable asset ID. For workflow websites use sulla_n8n.' },
-      skillSlug: { type: 'string', optional: true, description: 'Optional skill slug to bind website assets to a skill.' },
+      assetId:   { type: 'string', optional: true, description: 'Stable asset ID. Reuse the same ID to update an existing tab.' },
+      skillSlug: { type: 'string', optional: true, description: 'Optional skill slug to associate with the asset.' },
       title:     { type: 'string', optional: true },
       url:       { type: 'string', optional: true, description: 'Required for iframe upsert.' },
       content:   { type: 'string', optional: true, description: 'Document HTML/markdown content.' },

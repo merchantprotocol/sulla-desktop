@@ -118,10 +118,11 @@ console.log('[window/index] URLs configured:', { webRoot, mainUrl, dockerDashboa
 export function openMain() {
   console.log('[openMain] Called. mainUrl:', mainUrl, 'webRoot:', webRoot);
 
-  const { height } = screen.getPrimaryDisplay().workAreaSize;
+  const fullSize = screen.getPrimaryDisplay().size;
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
 
-  const defaultWidth = 769;
-  const defaultHeight = Math.min(Math.trunc(height * 0.8), 900); // 720 (692)
+  const defaultWidth = Math.trunc(fullSize.width * 0.9);
+  const defaultHeight = workArea.height;
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
   const window = createWindow(
@@ -129,15 +130,18 @@ export function openMain() {
     mainUrl,
     {
       title:          'Sulla Agent',
+      x:              0,
+      y:              0,
       width:          defaultWidth,
       height:         defaultHeight,
-      resizable:      !process.env.RD_MOCK_FOR_SCREENSHOTS, // remove window's shadows while taking screenshots
+      resizable:      true,
       icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      backgroundColor: '#0d1117',
       // macOS: hide native title bar, keep traffic lights overlaid on content
       ...(os.platform() === 'darwin'
         ? {
           titleBarStyle:        'hiddenInset',
-          trafficLightPosition: { x: 16, y: 16 },
+          trafficLightPosition: { x: 16, y: 14 },
         }
         : {}),
       webPreferences: {

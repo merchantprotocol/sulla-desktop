@@ -727,7 +727,10 @@ mainEvents.on('restarting', () => {
 });
 
 Electron.app.on('before-quit', async(event) => {
+  const triggerStack = new Error('before-quit trigger trace').stack;
+
   console.log(`[Shutdown] before-quit fired — gone=${ gone }, isRestarting=${ isRestarting }`);
+  console.log(`[Shutdown] before-quit call stack:\n${ triggerStack }`);
   if (gone) {
     console.log('[Shutdown] before-quit: already gone, emitting "quit" and returning');
     mainEvents.emit('quit');
@@ -1930,5 +1933,9 @@ async function runRdctlSetup(newSettings: settings.Settings): Promise<void> {
   const rdctlPath = executable('rdctl');
   const args = ['setup', `--auto-start=${ newSettings.application.autoStart }`];
 
-  await spawnFile(rdctlPath, args);
+  try {
+    await spawnFile(rdctlPath, args);
+  } catch (err: any) {
+    console.error(`[Startup] rdctl setup failed (exit code ${ err.code }): ${ err.message }`);
+  }
 }

@@ -17,6 +17,8 @@ import AgentIntegrationDetail from '../pages/AgentIntegrationDetail.vue';
 import AgentExtensions from '../pages/AgentExtensions.vue';
 import AgentAutomations from '../pages/AgentAutomations.vue';
 
+import AgentAssetView from '../pages/AgentAssetView.vue';
+import BrowserTab from '../pages/BrowserTab.vue';
 import FirstRun from '../pages/FirstRun.vue';
 import ExtensionView from '../pages/ExtensionView.vue';
 await initiateWindowContext();
@@ -31,6 +33,8 @@ const router = createRouter({
     { path: '/Integrations/:id', component: AgentIntegrationDetail, name: 'AgentIntegrationDetail' },
     { path: '/Extensions', component: AgentExtensions, name: 'AgentExtensions' },
     { path: '/Automations', component: AgentAutomations, name: 'AgentAutomations' },
+    { path: '/Asset/:id', component: AgentAssetView, name: 'AgentAssetView' },
+    { path: '/Browser/:id', component: BrowserTab, name: 'BrowserTab' },
 
     { path: '/FirstRun', component: FirstRun, name: 'FirstRun' },
     { path: '/Extension/:name/:path*', component: ExtensionView, name: 'ExtensionView' },

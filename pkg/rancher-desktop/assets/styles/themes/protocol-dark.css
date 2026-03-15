@@ -13,6 +13,7 @@
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Roboto Mono', monospace;
 
   /* Backgrounds — noir terminal palette (design guide gray ramp) */
+  --body-bg: #0d1117;            /* Override legacy token so body/wrapper match */
   --bg-page: #0d1117;            /* Level 0 — deepest page background */
   --bg-surface: #161b22;         /* Level 100 — cards, panels, sidebar */
   --bg-surface-alt: #1c2128;     /* Level 200 — nested panels, terminal bars */
@@ -201,9 +202,6 @@
 /* ── Header: noir nav with backdrop blur ── */
 .theme-protocol-dark header {
   background: #0d1117 !important;
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border-default);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 .theme-protocol-dark header nav a {
