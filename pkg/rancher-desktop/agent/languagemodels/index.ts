@@ -27,6 +27,7 @@ const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   google:    async() => { const { getGoogleService } = await import('./GoogleService'); return getGoogleService() },
   kimi:      async() => { const { getKimiService } = await import('./KimiService'); return getKimiService() },
   nvidia:    async() => { const { getNvidiaService } = await import('./NvidiaService'); return getNvidiaService() },
+  alibaba:   async() => { const { getAlibabaService } = await import('./AlibabaService'); return getAlibabaService() },
   custom:    async() => { const { getCustomService } = await import('./CustomService'); return getCustomService() },
 };
 
@@ -174,7 +175,7 @@ class LLMRegistryImpl {
     try {
       const integrationService = getIntegrationService();
       // Check each AI provider in priority order for a connected integration
-      for (const providerId of ['grok', 'anthropic', 'openai', 'google', 'kimi', 'nvidia', 'custom']) {
+      for (const providerId of ['grok', 'anthropic', 'openai', 'google', 'kimi', 'nvidia', 'alibaba', 'custom']) {
         const connected = await integrationService.isAnyAccountConnected(providerId);
         if (connected) {
           return providerId;
