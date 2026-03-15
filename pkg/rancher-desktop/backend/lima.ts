@@ -2169,8 +2169,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
 
     // Fetch settings from SullaSettingsModel
-    const sullaServicePassword = await SullaSettingsModel.get('sullaServicePassword') || 'sulla_dev_password';
-    const sullaN8nEncryptionKey = await SullaSettingsModel.get('sullaN8nEncryptionKey') || 'changeMeToA32CharRandomString1234';
+    // Escape '$' as '$$' so Docker Compose doesn't interpret them as variable references
+    const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
+    const sullaServicePassword = escapeForCompose(await SullaSettingsModel.get('sullaServicePassword') || 'sulla_dev_password');
+    const sullaN8nEncryptionKey = escapeForCompose(await SullaSettingsModel.get('sullaN8nEncryptionKey') || 'changeMeToA32CharRandomString1234');
 
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
@@ -2232,6 +2234,30 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       } catch {
         console.warn('[Sulla] Compose file not found at /tmp/sulla-docker-compose.yml');
         throw new Error('Compose file verification failed');
+      }
+    });
+
+    // Ensure the VM's Docker config doesn't have a broken credsStore that would
+    // block image pulls. Most users won't have credentials installed — anonymous
+    // pulls should still work (just subject to Docker Hub rate limits).
+    await this.progressTracker.action('Checking Docker credentials config', 62.7, async() => {
+      try {
+        const rawConfig = await this.execCommand({ capture: true, root: true }, 'cat', ROOT_DOCKER_CONFIG_PATH);
+        const config = JSON.parse(rawConfig);
+
+        if (config.credsStore) {
+          // Test if the credential helper actually works
+          try {
+            await this.execCommand({ root: true }, `docker-credential-${ config.credsStore }`, 'list');
+          } catch {
+            console.log(`[Sulla] Credential helper "docker-credential-${ config.credsStore }" is not available, removing credsStore to allow anonymous pulls`);
+            delete config.credsStore;
+            await this.writeFile(ROOT_DOCKER_CONFIG_PATH, jsonStringifyWithWhiteSpace(config), 0o644);
+          }
+        }
+      } catch {
+        // No Docker config file or can't parse it — that's fine, Docker will use defaults
+        console.log('[Sulla] No Docker config found in VM, proceeding with anonymous pulls');
       }
     });
 
