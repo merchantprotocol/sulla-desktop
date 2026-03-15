@@ -20,12 +20,12 @@ function generateId(): string {
 }
 
 export function useBrowserTabs() {
-  function createTab(url = 'about:blank'): BrowserTab {
-    const mode: BrowserTabMode = url === 'about:blank' ? 'welcome' : 'browser';
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {
+    const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:      generateId(),
       url,
-      title:   mode === 'welcome' ? 'New Tab' : 'New Tab',
+      title:   mode === 'chat' ? 'New Chat' : 'New Tab',
       favicon: '',
       loading: false,
       mode,

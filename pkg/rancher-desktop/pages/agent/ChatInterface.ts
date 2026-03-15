@@ -2,28 +2,44 @@
 import { ref, computed, watch } from 'vue';
 import { AgentPersonaService } from '@pkg/agent';
 import type { PersonaSidebarAsset } from '@pkg/agent';
-import { AgentPersonaRegistry, type ChatMessage as RegistryChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
+import { getAgentPersonaRegistry, AgentPersonaRegistry, type ChatMessage as RegistryChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 
 export type ChatMessage = RegistryChatMessage;
 
-const SULLA_DESKTOP_CHANNEL = 'sulla-desktop';
-const MESSAGES_STORAGE_KEY = `chat_messages_${ SULLA_DESKTOP_CHANNEL }`;
+const DEFAULT_CHANNEL = 'sulla-desktop';
 const MAX_PERSISTED_MESSAGES = 200;
 
 export class ChatInterface {
   private readonly persona:  AgentPersonaService;
   private readonly registry: AgentPersonaRegistry;
+  private readonly channelId: string;
+  /** Unique key for this tab's localStorage — scoped by tabId when provided */
+  private readonly storageScope: string;
+  private readonly messagesStorageKey: string;
 
   readonly query = ref('');
   readonly transcriptEl = ref<HTMLElement | null>(null);
 
-  readonly currentAgentId = computed(() => SULLA_DESKTOP_CHANNEL);
+  readonly currentAgentId: ReturnType<typeof computed<string>>;
 
   readonly messages = ref<ChatMessage[]>([]);
 
-  constructor() {
-    this.registry = new AgentPersonaRegistry();
-    this.persona = this.registry.getOrCreatePersonaService(SULLA_DESKTOP_CHANNEL);
+  /**
+   * @param channelId  WebSocket channel (shared across tabs, e.g. 'sulla-desktop')
+   * @param tabId      Optional per-tab identifier. When provided, localStorage keys
+   *                   (messages, threadId, hasSentMessage) are scoped to this tab so
+   *                   multiple chat tabs can coexist independently.
+   */
+  constructor(channelId: string = DEFAULT_CHANNEL, tabId?: string) {
+    this.channelId = channelId;
+    // Use tabId for storage scoping when available, otherwise fall back to channelId
+    this.storageScope = tabId ? `${ channelId }_${ tabId }` : channelId;
+    this.messagesStorageKey = `chat_messages_${ this.storageScope }`;
+    this.currentAgentId = computed(() => this.channelId);
+    this.hasSentMessageKey = `chat_has_sent_message_${ this.storageScope }`;
+    this.hasSentMessage = ref(localStorage.getItem(this.hasSentMessageKey) === 'true');
+    this.registry = getAgentPersonaRegistry();
+    this.persona = this.registry.getOrCreatePersonaService(channelId, tabId);
 
     // Restore threadId from localStorage so the next message reuses the same backend thread
     this.persona.restoreThreadId();
@@ -48,13 +64,13 @@ export class ChatInterface {
         }
         return m;
       });
-      localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(toStore));
+      localStorage.setItem(this.messagesStorageKey, JSON.stringify(toStore));
     } catch { /* storage full — silently degrade */ }
   }
 
   private restoreMessages(): void {
     try {
-      const raw = localStorage.getItem(MESSAGES_STORAGE_KEY);
+      const raw = localStorage.getItem(this.messagesStorageKey);
       if (!raw) return;
       const parsed = JSON.parse(raw) as ChatMessage[];
       if (Array.isArray(parsed) && parsed.length > 0 && this.persona.messages.length === 0) {
@@ -80,7 +96,7 @@ export class ChatInterface {
   });
 
   readonly loading = computed(() => {
-    return this.registry.isLoading(SULLA_DESKTOP_CHANNEL);
+    return this.registry.isLoading(this.channelId);
   });
 
   readonly currentActivity = computed(() => {
@@ -101,8 +117,8 @@ export class ChatInterface {
   });
 
   // Track if user has ever sent a message (persisted in localStorage)
-  private readonly hasSentMessageKey = 'chat_has_sent_message';
-  private hasSentMessage = ref(localStorage.getItem(this.hasSentMessageKey) === 'true');
+  private readonly hasSentMessageKey: string;
+  private hasSentMessage: ReturnType<typeof ref<boolean>>;
 
   readonly hasMessages = computed(() => {
     return this.hasSentMessage.value || this.messages.value.length > 0;
@@ -116,7 +132,7 @@ export class ChatInterface {
     this.messages.value = [];
     // Clear persisted messages
     try {
-      localStorage.removeItem(MESSAGES_STORAGE_KEY);
+      localStorage.removeItem(this.messagesStorageKey);
     } catch { /* ignore */ }
     // Reset the "has sent" flag so the empty-state composer appears
     this.hasSentMessage.value = false;
@@ -128,7 +144,7 @@ export class ChatInterface {
   }
 
   stop(): void {
-    this.persona.emitStopSignal(SULLA_DESKTOP_CHANNEL);
+    this.persona.emitStopSignal(this.channelId);
     this.persona.graphRunning.value = false;
   }
 
