@@ -60,8 +60,8 @@ SPINNER_PID=""
 # Track all step results for final summary
 STEP_RESULTS=()
 
-# Log file for suppressed output
-INSTALL_LOG="/tmp/sulla-install-$$.log"
+# Log file for suppressed output — fixed path so it's always easy to find
+INSTALL_LOG="/tmp/sulla-install.log"
 : > "$INSTALL_LOG"
 
 # ---------------------------------------------------------------------------
@@ -266,9 +266,49 @@ run_silent() {
   fi
 }
 
+# Run a command with live status updates — logs everything and updates the
+# spinner text with the last meaningful line of output so the user can see
+# what's happening during long-running operations.
+# Usage: run_with_status <label> <command...>
+run_with_status() {
+  local label="$1"
+  shift
+  echo "=== [$label] $(date) ===" >> "$INSTALL_LOG"
+  echo "CMD: $*" >> "$INSTALL_LOG"
+
+  "$@" 2>&1 | while IFS= read -r line; do
+    echo "$line" >> "$INSTALL_LOG"
+    case "$line" in
+      *"Resolving"*|*"Fetching"*|*"Linking"*|*"Building"*)
+        stop_spinner 2>/dev/null
+        start_spinner "${label}: ${line:0:60}"
+        ;;
+      *"step "*)
+        stop_spinner 2>/dev/null
+        start_spinner "${label}: ${line:0:60}"
+        ;;
+      *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
+        stop_spinner 2>/dev/null
+        start_spinner "${label}: compiling native modules..."
+        ;;
+      *"webpack"*|*"ts-loader"*|*"babel"*)
+        stop_spinner 2>/dev/null
+        start_spinner "${label}: ${line:0:60}"
+        ;;
+    esac
+  done
+
+  local rc=${PIPESTATUS[0]}
+  if [ "$rc" -ne 0 ]; then
+    echo "EXIT CODE: $rc" >> "$INSTALL_LOG"
+  fi
+  return "$rc"
+}
+
+
 # Prompt the user for sudo access with a clear explanation of why.
 # Pre-authenticates so subsequent sudo calls don't re-prompt.
-# Usage: require_sudo "Go ${GO_VERSION}" "needs to install to /usr/local which requires admin access"
+# Usage: require_sudo "Go ${GO_VERSION}" "needs to install to /usr/local which requires user authorization"
 require_sudo() {
   local package="$1"
   local reason="$2"
@@ -286,7 +326,7 @@ require_sudo() {
     echo ""
     return 0
   else
-    step_fail "sudo authentication failed — cannot continue without admin access"
+    step_fail "sudo authentication failed — cannot continue without user authorization"
   fi
 }
 
@@ -584,7 +624,7 @@ install_curl() {
   case "$OS" in
     macos) ;;
     linux)
-      require_sudo "curl" "is required for downloading packages and needs admin access to install"
+      require_sudo "curl" "is required for downloading packages and needs user authorization to install"
       start_spinner "Installing curl..."
       case "$(detect_pkg_manager)" in
         apt)    run_silent "curl" sudo apt-get update -qq && run_silent "curl" sudo apt-get install -yqq curl ;;
@@ -616,7 +656,7 @@ install_git() {
       fi
       ;;
     linux)
-      require_sudo "git" "is required for source control and needs admin access to install"
+      require_sudo "git" "is required for source control and needs user authorization to install"
       start_spinner "Installing git..."
       case "$(detect_pkg_manager)" in
         apt)    run_silent "git" sudo apt-get update -qq && run_silent "git" sudo apt-get install -yqq git ;;
@@ -691,7 +731,7 @@ install_build_tools() {
       local pkgs_needed=""
       command_exists make    || pkgs_needed="$pkgs_needed build-essential"
       command_exists python3 || pkgs_needed="$pkgs_needed python3"
-      require_sudo "Build tools (${pkgs_needed# })" "are required for compiling native modules and need admin access to install"
+      require_sudo "Build tools (${pkgs_needed# })" "are required for compiling native modules and need user authorization to install"
       start_spinner "Installing build tools..."
       case "$(detect_pkg_manager)" in
         apt)    run_silent "build-tools" sudo apt-get update -qq && run_silent "build-tools" sudo apt-get install -yqq $pkgs_needed ;;
@@ -720,7 +760,7 @@ install_go() {
           || run_silent "go" brew upgrade go
         run_silent "go" brew link --overwrite "go@1.24" 2>/dev/null || true
       else
-        require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs admin access to install to /usr/local"
+        require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs user authorization to install to /usr/local"
         start_spinner "Installing Go ${GO_VERSION}..."
         local arch go_arch="amd64"
         arch="$(uname -m)"
@@ -733,7 +773,7 @@ install_go() {
       fi
       ;;
     linux)
-      require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs admin access to install to /usr/local"
+      require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs user authorization to install to /usr/local"
       start_spinner "Installing Go ${GO_VERSION}..."
       local arch go_arch="amd64"
       arch="$(uname -m)"
@@ -921,16 +961,16 @@ install_deps() {
     nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
 
-  start_spinner "Installing dependencies (this may take a few minutes)..."
-  if run_silent "yarn-install" yarn install --ignore-engines; then
-    step_ok "Dependencies installed"
+  start_spinner "Installing packages..."
+  if run_with_status "Installing packages" yarn install --ignore-engines; then
+    step_ok "Packages installed"
   else
     start_spinner "Retrying with clean state..."
     rm -rf node_modules
-    if run_silent "yarn-install-retry" yarn install --ignore-engines; then
-      step_ok "Dependencies installed (retry succeeded)"
+    if run_with_status "Installing packages (retry)" yarn install --ignore-engines; then
+      step_ok "Packages installed (retry succeeded)"
     else
-      step_fail "Dependency installation failed"
+      step_fail "Package installation failed"
     fi
   fi
 }
@@ -956,14 +996,14 @@ build_app() {
     heap_mb=12288
   fi
 
-  start_spinner "Building Sulla Desktop (this may take several minutes)..."
-  if run_silent "build" env NODE_OPTIONS="--max-old-space-size=$heap_mb" yarn build; then
+  start_spinner "Compiling desktop application..."
+  if run_with_status "Compiling" env NODE_OPTIONS="--max-old-space-size=$heap_mb" yarn build; then
     if [ ! -f "dist/app/background.js" ]; then
       step_fail "Build produced no output"
     fi
-    step_ok "Build complete"
+    step_ok "Desktop application compiled"
   else
-    step_fail "Build failed — check $INSTALL_LOG for details"
+    step_fail "Compilation failed"
   fi
 }
 
