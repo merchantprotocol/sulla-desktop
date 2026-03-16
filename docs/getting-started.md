@@ -17,7 +17,7 @@ Visit our [downloads page](https://sulladesktop.ai/downloads.html) to get the in
 If you prefer to build from source:
 
 ```bash
-git clone https://github.com/sulla-ai/sulla-desktop.git
+git clone https://github.com/merchantprotocol/sulla-desktop.git
 cd sulla-desktop
 yarn install
 yarn dev  # For development
@@ -36,8 +36,8 @@ yarn build  # For production
 
 ### Community Support
 
-- **GitHub Discussions**: Join our [community forum](https://github.com/sulla-ai/sulla-desktop/discussions) for free support
-- **Bug Reports**: Report issues on [GitHub Issues](https://github.com/sulla-ai/sulla-desktop/issues)
+- **GitHub Discussions**: Join our [community forum](https://github.com/merchantprotocol/sulla-desktop/discussions) for free support
+- **Bug Reports**: Report issues on [GitHub Issues](https://github.com/merchantprotocol/sulla-desktop/issues)
 
 ### Premium Support
 
@@ -45,7 +45,7 @@ For direct access to our developers and priority support, join our [SKOOL commun
 
 ## Next Steps
 
-- Browse the [documentation](https://github.com/sulla-ai/sulla-desktop/tree/main/docs) to learn about advanced features
+- Browse the [documentation](https://github.com/merchantprotocol/sulla-desktop/tree/main/docs) to learn about advanced features
 - Check out example workflows and use cases
 - Join our community to connect with other users
 

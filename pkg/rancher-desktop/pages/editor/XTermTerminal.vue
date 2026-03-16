@@ -200,4 +200,9 @@ export default defineComponent({
   overflow-y: hidden !important;
   background-color: inherit !important;
 }
+
+.terminal-wrapper :deep(.xterm-scrollable-element) {
+  background-color: var(--bg-surface) !important;
+  color: #f1f5f9;
+}
 </style>

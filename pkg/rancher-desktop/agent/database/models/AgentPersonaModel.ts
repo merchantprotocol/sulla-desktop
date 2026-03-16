@@ -580,6 +580,31 @@ export class AgentPersonaService {
     return undefined;
   }
 
+  /**
+   * Route an incoming WebSocket message to the appropriate handler.
+   *
+   * This is the **chat-path** entry point for all WebSocket messages on this
+   * persona's channel. For `workflow_execution_event` messages specifically,
+   * this is one of TWO independent consumers (the other being the canvas path
+   * via `EditorChatInterface` → `AgentEditor.vue` → `WorkflowEditor.vue`).
+   *
+   * **Workflow events handled here** (creates/mutates `ChatMessage` objects
+   * with `kind: 'workflow_node'`, rendered by `WorkflowNodeCard.vue`):
+   * - `workflow_started` — creates a "Workflow Started" card (status: running)
+   * - `node_started` — creates a running node card with nodeId + nodeLabel
+   * - `node_completed` / `node_failed` / `node_waiting` — updates existing card
+   * - `workflow_completed` / `workflow_failed` — updates the start card's status
+   *
+   * **Workflow events NOT handled here** (canvas-only):
+   * - `edge_activated`, `node_thinking`
+   *
+   * The event payload originates from `Graph.emitPlaybookEvent()` in the main
+   * process. Any changes to the payload shape must be reflected here AND in the
+   * canvas-path dispatcher in `AgentEditor.vue`.
+   *
+   * @param agentId The channel / agent ID this message arrived on
+   * @param msg     The raw WebSocket message
+   */
   private handleWebSocketMessage(agentId: string, msg: WebSocketMessage): void {
     const dataPreview = msg.data
       ? (typeof msg.data === 'string'
@@ -847,6 +872,118 @@ export class AgentPersonaService {
         // Handle token information from completed LLM response
         this.handleTokenInfo(tokens_used, prompt_tokens, completion_tokens, time_spent, threadId, nodeId);
       }
+      return;
+    }
+    // ── Chat-path workflow event handler ────────────────────────────────
+    // Creates and updates ChatMessage objects (kind: 'workflow_node') in the
+    // reactive messages array so the chat UI shows workflow progress cards.
+    //
+    // This is one of TWO independent consumers of `workflow_execution_event`:
+    //   1. EditorChatInterface → AgentEditor.vue → WorkflowEditor.vue (canvas)
+    //   2. This handler (chat message cards via WorkflowNodeCard.vue)
+    //
+    // Both listen on the same WebSocket channel. The event payload is emitted
+    // by Graph.emitPlaybookEvent() in the main process.
+    //
+    // Events handled here:
+    //   - workflow_started   → creates a "Workflow Started" card (status: running)
+    //   - node_started       → creates a new running node card
+    //   - node_completed     → finds running card by nodeId, updates to completed
+    //   - node_failed        → finds running card by nodeId, updates to failed
+    //   - node_waiting       → finds running card by nodeId, updates to waiting
+    //   - workflow_completed → finds start card, updates to completed
+    //   - workflow_failed    → finds start card, updates to failed
+    //
+    // Events NOT handled here (canvas-only):
+    //   - edge_activated, node_thinking
+    case 'workflow_execution_event': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+      if (!data) return;
+      const eventType: string = data.type || '';
+      const nodeId: string = data.nodeId || '';
+      const nodeLabel: string = data.nodeLabel || '';
+      const workflowRunId: string = data.thread_id || `wf_${ Date.now() }`;
+      const totalNodes: number = typeof data.totalNodes === 'number' ? data.totalNodes : 0;
+      const nodeIndex: number = typeof data.nodeIndex === 'number' ? data.nodeIndex : 0;
+
+      if (eventType === 'workflow_started') {
+        // Push a workflow-started card so the user sees the workflow kicked off
+        this.messages.push({
+          id:        `${ Date.now() }_wf_started`,
+          channelId: agentId,
+          threadId:  msgThreadId,
+          role:      'assistant',
+          kind:      'workflow_node',
+          content:   '',
+          workflowNode: {
+            workflowRunId,
+            nodeId:     '',
+            nodeLabel:  'Workflow Started',
+            status:     'running',
+            nodeIndex:  0,
+            totalNodes,
+          },
+        });
+        return;
+      }
+
+      if (eventType === 'node_started') {
+        // Push a new running node card
+        const messageId = `${ Date.now() }_wf_node_${ nodeId }`;
+        this.messages.push({
+          id:        messageId,
+          channelId: agentId,
+          threadId:  msgThreadId,
+          role:      'assistant',
+          kind:      'workflow_node',
+          content:   '',
+          workflowNode: {
+            workflowRunId,
+            nodeId,
+            nodeLabel,
+            status:    'running',
+            prompt:    typeof data.prompt === 'string' ? data.prompt : undefined,
+            nodeIndex,
+            totalNodes,
+          },
+        });
+        return;
+      }
+
+      if (eventType === 'node_completed' || eventType === 'node_failed' || eventType === 'node_waiting') {
+        // Find the existing card for this node and update it in place
+        const existing = [...this.messages].reverse().find(
+          m => m.workflowNode?.nodeId === nodeId && m.workflowNode?.status === 'running',
+        );
+        if (existing?.workflowNode) {
+          existing.workflowNode.status = eventType === 'node_completed' ? 'completed'
+            : eventType === 'node_failed' ? 'failed'
+              : 'waiting';
+          if (data.output !== undefined) {
+            existing.workflowNode.output = typeof data.output === 'string'
+              ? data.output
+              : JSON.stringify(data.output);
+          }
+          if (data.error) {
+            existing.workflowNode.error = String(data.error);
+          }
+          if (totalNodes > 0) existing.workflowNode.totalNodes = totalNodes;
+          if (nodeIndex > 0) existing.workflowNode.nodeIndex = nodeIndex;
+        }
+        return;
+      }
+
+      if (eventType === 'workflow_completed' || eventType === 'workflow_failed') {
+        // Update the workflow-started card
+        const startCard = [...this.messages].reverse().find(
+          m => m.workflowNode?.nodeLabel === 'Workflow Started' && m.workflowNode?.status === 'running',
+        );
+        if (startCard?.workflowNode) {
+          startCard.workflowNode.status = eventType === 'workflow_completed' ? 'completed' : 'failed';
+          if (data.error) startCard.workflowNode.error = String(data.error);
+        }
+      }
+      // edge_activated and other sub-events are visual-only (canvas), skip chat
       return;
     }
     case 'ack':

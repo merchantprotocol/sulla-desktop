@@ -1,7 +1,7 @@
 import { BaseTool, ToolResponse } from '../base';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 
-export class ManageActiveAssetWorker extends BaseTool {
+export class BrowserTabWorker extends BaseTool {
   name = '';
   description = '';
 

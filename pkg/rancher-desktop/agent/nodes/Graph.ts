@@ -32,48 +32,52 @@ import {
 const DEFAULT_WS_CHANNEL = 'heartbeat';
 const MAX_CONSECTUIVE_LOOP = 40;
 
-// ── Hand-back parser ──
+// ── Completion block parser ──
 
 interface ParsedHandBack {
   summary:             string;
   artifact:            string;
   needsUserInput:      boolean;
-  suggestedNextAction: string;
   rawOutput:           string;
 }
 
 /**
- * Parse the structured HAND_BACK block from a sub-agent's output.
- * Returns parsed fields if found, or a fallback with the raw output as summary.
+ * Parse the structured completion block from a sub-agent's output.
+ * Looks for <AGENT_DONE> XML wrapper with <KEY_RESULT> containing structured fields.
+ * Falls back to raw output as summary if no completion block found.
  */
 function parseHandBack(output: string): ParsedHandBack {
   const raw = typeof output === 'string' ? output : JSON.stringify(output);
-  const handBackIndex = raw.indexOf('HAND_BACK');
 
-  if (handBackIndex === -1) {
-    // No hand-back block — treat the entire output as the summary
+  // Extract content from <AGENT_DONE> wrapper
+  const agentDoneMatch = /<AGENT_DONE>([\s\S]*?)<\/AGENT_DONE>/i.exec(raw);
+
+  if (!agentDoneMatch) {
+    // No completion block — treat the entire output as the summary
     return {
       summary:             raw.substring(0, 500),
       artifact:            'none',
       needsUserInput:      false,
-      suggestedNextAction: '',
       rawOutput:           raw,
     };
   }
 
-  const handBackSection = raw.substring(handBackIndex);
+  const doneBlock = agentDoneMatch[1];
+
+  // Try to extract from <KEY_RESULT> if present, otherwise use the whole block
+  const keyResultMatch = /<KEY_RESULT>([\s\S]*?)<\/KEY_RESULT>/i.exec(doneBlock);
+  const section = keyResultMatch ? keyResultMatch[1] : doneBlock;
 
   const extractField = (field: string): string => {
     const regex = new RegExp(`${ field }:\\s*(.+?)(?:\\n|$)`, 'i');
-    const match = handBackSection.match(regex);
+    const match = section.match(regex);
     return match?.[1]?.trim() || '';
   };
 
   return {
-    summary:             extractField('Summary') || raw.substring(0, handBackIndex).trim().substring(0, 500),
+    summary:             extractField('Summary') || section.trim().substring(0, 500),
     artifact:            extractField('Artifact') || 'none',
     needsUserInput:      /^yes$/i.test(extractField('Needs user input')),
-    suggestedNextAction: extractField('Suggested next action'),
     rawOutput:           raw,
   };
 }
@@ -385,6 +389,11 @@ export class Graph<TState = BaseThreadState> {
 
     // Conversation logging (skip on playbook re-entry to avoid duplicates)
     const isReentry = options?._isPlaybookReentry ?? false;
+
+    // Propagate reentry flag to metadata so downstream nodes (AgentNode, BaseNode)
+    // can route orchestrator responses as workflow events instead of chat messages.
+    const prevReentryFlag = (state as any).metadata._isPlaybookReentry;
+    (state as any).metadata._isPlaybookReentry = isReentry;
     const convId = (state as any).metadata.conversationId;
     if (convId && !isReentry) {
       const convLogger = getConversationLogger();
@@ -472,6 +481,9 @@ export class Graph<TState = BaseThreadState> {
         (state as any).metadata.currentNodeId = nextId;
       }
     } catch (error: any) {
+      // Restore reentry flag on error path
+      (state as any).metadata._isPlaybookReentry = prevReentryFlag;
+
       if (error?.name === 'AbortError') {
         (state as any).metadata.waitingForUser = true;
         (state as any).metadata.cycleComplete = true;
@@ -532,6 +544,9 @@ export class Graph<TState = BaseThreadState> {
       // Clear stopReason after sending
       (state as any).metadata.stopReason = null;
     }
+
+    // Restore previous reentry flag so nested reentries unwind correctly
+    (state as any).metadata._isPlaybookReentry = prevReentryFlag;
 
     return state;
   }
@@ -736,14 +751,13 @@ export class Graph<TState = BaseThreadState> {
               `Summary: ${ handBack.summary }`,
               `Artifact: ${ handBack.artifact }`,
               `Needs user input: ${ handBack.needsUserInput ? 'yes' : 'no' }`,
-              handBack.suggestedNextAction ? `Suggested next action: ${ handBack.suggestedNextAction }` : '',
-            ].filter(Boolean).join('\n');
+            ].join('\n');
 
             let afterMsg: string;
             if (successCriteria) {
-              afterMsg = `[Workflow Node Complete: ${ subNodeLabel }]\nThe agent has completed its work and handed back results.\n\nHAND_BACK:\n${ handBackBlock }\n\nFull result:\n---\n${ resultText }\n---\n\nSuccess Criteria: ${ successCriteria }\n\nValidate whether the agent's output meets the success criteria above. Decide: approve, retry, or ask user.`;
+              afterMsg = `[Workflow Node Complete: ${ subNodeLabel }]\nThe agent has completed its work.\n\nResult:\n${ handBackBlock }\n\nFull output:\n---\n${ resultText }\n---\n\nSuccess Criteria: ${ successCriteria }\n\nValidate whether the agent's output meets the success criteria above. Decide: approve, retry, or ask user.`;
             } else {
-              afterMsg = `[Workflow Node Complete: ${ subNodeLabel }]\nThe agent has completed its work and handed back results.\n\nHAND_BACK:\n${ handBackBlock }\n\nReview this result. The workflow will advance to the next node.`;
+              afterMsg = `[Workflow Node Complete: ${ subNodeLabel }]\nThe agent has completed its work.\n\nResult:\n${ handBackBlock }\n\nReview this result. The workflow will advance to the next node.`;
             }
             this.injectWorkflowMessage(state, afterMsg);
             state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
@@ -1093,7 +1107,34 @@ export class Graph<TState = BaseThreadState> {
   }
 
   /**
-   * Emit a workflow execution event via WebSocket so the frontend can update the canvas.
+   * Emit a workflow execution event via WebSocket so the frontend can update both
+   * the vue-flow canvas (WorkflowEditor) and the chat message list (AgentPersonaModel).
+   *
+   * **Consumers (two independent listeners on the same WebSocket channel):**
+   *
+   * 1. **Canvas path** — `EditorChatInterface` forwards the raw event to
+   *    `AgentEditor.vue`, which calls methods on `WorkflowEditor.vue`
+   *    (`updateNodeExecution`, `clearAllExecution`, `setEdgeAnimated`, `pushNodeThinking`).
+   *
+   * 2. **Chat path** — `AgentPersonaModel.handleWebSocketMessage()` creates or
+   *    mutates `ChatMessage` objects (kind: `'workflow_node'`) in the reactive
+   *    messages array, rendered by `WorkflowNodeCard.vue`.
+   *
+   * **Supported event types:**
+   * - `workflow_started`  — resets canvas; creates a "Workflow Started" chat card
+   * - `node_started`      — sets node running on canvas; creates a running chat card
+   * - `node_completed`    — updates canvas + chat card to completed
+   * - `node_failed`       — updates canvas + chat card to failed
+   * - `node_waiting`      — chat-only (updates card to waiting; canvas ignores)
+   * - `node_thinking`     — canvas-only (pushes thinking message; chat ignores)
+   * - `edge_activated`    — canvas-only (animates edge; chat ignores)
+   * - `workflow_completed` — chat updates start card; canvas is a no-op
+   * - `workflow_failed`    — chat updates start card; canvas is a no-op
+   * - `workflow_aborted`   — canvas no-op; chat does not handle
+   *
+   * @param state  Current graph state (provides wsChannel + threadId from metadata)
+   * @param type   One of the event types listed above
+   * @param data   Extra payload fields merged into the event (e.g. nodeId, nodeLabel, output, error)
    */
   private emitPlaybookEvent(state: TState, type: string, data: Record<string, unknown> = {}): void {
     try {
@@ -1105,28 +1146,37 @@ export class Graph<TState = BaseThreadState> {
       // Compute progress counters from the active playbook
       let totalNodes = 0;
       let nodeIndex = 0;
+
       if (playbook?.definition?.nodes) {
-        // Exclude trigger nodes from the count — they fire automatically
         const executableNodes = (playbook.definition.nodes as any[]).filter(
           (n: any) => n.data?.category !== 'trigger',
         );
+
         totalNodes = executableNodes.length;
-        const completedCount = Object.keys(playbook.nodeOutputs ?? {}).length;
-        nodeIndex = completedCount;
+        nodeIndex = Object.keys(playbook.nodeOutputs ?? {}).length;
       }
 
       ws.send(channel, {
         type:      'workflow_execution_event',
-        data:      { type, thread_id: meta.threadId, timestamp: new Date().toISOString(), totalNodes, nodeIndex, ...data },
+        data:      {
+          type, thread_id: meta.threadId, timestamp: new Date().toISOString(), totalNodes, nodeIndex, ...data,
+        },
         timestamp: Date.now(),
       });
     } catch { /* best-effort */ }
   }
 
   /**
-   * Emit edge_activated events for all edges connecting to/from a node.
-   * Direction 'incoming' animates edges pointing INTO the node,
-   * 'outgoing' animates edges going OUT of the node.
+   * Emit `edge_activated` events for all edges connecting to/from a node.
+   *
+   * These events are consumed **only by the canvas** (WorkflowEditor.vue via
+   * `setEdgeAnimated`). The chat path in AgentPersonaModel explicitly skips them.
+   *
+   * @param state      Current graph state (forwarded to `emitPlaybookEvent`)
+   * @param definition Workflow definition containing the edges array
+   * @param nodeId     The node whose edges should animate
+   * @param direction  `'incoming'` animates edges pointing INTO the node,
+   *                   `'outgoing'` animates edges going OUT of the node
    */
   private emitEdgeActivations(
     state: TState,
@@ -1161,16 +1211,17 @@ export class Graph<TState = BaseThreadState> {
 
   /**
    * Inject a workflow-related message into the agent's conversation.
+   *
+   * Training data logging is intentionally NOT done here. The message will be
+   * logged by `BaseNode.logTrainingTurn()` after `InputHandlerNode.sanitizeMessage()`
+   * has normalized whitespace. Logging here would create a duplicate entry because
+   * sanitization mutates the content in place (e.g. collapsing `\n\n\n` → `\n\n`),
+   * causing the dedup check in TrainingDataLogger to fail.
    */
   private injectWorkflowMessage(state: TState, content: string, _silent?: boolean): void {
     const msgs = (state as any).messages;
     if (Array.isArray(msgs)) {
       msgs.push({ role: 'user', content: `[Workflow] ${ content }` });
-    }
-    // Training data: capture workflow-injected messages
-    const convId = (state as any).metadata?.conversationId;
-    if (convId) {
-      getTrainingDataLogger().logUserMessage(convId, `[Workflow] ${ content }`);
     }
   }
 

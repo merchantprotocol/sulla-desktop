@@ -35,7 +35,7 @@ services:
       retries: 3
 
   ws-server:
-    image: ghcr.io/jonathonbyrdziak/sulla-websocket:latest
+    image: ghcr.io/merchantprotocol/sulla-docker-websocket:latest
     container_name: sulla_ws_server
     ports:
       - "30118:8080"

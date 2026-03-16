@@ -27,20 +27,23 @@ import type {
   LoopIterationState,
 } from './types';
 
-// ── Default hand-back contract ──
+// ── Default completion contract ──
 // Appended to every sub-agent prompt so the orchestrator gets a structured response.
+// Uses <AGENT_DONE> XML wrapper consistent with the agent graph completion protocol.
 // Can be overridden per agent node via the completionContract config field.
 
 export const DEFAULT_HANDBACK_CONTRACT = `
 
 --- COMPLETION CONTRACT ---
-When you have finished your work, you MUST end your final message with the following structured hand-back block. This is required for the orchestrator to process your results.
+When you have fully completed your task, end your final message with:
 
-HAND_BACK
-Summary: [1-3 paragraph summary of what was accomplished, key decisions made, and any important context]
-Artifact: [file path to the primary output artifact, or "none" if no file was created]
-Needs user input: [yes/no — whether the user needs to review or approve before proceeding]
-Suggested next action: [optional — what should happen next in the workflow]
+<AGENT_DONE>
+<KEY_RESULT>
+Summary: [1-3 paragraphs of what was accomplished]
+Artifact: [primary output file path, or "none"]
+Needs user input: [yes/no]
+</KEY_RESULT>
+</AGENT_DONE>
 --- END CONTRACT ---
 `;
 
@@ -552,7 +555,7 @@ function handleAgentNode(
   upstreamOutputs: PlaybookNodeOutput[],
   triggerPayload: unknown,
 ): PlaybookStepResult {
-  const agentId = (config.agentId as string) || '';
+  const agentId = (config.agentId as string) || 'sulla-desktop';
   const additionalPrompt = (config.additionalPrompt as string) || '';
   const userMessageTemplate = (config.userMessage as string) || '';
 

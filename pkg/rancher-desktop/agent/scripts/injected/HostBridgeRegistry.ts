@@ -252,6 +252,9 @@ class HostBridgeRegistryImpl {
     lines.push(`You have ${ this.bridges.size } website(s) open that you can interact with using the playwright tools (click_element, set_field, scroll_to_element, get_form_values, get_page_text). Each tool accepts an optional assetId parameter to target a specific website. DOM changes, navigation, clicks, and dialog alerts are streamed to you automatically — you do NOT need to poll for page state.\n`);
 
     for (const entry of this.bridges.values()) {
+      // Skip entries with no URL or about:blank (not real pages)
+      if (!entry.url || entry.url === 'about:blank') continue;
+
       const isActive = entry.assetId === this.activeAssetId;
       const status = entry.bridge.isInjected() ? 'ready' : 'loading';
       const marker = isActive ? ' (active)' : '';
