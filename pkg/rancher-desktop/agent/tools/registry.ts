@@ -43,7 +43,7 @@ export class ToolRegistry {
   private schemaDefs = new Map<string, Record<string, any>>();
   private operationTypesMap = new Map<string, ToolOperation[]>();
   private categoriesList = [
-    'meta', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'n8n', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
+    'meta', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -58,7 +58,6 @@ export class ToolRegistry {
     fs:                 'File system operations tools for creating, reading, writing, moving, copying, and deleting files/directories.',
     github:             'GitHub repository management tools.',
     kubectl:            'Kubernetes cluster management tools.',
-    n8n:                'Tools for managing n8n workflows, executions, credentials, tags, variables, and data tables.',
     slack:              'Slack messaging and reaction tools.',
     workspace:          'Tools for managing workspace folders in the Rancher Desktop data directory.',
     redis:              'Redis key/value store operations.',

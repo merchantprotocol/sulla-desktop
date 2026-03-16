@@ -84,10 +84,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue';
-import { StartupProgressController } from './StartupProgressController';
+import { onMounted, onUnmounted } from 'vue';
+import { useStartupProgress } from './useStartupProgress';
 
-const startupState = StartupProgressController.createState();
 const {
   systemReady,
   progressCurrent,
@@ -99,34 +98,16 @@ const {
   modelName,
   modelDownloadStatus,
   modelMode,
-} = startupState;
-
-const startupProgress = new StartupProgressController(startupState);
-
-const emit = defineEmits<{
-  'overlay-visible': [value: boolean];
-  'system-ready':    [value: boolean];
-}>();
-
-// Emit initial values
-emit('overlay-visible', showOverlay.value);
-emit('system-ready', systemReady.value);
-
-// Watch for changes and emit
-watch(showOverlay, (newVal) => {
-  emit('overlay-visible', newVal);
-});
-
-watch(systemReady, (newVal) => {
-  emit('system-ready', newVal);
-});
+  start,
+  dispose,
+} = useStartupProgress();
 
 onMounted(() => {
-  startupProgress.start();
+  start();
 });
 
 onUnmounted(() => {
-  startupProgress.dispose();
+  dispose();
 });
 </script>
 
