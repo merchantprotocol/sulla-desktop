@@ -1236,6 +1236,15 @@ install_deps() {
     return
   fi
 
+  # On Linux, node-pty ships no prebuilds and must compile from source via
+  # node-gyp.  Ensure node-gyp is globally available so lifecycle scripts
+  # can find it regardless of installation order.
+  if [ "$OS" = "linux" ] && ! command_exists node-gyp; then
+    start_spinner "Installing node-gyp (needed for native modules on Linux)..."
+    run_silent "node-gyp" npm install -g node-gyp
+    step_ok "node-gyp installed"
+  fi
+
   start_spinner "Installing packages..."
   run_with_status "Installing packages" yarn install --ignore-engines --ignore-platform || true
   stop_spinner
