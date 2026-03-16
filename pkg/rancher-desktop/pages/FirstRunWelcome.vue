@@ -1,46 +1,46 @@
 <template>
-  <div class="max-w-lg mx-0 p-6 bg-white dark:bg-gray-800/30">
+  <div class="max-w-lg mx-0 p-6">
     <form @submit.prevent="handleNextWelcome">
-      <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">
+      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
         Create Your Account
       </h2>
-      <p class="mb-6 text-gray-600 dark:text-gray-400">
+      <p class="mb-6 secondary-text">
         Set up your account details and preferences.
       </p>
 
       <rd-fieldset
         legend-text="User Account"
-        class="mb-6 dark:text-gray-100"
+        class="mb-6 heading-text"
       >
         <div class="mb-4">
           <label
             for="primaryUserName"
-            class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            class="block text-sm font-medium mb-1 label-text"
           >Primary User Name:</label>
           <input
             id="primaryUserName"
             v-model="primaryUserName"
             type="text"
-            class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+            class="w-full p-2 border rounded-md form-input"
             placeholder="Enter your name (optional)"
           >
         </div>
         <div class="mb-4">
           <label
             for="email"
-            class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            class="block text-sm font-medium mb-1 label-text"
           >Email:</label>
           <input
             id="email"
             v-model="sullaEmail"
             type="email"
-            class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-            :class="{ 'border-red-500': !!emailError }"
+            class="w-full p-2 border rounded-md form-input"
+            :class="{ 'input-error': !!emailError }"
             placeholder="Enter email"
           >
           <p
             v-if="emailError"
-            class="text-red-500 text-sm mt-1"
+            class="text-sm mt-1 error-text"
           >
             {{ emailError }}
           </p>
@@ -48,19 +48,19 @@
         <div class="mb-4">
           <label
             for="password"
-            class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            class="block text-sm font-medium mb-1 label-text"
           >Password:</label>
           <input
             id="password"
             v-model="sullaPassword"
             type="password"
-            class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-            :class="{ 'border-red-500': !!passwordError }"
+            class="w-full p-2 border rounded-md form-input"
+            :class="{ 'input-error': !!passwordError }"
             placeholder="Enter password"
           >
           <p
             v-if="passwordError"
-            class="text-red-500 text-sm mt-1"
+            class="text-sm mt-1 error-text"
           >
             {{ passwordError }}
           </p>
@@ -69,7 +69,7 @@
 
       <rd-fieldset
         legend-text="Updates"
-        class="mb-6 dark:text-gray-100"
+        class="mb-6 heading-text"
       >
         <label class="flex items-center">
           <input
@@ -78,7 +78,7 @@
             checked="true"
             class="mr-2"
           >
-          <span class="text-sm text-gray-700 dark:text-gray-300">Subscribe to updates and newsletters</span>
+          <span class="text-sm label-text">Subscribe to updates and newsletters</span>
         </label>
       </rd-fieldset>
 
@@ -86,15 +86,14 @@
         <button
           v-if="showBack"
           type="button"
-          class="px-6 py-2 text-gray-500 rounded-md transition-colors font-medium hover:opacity-90 bg-gray-100 hover:bg-gray-200 cursor-pointer"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 cursor-pointer btn-back"
           @click="$emit('back')"
         >
           Back
         </button>
         <button
           type="submit"
-          class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90"
-          :style="{ backgroundColor: '#30a5e9' }"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary"
         >
           Next
         </button>
@@ -252,6 +251,53 @@ const handleNextWelcome = async() => {
 .button-area {
   align-self: flex-end;
   margin-top: 1.5rem;
+}
+
+/* Text color classes */
+.heading-text {
+  color: var(--text-primary);
+}
+
+.secondary-text {
+  color: var(--text-secondary);
+}
+
+.label-text {
+  color: var(--text-secondary);
+}
+
+.error-text {
+  color: var(--text-error);
+}
+
+/* Form input styling */
+.form-input {
+  background-color: var(--bg-input);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.input-error {
+  border-color: var(--border-error);
+}
+
+/* Button styles */
+.btn-back {
+  color: var(--text-secondary);
+  background-color: var(--bg-surface-alt);
+
+  &:hover {
+    background-color: var(--bg-surface-hover);
+  }
+}
+
+.btn-primary {
+  background-color: var(--accent-primary);
+  color: var(--text-on-accent);
+
+  &:hover {
+    background-color: var(--accent-primary-hover);
+  }
 }
 
 input[type="checkbox"]:checked {
