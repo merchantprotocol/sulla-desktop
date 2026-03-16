@@ -96,10 +96,10 @@ export function resolveSullaConversationsDir(): string {
 }
 
 const BOOTSTRAP_REPOS: { dir: () => string; repo: string }[] = [
-  { dir: resolveSullaAgentsDir, repo: 'https://github.com/sulla-ai/agents.git' },
-  { dir: resolveSullaSkillsDir, repo: 'https://github.com/sulla-ai/skills.git' },
-  { dir: resolveSullaWorkflowsDir, repo: 'https://github.com/sulla-ai/workflows.git' },
-  { dir: resolveSullaIntegrationsDir, repo: 'https://github.com/sulla-ai/integrations.git' },
+  { dir: resolveSullaAgentsDir, repo: 'https://github.com/merchantprotocol/agents.git' },
+  { dir: resolveSullaSkillsDir, repo: 'https://github.com/merchantprotocol/skills.git' },
+  { dir: resolveSullaWorkflowsDir, repo: 'https://github.com/merchantprotocol/workflows.git' },
+  { dir: resolveSullaIntegrationsDir, repo: 'https://github.com/merchantprotocol/integrations.git' },
 ];
 
 export async function bootstrapSullaHome(): Promise<void> {

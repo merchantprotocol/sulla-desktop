@@ -12,6 +12,7 @@ import { VMBackend } from '@pkg/backend/backend';
 import { State } from '@pkg/backend/k8s';
 import * as kubeconfig from '@pkg/backend/kubeconfig';
 import { Settings } from '@pkg/config/settings';
+import { showErrorDialogWithReport } from '@pkg/main/errorReporter';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
@@ -19,7 +20,7 @@ import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send, openEditor } from '@pkg/window';
+import { openMain, send, openEditor, openDockerDashboard } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -51,16 +52,7 @@ export class Tray {
         openMain();
       },
     },
-    {
-      id:    'automations',
-      label: 'Open Automations',
-      icon:  path.join(paths.resources, 'icons', 'automation-play.png'),
-      type:  'normal',
-      click() {
-        void Electron.shell.openExternal('http://127.0.0.1:30119');
-      },
-    },
-    {
+{
       id:    'editor',
       label: 'Open Agent Workbench',
       icon:  path.join(paths.resources, 'icons', 'book-open-16.png'),
@@ -77,9 +69,29 @@ export class Tray {
     },
     { type: 'separator' },
     {
-      id:    'help',
-      label: 'Help',
-      icon:  path.join(paths.resources, 'icons', 'help-circle-16.png'),
+      id:    'docker-dashboard',
+      label: 'Docker Dashboard',
+      icon:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
+      type:  'normal',
+      click() {
+        openDockerDashboard();
+      },
+    },
+    {
+      id:      'dashboard',
+      label:   'Kubernetes Dashboard',
+      icon:    path.join(paths.resources, 'icons', 'kubernetes-icon-color.png'),
+      type:    'normal',
+      enabled: false,
+      click() {
+        openDashboard();
+      },
+    },
+    { type: 'separator' },
+    {
+      id:      'help',
+      label:   'Help',
+      icon:    path.join(paths.resources, 'icons', 'help-circle-16.png'),
       submenu: [
         {
           id:    'premium-support',
@@ -102,7 +114,7 @@ export class Tray {
           label: 'Discussions',
           icon:  path.join(paths.resources, 'icons', 'messages-circle-16.png'),
           click() {
-            void Electron.shell.openExternal('https://github.com/sulla-ai/sulla-desktop/discussions');
+            void Electron.shell.openExternal('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },
@@ -111,7 +123,7 @@ export class Tray {
           label: 'Issues',
           icon:  path.join(paths.resources, 'icons', 'issue-opened-16.png'),
           click() {
-            void Electron.shell.openExternal('https://github.com/sulla-ai/sulla-desktop/issues');
+            void Electron.shell.openExternal('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },
@@ -183,7 +195,7 @@ export class Tray {
           fs.accessSync(filepath);
           return true;
         } catch {
-          console.debug(`Skipping watch for non-existent kubeconfig: ${filepath}`);
+          console.debug(`Skipping watch for non-existent kubeconfig: ${ filepath }`);
           return false;
         }
       })
@@ -220,8 +232,11 @@ export class Tray {
     try {
       this.updateContexts();
     } catch (err) {
-      Electron.dialog.showErrorBox('Error starting the app:',
-        `Error message: ${ err instanceof Error ? err.message : err }`);
+      showErrorDialogWithReport(
+        'Error starting the app',
+        `Error message: ${ err instanceof Error ? err.message : err }`,
+        'tray-updateContexts',
+      );
     }
 
     const contextMenu = Electron.Menu.buildFromTemplate(this.contextMenuItems);
@@ -506,10 +521,10 @@ export class Tray {
       }
 
       const data: Record<string, {
-        version: string;
-        metadata: any;
-        labels: Record<string, string>;
-        extraUrls?: Array<{ label: string; url: string }>;
+        version:    string;
+        metadata:   any;
+        labels:     Record<string, string>;
+        extraUrls?: { label: string; url: string }[];
       }> = await response.json();
 
       const extensionsMenu = this.contextMenuItems.find(item => item.id === 'extensions');

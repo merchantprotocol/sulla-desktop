@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { runCommand } from "../util/CommandRunner";
+import { BaseTool, ToolResponse } from '../base';
+import { runCommand } from '../util/CommandRunner';
 
 /**
  * Rdctl Extension Tool - Worker class for execution
  */
 export class RdctlExtensionWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { subcommand, args = [] } = input;
 
@@ -18,18 +18,18 @@ export class RdctlExtensionWorker extends BaseTool {
       if (res.exitCode !== 0) {
         return {
           successBoolean: false,
-          responseString: `Error executing extension command: ${res.stderr || res.stdout}`
+          responseString: `Error executing extension command: ${ res.stderr || res.stdout }`,
         };
       }
 
       return {
         successBoolean: true,
-        responseString: `Extension command executed: ${subcommand}${args.length ? ` ${args.join(' ')}` : ''}\nOutput:\n${res.stdout}`
+        responseString: `Extension command executed: ${ subcommand }${ args.length ? ` ${ args.join(' ') }` : '' }\nOutput:\n${ res.stdout }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing rdctl extension: ${(error as Error).message}`
+        responseString: `Error executing rdctl extension: ${ (error as Error).message }`,
       };
     }
   }

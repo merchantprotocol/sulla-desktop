@@ -1,9 +1,23 @@
 <template>
-  <div class="monitor-nav" :class="{ dark: isDark }">
+  <div
+    class="monitor-nav"
+    :class="{ dark: isDark }"
+  >
     <div class="pane-header">
       <span class="pane-title">MONITOR</span>
-      <button class="pane-close" @click="$emit('close')" title="Close">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      <button
+        class="pane-close"
+        title="Close"
+        @click="$emit('close')"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        ><path d="M18 6L6 18M6 6l12 12" /></svg>
       </button>
     </div>
 
@@ -15,64 +29,83 @@
         :class="{ active: activeSection === item.id }"
         @click="$emit('section-change', item.id)"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" v-html="item.icon"></svg>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          v-html="item.icon"
+        />
         <span class="nav-label">{{ item.label }}</span>
-        <span v-if="item.badge" class="nav-badge" :class="item.badgeClass">{{ item.badge }}</span>
+        <span
+          v-if="item.badge"
+          class="nav-badge"
+          :class="item.badgeClass"
+        >{{ item.badge }}</span>
       </button>
     </div>
 
     <div class="nav-footer">
-      <button class="refresh-btn" @click="$emit('refresh')">Refresh All</button>
+      <button
+        class="refresh-btn"
+        @click="$emit('refresh')"
+      >
+        Refresh All
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 defineProps<{
-  isDark: boolean;
+  isDark:        boolean;
   activeSection: string;
 }>();
 
 defineEmits<{
-  close: [];
+  close:            [];
   'section-change': [section: string];
-  refresh: [];
+  refresh:          [];
 }>();
 
 const navItems = [
   {
-    id: 'health',
-    label: 'Health',
-    icon: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
-    badge: null,
+    id:         'health',
+    label:      'Health',
+    icon:       '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    badge:      null,
     badgeClass: '',
   },
   {
-    id: 'heartbeat',
-    label: 'Heartbeat',
-    icon: '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
-    badge: null,
+    id:         'heartbeat',
+    label:      'Heartbeat',
+    icon:       '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
+    badge:      null,
     badgeClass: '',
   },
   {
-    id: 'live',
-    label: 'Live',
-    icon: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
-    badge: null,
+    id:         'live',
+    label:      'Live',
+    icon:       '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+    badge:      null,
     badgeClass: '',
   },
   {
-    id: 'conversations',
-    label: 'Conversations',
-    icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
-    badge: null,
+    id:         'conversations',
+    label:      'Conversations',
+    icon:       '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    badge:      null,
     badgeClass: '',
   },
   {
-    id: 'errors',
-    label: 'Errors',
-    icon: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
-    badge: null,
+    id:         'errors',
+    label:      'Errors',
+    icon:       '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+    badge:      null,
     badgeClass: '',
   },
 ];
@@ -84,24 +117,22 @@ const navItems = [
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  font-size: 12px;
-  color: #334155;
+  font-size: var(--fs-body-sm);
+  color: var(--text-primary);
 }
-.monitor-nav.dark { color: #94a3b8; }
 
 .pane-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  color: #64748b;
-  border-bottom: 1px solid #e2e8f0;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
 }
-.dark .pane-header { border-color: #334155; color: #94a3b8; }
 
 .pane-close {
   background: none;
@@ -112,8 +143,7 @@ const navItems = [
   border-radius: 3px;
   display: flex;
 }
-.pane-close:hover { background: rgba(0,0,0,0.08); }
-.dark .pane-close:hover { background: rgba(255,255,255,0.08); }
+.pane-close:hover { background: var(--bg-hover); }
 
 .nav-items {
   flex: 1;
@@ -131,50 +161,42 @@ const navItems = [
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-code);
   text-align: left;
   transition: background 0.1s;
 }
-.nav-item:hover { background: rgba(0,0,0,0.05); }
-.dark .nav-item:hover { background: rgba(255,255,255,0.05); }
+.nav-item:hover { background: var(--bg-hover); }
 
 .nav-item.active {
-  background: rgba(0, 120, 212, 0.08);
-  color: #0078d4;
-  font-weight: 500;
-}
-.dark .nav-item.active {
-  background: rgba(0, 120, 212, 0.15);
-  color: #60a5fa;
+  background: var(--bg-info);
+  color: var(--accent-primary);
+  font-weight: var(--weight-medium);
 }
 
 .nav-label { flex: 1; }
 
 .nav-badge {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   padding: 1px 6px;
   border-radius: 8px;
 }
 
 .nav-footer {
   padding: 8px 10px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-default);
   flex-shrink: 0;
 }
-.dark .nav-footer { border-color: #334155; }
 
 .refresh-btn {
   width: 100%;
   padding: 6px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 4px;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
 }
-.refresh-btn:hover { background: rgba(0,0,0,0.05); }
-.dark .refresh-btn { border-color: #334155; }
-.dark .refresh-btn:hover { background: rgba(255,255,255,0.05); }
+.refresh-btn:hover { background: var(--bg-hover); }
 </style>

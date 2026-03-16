@@ -8,25 +8,39 @@ import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientSe
 
 const WORKBENCH_CHANNEL = 'workbench';
 
+/**
+ * Handler signature for workflow execution events forwarded to the canvas.
+ *
+ * Registered via {@link EditorChatInterface.onWorkflowEvent} and invoked by the
+ * WebSocket listener in the EditorChatInterface constructor whenever a
+ * `workflow_execution_event` message arrives on the `workbench` channel.
+ *
+ * The consumer is `AgentEditor.vue`, which dispatches each event type to the
+ * corresponding `WorkflowEditor.vue` method (see that component's doc blocks
+ * for per-method details).
+ *
+ * **Important:** This is the canvas-only path. The chat message list receives
+ * the same raw WebSocket event independently via `AgentPersonaModel.handleWebSocketMessage()`.
+ */
 export type WorkflowExecutionEventHandler = (event: {
-  type: string;
-  nodeId?: string;
+  type:       string;
+  nodeId?:    string;
   nodeLabel?: string;
-  output?: unknown;
-  error?: string;
-  threadId?: string;
-  sourceId?: string;
-  targetId?: string;
+  output?:    unknown;
+  error?:     string;
+  threadId?:  string;
+  sourceId?:  string;
+  targetId?:  string;
   /** Present on node_thinking events */
-  content?: string;
-  role?: 'assistant' | 'system';
-  kind?: string;
-  timestamp: string;
+  content?:   string;
+  role?:      'assistant' | 'system';
+  kind?:      string;
+  timestamp:  string;
 }) => void;
 
 export class EditorChatInterface {
   private readonly registry: AgentPersonaRegistry;
-  private readonly persona: AgentPersonaService;
+  private readonly persona:  AgentPersonaService;
 
   readonly query = ref('');
   readonly messages = ref<ChatMessage[]>([]);
@@ -37,8 +51,8 @@ export class EditorChatInterface {
   /** When set, overrides which agent handles messages on the backend */
   readonly activeAgentId = ref<string | null>(null);
 
-  private watcher: ReturnType<typeof watch> | null = null;
-  private wsUnsub: (() => void) | null = null;
+  private watcher:              ReturnType<typeof watch> | null = null;
+  private wsUnsub:              (() => void) | null = null;
   private workflowEventHandler: WorkflowExecutionEventHandler | null = null;
 
   readonly graphRunning = computed(() => {
@@ -50,6 +64,10 @@ export class EditorChatInterface {
   });
 
   readonly loading = ref(false);
+
+  readonly currentActivity = computed(() => {
+    return this.persona.currentActivity.value;
+  });
 
   constructor() {
     // Create a minimal registry just for the persona service's internal needs
@@ -64,7 +82,16 @@ export class EditorChatInterface {
 
     this.updateMessages();
 
-    // Listen for workflow execution events on the workbench channel
+    // ── Canvas-path WebSocket listener ──────────────────────────────────
+    // Subscribes to the `workbench` channel and forwards `workflow_execution_event`
+    // messages to the handler registered via `onWorkflowEvent()`.
+    //
+    // This is one of TWO independent consumers of the same event:
+    //   1. This listener → AgentEditor.vue → WorkflowEditor.vue (canvas updates)
+    //   2. AgentPersonaModel.handleWebSocketMessage() (chat card updates)
+    //
+    // Both paths listen on the same WebSocket channel. Changes to the event
+    // payload shape in Graph.emitPlaybookEvent() must be reflected in both.
     const ws = getWebSocketClientService();
     this.wsUnsub = ws.onMessage(WORKBENCH_CHANNEL, (msg) => {
       if (msg.type === 'workflow_execution_event' && this.workflowEventHandler) {
@@ -74,7 +101,18 @@ export class EditorChatInterface {
     });
   }
 
-  /** Register a handler for workflow execution events (node_started, node_completed, etc.) */
+  /**
+   * Register a handler for workflow execution events forwarded to the canvas.
+   *
+   * Only one handler is supported at a time (last-write-wins). The handler is
+   * called for every `workflow_execution_event` message on the `workbench`
+   * WebSocket channel with the raw `msg.data` payload from
+   * {@link Graph.emitPlaybookEvent}.
+   *
+   * The sole consumer today is `AgentEditor.vue`, which dispatches to
+   * `WorkflowEditor.vue` methods: `clearAllExecution`, `updateNodeExecution`,
+   * `setEdgeAnimated`, and `pushNodeThinking`.
+   */
   onWorkflowEvent(handler: WorkflowExecutionEventHandler): void {
     this.workflowEventHandler = handler;
   }
@@ -90,7 +128,7 @@ export class EditorChatInterface {
     this.query.value = '';
     await this.persona.addUserMessage('', text, {
       workflowId: this.activeWorkflowId.value || undefined,
-      agentId: this.activeAgentId.value || undefined,
+      agentId:    this.activeAgentId.value || undefined,
     });
   }
 
@@ -107,8 +145,8 @@ export class EditorChatInterface {
     if (oldThreadId) {
       const ws = getWebSocketClientService();
       ws.send(WORKBENCH_CHANNEL, {
-        type: 'new_conversation',
-        data: { threadId: oldThreadId },
+        type:      'new_conversation',
+        data:      { threadId: oldThreadId },
         timestamp: Date.now(),
       });
     }

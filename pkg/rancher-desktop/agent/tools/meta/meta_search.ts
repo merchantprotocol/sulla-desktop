@@ -6,8 +6,8 @@ import { indexDirectory, search, type QmdSearchResult } from '@pkg/main/qmdServi
  * Indexes and searches a directory, returning matching files with previews.
  */
 export class MetaSearchWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { query, dirPath, limit, reindex } = input;
@@ -42,7 +42,7 @@ export class MetaSearchWorker extends BaseTool {
         if (retryResults.length === 0) {
           return {
             successBoolean: true,
-            responseString: `No results found for "${query}" in ${dirPath}`,
+            responseString: `No results found for "${ query }" in ${ dirPath }`,
           };
         }
 
@@ -59,18 +59,18 @@ export class MetaSearchWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Search failed: ${error instanceof Error ? error.message : String(error)}`,
+        responseString: `Search failed: ${ error instanceof Error ? error.message : String(error) }`,
       };
     }
   }
 }
 
 function formatResults(results: QmdSearchResult[], query: string, dirPath: string): string {
-  const header = `Found ${results.length} result(s) for "${query}" in ${dirPath}:\n`;
+  const header = `Found ${ results.length } result(s) for "${ query }" in ${ dirPath }:\n`;
   const items = results.map((r, i) => {
-    const parts = [`${i + 1}. ${r.path}`];
-    if (r.line) parts.push(`   Line ${r.line}`);
-    if (r.preview) parts.push(`   ${r.preview}`);
+    const parts = [`${ i + 1 }. ${ r.path }`];
+    if (r.line) parts.push(`   Line ${ r.line }`);
+    if (r.preview) parts.push(`   ${ r.preview }`);
     return parts.join('\n');
   });
   return header + items.join('\n\n');

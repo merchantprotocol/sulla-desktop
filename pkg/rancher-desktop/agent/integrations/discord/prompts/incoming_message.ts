@@ -17,5 +17,5 @@ Rules:
 5. Never hallucinate — stick to visible facts in payload
 
 ## Discord usage instructions
-${getDiscordInstructions()}
+${ getDiscordInstructions() }
 `;

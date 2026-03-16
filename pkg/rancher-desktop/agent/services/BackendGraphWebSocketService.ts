@@ -29,7 +29,6 @@ export class BackendGraphWebSocketService {
   private activeAborts = new Map<string, AbortService>();
   private subscribedChannels = new Set<string>();
 
-
   constructor() {
     this.initialize();
   }
@@ -158,8 +157,8 @@ export class BackendGraphWebSocketService {
     const metadata = data?.metadata;
     if (metadata?.origin === 'scheduler' && typeof metadata?.eventId === 'number') {
       this.wsService.send(channelId, {
-        type: 'scheduler_ack',
-        data: { eventId: metadata.eventId },
+        type:      'scheduler_ack',
+        data:      { eventId: metadata.eventId },
         timestamp: Date.now(),
       });
     }
@@ -189,8 +188,8 @@ export class BackendGraphWebSocketService {
       // Notify frontend of the threadId so it can maintain the conversation
       if (isNewThread) {
         this.wsService.send(channelId, {
-          type: 'thread_created',
-          data: { threadId },
+          type:      'thread_created',
+          data:      { threadId },
           timestamp: Date.now(),
         });
       }
@@ -222,9 +221,9 @@ export class BackendGraphWebSocketService {
       const resumeNodeId = state.metadata.waitingForUser === true
         ? String(state.metadata.currentNodeId || '').trim()
         : '';
-      const shouldResumeFromCurrentNode = !!resumeNodeId
-        && resumeNodeId !== 'input_handler'
-        && resumeNodeId !== 'output';
+      const shouldResumeFromCurrentNode = !!resumeNodeId &&
+        resumeNodeId !== 'input_handler' &&
+        resumeNodeId !== 'output';
 
       // Reset execution counters for this run (but NOT messages — those accumulate)
       state.metadata.consecutiveSameNode = 0;
@@ -241,10 +240,11 @@ export class BackendGraphWebSocketService {
         state.metadata.cycleComplete = true;
         state.metadata.waitingForUser = true;
       } else if (err?.name !== 'AbortError') {
-        console.error(`[BackendGraphWS] Agent execution FAILED on ${channelId}:`, err);
+        console.error(`[BackendGraphWS] Agent execution FAILED on ${ channelId }:`, err);
         this.emitMessage(channelId, 'assistant_message', {
-          content: `Agent error: ${err.message || String(err)}`,
-          role: 'assistant',
+          content:   `Agent error: ${ err.message || String(err) }`,
+          role:      'assistant',
+          thread_id: threadId,
         });
       }
     } finally {
@@ -313,9 +313,9 @@ export class BackendGraphWebSocketService {
 }
 
 interface CalendarWebSocketMessage {
-  type: 'scheduled' | 'cancel' | 'reschedule';
-  event?: CalendarEventData;
-  id: string;
+  type:      'scheduled' | 'cancel' | 'reschedule';
+  event?:    CalendarEventData;
+  id:        string;
   timestamp: number;
-  channel: string;
+  channel:   string;
 }

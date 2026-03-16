@@ -15,18 +15,18 @@ const LOG_PREFIX = '[OAuthService]';
 // ─── DB row shape ─────────────────────────────────────────────────
 
 interface OAuthTokenRow {
-  token_id: number;
+  token_id:       number;
   integration_id: string;
-  account_id: string;
-  provider_id: string;
-  access_token: string;
-  refresh_token: string | null;
-  token_type: string;
-  scope: string | null;
-  expires_at: number | null;
-  raw_response: Record<string, unknown> | null;
-  created_at: Date;
-  updated_at: Date;
+  account_id:     string;
+  provider_id:    string;
+  access_token:   string;
+  refresh_token:  string | null;
+  token_type:     string;
+  scope:          string | null;
+  expires_at:     number | null;
+  raw_response:   Record<string, unknown> | null;
+  created_at:     Date;
+  updated_at:     Date;
 }
 
 // ─── Active refresh timers ────────────────────────────────────────
@@ -100,9 +100,9 @@ export class OAuthService {
 
     // Start callback server (with optional fixed port/path)
     const { redirectUri, codePromise, shutdown } = startOAuthCallbackServer({
-      expectedState: state,
-      fixedPort:     cfg.fixedCallbackPort,
-      callbackPath:  cfg.fixedCallbackPath,
+      expectedState:        state,
+      fixedPort:            cfg.fixedCallbackPort,
+      callbackPath:         cfg.fixedCallbackPath,
       useLocalhostHostname: !!cfg.fixedCallbackPort,
     });
     console.log(`${ LOG_PREFIX } Callback server listening at ${ redirectUri }`);
@@ -335,7 +335,7 @@ export class OAuthService {
 
     console.log(`${ LOG_PREFIX } Scheduling refresh for ${ integrationId }/${ accountId } in ${ Math.round(delayMs / 1000) }s`);
 
-    const timer = setTimeout(async () => {
+    const timer = setTimeout(async() => {
       try {
         await this.refreshAccessToken(integrationId, accountId, providerId, clientId, clientSecret);
       } catch (err) {
@@ -363,9 +363,9 @@ export class OAuthService {
     if (revokeUrl && stored.access_token) {
       try {
         await fetch(revokeUrl, {
-          method: 'POST',
+          method:  'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ token: stored.access_token }).toString(),
+          body:    new URLSearchParams({ token: stored.access_token }).toString(),
         });
         console.log(`${ LOG_PREFIX } Token revoked at provider for ${ integrationId }/${ accountId }`);
       } catch (err) {
@@ -443,7 +443,7 @@ export class OAuthService {
     }
 
     const refreshed = await this.refreshAccessToken(
-      integrationId, accountId, stored.provider_id, clientId!, clientSecret ?? '',
+      integrationId, accountId, stored.provider_id, clientId, clientSecret ?? '',
     );
 
     return refreshed.access_token;

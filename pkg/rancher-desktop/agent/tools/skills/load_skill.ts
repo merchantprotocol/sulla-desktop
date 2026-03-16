@@ -6,8 +6,8 @@ import { skillsRegistry } from '../../database/registry/SkillsRegistry';
  * Resolves from native (built-in), database, or filesystem sources.
  */
 export class LoadSkillWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { skill_name } = input;

@@ -1,6 +1,6 @@
 # Submitting Your Extension
 
-All Sulla Desktop extensions are published through the [`sulla-ai/sulla-recipes`](https://github.com/sulla-ai/sulla-recipes) repository. To get your extension listed in the marketplace, you submit a pull request with your recipe files.
+All Sulla Desktop extensions are published through the [`merchantprotocol/sulla-recipes`](https://github.com/merchantprotocol/sulla-recipes) repository. To get your extension listed in the marketplace, you submit a pull request with your recipe files.
 
 ## Prerequisites
 
@@ -100,7 +100,7 @@ Create `recipes/my-extension/manifest.yaml`:
   containerd_compatible: true
   labels:
     com.docker.desktop.extension.api.version: 0.0.1
-    com.docker.extension.icon: https://raw.githubusercontent.com/sulla-ai/sulla-recipes/main/recipes/my-extension/icon.png
+    com.docker.extension.icon: https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/main/recipes/my-extension/icon.png
     com.docker.extension.additional-urls: ""
     com.docker.extension.categories: productivity,utility-tools
     com.docker.extension.changelog: >
@@ -131,10 +131,10 @@ Create `recipes/my-extension/manifest.yaml`:
     org.opencontainers.image.vendor: Your Org
     org.opencontainers.image.version: 1.0.0
   title: My Extension by Your Org
-  logo: https://raw.githubusercontent.com/sulla-ai/sulla-recipes/main/recipes/my-extension/icon.png
+  logo: https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/main/recipes/my-extension/icon.png
   publisher: Your Org
   short_description: Short one-line description of my extension
-  installable: https://raw.githubusercontent.com/sulla-ai/sulla-recipes/refs/heads/main/recipes/my-extension/installation.yaml
+  installable: https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/recipes/my-extension/installation.yaml
 ```
 
 See [manifest.yaml Reference](./manifest-yaml.md) for all available fields.
@@ -164,7 +164,7 @@ plugins:
   - slug: docker.io/your-org/my-extension
     version: 1.0.0
     # ... rest of your manifest entry ...
-    installable: https://raw.githubusercontent.com/sulla-ai/sulla-recipes/refs/heads/main/recipes/my-extension/installation.yaml
+    installable: https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/recipes/my-extension/installation.yaml
 ```
 
 The `installable` field is what makes your extension recipe-based. **Do not omit it.**
@@ -196,7 +196,7 @@ git push origin add-my-extension
 
 ### 10. Submit a Pull Request
 
-Go to [https://github.com/sulla-ai/sulla-recipes/pulls](https://github.com/sulla-ai/sulla-recipes/pulls) and create a new pull request from your branch.
+Go to [https://github.com/merchantprotocol/sulla-recipes/pulls](https://github.com/merchantprotocol/sulla-recipes/pulls) and create a new pull request from your branch.
 
 **Your PR should include:**
 

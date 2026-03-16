@@ -2,30 +2,30 @@ import { RedisClient } from '../database/RedisClient';
 
 // Types for streaming buffer management
 interface StreamBuffer {
-  threadId: string;
-  bufferData: string[];
-  lastActivity: number;
+  threadId:      string;
+  bufferData:    string[];
+  lastActivity:  number;
   speakingState: 'active' | 'paused' | 'complete';
   bufferTimeout: NodeJS.Timeout | null;
-  instanceId: string;
+  instanceId:    string;
 }
 
 interface BufferConfig {
-  pauseThreshold: number;    // ms to wait after speech pause
-  maxBufferTime: number;     // ms maximum buffer duration
+  pauseThreshold:      number;    // ms to wait after speech pause
+  maxBufferTime:       number;     // ms maximum buffer duration
   minProcessingLength: number; // minimum chars before processing
-  flushOnSilence: number;    // ms of silence before force flush
+  flushOnSilence:      number;    // ms of silence before force flush
 }
 
 /**
  * Stream Buffer Manager
- * 
+ *
  * Handles partial speech transcripts from 11Labs streaming:
  * - Buffers incoming speech chunks during active speaking
  * - Detects speech pauses and completion points
  * - Manages serverless instance handoffs
  * - Prevents processing incomplete thoughts
- * 
+ *
  * Timing Strategy:
  * - Active speaking: Buffer continuously, no processing
  * - Speech pause (1.5s): Evaluate if complete thought
@@ -34,14 +34,14 @@ interface BufferConfig {
  */
 export class StreamBufferManager {
   private static instance: StreamBufferManager | null = null;
-  private redisClient: RedisClient;
-  private activeBuffers: Map<string, StreamBuffer> = new Map();
-  
+  private redisClient:     RedisClient;
+  private activeBuffers = new Map<string, StreamBuffer>();
+
   private readonly config: BufferConfig = {
-    pauseThreshold: 1500,      // 1.5s pause suggests sentence completion
-    maxBufferTime: 15000,      // 15s maximum buffer to prevent endless waiting
+    pauseThreshold:      1500,      // 1.5s pause suggests sentence completion
+    maxBufferTime:       15000,      // 15s maximum buffer to prevent endless waiting
     minProcessingLength: 20,   // 20 chars minimum for meaningful processing
-    flushOnSilence: 3000       // 3s silence forces processing
+    flushOnSilence:      3000,       // 3s silence forces processing
   };
 
   constructor() {
@@ -58,25 +58,25 @@ export class StreamBufferManager {
   /**
    * Add speech chunk to buffer (called continuously during speaking)
    */
-  async addSpeechChunk(threadId: string, speechChunk: string, isComplete: boolean = false): Promise<{
-    shouldProcess: boolean;
+  async addSpeechChunk(threadId: string, speechChunk: string, isComplete = false): Promise<{
+    shouldProcess:   boolean;
     bufferedContent: string;
-    reason: string;
+    reason:          string;
   }> {
-    const instanceId = `instance_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    const instanceId = `instance_${ Date.now() }_${ Math.random().toString(36).substr(2, 5) }`;
     let buffer = this.activeBuffers.get(threadId);
-    
+
     if (!buffer) {
       buffer = {
         threadId,
-        bufferData: [],
-        lastActivity: Date.now(),
+        bufferData:    [],
+        lastActivity:  Date.now(),
         speakingState: 'active',
         bufferTimeout: null,
-        instanceId
+        instanceId,
       };
       this.activeBuffers.set(threadId, buffer);
-      console.log(`[StreamBuffer] Created new buffer for thread ${threadId}`);
+      console.log(`[StreamBuffer] Created new buffer for thread ${ threadId }`);
     }
 
     // Update buffer with new speech chunk
@@ -91,20 +91,20 @@ export class StreamBufferManager {
     }
 
     const bufferedContent = buffer.bufferData.join(' ');
-    console.log(`[StreamBuffer] Added chunk: "${speechChunk}" (total: ${bufferedContent.length} chars)`);
+    console.log(`[StreamBuffer] Added chunk: "${ speechChunk }" (total: ${ bufferedContent.length } chars)`);
 
     // Decision logic for when to process
     const shouldProcess = await this.shouldProcessBuffer(buffer, isComplete);
-    
+
     if (shouldProcess.process) {
       // Store buffer in Redis for serverless handoff before processing
       await this.storeBufferInRedis(threadId, bufferedContent);
       this.activeBuffers.delete(threadId);
-      
+
       return {
         shouldProcess: true,
         bufferedContent,
-        reason: shouldProcess.reason
+        reason:        shouldProcess.reason,
       };
     }
 
@@ -118,7 +118,7 @@ export class StreamBufferManager {
     return {
       shouldProcess: false,
       bufferedContent,
-      reason: 'Continuing to buffer - user still speaking'
+      reason:        'Continuing to buffer - user still speaking',
     };
   }
 
@@ -127,20 +127,20 @@ export class StreamBufferManager {
    */
   private async shouldProcessBuffer(buffer: StreamBuffer, isComplete: boolean): Promise<{
     process: boolean;
-    reason: string;
+    reason:  string;
   }> {
     const bufferedContent = buffer.bufferData.join(' ');
     const bufferAge = Date.now() - (buffer.lastActivity - this.config.pauseThreshold);
-    
+
     // Force processing conditions
     if (isComplete) {
       return { process: true, reason: 'Speech marked as complete' };
     }
-    
+
     if (bufferAge > this.config.maxBufferTime) {
       return { process: true, reason: 'Maximum buffer time exceeded (15s)' };
     }
-    
+
     if (bufferedContent.length < this.config.minProcessingLength) {
       return { process: false, reason: 'Buffer too short for meaningful processing' };
     }
@@ -148,7 +148,7 @@ export class StreamBufferManager {
     // Check for natural completion indicators
     const hasCompleteSentence = /[.!?]\s*$/.test(bufferedContent.trim());
     const hasCompleteThought = this.detectCompleteThought(bufferedContent);
-    
+
     if (hasCompleteSentence && hasCompleteThought) {
       return { process: true, reason: 'Complete sentence and thought detected' };
     }
@@ -166,15 +166,15 @@ export class StreamBufferManager {
     const bufferedContent = buffer.bufferData.join(' ');
     const timeSinceLastActivity = Date.now() - buffer.lastActivity;
 
-    console.log(`[StreamBuffer] Speech pause detected for ${threadId} (${timeSinceLastActivity}ms silence)`);
+    console.log(`[StreamBuffer] Speech pause detected for ${ threadId } (${ timeSinceLastActivity }ms silence)`);
 
     // Extended silence - force processing
     if (timeSinceLastActivity >= this.config.flushOnSilence) {
-      console.log(`[StreamBuffer] Force processing due to extended silence (${timeSinceLastActivity}ms)`);
-      
+      console.log(`[StreamBuffer] Force processing due to extended silence (${ timeSinceLastActivity }ms)`);
+
       await this.storeBufferInRedis(threadId, bufferedContent);
       this.activeBuffers.delete(threadId);
-      
+
       // Trigger serverless instance handoff
       await this.triggerServerlessHandoff(threadId, bufferedContent, 'silence_timeout');
       return;
@@ -183,10 +183,10 @@ export class StreamBufferManager {
     // Check if current buffer represents complete thought
     if (this.detectCompleteThought(bufferedContent) && bufferedContent.length >= this.config.minProcessingLength) {
       console.log(`[StreamBuffer] Processing complete thought after pause`);
-      
+
       await this.storeBufferInRedis(threadId, bufferedContent);
       this.activeBuffers.delete(threadId);
-      
+
       // Trigger serverless instance handoff
       await this.triggerServerlessHandoff(threadId, bufferedContent, 'complete_thought');
       return;
@@ -203,21 +203,21 @@ export class StreamBufferManager {
    */
   private detectCompleteThought(content: string): boolean {
     const trimmed = content.trim();
-    
+
     // Empty or too short
     if (trimmed.length < this.config.minProcessingLength) return false;
-    
+
     // Has sentence ending punctuation
     if (/[.!?]\s*$/.test(trimmed)) return true;
-    
+
     // Complete request patterns
     const completePatterns = [
       /^(can you|could you|please|I need|I want|help me).+/i,
       /^(what|how|when|where|why).+/i,
       /^(create|build|make|generate|write|design).+/i,
-      /(thank you|thanks|that's all|goodbye|bye)$/i
+      /(thank you|thanks|that's all|goodbye|bye)$/i,
     ];
-    
+
     return completePatterns.some(pattern => pattern.test(trimmed));
   }
 
@@ -227,17 +227,17 @@ export class StreamBufferManager {
   private async storeBufferInRedis(threadId: string, content: string): Promise<void> {
     try {
       await this.redisClient.initialize();
-      
+
       const bufferData = {
         threadId,
         content,
-        timestamp: Date.now(),
-        processed: false,
-        handoffType: 'speech_buffer'
+        timestamp:   Date.now(),
+        processed:   false,
+        handoffType: 'speech_buffer',
       };
-      
-      await this.redisClient.set(`stream_buffer:${threadId}`, JSON.stringify(bufferData));
-      console.log(`[StreamBuffer] Stored buffer in Redis for thread ${threadId}: "${content.substring(0, 50)}..."`);
+
+      await this.redisClient.set(`stream_buffer:${ threadId }`, JSON.stringify(bufferData));
+      console.log(`[StreamBuffer] Stored buffer in Redis for thread ${ threadId }: "${ content.substring(0, 50) }..."`);
     } catch (error) {
       console.error(`[StreamBuffer] Failed to store buffer in Redis:`, error);
     }
@@ -247,29 +247,29 @@ export class StreamBufferManager {
    * Trigger new serverless instance to process complete buffer
    */
   private async triggerServerlessHandoff(threadId: string, content: string, reason: string): Promise<void> {
-    console.log(`[StreamBuffer] Serverless handoff for ${threadId} — reason=${reason}, content="${content.substring(0, 80)}"`);
+    console.log(`[StreamBuffer] Serverless handoff for ${ threadId } — reason=${ reason }, content="${ content.substring(0, 80) }"`);
   }
 
   /**
    * Get current buffer status for monitoring
    */
   getBufferStatus(threadId: string): {
-    exists: boolean;
+    exists:   boolean;
     content?: string;
-    age?: number;
-    state?: string;
+    age?:     number;
+    state?:   string;
   } {
     const buffer = this.activeBuffers.get(threadId);
-    
+
     if (!buffer) {
       return { exists: false };
     }
 
     return {
-      exists: true,
+      exists:  true,
       content: buffer.bufferData.join(' '),
-      age: Date.now() - buffer.lastActivity,
-      state: buffer.speakingState
+      age:     Date.now() - buffer.lastActivity,
+      state:   buffer.speakingState,
     };
   }
 
@@ -283,8 +283,8 @@ export class StreamBufferManager {
     const content = buffer.bufferData.join(' ');
     await this.storeBufferInRedis(threadId, content);
     this.activeBuffers.delete(threadId);
-    
-    console.log(`[StreamBuffer] Force flushed buffer for ${threadId}`);
+
+    console.log(`[StreamBuffer] Force flushed buffer for ${ threadId }`);
     return content;
   }
 }

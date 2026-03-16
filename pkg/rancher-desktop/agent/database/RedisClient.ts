@@ -15,9 +15,15 @@ export class RedisClient {
 
   constructor() {
     this.client = new Redis(REDIS_URL, {
-      retryStrategy: (times: number) => Math.min(times * 50, 2000),
+      retryStrategy: (times: number) => {
+        if (times > this.maxConnectionAttempts) {
+          return null; // Stop retrying
+        }
+
+        return Math.min(times * 50, 2000);
+      },
       maxRetriesPerRequest: 3,
-      lazyConnect: true, // Don't auto-connect on construction
+      lazyConnect:          true, // Don't auto-connect on construction
     });
 
     this.client.on('connect', () => {
@@ -29,8 +35,8 @@ export class RedisClient {
     this.client.on('error', (err: any) => {
       this.connected = false;
       // Reduce error verbosity for common startup errors
-      if ((err as any).code === 'ECONNREFUSED' || (err as any).code === 'EPIPE' || (err as any).code === 'ECONNRESET') {
-        console.log(`[RedisClient] Connection error (${(err as any).code}): Redis server not available yet`);
+      if ((err).code === 'ECONNREFUSED' || (err).code === 'EPIPE' || (err).code === 'ECONNRESET') {
+        console.log(`[RedisClient] Connection error (${ (err).code }): Redis server not available yet`);
       } else {
         console.error('[RedisClient] Error:', err);
       }
@@ -57,7 +63,7 @@ export class RedisClient {
 
     // Stop trying if we've exceeded max attempts
     if (this.connectionAttempts >= this.maxConnectionAttempts) {
-      console.log(`[RedisClient] Max connection attempts (${this.maxConnectionAttempts}) reached, giving up`);
+      console.log(`[RedisClient] Max connection attempts (${ this.maxConnectionAttempts }) reached, giving up`);
       return false;
     }
 
@@ -68,7 +74,7 @@ export class RedisClient {
       return true;
     } catch (error) {
       this.connectionAttempts++;
-      console.log(`[RedisClient] Connection attempt ${this.connectionAttempts}/${this.maxConnectionAttempts} failed`);
+      console.log(`[RedisClient] Connection attempt ${ this.connectionAttempts }/${ this.maxConnectionAttempts } failed`);
       this.connected = false;
       return false;
     }
@@ -125,7 +131,7 @@ export class RedisClient {
     if (args.length === 0) {
       return this.client.scan(cursor);
     }
-    
+
     // Handle MATCH pattern
     if (args[0] === 'MATCH' && args[1]) {
       if (args[2] === 'COUNT' && args[3]) {
@@ -133,12 +139,12 @@ export class RedisClient {
       }
       return this.client.scan(cursor, 'MATCH', args[1]);
     }
-    
+
     // Handle COUNT
     if (args[0] === 'COUNT' && args[1]) {
       return this.client.scan(cursor, 'COUNT', args[1]);
     }
-    
+
     // Fallback: call without additional args if pattern doesn't match
     return this.client.scan(cursor);
   }
@@ -156,10 +162,10 @@ export class RedisClient {
 
   async hgetall(key: string): Promise<Record<string, string>> {
     await this.ensureConnected();
-    return this.client.hgetall(key);
+    return await this.client.hgetall(key) ?? {};
   }
 
-  async hmget(key: string, ...fields: string[]): Promise<Array<string | null>> {
+  async hmget(key: string, ...fields: string[]): Promise<(string | null)[]> {
     await this.ensureConnected();
     return this.client.hmget(key, ...fields);
   }
@@ -193,6 +199,7 @@ export class RedisClient {
       this.connected = false;
     }
   }
+
   // Pipeline support
   pipeline(): Pipeline {
     return this.client.pipeline() as Pipeline;
@@ -203,7 +210,7 @@ export class RedisClient {
       const ok = await this.initialize();
       if (!ok) {
         if (this.connectionAttempts >= this.maxConnectionAttempts) {
-          throw new Error(`Redis not connected after ${this.maxConnectionAttempts} attempts`);
+          throw new Error(`Redis not connected after ${ this.maxConnectionAttempts } attempts`);
         } else {
           throw new Error('Redis server not available yet');
         }

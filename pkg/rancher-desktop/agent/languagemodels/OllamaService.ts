@@ -48,14 +48,36 @@ export class OllamaService extends BaseLanguageModel {
   }
 
   /**
-   * Check if llama-server is reachable via /health.
+   * Check if llama-server is reachable AND has a model loaded.
+   * A bare /health returning {"status":"ok"} doesn't mean the server can
+   * actually serve completions — it may have no model loaded, causing
+   * requests to hang until timeout.
    */
   protected async healthCheck(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.baseUrl}/health`, {
+      const res = await fetch(`${ this.baseUrl }/health`, {
         signal: AbortSignal.timeout(4000),
       });
-      return res.ok;
+      if (!res.ok) return false;
+
+      // Quick probe: ask /v1/models to confirm at least one model is loaded
+      try {
+        const modelsRes = await fetch(`${ this.baseUrl }/v1/models`, {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (modelsRes.ok) {
+          const body = await modelsRes.json();
+          const models = body?.data;
+          if (!Array.isArray(models) || models.length === 0) {
+            console.log('[OllamaService] Server healthy but no models loaded — marking unavailable');
+            return false;
+          }
+        }
+      } catch {
+        // If /v1/models isn't supported, fall through to trusting /health
+      }
+
+      return true;
     } catch {
       return false;
     }
@@ -69,12 +91,14 @@ export class OllamaService extends BaseLanguageModel {
     const body = this.buildRequestBody(messages, options);
     console.log('[OllamaService] Sending request to llama-server:', JSON.stringify(body).slice(0, 500));
 
-    const res = await fetch(`${this.baseUrl}/v1/chat/completions`, this.buildFetchOptions(body, options.signal));
+    const timeoutMs = this.localTimeoutSeconds * 1000;
+    const signal = this.combinedSignal(options.signal, timeoutMs);
+    const res = await fetch(`${ this.baseUrl }/v1/chat/completions`, this.buildFetchOptions(body, signal));
     console.log('[OllamaService] Response from llama-server:', res.status);
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
-      throw new Error(`llama-server chat failed: ${res.status} ${res.statusText} — ${errBody}`);
+      throw new Error(`llama-server chat failed: ${ res.status } ${ res.statusText } — ${ errBody }`);
     }
 
     const responseText = await res.text();
@@ -84,7 +108,7 @@ export class OllamaService extends BaseLanguageModel {
 
       return parsed;
     } catch (e) {
-      throw new Error(`Failed to parse llama-server response as JSON: ${e}`);
+      throw new Error(`Failed to parse llama-server response as JSON: ${ e }`);
     }
   }
 
@@ -104,6 +128,10 @@ export class OllamaService extends BaseLanguageModel {
     } catch {
       return 4096;
     }
+  }
+
+  override getContextWindow(): number {
+    return this.getContextLimit();
   }
 
   /**
@@ -147,15 +175,15 @@ export class OllamaService extends BaseLanguageModel {
     }
 
     if (trimmed.length < nonSystemMsgs.length) {
-      console.log(`[OllamaService] Trimmed ${nonSystemMsgs.length - trimmed.length} oldest messages to fit ctx limit (${ctxLimit} tokens, ~${systemTokens + conversationTokens} used)`);
+      console.log(`[OllamaService] Trimmed ${ nonSystemMsgs.length - trimmed.length } oldest messages to fit ctx limit (${ ctxLimit } tokens, ~${ systemTokens + conversationTokens } used)`);
     }
 
     const cleanMessages = [...systemMsgs, ...trimmed];
 
     const body: Record<string, any> = {
-      model: options.model ?? this.model,
+      model:    options.model ?? this.model,
       messages: cleanMessages,
-      stream: false,
+      stream:   false,
     };
 
     if (options.format === 'json') {

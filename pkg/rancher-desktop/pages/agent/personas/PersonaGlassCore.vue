@@ -1,31 +1,41 @@
 <template>
   <div class="w-full p-3 persona-wrap">
-    <div class="persona-glow-blur"></div>
-    <div class="persona-glow"></div>
+    <div class="persona-glow-blur" />
+    <div class="persona-glow" />
     <div class="persona-card persona-shine">
-      <div class="persona-accent-top"></div>
-      <div class="persona-accent-bottom"></div>
+      <div class="persona-accent-top" />
+      <div class="persona-accent-bottom" />
       <div class="pt-3 pl-3 flex items-center gap-1.5">
-        <div class="w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
-        <div class="w-2.5 h-2.5 rounded-full bg-amber-500/80"></div>
-        <div class="w-2.5 h-2.5 rounded-full bg-green-500/80"></div>
+        <div class="w-2.5 h-2.5 rounded-full bg-red-500/80" />
+        <div class="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
+        <div class="w-2.5 h-2.5 rounded-full bg-green-500/80" />
       </div>
       <div class="flex items-center gap-3 p-4 pt-2">
         <div class="w-11 h-11 relative flex items-center justify-center">
-          <div class="absolute inset-0 rounded-full blur-md animate-pulse" style="background-color: color-mix(in oklab, var(--persona-primary) 30%, transparent);"></div>
+          <div
+            class="absolute inset-0 rounded-full blur-md animate-pulse"
+            style="background-color: color-mix(in oklab, var(--persona-primary) 30%, transparent);"
+          />
           <div
             class="absolute inset-1 rounded-full opacity-80"
             style="background-image: linear-gradient(to top right, var(--persona-from), var(--persona-to));"
-          ></div>
-          <div class="relative w-5 h-5 bg-white rounded-full" style="box-shadow: 0 0 10px var(--persona-primary);"></div>
+          />
+          <div
+            class="relative w-5 h-5 bg-white rounded-full"
+            style="box-shadow: 0 0 10px var(--persona-primary);"
+          />
         </div>
         <div class="flex-1">
-          <div class="persona-label">Core_ID</div>
-          <div class="text-sm font-semibold persona-title">{{ agentName }}</div>
+          <div class="persona-label">
+            Core_ID
+          </div>
+          <div class="text-sm font-semibold persona-title">
+            {{ agentName }}
+          </div>
         </div>
         <div class="flex items-center gap-2">
           <span class="text-[10px] text-slate-400 font-mono">{{ statusLabel }}</span>
-          <div class="w-2 h-2 rounded-full animate-pulse persona-status-dot"></div>
+          <div class="w-2 h-2 rounded-full animate-pulse persona-status-dot" />
         </div>
       </div>
       <div class="px-4 pb-4 space-y-2">
@@ -34,10 +44,17 @@
             class="flex h-5 rounded-full p-px"
             style="background-image: linear-gradient(to right, color-mix(in oklab, var(--persona-primary) 20%, transparent), color-mix(in oklab, var(--persona-primary) 40%, transparent), color-mix(in oklab, var(--persona-primary) 20%, transparent));"
           >
-            <div class="flex items-center rounded-full px-2 text-[10px] font-medium bg-slate-800/80" style="color: color-mix(in oklab, var(--persona-primary) 90%, transparent);">inference.js</div>
+            <div
+              class="flex items-center rounded-full px-2 text-[10px] font-medium bg-slate-800/80"
+              style="color: color-mix(in oklab, var(--persona-primary) 90%, transparent);"
+            >
+              inference.js
+            </div>
           </div>
           <div class="flex h-5 rounded-full bg-slate-700/30">
-            <div class="flex items-center rounded-full px-2 text-[10px] text-slate-400">model.gguf</div>
+            <div class="flex items-center rounded-full px-2 text-[10px] text-slate-400">
+              model.gguf
+            </div>
           </div>
         </div>
         <div class="flex items-center gap-3 text-[10px] font-mono pt-1">
@@ -59,13 +76,13 @@
 import { computed } from 'vue';
 
 const props = defineProps<{
-  agentId: string;
-  agentName: string;
-  status: 'online' | 'idle' | 'busy' | 'offline';
+  agentId:     string;
+  agentName:   string;
+  status:      'online' | 'idle' | 'busy' | 'offline';
   totalTokens: number;
   temperature: number;
-  inputCost: number;
-  outputCost: number;
+  inputCost:   number;
+  outputCost:  number;
 }>();
 
 const agentName = computed(() => props.agentName || props.agentId);
@@ -81,14 +98,14 @@ const outputCost = computed(() => props.outputCost ?? 0);
 
 const statusLabel = computed(() => {
   switch (props.status) {
-    case 'online':
-      return 'LIVE';
-    case 'busy':
-      return 'RUNNING';
-    case 'idle':
-      return 'IDLE';
-    case 'offline':
-      return 'OFFLINE';
+  case 'online':
+    return 'LIVE';
+  case 'busy':
+    return 'RUNNING';
+  case 'idle':
+    return 'IDLE';
+  case 'offline':
+    return 'OFFLINE';
   }
 });
 </script>

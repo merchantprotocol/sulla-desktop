@@ -17,18 +17,18 @@ export interface HeartbeatThreadState extends BaseThreadState {
   messages: ChatMessage[];
   metadata: BaseThreadState['metadata'] & {
     // Project context loaded at heartbeat start
-    activeProjects: string;
+    activeProjects:  string;
     availableSkills: string;
 
     // Heartbeat tracking
-    heartbeatCycleCount: number;
-    heartbeatMaxCycles: number;
-    heartbeatStatus: 'running' | 'done' | 'blocked' | 'idle';
+    heartbeatCycleCount:       number;
+    heartbeatMaxCycles:        number;
+    heartbeatStatus:           'running' | 'done' | 'blocked' | 'idle';
     heartbeatLastCycleSummary: string;
 
     // What the agent decided to work on
     currentFocus: string;
-    focusReason: string;
+    focusReason:  string;
 
     // Environmental context (loaded each cycle from Redis)
     agentsContext: string;
@@ -59,7 +59,7 @@ const HEARTBEAT_WS_CHANNEL = 'heartbeat';
  *   5. Returns to the heartbeat graph's conditional edge for loop/exit decision
  *
  * The AgentGraph has full tool access — it can use project tools, skill tools,
- * exec, docker, n8n, playwright, memory, calendar, etc.
+ * exec, docker, playwright, memory, calendar, etc.
  */
 export class HeartbeatNode extends BaseNode {
   constructor() {
@@ -71,7 +71,7 @@ export class HeartbeatNode extends BaseNode {
     const cycleNum = (state.metadata.heartbeatCycleCount || 0) + 1;
     state.metadata.heartbeatCycleCount = cycleNum;
 
-    console.log(`[HeartbeatNode] ═══ Cycle ${cycleNum}/${state.metadata.heartbeatMaxCycles || MAX_HEARTBEAT_CYCLES} ═══`);
+    console.log(`[HeartbeatNode] ═══ Cycle ${ cycleNum }/${ state.metadata.heartbeatMaxCycles || MAX_HEARTBEAT_CYCLES } ═══`);
 
     // ----------------------------------------------------------------
     // 1. GATHER CONTEXT — projects & skills (lazy, once per heartbeat run)
@@ -101,7 +101,7 @@ export class HeartbeatNode extends BaseNode {
     const agentGraph = createAgentGraph();
     const agentState = this.buildAgentState(state, autonomousPrompt);
 
-    console.log(`[HeartbeatNode] Spawning AgentGraph (threadId=${agentState.metadata.threadId})`);
+    console.log(`[HeartbeatNode] Spawning AgentGraph (threadId=${ agentState.metadata.threadId })`);
 
     try {
       await agentGraph.execute(agentState, 'input_handler');
@@ -126,14 +126,13 @@ export class HeartbeatNode extends BaseNode {
     const lastAssistant = [...agentState.messages]
       .reverse()
       .find(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim());
-    const cycleSummary = agentMeta.status_report
-      || agentMeta.response
-      || (lastAssistant?.content as string)?.slice(0, 500)
-      || '';
+    const cycleSummary = agentMeta.status_report ||
+      agentMeta.response ||
+      (lastAssistant?.content!)?.slice(0, 500) ||
+      '';
 
     state.metadata.heartbeatLastCycleSummary = cycleSummary;
     state.metadata.currentFocus = agentMeta.currentFocus || state.metadata.currentFocus || '';
-
 
     // Map agent status to heartbeat status
     if (agentStatus === 'done') {
@@ -143,14 +142,14 @@ export class HeartbeatNode extends BaseNode {
       // conversation so the orchestrator can decide what to do next cycle
       const blockerReason = agentMeta.blocker_reason || 'Unknown blocker';
       const unblockReqs = agentMeta.unblock_requirements || '';
-      console.log(`[HeartbeatNode] Sub-agent blocked — reason: ${blockerReason}, requirements: ${unblockReqs}`);
+      console.log(`[HeartbeatNode] Sub-agent blocked — reason: ${ blockerReason }, requirements: ${ unblockReqs }`);
 
       state.messages.push({
-        role: 'system',
+        role:    'system',
         content: [
           `[Sub-agent blocked]`,
-          `Blocker: ${blockerReason}`,
-          unblockReqs ? `Requirements to unblock: ${unblockReqs}` : '',
+          `Blocker: ${ blockerReason }`,
+          unblockReqs ? `Requirements to unblock: ${ unblockReqs }` : '',
           `Decide whether to resolve this yourself, escalate to the user via send_channel_message, or move on to other work.`,
         ].filter(Boolean).join('\n'),
       } as ChatMessage);
@@ -163,7 +162,7 @@ export class HeartbeatNode extends BaseNode {
     }
 
     const elapsed = Date.now() - cycleStart;
-    console.log(`[HeartbeatNode] Cycle ${cycleNum} complete — status: ${agentStatus}, elapsed: ${elapsed}ms`);
+    console.log(`[HeartbeatNode] Cycle ${ cycleNum } complete — status: ${ agentStatus }, elapsed: ${ elapsed }ms`);
 
     return { state, decision: { type: 'next' } };
   }
@@ -182,9 +181,9 @@ export class HeartbeatNode extends BaseNode {
       }
 
       const lines = summaries.map(p =>
-        `- **${p.name}** (slug: \`${p.slug}\`, status: ${p.status}): ${p.description}`
+        `- **${ p.name }** (slug: \`${ p.slug }\`, status: ${ p.status }): ${ p.description }`,
       );
-      return `## Active Projects\n${lines.join('\n')}`;
+      return `## Active Projects\n${ lines.join('\n') }`;
     } catch (err) {
       console.warn('[HeartbeatNode] Failed to load projects:', err);
       return 'Unable to load projects — use meta_search to discover them or browse the projects directory.';
@@ -201,9 +200,9 @@ export class HeartbeatNode extends BaseNode {
       }
 
       const lines = summaries.map(s =>
-        `- **${s.name}** (slug: \`${s.slug}\`): ${s.description}`
+        `- **${ s.name }** (slug: \`${ s.slug }\`): ${ s.description }`,
       );
-      return `## Available Skills\n${lines.join('\n')}`;
+      return `## Available Skills\n${ lines.join('\n') }`;
     } catch (err) {
       console.warn('[HeartbeatNode] Failed to load skills:', err);
       return 'Unable to load skills — use meta_search tool to discover them.';
@@ -234,13 +233,13 @@ export class HeartbeatNode extends BaseNode {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const timeStr = now.toLocaleString('en-US', {
       timeZone: tz,
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
+      weekday:  'long',
+      year:     'numeric',
+      month:    'long',
+      day:      'numeric',
+      hour:     '2-digit',
+      minute:   '2-digit',
+      hour12:   true,
     });
 
     const cycleNum = state.metadata.heartbeatCycleCount || 1;
@@ -255,26 +254,26 @@ export class HeartbeatNode extends BaseNode {
 
     // Time context
     parts.push(`\n---\n## Current Context\n`);
-    parts.push(`**Time:** ${timeStr} (${tz})`);
-    parts.push(`**Heartbeat Cycle:** ${cycleNum} of ${maxCycles}`);
+    parts.push(`**Time:** ${ timeStr } (${ tz })`);
+    parts.push(`**Heartbeat Cycle:** ${ cycleNum } of ${ maxCycles }`);
 
     // Projects
-    parts.push(`\n${state.metadata.activeProjects}`);
+    parts.push(`\n${ state.metadata.activeProjects }`);
 
     // Skills
-    parts.push(`\n${state.metadata.availableSkills}`);
+    parts.push(`\n${ state.metadata.availableSkills }`);
 
     // Active agents, channels, and human presence (injected every cycle)
     if (state.metadata.agentsContext) {
-      parts.push(`\n${state.metadata.agentsContext}`);
+      parts.push(`\n${ state.metadata.agentsContext }`);
     }
 
     // Continuity from prior cycle
     if (priorSummary && cycleNum > 1) {
-      parts.push(`\n## Prior Cycle Summary\n${priorSummary}`);
+      parts.push(`\n## Prior Cycle Summary\n${ priorSummary }`);
     }
     if (currentFocus) {
-      parts.push(`\n## Current Focus\n${currentFocus}`);
+      parts.push(`\n## Current Focus\n${ currentFocus }`);
     }
 
     // Autonomous directives
@@ -284,7 +283,7 @@ You are running autonomously — no human is watching. Act decisively.
 
 1. **Respond to incoming messages FIRST.** If there are user messages in this thread (after the autonomous prompt), read them and reply using **send_channel_message** to the sender's channel. This is non-negotiable — never ignore someone talking to you.
 2. **Pick the highest-impact work.** If no incoming messages, review active projects and pick the one where you can make the most progress right now. If no projects exist, create one based on your mission.
-3. **Use your tools.** You have full access to: file system, Docker, n8n, git, memory, calendar, playwright, skills, projects, and the **bridge** tools. Use them.
+3. **Use your tools.** You have full access to: file system, Docker, git, memory, calendar, playwright, skills, projects, and the **bridge** tools. Use them.
 4. **Communicate via channels.** To reach the human or another agent, use **send_channel_message** with the target channel from the Active Agents list above. Include your sender_id and sender_channel so they can reply.
 5. **Learn and create skills.** If you find yourself doing something that could be reusable, create a skill for it using create_skill. If a skill exists for what you need, load and follow it.
 6. **Track your work.** Update project PRDs with progress. Add observational memories for important findings. Update project status when milestones are hit.
@@ -302,38 +301,39 @@ If this is your first heartbeat and no projects exist, your first task should be
 
   private buildAgentState(parentState: HeartbeatThreadState, prompt: string): AgentGraphState {
     const now = Date.now();
-    const threadId = `heartbeat_agent_${now}_${parentState.metadata.heartbeatCycleCount}`;
+    const threadId = `heartbeat_agent_${ now }_${ parentState.metadata.heartbeatCycleCount }`;
 
     return {
       messages: [
         {
-          role: 'user',
-          content: prompt,
+          role:     'user',
+          content:  prompt,
           metadata: {
             source: 'heartbeat',
-            type: 'autonomous_prompt',
+            type:   'autonomous_prompt',
           },
         } as ChatMessage,
         // Include parent state messages so the agent sees incoming channel messages
         ...parentState.messages,
       ],
       metadata: {
-        action: 'use_tools',
+        action:    'use_tools',
         threadId,
         wsChannel: parentState.metadata.wsChannel || HEARTBEAT_WS_CHANNEL,
 
-        cycleComplete: false,
+        cycleComplete:  false,
         waitingForUser: false,
-        isSubAgent: true,
+        isSubAgent:     true,
+        subAgentDepth:  0,
 
         llmModel: parentState.metadata.llmModel,
         llmLocal: parentState.metadata.llmLocal,
-        options: parentState.metadata.options || {},
+        options:  parentState.metadata.options || {},
 
-        currentNodeId: 'input_handler',
-        consecutiveSameNode: 0,
-        iterations: 0,
-        revisionCount: 0,
+        currentNodeId:        'input_handler',
+        consecutiveSameNode:  0,
+        iterations:           0,
+        revisionCount:        0,
         maxIterationsReached: false,
 
         memory: {
@@ -341,17 +341,17 @@ If this is your first heartbeat and no projects exist, your first task should be
           chatSummariesContext: '',
         },
         subGraph: {
-          state: 'completed',
-          name: 'hierarchical',
-          prompt: '',
+          state:    'completed',
+          name:     'hierarchical',
+          prompt:   '',
           response: '',
         },
-        finalSummary: '',
-        finalState: 'running',
+        finalSummary:         '',
+        finalState:           'running',
         n8nLiveEventsEnabled: parentState.metadata.n8nLiveEventsEnabled || false,
-        returnTo: null,
+        returnTo:             null,
 
-        agent: undefined,
+        agent:          undefined,
         agentLoopCount: 0,
       },
     };

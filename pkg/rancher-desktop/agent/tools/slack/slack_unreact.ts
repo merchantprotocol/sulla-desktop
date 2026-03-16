@@ -1,13 +1,13 @@
-import { BaseTool, ToolResponse } from "../base";
-import { registry } from "../../integrations";
-import type { SlackClient } from "../../integrations/slack/SlackClient";
+import { BaseTool, ToolResponse } from '../base';
+import { registry } from '../../integrations';
+import type { SlackClient } from '../../integrations/slack/SlackClient';
 
 /**
  * Slack Unreact Tool - Worker class for execution
  */
 export class SlackUnreactWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { channel, ts, reaction } = input;
 
@@ -16,18 +16,18 @@ export class SlackUnreactWorker extends BaseTool {
       if (!slack) {
         return {
           successBoolean: false,
-          responseString: `Slack integration is not initialized for command ${this.name}`,
+          responseString: `Slack integration is not initialized for command ${ this.name }`,
         };
       }
       await slack.removeReaction(channel, ts, reaction);
       return {
         successBoolean: true,
-        responseString: `Slack reaction ":${reaction}:" removed successfully from message ${ts} in channel ${channel}`
+        responseString: `Slack reaction ":${ reaction }:" removed successfully from message ${ ts } in channel ${ channel }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error removing Slack reaction: ${(error as Error).message}`
+        responseString: `Error removing Slack reaction: ${ (error as Error).message }`,
       };
     }
   }

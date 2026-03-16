@@ -56,7 +56,7 @@ export default defineComponent({
     .icon {
       background: transparent;
       color: var(--primary);
-      font-size: 1.4rem;
+      font-size: var(--fs-heading);
       cursor: pointer;
 
       &:hover {

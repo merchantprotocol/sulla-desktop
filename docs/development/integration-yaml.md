@@ -4,7 +4,7 @@
 
 Sulla uses YAML files to define third-party API integrations. Each integration consists of an **auth config** file (credentials, base URL) and one or more **endpoint config** files (API operations). These YAML definitions are loaded at startup and used by `ConfigApiClient` to make authenticated API calls.
 
-**Integrations repository:** [https://github.com/sulla-ai/integrations](https://github.com/sulla-ai/integrations)
+**Integrations repository:** [https://github.com/merchantprotocol/integrations](https://github.com/merchantprotocol/integrations)
 
 **Local path:** `~/sulla/integrations/`
 

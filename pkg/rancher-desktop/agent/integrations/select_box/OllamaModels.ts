@@ -1,7 +1,7 @@
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
 
 function normalizeBaseUrl(raw?: string): string {
-  if (!raw || !raw.trim()) {
+  if (!raw?.trim()) {
     return 'http://127.0.0.1:11434';
   }
 

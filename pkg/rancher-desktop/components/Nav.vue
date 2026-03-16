@@ -205,7 +205,7 @@ ul {
             gap: 0.25rem;
             color: var(--body-text);
             text-decoration: none;
-            font-size: 1.125rem;
+            font-size: var(--fs-heading);
             line-height: 1.75rem;
             padding: 0.5rem 0.75rem;
             outline: none;
@@ -230,7 +230,7 @@ a {
 .nav-badge {
   line-height: initial;
   letter-spacing: initial;
-  font-size: 0.75rem;
+  font-size: var(--fs-body-sm);
 }
 
 .nav-button-container {

@@ -11,7 +11,10 @@
         :class="{ open: expandedDirs.has(node.path), empty: !node.hasChildren }"
         @click="$emit('toggle-dir', node.path)"
       />
-      <span v-else class="tft-arrow-spacer" />
+      <span
+        v-else
+        class="tft-arrow-spacer"
+      />
       <input
         type="checkbox"
         class="tft-checkbox"
@@ -31,9 +34,15 @@
         v-if="!node.isDir && node.size > 0"
         class="tft-size"
       >{{ fmtSize(node.size) }}</span>
-      <span v-if="treeLoading === node.path" class="tft-spinner" />
+      <span
+        v-if="treeLoading === node.path"
+        class="tft-spinner"
+      />
     </div>
-    <div v-if="node.isDir && expandedDirs.has(node.path) && treeChildren[node.path]" class="tft-children">
+    <div
+      v-if="node.isDir && expandedDirs.has(node.path) && treeChildren[node.path]"
+      class="tft-children"
+    >
       <TreeNode
         v-for="child in treeChildren[node.path]"
         :key="child.path"
@@ -57,22 +66,22 @@
 import { defineComponent } from 'vue';
 
 interface TreeEntry {
-  path: string;
-  name: string;
-  isDir: boolean;
+  path:        string;
+  name:        string;
+  isDir:       boolean;
   hasChildren: boolean;
-  size: number;
-  ext: string;
+  size:        number;
+  ext:         string;
 }
 
 function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024) return `${ bytes } B`;
+  if (bytes < 1024 * 1024) return `${ (bytes / 1024).toFixed(1) } KB`;
+  return `${ (bytes / (1024 * 1024)).toFixed(1) } MB`;
 }
 
 export default defineComponent({
-  name: 'TreeNode',
+  name:  'TreeNode',
   props: {
     node:            { type: Object as () => TreeEntry, required: true },
     depth:           { type: Number, default: 0 },
@@ -83,7 +92,7 @@ export default defineComponent({
     selectedFolders: { type: Array as () => string[], required: true },
     selectedFiles:   { type: Array as () => string[], required: true },
   },
-  emits: ['toggle-dir', 'toggle-folder', 'toggle-file'],
+  emits:    ['toggle-dir', 'toggle-folder', 'toggle-file'],
   computed: {
     isSelected(): boolean {
       if (this.node.isDir) return this.selectedFolders.includes(this.node.path);
@@ -107,26 +116,20 @@ export default defineComponent({
   align-items: center;
   padding: 3px 8px;
   cursor: default;
-  font-size: 12px;
+  font-size: var(--fs-code);
   line-height: 1.4;
-  color: #334155;
+  color: var(--text-secondary);
   transition: background 0.1s;
   gap: 2px;
 }
 .tft-row.dark {
-  color: #cbd5e1;
+  color: var(--text-muted);
 }
 .tft-row:hover {
-  background: #f1f5f9;
-}
-.tft-row.dark:hover {
-  background: #1e293b;
+  background: var(--bg-hover);
 }
 .tft-row.selected {
-  background: #eff6ff;
-}
-.tft-row.selected.dark {
-  background: #1e3a5f;
+  background: var(--bg-info);
 }
 
 /* Caret arrow for folders */
@@ -138,7 +141,7 @@ export default defineComponent({
   height: 16px;
   flex-shrink: 0;
   cursor: pointer;
-  color: #94a3b8;
+  color: var(--text-muted);
   transition: transform 0.15s;
 }
 .tft-arrow::before {
@@ -158,10 +161,7 @@ export default defineComponent({
   visibility: hidden;
 }
 .tft-arrow:hover {
-  color: #475569;
-}
-.dark .tft-arrow:hover {
-  color: #e2e8f0;
+  color: var(--text-secondary);
 }
 .tft-arrow-spacer {
   display: inline-block;
@@ -176,26 +176,22 @@ export default defineComponent({
   height: 14px;
   margin: 0 6px 0 0;
   cursor: pointer;
-  accent-color: #0284c7;
+  accent-color: var(--accent-primary);
 }
 
 /* File extension badge */
 .tft-ext {
   display: inline-block;
-  font-size: 9px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: var(--tracking-wide);
   padding: 0 4px;
   border-radius: 3px;
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
   flex-shrink: 0;
   margin-right: 4px;
-}
-.dark .tft-ext {
-  background: #334155;
-  color: #94a3b8;
 }
 
 /* Label */
@@ -207,19 +203,16 @@ export default defineComponent({
   cursor: pointer;
 }
 .tft-label.dir {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 .tft-label:hover {
-  color: #0284c7;
-}
-.dark .tft-label:hover {
-  color: #38bdf8;
+  color: var(--accent-primary);
 }
 
 /* File size */
 .tft-size {
-  font-size: 10px;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
   flex-shrink: 0;
   margin-left: 6px;
 }
@@ -228,7 +221,7 @@ export default defineComponent({
 .tft-spinner {
   width: 10px;
   height: 10px;
-  border: 1.5px solid #0284c7;
+  border: 1.5px solid var(--accent-primary);
   border-top-color: transparent;
   border-radius: 50%;
   animation: tft-spin 0.6s linear infinite;

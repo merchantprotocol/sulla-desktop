@@ -12,27 +12,27 @@ describe('browse_tools output details', () => {
     (toolRegistry as any).getCategories = originalGetCategories;
   });
 
-  it('returns tool name, description, and signature for each found tool', async () => {
-    (toolRegistry as any).searchTools = async () => ([
+  it('returns tool name, description, and signature for each found tool', async() => {
+    (toolRegistry as any).searchTools = async() => ([
       {
-        name: 'slack_post_message',
+        name:        'slack_post_message',
         description: 'Post a message to Slack',
-        jsonSchema: {
-          type: 'object',
+        jsonSchema:  {
+          type:       'object',
           properties: {
             channel: { type: 'string' },
-            text: { type: 'string' },
+            text:    { type: 'string' },
           },
           required: ['channel', 'text'],
         },
       },
       {
-        name: 'slack_react',
+        name:        'slack_react',
         description: 'React to a message in Slack',
-        schemaDef: {
-          channel: { type: 'string' },
+        schemaDef:   {
+          channel:   { type: 'string' },
           timestamp: { type: 'string' },
-          emoji: { type: 'string' },
+          emoji:     { type: 'string' },
         },
       },
     ]);
@@ -53,13 +53,13 @@ describe('browse_tools output details', () => {
     expect(response).toContain('"name": "slack_react"');
   });
 
-  it('accepts meta category and returns meta tool details', async () => {
-    (toolRegistry as any).searchTools = async () => ([
+  it('accepts meta category and returns meta tool details', async() => {
+    (toolRegistry as any).searchTools = async() => ([
       {
-        name: 'browse_tools',
+        name:        'browse_tools',
         description: 'List available tools by category or search term.',
-        jsonSchema: {
-          type: 'object',
+        jsonSchema:  {
+          type:       'object',
           properties: {
             category: { type: 'string' },
           },
@@ -82,15 +82,15 @@ describe('browse_tools output details', () => {
     expect(response).toContain('"description": "List available tools by category or search term."');
   });
 
-  it('accepts workspace category and returns workspace tool details', async () => {
-    (toolRegistry as any).searchTools = async () => ([
+  it('accepts workspace category and returns workspace tool details', async() => {
+    (toolRegistry as any).searchTools = async() => ([
       {
-        name: 'workspace_list',
+        name:        'workspace_list',
         description: 'List available workspaces',
-        jsonSchema: {
-          type: 'object',
+        jsonSchema:  {
+          type:       'object',
           properties: {},
-          required: [],
+          required:   [],
         },
       },
     ]);
@@ -109,8 +109,8 @@ describe('browse_tools output details', () => {
     expect(response).toContain('"description": "List available workspaces"');
   });
 
-  it('keeps no-tools response behavior intact', async () => {
-    (toolRegistry as any).searchTools = async () => ([]);
+  it('keeps no-tools response behavior intact', async() => {
+    (toolRegistry as any).searchTools = async() => ([]);
     (toolRegistry as any).getCategories = () => ['slack', 'n8n', 'pg'];
 
     const worker = new BrowseToolsWorker();

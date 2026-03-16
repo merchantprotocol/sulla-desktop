@@ -1,5 +1,8 @@
 <template>
-  <div class="font-sans page-root" :class="{ dark: isDark }">
+  <div
+    class="font-sans page-root"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="AgentFilesystem" />
     <EditorHeader
       :is-dark="isDark"
@@ -13,7 +16,7 @@
     />
 
     <div class="flex flex-1 min-h-0 overflow-hidden">
-        <div class="main-content">
+      <div class="main-content">
         <!-- Icon Panel -->
         <IconPanel
           :is-dark="isDark"
@@ -36,644 +39,1200 @@
           @toggle-training="toggleTraining"
           @toggle-monitor="toggleMonitor"
         />
+      </div>
+
+      <!-- Left sidebar: File tree -->
+      <div
+        v-show="leftPaneVisible"
+        class="left-pane"
+        :class="{ dark: isDark }"
+        :style="{ width: leftPaneWidth + 'px' }"
+      >
+        <div class="file-tree-wrapper">
+          <!-- Search -->
+          <FileSearch
+            v-show="searchMode"
+            v-model="searchQuery"
+            v-model:search-path="searchPath"
+            :is-dark="isDark"
+            :results="searchResults"
+            :indexing="qmdIndexing"
+            :searching="qmdSearching"
+            @file-selected="onFileSelected"
+            @close="leftPaneVisible = false"
+          />
+
+          <!-- Git pane -->
+          <GitPane
+            v-show="gitMode"
+            :root-path="rootPath"
+            :is-dark="isDark"
+            @file-selected="onFileSelected"
+            @open-diff="onOpenDiff"
+            @close="leftPaneVisible = false"
+          />
+
+          <!-- Docker pane -->
+          <DockerPane
+            v-show="dockerMode"
+            :is-dark="isDark"
+            @open-container-port="openContainerPort"
+            @docker-logs="openDockerLogs"
+            @docker-exec="openDockerExec"
+            @close="leftPaneVisible = false"
+          />
+
+          <!-- Agent pane -->
+          <AgentPane
+            v-show="agentMode"
+            ref="agentPaneRef"
+            :is-dark="isDark"
+            @close="leftPaneVisible = false"
+            @file-selected="onFileSelected"
+            @open-new-agent-tab="onNewAgentTab"
+            @edit-agent="onEditAgent"
+          />
+
+          <!-- Integrations pane -->
+          <IntegrationsPane
+            v-show="integrationsMode"
+            :is-dark="isDark"
+            @file-selected="onFileSelected"
+            @open-api-test="openApiTest"
+            @close="leftPaneVisible = false"
+          />
+
+          <!-- Workflow pane -->
+          <WorkflowPane
+            v-show="workflowMode"
+            ref="workflowPaneRef"
+            :is-dark="isDark"
+            @close="leftPaneVisible = false"
+            @workflow-activated="onWorkflowActivated"
+            @workflow-closed="onWorkflowClosed"
+            @workflow-created="onWorkflowCreated"
+            @workflow-deleted="onWorkflowDeleted"
+          />
+
+          <!-- Training file tree -->
+          <TrainingFileTreePane
+            v-show="trainingMode"
+            :is-dark="isDark"
+            :current-step="trainingStep"
+            @close="leftPaneVisible = false"
+            @step-change="trainingStep = $event"
+          />
+
+          <!-- Monitor pane -->
+          <MonitorPane
+            v-show="monitorMode"
+            :is-dark="isDark"
+            :active-section="monitorSection"
+            @close="toggleMonitor"
+            @section-change="monitorSection = $event"
+            @refresh="monitorDashboardRef?.refreshAll?.()"
+          />
+
+          <!-- File tree -->
+          <FileTreeSidebar
+            v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode && !monitorMode"
+            ref="fileTreeRef"
+            :root-path="rootPath"
+            :highlight-path="highlightPath"
+            :is-dark="isDark"
+            @file-selected="onFileSelected"
+            @close="leftPaneVisible = false"
+          />
         </div>
+      </div>
 
-        <!-- Left sidebar: File tree -->
-        <div class="left-pane" v-show="leftPaneVisible" :class="{ dark: isDark }" :style="{ width: leftPaneWidth + 'px' }">
-          <div class="file-tree-wrapper">
-            <!-- Search -->
-            <FileSearch
-              v-show="searchMode"
-              v-model="searchQuery"
-              v-model:search-path="searchPath"
-              :is-dark="isDark"
-              :results="searchResults"
-              :indexing="qmdIndexing"
-              :searching="qmdSearching"
-              @file-selected="onFileSelected"
-              @close="leftPaneVisible = false"
-            />
+      <!-- Resize handle: left pane -->
+      <div
+        v-show="leftPaneVisible"
+        class="resize-handle resize-handle-v"
+        :class="{ dark: isDark }"
+        @mousedown="startResize('left', $event)"
+      />
 
-            <!-- Git pane -->
-            <GitPane
-              v-show="gitMode"
-              :root-path="rootPath"
-              :is-dark="isDark"
-              @file-selected="onFileSelected"
-              @open-diff="onOpenDiff"
-              @close="leftPaneVisible = false"
-            />
-
-            <!-- Docker pane -->
-            <DockerPane
-              v-show="dockerMode"
-              :is-dark="isDark"
-              @open-container-port="openContainerPort"
-              @docker-logs="openDockerLogs"
-              @docker-exec="openDockerExec"
-              @close="leftPaneVisible = false"
-            />
-
-            <!-- Agent pane -->
-            <AgentPane
-              ref="agentPaneRef"
-              v-show="agentMode"
-              :is-dark="isDark"
-              @close="leftPaneVisible = false"
-              @file-selected="onFileSelected"
-              @open-new-agent-tab="onNewAgentTab"
-              @edit-agent="onEditAgent"
-            />
-
-            <!-- Integrations pane -->
-            <IntegrationsPane
-              v-show="integrationsMode"
-              :is-dark="isDark"
-              @file-selected="onFileSelected"
-              @open-api-test="openApiTest"
-              @close="leftPaneVisible = false"
-            />
-
-            <!-- Workflow pane -->
-            <WorkflowPane
-              ref="workflowPaneRef"
-              v-show="workflowMode"
-              :is-dark="isDark"
-              @close="leftPaneVisible = false"
-              @workflow-activated="onWorkflowActivated"
-              @workflow-closed="onWorkflowClosed"
-              @workflow-created="onWorkflowCreated"
-              @workflow-deleted="onWorkflowDeleted"
-            />
-
-            <!-- Training file tree -->
-            <TrainingFileTreePane
-              v-show="trainingMode"
-              :is-dark="isDark"
-              :current-step="trainingStep"
-              @close="leftPaneVisible = false"
-              @step-change="trainingStep = $event"
-            />
-
-            <!-- Monitor pane -->
-            <MonitorPane
-              v-show="monitorMode"
-              :is-dark="isDark"
-              :active-section="monitorSection"
-              @close="toggleMonitor"
-              @section-change="monitorSection = $event"
-              @refresh="monitorDashboardRef?.refreshAll?.()"
-            />
-
-            <!-- File tree -->
-            <FileTreeSidebar
-              ref="fileTreeRef"
-              v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode && !monitorMode"
-              :root-path="rootPath"
-              :highlight-path="highlightPath"
-              :is-dark="isDark"
-              @file-selected="onFileSelected"
-              @close="leftPaneVisible = false"
-            />
-          </div>
-        </div>
-
-        <!-- Resize handle: left pane -->
+      <!-- Right content: Editor area -->
+      <div
+        v-show="centerPaneVisible"
+        class="editor-panel"
+        :class="{ dark: isDark }"
+      >
+        <!-- Monitor dashboard (replaces editor area when monitor mode is active) -->
+        <MonitorDashboard
+          v-if="monitorMode"
+          ref="monitorDashboardRef"
+          :is-dark="isDark"
+          :active-section="monitorSection"
+          @refresh="monitorDashboardRef?.refreshAll?.()"
+          @open-detail="openMonitorDetail"
+        />
+        <!-- Training full-screen (replaces everything when training mode is active) -->
+        <TrainingPane
+          v-if="trainingMode"
+          ref="trainingPaneRef"
+          :is-dark="isDark"
+          :current-step="trainingStep"
+          @env-ready="leftPaneVisible = true"
+          @step-change="trainingStep = $event"
+          @content-scale="trainingContentScale = $event"
+          @open-training-log="openTrainingLog"
+        />
+        <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
+        <WorkflowEditor
+          v-if="workflowMode"
+          ref="workflowEditorRef"
+          :is-dark="isDark"
+          :workflow-data="activeWorkflowData"
+          @node-selected="onWorkflowNodeSelected"
+          @workflow-changed="onWorkflowChanged"
+        />
+        <!-- Workflow save toolbar -->
         <div
-          v-show="leftPaneVisible"
-          class="resize-handle resize-handle-v"
+          v-if="workflowMode && activeWorkflowData"
+          class="workflow-save-bar"
           :class="{ dark: isDark }"
-          @mousedown="startResize('left', $event)"
-        ></div>
+        >
+          <span
+            v-if="workflowSaveStatus === 'saving'"
+            class="workflow-save-status saving"
+          >
+            <svg
+              class="workflow-save-spinner"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            ><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+            Saving…
+          </span>
+          <span
+            v-else-if="workflowSaveStatus === 'saved'"
+            class="workflow-save-status saved"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            ><polyline points="20 6 9 17 4 12" /></svg>
+            Saved
+          </span>
+          <span
+            v-else-if="workflowSaveStatus === 'unsaved'"
+            class="workflow-save-status unsaved"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            ><circle
+              cx="12"
+              cy="12"
+              r="10"
+            /><path d="M12 8v4" /><path d="M12 16h.01" /></svg>
+            Unsaved
+          </span>
+          <button
+            class="workflow-save-btn"
+            :class="{ dark: isDark }"
+            title="Save workflow (⌘S)"
+            @click="saveWorkflowNow"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
+            </svg>
+            Save
+          </button>
+          <button
+            class="workflow-save-btn"
+            :class="{ dark: isDark }"
+            title="Workflow settings"
+            @click="toggleWorkflowSettings"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="3"
+              />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          <button
+            class="workflow-enable-btn"
+            :class="{ dark: isDark, enabled: activeWorkflowData?.enabled }"
+            :title="activeWorkflowData?.enabled ? 'Disable workflow (live)' : 'Enable workflow (go live)'"
+            @click="toggleWorkflowEnabled"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+              <line
+                x1="12"
+                y1="2"
+                x2="12"
+                y2="12"
+              />
+            </svg>
+            {{ activeWorkflowData?.enabled ? 'Live' : 'Disabled' }}
+          </button>
+          <div
+            class="workflow-save-divider"
+            :class="{ dark: isDark }"
+          />
+          <button
+            class="workflow-run-btn"
+            :class="{ dark: isDark }"
+            title="Run workflow (opens chat)"
+            @click="runWorkflow"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            Run
+          </button>
+        </div>
 
-        <!-- Right content: Editor area -->
-        <div class="editor-panel" v-show="centerPaneVisible" :class="{ dark: isDark }">
-          <!-- Monitor dashboard (replaces editor area when monitor mode is active) -->
-          <MonitorDashboard v-if="monitorMode" ref="monitorDashboardRef" :is-dark="isDark" :active-section="monitorSection" @refresh="monitorDashboardRef?.refreshAll?.()" @open-detail="openMonitorDetail" />
-          <!-- Training full-screen (replaces everything when training mode is active) -->
-          <TrainingPane ref="trainingPaneRef" v-if="trainingMode" :is-dark="isDark" :current-step="trainingStep" @env-ready="leftPaneVisible = true" @step-change="trainingStep = $event" @content-scale="trainingContentScale = $event" @open-training-log="openTrainingLog" />
-          <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
-          <WorkflowEditor v-if="workflowMode" ref="workflowEditorRef" :is-dark="isDark" :workflow-data="activeWorkflowData" @node-selected="onWorkflowNodeSelected" @workflow-changed="onWorkflowChanged" />
-          <!-- Workflow save toolbar -->
-          <div v-if="workflowMode && activeWorkflowData" class="workflow-save-bar" :class="{ dark: isDark }">
-            <span v-if="workflowSaveStatus === 'saving'" class="workflow-save-status saving">
-              <svg class="workflow-save-spinner" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              Saving…
-            </span>
-            <span v-else-if="workflowSaveStatus === 'saved'" class="workflow-save-status saved">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-              Saved
-            </span>
-            <span v-else-if="workflowSaveStatus === 'unsaved'" class="workflow-save-status unsaved">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-              Unsaved
-            </span>
-            <button class="workflow-save-btn" :class="{ dark: isDark }" title="Save workflow (⌘S)" @click="saveWorkflowNow">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                <polyline points="17 21 17 13 7 13 7 21"/>
-                <polyline points="7 3 7 8 15 8"/>
-              </svg>
-              Save
-            </button>
-            <button class="workflow-save-btn" :class="{ dark: isDark }" title="Workflow settings" @click="toggleWorkflowSettings">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </svg>
-            </button>
-            <button
-              class="workflow-enable-btn"
-              :class="{ dark: isDark, enabled: activeWorkflowData?.enabled }"
-              :title="activeWorkflowData?.enabled ? 'Disable workflow (live)' : 'Enable workflow (go live)'"
-              @click="toggleWorkflowEnabled"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
-                <line x1="12" y1="2" x2="12" y2="12"/>
-              </svg>
-              {{ activeWorkflowData?.enabled ? 'Live' : 'Disabled' }}
-            </button>
-            <div class="workflow-save-divider" :class="{ dark: isDark }"></div>
-            <button
-              class="workflow-run-btn"
+        <!-- Top editor area -->
+        <div
+          v-show="!workflowMode && !trainingMode && !monitorMode"
+          class="editor-top"
+        >
+          <!-- Tab bar (always visible) -->
+          <div
+            class="tab-bar"
+            :class="{ dark: isDark, empty: openTabs.length === 0 }"
+          >
+            <div class="tab-bar-tabs">
+              <div
+                v-for="tab in openTabs"
+                :key="`${tab.path}-${tab.editorType || 'code'}`"
+                class="tab"
+                :class="{ active: activeTabKey === `${tab.path}-${tab.editorType || 'code'}`, dark: isDark }"
+                @click="switchTab(tab)"
+                @contextmenu.prevent="$emit('tab-context-menu', $event, tab)"
+              >
+                <span class="tab-icon">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                  >
+                    <path
+                      d="M3.5 1C2.94772 1 2.5 1.44772 2.5 2V14C2.5 14.5523 2.94772 15 3.5 15H12.5C13.0523 15 13.5 14.5523 13.5 14V5L9.5 1H3.5Z"
+                      :fill="getIconColor(tab.ext)"
+                      stroke-width="0.5"
+                      :stroke="getIconColor(tab.ext)"
+                    />
+                    <path
+                      d="M9.5 1V5H13.5"
+                      :stroke="getIconColor(tab.ext)"
+                      stroke-width="0.8"
+                      fill="none"
+                    />
+                  </svg>
+                </span>
+                <span class="tab-label">{{ tab.name }}{{ tab.editorType === 'diff' ? ' (diff)' : '' }}</span>
+                <span
+                  v-if="tab.dirty"
+                  class="tab-dirty-dot"
+                />
+                <span
+                  class="tab-close"
+                  @click.stop="closeTab(tab)"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                  >
+                    <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z" />
+                  </svg>
+                </span>
+              </div>
+            </div>
+            <!-- Tab bar actions (right side) -->
+            <div class="tab-bar-actions">
+              <button
+                class="tab-bar-action-btn"
+                :class="{ dark: isDark }"
+                title="More actions"
+                @click.stop="editorMenu.visible = !editorMenu.visible"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <circle
+                    cx="12"
+                    cy="5"
+                    r="2"
+                  />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="2"
+                  />
+                  <circle
+                    cx="12"
+                    cy="19"
+                    r="2"
+                  />
+                </svg>
+              </button>
+            </div>
+            <!-- Editor dropdown menu -->
+            <div
+              v-if="editorMenu.visible"
+              ref="editorDropdownRef"
+              class="editor-dropdown"
               :class="{ dark: isDark }"
-              title="Run workflow (opens chat)"
-              @click="runWorkflow"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
-              Run
-            </button>
+              <button
+                class="editor-dropdown-item"
+                :class="{ dark: isDark }"
+                @click="createNewUntitledTab"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line
+                    x1="12"
+                    y1="18"
+                    x2="12"
+                    y2="12"
+                  />
+                  <line
+                    x1="9"
+                    y1="15"
+                    x2="15"
+                    y2="15"
+                  />
+                </svg>
+                <span>New File</span>
+              </button>
+            </div>
           </div>
 
-          <!-- Top editor area -->
-          <div class="editor-top" v-show="!workflowMode && !trainingMode && !monitorMode">
-            <!-- Tab bar (always visible) -->
-            <div class="tab-bar" :class="{ dark: isDark, empty: openTabs.length === 0 }">
-              <div class="tab-bar-tabs">
+          <!-- Empty state (no tabs open) -->
+          <div
+            v-if="openTabs.length === 0"
+            class="empty-state"
+          >
+            <img
+              :src="sullaMutedIconUrl"
+              alt="Sulla"
+              class="empty-icon-img"
+            >
+            <p class="empty-text">
+              Agent Workbench
+            </p>
+            <p class="empty-hint">
+              an editor built for vibe coders
+            </p>
+          </div>
+
+          <!-- Active tab content -->
+          <template v-if="activeTab">
+            <!-- Loading state -->
+            <div
+              v-if="activeTab?.loading"
+              class="empty-state"
+            >
+              <div class="loading-spinner" />
+              <p class="empty-text">
+                Loading {{ activeTab?.name }}…
+              </p>
+            </div>
+
+            <!-- Error state -->
+            <div
+              v-else-if="activeTab?.error"
+              class="empty-state"
+            >
+              <p class="error-text">
+                {{ activeTab?.error }}
+              </p>
+            </div>
+
+            <!-- Editor content -->
+            <template v-else>
+              <!-- Breadcrumb and Save Button Row -->
+              <div
+                class="editor-header"
+                :class="{ dark: isDark }"
+              >
                 <div
-                  v-for="tab in openTabs"
-                  :key="`${tab.path}-${tab.editorType || 'code'}`"
-                  class="tab"
-                  :class="{ active: activeTabKey === `${tab.path}-${tab.editorType || 'code'}`, dark: isDark }"
-                  @click="switchTab(tab)"
-                  @contextmenu.prevent="$emit('tab-context-menu', $event, tab)"
+                  class="breadcrumb-bar"
+                  :class="{ dark: isDark }"
                 >
-                  <span class="tab-icon">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                      <path d="M3.5 1C2.94772 1 2.5 1.44772 2.5 2V14C2.5 14.5523 2.94772 15 3.5 15H12.5C13.0523 15 13.5 14.5523 13.5 14V5L9.5 1H3.5Z" :fill="getIconColor(tab.ext)" stroke-width="0.5" :stroke="getIconColor(tab.ext)"/>
-                      <path d="M9.5 1V5H13.5" :stroke="getIconColor(tab.ext)" stroke-width="0.8" fill="none"/>
-                    </svg>
-                  </span>
-                  <span class="tab-label">{{ tab.name }}{{ tab.editorType === 'diff' ? ' (diff)' : '' }}</span>
-                  <span v-if="tab.dirty" class="tab-dirty-dot"></span>
-                  <span class="tab-close" @click.stop="closeTab(tab)">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.707L8 8.707z"/>
-                    </svg>
+                  <span
+                    v-for="(segment, idx) in activeBreadcrumbs"
+                    :key="idx"
+                    class="breadcrumb-segment"
+                  >
+                    <span
+                      v-if="idx > 0"
+                      class="breadcrumb-sep"
+                    >›</span>
+                    {{ segment }}
                   </span>
                 </div>
-              </div>
-              <!-- Tab bar actions (right side) -->
-              <div class="tab-bar-actions">
-                <button class="tab-bar-action-btn" :class="{ dark: isDark }" title="More actions" @click.stop="editorMenu.visible = !editorMenu.visible">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                    <circle cx="12" cy="5" r="2"/>
-                    <circle cx="12" cy="12" r="2"/>
-                    <circle cx="12" cy="19" r="2"/>
+                <span
+                  v-if="agentMode && activeTab && !activeTab.loading"
+                  class="token-estimate"
+                  :class="{ dark: isDark }"
+                >
+                  ~{{ estimatedTokens }} tokens
+                </span>
+                <button
+                  v-if="activeTab?.dirty"
+                  class="save-button"
+                  :class="{ dark: isDark }"
+                  :disabled="activeTab?.loading"
+                  @click="saveActiveTab"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                    <polyline points="17,21 17,13 7,13 7,21" />
+                    <polyline points="7,3 7,8 15,8" />
                   </svg>
+                  Save
                 </button>
-              </div>
-              <!-- Editor dropdown menu -->
-              <div v-if="editorMenu.visible" ref="editorDropdownRef" class="editor-dropdown" :class="{ dark: isDark }">
-                <button class="editor-dropdown-item" :class="{ dark: isDark }" @click="createNewUntitledTab">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                    <line x1="12" y1="18" x2="12" y2="12"/>
-                    <line x1="9" y1="15" x2="15" y2="15"/>
-                  </svg>
-                  <span>New File</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Empty state (no tabs open) -->
-            <div v-if="openTabs.length === 0" class="empty-state">
-              <img :src="sullaMutedIconUrl" alt="Sulla" class="empty-icon-img">
-              <p class="empty-text">Agent Workbench</p>
-              <p class="empty-hint">an editor built for vibe coders</p>
-            </div>
-
-            <!-- Active tab content -->
-            <template v-if="activeTab">
-              <!-- Loading state -->
-              <div v-if="activeTab?.loading" class="empty-state">
-                <div class="loading-spinner"></div>
-                <p class="empty-text">Loading {{ activeTab?.name }}…</p>
-              </div>
-
-              <!-- Error state -->
-              <div v-else-if="activeTab?.error" class="empty-state">
-                <p class="error-text">{{ activeTab?.error }}</p>
               </div>
 
               <!-- Editor content -->
-              <template v-else>
-                <!-- Breadcrumb and Save Button Row -->
-                <div class="editor-header" :class="{ dark: isDark }">
-                  <div class="breadcrumb-bar" :class="{ dark: isDark }">
-                    <span
-                      v-for="(segment, idx) in activeBreadcrumbs"
-                      :key="idx"
-                      class="breadcrumb-segment"
-                    >
-                      <span v-if="idx > 0" class="breadcrumb-sep">›</span>
-                      {{ segment }}
-                    </span>
-                  </div>
-                  <span v-if="agentMode && activeTab && !activeTab.loading" class="token-estimate" :class="{ dark: isDark }">
-                    ~{{ estimatedTokens }} tokens
-                  </span>
-                  <button
-                    v-if="activeTab?.dirty"
-                    class="save-button"
-                    :class="{ dark: isDark }"
-                    @click="saveActiveTab"
-                    :disabled="activeTab?.loading"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                      <polyline points="17,21 17,13 7,13 7,21"/>
-                      <polyline points="7,3 7,8 15,8"/>
-                    </svg>
-                    Save
-                  </button>
-                </div>
+              <div
+                class="editor-content"
+                @contextmenu="onEditorContextMenu"
+              >
+                <component
+                  :is="activeEditorComponent"
+                  :key="activeTab?.path || ''"
+                  ref="editorRef"
+                  :content="activeTab?.content || ''"
+                  :original-content="activeTab?.originalContent || ''"
+                  :file-path="activeTab?.path || ''"
+                  :file-ext="activeTab?.ext || ''"
+                  :is-dark="isDark"
+                  :line="activeTab?.line"
+                  :read-only="activeTab?.editorType === 'preview' || activeTab?.editorType === 'diff' || activeTab?.editorType === 'terminal'"
+                  @dirty="markActiveTabDirty"
+                  @saved="onAgentFormSaved"
+                />
+              </div>
 
-                <!-- Editor content -->
-                <div class="editor-content" @contextmenu="onEditorContextMenu">
-                  <component
-                    :is="activeEditorComponent"
-                    :key="activeTab?.path || ''"
-                    ref="editorRef"
-                    :content="activeTab?.content || ''"
-                    :original-content="activeTab?.originalContent || ''"
-                    :file-path="activeTab?.path || ''"
-                    :file-ext="activeTab?.ext || ''"
-                    :is-dark="isDark"
-                    :read-only="activeTab?.editorType === 'preview' || activeTab?.editorType === 'diff' || activeTab?.editorType === 'terminal'"
-                    @dirty="markActiveTabDirty"
-                    @saved="onAgentFormSaved"
-                  />
-                </div>
-
-                <!-- Inject Variable context menu -->
-                <Teleport to="body">
-                  <div
-                    v-if="injectMenu.visible"
-                    class="inject-menu"
-                    :class="{ dark: isDark }"
-                    :style="{ top: injectMenu.y + 'px', left: injectMenu.x + 'px' }"
-                    @contextmenu.prevent
-                  >
-                    <div class="inject-menu-header">Inject Variable</div>
-                    <button
-                      v-for="v in injectMenu.variables"
-                      :key="v.key"
-                      class="inject-menu-item"
-                      :class="{ dark: isDark }"
-                      @click="doInjectVariable(v.key)"
-                    >
-                      <span class="inject-var-label">{{ v.label }}</span>
-                      <span class="inject-var-key">{{ v.key }}</span>
-                    </button>
-                  </div>
-                </Teleport>
-              </template>
-            </template>
-          </div>
-
-          <!-- Resize handle: bottom pane -->
-          <div
-            v-show="bottomPaneVisible"
-            class="resize-handle resize-handle-h"
-            :class="{ dark: isDark }"
-            @mousedown="startResize('bottom', $event)"
-          ></div>
-
-          <!-- Bottom center pane -->
-          <div v-show="bottomPaneVisible" class="editor-bottom" :class="{ dark: isDark }" :style="{ height: bottomPaneHeight + 'px' }">
-            <!-- Terminal tabs header -->
-            <div class="terminal-tabs-header" :class="{ dark: isDark }">
-              <div class="terminal-tabs">
+              <!-- Inject Variable context menu -->
+              <Teleport to="body">
                 <div
-                  v-for="tab in terminalTabs"
-                  :key="tab.id"
-                  class="terminal-tab"
-                  :class="{ active: bottomPaneTab === 'terminal' && activeTerminalTab === tab.id, dark: isDark }"
-                  @click="bottomPaneTab = 'terminal'; switchTerminalTab(tab.id)"
+                  v-if="injectMenu.visible"
+                  class="inject-menu"
+                  :class="{ dark: isDark }"
+                  :style="{ top: injectMenu.y + 'px', left: injectMenu.x + 'px' }"
+                  @contextmenu.prevent
                 >
-                  <span>{{ tab.name }}</span>
+                  <div class="inject-menu-header">
+                    Inject Variable
+                  </div>
                   <button
-                    v-if="terminalTabs.length > 1"
-                    class="terminal-tab-close"
+                    v-for="v in injectMenu.variables"
+                    :key="v.key"
+                    class="inject-menu-item"
                     :class="{ dark: isDark }"
-                    @click.stop="closeTerminalTab(tab.id)"
+                    @click="doInjectVariable(v.key)"
                   >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18"></line>
-                      <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
+                    <span class="inject-var-label">{{ v.label }}</span>
+                    <span class="inject-var-key">{{ v.key }}</span>
                   </button>
                 </div>
-              </div>
-              <!-- API Test tabs -->
-              <div
-                v-for="atab in apiTabs"
-                :key="atab.id"
-                class="terminal-tab"
-                :class="{ active: bottomPaneTab === 'api' && activeApiTab === atab.id, dark: isDark }"
-                @click="bottomPaneTab = 'api'; activeApiTab = atab.id"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
-                  <path d="M4 6h16M4 12h16M4 18h16"/>
-                </svg>
-                <span>API:{{ atab.slug }}</span>
-                <button
-                  class="terminal-tab-close"
-                  :class="{ dark: isDark }"
-                  @click.stop="closeApiTab(atab.id)"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              </div>
-              <!-- Monitor detail tabs -->
-              <div
-                v-for="mtab in monitorTabs"
-                :key="mtab.id"
-                class="terminal-tab"
-                :class="{ active: bottomPaneTab === 'monitor' && activeMonitorTab === mtab.id, dark: isDark }"
-                @click="bottomPaneTab = 'monitor'; activeMonitorTab = mtab.id"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
-                  <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                </svg>
-                <span>{{ mtab.label }}</span>
-                <button
-                  class="terminal-tab-close"
-                  :class="{ dark: isDark }"
-                  @click.stop="closeMonitorTab(mtab.id)"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              </div>
-              <!-- Training log tab -->
-              <div
-                v-if="trainingLogFilename"
-                class="terminal-tab"
-                :class="{ active: bottomPaneTab === 'training', dark: isDark }"
-                @click="bottomPaneTab = 'training'"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 3px; flex-shrink: 0;">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/>
-                  <line x1="16" y1="17" x2="8" y2="17"/>
-                </svg>
-                <span>Training Log</span>
-                <button
-                  class="terminal-tab-close"
-                  :class="{ dark: isDark }"
-                  @click.stop="trainingLogFilename = ''; bottomPaneTab = 'terminal'"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              </div>
-              <button
-                class="terminal-tab-add"
-                :class="{ dark: isDark }"
-                @click="createNewTerminalTab"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-              </button>
-              <div style="flex:1"></div>
-              <button class="pane-close-btn" :class="{ dark: isDark }" title="Close" @click="bottomPaneVisible = false">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
-            
-            <!-- Terminal content -->
-            <div v-show="bottomPaneTab === 'terminal'" class="terminal-content">
+              </Teleport>
+            </template>
+          </template>
+        </div>
+
+        <!-- Resize handle: bottom pane -->
+        <div
+          v-show="bottomPaneVisible"
+          class="resize-handle resize-handle-h"
+          :class="{ dark: isDark }"
+          @mousedown="startResize('bottom', $event)"
+        />
+
+        <!-- Bottom center pane -->
+        <div
+          v-show="bottomPaneVisible"
+          class="editor-bottom"
+          :class="{ dark: isDark }"
+          :style="{ height: bottomPaneHeight + 'px' }"
+        >
+          <!-- Terminal tabs header -->
+          <div
+            class="terminal-tabs-header"
+            :class="{ dark: isDark }"
+          >
+            <div class="terminal-tabs">
               <div
                 v-for="tab in terminalTabs"
                 :key="tab.id"
-                v-show="activeTerminalTab === tab.id"
-                class="terminal-pane"
+                class="terminal-tab"
+                :class="{ active: bottomPaneTab === 'terminal' && activeTerminalTab === tab.id, dark: isDark }"
+                @click="bottomPaneTab = 'terminal'; switchTerminalTab(tab.id)"
               >
-                <XTermTerminal :is-dark="isDark" :session-id="tab.sessionId" :command="tab.command || ''" :read-only="tab.readOnly || false" />
-              </div>
-            </div>
-
-            <!-- API Test Panels -->
-            <div v-show="bottomPaneTab === 'api'" class="terminal-content">
-              <div
-                v-for="atab in apiTabs"
-                :key="atab.id"
-                v-show="activeApiTab === atab.id"
-                style="height: 100%"
-              >
-                <ApiTestPanel :is-dark="isDark" :initial-slug="atab.slug" />
-              </div>
-            </div>
-
-            <!-- Training Log -->
-            <div v-show="bottomPaneTab === 'training'" class="terminal-content">
-              <TrainingLogViewer v-if="trainingLogFilename" :is-dark="isDark" :log-filename="trainingLogFilename" />
-            </div>
-
-            <!-- Monitor Detail Panels -->
-            <div v-show="bottomPaneTab === 'monitor'" class="terminal-content">
-              <div
-                v-for="mtab in monitorTabs"
-                :key="mtab.id"
-                v-show="activeMonitorTab === mtab.id"
-                style="height: 100%"
-              >
-                <MonitorDetailPanel :is-dark="isDark" :tab-type="mtab.type" :tab-id="mtab.tabId" :error-data="mtab.errorData" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Resize handle: right pane -->
-        <div
-          v-show="rightPaneVisible"
-          class="resize-handle resize-handle-v"
-          :class="{ dark: isDark }"
-          @mousedown="startResize('right', $event)"
-        ></div>
-
-        <!-- Right pane -->
-        <div class="right-pane" v-show="rightPaneVisible" :class="{ dark: isDark }" :style="{ width: rightPaneWidth + 'px' }">
-          <!-- Workflow settings panel -->
-          <div v-if="workflowMode && workflowSettingsOpen && activeWorkflowData" class="workflow-settings-panel" :class="{ dark: isDark }">
-            <div class="workflow-settings-header">
-              <span class="workflow-settings-title">Workflow Settings</span>
-              <button class="workflow-settings-close" @click="onWorkflowSettingsClose" title="Close">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <div class="workflow-settings-body">
-              <label class="workflow-settings-label">Name</label>
-              <input
-                class="workflow-settings-input"
-                :class="{ dark: isDark }"
-                type="text"
-                :value="activeWorkflowData.name"
-                @input="onWorkflowNameUpdate(($event.target as HTMLInputElement).value)"
-                placeholder="Workflow name"
-              />
-              <label class="workflow-settings-label">Description</label>
-              <textarea
-                class="workflow-settings-textarea"
-                :class="{ dark: isDark }"
-                :value="activeWorkflowData.description"
-                @input="onWorkflowDescriptionUpdate(($event.target as HTMLTextAreaElement).value)"
-                placeholder="Describe what this workflow does…"
-                rows="4"
-              />
-              <div class="workflow-settings-danger-zone">
+                <span>{{ tab.name }}</span>
                 <button
-                  class="workflow-delete-btn"
+                  v-if="terminalTabs.length > 1"
+                  class="terminal-tab-close"
                   :class="{ dark: isDark }"
-                  @click="deleteActiveWorkflow"
+                  @click.stop="closeTerminalTab(tab.id)"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line
+                      x1="18"
+                      y1="6"
+                      x2="6"
+                      y2="18"
+                    />
+                    <line
+                      x1="6"
+                      y1="6"
+                      x2="18"
+                      y2="18"
+                    />
                   </svg>
-                  Delete Workflow
                 </button>
               </div>
             </div>
-          </div>
-          <!-- Workflow node properties panel -->
-          <WorkflowNodePanel
-            v-else-if="workflowMode && selectedWorkflowNode"
-            :is-dark="isDark"
-            :node="selectedWorkflowNode"
-            :upstream-nodes="selectedNodeUpstream"
-            @close="onWorkflowNodePanelClose"
-            @update-label="onWorkflowNodeLabelUpdate"
-            @update-trigger="() => {}"
-            @update-node-config="onWorkflowNodeConfigUpdate"
-          />
-          <!-- Training mode: tabbed right pane (Chat / Help) -->
-          <template v-else-if="trainingMode">
-            <div class="rp-tabs" :class="{ dark: isDark }">
+            <!-- API Test tabs -->
+            <div
+              v-for="atab in apiTabs"
+              :key="atab.id"
+              class="terminal-tab"
+              :class="{ active: bottomPaneTab === 'api' && activeApiTab === atab.id, dark: isDark }"
+              @click="bottomPaneTab = 'api'; activeApiTab = atab.id"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="margin-right: 3px; flex-shrink: 0;"
+              >
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+              <span>API:{{ atab.slug }}</span>
               <button
-                class="rp-tab"
-                :class="{ active: rightPaneTab === 'chat', dark: isDark }"
-                @click="rightPaneTab = 'chat'"
-              >Chat</button>
-              <button
-                class="rp-tab"
-                :class="{ active: rightPaneTab === 'help', dark: isDark }"
-                @click="rightPaneTab = 'help'"
-              >Help</button>
+                class="terminal-tab-close"
+                :class="{ dark: isDark }"
+                @click.stop="closeApiTab(atab.id)"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line
+                    x1="18"
+                    y1="6"
+                    x2="6"
+                    y2="18"
+                  />
+                  <line
+                    x1="6"
+                    y1="6"
+                    x2="18"
+                    y2="18"
+                  />
+                </svg>
+              </button>
             </div>
-            <EditorChat
-              v-show="rightPaneTab === 'chat'"
+            <!-- Monitor detail tabs -->
+            <div
+              v-for="mtab in monitorTabs"
+              :key="mtab.id"
+              class="terminal-tab"
+              :class="{ active: bottomPaneTab === 'monitor' && activeMonitorTab === mtab.id, dark: isDark }"
+              @click="bottomPaneTab = 'monitor'; activeMonitorTab = mtab.id"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="margin-right: 3px; flex-shrink: 0;"
+              >
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              <span>{{ mtab.label }}</span>
+              <button
+                class="terminal-tab-close"
+                :class="{ dark: isDark }"
+                @click.stop="closeMonitorTab(mtab.id)"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line
+                    x1="18"
+                    y1="6"
+                    x2="6"
+                    y2="18"
+                  />
+                  <line
+                    x1="6"
+                    y1="6"
+                    x2="18"
+                    y2="18"
+                  />
+                </svg>
+              </button>
+            </div>
+            <!-- Training log tab -->
+            <div
+              v-if="trainingLogFilename"
+              class="terminal-tab"
+              :class="{ active: bottomPaneTab === 'training', dark: isDark }"
+              @click="bottomPaneTab = 'training'"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="margin-right: 3px; flex-shrink: 0;"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line
+                  x1="16"
+                  y1="13"
+                  x2="8"
+                  y2="13"
+                />
+                <line
+                  x1="16"
+                  y1="17"
+                  x2="8"
+                  y2="17"
+                />
+              </svg>
+              <span>Training Log</span>
+              <button
+                class="terminal-tab-close"
+                :class="{ dark: isDark }"
+                @click.stop="trainingLogFilename = ''; bottomPaneTab = 'terminal'"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line
+                    x1="18"
+                    y1="6"
+                    x2="6"
+                    y2="18"
+                  />
+                  <line
+                    x1="6"
+                    y1="6"
+                    x2="18"
+                    y2="18"
+                  />
+                </svg>
+              </button>
+            </div>
+            <button
+              class="terminal-tab-add"
+              :class="{ dark: isDark }"
+              @click="createNewTerminalTab"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line
+                  x1="12"
+                  y1="5"
+                  x2="12"
+                  y2="19"
+                />
+                <line
+                  x1="5"
+                  y1="12"
+                  x2="19"
+                  y2="12"
+                />
+              </svg>
+            </button>
+            <div style="flex:1" />
+            <button
+              class="pane-close-btn"
+              :class="{ dark: isDark }"
+              title="Close"
+              @click="bottomPaneVisible = false"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line
+                  x1="18"
+                  y1="6"
+                  x2="6"
+                  y2="18"
+                />
+                <line
+                  x1="6"
+                  y1="6"
+                  x2="18"
+                  y2="18"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Terminal content -->
+          <div
+            v-show="bottomPaneTab === 'terminal'"
+            class="terminal-content"
+          >
+            <div
+              v-for="tab in terminalTabs"
+              v-show="activeTerminalTab === tab.id"
+              :key="tab.id"
+              class="terminal-pane"
+            >
+              <XTermTerminal
+                :is-dark="isDark"
+                :session-id="tab.sessionId"
+                :command="tab.command || ''"
+                :read-only="tab.readOnly || false"
+              />
+            </div>
+          </div>
+
+          <!-- API Test Panels -->
+          <div
+            v-show="bottomPaneTab === 'api'"
+            class="terminal-content"
+          >
+            <div
+              v-for="atab in apiTabs"
+              v-show="activeApiTab === atab.id"
+              :key="atab.id"
+              style="height: 100%"
+            >
+              <ApiTestPanel
+                :is-dark="isDark"
+                :initial-slug="atab.slug"
+              />
+            </div>
+          </div>
+
+          <!-- Training Log -->
+          <div
+            v-show="bottomPaneTab === 'training'"
+            class="terminal-content"
+          >
+            <TrainingLogViewer
+              v-if="trainingLogFilename"
               :is-dark="isDark"
-              :messages="chatMessages"
-              :query="chatQuery"
-              :loading="chatLoading"
-              :graph-running="chatGraphRunning"
-              :waiting-for-user="chatWaitingForUser"
-              :model-selector="modelSelector"
-              :agent-registry="agentRegistry"
-              :hide-agent-selector="false"
-              :total-tokens-used="chatTotalTokensUsed"
-              @update:query="chatUpdateQuery"
-              @send="chatSend()"
-              @stop="chatStop()"
-              @close="rightPaneVisible = false"
+              :log-filename="trainingLogFilename"
             />
-            <TrainingHelpPane
-              v-show="rightPaneTab === 'help'"
-              :is-dark="isDark"
-              :current-step="trainingStep"
-              :content-scale="trainingContentScale"
+          </div>
+
+          <!-- Monitor Detail Panels -->
+          <div
+            v-show="bottomPaneTab === 'monitor'"
+            class="terminal-content"
+          >
+            <div
+              v-for="mtab in monitorTabs"
+              v-show="activeMonitorTab === mtab.id"
+              :key="mtab.id"
+              style="height: 100%"
+            >
+              <MonitorDetailPanel
+                :is-dark="isDark"
+                :tab-type="mtab.type"
+                :tab-id="mtab.tabId"
+                :error-data="mtab.errorData"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resize handle: right pane -->
+      <div
+        v-show="rightPaneVisible"
+        class="resize-handle resize-handle-v"
+        :class="{ dark: isDark }"
+        @mousedown="startResize('right', $event)"
+      />
+
+      <!-- Right pane -->
+      <div
+        v-show="rightPaneVisible"
+        class="right-pane"
+        :class="{ dark: isDark }"
+        :style="{ width: rightPaneWidth + 'px' }"
+      >
+        <!-- Workflow settings panel -->
+        <div
+          v-if="workflowMode && workflowSettingsOpen && activeWorkflowData"
+          class="workflow-settings-panel"
+          :class="{ dark: isDark }"
+        >
+          <div class="workflow-settings-header">
+            <span class="workflow-settings-title">Workflow Settings</span>
+            <button
+              class="workflow-settings-close"
+              title="Close"
+              @click="onWorkflowSettingsClose"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              ><line
+                x1="18"
+                y1="6"
+                x2="6"
+                y2="18"
+              /><line
+                x1="6"
+                y1="6"
+                x2="18"
+                y2="18"
+              /></svg>
+            </button>
+          </div>
+          <div class="workflow-settings-body">
+            <label class="workflow-settings-label">Name</label>
+            <input
+              class="workflow-settings-input"
+              :class="{ dark: isDark }"
+              type="text"
+              :value="activeWorkflowData.name"
+              placeholder="Workflow name"
+              @input="onWorkflowNameUpdate(($event.target as HTMLInputElement).value)"
+            >
+            <label class="workflow-settings-label">Description</label>
+            <textarea
+              class="workflow-settings-textarea"
+              :class="{ dark: isDark }"
+              :value="activeWorkflowData.description"
+              placeholder="Describe what this workflow does…"
+              rows="4"
+              @input="onWorkflowDescriptionUpdate(($event.target as HTMLTextAreaElement).value)"
             />
-          </template>
-          <!-- Chat (default / workflow mode) -->
+            <div class="workflow-settings-danger-zone">
+              <button
+                class="workflow-delete-btn"
+                :class="{ dark: isDark }"
+                @click="deleteActiveWorkflow"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                Delete Workflow
+              </button>
+            </div>
+          </div>
+        </div>
+        <!-- Workflow node properties panel -->
+        <WorkflowNodePanel
+          v-else-if="workflowMode && selectedWorkflowNode"
+          :is-dark="isDark"
+          :node="selectedWorkflowNode"
+          :upstream-nodes="selectedNodeUpstream"
+          @close="onWorkflowNodePanelClose"
+          @update-label="onWorkflowNodeLabelUpdate"
+          @update-trigger="() => {}"
+          @update-node-config="onWorkflowNodeConfigUpdate"
+        />
+        <!-- Training mode: tabbed right pane (Chat / Help) -->
+        <template v-else-if="trainingMode">
+          <div
+            class="rp-tabs"
+            :class="{ dark: isDark }"
+          >
+            <button
+              class="rp-tab"
+              :class="{ active: rightPaneTab === 'chat', dark: isDark }"
+              @click="rightPaneTab = 'chat'"
+            >
+              Chat
+            </button>
+            <button
+              class="rp-tab"
+              :class="{ active: rightPaneTab === 'help', dark: isDark }"
+              @click="rightPaneTab = 'help'"
+            >
+              Help
+            </button>
+          </div>
           <EditorChat
-            v-else
+            v-show="rightPaneTab === 'chat'"
             :is-dark="isDark"
             :messages="chatMessages"
             :query="chatQuery"
             :loading="chatLoading"
             :graph-running="chatGraphRunning"
             :waiting-for-user="chatWaitingForUser"
+            :current-activity="chatCurrentActivity"
             :model-selector="modelSelector"
             :agent-registry="agentRegistry"
-            :hide-agent-selector="!agentMode && !workflowMode"
+            :hide-agent-selector="false"
             :total-tokens-used="chatTotalTokensUsed"
             @update:query="chatUpdateQuery"
             @send="chatSend()"
             @stop="chatStop()"
             @close="rightPaneVisible = false"
           />
-        </div>
+          <TrainingHelpPane
+            v-show="rightPaneTab === 'help'"
+            :is-dark="isDark"
+            :current-step="trainingStep"
+            :content-scale="trainingContentScale"
+          />
+        </template>
+        <!-- Chat (default / workflow mode) -->
+        <EditorChat
+          v-else
+          :is-dark="isDark"
+          :messages="chatMessages"
+          :query="chatQuery"
+          :loading="chatLoading"
+          :graph-running="chatGraphRunning"
+          :waiting-for-user="chatWaitingForUser"
+          :current-activity="chatCurrentActivity"
+          :model-selector="modelSelector"
+          :agent-registry="agentRegistry"
+          :hide-agent-selector="!agentMode && !workflowMode"
+          :total-tokens-used="chatTotalTokensUsed"
+          @update:query="chatUpdateQuery"
+          @send="chatSend()"
+          @stop="chatStop()"
+          @close="rightPaneVisible = false"
+        />
       </div>
-
-      <!-- Editor Status Bar Footer -->
-      <footer class="editor-footer" :class="{ dark: isDark }">
-        <div class="editor-footer-left">
-          <span class="footer-item" :title="`${formatBytes(footerStats.availableBytes)} free on disk`">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M16 2v20"/><path d="M2 12h14"/></svg>
-            {{ formatBytes(footerStats.availableBytes) }} free
-          </span>
-          <span class="footer-item" :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-            {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
-          </span>
-          <span v-if="activeTab" class="footer-item footer-lang">{{ extToLanguage(activeTab.ext) }}</span>
-        </div>
-        <div class="editor-footer-right">
-          <span v-if="backendProgressDesc" class="footer-item footer-progress-text">
-            {{ backendProgressDesc }}
-          </span>
-          <span v-if="backendProgressActive" class="footer-progress-bar-wrapper">
-            <span
-              class="footer-progress-bar-fill"
-              :class="{ indeterminate: backendProgressPct < 0 }"
-              :style="backendProgressPct >= 0 ? { width: backendProgressPct + '%' } : {}"
-            />
-          </span>
-          <span class="footer-item footer-state" :class="backendStateClass">{{ backendStateLabel }}</span>
-        </div>
-      </footer>
     </div>
 
+    <!-- Editor Status Bar Footer -->
+    <footer
+      class="editor-footer"
+      :class="{ dark: isDark }"
+    >
+      <div class="editor-footer-left">
+        <span
+          class="footer-item"
+          :title="`${formatBytes(footerStats.availableBytes)} free on disk`"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><rect
+            x="2"
+            y="2"
+            width="20"
+            height="20"
+            rx="2"
+          /><path d="M16 2v20" /><path d="M2 12h14" /></svg>
+          {{ formatBytes(footerStats.availableBytes) }} free
+        </span>
+        <span
+          class="footer-item"
+          :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></svg>
+          {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
+        </span>
+        <span
+          v-if="activeTab"
+          class="footer-item footer-lang"
+        >{{ extToLanguage(activeTab.ext) }}</span>
+      </div>
+      <div class="editor-footer-right">
+        <span
+          v-if="backendProgressDesc"
+          class="footer-item footer-progress-text"
+        >
+          {{ backendProgressDesc }}
+        </span>
+        <span
+          v-if="backendProgressActive"
+          class="footer-progress-bar-wrapper"
+        >
+          <span
+            class="footer-progress-bar-fill"
+            :class="{ indeterminate: backendProgressPct < 0 }"
+            :style="backendProgressPct >= 0 ? { width: backendProgressPct + '%' } : {}"
+          />
+        </span>
+        <span
+          class="footer-item footer-state"
+          :class="backendStateClass"
+        >{{ backendStateLabel }}</span>
+      </div>
+    </footer>
+  </div>
 
   <!-- Tab Context Menu -->
   <TabContextMenu
@@ -689,13 +1248,13 @@
     @close-others="closeOtherTabs"
     @close-all="closeAllTabs"
   />
-
 </template>
 
 <script lang="ts">
 import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, watch, type Component } from 'vue';
 import { ipcRenderer } from 'electron';
 
+import { useTheme } from '@pkg/composables/useTheme';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import EditorHeader from './editor/EditorHeader.vue';
 import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
@@ -732,15 +1291,16 @@ import { getAgentPersonaRegistry } from '@pkg/agent';
 import type { FileEntry } from './filesystem/FileTreeSidebar.vue';
 
 interface TabState {
-  path: string;
-  name: string;
-  ext: string;
-  content: string;
-  loading: boolean;
-  error: string;
-  dirty: boolean;
-  editorType?: 'code' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
+  path:             string;
+  name:             string;
+  ext:              string;
+  content:          string;
+  loading:          boolean;
+  error:            string;
+  dirty:            boolean;
+  editorType?:      'code' | 'preview' | 'webview' | 'terminal' | 'diff' | 'agent-form';
   originalContent?: string; // For diff editor: the HEAD version
+  line?:            number; // Navigate to this line when opening
 }
 
 const MARKDOWN_EXTS = new Set(['.md', '.markdown', '.mdx']);
@@ -766,9 +1326,9 @@ const EXT_ICON_COLORS: Record<string, string> = {
  * Extensible: add new entries here to support more file types.
  */
 const editorRegistry: Record<string, Component> = {
-  code:      markRaw(CodeEditor),
-  webview:   markRaw(WebViewTab),
-  terminal:  markRaw(TerminalTab),
+  code:         markRaw(CodeEditor),
+  webview:      markRaw(WebViewTab),
+  terminal:     markRaw(TerminalTab),
   diff:         markRaw(DiffEditor),
   'agent-form': markRaw(AgentFormTab),
 };
@@ -778,14 +1338,42 @@ function resolveEditorType(_ext: string): NonNullable<TabState['editorType']> {
 }
 
 const EXT_LANG_MAP: Record<string, string> = {
-  '.ts': 'TypeScript', '.tsx': 'TypeScript React', '.js': 'JavaScript', '.jsx': 'JavaScript React',
-  '.vue': 'Vue', '.json': 'JSON', '.md': 'Markdown', '.markdown': 'Markdown', '.mdx': 'MDX',
-  '.py': 'Python', '.yaml': 'YAML', '.yml': 'YAML', '.sh': 'Shell', '.bash': 'Bash',
-  '.css': 'CSS', '.scss': 'SCSS', '.less': 'Less', '.html': 'HTML', '.xml': 'XML',
-  '.go': 'Go', '.rs': 'Rust', '.java': 'Java', '.rb': 'Ruby', '.php': 'PHP',
-  '.c': 'C', '.cpp': 'C++', '.h': 'C Header', '.swift': 'Swift', '.kt': 'Kotlin',
-  '.sql': 'SQL', '.graphql': 'GraphQL', '.proto': 'Protobuf', '.toml': 'TOML',
-  '.env': 'Environment', '.dockerfile': 'Dockerfile', '.txt': 'Plain Text',
+  '.ts':         'TypeScript',
+  '.tsx':        'TypeScript React',
+  '.js':         'JavaScript',
+  '.jsx':        'JavaScript React',
+  '.vue':        'Vue',
+  '.json':       'JSON',
+  '.md':         'Markdown',
+  '.markdown':   'Markdown',
+  '.mdx':        'MDX',
+  '.py':         'Python',
+  '.yaml':       'YAML',
+  '.yml':        'YAML',
+  '.sh':         'Shell',
+  '.bash':       'Bash',
+  '.css':        'CSS',
+  '.scss':       'SCSS',
+  '.less':       'Less',
+  '.html':       'HTML',
+  '.xml':        'XML',
+  '.go':         'Go',
+  '.rs':         'Rust',
+  '.java':       'Java',
+  '.rb':         'Ruby',
+  '.php':        'PHP',
+  '.c':          'C',
+  '.cpp':        'C++',
+  '.h':          'C Header',
+  '.swift':      'Swift',
+  '.kt':         'Kotlin',
+  '.sql':        'SQL',
+  '.graphql':    'GraphQL',
+  '.proto':      'Protobuf',
+  '.toml':       'TOML',
+  '.env':        'Environment',
+  '.dockerfile': 'Dockerfile',
+  '.txt':        'Plain Text',
 };
 
 function extToLanguage(ext: string): string {
@@ -824,8 +1412,7 @@ export default defineComponent({
   },
 
   setup(props, { emit }) {
-    const isDark = ref(false);
-    const THEME_STORAGE_KEY = 'agentTheme';
+    const { isDark, toggleTheme } = useTheme();
     const sullaMutedIconUrl = new URL('../../../resources/icons/sulla-muted-icon.png', import.meta.url).toString();
     const rootPath = ref('');
 
@@ -921,8 +1508,8 @@ export default defineComponent({
     const bottomPaneVisible = ref(true);
     const bottomPaneTab = ref<'terminal' | 'api' | 'monitor' | 'training'>('terminal');
     const trainingLogFilename = ref('');
-    const apiTabs = ref<Array<{ id: string; slug: string }>>([]);
-    const monitorTabs = ref<Array<{ id: string; type: 'ws' | 'service' | 'agent' | 'error'; tabId: string; label: string; errorData?: any }>>([]);
+    const apiTabs = ref<{ id: string; slug: string }[]>([]);
+    const monitorTabs = ref<{ id: string; type: 'ws' | 'service' | 'agent' | 'error'; tabId: string; label: string; errorData?: any }[]>([]);
     const activeMonitorTab = ref('');
     let monitorTabCounter = 0;
     const activeApiTab = ref('');
@@ -944,7 +1531,7 @@ export default defineComponent({
         return;
       }
       apiTabCounter++;
-      const newTab = { id: `api-${apiTabCounter}`, slug };
+      const newTab = { id: `api-${ apiTabCounter }`, slug };
       apiTabs.value.push(newTab);
       activeApiTab.value = newTab.id;
       bottomPaneVisible.value = true;
@@ -965,68 +1552,86 @@ export default defineComponent({
     const chatLoading = editorChat.loading;
     const chatGraphRunning = editorChat.graphRunning;
     const chatWaitingForUser = editorChat.waitingForUser;
+    const chatCurrentActivity = editorChat.currentActivity;
     const chatSend = () => editorChat.send();
     const chatStop = () => editorChat.stop();
-    const chatUpdateQuery = (val: string) => { editorChat.query.value = val; };
+    const chatUpdateQuery = (val: string) => { editorChat.query.value = val };
 
-    // Listen for workflow playbook events and update the canvas
+    // ── Canvas-path event dispatcher ──────────────────────────────────
+    // Receives workflow execution events forwarded by EditorChatInterface and
+    // dispatches them to the corresponding WorkflowEditor.vue methods.
+    //
+    // This is the CANVAS consumer. The CHAT consumer is AgentPersonaModel's
+    // `workflow_execution_event` case, which independently creates/updates
+    // ChatMessage objects. Both listen on the same WebSocket channel.
+    //
+    // Event → Method mapping:
+    //   workflow_started   → clearAllExecution()
+    //   node_started       → updateNodeExecution(nodeId, { status: 'running' })
+    //   node_completed     → updateNodeExecution(nodeId, { status: 'completed' })
+    //   node_failed        → updateNodeExecution(nodeId, { status: 'failed' })
+    //   node_thinking      → pushNodeThinking(nodeId, message)
+    //   edge_activated     → setEdgeAnimated(sourceId, targetId, true)
+    //   workflow_completed → no-op (individual nodes already show final state)
+    //   workflow_failed    → no-op
+    //   workflow_aborted   → no-op
     editorChat.onWorkflowEvent((event) => {
       if (!workflowEditorRef.value) return;
 
       const nodeId = event.nodeId;
       switch (event.type) {
-        case 'workflow_started':
-          // Reset canvas for fresh execution — de-animate all edges so they light up as traversed
-          workflowEditorRef.value.clearAllExecution();
-          break;
-        case 'node_started':
-          if (nodeId) {
-            workflowEditorRef.value.updateNodeExecution(nodeId, {
-              status: 'running',
-              startedAt: event.timestamp,
-            });
-          }
-          break;
-        case 'node_completed':
-          if (nodeId) {
-            workflowEditorRef.value.updateNodeExecution(nodeId, {
-              status: 'completed',
-              output: event.output,
-              threadId: event.threadId,
-              completedAt: event.timestamp,
-            });
-          }
-          break;
-        case 'node_failed':
-          if (nodeId) {
-            workflowEditorRef.value.updateNodeExecution(nodeId, {
-              status: 'failed',
-              error: event.error,
-              completedAt: event.timestamp,
-            });
-          }
-          break;
-        case 'node_thinking':
-          if (nodeId && event.content) {
-            workflowEditorRef.value.pushNodeThinking(nodeId, {
-              content: event.content,
-              role: event.role || 'assistant',
-              kind: event.kind || 'progress',
-              timestamp: event.timestamp,
-            });
-          }
-          break;
-        case 'edge_activated':
-          // Animate the edge connecting two nodes during workflow traversal
-          if (event.sourceId && event.targetId) {
-            workflowEditorRef.value.setEdgeAnimated(event.sourceId, event.targetId, true);
-          }
-          break;
-        case 'workflow_completed':
-        case 'workflow_failed':
-        case 'workflow_aborted':
-          // Canvas nodes already show their individual states — nothing extra needed
-          break;
+      case 'workflow_started':
+        // Reset canvas for fresh execution — de-animate all edges so they light up as traversed
+        workflowEditorRef.value.clearAllExecution();
+        break;
+      case 'node_started':
+        if (nodeId) {
+          workflowEditorRef.value.updateNodeExecution(nodeId, {
+            status:    'running',
+            startedAt: event.timestamp,
+          });
+        }
+        break;
+      case 'node_completed':
+        if (nodeId) {
+          workflowEditorRef.value.updateNodeExecution(nodeId, {
+            status:      'completed',
+            output:      event.output,
+            threadId:    event.threadId,
+            completedAt: event.timestamp,
+          });
+        }
+        break;
+      case 'node_failed':
+        if (nodeId) {
+          workflowEditorRef.value.updateNodeExecution(nodeId, {
+            status:      'failed',
+            error:       event.error,
+            completedAt: event.timestamp,
+          });
+        }
+        break;
+      case 'node_thinking':
+        if (nodeId && event.content) {
+          workflowEditorRef.value.pushNodeThinking(nodeId, {
+            content:   event.content,
+            role:      event.role || 'assistant',
+            kind:      event.kind || 'progress',
+            timestamp: event.timestamp,
+          });
+        }
+        break;
+      case 'edge_activated':
+        // Animate the edge connecting two nodes during workflow traversal
+        if (event.sourceId && event.targetId) {
+          workflowEditorRef.value.setEdgeAnimated(event.sourceId, event.targetId, true);
+        }
+        break;
+      case 'workflow_completed':
+      case 'workflow_failed':
+      case 'workflow_aborted':
+        // Canvas nodes already show their individual states — nothing extra needed
+        break;
       }
     });
 
@@ -1079,7 +1684,7 @@ export default defineComponent({
     const savedSizes = (() => {
       try {
         return JSON.parse(localStorage.getItem(PANE_STORAGE_KEY) || '{}');
-      } catch { return {}; }
+      } catch { return {} }
     })();
     const leftPaneWidth = ref<number>(savedSizes.left ?? 280);
     const rightPaneWidth = ref<number>(savedSizes.right ?? 280);
@@ -1163,13 +1768,13 @@ export default defineComponent({
     let workflowSavedResetTimer: ReturnType<typeof setTimeout> | null = null;
     const searchQuery = ref('');
     const searchPath = ref('');
-    const searchResults = ref<Array<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }>>([]);
+    const searchResults = ref<{ path: string; name: string; line: number; preview: string; score: number; source: 'fts' | 'filename' }[]>([]);
     const qmdIndexing = ref(false);
     const qmdSearching = ref(false);
 
     // Terminal tabs state
-    const terminalTabs = ref<Array<{ id: string; name: string; sessionId: string; command?: string; readOnly?: boolean }>>([
-      { id: 'terminal-1', name: 'Terminal 1', sessionId: '' }
+    const terminalTabs = ref<{ id: string; name: string; sessionId: string; command?: string; readOnly?: boolean }[]>([
+      { id: 'terminal-1', name: 'Terminal 1', sessionId: '' },
     ]);
     const activeTerminalTab = ref('terminal-1');
     let terminalCounter = 1;
@@ -1178,9 +1783,9 @@ export default defineComponent({
     function createNewTerminalTab() {
       terminalCounter++;
       const newTab = {
-        id: `terminal-${terminalCounter}`,
-        name: `Terminal ${terminalCounter}`,
-        sessionId: ''
+        id:        `terminal-${ terminalCounter }`,
+        name:      `Terminal ${ terminalCounter }`,
+        sessionId: '',
       };
       terminalTabs.value.push(newTab);
       activeTerminalTab.value = newTab.id;
@@ -1188,13 +1793,13 @@ export default defineComponent({
 
     function closeTerminalTab(tabId: string) {
       if (terminalTabs.value.length <= 1) return; // Don't close last tab
-      
+
       const index = terminalTabs.value.findIndex(tab => tab.id === tabId);
       if (index === -1) return;
-      
+
       const wasActive = activeTerminalTab.value === tabId;
       terminalTabs.value.splice(index, 1);
-      
+
       if (wasActive) {
         // Switch to the last tab
         const lastTab = terminalTabs.value[terminalTabs.value.length - 1];
@@ -1228,7 +1833,7 @@ export default defineComponent({
         return;
       }
       monitorTabCounter++;
-      const newTab = { id: `mon-${monitorTabCounter}`, type, tabId: id, label, errorData };
+      const newTab = { id: `mon-${ monitorTabCounter }`, type, tabId: id, label, errorData };
       monitorTabs.value.push(newTab);
       activeMonitorTab.value = newTab.id;
       bottomPaneVisible.value = true;
@@ -1254,7 +1859,7 @@ export default defineComponent({
       activeTerminalTab.value = tabId;
     }
 
-    onMounted(async () => {
+    onMounted(async() => {
       // Start footer stats polling (every 30s)
       refreshFooterStats();
       footerStatsTimer = setInterval(refreshFooterStats, 30_000);
@@ -1267,26 +1872,11 @@ export default defineComponent({
         if (p?.description) backendProgressDesc.value = p.description;
       }).catch(() => {});
 
-      const stored = localStorage.getItem(THEME_STORAGE_KEY);
-
-      if (stored === 'dark') {
-        isDark.value = true;
-      } else if (stored === 'light') {
-        isDark.value = false;
-      } else {
-        isDark.value = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
-      }
-
       await modelSelector.start();
       window.addEventListener('keydown', onKeyDown);
       document.addEventListener('mousedown', onEditorMenuOutsideClick);
       document.addEventListener('click', onInjectMenuOutsideClick);
     });
-
-    function toggleTheme() {
-      isDark.value = !isDark.value;
-      localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-    }
 
     // Saved pane states to restore when exiting workflow mode
     let savedBottomPaneVisible = false;
@@ -1462,7 +2052,7 @@ export default defineComponent({
 
     function onWorkflowNodeLabelUpdate(nodeId: string, label: string) {
       workflowEditorRef.value?.updateNodeLabel(nodeId, label);
-      if (selectedWorkflowNode.value && selectedWorkflowNode.value.id === nodeId) {
+      if (selectedWorkflowNode.value?.id === nodeId) {
         selectedWorkflowNode.value = { ...selectedWorkflowNode.value, label };
       }
     }
@@ -1588,7 +2178,7 @@ export default defineComponent({
       // Delete via IPC
       try {
         await ipcRenderer.invoke('workflow-delete', wfId);
-        console.log(`[AgentEditor] Deleted workflow: ${wfName} (${wfId})`);
+        console.log(`[AgentEditor] Deleted workflow: ${ wfName } (${ wfId })`);
       } catch (err) {
         console.error('[AgentEditor] Failed to delete workflow:', err);
       }
@@ -1628,13 +2218,21 @@ export default defineComponent({
       workflowSaveStatus.value = 'idle';
       try {
         const data = await ipcRenderer.invoke('workflow-get', workflowId);
+
+        console.log(`[Workflow] Loaded "${ workflowId }": ${ data.nodes?.length ?? 0 } nodes, ${ data.edges?.length ?? 0 } edges`);
         activeWorkflowData.value = data;
-      } catch {
+      } catch (err) {
+        console.error(`[Workflow] Failed to load "${ workflowId }" — starting empty canvas:`, err);
         // New workflow not yet saved — start with empty canvas
         activeWorkflowData.value = {
-          id: workflowId, name: workflowId, description: '', version: 1,
-          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-          nodes: [], edges: [],
+          id:          workflowId,
+          name:        workflowId,
+          description: '',
+          version:     1,
+          createdAt:   new Date().toISOString(),
+          updatedAt:   new Date().toISOString(),
+          nodes:       [],
+          edges:       [],
         };
       }
     }
@@ -1651,9 +2249,14 @@ export default defineComponent({
 
     async function onWorkflowCreated(workflowId: string, workflowName: string) {
       const newWorkflow = {
-        id: workflowId, name: workflowName, description: '', version: 1,
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-        nodes: [], edges: [],
+        id:          workflowId,
+        name:        workflowName,
+        description: '',
+        version:     1,
+        createdAt:   new Date().toISOString(),
+        updatedAt:   new Date().toISOString(),
+        nodes:       [],
+        edges:       [],
       };
       try {
         await ipcRenderer.invoke('workflow-save', newWorkflow);
@@ -1670,9 +2273,9 @@ export default defineComponent({
         workflowSaveStatus.value = 'saving';
         const toSave = {
           ...activeWorkflowData.value,
-          nodes:    serialized.nodes,
-          edges:    serialized.edges,
-          viewport: serialized.viewport,
+          nodes:     serialized.nodes,
+          edges:     serialized.edges,
+          viewport:  serialized.viewport,
           updatedAt: new Date().toISOString(),
         };
         ipcRenderer.invoke('workflow-save', toSave).then(() => {
@@ -1751,7 +2354,7 @@ export default defineComponent({
     });
 
     const activeTab = computed(() => {
-      return openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === activeTabKey.value) || null;
+      return openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === activeTabKey.value) || null;
     });
 
     const activeEditorComponent = computed(() => {
@@ -1775,7 +2378,7 @@ export default defineComponent({
       const content = activeTab.value?.content || '';
       const count = Math.ceil(content.length / 4);
       if (count >= 1000) {
-        return `${(count / 1000).toFixed(1)}k`;
+        return `${ (count / 1000).toFixed(1) }k`;
       }
       return String(count);
     });
@@ -1799,10 +2402,13 @@ export default defineComponent({
       const editorType = entry.editorType === 'markdown' ? 'code' : (entry.editorType || resolveEditorType(entry.ext));
 
       // Check if tab already open with same path and editorType
-      const key = `${entry.path}-${editorType}`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ entry.path }-${ editorType }`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
+        if (entry.line) {
+          existing.line = entry.line;
+        }
         // Reload content from disk if the tab isn't dirty
         if (!existing.dirty) {
           await loadTabContent(existing);
@@ -1820,6 +2426,7 @@ export default defineComponent({
         error:      '',
         dirty:      false,
         editorType,
+        line:       entry.line,
       });
 
       openTabs.value = [...openTabs.value, tab];
@@ -1830,8 +2437,8 @@ export default defineComponent({
 
     async function onOpenDiff(repoRoot: string, file: string, staged: boolean) {
       const fullPath = repoRoot + '/' + file;
-      const key = `${fullPath}-diff`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ fullPath }-diff`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
@@ -1842,8 +2449,8 @@ export default defineComponent({
 
       const tab: TabState = reactive({
         path:            fullPath,
-        name:            name,
-        ext:             ext,
+        name,
+        ext,
         content:         '',
         originalContent: '',
         loading:         true,
@@ -1888,14 +2495,14 @@ export default defineComponent({
     }
 
     function switchTab(tab: TabState) {
-      activeTabKey.value = `${tab.path}-${tab.editorType || 'code'}`;
+      activeTabKey.value = `${ tab.path }-${ tab.editorType || 'code' }`;
     }
 
     function closeTab(tab: TabState) {
       const index = openTabs.value.findIndex(t => t === tab);
       if (index === -1) return;
 
-      const wasActive = `${tab.path}-${tab.editorType || 'code'}` === activeTabKey.value;
+      const wasActive = `${ tab.path }-${ tab.editorType || 'code' }` === activeTabKey.value;
       openTabs.value.splice(index, 1);
 
       if (wasActive) {
@@ -1904,14 +2511,14 @@ export default defineComponent({
         } else {
           // Switch to the last tab
           const lastTab = openTabs.value[openTabs.value.length - 1];
-          activeTabKey.value = `${lastTab.path}-${lastTab.editorType || 'code'}`;
+          activeTabKey.value = `${ lastTab.path }-${ lastTab.editorType || 'code' }`;
         }
       }
     }
 
     function closeOtherTabs(tab: TabState) {
       openTabs.value = openTabs.value.filter(t => t === tab);
-      activeTabKey.value = `${tab.path}-${tab.editorType || 'code'}`;
+      activeTabKey.value = `${ tab.path }-${ tab.editorType || 'code' }`;
     }
 
     function closeAllTabs() {
@@ -1923,21 +2530,21 @@ export default defineComponent({
 
     const tabContextMenu = ref<{
       visible: boolean;
-      x: number;
-      y: number;
-      tab: TabState | null;
+      x:       number;
+      y:       number;
+      tab:     TabState | null;
     }>({
       visible: false,
-      x: 0,
-      y: 0,
-      tab: null,
+      x:       0,
+      y:       0,
+      tab:     null,
     });
 
     function onTabContextMenu(event: MouseEvent, tab: TabState) {
       tabContextMenu.value = {
         visible: true,
-        x: event.clientX,
-        y: event.clientY,
+        x:       event.clientX,
+        y:       event.clientY,
         tab,
       };
     }
@@ -1954,12 +2561,12 @@ export default defineComponent({
     function createNewUntitledTab() {
       editorMenu.visible = false;
       untitledCounter++;
-      const name = `Untitled-${untitledCounter}`;
-      const key = `untitled://${name}-code`;
+      const name = `Untitled-${ untitledCounter }`;
+      const key = `untitled://${ name }-code`;
 
       const tab: TabState = reactive({
-        path:       `untitled://${name}`,
-        name:       name,
+        path:       `untitled://${ name }`,
+        name,
         ext:        '.txt',
         content:    '',
         loading:    false,
@@ -1982,9 +2589,9 @@ export default defineComponent({
     // ─── Inject Variable context menu ─────────────────────────
     interface TemplateVar { key: string; label: string; preview: string }
     const injectMenu = reactive({
-      visible: false,
-      x: 0,
-      y: 0,
+      visible:   false,
+      x:         0,
+      y:         0,
       variables: [] as TemplateVar[],
     });
 
@@ -2031,8 +2638,8 @@ export default defineComponent({
 
     function openWithEditor(tab: TabState, editorType: 'code' | 'preview') {
       // Check if tab with same path and editorType already exists
-      const key = `${tab.path}-${editorType}`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ tab.path }-${ editorType }`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         hideTabContextMenu();
@@ -2048,7 +2655,7 @@ export default defineComponent({
         loading:    true,
         error:      '',
         dirty:      false,
-        editorType: editorType,
+        editorType,
       });
 
       openTabs.value = [...openTabs.value, newTab];
@@ -2073,7 +2680,7 @@ export default defineComponent({
 
     function onNewAgentTab() {
       const key = 'agent-form://new-agent-form';
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
@@ -2119,9 +2726,9 @@ export default defineComponent({
       // Activate this agent: ensure it exists in registry, connect its WS, and set active
       activateAgentInRegistry(agent);
 
-      const editPath = `agent-form://edit/${agent.id}`;
-      const key = `${editPath}-agent-form`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const editPath = `agent-form://edit/${ agent.id }`;
+      const key = `${ editPath }-agent-form`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
@@ -2130,12 +2737,12 @@ export default defineComponent({
       // Read agent.yaml content so form can pre-fill
       let yamlContent = '';
       try {
-        yamlContent = await ipcRenderer.invoke('filesystem-read-file', `${agent.path}/agent.yaml`);
+        yamlContent = await ipcRenderer.invoke('filesystem-read-file', `${ agent.path }/agent.yaml`);
       } catch { /* ignore */ }
 
       const tab: TabState = reactive({
         path:       editPath,
-        name:       `Edit: ${agent.name}`,
+        name:       `Edit: ${ agent.name }`,
         ext:        '',
         content:    yamlContent,
         loading:    false,
@@ -2162,7 +2769,7 @@ export default defineComponent({
 
     async function saveActiveTab() {
       const tab = activeTab.value;
-      if (!tab || !tab.dirty) return;
+      if (!tab?.dirty) return;
 
       try {
         let content = tab.content;
@@ -2195,7 +2802,7 @@ export default defineComponent({
           tab.path = savePath;
           tab.name = fileName;
           tab.ext = ext;
-          activeTabKey.value = `${tab.path}-${tab.editorType || 'code'}`;
+          activeTabKey.value = `${ tab.path }-${ tab.editorType || 'code' }`;
         }
 
         await ipcRenderer.invoke('filesystem-write-file', tab.path, content);
@@ -2226,8 +2833,8 @@ export default defineComponent({
     // Tab context menu removed - now in FileTree component
 
     function openContainerPort({ url, name }: { url: string; name: string }) {
-      const key = `${url}-webview`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const key = `${ url }-webview`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
@@ -2249,7 +2856,7 @@ export default defineComponent({
     function openDockerTerminalTab(name: string, command: string, readOnly: boolean) {
       terminalCounter++;
       const newTab = {
-        id: `terminal-${terminalCounter}`,
+        id:        `terminal-${ terminalCounter }`,
         name,
         sessionId: '',
         command,
@@ -2261,16 +2868,16 @@ export default defineComponent({
     }
 
     function openDockerLogs(containerName: string) {
-      const command = `docker logs -f ${containerName}`;
-      const key = `${command}-terminal`;
-      const existing = openTabs.value.find(t => `${t.path}-${t.editorType || 'code'}` === key);
+      const command = `docker logs -f ${ containerName }`;
+      const key = `${ command }-terminal`;
+      const existing = openTabs.value.find(t => `${ t.path }-${ t.editorType || 'code' }` === key);
       if (existing) {
         activeTabKey.value = key;
         return;
       }
       const tab: TabState = reactive({
         path:       command,
-        name:       `Logs: ${containerName}`,
+        name:       `Logs: ${ containerName }`,
         ext:        '',
         content:    command,
         loading:    false,
@@ -2284,8 +2891,8 @@ export default defineComponent({
 
     function openDockerExec(containerName: string) {
       openDockerTerminalTab(
-        `Shell: ${containerName}`,
-        `docker exec -it ${containerName} sh`,
+        `Shell: ${ containerName }`,
+        `docker exec -it ${ containerName } sh`,
         false,
       );
     }
@@ -2312,6 +2919,7 @@ export default defineComponent({
       chatLoading,
       chatGraphRunning,
       chatWaitingForUser,
+      chatCurrentActivity,
       chatSend,
       chatStop,
       chatUpdateQuery,
@@ -2461,18 +3069,13 @@ html, body, #app {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
+  background: var(--bg-surface);
+  color: var(--text-primary);
   height: 100vh;
   max-height: 100vh;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
 }
 
 /* Editor Status Bar Footer */
@@ -2484,18 +3087,12 @@ html, body, #app {
   min-height: 22px;
   max-height: 22px;
   padding: 0 10px;
-  font-size: 11px;
-  background: #f3f4f6;
-  border-top: 1px solid #e5e7eb;
-  color: #6b7280;
+  font-size: var(--fs-body-sm);
+  background: var(--bg-surface-alt);
+  border-top: 1px solid var(--border-default);
+  color: var(--text-secondary);
   flex-shrink: 0;
   user-select: none;
-}
-
-.editor-footer.dark {
-  background: #1b1c21;
-  border-top-color: #4a4b52;
-  color: #9ca3af;
 }
 
 .editor-footer-left,
@@ -2522,48 +3119,35 @@ html, body, #app {
 .footer-lang {
   padding: 0 6px;
   border-radius: 3px;
-  background: rgba(0, 0, 0, 0.05);
-}
-
-.editor-footer.dark .footer-lang {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
 }
 
 .footer-progress-text {
-  font-size: 10px;
+  font-size: var(--fs-caption);
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .footer-state {
   padding: 0 6px;
   border-radius: 3px;
-  font-weight: 600;
-  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  font-size: var(--fs-caption);
 }
 .footer-state.state-ok {
-  color: #16a34a;
-}
-.editor-footer.dark .footer-state.state-ok {
-  color: #4ade80;
+  color: var(--text-success);
 }
 .footer-state.state-error {
-  color: #dc2626;
-}
-.editor-footer.dark .footer-state.state-error {
-  color: #f87171;
+  color: var(--text-error);
 }
 .footer-state.state-busy {
-  color: #d97706;
-}
-.editor-footer.dark .footer-state.state-busy {
-  color: #fbbf24;
+  color: var(--text-warning);
 }
 .footer-state.state-stopped {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 /* Footer progress bar */
@@ -2572,17 +3156,14 @@ html, body, #app {
   align-items: center;
   width: 80px;
   height: 6px;
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--bg-hover);
   border-radius: 3px;
   overflow: hidden;
   flex-shrink: 0;
 }
-.editor-footer.dark .footer-progress-bar-wrapper {
-  background: rgba(255, 255, 255, 0.12);
-}
 .footer-progress-bar-fill {
   height: 100%;
-  background: #3b82f6;
+  background: var(--accent-primary);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -2601,12 +3182,8 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--bg-surface);
   position: relative;
-}
-
-.editor-panel.dark {
-  background: #1e293b;
 }
 
 .editor-top {
@@ -2628,72 +3205,47 @@ html, body, #app {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid #cbd5e1;
+  border-top: 1px solid var(--border-default);
   overflow: hidden;
-  background: #f8fafc;
-}
-
-.editor-bottom.dark {
-  border-top-color: #3c3c3c;
-  background: #1e293b;
+  background: var(--bg-surface);
 }
 
 .right-pane {
   flex-shrink: 0;
-  border-left: 1px solid #cbd5e1;
-  border-right: 1px solid #cbd5e1;
+  border-left: 1px solid var(--border-default);
+  border-right: 1px solid var(--border-default);
   overflow: hidden;
-  background: #f8fafc;
+  background: var(--bg-surface);
   display: flex;
   flex-direction: column;
-}
-
-.right-pane.dark {
-  border-left-color: #3c3c3c;
-  border-right-color: #3c3c3c;
-  background: #1e293b;
 }
 
 /* Right pane tabs (training mode) */
 .rp-tabs {
   display: flex;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
-}
-.rp-tabs.dark {
-  border-bottom-color: #334155;
 }
 .rp-tab {
   flex: 1;
   padding: 8px 0;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
   text-align: center;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  color: #64748b;
+  color: var(--text-secondary);
   transition: all 0.15s;
 }
 .rp-tab:hover {
-  color: #334155;
-  background: #f1f5f9;
-}
-.rp-tab.dark {
-  color: #64748b;
-}
-.rp-tab.dark:hover {
-  color: #e2e8f0;
-  background: #1e293b;
+  color: var(--text-primary);
+  background: var(--bg-surface-alt);
 }
 .rp-tab.active {
-  color: #0284c7;
-  border-bottom-color: #0284c7;
-}
-.rp-tab.active.dark {
-  color: #38bdf8;
-  border-bottom-color: #38bdf8;
+  color: var(--accent-primary);
+  border-bottom-color: var(--accent-primary);
 }
 
 .empty-state {
@@ -2703,7 +3255,7 @@ html, body, #app {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: #999;
+  color: var(--text-muted);
 }
 
 .empty-icon {
@@ -2721,36 +3273,27 @@ html, body, #app {
 }
 
 .empty-text {
-  font-size: 14px;
-  color: #666;
-}
-
-.dark .empty-text {
-  color: #888;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
 }
 
 .empty-hint {
-  font-size: 12px;
-  color: #999;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
 }
 
 .error-text {
-  font-size: 13px;
-  color: #e53e3e;
+  font-size: var(--fs-body);
+  color: var(--text-error);
 }
 
 .loading-spinner {
   width: 24px;
   height: 24px;
-  border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: #0078d4;
+  border: 2px solid var(--bg-hover);
+  border-top-color: var(--accent-primary, #0078d4);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
-}
-
-.dark .loading-spinner {
-  border-color: rgba(255, 255, 255, 0.1);
-  border-top-color: #0078d4;
 }
 
 @keyframes spin {
@@ -2762,8 +3305,8 @@ html, body, #app {
   display: flex;
   align-items: stretch;
   height: 35px;
-  background: #f8fafc;
-  border-bottom: 1px solid #cbd5e1;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-strong);
   flex-shrink: 0;
   position: relative;
 }
@@ -2774,16 +3317,7 @@ html, body, #app {
 
 .tab-bar.empty {
   border-bottom: none;
-  background: #ffffff;
-}
-
-.tab-bar.empty.dark {
-  background: #0f172a;
-}
-
-.tab-bar.dark {
-  background: #1e293b;
-  border-bottom-color: #3c3c3c;
+  background: var(--bg-surface);
 }
 
 .tab-bar-tabs {
@@ -2814,23 +3348,18 @@ html, body, #app {
   height: 28px;
   border: none;
   background: transparent;
-  color: #666;
+  color: var(--text-secondary);
   border-radius: 4px;
   cursor: pointer;
 }
 
 .tab-bar-action-btn:hover {
-  background: rgba(0,0,0,0.06);
-  color: #333;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .tab-bar-action-btn.dark {
-  color: #999;
-}
-
-.tab-bar-action-btn.dark:hover {
-  background: rgba(255,255,255,0.08);
-  color: #ccc;
+  color: var(--text-muted);
 }
 
 .editor-dropdown {
@@ -2838,18 +3367,12 @@ html, body, #app {
   top: 35px;
   right: 4px;
   min-width: 160px;
-  background: #fff;
-  border: 1px solid #cbd5e1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.12);
   z-index: 100;
   padding: 4px 0;
-}
-
-.editor-dropdown.dark {
-  background: #1e293b;
-  border-color: #3c3c3c;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
 
 .editor-dropdown-item {
@@ -2860,22 +3383,18 @@ html, body, #app {
   padding: 6px 12px;
   border: none;
   background: transparent;
-  color: #333;
-  font-size: 13px;
+  color: var(--text-primary);
+  font-size: var(--fs-body);
   cursor: pointer;
   text-align: left;
 }
 
 .editor-dropdown-item:hover {
-  background: #f1f5f9;
+  background: var(--bg-surface-alt);
 }
 
 .editor-dropdown-item.dark {
-  color: #ccc;
-}
-
-.editor-dropdown-item.dark:hover {
-  background: #334155;
+  color: var(--text-muted);
 }
 
 .tab {
@@ -2883,10 +3402,10 @@ html, body, #app {
   align-items: center;
   gap: 6px;
   padding: 0 12px;
-  font-size: 13px;
-  color: #333;
-  border-right: 1px solid #cbd5e1;
-  background: #eef2f6;
+  font-size: var(--fs-body);
+  color: var(--text-primary);
+  border-right: 1px solid var(--border-strong);
+  background: var(--bg-surface-hover);
   cursor: pointer;
   flex-shrink: 0;
   max-width: 200px;
@@ -2894,31 +3413,14 @@ html, body, #app {
 }
 
 .tab:hover {
-  background: #e8ecf0;
-}
-
-.tab.dark {
-  color: #999;
-  border-right-color: #3c3c3c;
-  background: #2d2d2d;
-}
-
-.tab.dark:hover {
-  background: #323232;
-  color: #ccc;
+  background: var(--bg-surface-hover);
 }
 
 .tab.active {
-  background: #ffffff;
-  color: #333;
-  border-bottom: 1px solid #ffffff;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--bg-surface);
   margin-bottom: -1px;
-}
-
-.tab.active.dark {
-  background: #0f172a;
-  border-bottom-color: #0f172a;
-  color: #ccc;
 }
 
 .tab-icon {
@@ -2936,7 +3438,7 @@ html, body, #app {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #0078d4;
+  background: var(--accent-primary, #0078d4);
   flex-shrink: 0;
 }
 
@@ -2947,8 +3449,9 @@ html, body, #app {
   width: 18px;
   height: 18px;
   border-radius: 3px;
-  color: #999;
+  color: var(--text-muted);
   margin-left: 2px;
+  cursor: pointer;
   flex-shrink: 0;
   opacity: 0;
   transition: opacity 0.1s;
@@ -2965,11 +3468,7 @@ html, body, #app {
 .tab.active:hover .tab-close,
 .tab-close:hover {
   opacity: 1;
-  background: rgba(0, 0, 0, 0.1);
-}
-
-.dark .tab-close:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
 }
 
 /* Editor header (breadcrumb + save button) */
@@ -2978,17 +3477,11 @@ html, body, #app {
   align-items: center;
   justify-content: space-between;
   padding: 4px 12px;
-  font-size: 12px;
-  color: #888;
-  background: #ffffff;
-  border-bottom: 1px solid #cbd5e1;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-strong);
   flex-shrink: 0;
-}
-
-.editor-header.dark {
-  background: #0f172a;
-  color: #888;
-  border-bottom-color: #2d2d2d;
 }
 
 .save-button {
@@ -2996,10 +3489,10 @@ html, body, #app {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  color: #ffffff;
-  background: #0078d4;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-on-accent);
+  background: var(--accent-primary);
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -3007,34 +3500,16 @@ html, body, #app {
 }
 
 .save-button:hover:not(:disabled) {
-  background: #106ebe;
+  background: var(--accent-primary-hover);
 }
 
 .save-button:active:not(:disabled) {
-  background: #005a9e;
+  background: var(--accent-primary-hover);
 }
 
 .save-button:disabled {
-  background: #cccccc;
+  background: var(--bg-surface-hover);
   cursor: not-allowed;
-}
-
-.save-button.dark {
-  color: #ffffff;
-  background: #0078d4;
-}
-
-.save-button.dark:hover:not(:disabled) {
-  background: #106ebe;
-}
-
-.save-button.dark:active:not(:disabled) {
-  background: #005a9e;
-}
-
-.save-button.dark:disabled {
-  background: #666666;
-  color: #cccccc;
 }
 
 .breadcrumb-segment {
@@ -3043,12 +3518,12 @@ html, body, #app {
 
 .breadcrumb-sep {
   margin: 0 4px;
-  color: #aaa;
+  color: var(--text-muted);
 }
 
 .token-estimate {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin-left: auto;
   margin-right: 8px;
   white-space: nowrap;
@@ -3056,7 +3531,7 @@ html, body, #app {
 }
 
 .token-estimate.dark {
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .main-content {
@@ -3086,7 +3561,7 @@ html, body, #app {
 
 .resize-handle:hover,
 .resize-handle:active {
-  background: #0078d4;
+  background: var(--accent-primary, #0078d4);
   opacity: 0.5;
 }
 
@@ -3096,7 +3571,7 @@ html, body, #app {
 
 .resize-handle.dark:hover,
 .resize-handle.dark:active {
-  background: #4fa3e0;
+  background: var(--accent-primary);
 }
 
 .pane-close-btn {
@@ -3107,36 +3582,26 @@ html, body, #app {
   height: 24px;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   border-radius: 4px;
   cursor: pointer;
 }
 
 .pane-close-btn:hover {
-  background: rgba(0,0,0,0.06);
-  color: #475569;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .pane-close-btn.dark {
-  color: #64748b;
-}
-
-.pane-close-btn.dark:hover {
-  background: rgba(255,255,255,0.08);
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .left-pane {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #cbd5e1;
-  background: #f8fafc;
-}
-
-.left-pane.dark {
-  background: #1e293b;
-  border-right-color: #334155;
+  border-right: 1px solid var(--border-strong);
+  background: var(--bg-surface);
 }
 
 .file-tree-wrapper {
@@ -3156,32 +3621,26 @@ html, body, #app {
   min-width: 240px;
   max-height: 400px;
   overflow-y: auto;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   padding: 4px 0;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 13px;
-}
-
-.inject-menu.dark {
-  background: #2d2d2d;
-  border-color: #404040;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
 }
 
 .inject-menu-header {
   padding: 6px 12px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.3px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
 }
 
 .inject-menu.dark .inject-menu-header {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .inject-menu-item {
@@ -3193,22 +3652,18 @@ html, body, #app {
   padding: 6px 12px;
   border: none;
   background: none;
-  color: #333;
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
   line-height: 1.3;
 }
 
 .inject-menu-item:hover {
-  background: #f1f5f9;
+  background: var(--bg-surface-alt);
 }
 
 .inject-menu-item.dark {
-  color: #ccc;
-}
-
-.inject-menu-item.dark:hover {
-  background: #383838;
+  color: var(--text-muted);
 }
 
 .inject-var-label {
@@ -3217,25 +3672,25 @@ html, body, #app {
 }
 
 .inject-var-key {
-  font-size: 11px;
-  font-family: monospace;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .inject-menu.dark .inject-var-key {
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .git-change {
   padding: 4px 0;
-  font-size: 13px;
-  color: #333;
+  font-size: var(--fs-body);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 .dark .git-change {
-  color: #ccc;
+  color: var(--text-muted);
 }
 
 /* ── Workflow save bar ── */
@@ -3248,18 +3703,16 @@ html, body, #app {
   align-items: center;
   gap: 8px;
   padding: 4px 6px;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--bg-surface);
   backdrop-filter: blur(8px);
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-  font-size: 11px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: var(--fs-body-sm);
+  font-family: var(--font-sans);
 }
 
 .workflow-save-bar.dark {
-  background: rgba(30, 41, 59, 0.85);
-  border-color: #3c3c5c;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
@@ -3267,20 +3720,20 @@ html, body, #app {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   white-space: nowrap;
 }
 
 .workflow-save-status.saving {
-  color: #6366f1;
+  color: var(--accent-primary);
 }
 
 .workflow-save-status.saved {
-  color: #22c55e;
+  color: var(--text-success);
 }
 
 .workflow-save-status.unsaved {
-  color: #f59e0b;
+  color: var(--text-warning);
 }
 
 @keyframes spin {
@@ -3297,43 +3750,27 @@ html, body, #app {
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 4px;
-  background: #fff;
-  color: #475569;
-  font-size: 11px;
-  font-weight: 500;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .workflow-save-btn:hover {
-  background: #f1f5f9;
-  border-color: #6366f1;
-  color: #6366f1;
-}
-
-.workflow-save-btn.dark {
-  background: #2d2d44;
-  border-color: #3c3c5c;
-  color: #94a3b8;
-}
-
-.workflow-save-btn.dark:hover {
-  background: #33334e;
-  border-color: #6366f1;
-  color: #818cf8;
+  background: var(--bg-surface-alt);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
 .workflow-save-divider {
   width: 1px;
   height: 18px;
-  background: #e2e8f0;
+  background: var(--bg-surface-hover);
   margin: 0 2px;
-}
-
-.workflow-save-divider.dark {
-  background: #3c3c5c;
 }
 
 .workflow-enable-btn {
@@ -3342,49 +3779,29 @@ html, body, #app {
   gap: 4px;
   padding: 3px 10px;
   border-radius: 5px;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   white-space: nowrap;
-  border: 1px solid #94a3b8;
+  border: 1px solid var(--border-strong);
   background: transparent;
-  color: #64748b;
+  color: var(--text-secondary);
   transition: all 0.15s;
 }
 
 .workflow-enable-btn:hover {
-  background: rgba(0,0,0,0.04);
-  color: #475569;
-}
-
-.workflow-enable-btn.dark {
-  border-color: #475569;
-  color: #94a3b8;
-}
-
-.workflow-enable-btn.dark:hover {
-  background: rgba(255,255,255,0.06);
-  color: #cbd5e1;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .workflow-enable-btn.enabled {
-  background: #22c55e;
-  color: #fff;
-  border-color: #16a34a;
+  background: var(--status-success);
+  color: var(--text-on-accent);
+  border-color: var(--status-success);
 }
 
 .workflow-enable-btn.enabled:hover {
-  background: #16a34a;
-}
-
-.workflow-enable-btn.enabled.dark {
-  background: #166534;
-  border-color: #22c55e;
-  color: #bbf7d0;
-}
-
-.workflow-enable-btn.enabled.dark:hover {
-  background: #15803d;
+  background: var(--status-success);
 }
 
 .workflow-run-btn,
@@ -3394,8 +3811,8 @@ html, body, #app {
   gap: 4px;
   padding: 3px 10px;
   border-radius: 5px;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   white-space: nowrap;
   border: 1px solid transparent;
@@ -3403,43 +3820,23 @@ html, body, #app {
 }
 
 .workflow-run-btn {
-  background: #22c55e;
-  color: #fff;
-  border-color: #16a34a;
+  background: var(--status-success);
+  color: var(--text-on-accent);
+  border-color: var(--status-success);
 }
 
 .workflow-run-btn:hover {
-  background: #16a34a;
-}
-
-.workflow-run-btn.dark {
-  background: #166534;
-  border-color: #22c55e;
-  color: #bbf7d0;
-}
-
-.workflow-run-btn.dark:hover {
-  background: #15803d;
+  background: var(--status-success);
 }
 
 .workflow-stop-btn {
-  background: #ef4444;
-  color: #fff;
-  border-color: #dc2626;
+  background: var(--status-error);
+  color: var(--text-on-accent);
+  border-color: var(--status-error);
 }
 
 .workflow-stop-btn:hover {
-  background: #dc2626;
-}
-
-.workflow-stop-btn.dark {
-  background: #7f1d1d;
-  border-color: #ef4444;
-  color: #fecaca;
-}
-
-.workflow-stop-btn.dark:hover {
-  background: #991b1b;
+  background: var(--status-error);
 }
 
 .workflow-settings-panel {
@@ -3454,22 +3851,14 @@ html, body, #app {
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
 }
 
-.workflow-settings-panel.dark .workflow-settings-header {
-  border-bottom-color: #3c3c5c;
-}
-
 .workflow-settings-title {
-  font-weight: 600;
-  font-size: 13px;
-  color: #1e293b;
-}
-
-.workflow-settings-panel.dark .workflow-settings-title {
-  color: #e2e8f0;
+  font-weight: var(--weight-semibold);
+  font-size: var(--fs-heading);
+  color: var(--text-primary);
 }
 
 .workflow-settings-close {
@@ -3477,18 +3866,13 @@ html, body, #app {
   border: none;
   cursor: pointer;
   padding: 2px;
-  color: #64748b;
+  color: var(--text-secondary);
   border-radius: 4px;
 }
 
 .workflow-settings-close:hover {
-  background: #f1f5f9;
-  color: #334155;
-}
-
-.workflow-settings-panel.dark .workflow-settings-close:hover {
-  background: #2d2d44;
-  color: #e2e8f0;
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
 }
 
 .workflow-settings-body {
@@ -3500,25 +3884,25 @@ html, body, #app {
 }
 
 .workflow-settings-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #475569;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
   margin-top: 4px;
 }
 
 .workflow-settings-panel.dark .workflow-settings-label {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .workflow-settings-input,
 .workflow-settings-textarea {
   width: 100%;
   padding: 6px 8px;
-  font-size: 13px;
-  border: 1px solid #cbd5e1;
+  font-size: var(--fs-body);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: #fff;
-  color: #1e293b;
+  background: var(--bg-input);
+  color: var(--text-primary);
   outline: none;
   font-family: inherit;
   box-sizing: border-box;
@@ -3526,21 +3910,8 @@ html, body, #app {
 
 .workflow-settings-input:focus,
 .workflow-settings-textarea:focus {
-  border-color: #6366f1;
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
-}
-
-.workflow-settings-input.dark,
-.workflow-settings-textarea.dark {
-  background: #1e1e2e;
-  border-color: #3c3c5c;
-  color: #e2e8f0;
-}
-
-.workflow-settings-input.dark:focus,
-.workflow-settings-textarea.dark:focus {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
 }
 
 .workflow-settings-textarea {
@@ -3551,11 +3922,7 @@ html, body, #app {
 .workflow-settings-danger-zone {
   margin-top: 24px;
   padding-top: 16px;
-  border-top: 1px solid #e2e8f0;
-}
-
-.workflow-settings-panel.dark .workflow-settings-danger-zone {
-  border-top-color: #3c3c5c;
+  border-top: 1px solid var(--border-default);
 }
 
 .workflow-delete-btn {
@@ -3564,30 +3931,19 @@ html, body, #app {
   gap: 6px;
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid #fca5a5;
+  border: 1px solid var(--border-error);
   border-radius: 6px;
-  background: #fef2f2;
-  color: #dc2626;
-  font-size: 13px;
-  font-weight: 500;
+  background: var(--bg-error);
+  color: var(--text-error);
+  font-size: var(--fs-body);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .workflow-delete-btn:hover {
-  background: #fee2e2;
-  border-color: #f87171;
-}
-
-.workflow-delete-btn.dark {
-  background: #451a1a;
-  border-color: #7f1d1d;
-  color: #f87171;
-}
-
-.workflow-delete-btn.dark:hover {
-  background: #5a2020;
-  border-color: #ef4444;
+  background: var(--bg-error);
+  border-color: var(--border-error);
 }
 </style>
 
@@ -3598,14 +3954,9 @@ html, body, #app {
   justify-content: space-between;
   padding: 0 12px;
   height: 35px;
-  background: #f8fafc;
-  border-bottom: 1px solid #cbd5e1;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-strong);
   flex-shrink: 0;
-}
-
-.terminal-tabs-header.dark {
-  background: #1e293b;
-  border-bottom-color: #3c3c3c;
 }
 
 .terminal-tabs {
@@ -3618,38 +3969,32 @@ html, body, #app {
   height: 28px;
   display: flex;
   align-items: center;
-  background: #eef2f6;
+  background: var(--bg-surface-hover);
   border-radius: 4px 4px 0 0;
   cursor: pointer;
-  font-size: 13px;
-  color: #333;
+  font-size: var(--fs-body);
+  color: var(--text-primary);
 }
 
 .terminal-tab:hover {
-  background: #e8ecf0;
+  background: var(--bg-surface-hover);
 }
 
 .terminal-tab.active {
-  background: #ffffff;
-  color: #333;
-  border-bottom: 1px solid #ffffff;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--bg-surface);
   margin-bottom: -1px;
 }
 
 .dark .terminal-tab {
-  background: #2d2d2d;
-  color: #999;
-}
-
-.dark .terminal-tab:hover {
-  background: #323232;
-  color: #ccc;
+  color: var(--text-muted);
 }
 
 .dark .terminal-tab.active {
-  background: #0f172a;
-  border-bottom-color: #0f172a;
-  color: #ccc;
+  background: var(--editor-bg, #0f172a);
+  border-bottom-color: var(--editor-bg, #0f172a);
+  color: var(--text-muted);
 }
 
 .terminal-tab-close {
@@ -3670,7 +4015,7 @@ html, body, #app {
 }
 
 .terminal-tab-close.dark {
-  color: #ccc;
+  color: var(--text-muted);
 }
 
 .terminal-tab-add {
@@ -3683,7 +4028,7 @@ html, body, #app {
   cursor: pointer;
   opacity: 0.6;
   transition: opacity 0.1s;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .terminal-tab-add:hover {
@@ -3691,7 +4036,7 @@ html, body, #app {
 }
 
 .terminal-tab-add.dark {
-  color: #ccc;
+  color: var(--text-muted);
 }
 
 .terminal-content {
@@ -3712,27 +4057,27 @@ html, body, #app {
   width: 28px;
   height: 28px;
   border: none;
-  background: #0078d4;
+  background: var(--accent-primary, #0078d4);
   color: white;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--fs-heading);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .add-terminal-btn:hover {
-  background: #005a9e;
+  background: var(--accent-primary-hover);
 }
 
 .close-tab-btn {
   margin-left: auto;
   border: none;
   background: none;
-  color: #999;
+  color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-body);
   padding: 0;
   width: 16px;
   height: 16px;
@@ -3743,8 +4088,8 @@ html, body, #app {
 }
 
 .close-tab-btn:hover {
-  color: #fff;
-  background: #d32f2f;
+  color: var(--text-on-accent);
+  background: var(--status-error);
 }
 
 .terminal-container {

@@ -17,7 +17,16 @@
       ref="body"
       class="body"
     >
-      <RouterView />
+      <!-- Main tabs are always mounted, toggled with v-show to preserve state -->
+      <Containers v-show="activeMainTab === '/Containers'" />
+      <Volumes v-show="activeMainTab === '/Volumes'" />
+      <PortForwarding v-show="activeMainTab === '/PortForwarding'" />
+      <Images v-show="activeMainTab === '/Images'" />
+      <Snapshots v-show="activeMainTab === '/Snapshots'" />
+      <Troubleshooting v-show="activeMainTab === '/Troubleshooting'" />
+      <Diagnostics v-show="activeMainTab === '/Diagnostics'" />
+      <!-- Non-main routes (sub-pages, dialogs, extensions) still use RouterView -->
+      <RouterView v-if="!activeMainTab" />
     </main>
     <!-- The extension area is used for sizing the extension view. -->
     <div
@@ -39,6 +48,13 @@ import Nav from '@pkg/components/Nav.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
 import { mapTypedState } from '@pkg/entry/store';
+import Containers from '@pkg/pages/Containers.vue';
+import Diagnostics from '@pkg/pages/Diagnostics.vue';
+import Images from '@pkg/pages/Images.vue';
+import PortForwarding from '@pkg/pages/PortForwarding.vue';
+import Snapshots from '@pkg/pages/Snapshots.vue';
+import Troubleshooting from '@pkg/pages/Troubleshooting.vue';
+import Volumes from '@pkg/pages/Volumes.vue';
 import initExtensions from '@pkg/preload/extensions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { mainRoutes } from '@pkg/window/constants';
@@ -50,6 +66,13 @@ export default {
     ActionMenu,
     rdNav: Nav,
     TheTitle,
+    Containers,
+    Volumes,
+    PortForwarding,
+    Images,
+    Snapshots,
+    Troubleshooting,
+    Diagnostics,
   },
 
   data() {
@@ -72,6 +95,11 @@ export default {
     },
     paths() {
       return mainRoutes.map(r => r.route);
+    },
+    activeMainTab() {
+      const currentPath = this.$route.path;
+
+      return this.paths.find(p => currentPath.toLowerCase() === p.toLowerCase()) || null;
     },
     /** @returns {number} The number of diagnostics errors. */
     diagnosticsCount() {

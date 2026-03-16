@@ -1,6 +1,6 @@
 blank_issues_enabled: true
 contact_links:
 - name: Ask a question (GitHub Discussions)
-  url: https://github.com/sulla-ai/desktop/discussions
+  url: https://github.com/merchantprotocol/desktop/discussions
   about: We use GitHub Discussions for questions and GitHub issues for tracking bug reports and feature requests
 

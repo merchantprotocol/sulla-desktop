@@ -51,8 +51,8 @@ jobs:
           --pattern '*.dmg.sha512sum' \
           --pattern '*.msi' \
           --pattern '*.msi.sha512sum' \
-          --pattern 'rancher-desktop-linux-*.zip' \
-          --pattern 'rancher-desktop-linux-*.zip.sha512sum'
+          --pattern 'sulla-desktop-linux-*.zip' \
+          --pattern 'sulla-desktop-linux-*.zip.sha512sum'
       env:
         GH_TOKEN: ${{ github.token }}
 
@@ -63,12 +63,12 @@ jobs:
           curl "${OBS_DOWNLOAD_URL}?jsontable" \
             | jq --raw-output ".data[].name | select(endswith(\".AppImage\")) | select(contains(\".release${branch}.\"))"
           )
-        curl -L -o rancher-desktop.AppImage "${OBS_DOWNLOAD_URL}${artifact_name}"
+        curl -L -o sulla-desktop.AppImage "${OBS_DOWNLOAD_URL}${artifact_name}"
         # The AppImage does not have a checksum; make one up.
-        sha512sum rancher-desktop.AppImage > rancher-desktop.AppImage.sha512sum
-        chmod a+x rancher-desktop.AppImage
+        sha512sum sulla-desktop.AppImage > sulla-desktop.AppImage.sha512sum
+        chmod a+x sulla-desktop.AppImage
       env:
-        OBS_DOWNLOAD_URL: https://download.opensuse.org/download/repositories/isv:/Rancher:/dev/AppImage/
+        OBS_DOWNLOAD_URL: https://download.opensuse.org/download/repositories/isv:/Sulla:/dev/AppImage/
 
     - name: Upload macOS aarch-64 artifacts
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -100,16 +100,16 @@ jobs:
         name: application-linux.zip
         if-no-files-found: error
         path: |
-          rancher-desktop-linux-*.zip
-          rancher-desktop-linux-*.zip.sha512sum
+          sulla-desktop-linux-*.zip
+          sulla-desktop-linux-*.zip.sha512sum
     - name: Upload Linux AppImage
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
         name: application-linux.AppImage
         if-no-files-found: error
         path: |
-          rancher-desktop.AppImage
-          rancher-desktop.AppImage.sha512sum
+          sulla-desktop.AppImage
+          sulla-desktop.AppImage.sha512sum
 
   smoke-test:
     name: Smoke test
@@ -194,7 +194,7 @@ jobs:
         mkdir -p $RD_LOGS_DIR
         chown --recursive ci-user "$LOGS_DIR"
     - uses: ./.github/actions/setup-environment
-    - name: Install Rancher Desktop from package
+    - name: Install Sulla Desktop from package
       if: runner.os == 'Linux'
       run: .github/workflows/smoke-test/install-from-repo.sh
       env:
@@ -230,7 +230,7 @@ jobs:
         set -o xtrace -o errexit
         PID=$(pidof smoke-test.sh || echo missing)
         if [[ ! -r /proc/$PID/environ ]]; then
-          echo "Rancher Desktop is not running" >&2
+          echo "Sulla Desktop is not running" >&2
           exit 0
         fi
         export $(gawk 'BEGIN { RS="\0"; FS="=" } ($1 == "DISPLAY" || $1 == "XAUTHORITY") { print }' \
@@ -305,9 +305,9 @@ jobs:
         bash --noprofile --norc -eo pipefail {0}
       run: |
         set -o xtrace -o errexit
-        PID=$(pidof rancher-desktop.AppImage || echo missing)
+        PID=$(pidof sulla-desktop.AppImage || echo missing)
         if [[ ! -r /proc/$PID/environ ]]; then
-          echo "Rancher Desktop is not running" >&2
+          echo "Sulla Desktop is not running" >&2
           exit 0
         fi
         export $(gawk 'BEGIN { RS="\0"; FS="=" } ($1 == "DISPLAY" || $1 == "XAUTHORITY") { print }' \

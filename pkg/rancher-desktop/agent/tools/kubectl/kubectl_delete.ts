@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { runCommand } from "../util/CommandRunner";
+import { BaseTool, ToolResponse } from '../base';
+import { runCommand } from '../util/CommandRunner';
 
 /**
  * Kubectl Delete Tool - Worker class for execution
  */
 export class KubectlDeleteWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { resource, name, namespace, force, gracePeriod } = input;
 
@@ -30,20 +30,20 @@ export class KubectlDeleteWorker extends BaseTool {
       if (res.exitCode !== 0) {
         return {
           successBoolean: false,
-          responseString: `Error deleting resource: ${res.stderr || res.stdout}`
+          responseString: `Error deleting resource: ${ res.stderr || res.stdout }`,
         };
       }
 
-      const responseString = `Deleted ${resource} ${name}${namespace ? ` in namespace ${namespace}` : ''}${force ? ' (force)' : ''}${gracePeriod !== undefined ? ` (grace period: ${gracePeriod}s)` : ''}\nOutput:\n${res.stdout}`;
+      const responseString = `Deleted ${ resource } ${ name }${ namespace ? ` in namespace ${ namespace }` : '' }${ force ? ' (force)' : '' }${ gracePeriod !== undefined ? ` (grace period: ${ gracePeriod }s)` : '' }\nOutput:\n${ res.stdout }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing kubectl delete: ${(error as Error).message}`
+        responseString: `Error executing kubectl delete: ${ (error as Error).message }`,
       };
     }
   }

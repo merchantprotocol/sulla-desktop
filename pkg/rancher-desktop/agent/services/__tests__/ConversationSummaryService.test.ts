@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it, jest } from '@jest/globals';
 let ConversationSummaryServiceClass: any;
 
 describe('ConversationSummaryService overflow summarization', () => {
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
 
@@ -23,7 +23,7 @@ describe('ConversationSummaryService overflow summarization', () => {
   });
 
   it('prioritizes older messages with higher age score', () => {
-    const service = new ConversationSummaryServiceClass() as any;
+    const service = new ConversationSummaryServiceClass();
     const total = 100;
 
     const olderScore = service.calculateAgeScore(0, total, { role: 'assistant', content: 'old' });
@@ -32,18 +32,18 @@ describe('ConversationSummaryService overflow summarization', () => {
     expect(olderScore).toBeGreaterThan(newerScore);
   });
 
-  it('always summarizes enough overflow messages and includes tool/user/assistant roles', async () => {
-    const service = new ConversationSummaryServiceClass() as any;
+  it('always summarizes enough overflow messages and includes tool/user/assistant roles', async() => {
+    const service = new ConversationSummaryServiceClass();
 
     const messages: any[] = [{ role: 'system', content: 'system prompt' }];
 
     for (let i = 0; i < 109; i++) {
       if (i % 3 === 0) {
-        messages.push({ role: 'user', content: `user ${i}` });
+        messages.push({ role: 'user', content: `user ${ i }` });
       } else if (i % 3 === 1) {
-        messages.push({ role: 'assistant', content: `assistant ${i}` });
+        messages.push({ role: 'assistant', content: `assistant ${ i }` });
       } else {
-        messages.push({ role: 'tool', content: `tool ${i}` });
+        messages.push({ role: 'tool', content: `tool ${ i }` });
       }
     }
 
@@ -57,7 +57,7 @@ describe('ConversationSummaryService overflow summarization', () => {
     };
 
     let capturedBatch: any[] = [];
-    service.summarizeBatch = async (_state: any, batch: any[]) => {
+    service.summarizeBatch = async(_state: any, batch: any[]) => {
       capturedBatch = batch;
       return [{ priority: '🟡', content: 'compressed summary observation' }];
     };
@@ -76,12 +76,12 @@ describe('ConversationSummaryService overflow summarization', () => {
     expect(state.messages.length).toBeLessThanOrEqual(20);
   });
 
-  it('force-trims to max window even when summarizer returns no observations', async () => {
-    const service = new ConversationSummaryServiceClass() as any;
+  it('force-trims to max window even when summarizer returns no observations', async() => {
+    const service = new ConversationSummaryServiceClass();
 
     const messages: any[] = [{ role: 'system', content: 'system prompt' }];
     for (let i = 0; i < 40; i++) {
-      messages.push({ role: i % 2 === 0 ? 'user' : 'assistant', content: `message ${i}` });
+      messages.push({ role: i % 2 === 0 ? 'user' : 'assistant', content: `message ${ i }` });
     }
 
     const state: any = {
@@ -93,14 +93,13 @@ describe('ConversationSummaryService overflow summarization', () => {
       },
     };
 
-    service.summarizeBatch = async () => [];
+    service.summarizeBatch = async() => [];
 
     await service.performSummarization(state);
 
     expect(state.messages.length).toBeLessThanOrEqual(20);
     expect(Array.isArray(state.metadata.conversationSummaries)).toBe(true);
     expect(state.metadata.conversationSummaries.length).toBeGreaterThan(0);
-    expect((state.messages[0]?.metadata as any)?._conversationSummary).toBe(true);
+    expect((state.messages[0]?.metadata)?._conversationSummary).toBe(true);
   });
-
 });

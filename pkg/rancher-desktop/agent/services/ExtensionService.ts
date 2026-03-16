@@ -5,7 +5,7 @@ import paths from '@pkg/utils/paths';
 import { ExtensionMetadata } from '@pkg/main/extensions/types';
 import { Integration } from '../integrations/catalog';
 
-const MARKETPLACE_URL = 'https://raw.githubusercontent.com/sulla-ai/sulla-recipes/refs/heads/main/index.yaml';
+const MARKETPLACE_URL = 'https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml';
 const CACHE_TTL_MS = 1 * 60 * 1000;
 
 export interface MarketplaceEntry {
@@ -21,44 +21,44 @@ export interface MarketplaceEntry {
 }
 
 export interface InstalledExtension {
-  id:               string;
-  version:          string;
-  metadata:         ExtensionMetadata;
-  labels:           Record<string, string>;
-  extraUrls:        Array<{ label: string; url: string }>;
+  id:                string;
+  version:           string;
+  metadata:          ExtensionMetadata;
+  labels:            Record<string, string>;
+  extraUrls:         { label: string; url: string }[];
   availableVersion?: string;
-  canUpgrade:       boolean;
-  status:           'running' | 'stopped';
+  canUpgrade:        boolean;
+  status:            'running' | 'stopped';
 }
 
 export interface LocalExtensionMetadata extends ExtensionMetadata {
-  id: string;
-  name: string;
-  version: string;
-  title: string;
-  description: string;
-  vendor: string;
-  category: string;
-  platforms: string[];
+  id:                   string;
+  name:                 string;
+  version:              string;
+  title:                string;
+  description:          string;
+  vendor:               string;
+  category:             string;
+  platforms:            string[];
   extensionScreenshots: any[];
-  tags: string[];
-  containers: any;
+  tags:                 string[];
+  containers:           any;
   ui: Record<string, {
-    title: string;
-    root: string;
-    src: string;
+    title:         string;
+    root:          string;
+    src:           string;
     showInHeader?: boolean;
-    displayMode?: 'embedded' | 'iframe';
+    displayMode?:  'embedded' | 'iframe';
   }>;
-  integrations: Record<string, Integration>;
+  integrations:  Record<string, Integration>;
   [key: string]: any;
 }
 
 export interface HeaderMenuItem {
-  title: string;
-  root: string;
-  src: string;
-  link: string;
+  title:        string;
+  root:         string;
+  src:          string;
+  link:         string;
   displayMode?: 'embedded' | 'iframe';
 }
 
@@ -73,10 +73,10 @@ export function getExtensionService(): ExtensionService {
 
 export class ExtensionService {
   private backendUrl = 'http://127.0.0.1:6107';
-  private extensionsMetadata: LocalExtensionMetadata[] = [];
-  private headerMenuItems: HeaderMenuItem[] = [];
+  private extensionsMetadata:       LocalExtensionMetadata[] = [];
+  private headerMenuItems:          HeaderMenuItem[] = [];
   private initialized = false;
-  private cachedMarketplace: MarketplaceEntry[] | undefined;
+  private cachedMarketplace:        MarketplaceEntry[] | undefined;
   private marketplaceCacheExpires = 0;
   private inFlightMarketplaceFetch: Promise<MarketplaceEntry[]> | undefined;
 
@@ -92,7 +92,7 @@ export class ExtensionService {
     try {
       await this.loadExtensionsFromAPI();
 
-      console.log(`[ExtensionService] Loaded ${this.extensionsMetadata.length} extensions`);
+      console.log(`[ExtensionService] Loaded ${ this.extensionsMetadata.length } extensions`);
     } catch (err) {
       console.error('[ExtensionService] Initialization failed:', err);
     }
@@ -102,25 +102,25 @@ export class ExtensionService {
 
   private async loadExtensionsFromAPI(): Promise<void> {
     try {
-      const response = await fetch(`${this.backendUrl}/v1/extensions`, {
-        headers: this.getRequestHeaders()
+      const response = await fetch(`${ this.backendUrl }/v1/extensions`, {
+        headers: this.getRequestHeaders(),
       });
 
       if (!response.ok) {
-        console.error(`[ExtensionService] Failed to fetch extensions: ${response.status}`);
+        console.error(`[ExtensionService] Failed to fetch extensions: ${ response.status }`);
         return;
       }
 
-      const extensionsData: Record<string, { 
-        version: string, 
-        metadata: ExtensionMetadata, 
-        labels: Record<string, string> 
+      const extensionsData: Record<string, {
+        version:  string,
+        metadata: ExtensionMetadata,
+        labels:   Record<string, string>
       }> = await response.json();
 
       this.extensionsMetadata = Object.entries(extensionsData).map(([key, ext]) => (
         { ...ext.metadata, id: key } as LocalExtensionMetadata
       ));
-      
+
       for (const metadata of this.extensionsMetadata) {
         const ui = metadata['ui'] || {};
         const headerMenuItems = Object.entries(ui).filter(([_, item]) => item.showInHeader);
@@ -128,14 +128,14 @@ export class ExtensionService {
         for (const [itemKey, item] of headerMenuItems) {
           this.headerMenuItems.push({
             ...item,
-            link: `/Extension/${metadata.name}/ui/${itemKey}/${item.root}/${item.src}`
+            link: `/Extension/${ metadata.name }/ui/${ itemKey }/${ item.root }/${ item.src }`,
           });
         }
       }
     } catch (error) {
       console.error('[ExtensionService] Failed to load extensions from API:', error);
     }
-    
+
     console.log('[ExtensionService] Initialization complete');
   }
 
@@ -143,9 +143,9 @@ export class ExtensionService {
     const statePath = path.join(paths.appHome, 'rd-engine.json');
     const stateData = JSON.parse(fs.readFileSync(statePath, 'utf8'));
     const auth = btoa(`user:${ stateData.password }`);
-    
+
     return {
-      'Authorization': `Basic ${auth}`
+      Authorization: `Basic ${ auth }`,
     };
   }
 
@@ -164,10 +164,10 @@ export class ExtensionService {
   getExtensionMetadata(name: string): LocalExtensionMetadata | undefined {
     return this.extensionsMetadata.find(ext => ext.name === name);
   }
-  
+
   getExtensionIntegrations(): Integration[] {
     const allIntegrations: Integration[] = [];
-    
+
     for (const ext of this.extensionsMetadata) {
       if (ext.integrations) {
         for (const [_, integration] of Object.entries(ext.integrations)) {
@@ -175,7 +175,7 @@ export class ExtensionService {
         }
       }
     }
-    
+
     return allIntegrations;
   }
 
@@ -188,12 +188,12 @@ export class ExtensionService {
       return this.inFlightMarketplaceFetch;
     }
 
-    this.inFlightMarketplaceFetch = (async () => {
+    this.inFlightMarketplaceFetch = (async() => {
       try {
         const response = await fetch(MARKETPLACE_URL);
 
         if (!response.ok) {
-          console.error(`[ExtensionService] Failed to fetch marketplace: ${response.status}`);
+          console.error(`[ExtensionService] Failed to fetch marketplace: ${ response.status }`);
           return this.cachedMarketplace ?? [];
         }
 
@@ -205,7 +205,7 @@ export class ExtensionService {
 
         return this.cachedMarketplace;
       } catch (ex) {
-        console.error(`[ExtensionService] Error fetching marketplace: ${ex}`);
+        console.error(`[ExtensionService] Error fetching marketplace: ${ ex }`);
         return this.cachedMarketplace ?? [];
       } finally {
         this.inFlightMarketplaceFetch = undefined;
@@ -217,16 +217,16 @@ export class ExtensionService {
 
   async fetchInstalledExtensions(): Promise<InstalledExtension[]> {
     try {
-      const response = await fetch(`${this.backendUrl}/v1/extensions`, {
+      const response = await fetch(`${ this.backendUrl }/v1/extensions`, {
         headers: this.getRequestHeaders(),
       });
 
       if (!response.ok) {
-        console.error(`[ExtensionService] Failed to fetch installed extensions: ${response.status}`);
+        console.error(`[ExtensionService] Failed to fetch installed extensions: ${ response.status }`);
         return [];
       }
 
-      const data: Record<string, { version: string; metadata: ExtensionMetadata; labels: Record<string, string>; extraUrls?: Array<{ label: string; url: string }>; status?: 'running' | 'stopped' }> = await response.json();
+      const data: Record<string, { version: string; metadata: ExtensionMetadata; labels: Record<string, string>; extraUrls?: { label: string; url: string }[]; status?: 'running' | 'stopped' }> = await response.json();
       const marketplace = await this.fetchMarketplaceData();
 
       return Object.entries(data).map(([id, ext]) => {
@@ -259,9 +259,9 @@ export class ExtensionService {
 
   async installExtension(id: string): Promise<{ ok: boolean; error?: string }> {
     try {
-      const url = `${this.backendUrl}/v1/extensions/install?id=${encodeURIComponent(id)}`;
+      const url = `${ this.backendUrl }/v1/extensions/install?id=${ encodeURIComponent(id) }`;
 
-      console.info(`[ExtensionService] Installing extension ${id}`);
+      console.info(`[ExtensionService] Installing extension ${ id }`);
       const response = await fetch(url, {
         method:  'POST',
         headers: this.getRequestHeaders(),
@@ -282,14 +282,14 @@ export class ExtensionService {
           // best effort
         }
 
-        const message = detail || response.statusText || `HTTP ${response.status}`;
+        const message = detail || response.statusText || `HTTP ${ response.status }`;
 
-        console.error(`[ExtensionService] Install failed for ${id}: HTTP ${response.status} ${message}`);
+        console.error(`[ExtensionService] Install failed for ${ id }: HTTP ${ response.status } ${ message }`);
 
         return { ok: false, error: message };
       }
 
-      console.info(`[ExtensionService] Installed extension ${id}`);
+      console.info(`[ExtensionService] Installed extension ${ id }`);
 
       return { ok: true };
     } catch (error) {
@@ -299,23 +299,23 @@ export class ExtensionService {
 
   async startExtension(id: string): Promise<{ ok: boolean; error?: string }> {
     try {
-      const url = `${this.backendUrl}/v1/extensions/start?id=${encodeURIComponent(id)}`;
+      const url = `${ this.backendUrl }/v1/extensions/start?id=${ encodeURIComponent(id) }`;
 
-      console.info(`[ExtensionService] Starting extension ${id}`);
+      console.info(`[ExtensionService] Starting extension ${ id }`);
       const response = await fetch(url, {
         method:  'POST',
         headers: this.getRequestHeaders(),
       });
 
       if (!response.ok) {
-        const message = (await response.text()).trim() || `HTTP ${response.status}`;
+        const message = (await response.text()).trim() || `HTTP ${ response.status }`;
 
-        console.error(`[ExtensionService] Start failed for ${id}: ${message}`);
+        console.error(`[ExtensionService] Start failed for ${ id }: ${ message }`);
 
         return { ok: false, error: message };
       }
 
-      console.info(`[ExtensionService] Started extension ${id}`);
+      console.info(`[ExtensionService] Started extension ${ id }`);
 
       return { ok: true };
     } catch (error) {
@@ -325,23 +325,23 @@ export class ExtensionService {
 
   async stopExtension(id: string): Promise<{ ok: boolean; error?: string }> {
     try {
-      const url = `${this.backendUrl}/v1/extensions/stop?id=${encodeURIComponent(id)}`;
+      const url = `${ this.backendUrl }/v1/extensions/stop?id=${ encodeURIComponent(id) }`;
 
-      console.info(`[ExtensionService] Stopping extension ${id}`);
+      console.info(`[ExtensionService] Stopping extension ${ id }`);
       const response = await fetch(url, {
         method:  'POST',
         headers: this.getRequestHeaders(),
       });
 
       if (!response.ok) {
-        const message = (await response.text()).trim() || `HTTP ${response.status}`;
+        const message = (await response.text()).trim() || `HTTP ${ response.status }`;
 
-        console.error(`[ExtensionService] Stop failed for ${id}: ${message}`);
+        console.error(`[ExtensionService] Stop failed for ${ id }: ${ message }`);
 
         return { ok: false, error: message };
       }
 
-      console.info(`[ExtensionService] Stopped extension ${id}`);
+      console.info(`[ExtensionService] Stopped extension ${ id }`);
 
       return { ok: true };
     } catch (error) {
@@ -351,7 +351,7 @@ export class ExtensionService {
 
   async getExtensionStatus(id: string): Promise<'running' | 'stopped' | 'not_installed'> {
     try {
-      const url = `${this.backendUrl}/v1/extensions/status?id=${encodeURIComponent(id)}`;
+      const url = `${ this.backendUrl }/v1/extensions/status?id=${ encodeURIComponent(id) }`;
       const response = await fetch(url, { headers: this.getRequestHeaders() });
 
       if (!response.ok) {
@@ -373,9 +373,9 @@ export class ExtensionService {
       if (options?.deleteData) {
         params.set('deleteData', 'true');
       }
-      const url = `${this.backendUrl}/v1/extensions/uninstall?${params.toString()}`;
+      const url = `${ this.backendUrl }/v1/extensions/uninstall?${ params.toString() }`;
 
-      console.info(`[ExtensionService] Uninstalling extension ${id}`, { deleteData: !!options?.deleteData });
+      console.info(`[ExtensionService] Uninstalling extension ${ id }`, { deleteData: !!options?.deleteData });
       const response = await fetch(url, {
         method:  'POST',
         headers: this.getRequestHeaders(),
@@ -396,14 +396,14 @@ export class ExtensionService {
           // best effort
         }
 
-        const message = detail || response.statusText || `HTTP ${response.status}`;
+        const message = detail || response.statusText || `HTTP ${ response.status }`;
 
-        console.error(`[ExtensionService] Uninstall failed for ${id}: HTTP ${response.status} ${message}`);
+        console.error(`[ExtensionService] Uninstall failed for ${ id }: HTTP ${ response.status } ${ message }`);
 
         return { ok: false, error: message };
       }
 
-      console.info(`[ExtensionService] Uninstalled extension ${id}`);
+      console.info(`[ExtensionService] Uninstalled extension ${ id }`);
 
       return { ok: true };
     } catch (error) {

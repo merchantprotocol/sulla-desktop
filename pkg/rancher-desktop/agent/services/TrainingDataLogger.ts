@@ -19,30 +19,30 @@ import { resolveSullaConversationsDir } from '../utils/sullaPaths';
 // ── Types ──
 
 export interface TrainingMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content?: string | null;
-  tool_calls?: Array<{
-    id: string;
-    type: 'function';
+  role:        'system' | 'user' | 'assistant' | 'tool';
+  content?:    string | null;
+  tool_calls?: {
+    id:       string;
+    type:     'function';
     function: { name: string; arguments: string };
-  }>;
+  }[];
   tool_call_id?: string;
-  reasoning?: string;
+  reasoning?:    string;
 }
 
 interface TrainingSession {
-  sessionId: string;
-  filePath: string;
-  allMessages: TrainingMessage[];
+  sessionId:          string;
+  filePath:           string;
+  allMessages:        TrainingMessage[];
   systemPromptLogged: boolean;
-  lastUserContent?: string;
+  lastUserContent?:   string;
 }
 
 // ── Logger ──
 
 class TrainingDataLoggerImpl {
   private dir: string;
-  private activeSessions: Map<string, TrainingSession> = new Map();
+  private activeSessions = new Map<string, TrainingSession>();
 
   constructor() {
     this.dir = resolveSullaConversationsDir();
@@ -54,7 +54,7 @@ class TrainingDataLoggerImpl {
 
   private sessionFilePath(sessionId: string): string {
     const safe = sessionId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
-    return path.join(this.dir, `${safe}.jsonl`);
+    return path.join(this.dir, `${ safe }.jsonl`);
   }
 
   private append(session: TrainingSession, msg: TrainingMessage): void {
@@ -74,8 +74,8 @@ class TrainingDataLoggerImpl {
       this.ensureDir();
       const session: TrainingSession = {
         sessionId,
-        filePath: this.sessionFilePath(sessionId),
-        allMessages: [],
+        filePath:           this.sessionFilePath(sessionId),
+        allMessages:        [],
         systemPromptLogged: false,
       };
       this.activeSessions.set(sessionId, session);
@@ -116,20 +116,20 @@ class TrainingDataLoggerImpl {
 
   logToolCall(
     sessionId: string,
-    calls: Array<{ id: string; name: string; args: any }>,
+    calls: { id: string; name: string; args: any }[],
     textContent?: string | null,
     opts?: { reasoning?: string },
   ): void {
     const session = this.activeSessions.get(sessionId);
     if (!session) return;
     const msg: TrainingMessage = {
-      role: 'assistant',
-      content: textContent || null,
+      role:       'assistant',
+      content:    textContent || null,
       tool_calls: calls.map(tc => ({
-        id: tc.id,
-        type: 'function' as const,
+        id:       tc.id,
+        type:     'function' as const,
         function: {
-          name: tc.name,
+          name:      tc.name,
           arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args ?? {}),
         },
       })),
@@ -142,7 +142,7 @@ class TrainingDataLoggerImpl {
     const session = this.activeSessions.get(sessionId);
     if (!session) return;
     this.append(session, {
-      role: 'tool',
+      role:         'tool',
       tool_call_id: toolCallId,
       content,
     });
@@ -168,36 +168,36 @@ class TrainingDataLoggerImpl {
   }
 
   private serializeSubAgent(messages: TrainingMessage[], label: string): string {
-    const lines: string[] = [`[Sub-Agent: ${label}]`];
+    const lines: string[] = [`[Sub-Agent: ${ label }]`];
 
     for (const msg of messages) {
       switch (msg.role) {
-        case 'system':
-          lines.push('--- System ---');
-          lines.push(msg.content ? msg.content.slice(0, 500) : '');
-          break;
-        case 'user':
-          lines.push('--- User ---');
-          lines.push(msg.content || '');
-          break;
-        case 'assistant':
-          if (msg.tool_calls?.length) {
-            const reasoningNote = msg.reasoning ? ` (reasoning: "${msg.reasoning.slice(0, 200)}")` : '';
-            lines.push(`--- Assistant${reasoningNote} ---`);
-            if (msg.content) lines.push(msg.content);
-            for (const tc of msg.tool_calls) {
-              lines.push(`--- Tool Call: ${tc.function.name}(${tc.function.arguments}) ---`);
-            }
-          } else {
-            const reasoningNote = msg.reasoning ? ` (reasoning: "${msg.reasoning.slice(0, 200)}")` : '';
-            lines.push(`--- Assistant${reasoningNote} ---`);
-            lines.push(msg.content || '');
+      case 'system':
+        lines.push('--- System ---');
+        lines.push(msg.content ? msg.content.slice(0, 500) : '');
+        break;
+      case 'user':
+        lines.push('--- User ---');
+        lines.push(msg.content || '');
+        break;
+      case 'assistant':
+        if (msg.tool_calls?.length) {
+          const reasoningNote = msg.reasoning ? ` (reasoning: "${ msg.reasoning.slice(0, 200) }")` : '';
+          lines.push(`--- Assistant${ reasoningNote } ---`);
+          if (msg.content) lines.push(msg.content);
+          for (const tc of msg.tool_calls) {
+            lines.push(`--- Tool Call: ${ tc.function.name }(${ tc.function.arguments }) ---`);
           }
-          break;
-        case 'tool':
-          lines.push('--- Tool Result ---');
+        } else {
+          const reasoningNote = msg.reasoning ? ` (reasoning: "${ msg.reasoning.slice(0, 200) }")` : '';
+          lines.push(`--- Assistant${ reasoningNote } ---`);
           lines.push(msg.content || '');
-          break;
+        }
+        break;
+      case 'tool':
+        lines.push('--- Tool Result ---');
+        lines.push(msg.content || '');
+        break;
       }
     }
 

@@ -2,7 +2,8 @@ import { BaseNode } from './BaseNode';
 import type { NodeRunPolicy } from './BaseNode';
 import type { BaseThreadState, NodeResult } from './Graph';
 import { throwIfAborted } from '../services/AbortService';
-import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
+import { stripProtocolTags } from '../utils/stripProtocolTags';
 
 // ============================================================================
 // AGENT PROMPT
@@ -23,9 +24,9 @@ async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
     const { getActiveAgentsRegistry } = await import('../services/ActiveAgentsRegistry');
     const registry = getActiveAgentsRegistry();
     const block = await registry.buildContextBlock();
-    return `${block}\n\nYou run on the **${wsChannel}** WebSocket channel. Your \`sender_id\` and \`sender_channel\` are both \`${wsChannel}\`.`;
+    return `${ block }\n\nYou run on the **${ wsChannel }** WebSocket channel. Your \`sender_id\` and \`sender_channel\` are both \`${ wsChannel }\`.`;
   } catch {
-    return `## Inter-Agent Communication\n\nYou run on the **${wsChannel}** WebSocket channel. Agent registry unavailable.`;
+    return `## Inter-Agent Communication\n\nYou run on the **${ wsChannel }** WebSocket channel. Agent registry unavailable.`;
   }
 }
 
@@ -132,13 +133,13 @@ export class AgentNode extends BaseNode {
     // ----------------------------------------------------------------
     const wsChannel = String(state.metadata.wsChannel || 'sulla-desktop');
     const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
-    const systemPrompt = `${AGENT_PROMPT_BASE}\n\n${channelAwareness}\n\n${AGENT_PROMPT_DIRECTIVE}\n\n${AGENT_PROMPT_COMPLETION_WRAPPERS}`;
+    const systemPrompt = `${ AGENT_PROMPT_BASE }\n\n${ channelAwareness }\n\n${ AGENT_PROMPT_DIRECTIVE }\n\n${ AGENT_PROMPT_COMPLETION_WRAPPERS }`;
 
     const enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
-      includeSoul: true,
-      includeAwareness: true,
+      includeSoul:        true,
+      includeAwareness:   true,
       includeEnvironment: true,
-      includeMemory: false,
+      includeMemory:      false,
     });
 
     // Training data: capture the full assembled system prompt (once per session)
@@ -149,7 +150,7 @@ export class AgentNode extends BaseNode {
         const tl = getTrainingDataLogger();
         if (tl.hasSession(trainingConvId)) {
           const existing = tl.getSessionMessages(trainingConvId);
-          if (!existing || !existing.some(m => m.role === 'system')) {
+          if (!existing?.some(m => m.role === 'system')) {
             tl.logSystemPrompt(trainingConvId, enrichedPrompt);
           }
         }
@@ -175,21 +176,21 @@ export class AgentNode extends BaseNode {
 
     // Store outcome on metadata
     const statusNote = this.toOneLineStatusNote(
-      agentOutcome.statusReport
-      || agentOutcome.blockerReason
-      || agentOutcome.summary
-      || '',
+      agentOutcome.statusReport ||
+      agentOutcome.blockerReason ||
+      agentOutcome.summary ||
+      '',
     );
 
     (state.metadata as any).agent = {
       ...((state.metadata as any).agent || {}),
-      status: agentOutcome.status,
-      status_report: agentOutcome.statusReport,
-      blocker_reason: agentOutcome.blockerReason,
+      status:               agentOutcome.status,
+      status_report:        agentOutcome.statusReport,
+      blocker_reason:       agentOutcome.blockerReason,
       unblock_requirements: agentOutcome.unblockRequirements,
-      status_note: statusNote,
-      response: agentOutcome.status === 'done' ? agentResultText : null,
-      updatedAt: Date.now(),
+      status_note:          statusNote,
+      response:             agentOutcome.status === 'done' ? stripProtocolTags(agentResultText) : null,
+      updatedAt:            Date.now(),
     };
 
     // When the agent reports done or blocked, mark the cycle as complete
@@ -206,7 +207,7 @@ export class AgentNode extends BaseNode {
       if (state.metadata.isSubAgent) {
         // Sub-agent: don't wait for user — the orchestrator will read
         // blocker_reason / unblock_requirements from agent metadata
-        console.log(`[AgentNode] Sub-agent blocked — deferring to orchestrator. Reason: ${agentOutcome.blockerReason}`);
+        console.log(`[AgentNode] Sub-agent blocked — deferring to orchestrator. Reason: ${ agentOutcome.blockerReason }`);
       } else {
         state.metadata.waitingForUser = true;
       }
@@ -224,14 +225,20 @@ export class AgentNode extends BaseNode {
         state.messages = [];
       }
       const normalizedUserVisibleResult = userVisibleResultText.trim();
+      const stripWrapperXml = (text: string): string => text
+        .replace(AGENT_DONE_XML_REGEX, '')
+        .replace(AGENT_BLOCKED_XML_REGEX, '')
+        .replace(AGENT_CONTINUE_XML_REGEX, '')
+        .trim();
+
       const alreadyStored = state.messages.some((msg: any) => {
         if (msg.role !== 'assistant') return false;
-        // Match string content
-        if (typeof msg.content === 'string' && msg.content.trim() === normalizedUserVisibleResult) return true;
+        // Match string content (strip wrapper XML so raw responses match their stripped counterparts)
+        if (typeof msg.content === 'string' && stripWrapperXml(msg.content) === normalizedUserVisibleResult) return true;
         // Match text inside native content arrays (e.g. [{ type: 'text', text: '...' }, { type: 'tool_use', ... }])
         if (Array.isArray(msg.content)) {
           return msg.content.some((block: any) =>
-            block?.type === 'text' && typeof block.text === 'string' && block.text.trim() === normalizedUserVisibleResult,
+            block?.type === 'text' && typeof block.text === 'string' && stripWrapperXml(block.text) === normalizedUserVisibleResult,
           );
         }
         return false;
@@ -239,25 +246,25 @@ export class AgentNode extends BaseNode {
 
       if (normalizedUserVisibleResult && !alreadyStored) {
         state.messages.push({
-          role: 'assistant',
-          content: normalizedUserVisibleResult,
+          role:     'assistant',
+          content:  normalizedUserVisibleResult,
           metadata: {
-            nodeId: this.id,
-            nodeName: this.name,
-            kind: 'agent_result',
+            nodeId:    this.id,
+            nodeName:  this.name,
+            kind:      'agent_result',
             timestamp: Date.now(),
           },
         } as ChatMessage);
         this.bumpStateVersion(state);
       }
-      await this.wsChatMessage(state, userVisibleResultText, 'assistant');
+      // Text already dispatched to UI in executeAgent() before tool execution
     }
 
     // ----------------------------------------------------------------
     // 3. LOG
     // ----------------------------------------------------------------
     const executionTimeMs = Date.now() - startTime;
-    console.log(`[AgentNode] Complete — status: ${agentOutcome.status} in ${executionTimeMs}ms`);
+    console.log(`[AgentNode] Complete — status: ${ agentOutcome.status } in ${ executionTimeMs }ms`);
 
     return { state, decision: { type: 'next' } };
   }
@@ -272,21 +279,65 @@ export class AgentNode extends BaseNode {
   ): Promise<string | null> {
     try {
       const policy: Required<NodeRunPolicy> = {
-        messageSource: 'graph',
+        messageSource:           'graph',
         persistAssistantToGraph: true,
       };
 
-      const chatResult = await this.chat(state, systemPrompt, {
-        temperature: 0.2,
+      // Flush any buffered DOM events as a single tool pair before the LLM call
+      this.flushDomEventBuffer(state);
+
+      const reply = await this.normalizedChat(state, systemPrompt, {
+        temperature:   0.2,
         nodeRunPolicy: policy,
       });
 
-      return chatResult || null;
+      if (!reply) return null;
+
+      // Emit text to the UI BEFORE tool execution so text appears before tool cards
+      const agentOutcome = this.extractAgentOutcome(reply.content);
+      const userVisibleText = this.toUserVisibleAgentMessage(reply.content, agentOutcome);
+      if (userVisibleText?.trim()) {
+        await this.wsChatMessage(state, userVisibleText, 'assistant');
+      }
+
+      // Now execute tool calls — tool cards appear after text in the UI
+      await this.processPendingToolCalls(state, reply);
+
+      return reply.content || null;
     } catch (error) {
       // Re-throw abort errors so they propagate to the graph loop
       if ((error as any)?.name === 'AbortError') throw error;
-      console.error('[AgentNode] Execution failed:', error);
-      return null;
+
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[AgentNode] Execution failed:', errorMsg);
+
+      // Surface the error to the user instead of silently dying
+      const userMessage = `⚠️ I encountered an error and couldn't complete the request: ${ errorMsg }. Please try again or switch to a different model.`;
+
+      // Push error as assistant message so user sees it in the chat
+      state.messages.push({
+        role:     'assistant',
+        content:  userMessage,
+        metadata: {
+          nodeId:    this.id,
+          nodeName:  this.name,
+          kind:      'agent_error',
+          timestamp: Date.now(),
+        },
+      } as ChatMessage);
+
+      // Send error via WebSocket so user sees it immediately
+      await this.wsChatMessage(state, userMessage, 'assistant');
+
+      // Mark as blocked so graph takes the clean exit path (not the ambiguous in_progress path)
+      (state.metadata as any).agent = {
+        ...((state.metadata as any).agent || {}),
+        status:         'blocked',
+        blocker_reason: errorMsg,
+        updatedAt:      Date.now(),
+      };
+
+      return userMessage;
     }
   }
 
@@ -294,38 +345,48 @@ export class AgentNode extends BaseNode {
   // LIVE DOM STREAM
   // ======================================================================
 
+  /** Buffered DOM events waiting to be flushed as a single tool pair. */
+  private domEventBuffer: { content: string; event: { assetId: string; type: string; timestamp: number } }[] = [];
+
   private async startLiveDomStream(state: BaseThreadState): Promise<() => void> {
     try {
-      const { hostBridgeRegistry } = await import('../scripts/injected/HostBridgeRegistry');
+      const { hostBridgeProxy } = await import('../scripts/injected/HostBridgeProxy');
 
-      if (hostBridgeRegistry.size() === 0) {
+      const size = await hostBridgeProxy.size();
+      if (size === 0) {
         return () => {};
       }
 
-      const unsub = hostBridgeRegistry.onDomEvent((event) => {
+      this.domEventBuffer = [];
+
+      const unsub = hostBridgeProxy.onDomEvent((event) => {
         const content = event.message;
         if (!content) return;
 
-        if (this.shouldAppendLiveDomEvent(state, content)) {
-          this.appendLiveDomMessage(state, content, event);
+        if (this.shouldBufferDomEvent(state, content)) {
+          this.domEventBuffer.push({ content, event });
         }
 
-        console.log('[AgentNode] DOM event received:', {
+        console.log('[AgentNode] DOM event buffered:', {
           assetId: event.assetId,
-          type: event.type,
+          type:    event.type,
           message: content.slice(0, 120),
         });
       });
 
       console.log('[AgentNode] Live DOM stream started for all assets');
-      return unsub;
+      return () => {
+        unsub();
+        // Flush any remaining events on dispose
+        this.flushDomEventBuffer(state);
+      };
     } catch (error) {
       console.warn('[AgentNode] Unable to start live DOM stream:', error);
       return () => {};
     }
   }
 
-  private shouldAppendLiveDomEvent(state: BaseThreadState, content: string): boolean {
+  private shouldBufferDomEvent(state: BaseThreadState, content: string): boolean {
     const metadataAny = state.metadata as any;
     const liveMeta = metadataAny.__domLiveEvent || {};
     const now = Date.now();
@@ -337,33 +398,64 @@ export class AgentNode extends BaseNode {
 
     metadataAny.__domLiveEvent = {
       lastContent: content,
-      lastAt: now,
+      lastAt:      now,
     };
 
     return true;
   }
 
-  private appendLiveDomMessage(
-    state: BaseThreadState,
-    content: string,
-    event: { assetId: string; type: string; timestamp: number },
-  ): void {
-    const message: ChatMessage = {
-      role: 'assistant',
-      content,
-      metadata: {
-        nodeId: this.id,
-        nodeName: this.name,
-        kind: 'agent_live_dom_event',
-        source: 'dom_event_stream',
-        transport: 'ipc',
-        eventType: event.type,
-        assetId: event.assetId,
-        timestamp: event.timestamp,
-      },
+  /**
+   * Flush all buffered DOM events into state.messages as a single
+   * dom_observer tool_use / tool_result pair.
+   */
+  flushDomEventBuffer(state: BaseThreadState): void {
+    if (this.domEventBuffer.length === 0) return;
+
+    const buffered = this.domEventBuffer.splice(0);
+    const toolCallId = `dom_observer_${ Date.now() }_${ Math.random().toString(36).slice(2, 11) }`;
+
+    // Collect unique assetIds for the tool_use input
+    const assetIds = [...new Set(buffered.map(b => b.event.assetId))];
+
+    // Build a single result body from all buffered events
+    const resultLines = buffered.map(b => b.content);
+    const resultContent = `tool: dom_observer\nresult:\n${ resultLines.join('\n') }`;
+
+    const eventMeta = {
+      nodeId:    this.id,
+      nodeName:  this.name,
+      kind:      'agent_live_dom_event',
+      source:    'dom_event_stream',
+      transport: 'ipc',
+      timestamp: Date.now(),
     };
 
-    state.messages.push(message);
+    // Assistant message: synthetic tool_use block
+    state.messages.push({
+      role:    'assistant',
+      content: [{
+        type:  'tool_use',
+        id:    toolCallId,
+        name:  'dom_observer',
+        input: { assetIds },
+      }],
+      metadata: eventMeta,
+    } as any);
+
+    // User message: matching tool_result
+    state.messages.push({
+      role:    'user',
+      content: [{
+        type:        'tool_result',
+        tool_use_id: toolCallId,
+        content:     resultContent,
+      }],
+      metadata: {
+        ...eventMeta,
+        kind: 'tool_result',
+      },
+    } as any);
+
     this.bumpStateVersion(state);
   }
 
@@ -372,10 +464,10 @@ export class AgentNode extends BaseNode {
   // ======================================================================
 
   private extractAgentOutcome(resultText: string): {
-    status: 'done' | 'blocked' | 'continue' | 'in_progress';
-    summary: string | null;
-    statusReport: string | null;
-    blockerReason: string | null;
+    status:              'done' | 'blocked' | 'continue' | 'in_progress';
+    summary:             string | null;
+    statusReport:        string | null;
+    blockerReason:       string | null;
     unblockRequirements: string | null;
   } {
     // Check BLOCKED first
@@ -392,8 +484,8 @@ export class AgentNode extends BaseNode {
         .find(Boolean) || null;
 
       return {
-        status: 'blocked',
-        summary: blockerReason || fallbackSummary,
+        status:       'blocked',
+        summary:      blockerReason || fallbackSummary,
         statusReport: null,
         blockerReason,
         unblockRequirements,
@@ -410,10 +502,10 @@ export class AgentNode extends BaseNode {
         : doneBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
 
       return {
-        status: 'done',
+        status:              'done',
         summary,
-        statusReport: null,
-        blockerReason: null,
+        statusReport:        null,
+        blockerReason:       null,
         unblockRequirements: null,
       };
     }
@@ -428,23 +520,23 @@ export class AgentNode extends BaseNode {
         ? String(statusReportMatch[1] || '').trim() || null
         : statusMessageMatch
           ? String(statusMessageMatch[1] || '').trim() || null
-        : continueBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
+          : continueBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
 
       return {
-        status: 'continue',
-        summary: statusReport,
+        status:              'continue',
+        summary:             statusReport,
         statusReport,
-        blockerReason: null,
+        blockerReason:       null,
         unblockRequirements: null,
       };
     }
 
     // No wrapper found — treat as in_progress (legacy fallback)
     return {
-      status: 'in_progress',
-      summary: null,
-      statusReport: null,
-      blockerReason: null,
+      status:              'in_progress',
+      summary:             null,
+      statusReport:        null,
+      blockerReason:       null,
       unblockRequirements: null,
     };
   }
@@ -452,10 +544,10 @@ export class AgentNode extends BaseNode {
   private toUserVisibleAgentMessage(
     rawResultText: string,
     outcome: {
-      status: 'done' | 'blocked' | 'continue' | 'in_progress';
-      summary: string | null;
-      statusReport: string | null;
-      blockerReason: string | null;
+      status:              'done' | 'blocked' | 'continue' | 'in_progress';
+      summary:             string | null;
+      statusReport:        string | null;
+      blockerReason:       string | null;
       unblockRequirements: string | null;
     },
   ): string {

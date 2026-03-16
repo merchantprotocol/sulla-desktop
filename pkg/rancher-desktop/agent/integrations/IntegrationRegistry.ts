@@ -6,11 +6,11 @@ export class IntegrationRegistry {
   register<T>(id: string, factory: () => Promise<T>): void {
     console.log('[IntegrationRegistry] register()', {
       id,
-      hadFactory: this.factories.has(id),
-      instanceCount: this.instances.size,
+      hadFactory:         this.factories.has(id),
+      instanceCount:      this.instances.size,
       factoryCountBefore: this.factories.size,
-      pid: typeof process !== 'undefined' ? process.pid : null,
-      processType: typeof process !== 'undefined' ? ((process as any).type || 'node') : 'unknown',
+      pid:                typeof process !== 'undefined' ? process.pid : null,
+      processType:        typeof process !== 'undefined' ? ((process as any).type || 'node') : 'unknown',
     });
     this.factories.set(id, factory);
   }
@@ -20,23 +20,23 @@ export class IntegrationRegistry {
     console.log('[IntegrationRegistry] get() called', {
       id,
       hasInstance,
-      hasFactory: this.factories.has(id),
+      hasFactory:    this.factories.has(id),
       instanceCount: this.instances.size,
-      factoryCount: this.factories.size,
-      pid: typeof process !== 'undefined' ? process.pid : null,
-      processType: typeof process !== 'undefined' ? ((process as any).type || 'node') : 'unknown',
+      factoryCount:  this.factories.size,
+      pid:           typeof process !== 'undefined' ? process.pid : null,
+      processType:   typeof process !== 'undefined' ? ((process as any).type || 'node') : 'unknown',
     });
 
     if (!this.instances.has(id)) {
       const factory = this.factories.get(id);
-      if (!factory) throw new Error(`No factory registered for integration: ${id}`);
+      if (!factory) throw new Error(`No factory registered for integration: ${ id }`);
 
       console.log('[IntegrationRegistry] get() cache miss -> invoking factory', { id });
       const instance = await factory();
 
       console.log('[IntegrationRegistry] factory resolved', {
         id,
-        gotInstance: instance !== null && instance !== undefined,
+        gotInstance:  instance !== null && instance !== undefined,
         instanceType: instance === null || instance === undefined ? 'nullish' : typeof instance,
       });
       if (instance !== null && instance !== undefined) {
@@ -59,7 +59,7 @@ export class IntegrationRegistry {
   async invalidate(id: string): Promise<void> {
     console.log('[IntegrationRegistry] invalidate() called', {
       id,
-      hasInstance: this.instances.has(id),
+      hasInstance:         this.instances.has(id),
       instanceCountBefore: this.instances.size,
     });
 
@@ -70,7 +70,7 @@ export class IntegrationRegistry {
 
     const instance = this.instances.get(id);
     if (instance && typeof instance.close === 'function') {
-      await instance.close().catch((err: unknown) => console.error(`[Registry] Close error (${id}):`, err));
+      await instance.close().catch((err: unknown) => console.error(`[Registry] Close error (${ id }):`, err));
     }
 
     this.instances.delete(id);

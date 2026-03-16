@@ -1,8 +1,14 @@
 Sulla Desktop
-Copyright (c) 2026 Jonathon Byrdziak / Merchant Protocol LLC
+Copyright (c) 2025-2026 Merchant Protocol LLC
 
-This product includes software developed by Rancher Labs, Inc.
-and contributors<a href="https://github.com/rancher-sandbox/rancher-desktop" target="_blank" rel="noopener noreferrer nofollow"></a>.
+This product is a derivative work of Rancher Desktop, originally developed
+by SUSE LLC / Rancher Labs, Inc. and contributors
+(https://github.com/rancher-sandbox/rancher-desktop).
 
-Portions licensed under the Apache License, Version 2.0.
+Original Rancher Desktop source code is Copyright (c) 2021-2025 SUSE LLC
+and is licensed under the Apache License, Version 2.0.
+
+All modifications and new code are Copyright (c) 2025-2026 Merchant Protocol LLC,
+also licensed under the Apache License, Version 2.0.
+
 See LICENSE for full terms.

@@ -19,12 +19,16 @@ import { getOllamaService } from './OllamaService';
 export class OpenAICompatibleService extends BaseLanguageModel {
   protected declare config: LLMServiceConfig;
   protected retryCount = 3;
-  protected defaultTimeoutMs = 60_000;
+  protected defaultTimeoutMs = 180_000;
   protected chatEndpoint = '/chat/completions';
 
   constructor(config: LLMServiceConfig) {
     super(config);
     this.config = config;
+  }
+
+  override getContextWindow(): number {
+    return 128_000;
   }
 
   /**
@@ -46,7 +50,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
    * Send request to remote provider with retry + Ollama fallback.
    */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const url = `${this.baseUrl}${this.chatEndpoint}`;
+    const url = `${ this.baseUrl }${ this.chatEndpoint }`;
     const body = this.buildRequestBody(messages, options);
     const conversationId = typeof options?.conversationId === 'string' ? options.conversationId : undefined;
     const nodeName = typeof options?.nodeName === 'string' ? options.nodeName : undefined;
@@ -58,12 +62,14 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         if (options?.signal?.aborted) throw new DOMException('Operation aborted', 'AbortError');
 
         if (attempt > 0) {
-          console.log(`[${this.constructor.name}] Retry ${attempt}/${this.retryCount} after ${Math.pow(2, attempt-1)}s backoff`);
+          console.log(`[${ this.constructor.name }] Retry ${ attempt }/${ this.retryCount } after ${ Math.pow(2, attempt - 1) }s backoff`);
           await new Promise(r => setTimeout(r, Math.pow(2, attempt - 1) * 1000));
           if (options?.signal?.aborted) throw new DOMException('Aborted during retry backoff', 'AbortError');
         }
 
-        const payload = this.buildFetchOptions(body, options?.signal);
+        const timeoutMs = options?.timeoutSeconds ? options.timeoutSeconds * 1000 : this.defaultTimeoutMs;
+        const signal = this.combinedSignal(options?.signal, timeoutMs);
+        const payload = this.buildFetchOptions(body, signal);
         const res = await fetch(url, payload);
 
         if (!res.ok) {
@@ -71,7 +77,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
           if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
             continue;
           }
-          throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+          throw new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
         }
 
         const rawResponse = await res.json();
@@ -79,7 +85,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         return rawResponse;
       } catch (err) {
         lastError = err;
-        console.log(`[${this.constructor.name}] Error on attempt ${attempt}:`, err);
+        console.log(`[${ this.constructor.name }] Error on attempt ${ attempt }:`, err);
 
         // Do not retry non-rate-limit 4xx client errors
         if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
@@ -88,20 +94,27 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       }
     }
 
-    // Final fallback to Ollama
-    const ollama = await this.getFallbackLocalService();
-    await ollama.initialize();
-    if (ollama.isAvailable()) {
-      const localModel = ollama.getModel();
-      const fallbackOptions = {
-        ...(options ?? {}),
-        model: localModel,
-      };
+    // Final fallback to Ollama — only if it's actually healthy and has a model
+    try {
+      const ollama = await this.getFallbackLocalService();
+      await ollama.initialize();
+      if (ollama.isAvailable()) {
+        console.log(`[${ this.constructor.name }] Falling back to local Ollama (${ ollama.getModel() })`);
+        const localModel = ollama.getModel();
+        const fallbackOptions = {
+          ...(options ?? {}),
+          model: localModel,
+        };
 
-      const localResponse = await ollama.chat(messages, fallbackOptions);
-      if (localResponse) {
-        return this.toOpenAiCompatibleRawResponse(localResponse, localModel);
+        const localResponse = await ollama.chat(messages, fallbackOptions);
+        if (localResponse) {
+          return this.toOpenAiCompatibleRawResponse(localResponse, localModel);
+        }
+      } else {
+        console.log(`[${ this.constructor.name }] Ollama fallback skipped — not available`);
       }
+    } catch (ollamaErr) {
+      console.warn(`[${ this.constructor.name }] Ollama fallback failed:`, ollamaErr instanceof Error ? ollamaErr.message : String(ollamaErr));
     }
 
     throw lastError ?? new Error('All retries failed and Ollama unavailable');
@@ -122,11 +135,11 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     // messages to appear before any other role. Hoist them to the front while
     // preserving relative order within each group.
     const systemMsgs = openaiMessages.filter((m: any) => m.role === 'system');
-    const otherMsgs  = openaiMessages.filter((m: any) => m.role !== 'system');
+    const otherMsgs = openaiMessages.filter((m: any) => m.role !== 'system');
     const orderedMessages = [...systemMsgs, ...otherMsgs];
 
     const body: any = {
-      model: options.model ?? this.model,
+      model:    options.model ?? this.model,
       messages: orderedMessages,
     };
 
@@ -168,16 +181,16 @@ export class OpenAICompatibleService extends BaseLanguageModel {
 
         if (toolUseBlocks.length > 0) {
           const toolCalls = toolUseBlocks.map((b: any) => ({
-            id: b.id,
-            type: 'function' as const,
+            id:       b.id,
+            type:     'function' as const,
             function: {
-              name: b.name,
+              name:      b.name,
               arguments: typeof b.input === 'string' ? b.input : JSON.stringify(b.input ?? {}),
             },
           }));
           result.push({
-            role: 'assistant',
-            content: textContent,
+            role:       'assistant',
+            content:    textContent,
             tool_calls: toolCalls,
           });
           continue;
@@ -201,7 +214,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
             ? block.content
             : JSON.stringify(block.content ?? '');
           result.push({
-            role: 'tool',
+            role:         'tool',
             tool_call_id: block.tool_use_id,
             content,
           });
@@ -246,23 +259,23 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     };
 
     if (this.apiKey) {
-      headers.Authorization = `Bearer ${this.apiKey}`;
+      headers.Authorization = `Bearer ${ this.apiKey }`;
     }
 
     return {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body:   JSON.stringify(body),
       signal,
     };
   }
 
   private toOpenAiCompatibleRawResponse(localResponse: NormalizedResponse, model: string): any {
     const toolCalls = localResponse.metadata.tool_calls?.map((tc) => ({
-      id: tc.id,
-      type: 'function',
+      id:       tc.id,
+      type:     'function',
       function: {
-        name: tc.name,
+        name:      tc.name,
         arguments: JSON.stringify(tc.args ?? {}),
       },
     }));
@@ -278,10 +291,10 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         },
       ],
       usage: {
-        prompt_tokens: localResponse.metadata.prompt_tokens ?? 0,
+        prompt_tokens:     localResponse.metadata.prompt_tokens ?? 0,
         completion_tokens: localResponse.metadata.completion_tokens ?? 0,
-        total_tokens: localResponse.metadata.tokens_used
-          ?? ((localResponse.metadata.prompt_tokens ?? 0) + (localResponse.metadata.completion_tokens ?? 0)),
+        total_tokens:      localResponse.metadata.tokens_used ??
+          ((localResponse.metadata.prompt_tokens ?? 0) + (localResponse.metadata.completion_tokens ?? 0)),
       },
       model,
     };

@@ -68,7 +68,7 @@ export class Sensory {
       type:      'text',
       data:      text.trim(),
       metadata:  {
-        source: 'calendar',
+        source:           'calendar',
         isBackgroundTask: true,
         ...metadata,
       },
@@ -85,7 +85,7 @@ export class Sensory {
       type:      'text',
       data:      text.trim(),
       metadata:  {
-        source: 'heartbeat',
+        source:           'heartbeat',
         isBackgroundTask: true,
         ...metadata,
       },

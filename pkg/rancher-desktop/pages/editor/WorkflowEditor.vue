@@ -23,11 +23,48 @@
       @pane-click="onPaneClick"
     >
       <template #node-workflow="nodeProps">
-        <WorkflowCustomNode v-bind="nodeProps" :is-dark="isDark" />
+        <WorkflowCustomNode
+          v-bind="nodeProps"
+          :is-dark="isDark"
+        />
       </template>
-      <Background :variant="BackgroundVariant.Dots" :gap="16" :size="1" />
+      <Background
+        :variant="BackgroundVariant.Dots"
+        :gap="16"
+        :size="1"
+      />
       <Controls />
       <MiniMap />
+
+      <!-- SVG gradient for edge lines -->
+      <svg
+        width="0"
+        height="0"
+        style="position:absolute"
+      >
+        <defs>
+          <linearGradient
+            id="edge-green-gradient"
+            x1="0%"
+            y1="0%"
+            x2="100%"
+            y2="100%"
+          >
+            <stop
+              offset="0%"
+              stop-color="rgba(46, 160, 67, 0.6)"
+            />
+            <stop
+              offset="50%"
+              stop-color="rgba(63, 185, 80, 0.9)"
+            />
+            <stop
+              offset="100%"
+              stop-color="rgba(46, 160, 67, 0.6)"
+            />
+          </linearGradient>
+        </defs>
+      </svg>
     </VueFlow>
 
     <!-- Node context menu -->
@@ -38,17 +75,70 @@
         :class="{ dark: isDark }"
         :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
       >
-        <button class="context-menu-item" :class="{ dark: isDark }" @click="ctxDuplicate">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        <button
+          class="context-menu-item"
+          :class="{ dark: isDark }"
+          @click="ctxDuplicate"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><rect
+            x="9"
+            y="9"
+            width="13"
+            height="13"
+            rx="2"
+          /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
           Duplicate
         </button>
-        <button class="context-menu-item" :class="{ dark: isDark }" @click="ctxDisconnect">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        <button
+          class="context-menu-item"
+          :class="{ dark: isDark }"
+          @click="ctxDisconnect"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line
+            x1="10"
+            y1="14"
+            x2="21"
+            y2="3"
+          /></svg>
           Disconnect All
         </button>
-        <div class="context-menu-divider" :class="{ dark: isDark }"></div>
-        <button class="context-menu-item danger" :class="{ dark: isDark }" @click="ctxDelete">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        <div
+          class="context-menu-divider"
+          :class="{ dark: isDark }"
+        />
+        <button
+          class="context-menu-item danger"
+          :class="{ dark: isDark }"
+          @click="ctxDelete"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
           Delete
         </button>
       </div>
@@ -56,17 +146,40 @@
 
     <!-- Delete confirmation dialog -->
     <Teleport to="body">
-      <div v-if="deleteConfirm.visible" class="delete-confirm-overlay" @mousedown.self="cancelDelete">
-        <div class="delete-confirm-dialog" :class="{ dark: isDark }">
-          <div class="delete-confirm-title">Delete Node</div>
-          <p class="delete-confirm-text" :class="{ dark: isDark }">
+      <div
+        v-if="deleteConfirm.visible"
+        class="delete-confirm-overlay"
+        @mousedown.self="cancelDelete"
+      >
+        <div
+          class="delete-confirm-dialog"
+          :class="{ dark: isDark }"
+        >
+          <div class="delete-confirm-title">
+            Delete Node
+          </div>
+          <p
+            class="delete-confirm-text"
+            :class="{ dark: isDark }"
+          >
             <strong>{{ deleteConfirm.label }}</strong> has {{ deleteConfirm.edgeCount }}
             connection{{ deleteConfirm.edgeCount === 1 ? '' : 's' }}.
             Are you sure you want to delete it?
           </p>
           <div class="delete-confirm-actions">
-            <button class="delete-confirm-btn cancel" :class="{ dark: isDark }" @click="cancelDelete">Cancel</button>
-            <button class="delete-confirm-btn confirm" @click="confirmDelete">Delete</button>
+            <button
+              class="delete-confirm-btn cancel"
+              :class="{ dark: isDark }"
+              @click="cancelDelete"
+            >
+              Cancel
+            </button>
+            <button
+              class="delete-confirm-btn confirm"
+              @click="confirmDelete"
+            >
+              Delete
+            </button>
           </div>
         </div>
       </div>
@@ -86,7 +199,7 @@ import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
 
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core';
-import type { WorkflowDefinition, WorkflowNodeData, WorkflowNodeSubtype } from './workflow/types';
+import type { WorkflowDefinition, WorkflowNodeData, WorkflowNodeSubtype, WorkflowNodeExecutionState, NodeThinkingMessage } from './workflow/types';
 import WorkflowCustomNode from './workflow/WorkflowCustomNode.vue';
 import { getNodeDefinition } from './workflow/nodeRegistry';
 
@@ -103,12 +216,12 @@ const NON_PARALLELIZABLE_SUBTYPES: ReadonlySet<WorkflowNodeSubtype> = new Set([
 ]);
 
 const props = defineProps<{
-  isDark: boolean;
+  isDark:        boolean;
   workflowData?: WorkflowDefinition | null;
 }>();
 
 const emit = defineEmits<{
-  'node-selected': [node: { id: string; label: string; type?: string; data?: WorkflowNodeData } | null];
+  'node-selected':    [node: { id: string; label: string; type?: string; data?: WorkflowNodeData } | null];
   'workflow-changed': [];
 }>();
 
@@ -170,10 +283,10 @@ watch(
 // ── Delete confirmation state ──
 
 const deleteConfirm = reactive({
-  visible:   false,
-  nodeId:    '',
-  label:     '',
-  edgeCount: 0,
+  visible:        false,
+  nodeId:         '',
+  label:          '',
+  edgeCount:      0,
   pendingChanges: [] as NodeChange[],
 });
 
@@ -304,7 +417,7 @@ function onConnect(connection: Connection) {
     // loop-entry (In): only accepts connections from upstream workflow nodes (not loop body nodes)
     if (targetHandle === 'loop-entry') {
       // Prevent loop body nodes from connecting to loop-entry
-      if (sourceData && isLoopBodyNode(connection.target!, connection.source!)) {
+      if (sourceData && isLoopBodyNode(connection.target, connection.source)) {
         console.warn('[WorkflowEditor] Cannot connect a loop body node to the loop entry. Use the "Back" handle instead.');
         return;
       }
@@ -313,7 +426,7 @@ function onConnect(connection: Connection) {
     // loop-back (Back): only accepts connections from nodes downstream of loop-start (loop body)
     if (targetHandle === 'loop-back') {
       // Prevent upstream/external nodes from connecting to loop-back
-      if (sourceData && !isLoopBodyNode(connection.target!, connection.source!)) {
+      if (sourceData && !isLoopBodyNode(connection.target, connection.source)) {
         console.warn('[WorkflowEditor] Only loop body nodes (downstream of "Start") can connect to the "Back" handle.');
         return;
       }
@@ -338,7 +451,7 @@ function onConnect(connection: Connection) {
 
     // loop-exit (Exit): should not connect back to the loop's own body nodes
     if (sourceHandle === 'loop-exit') {
-      if (targetData && isLoopBodyNode(connection.source!, connection.target!)) {
+      if (targetData && isLoopBodyNode(connection.source, connection.target)) {
         console.warn('[WorkflowEditor] The loop "Exit" handle should connect to downstream nodes outside the loop body.');
         return;
       }
@@ -354,7 +467,7 @@ function onConnect(connection: Connection) {
     // Check if any existing loop node has the source in its body — that would make the target loop nested
     const loopNodes = nodes.value.filter(n => (n.data as WorkflowNodeData).subtype === 'loop' && n.id !== connection.target);
     for (const ln of loopNodes) {
-      if (isLoopBodyNode(ln.id, connection.source!)) {
+      if (isLoopBodyNode(ln.id, connection.source)) {
         console.warn('[WorkflowEditor] Cannot place a loop node inside another loop body. Nested loops are not supported.');
         return;
       }
@@ -371,7 +484,7 @@ function onConnect(connection: Connection) {
     // Block direct connection from a parallel node
     if (sourceData?.subtype === 'parallel') {
       console.warn(
-        `[WorkflowEditor] Cannot connect "${targetData.subtype}" node directly to a parallel node. ` +
+        `[WorkflowEditor] Cannot connect "${ targetData.subtype }" node directly to a parallel node. ` +
         `Router, condition, user-input, and wait nodes cannot run in parallel branches.`,
       );
 
@@ -381,7 +494,7 @@ function onConnect(connection: Connection) {
     // Block connection if the source is already inside a parallel branch
     if (connection.source && isInsideParallelBranch(connection.source)) {
       console.warn(
-        `[WorkflowEditor] Cannot place "${targetData.subtype}" node inside a parallel branch. ` +
+        `[WorkflowEditor] Cannot place "${ targetData.subtype }" node inside a parallel branch. ` +
         `Router, condition, user-input, and wait nodes cannot run in parallel branches.`,
       );
 
@@ -442,9 +555,9 @@ function onNodeClick({ node }: { node: Node }) {
 
 const contextMenu = reactive({
   visible: false,
-  x: 0,
-  y: 0,
-  nodeId: '',
+  x:       0,
+  y:       0,
+  nodeId:  '',
 });
 
 function onNodeContextMenu({ event, node }: { event: MouseEvent; node: Node }) {
@@ -461,10 +574,10 @@ function closeContextMenu() {
 
 function ctxDuplicate() {
   const node = nodes.value.find(n => n.id === contextMenu.nodeId);
-  if (!node) { closeContextMenu(); return; }
+  if (!node) { closeContextMenu(); return }
 
   const newNode: Node = {
-    id:       `node-${Date.now()}`,
+    id:       `node-${ Date.now() }`,
     type:     node.type,
     position: { x: node.position.x + 40, y: node.position.y + 40 },
     data:     JSON.parse(JSON.stringify(node.data)),
@@ -532,14 +645,14 @@ function onKeyDown(event: KeyboardEvent) {
 
 function updateNodeLabel(nodeId: string, label: string) {
   const node = nodes.value.find(n => n.id === nodeId);
-  if (node && node.data) {
+  if (node?.data) {
     (node.data as WorkflowNodeData).label = label;
   }
 }
 
 function updateNodeConfig(nodeId: string, config: Record<string, any>) {
   const node = nodes.value.find(n => n.id === nodeId);
-  if (node && node.data) {
+  if (node?.data) {
     (node.data as WorkflowNodeData).config = { ...config };
   }
   emit('workflow-changed');
@@ -608,15 +721,42 @@ function serialize(): { nodes: any[]; edges: any[]; viewport: any } {
   };
 }
 
-import type { WorkflowNodeExecutionState, NodeThinkingMessage } from './workflow/types';
-
+/**
+ * Update the execution state of a single workflow node on the vue-flow canvas.
+ *
+ * Called by `AgentEditor.vue` in response to `node_started`, `node_completed`,
+ * and `node_failed` events from `EditorChatInterface.onWorkflowEvent()`.
+ *
+ * The execution object controls the node's visual status indicator (color, icon)
+ * and stores runtime data (output, error, threadId, timestamps) that the node
+ * detail panel can display.
+ *
+ * **Event flow:** Graph.emitPlaybookEvent() → WebSocket → EditorChatInterface
+ * → AgentEditor.vue → this method
+ *
+ * @param nodeId    ID of the workflow node to update
+ * @param execution New execution state, or `undefined` to clear it
+ */
 function updateNodeExecution(nodeId: string, execution: WorkflowNodeExecutionState | undefined) {
   const node = nodes.value.find(n => n.id === nodeId);
-  if (node && node.data) {
+  if (node?.data) {
     (node.data as WorkflowNodeData).execution = execution;
   }
 }
 
+/**
+ * Reset all nodes and edges to their pre-execution visual state.
+ *
+ * Called by `AgentEditor.vue` in response to `workflow_started` events, so that
+ * a fresh workflow run begins with a clean canvas. Also called when a new
+ * workflow is activated via `onWorkflowActivated`.
+ *
+ * Clears `execution` data from every node and sets `animated = false` on every
+ * edge, removing any leftover running/completed indicators from a prior run.
+ *
+ * **Event flow:** Graph.emitPlaybookEvent('workflow_started') → WebSocket →
+ * EditorChatInterface → AgentEditor.vue → this method
+ */
 function clearAllExecution() {
   for (const node of nodes.value) {
     if (node.data) {
@@ -629,6 +769,22 @@ function clearAllExecution() {
   }
 }
 
+/**
+ * Toggle the animated state of a single edge on the vue-flow canvas.
+ *
+ * Called by `AgentEditor.vue` in response to `edge_activated` events, which are
+ * canvas-only (the chat path in AgentPersonaModel explicitly skips them).
+ *
+ * Note: Edges are only de-animated when `clearAllExecution()` is called on
+ * the next `workflow_started`. There is no explicit de-animation event.
+ *
+ * **Event flow:** Graph.emitEdgeActivations() → emitPlaybookEvent('edge_activated')
+ * → WebSocket → EditorChatInterface → AgentEditor.vue → this method
+ *
+ * @param sourceId Source node ID of the edge
+ * @param targetId Target node ID of the edge
+ * @param animated Whether to animate (`true`) or de-animate (`false`) the edge
+ */
 function setEdgeAnimated(sourceId: string, targetId: string, animated: boolean) {
   const edge = edges.value.find(e => e.source === sourceId && e.target === targetId);
   if (edge) {
@@ -636,6 +792,22 @@ function setEdgeAnimated(sourceId: string, targetId: string, animated: boolean) 
   }
 }
 
+/**
+ * Append a thinking/progress message to a node's execution state on the canvas.
+ *
+ * Called by `AgentEditor.vue` in response to `node_thinking` events, which are
+ * canvas-only (the chat path in AgentPersonaModel does not handle them).
+ *
+ * Requires that `updateNodeExecution` has already been called for this node
+ * (i.e. `data.execution` must exist), since thinking messages are only
+ * meaningful while a node is actively running.
+ *
+ * **Event flow:** Graph.emitPlaybookEvent('node_thinking') → WebSocket →
+ * EditorChatInterface → AgentEditor.vue → this method
+ *
+ * @param nodeId  ID of the node to append the thinking message to
+ * @param message The thinking message (content, role, kind, timestamp)
+ */
 function pushNodeThinking(nodeId: string, message: NodeThinkingMessage) {
   const node = nodes.value.find(n => n.id === nodeId);
   if (!node?.data) return;
@@ -666,50 +838,63 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 
 /* Dark theme overrides */
 .workflow-editor.dark :deep(.vue-flow) {
-  background: #1a1a2e;
+  background: var(--bg-page);
 }
 
 .workflow-editor.dark :deep(.vue-flow__edge-path) {
-  stroke: #6366f1;
+  stroke: url(#edge-green-gradient);
+  stroke-width: 1.8px;
+  stroke-dasharray: 5 5;
+  animation: wf-dash 1s linear infinite;
+  filter: drop-shadow(0 0 3px rgba(46, 160, 67, 0.3));
+}
+
+@keyframes wf-dash {
+  to { stroke-dashoffset: -20; }
 }
 
 .workflow-editor.dark :deep(.vue-flow__minimap) {
-  background: #1e293b;
+  background: var(--bg-surface, #1e293b);
 }
 
 .workflow-editor.dark :deep(.vue-flow__minimap-mask) {
-  fill: rgba(99, 102, 241, 0.1);
+  fill: var(--bg-accent);
 }
 
 .workflow-editor.dark :deep(.vue-flow__minimap-node) {
-  fill: #4a4a6a;
+  fill: var(--bg-surface-hover);
 }
 
 .workflow-editor.dark :deep(.vue-flow__controls) {
-  background: #2d2d44;
-  border-color: #4a4a6a;
+  background: var(--bg-surface-alt);
+  border-color: var(--border-strong);
 }
 
 .workflow-editor.dark :deep(.vue-flow__controls-button) {
-  background: #2d2d44;
-  border-color: #4a4a6a;
-  fill: #e2e8f0;
+  background: var(--bg-surface-alt);
+  border-color: var(--border-strong);
+  fill: var(--text-muted);
 }
 
 .workflow-editor.dark :deep(.vue-flow__controls-button:hover) {
-  background: #3d3d5c;
+  background: var(--bg-surface-hover);
+}
+
+.workflow-editor.dark :deep(.vue-flow__background) {
+  mask-image: radial-gradient(ellipse at center, black 15%, transparent 65%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 15%, transparent 65%);
 }
 
 .workflow-editor.dark :deep(.vue-flow__background pattern circle) {
-  fill: #4a4a6a;
+  fill: hsl(0deg 0% 100% / 62%);
 }
 
 /* ── Context menu ── */
 .node-context-menu {
   position: fixed;
   z-index: 10001;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 8px;
   padding: 4px;
   min-width: 160px;
@@ -717,8 +902,6 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .node-context-menu.dark {
-  background: #1e293b;
-  border-color: #3c3c5c;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
@@ -730,45 +913,29 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
   padding: 7px 10px;
   border: none;
   background: transparent;
-  color: #334155;
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: var(--fs-code);
   border-radius: 5px;
   cursor: pointer;
   text-align: left;
 }
 
 .context-menu-item:hover {
-  background: #f1f5f9;
-}
-
-.context-menu-item.dark {
-  color: #e2e8f0;
-}
-
-.context-menu-item.dark:hover {
-  background: #334155;
+  background: var(--bg-surface-alt);
 }
 
 .context-menu-item.danger {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 .context-menu-item.danger:hover {
-  background: #fef2f2;
-}
-
-.context-menu-item.danger.dark:hover {
-  background: rgba(239, 68, 68, 0.15);
+  background: var(--bg-error);
 }
 
 .context-menu-divider {
   height: 1px;
-  background: #e2e8f0;
+  background: var(--bg-surface-hover);
   margin: 4px 6px;
-}
-
-.context-menu-divider.dark {
-  background: #3c3c5c;
 }
 
 /* ── Delete confirm dialog ── */
@@ -783,7 +950,7 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 }
 
 .delete-confirm-dialog {
-  background: #fff;
+  background: var(--bg-surface);
   border-radius: 8px;
   padding: 16px;
   width: 320px;
@@ -793,30 +960,17 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
   gap: 12px;
 }
 
-.delete-confirm-dialog.dark {
-  background: #1e293b;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-}
-
 .delete-confirm-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.delete-confirm-dialog.dark .delete-confirm-title {
-  color: #e2e8f0;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
 }
 
 .delete-confirm-text {
-  font-size: 13px;
-  color: #475569;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
   margin: 0;
   line-height: 1.4;
-}
-
-.delete-confirm-text.dark {
-  color: #94a3b8;
 }
 
 .delete-confirm-actions {
@@ -827,37 +981,28 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
 
 .delete-confirm-btn {
   padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   border: none;
   border-radius: 5px;
   cursor: pointer;
 }
 
 .delete-confirm-btn.cancel {
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
 }
 
 .delete-confirm-btn.cancel:hover {
-  background: #e2e8f0;
-}
-
-.delete-confirm-btn.cancel.dark {
-  background: #334155;
-  color: #94a3b8;
-}
-
-.delete-confirm-btn.cancel.dark:hover {
-  background: #475569;
+  background: var(--bg-surface-hover);
 }
 
 .delete-confirm-btn.confirm {
-  background: #ef4444;
-  color: #fff;
+  background: var(--status-error);
+  color: var(--text-on-accent);
 }
 
 .delete-confirm-btn.confirm:hover {
-  background: #dc2626;
+  background: var(--status-error);
 }
 </style>

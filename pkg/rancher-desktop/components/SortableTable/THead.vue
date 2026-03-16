@@ -351,7 +351,7 @@ export default {
       .table-options-btn.role-multi-action {
         background-color: transparent;
         border: none;
-        font-size: 18px;
+        font-size: var(--fs-heading);
         &:hover, &:focus {
           background-color: var(--accent-btn);
           box-shadow: none;
@@ -359,7 +359,7 @@ export default {
       }
       .table-options-container {
         width: 350px;
-        border: 1px solid var(--primary);
+        border: 1px solid var(--border-accent);
         background-color: var(--body-bg);
         padding: 20px;
         z-index: 1;
@@ -446,7 +446,7 @@ export default {
         }
 
         .not-filter-icon {
-          font-size: 16px;
+          font-size: var(--fs-heading);
           color: var(--primary);
           vertical-align: super;
         }

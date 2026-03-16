@@ -20,58 +20,58 @@ export type WorkflowPlaybookStatus = 'running' | 'completed' | 'failed' | 'abort
  * each cycle and processes the next workflow step.
  */
 export interface WorkflowPlaybookState {
-  workflowId: string;
-  executionId: string;
-  definition: WorkflowDefinition;
+  workflowId:       string;
+  executionId:      string;
+  definition:       WorkflowDefinition;
   /** Node IDs currently ready to execute (the "frontier") */
-  currentNodeIds: string[];
+  currentNodeIds:   string[];
   /** Node IDs that have finished executing */
   completedNodeIds: string[];
   /** Results from completed nodes, keyed by nodeId */
-  nodeOutputs: Record<string, PlaybookNodeOutput>;
-  status: WorkflowPlaybookStatus;
+  nodeOutputs:      Record<string, PlaybookNodeOutput>;
+  status:           WorkflowPlaybookStatus;
   /** When a router/condition node needs the agent to decide, this holds the pending prompt */
   pendingDecision?: {
-    nodeId: string;
+    nodeId:  string;
     subtype: WorkflowNodeSubtype;
-    prompt: string;
+    prompt:  string;
     /** For routers: the available routes */
     routes?: { label: string; description: string; handleId: string }[];
     /** For conditions: the rules being evaluated */
-    rules?: { field: string; operator: string; value: string }[];
+    rules?:  { field: string; operator: string; value: string }[];
   };
   /** Active loop iteration state, keyed by loop nodeId */
-  loopState?: Record<string, LoopIterationState>;
-  startedAt: string;
+  loopState?:   Record<string, LoopIterationState>;
+  startedAt:    string;
   completedAt?: string;
-  error?: string;
+  error?:       string;
 }
 
 /** Tracks iteration progress for a single loop node */
 export interface LoopIterationState {
-  currentIteration: number;
+  currentIteration:        number;
   /** Shared thread ID across all iterations */
-  threadId: string;
+  threadId:                string;
   /** Accumulated conversation messages across all iterations (for training data) */
-  accumulatedConversation: Array<{ role: string; content: string; iteration: number }>;
+  accumulatedConversation: { role: string; content: string; iteration: number }[];
   /** Snapshot of body node outputs from each completed iteration */
-  iterationResults: Array<{
-    index: number;
+  iterationResults: {
+    index:       number;
     bodyOutputs: Record<string, PlaybookNodeOutput>;
-  }>;
+  }[];
   /** Node IDs that form the loop body (cached after first discovery) */
-  bodyNodeIds: string[];
+  bodyNodeIds:      string[];
   /** Node IDs at the start of the loop body */
   bodyStartNodeIds: string[];
 }
 
 export interface PlaybookNodeOutput {
-  nodeId: string;
-  label: string;
-  subtype: WorkflowNodeSubtype;
-  category: WorkflowNodeCategory;
-  result: unknown;
-  threadId?: string;
+  nodeId:      string;
+  label:       string;
+  subtype:     WorkflowNodeSubtype;
+  category:    WorkflowNodeCategory;
+  result:      unknown;
+  threadId?:   string;
   completedAt: string;
 }
 
@@ -100,14 +100,14 @@ export type WorkflowExecutionEventType =
   | 'node_waiting';
 
 export interface WorkflowExecutionEvent {
-  type: WorkflowExecutionEventType;
+  type:        WorkflowExecutionEventType;
   executionId: string;
-  workflowId: string;
-  nodeId?: string;
-  nodeLabel?: string;
-  status?: WorkflowNodeStatus;
-  threadId?: string;
-  output?: unknown;
-  error?: string;
-  timestamp: string;
+  workflowId:  string;
+  nodeId?:     string;
+  nodeLabel?:  string;
+  status?:     WorkflowNodeStatus;
+  threadId?:   string;
+  output?:     unknown;
+  error?:      string;
+  timestamp:   string;
 }

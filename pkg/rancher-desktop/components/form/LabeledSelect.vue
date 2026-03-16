@@ -341,7 +341,7 @@ export default {
           <i
             v-if="option.error"
             class="icon icon-warning pull-right"
-            style="font-size: 20px;"
+            style="font-size: var(--fs-heading);"
           />
         </div>
       </template>
@@ -500,7 +500,7 @@ export default {
     :deep() .vs__selected-options {
       padding: 3px 0;
       .vs__selected {
-        border-color: var(--accent-btn);
+        border-color: var(--border-accent);
         height: 20px;
         min-height: unset !important;
         padding: 0 0 0 7px !important;
@@ -596,7 +596,7 @@ $icon-size: 18px;
         background-color: var(--primary);
         border-radius: 4px;
         color: var(--primary-text);
-        font-size: 12px;
+        font-size: var(--fs-body-sm);
         height: 18px;
         line-height: 18px;
         margin-top: 1px;

@@ -1,14 +1,18 @@
 <template>
-  <div class="mx-auto p-6 dark:bg-gray-800/30">
+  <div class="mx-auto p-6">
     <form @submit.prevent="handleNext">
-      <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">Specify AI Resources</h2>
-      <p class="mb-6 text-gray-600 dark:text-gray-400">Choose the resources allocated to your AI Agent and the local language model. Your agent and the model and all resources they manage will not be allowed to use more than the allocated resources.</p>
+      <h2 class="text-2xl font-bold mt-5 mb-4 fr-heading">
+        Specify AI Resources
+      </h2>
+      <p class="mb-6 fr-body">
+        Choose the resources allocated to your AI Agent and the local language model. Your agent and the model and all resources they manage will not be allowed to use more than the allocated resources.
+      </p>
 
-      <div class="mt-10"></div>
+      <div class="mt-10" />
       <rd-fieldset
         legend-text="Virtual Machine Resources"
         legend-tooltip="Allocate CPU and memory for the AI services"
-        class="mb-6 mt-6 dark:text-gray-100"
+        class="mb-6 mt-6 fr-fieldset"
       >
         <system-preferences
           :memory-in-g-b="settings!.virtualMachine.memoryInGB"
@@ -24,13 +28,18 @@
         />
       </rd-fieldset>
 
-      <div class="mt-10"></div>
+      <div class="mt-10" />
 
-      <rd-fieldset legend-text="AI Model"
+      <rd-fieldset
+        legend-text="AI Model"
         legend-tooltip="Select the LLM model to use. Models are filtered based on your allocated resources."
-        class="mb-6 mt-6 dark:text-gray-100"
+        class="mb-6 mt-6 fr-fieldset"
       >
-        <select class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 mb-2" :class="{ 'border-red-500': !!modelError }" v-model="sullaModel">
+        <select
+          v-model="sullaModel"
+          class="w-full p-2 border rounded-md mb-2 fr-input"
+          :class="{ 'fr-border-error': !!modelError }"
+        >
           <option
             v-for="model in availableModels"
             :key="model.name"
@@ -41,45 +50,85 @@
             {{ model.displayName }} ({{ model.size }}) {{ !model.available ? '- Requires more resources' : '' }}
           </option>
         </select>
-        <p class="text-sm text-gray-500 dark:text-gray-400 italic">{{ selectedModelDescription }}</p>
-        <p v-if="modelError" class="text-red-500 text-sm mt-1">{{ modelError }}</p>
+        <p class="text-sm italic fr-muted">
+          {{ selectedModelDescription }}
+        </p>
+        <p
+          v-if="modelError"
+          class="text-sm mt-1 fr-error"
+        >
+          {{ modelError }}
+        </p>
       </rd-fieldset>
 
-      <div v-if="resourceError" class="my-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md dark:bg-red-900 dark:border-red-600 dark:text-red-100">{{ resourceError }}</div>
+      <div
+        v-if="resourceError"
+        class="my-4 p-3 border rounded-md fr-error-box"
+      >
+        {{ resourceError }}
+      </div>
 
-      <button type="button" @click="isOptionsOpen = !isOptionsOpen" class="w-full text-left p-2 hover:bg-gray-200 dark:hover:bg-gray-700 dark:text-gray-400 transition-colors text-sm font-medium">
+      <button
+        type="button"
+        class="w-full text-left p-2 transition-colors text-sm font-medium fr-btn-toggle"
+        @click="isOptionsOpen = !isOptionsOpen"
+      >
         Options {{ isOptionsOpen ? '▲' : '▼' }}
       </button>
 
       <Transition name="slide">
-        <div v-show="isOptionsOpen" class="mt-2 overflow-hidden">
+        <div
+          v-show="isOptionsOpen"
+          class="mt-2 overflow-hidden"
+        >
           <div class="mb-4">
             <label class="flex items-center">
-              <input type="checkbox" v-model="enableTelemetry" @change="onTelemetryChange" class="mr-2">
-              <span class="text-sm dark:text-gray-400">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
+              <input
+                v-model="enableTelemetry"
+                type="checkbox"
+                class="mr-2"
+                @change="onTelemetryChange"
+              >
+              <span class="text-sm fr-muted">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
             </label>
           </div>
 
           <div class="mb-4">
             <label class="flex items-center">
-              <input type="checkbox" v-model="enableKubernetes" @change="onKubernetesChange" class="mr-2">
-              <span class="text-sm dark:text-gray-400">Enable Kubernetes Mode (requires more resources)</span>
+              <input
+                v-model="enableKubernetes"
+                type="checkbox"
+                class="mr-2"
+                @change="onKubernetesChange"
+              >
+              <span class="text-sm fr-muted">Enable Kubernetes Mode (requires more resources)</span>
             </label>
           </div>
         </div>
       </Transition>
 
       <div class="flex justify-end mt-5">
-        <button v-if="showBack" type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md transition-colors font-medium hover:opacity-90 bg-gray-100 hover:bg-gray-200 cursor-pointer">Back</button>
-        <button type="submit" class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90" :style="{ backgroundColor: '#30a5e9' }">Next</button>
+        <button
+          v-if="showBack"
+          type="button"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 cursor-pointer fr-btn-secondary"
+          @click="$emit('back')"
+        >
+          Back
+        </button>
+        <button
+          type="submit"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 fr-btn-primary"
+        >
+          Next
+        </button>
       </div>
     </form>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject, onMounted } from 'vue';
-import { Ref } from 'vue';
+import { ref, computed, inject, onMounted, Ref } from 'vue';
 import os from 'os';
 import RdFieldset from '@pkg/components/form/RdFieldset.vue';
 import SystemPreferences from '@pkg/components/SystemPreferences.vue';
@@ -125,7 +174,7 @@ settings.value.application.pathManagementStrategy = PathManagementStrategy.RcFil
 settings.value.application.telemetry = { enabled: true };
 settings.value.kubernetes.enabled = false;
 
-onMounted(async () => {
+onMounted(async() => {
   ipcRenderer.invoke('settings-read' as any).then((loadedSettings: Settings) => {
     settings.value = loadedSettings;
     // Ensure defaults are set after loading
@@ -139,7 +188,7 @@ onMounted(async () => {
     // Save the initial settings
     commitChanges({
       application: { pathManagementStrategy: PathManagementStrategy.RcFiles, telemetry: { enabled: enableTelemetry.value } },
-      kubernetes: { enabled: enableKubernetes.value },
+      kubernetes:  { enabled: enableKubernetes.value },
     });
   });
 
@@ -180,11 +229,11 @@ const availableModels = computed(() =>
   GGUF_MODELS.map(model => ({
     ...model,
     available: modelMemoryGB.value >= model.minMemoryGB && modelCPUs.value >= model.minCPUs,
-  }))
+  })),
 );
 
 const selectedModelDescription = computed(() =>
-  availableModels.value.find(m => m.name === sullaModel.value)?.description || ''
+  availableModels.value.find(m => m.name === sullaModel.value)?.description || '',
 );
 
 const onMemoryChange = (value: number) => {
@@ -214,13 +263,13 @@ const autoSelectBestModel = () => {
   }
 };
 
-const onKubernetesChange = async () => {
+const onKubernetesChange = async() => {
   await commitChanges({
     kubernetes: { enabled: enableKubernetes.value },
   });
 };
 
-const onTelemetryChange = async () => {
+const onTelemetryChange = async() => {
   await commitChanges({
     application: { telemetry: { enabled: enableTelemetry.value } },
   });
@@ -235,7 +284,7 @@ const validateModel = () => {
   return true;
 };
 
-const handleNext = async () => {
+const handleNext = async() => {
   validateModel();  // Always validate to set error
 
   if ((settings.value as any).virtualMachine.memoryInGB <= 4 || (settings.value as any).virtualMachine.numberCPUs <= 2) {
@@ -294,7 +343,7 @@ const handleNext = async () => {
   position: relative;
   width: 100%;
   height: 6px;
-  background: #ddd;
+  background: var(--bg-surface-hover);
   border-radius: 3px;
   cursor: pointer;
 }
@@ -303,14 +352,14 @@ const handleNext = async () => {
   position: relative;
   width: 100%;
   height: 100%;
-  background: #ddd;
+  background: var(--bg-surface-hover);
   border-radius: 3px;
 }
 
 .vue-slider :deep(.vue-slider-process) {
   position: absolute;
   height: 100%;
-  background: #007bff;
+  background: var(--accent-primary);
   border-radius: 3px;
   top: 0;
   left: 0;
@@ -321,11 +370,11 @@ const handleNext = async () => {
   top: -6px;
   width: 2px;
   height: 18px;
-  background: #999;
+  background: var(--text-muted);
 }
 
 .vue-slider :deep(.vue-slider-mark-step) {
-  background: #ccc;
+  background: var(--bg-surface-hover);
   opacity: 0.5;
 }
 
@@ -335,8 +384,8 @@ const handleNext = async () => {
   transform: translate(-50%, -50%);
   width: 20px;
   height: 20px;
-  background: #fff;
-  border: 2px solid #007bff;
+  background: var(--bg-surface);
+  border: 2px solid var(--accent-primary);
   border-radius: 50%;
   cursor: grab;
   box-shadow: 0 2px 4px rgba(0,0,0,0.2);
@@ -346,7 +395,7 @@ const handleNext = async () => {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: #007bff;
+  background: var(--accent-primary);
   cursor: grab;
 }
 
@@ -368,12 +417,8 @@ button:hover {
 }
 
 input:hover, select:hover {
-  border-color: #374151; /* darker gray border */
-  background-color: #f3f4f6; /* slightly darker background */
-}
-
-dark input:hover, .dark select:hover {
-  background-color: #4b5563 !important; /* darker background for dark mode */
+  border-color: var(--border-strong);
+  background-color: var(--bg-surface-alt);
 }
 
 /* Slide transition for accordion */
@@ -392,5 +437,68 @@ dark input:hover, .dark select:hover {
 .slide-leave-from {
   opacity: 1;
   max-height: 200px;
+}
+
+/* Theme-aware color classes */
+.fr-heading {
+  color: var(--text-primary);
+}
+
+.fr-body {
+  color: var(--text-secondary);
+}
+
+.fr-fieldset {
+  color: var(--text-primary);
+}
+
+.fr-input {
+  background-color: var(--bg-input);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.fr-border-error {
+  border-color: var(--border-error);
+}
+
+.fr-muted {
+  color: var(--text-muted);
+}
+
+.fr-error {
+  color: var(--text-error);
+}
+
+.fr-error-box {
+  background-color: var(--bg-error);
+  border-color: var(--border-error);
+  color: var(--text-error);
+}
+
+.fr-btn-toggle {
+  color: var(--text-muted);
+
+  &:hover {
+    background-color: var(--bg-surface-hover);
+  }
+}
+
+.fr-btn-secondary {
+  color: var(--text-secondary);
+  background-color: var(--bg-surface-hover);
+
+  &:hover {
+    background-color: var(--bg-elevated);
+  }
+}
+
+.fr-btn-primary {
+  color: var(--text-on-accent);
+  background-color: var(--accent-primary);
+
+  &:hover {
+    background-color: var(--accent-primary-hover);
+  }
 }
 </style>

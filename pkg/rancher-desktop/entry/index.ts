@@ -3,7 +3,6 @@
  */
 // hoping this is the absolute earliest we can run in the renderer context
 import { initiateWindowContext } from '@pkg/sulla';
-await initiateWindowContext();
 
 import Cookies from 'cookie-universal';
 import { createApp } from 'vue';
@@ -11,6 +10,7 @@ import { createApp } from 'vue';
 import usePlugins from './plugins';
 import router from './router';
 import store from './store';
+await initiateWindowContext();
 
 // This does just the Vuex part of cookie-universal-nuxt, which is all we need.
 (store as any).$cookies = Cookies();

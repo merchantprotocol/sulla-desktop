@@ -34,7 +34,7 @@
 
   INPUT, SELECT {
     position: relative;
-    font-size: 14px;
+    font-size: var(--fs-body);
     display: block;
     width: 100%;
   }
@@ -64,7 +64,7 @@
   }
 
   &.view > DIV:not(.addon) {
-    font-size: 14px;
+    font-size: var(--fs-body);
     padding: $input-padding-lg 0 0 0;
 
     &.no-label {
@@ -87,7 +87,7 @@
 
     .addon {
       padding: 6px 12px;
-      font-size: 14px;
+      font-size: var(--fs-body);
       font-weight: normal;
       line-height: 1;
       text-align: center;

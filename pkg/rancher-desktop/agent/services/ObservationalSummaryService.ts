@@ -44,15 +44,17 @@ that has grown too large, keeping only the most valuable ones.
 
 Rules for prioritization:
 - 🔴 Critical observations (identity, core preferences, promises, deal-breakers) have highest priority
-- 🟡 Valuable observations (decisions, patterns, progress) have medium priority  
+- 🟡 Valuable observations (decisions, patterns, progress) have medium priority
 - ⚪ Low priority observations (minor details) have lowest priority
 - Within same priority level, prefer more recent and specific observations
-- Remove redundant or outdated observations
+- **Merge duplicates**: If multiple observations cover the same fact or event, keep ONLY the most complete and recent version. Discard all others.
+- **Consolidate related facts**: Combine observations about the same topic into a single, richer observation rather than keeping multiple partial ones.
+- Remove outdated observations that have been superseded by newer ones
 - Keep observations that provide unique context or insights
 
 Your task: Select the most important observations to keep, removing the least valuable ones.
 
-${JSON_ONLY_RESPONSE_INSTRUCTIONS}
+${ JSON_ONLY_RESPONSE_INSTRUCTIONS }
 {
   "selectedObservations": [
     {
@@ -69,19 +71,19 @@ ${JSON_ONLY_RESPONSE_INSTRUCTIONS}
 
 interface ObservationEntry {
   priority: string;
-  content: string;
+  content:  string;
 }
 
 interface PrioritizationResult {
   selectedObservations: ObservationEntry[];
-  reasoning?: string;
+  reasoning?:           string;
 }
 
 export class ObservationalSummaryService {
   private static instance: ObservationalSummaryService | null = null;
   private static isProcessing = false;
   private static processingQueue = new Set<string>();
-  
+
   public readonly id = 'observational_summary_service';
   public readonly name = 'Observational Summary Service';
 
@@ -104,10 +106,10 @@ export class ObservationalSummaryService {
    * Non-blocking: returns immediately, work happens asynchronously.
    */
   static triggerBackgroundTrimming(state: BaseThreadState, _deferLogged = false): void {
-    const threadId = state.metadata.threadId as string;
-    
+    const threadId = state.metadata.threadId;
+
     // Skip if already processing this thread or any thread
-    if (ObservationalSummaryService.isProcessing || 
+    if (ObservationalSummaryService.isProcessing ||
         ObservationalSummaryService.processingQueue.has(threadId)) {
       return;
     }
@@ -116,10 +118,9 @@ export class ObservationalSummaryService {
     // Import dynamically to avoid circular dependency
     try {
       const { ConversationSummaryService } = require('./ConversationSummaryService');
-      if (ConversationSummaryService.isProcessingThread && 
-          ConversationSummaryService.isProcessingThread(threadId)) {
+      if (ConversationSummaryService.isProcessingThread?.(threadId)) {
         if (!_deferLogged) {
-          console.log(`[ObservationalSummary] Deferring until ConversationSummaryService finishes thread ${threadId}`);
+          console.log(`[ObservationalSummary] Deferring until ConversationSummaryService finishes thread ${ threadId }`);
         }
         // Retry after delay (suppress repeated log)
         setTimeout(() => ObservationalSummaryService.triggerBackgroundTrimming(state, true), 2000);
@@ -135,20 +136,20 @@ export class ObservationalSummaryService {
       return;
     }
 
-    // Queue the work asynchronously 
+    // Queue the work asynchronously
     ObservationalSummaryService.processingQueue.add(threadId);
     setTimeout(() => {
       ObservationalSummaryService.getInstance()
         .processTrimming(state, threadId)
         .catch(err => {
-          console.error(`[ObservationalSummary] Fatal error for thread ${threadId}:`, err);
+          console.error(`[ObservationalSummary] Fatal error for thread ${ threadId }:`, err);
         })
         .finally(() => {
           ObservationalSummaryService.processingQueue.delete(threadId);
         });
     }, 0);
 
-    console.log(`[ObservationalSummary] Queued background trimming for thread ${threadId} (${currentLines} lines)`);
+    console.log(`[ObservationalSummary] Queued background trimming for thread ${ threadId } (${ currentLines } lines)`);
   }
 
   /**
@@ -157,7 +158,7 @@ export class ObservationalSummaryService {
   private static countObservationLines(state: BaseThreadState): number {
     const metadata = state.metadata as any;
     const observations = metadata.conversationSummaries || [];
-    
+
     return observations.reduce((total: number, obs: ObservationEntry) => {
       // Count lines in content (split by \n and count)
       const contentLines = obs.content.split('\n').length;
@@ -176,15 +177,15 @@ export class ObservationalSummaryService {
       while (attempts < MAX_RETRY_ATTEMPTS) {
         try {
           await this.performTrimming(state);
-          console.log(`[ObservationalSummary] Successfully trimmed observations for thread ${threadId} on attempt ${attempts + 1}`);
+          console.log(`[ObservationalSummary] Successfully trimmed observations for thread ${ threadId } on attempt ${ attempts + 1 }`);
           break;
         } catch (err) {
           attempts++;
-          console.warn(`[ObservationalSummary] Attempt ${attempts} failed for thread ${threadId}:`, 
+          console.warn(`[ObservationalSummary] Attempt ${ attempts } failed for thread ${ threadId }:`,
             err instanceof Error ? err.message : String(err));
 
           if (attempts >= MAX_RETRY_ATTEMPTS) {
-            console.error(`[ObservationalSummary] All retry attempts exhausted for thread ${threadId}`);
+            console.error(`[ObservationalSummary] All retry attempts exhausted for thread ${ threadId }`);
             throw err;
           }
 
@@ -203,7 +204,7 @@ export class ObservationalSummaryService {
   private async performTrimming(state: BaseThreadState): Promise<void> {
     const metadata = state.metadata as any;
     const currentObservations = metadata.conversationSummaries || [];
-    
+
     if (currentObservations.length === 0) {
       console.log('[ObservationalSummary] No observations to trim, skipping');
       return;
@@ -215,11 +216,11 @@ export class ObservationalSummaryService {
       return;
     }
 
-    console.log(`[ObservationalSummary] Trimming ${currentObservations.length} observations (${currentLines} lines -> target: ${TARGET_OBSERVATION_LINES})`);
+    console.log(`[ObservationalSummary] Trimming ${ currentObservations.length } observations (${ currentLines } lines -> target: ${ TARGET_OBSERVATION_LINES })`);
 
     // Use LLM to prioritize observations
     const prioritizedObservations = await this.prioritizeObservations(state, currentObservations);
-    
+
     if (prioritizedObservations.length === 0) {
       console.warn('[ObservationalSummary] No observations selected by prioritization, skipping trim');
       return;
@@ -236,7 +237,7 @@ export class ObservationalSummaryService {
       return total + obs.content.split('\n').length;
     }, 0);
 
-    console.log(`[ObservationalSummary] Trimmed to ${selectedObservations.length} observations (${newLines} lines)`);
+    console.log(`[ObservationalSummary] Trimmed to ${ selectedObservations.length } observations (${ newLines } lines)`);
 
     // Update conversation summary message if it exists
     this.updateConversationSummaryMessage(state, selectedObservations);
@@ -248,29 +249,29 @@ export class ObservationalSummaryService {
   private async prioritizeObservations(state: BaseThreadState, observations: ObservationEntry[]): Promise<ObservationEntry[]> {
     // Get LLM service using same logic as conversation system
     const llmService = await getPrimaryService();
-    
+
     // Build observation list for LLM
     const observationText = observations
-      .map(obs => `${obs.priority} ${obs.content}`)
+      .map(obs => `${ obs.priority } ${ obs.content }`)
       .join('\n');
-    
+
     // Prepare messages for LLM
     const llmMessages: ChatMessage[] = [
       {
-        role: 'system',
-        content: OBSERVATION_PRIORITIZATION_PROMPT
+        role:    'system',
+        content: OBSERVATION_PRIORITIZATION_PROMPT,
       },
       {
-        role: 'user', 
-        content: `Here are the observations to prioritize and trim:\n\n${observationText}`
-      }
+        role:    'user',
+        content: `Here are the observations to prioritize and trim:\n\n${ observationText }`,
+      },
     ];
 
     const response = await llmService.chat(llmMessages, {
       temperature: 0.1, // Low temperature for consistent prioritization
-      maxTokens: 2000,
-      format: 'json',
-      tools: [] // No tools needed for observation prioritization
+      maxTokens:   2000,
+      format:      'json',
+      tools:       [], // No tools needed for observation prioritization
     });
 
     if (!response) {
@@ -280,13 +281,13 @@ export class ObservationalSummaryService {
 
     const data = parseJson(response.content) as PrioritizationResult | null;
     const selectedObservations = Array.isArray(data?.selectedObservations) ? data.selectedObservations : [];
-    
+
     // Validate and return prioritized observations
     const validObservations = selectedObservations
-      .filter(obs => obs.priority && obs.content && typeof obs.content === 'string');
+      .filter((obs: ObservationEntry) => obs.priority && obs.content && typeof obs.content === 'string');
 
     if (data?.reasoning) {
-      console.log(`[ObservationalSummary] LLM reasoning: ${data.reasoning}`);
+      console.log(`[ObservationalSummary] LLM reasoning: ${ data.reasoning }`);
     }
 
     return validObservations.length > 0 ? validObservations : observations;
@@ -298,7 +299,7 @@ export class ObservationalSummaryService {
   private calculateTargetCount(observations: ObservationEntry[], targetLines: number): number {
     let lineCount = 0;
     let count = 0;
-    
+
     for (const obs of observations) {
       const obsLines = obs.content.split('\n').length;
       if (lineCount + obsLines > targetLines && count > 0) {
@@ -307,7 +308,7 @@ export class ObservationalSummaryService {
       lineCount += obsLines;
       count++;
     }
-    
+
     return Math.max(count, Math.floor(observations.length * 0.5)); // Keep at least 50%
   }
 
@@ -316,10 +317,10 @@ export class ObservationalSummaryService {
    */
   private updateConversationSummaryMessage(state: BaseThreadState, observations: ObservationEntry[]): void {
     // Find existing conversation summary message
-    const summaryIndex = state.messages.findIndex(msg => 
-      msg.role === 'assistant' && (msg.metadata as any)?._conversationSummary
+    const summaryIndex = state.messages.findIndex(msg =>
+      msg.role === 'assistant' && (msg.metadata as any)?._conversationSummary,
     );
-    
+
     if (summaryIndex >= 0) {
       // Remove old summary and add updated one
       state.messages.splice(summaryIndex, 1);
@@ -333,37 +334,37 @@ export class ObservationalSummaryService {
    */
   private appendConversationSummary(state: BaseThreadState, allObservations: ObservationEntry[]): void {
     if (!allObservations.length) return;
-    
+
     // Group observations by priority
     const critical = allObservations.filter(obs => obs.priority === '🔴');
     const valuable = allObservations.filter(obs => obs.priority === '🟡');
     const low = allObservations.filter(obs => obs.priority === '⚪');
-    
+
     const sections = [];
-    
+
     if (critical.length > 0) {
-      sections.push(`**Critical Context:**\n${critical.map(obs => `• ${obs.content}`).join('\n')}`);
+      sections.push(`**Critical Context:**\n${ critical.map(obs => `• ${ obs.content }`).join('\n') }`);
     }
-    
+
     if (valuable.length > 0) {
-      sections.push(`**Key Context:**\n${valuable.map(obs => `• ${obs.content}`).join('\n')}`);
+      sections.push(`**Key Context:**\n${ valuable.map(obs => `• ${ obs.content }`).join('\n') }`);
     }
-    
+
     if (low.length > 0) {
-      sections.push(`**Background:**\n${low.map(obs => `• ${obs.content}`).join('\n')}`);
+      sections.push(`**Background:**\n${ low.map(obs => `• ${ obs.content }`).join('\n') }`);
     }
-    
-    const summaryContent = `## Conversation Summary\n\n${sections.join('\n\n')}`;
-    
+
+    const summaryContent = `## Conversation Summary\n\n${ sections.join('\n\n') }`;
+
     // Add summary message to state as oldest message
     state.messages.unshift({
-      role: 'assistant',
-      content: summaryContent,
+      role:     'assistant',
+      content:  summaryContent,
       metadata: {
-        nodeId: this.id,
-        timestamp: Date.now(),
+        nodeId:               this.id,
+        timestamp:            Date.now(),
         _conversationSummary: true, // Flag for identification
-      }
+      },
     });
   }
 }

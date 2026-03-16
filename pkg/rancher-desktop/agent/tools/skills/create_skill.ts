@@ -5,8 +5,8 @@ import { skillsRegistry } from '../../database/registry/SkillsRegistry';
  * Create Skill Tool - Create or update a skill folder + SKILL.md.
  */
 export class CreateSkillWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { skill_name, content } = input;

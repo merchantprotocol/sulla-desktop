@@ -29,7 +29,7 @@ export default {
 
 <style lang="scss" scoped>
   .icon {
-    font-size: 0.75rem;
+    font-size: var(--fs-body-sm);
     background-color: var(--icon-circle);
     border-radius: 50%;
     text-align: center;

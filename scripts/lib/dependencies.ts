@@ -75,17 +75,30 @@ export const DEP_VERSIONS_PATH = 'pkg/rancher-desktop/assets/dependencies.yaml';
  * @param executableName The name of the executable expected.
  * @returns The checksum.
  */
-export async function findChecksum(checksumURL: string, executableName: string): Promise<string> {
-  const allChecksums = await getResource(checksumURL);
+export async function findChecksum(checksumURL: string, executableName: string): Promise<string | undefined> {
+  let allChecksums: string;
+
+  try {
+    allChecksums = await getResource(checksumURL);
+  } catch (e: any) {
+    console.warn(`WARNING: Could not fetch checksums from ${ checksumURL }: ${ e.message ?? e }`);
+    console.warn('Download will proceed without checksum verification.');
+
+    return undefined;
+  }
   const desiredChecksums = allChecksums.split(/\r?\n/).filter(line => line.endsWith(executableName));
 
   if (desiredChecksums.length < 1) {
-    throw new Error(`Couldn't find a matching SHA for [${ executableName }] in [${ allChecksums }]`);
+    console.warn(`WARNING: No matching SHA for [${ executableName }] in checksum file`);
+
+    return undefined;
   }
   if (desiredChecksums.length === 1) {
     return desiredChecksums[0].split(/\s+/, 1)[0];
   }
-  throw new Error(`Matched ${ desiredChecksums.length } hits, not exactly 1, for ${ executableName } in [${ allChecksums }]`);
+  console.warn(`WARNING: Matched ${ desiredChecksums.length } hits (expected 1) for ${ executableName } — skipping verification`);
+
+  return undefined;
 }
 
 export async function readDependencyVersions(path: string): Promise<DependencyVersions> {

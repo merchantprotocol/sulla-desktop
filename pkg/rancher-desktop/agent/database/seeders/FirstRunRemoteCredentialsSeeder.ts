@@ -25,14 +25,14 @@ async function initialize(): Promise<void> {
   if (firstrunProvider) {
     const integration = integrations[firstrunProvider];
     if (integration) {
-      console.log(`[FirstRunRemoteCredentialsSeeder] Found first-run credentials for provider: ${firstrunProvider}`);
+      console.log(`[FirstRunRemoteCredentialsSeeder] Found first-run credentials for provider: ${ firstrunProvider }`);
 
       // Migrate each property from SullaSettingsModel into integration_values
       for (const prop of (integration.properties || [])) {
-        const value = await SullaSettingsModel.get(`firstrun_${firstrunProvider}_${prop.key}`, '');
-        if (value && value.trim()) {
+        const value = await SullaSettingsModel.get(`firstrun_${ firstrunProvider }_${ prop.key }`, '');
+        if (value?.trim()) {
           await IntegrationValueModel.upsert(firstrunProvider, ACCOUNT_ID, prop.key, value);
-          console.log(`[FirstRunRemoteCredentialsSeeder]   Migrated ${prop.key} for ${firstrunProvider}`);
+          console.log(`[FirstRunRemoteCredentialsSeeder]   Migrated ${ prop.key } for ${ firstrunProvider }`);
         }
       }
 
@@ -45,7 +45,7 @@ async function initialize(): Promise<void> {
       // Set as default account
       await IntegrationValueModel.setDefaultAccount(firstrunProvider, ACCOUNT_ID);
 
-      console.log(`[FirstRunRemoteCredentialsSeeder] Completed migration for ${firstrunProvider}`);
+      console.log(`[FirstRunRemoteCredentialsSeeder] Completed migration for ${ firstrunProvider }`);
       return; // first-run prefixed keys take priority
     }
   }
@@ -59,11 +59,11 @@ async function initialize(): Promise<void> {
     // Check if this integration is already connected (another seeder may have handled it)
     const existing = await IntegrationValueModel.findByKey(legacyProvider, ACCOUNT_ID, 'api_key');
     if (existing) {
-      console.log(`[FirstRunRemoteCredentialsSeeder] ${legacyProvider} already has credentials — skipping legacy migration`);
+      console.log(`[FirstRunRemoteCredentialsSeeder] ${ legacyProvider } already has credentials — skipping legacy migration`);
       return;
     }
 
-    console.log(`[FirstRunRemoteCredentialsSeeder] Migrating legacy credentials for: ${legacyProvider}`);
+    console.log(`[FirstRunRemoteCredentialsSeeder] Migrating legacy credentials for: ${ legacyProvider }`);
 
     await IntegrationValueModel.upsert(legacyProvider, ACCOUNT_ID, 'api_key', legacyApiKey);
 
@@ -81,7 +81,7 @@ async function initialize(): Promise<void> {
     // Set as default account
     await IntegrationValueModel.setDefaultAccount(legacyProvider, ACCOUNT_ID);
 
-    console.log(`[FirstRunRemoteCredentialsSeeder] Completed legacy migration for ${legacyProvider}`);
+    console.log(`[FirstRunRemoteCredentialsSeeder] Completed legacy migration for ${ legacyProvider }`);
     return;
   }
 

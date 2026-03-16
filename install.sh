@@ -3,10 +3,18 @@
 # Sulla Desktop — One-Line Installer
 # ============================================================================
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/sulla-ai/sulla-desktop/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/install.sh | bash
+#
+# Install nightly (latest from main, may be unstable):
+#   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/install.sh | bash -s -- --nightly
 #
 # Or if you already cloned the repo:
 #   bash install.sh
+#   bash install.sh --nightly
+#
+# Options:
+#   --nightly   Install from the latest main branch instead of the latest release.
+#               Use this if you want bleeding-edge features (may be unstable).
 #
 # Idempotent — safe to run multiple times.
 # Supports macOS (arm64/x86_64), Linux (apt/dnf/pacman), and Windows (Git Bash / MSYS2).
@@ -17,20 +25,379 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-REPO_URL="https://github.com/sulla-ai/sulla-desktop.git"
+REPO_URL="https://github.com/merchantprotocol/sulla-desktop.git"
+REPO_OWNER="merchantprotocol"
+REPO_NAME="sulla-desktop"
 REPO_DIR="sulla-desktop"
+INSTALL_DIR="$HOME/.sulla-desktop"
 NODE_VERSION="22.22.0"
 GO_VERSION="1.24.2"
-MIN_DISK_GB=10  # minimum free disk space in GB
+MIN_DISK_GB=10
+USE_NIGHTLY=false
+ERROR_REPORT_URL="https://error-reports.merchantprotocol.workers.dev"
 
 # ---------------------------------------------------------------------------
-# Helpers
+# PATH Bootstrap — ensure common binary locations are reachable on all platforms
 # ---------------------------------------------------------------------------
-info()  { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
-ok()    { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
-warn()  { printf "\033[1;33m⚠ %s\033[0m\n" "$*"; }
-fail()  { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
+# Many tools (Go, Node, yarn, gofmt, git) may be installed in paths that are
+# not in the default PATH for non-interactive shells (e.g. when piped from
+# curl).  We add all well-known locations up front so every subsequent
+# command_exists check and subprocess (including Node/yarn postinstall scripts)
+# can find them without per-tool PATH hacks.
+bootstrap_path() {
+  local candidates=(
+    # macOS Homebrew — Apple Silicon
+    /opt/homebrew/bin
+    /opt/homebrew/sbin
+    # macOS Homebrew — Intel
+    /usr/local/bin
+    /usr/local/sbin
+    # Linux Homebrew (Linuxbrew)
+    /home/linuxbrew/.linuxbrew/bin
+    /home/linuxbrew/.linuxbrew/sbin
+    # Go — official installer location
+    /usr/local/go/bin
+    # Go — user GOPATH/bin
+    "$HOME/go/bin"
+    # Windows (Git Bash / MSYS2)
+    /c/Go/bin
+    /c/Program\ Files/Go/bin
+    # Cargo / Rust (fnm, other tools)
+    "$HOME/.cargo/bin"
+    # Common Linux paths that may be missing in minimal environments
+    /usr/bin
+    /usr/sbin
+    /bin
+    /sbin
+  )
 
+  for dir in "${candidates[@]}"; do
+    # Skip if already in PATH or doesn't exist
+    case ":$PATH:" in
+      *":$dir:"*) continue ;;
+    esac
+    [ -d "$dir" ] && export PATH="$dir:$PATH"
+  done
+}
+bootstrap_path
+
+# ---------------------------------------------------------------------------
+# Terminal UI — Colors & Symbols
+# ---------------------------------------------------------------------------
+BOLD="\033[1m"
+DIM="\033[2m"
+RESET="\033[0m"
+GREEN="\033[1;32m"
+RED="\033[1;31m"
+YELLOW="\033[1;33m"
+BLUE="\033[1;34m"
+CYAN="\033[1;36m"
+WHITE="\033[1;37m"
+
+CHECK="${GREEN}✔${RESET}"
+CROSS="${RED}✖${RESET}"
+WARN_SYM="${YELLOW}⚠${RESET}"
+ARROW="${BLUE}›${RESET}"
+
+# Spinner frames
+SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+SPINNER_PID=""
+
+# Track all step results for final summary
+STEP_RESULTS=()
+
+# Log file for suppressed output — fixed path so it's always easy to find
+INSTALL_LOG="/tmp/sulla-install.log"
+: > "$INSTALL_LOG"
+
+# ---------------------------------------------------------------------------
+# Terminal UI — Primitives
+# ---------------------------------------------------------------------------
+
+# Hide/show cursor
+hide_cursor() { printf "\033[?25l"; }
+show_cursor() { printf "\033[?25h"; }
+
+# Ensure cursor is restored on exit
+cleanup() {
+  stop_spinner 2>/dev/null
+  show_cursor
+  # Show log location if we failed
+  if [ "${INSTALL_FAILED:-false}" = true ]; then
+    echo ""
+    printf "  ${DIM}Full log: %s${RESET}\n" "$INSTALL_LOG"
+  fi
+}
+trap cleanup EXIT
+
+# Clear current line
+clear_line() { printf "\r\033[2K"; }
+
+# Start a spinner with a message
+# Usage: start_spinner "Doing something..."
+start_spinner() {
+  local msg="$1"
+  stop_spinner 2>/dev/null
+  (
+    local i=0
+    while true; do
+      local frame="${SPINNER_FRAMES[$((i % ${#SPINNER_FRAMES[@]}))]}"
+      printf "\r  ${CYAN}%s${RESET} %s" "$frame" "$msg"
+      sleep 0.08
+      i=$((i + 1))
+    done
+  ) &
+  SPINNER_PID=$!
+  disown "$SPINNER_PID" 2>/dev/null
+}
+
+# Stop the spinner
+stop_spinner() {
+  if [ -n "${SPINNER_PID:-}" ] && kill -0 "$SPINNER_PID" 2>/dev/null; then
+    kill "$SPINNER_PID" 2>/dev/null
+    wait "$SPINNER_PID" 2>/dev/null || true
+  fi
+  SPINNER_PID=""
+  clear_line
+}
+
+# Mark a step as completed with a checkmark
+step_ok() {
+  stop_spinner
+  printf "  ${CHECK}  %s\n" "$1"
+  STEP_RESULTS+=("ok|$1")
+}
+
+# Mark a step as failed
+step_fail() {
+  stop_spinner
+  printf "  ${CROSS}  %s\n" "$1"
+  STEP_RESULTS+=("fail|$1")
+  INSTALL_FAILED=true
+  show_cursor
+
+  printf "\n  ${RED}${BOLD}Installation failed.${RESET}\n"
+  printf "  ${DIM}Check the log for details: %s${RESET}\n\n" "$INSTALL_LOG"
+
+  # Offer to submit error report
+  offer_error_report "$1"
+
+  exit 1
+}
+
+# Submit an error report to the Cloudflare worker
+# Usage: submit_error_report <step_name>
+submit_error_report() {
+  local step_name="$1"
+  local log_tail=""
+  if [ -f "$INSTALL_LOG" ]; then
+    # JSON-escape the log: backslashes, quotes, tabs, then join lines with \n
+    log_tail="$(tail -80 "$INSTALL_LOG" 2>/dev/null \
+      | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g' \
+      | awk '{printf "%s\\n", $0}' \
+      | sed 's/\\n$//')"
+  fi
+
+  local os_platform os_version app_version
+  os_platform="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  os_version="$(uname -r)"
+  app_version="${INSTALL_REF:-unknown}"
+
+  # Build JSON payload with printf to avoid heredoc escaping issues
+  local payload
+  payload=$(printf '{
+  "error_type": "install_failure",
+  "error_message": "Installation failed at step: %s",
+  "stack_trace": "%s",
+  "app_version": "%s",
+  "os_platform": "%s",
+  "os_version": "%s",
+  "user_context": "install.sh — step: %s, nightly: %s"
+}' "$step_name" "$log_tail" "$app_version" "$os_platform" "$os_version" "$step_name" "$USE_NIGHTLY")
+
+  start_spinner "Submitting error report..."
+  local http_code
+  http_code="$(curl -s -o /dev/null -w '%{http_code}' \
+    -X POST "${ERROR_REPORT_URL}/" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    --max-time 10 2>/dev/null)" || http_code="000"
+
+  if [ "$http_code" = "200" ]; then
+    step_ok "Error report submitted — thank you!"
+  else
+    stop_spinner
+    printf "  ${WARN_SYM}  Could not submit report (HTTP %s). You can report issues manually at:\n" "$http_code"
+    printf "      ${DIM}https://github.com/${REPO_OWNER}/${REPO_NAME}/issues${RESET}\n"
+  fi
+}
+
+# Ask user if they want to submit the error report
+offer_error_report() {
+  local step_name="$1"
+
+  # If stdin is not a terminal (e.g. piped from curl), skip the prompt and auto-submit
+  if [ ! -t 0 ]; then
+    printf "  ${DIM}Submitting error report automatically...${RESET}\n"
+    submit_error_report "$step_name"
+    return
+  fi
+
+  echo ""
+  printf "  ${BOLD}Would you like to submit an anonymous error report?${RESET}\n"
+  printf "  ${DIM}This helps us fix installation issues faster.${RESET}\n"
+  printf "  ${DIM}Only the error details and your OS info are sent — no personal data.${RESET}\n"
+  echo ""
+  printf "  Submit report? ${BOLD}[Y/n]${RESET} "
+  local reply
+  read -r reply </dev/tty 2>/dev/null || reply="y"
+  reply="${reply:-y}"
+
+  case "$reply" in
+    [Nn]*)
+      printf "\n  ${DIM}No problem. You can report issues manually at:${RESET}\n"
+      printf "  ${DIM}https://github.com/${REPO_OWNER}/${REPO_NAME}/issues${RESET}\n"
+      ;;
+    *)
+      echo ""
+      submit_error_report "$step_name"
+      ;;
+  esac
+}
+
+# Mark a step with a warning
+step_warn() {
+  stop_spinner
+  printf "  ${WARN_SYM}  %s\n" "$1"
+  STEP_RESULTS+=("warn|$1")
+}
+
+# Print a section header
+section() {
+  echo ""
+  printf "  ${WHITE}${BOLD}%s${RESET}\n" "$1"
+  printf "  ${DIM}%s${RESET}\n" "$(printf '%.0s─' $(seq 1 ${#1}))"
+}
+
+# Draw a progress bar (called repeatedly)
+# Usage: draw_progress <current> <total> <label>
+draw_progress() {
+  local current="$1" total="$2" label="${3:-}"
+  local width=30
+  local pct=$((current * 100 / total))
+  local filled=$((current * width / total))
+  local empty=$((width - filled))
+
+  local bar=""
+  [ "$filled" -gt 0 ] && bar="$(printf '%.0s█' $(seq 1 "$filled"))"
+  local space=""
+  [ "$empty" -gt 0 ] && space="$(printf '%.0s░' $(seq 1 "$empty"))"
+
+  printf "\r  ${CYAN}⠸${RESET} %s ${DIM}%s%s${RESET} ${BOLD}%3d%%${RESET}" "$label" "$bar" "$space" "$pct"
+}
+
+# Run a command silently, capturing output to log
+# Usage: run_silent <description> <command...>
+run_silent() {
+  local desc="$1"
+  shift
+  echo "=== [$desc] $(date) ===" >> "$INSTALL_LOG"
+  echo "CMD: $*" >> "$INSTALL_LOG"
+  if "$@" >> "$INSTALL_LOG" 2>&1; then
+    return 0
+  else
+    local rc=$?
+    echo "EXIT CODE: $rc" >> "$INSTALL_LOG"
+    return $rc
+  fi
+}
+
+# Run a command with live status updates — logs everything and updates the
+# spinner text with the last meaningful line of output so the user can see
+# what's happening during long-running operations.
+# Usage: run_with_status <label> <command...>
+run_with_status() {
+  local label="$1"
+  shift
+  echo "=== [$label] $(date) ===" >> "$INSTALL_LOG"
+  echo "CMD: $*" >> "$INSTALL_LOG"
+
+  local last_update=0
+
+  local current_phase="$label"
+
+  # Use process substitution so the while loop runs in the current shell,
+  # not a pipe subshell — this keeps SPINNER_PID in scope so spinners
+  # are properly tracked and killed (pipe subshells + disown = orphaned spinners).
+  while IFS= read -r -t 300 line; do
+    echo "$line" >> "$INSTALL_LOG"
+
+    # Throttle spinner updates to at most once every 3 seconds to keep it calm
+    local now="$SECONDS"
+    [ "$((now - last_update))" -lt 3 ] && continue
+
+    local new_phase=""
+    case "$line" in
+      *"Resolving"*)  new_phase="${label}: resolving dependencies..." ;;
+      *"Fetching"*)   new_phase="${label}: fetching packages..." ;;
+      *"Linking"*)    new_phase="${label}: linking packages..." ;;
+      *"Building"*)   new_phase="${label}: building..." ;;
+      *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
+                      new_phase="${label}: compiling native modules..." ;;
+      *"webpack"*|*"ts-loader"*|*"babel"*)
+                      new_phase="${label}: bundling application..." ;;
+    esac
+
+    # Only restart the spinner when the phase actually changes
+    if [ -n "$new_phase" ] && [ "$new_phase" != "$current_phase" ]; then
+      current_phase="$new_phase"
+      stop_spinner 2>/dev/null
+      start_spinner "$current_phase"
+      last_update="$now"
+    fi
+  done < <(set +e; "$@" 2>&1; echo "___RWS_EXIT_$?___")
+
+  # Extract exit code from the sentinel line
+  local rc=0
+  if [[ "${line:-}" =~ ___RWS_EXIT_([0-9]+)___ ]]; then
+    rc="${BASH_REMATCH[1]}"
+  fi
+
+  stop_spinner 2>/dev/null
+  if [ "$rc" -ne 0 ]; then
+    echo "EXIT CODE: $rc" >> "$INSTALL_LOG"
+  fi
+  return "$rc"
+}
+
+
+# Prompt the user for sudo access with a clear explanation of why.
+# Pre-authenticates so subsequent sudo calls don't re-prompt.
+# Usage: require_sudo "Go ${GO_VERSION}" "needs to install to /usr/local which requires user authorization"
+require_sudo() {
+  local package="$1"
+  local reason="$2"
+  # Already authenticated — nothing to do
+  if sudo -n true 2>/dev/null; then
+    return 0
+  fi
+  stop_spinner
+  echo ""
+  printf "  ${ARROW}  ${BOLD}%s${RESET} %s\n" "$package" "$reason"
+  printf "     ${DIM}Enter your password to continue:${RESET}\n"
+  echo ""
+  # Let sudo prompt naturally on the terminal (not swallowed by run_silent)
+  if sudo -v 2>/dev/null; then
+    echo ""
+    return 0
+  else
+    step_fail "sudo authentication failed — cannot continue without user authorization"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Utility helpers (unchanged logic, quiet output)
+# ---------------------------------------------------------------------------
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
 detect_os() {
@@ -38,7 +405,7 @@ detect_os() {
     Darwin*)  echo "macos"  ;;
     Linux*)   echo "linux"  ;;
     MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
-    *)        fail "Unsupported OS: $(uname -s)" ;;
+    *)        step_fail "Unsupported OS: $(uname -s)" ;;
   esac
 }
 
@@ -52,25 +419,22 @@ detect_pkg_manager() {
   fi
 }
 
-# Get total system RAM in GB (integer, rounded down)
 get_ram_gb() {
   case "$OS" in
     macos)   sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1073741824}' ;;
     linux)   awk '/MemTotal/ {printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null ;;
     windows)
-      # Git Bash / MSYS2: use wmic
       local kb
       kb="$(wmic OS get TotalVisibleMemorySize /value 2>/dev/null | grep -oE '[0-9]+' | head -1)" || true
       if [ -n "${kb:-}" ]; then
         echo $(( kb / 1048576 ))
       else
-        echo "8" # safe fallback
+        echo "8"
       fi
       ;;
   esac
 }
 
-# Get available disk space in GB for a given path
 get_free_disk_gb() {
   local target="${1:-.}"
   case "$OS" in
@@ -79,13 +443,11 @@ get_free_disk_gb() {
         || df -k "$target" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1048576}'
       ;;
     windows)
-      # Git Bash: df reports in 1K blocks
       df -k "$target" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1048576}' || echo "999"
       ;;
   esac
 }
 
-# Get the platform-appropriate log directory
 get_log_dir() {
   case "$OS" in
     macos)   echo "$HOME/Library/Logs/Sulla Desktop" ;;
@@ -97,435 +459,835 @@ get_log_dir() {
 # ---------------------------------------------------------------------------
 # Pre-flight checks
 # ---------------------------------------------------------------------------
-preflight_disk_space() {
-  local target="${1:-$HOME}"
+preflight_checks() {
+  section "Pre-flight Checks"
+
+  # OS detection
+  OS="$(detect_os)"
+  local arch
+  arch="$(uname -m)"
+  step_ok "Detected ${OS} (${arch})"
+
+  # Disk space
+  start_spinner "Checking disk space..."
   local free_gb
-  free_gb="$(get_free_disk_gb "$target")"
-
+  free_gb="$(get_free_disk_gb "$HOME")"
   if [ -n "$free_gb" ] && [ "$free_gb" -lt "$MIN_DISK_GB" ] 2>/dev/null; then
-    fail "Not enough disk space. Need at least ${MIN_DISK_GB} GB free, only ${free_gb} GB available."
+    step_fail "Not enough disk space (${free_gb} GB free, need ${MIN_DISK_GB} GB)"
   fi
-  ok "Disk space: ${free_gb:-?} GB available (need ${MIN_DISK_GB} GB)"
-}
+  step_ok "Disk space: ${free_gb:-?} GB available"
 
-preflight_display() {
-  if [ "$OS" != "linux" ]; then
-    return
-  fi
-  # Electron needs a display server (X11 or Wayland)
-  if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-    warn "No DISPLAY or WAYLAND_DISPLAY set. Sulla Desktop requires a graphical environment."
-    warn "If you are on a headless server, you will not be able to launch the app."
+  # Display server (Linux only)
+  if [ "$OS" = "linux" ]; then
+    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+      step_warn "No display server detected — GUI may not work"
+    else
+      step_ok "Display server available"
+    fi
   fi
 }
 
 # ---------------------------------------------------------------------------
-# Dependency checks & installs
+# Dependency management — audit everything first, then install what's needed
 # ---------------------------------------------------------------------------
-ensure_git() {
-  if command_exists git; then
-    ok "git already installed ($(git --version))"
-    return
-  fi
-  info "Installing git..."
-  case "$OS" in
-    macos)   xcode-select --install 2>/dev/null || true ;;
-    linux)
-      case "$(detect_pkg_manager)" in
-        apt)    sudo apt-get update -qq && sudo apt-get install -yqq git ;;
-        dnf)    sudo dnf install -y git ;;
-        yum)    sudo yum install -y git ;;
-        pacman) sudo pacman -Sy --noconfirm git ;;
-        *)      fail "Cannot auto-install git. Please install it manually." ;;
-      esac ;;
-    windows) fail "Please install Git for Windows: https://git-scm.com/download/win" ;;
-  esac
-  command_exists git || fail "git installation failed"
-  ok "git installed"
-}
 
-# nvm (macOS/Linux only — Windows uses fnm)
-ensure_nvm() {
-  if [ "$OS" = "windows" ]; then
-    return  # Windows uses fnm instead
+# Audit tracking
+DEP_NAMES=()
+DEP_STATUSES=()   # ok, install, upgrade, warn
+DEP_DETAILS=()
+DEP_WORK_NEEDED=false
+
+dep_found()   { DEP_NAMES+=("$1"); DEP_STATUSES+=("ok");      DEP_DETAILS+=("${2:-}"); }
+dep_missing() { DEP_NAMES+=("$1"); DEP_STATUSES+=("install");  DEP_DETAILS+=("$2");     DEP_WORK_NEEDED=true; }
+dep_upgrade() { DEP_NAMES+=("$1"); DEP_STATUSES+=("upgrade");  DEP_DETAILS+=("$2");     DEP_WORK_NEEDED=true; }
+dep_warn()    { DEP_NAMES+=("$1"); DEP_STATUSES+=("warn");     DEP_DETAILS+=("$2"); }
+
+# --- Phase 1: Audit — check every dependency without installing anything ---
+audit_dependencies() {
+  start_spinner "Checking dependencies..."
+
+  # Xcode CLT (macOS only)
+  local xcode_ok=false
+  if [ "$OS" = "macos" ]; then
+    if xcode-select -p >/dev/null 2>&1 \
+       && /usr/bin/xcrun --find clang >/dev/null 2>&1; then
+      dep_found "Xcode CLT"
+      xcode_ok=true
+    else
+      dep_missing "Xcode CLT" "not installed"
+    fi
+  else
+    xcode_ok=true
   fi
+
+  # curl
+  if command_exists curl; then
+    dep_found "curl"
+  else
+    dep_missing "curl" "not installed"
+  fi
+
+  # git — on macOS without CLT, git is a shim that pops up the install dialog,
+  # so don't probe it; just report it as pending CLT install.
+  if [ "$OS" = "macos" ] && [ "$xcode_ok" = false ]; then
+    dep_missing "git" "provided by Xcode CLT"
+  elif command_exists git && git --version >/dev/null 2>&1; then
+    dep_found "git" "$(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+  else
+    dep_missing "git" "not installed"
+  fi
+
+  # Node.js — source nvm/fnm and activate the target version if installed
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [ -s "$NVM_DIR/nvm.sh" ]; then
-    # shellcheck disable=SC1091
-    . "$NVM_DIR/nvm.sh"
-    ok "nvm already installed"
-    return
+    . "$NVM_DIR/nvm.sh" 2>/dev/null || true
+    nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
-  info "Installing nvm..."
-  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-  # shellcheck disable=SC1091
-  . "$NVM_DIR/nvm.sh"
-  command_exists nvm || fail "nvm installation failed"
-  ok "nvm installed"
+  if command_exists fnm; then
+    eval "$(fnm env --shell bash 2>/dev/null)" || true
+    fnm use "$NODE_VERSION" >/dev/null 2>&1 || true
+  fi
+  local node_current=""
+  command_exists node && node_current="$(node -v 2>/dev/null | sed 's/^v//')"
+
+  if [ -n "$node_current" ] && [ "$node_current" = "$NODE_VERSION" ]; then
+    dep_found "Node.js" "v${node_current}"
+  elif [ -n "$node_current" ]; then
+    dep_upgrade "Node.js" "v${node_current} → v${NODE_VERSION}"
+  else
+    dep_missing "Node.js" "need v${NODE_VERSION}"
+  fi
+
+  # yarn
+  if command_exists yarn; then
+    dep_found "yarn" "$(yarn --version 2>/dev/null)"
+  else
+    dep_missing "yarn" "not installed"
+  fi
+
+  # Build tools (Linux/Windows only — macOS is covered by Xcode CLT)
+  case "$OS" in
+    linux)
+      if command_exists make && command_exists python3; then
+        dep_found "Build tools" "make, python3"
+      else
+        local bt_detail=""
+        command_exists make    || bt_detail="make"
+        if ! command_exists python3; then
+          [ -n "$bt_detail" ] && bt_detail="$bt_detail, "
+          bt_detail="${bt_detail}python3"
+        fi
+        dep_missing "Build tools" "${bt_detail} missing"
+      fi
+      ;;
+    windows)
+      if command_exists cl || [ -d "${PROGRAMFILES:-C:\\Program Files}/Microsoft Visual Studio" ]; then
+        dep_found "Build tools" "Visual Studio"
+      else
+        dep_warn "Build tools" "VS Build Tools may be needed"
+      fi
+      ;;
+  esac
+
+  # Go — check standard install paths that may not be in PATH yet
+  if ! command_exists go; then
+    for go_path in /opt/homebrew/bin /usr/local/bin /home/linuxbrew/.linuxbrew/bin /usr/local/go/bin /c/Go/bin "$HOME/go/bin"; do
+      if [ -x "$go_path/go" ]; then
+        export PATH="$go_path:$PATH"
+        break
+      fi
+    done
+  fi
+  if command_exists go; then
+    local go_ver go_major go_minor
+    go_ver="$(go version 2>/dev/null | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/^go//')"
+    go_major="$(echo "$go_ver" | cut -d. -f1)"
+    go_minor="$(echo "$go_ver" | cut -d. -f2)"
+    if [ "${go_major:-0}" -gt 1 ] 2>/dev/null || \
+       { [ "${go_major:-0}" -eq 1 ] && [ "${go_minor:-0}" -ge 24 ]; } 2>/dev/null; then
+      dep_found "Go" "${go_ver}"
+    else
+      dep_upgrade "Go" "${go_ver} → ${GO_VERSION}"
+    fi
+  else
+    dep_missing "Go" "need ${GO_VERSION}+"
+  fi
+
+  # Python (optional — warn only)
+  local python_ver=""
+  for cmd in python3.13 python3.12 python3.11 python3.10 python3 python; do
+    if command_exists "$cmd"; then
+      local ver minor
+      ver="$($cmd --version 2>/dev/null | grep -oE '3\.[0-9]+' | head -1)" || continue
+      minor="$(echo "$ver" | cut -d. -f2)"
+      if [ "${minor:-0}" -ge 10 ] 2>/dev/null; then
+        python_ver="$($cmd --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+        break
+      fi
+    fi
+  done
+  if [ -n "$python_ver" ]; then
+    dep_found "Python" "${python_ver}"
+  else
+    dep_warn "Python" "3.10+ not found — training features unavailable"
+  fi
+
+  stop_spinner
 }
 
-# fnm (Fast Node Manager — works on Windows Git Bash/MSYS2 where nvm doesn't)
-ensure_fnm() {
-  if command_exists fnm; then
-    ok "fnm already installed"
+# --- Phase 2: Show the audit results ---
+print_dep_plan() {
+  local i name status detail
+  for i in "${!DEP_NAMES[@]}"; do
+    name="${DEP_NAMES[$i]}"
+    status="${DEP_STATUSES[$i]}"
+    detail="${DEP_DETAILS[$i]}"
+    case "$status" in
+      ok)      printf "  ${CHECK}  %-24s${DIM}%s${RESET}\n" "$name" "$detail" ;;
+      install) printf "  ${CROSS}  %-24s${YELLOW}%s${RESET}\n" "$name" "$detail" ;;
+      upgrade) printf "  ${WARN_SYM}  %-24s${YELLOW}%s${RESET}\n" "$name" "$detail" ;;
+      warn)    printf "  ${WARN_SYM}  %-24s${DIM}%s${RESET}\n" "$name" "$detail" ;;
+    esac
+  done
+  echo ""
+
+  if [ "$DEP_WORK_NEEDED" = true ]; then
+    local install_count=0 upgrade_count=0
+    for status in "${DEP_STATUSES[@]}"; do
+      case "$status" in
+        install) install_count=$((install_count + 1)) ;;
+        upgrade) upgrade_count=$((upgrade_count + 1)) ;;
+      esac
+    done
+    local summary=""
+    [ "$install_count" -gt 0 ] && summary="${install_count} to install"
+    if [ "$upgrade_count" -gt 0 ]; then
+      [ -n "$summary" ] && summary="$summary, "
+      summary="${summary}${upgrade_count} to upgrade"
+    fi
+    printf "  ${ARROW}  ${BOLD}%s${RESET}\n" "$summary"
+  else
+    printf "  ${CHECK}  ${BOLD}All dependencies satisfied${RESET}\n"
+  fi
+}
+
+# --- Phase 3: Individual installers (install/upgrade only, no pre-check) ---
+
+install_xcode_clt() {
+  # Recheck — may have been installed between audit and now
+  if xcode-select -p >/dev/null 2>&1 \
+     && /usr/bin/xcrun --find clang >/dev/null 2>&1; then
+    step_ok "Xcode Command Line Tools"
     return
   fi
-  info "Installing fnm (Fast Node Manager for Windows)..."
-  # fnm provides a Windows installer via PowerShell
-  if command_exists powershell.exe; then
-    powershell.exe -Command "irm https://fnm.vercel.app/install | iex" || {
-      warn "fnm PowerShell install failed, trying cargo..."
-      if command_exists cargo; then
-        cargo install fnm
+
+  xcode-select --install >/dev/null 2>&1 || true
+  step_warn "User authorization needed for Xcode Command Line Tools — approve the dialog to continue"
+
+  local waited=0
+  while ! /usr/bin/xcrun --find clang >/dev/null 2>&1; do
+    sleep 5
+    waited=$((waited + 5))
+    if [ "$waited" -ge 1800 ]; then
+      step_fail "Xcode CLT installation timed out — please install manually and re-run"
+    fi
+  done
+  step_ok "Xcode Command Line Tools installed"
+}
+
+install_curl() {
+  case "$OS" in
+    macos) ;;
+    linux)
+      require_sudo "curl" "is required for downloading packages and needs user authorization to install"
+      start_spinner "Installing curl..."
+      case "$(detect_pkg_manager)" in
+        apt)    run_silent "curl" sudo apt-get update -qq && run_silent "curl" sudo apt-get install -yqq curl ;;
+        dnf)    run_silent "curl" sudo dnf install -y curl ;;
+        yum)    run_silent "curl" sudo yum install -y curl ;;
+        pacman) run_silent "curl" sudo pacman -Sy --noconfirm curl ;;
+        *)      step_fail "Cannot install curl — install manually and re-run" ;;
+      esac ;;
+    windows) step_fail "curl not found — please install Git for Windows" ;;
+  esac
+  command_exists curl || step_fail "curl installation failed"
+  step_ok "curl installed"
+}
+
+install_git() {
+  # On macOS, Xcode CLT provides git — recheck after CLT install
+  if command_exists git && git --version >/dev/null 2>&1; then
+    step_ok "git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+    return
+  fi
+
+  case "$OS" in
+    macos)
+      start_spinner "Installing git..."
+      if command_exists brew; then
+        run_silent "git" brew install git
       else
-        fail "Cannot install fnm. Please install it manually: https://github.com/Schniz/fnm#installation"
+        step_fail "git not available — Xcode CLT installation may have failed"
+      fi
+      ;;
+    linux)
+      require_sudo "git" "is required for source control and needs user authorization to install"
+      start_spinner "Installing git..."
+      case "$(detect_pkg_manager)" in
+        apt)    run_silent "git" sudo apt-get update -qq && run_silent "git" sudo apt-get install -yqq git ;;
+        dnf)    run_silent "git" sudo dnf install -y git ;;
+        yum)    run_silent "git" sudo yum install -y git ;;
+        pacman) run_silent "git" sudo pacman -Sy --noconfirm git ;;
+        *)      step_fail "Cannot install git — install manually and re-run" ;;
+      esac ;;
+    windows) step_fail "Please install Git for Windows: https://git-scm.com/download/win" ;;
+  esac
+  command_exists git || step_fail "git installation failed"
+  step_ok "git installed"
+}
+
+install_nvm() {
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    . "$NVM_DIR/nvm.sh"
+    return
+  fi
+  run_silent "nvm" bash -c 'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash'
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  . "$NVM_DIR/nvm.sh"
+  command_exists nvm || step_fail "nvm installation failed"
+}
+
+install_fnm() {
+  if command_exists fnm; then return; fi
+  if command_exists powershell.exe; then
+    run_silent "fnm" powershell.exe -Command "irm https://fnm.vercel.app/install | iex" || {
+      if command_exists cargo; then
+        run_silent "fnm" cargo install fnm
+      else
+        step_fail "Cannot install fnm — please install manually"
       fi
     }
   elif command_exists cargo; then
-    cargo install fnm
+    run_silent "fnm" cargo install fnm
   else
-    fail "Cannot install fnm. Please install it manually: https://github.com/Schniz/fnm#installation"
+    step_fail "Cannot install fnm — please install manually"
   fi
-
-  # Add fnm to PATH for this session
   eval "$(fnm env --shell bash 2>/dev/null)" || true
-  command_exists fnm || fail "fnm installation failed"
-  ok "fnm installed"
+  command_exists fnm || step_fail "fnm installation failed"
 }
 
-ensure_node() {
+install_node() {
+  start_spinner "Installing Node.js v${NODE_VERSION}..."
   if [ "$OS" = "windows" ]; then
-    ensure_fnm
-    local current=""
-    if command_exists node; then
-      current="$(node -v | sed 's/^v//')"
-    fi
-    if [ "$current" = "$NODE_VERSION" ]; then
-      ok "Node.js v${current} already installed"
-      return
-    fi
-    if [ -n "$current" ]; then
-      info "Node.js v${current} found but v${NODE_VERSION} required — switching..."
-    else
-      info "Installing Node.js v${NODE_VERSION} via fnm..."
-    fi
-    fnm install "$NODE_VERSION"
-    fnm use "$NODE_VERSION"
+    install_fnm
+    run_silent "node" fnm install "$NODE_VERSION"
+    run_silent "node" fnm use "$NODE_VERSION"
     eval "$(fnm env --shell bash 2>/dev/null)" || true
-    ok "Node.js $(node -v) active"
   else
-    ensure_nvm
-    local current=""
-    if command_exists node; then
-      current="$(node -v | sed 's/^v//')"
-    fi
-    if [ "$current" = "$NODE_VERSION" ]; then
-      ok "Node.js v${current} already installed"
-      return
-    fi
-    if [ -n "$current" ]; then
-      info "Node.js v${current} found but v${NODE_VERSION} required — upgrading..."
-    else
-      info "Installing Node.js v${NODE_VERSION} via nvm..."
-    fi
-    nvm install "$NODE_VERSION"
-    nvm use "$NODE_VERSION"
-    ok "Node.js $(node -v) active"
+    install_nvm
+    run_silent "node" nvm install "$NODE_VERSION"
+    run_silent "node" nvm use "$NODE_VERSION"
   fi
+  command_exists node || step_fail "Node.js installation failed"
+  step_ok "Node.js $(node -v)"
 }
 
-ensure_yarn() {
-  if command_exists yarn; then
-    ok "yarn already installed ($(yarn --version))"
-    return
-  fi
-  info "Installing yarn via corepack..."
-  corepack enable 2>/dev/null || npm install -g yarn
-  command_exists yarn || fail "yarn installation failed"
-  ok "yarn installed"
+install_yarn() {
+  start_spinner "Installing yarn..."
+  run_silent "yarn" bash -c 'corepack enable 2>/dev/null || npm install -g yarn'
+  command_exists yarn || step_fail "yarn installation failed"
+  step_ok "yarn $(yarn --version)"
 }
 
-ensure_curl() {
-  if command_exists curl; then
-    ok "curl already installed"
-    return
-  fi
-  info "Installing curl..."
+install_build_tools() {
   case "$OS" in
-    macos)   ;; # curl ships with macOS
-    linux)
-      case "$(detect_pkg_manager)" in
-        apt)    sudo apt-get update -qq && sudo apt-get install -yqq curl ;;
-        dnf)    sudo dnf install -y curl ;;
-        yum)    sudo yum install -y curl ;;
-        pacman) sudo pacman -Sy --noconfirm curl ;;
-        *)      fail "Cannot auto-install curl. Please install it manually." ;;
-      esac ;;
-    windows)
-      # curl is bundled with Windows 10+ and Git Bash
-      warn "curl not found. It should be bundled with Git for Windows."
-      warn "Please reinstall Git for Windows or install curl manually."
-      fail "curl is required."
-      ;;
-  esac
-  command_exists curl || fail "curl installation failed"
-  ok "curl installed"
-}
-
-ensure_build_tools() {
-  case "$OS" in
-    macos)
-      if ! xcode-select -p >/dev/null 2>&1; then
-        info "Installing Xcode command-line tools (needed for native modules)..."
-        xcode-select --install 2>/dev/null || true
-        warn "If a dialog appeared, finish the Xcode CLT install and re-run this script."
-      else
-        ok "Xcode CLT present"
-      fi
-      ;;
     linux)
       local pkgs_needed=""
       command_exists make    || pkgs_needed="$pkgs_needed build-essential"
       command_exists python3 || pkgs_needed="$pkgs_needed python3"
-      if [ -n "$pkgs_needed" ]; then
-        info "Installing build tools:$pkgs_needed"
-        case "$(detect_pkg_manager)" in
-          apt)    sudo apt-get update -qq && sudo apt-get install -yqq $pkgs_needed ;;
-          dnf)    sudo dnf install -y gcc gcc-c++ make python3 ;;
-          yum)    sudo yum install -y gcc gcc-c++ make python3 ;;
-          pacman) sudo pacman -Sy --noconfirm base-devel python ;;
-          *)      warn "Please ensure C/C++ build tools are installed." ;;
-        esac
-      else
-        ok "Build tools present"
-      fi
+      require_sudo "Build tools (${pkgs_needed# })" "are required for compiling native modules and need user authorization to install"
+      start_spinner "Installing build tools..."
+      case "$(detect_pkg_manager)" in
+        apt)    run_silent "build-tools" sudo apt-get update -qq && run_silent "build-tools" sudo apt-get install -yqq $pkgs_needed ;;
+        dnf)    run_silent "build-tools" sudo dnf install -y gcc gcc-c++ make python3 ;;
+        yum)    run_silent "build-tools" sudo yum install -y gcc gcc-c++ make python3 ;;
+        pacman) run_silent "build-tools" sudo pacman -Sy --noconfirm base-devel python ;;
+        *)      step_warn "Please ensure C/C++ build tools are installed" ; return ;;
+      esac
       ;;
     windows)
-      # Check if cl.exe (MSVC) is available — indicates VS Build Tools installed
-      if command_exists cl || [ -d "${PROGRAMFILES:-C:\\Program Files}/Microsoft Visual Studio" ]; then
-        ok "Visual Studio Build Tools detected"
-      else
-        warn "Visual Studio Build Tools not detected."
-        warn "If native module compilation fails, install them from:"
-        warn "  https://visualstudio.microsoft.com/visual-cpp-build-tools/"
-        warn "  Select 'Desktop development with C++' workload."
-        # Also try the npm windows-build-tools package as a convenience
-        info "Attempting to install build tools via npm..."
-        npm install --global windows-build-tools 2>/dev/null || {
-          warn "Automatic build tools install failed. Please install manually if needed."
-        }
-      fi
+      run_silent "build-tools" npm install --global windows-build-tools 2>/dev/null || true
+      step_warn "VS Build Tools — install manually if native modules fail"
+      return
       ;;
   esac
+  step_ok "Build tools installed"
 }
 
-ensure_go() {
-  local required_major=1
-  local required_minor=24
-
-  if command_exists go; then
-    local go_ver
-    go_ver="$(go version | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/^go//')"
-    local cur_major cur_minor
-    cur_major="$(echo "$go_ver" | cut -d. -f1)"
-    cur_minor="$(echo "$go_ver" | cut -d. -f2)"
-    if [ "$cur_major" -gt "$required_major" ] 2>/dev/null || \
-       { [ "$cur_major" -eq "$required_major" ] && [ "$cur_minor" -ge "$required_minor" ]; } 2>/dev/null; then
-      ok "Go already installed (go$go_ver >= $required_major.$required_minor)"
-      return
-    fi
-    warn "Go go$go_ver found but >= $required_major.$required_minor required — upgrading..."
-  else
-    info "Installing Go $GO_VERSION..."
-  fi
-
+install_go() {
   case "$OS" in
     macos)
       if command_exists brew; then
-        # Pin to the required version to avoid installing a too-new or too-old Go
-        brew install "go@${required_major}.${required_minor}" 2>/dev/null \
-          || brew install go 2>/dev/null \
-          || brew upgrade go
-        # Link versioned formula if it was installed as go@1.24
-        brew link --overwrite "go@${required_major}.${required_minor}" 2>/dev/null || true
+        start_spinner "Installing Go ${GO_VERSION}..."
+        run_silent "go" brew install "go@1.24" 2>/dev/null \
+          || run_silent "go" brew install go 2>/dev/null \
+          || run_silent "go" brew upgrade go
+        run_silent "go" brew link --overwrite "go@1.24" 2>/dev/null || true
       else
-        local arch
+        require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs user authorization to install to /usr/local"
+        start_spinner "Installing Go ${GO_VERSION}..."
+        local arch go_arch="amd64"
         arch="$(uname -m)"
-        local go_arch="amd64"
         [ "$arch" = "arm64" ] && go_arch="arm64"
         local go_pkg="go${GO_VERSION}.darwin-${go_arch}.pkg"
-        local go_url="https://go.dev/dl/${go_pkg}"
-        info "Downloading $go_url ..."
-        curl -fsSL -o "/tmp/$go_pkg" "$go_url"
-        info "Installing Go via pkg installer (may require password)..."
-        sudo installer -pkg "/tmp/$go_pkg" -target /
+        run_silent "go-download" curl -fsSL -o "/tmp/$go_pkg" "https://go.dev/dl/${go_pkg}"
+        run_silent "go-install" sudo installer -pkg "/tmp/$go_pkg" -target /
         rm -f "/tmp/$go_pkg"
         export PATH="/usr/local/go/bin:$PATH"
       fi
       ;;
     linux)
-      local arch
+      require_sudo "Go ${GO_VERSION}" "is required for building backend services and needs user authorization to install to /usr/local"
+      start_spinner "Installing Go ${GO_VERSION}..."
+      local arch go_arch="amd64"
       arch="$(uname -m)"
-      local go_arch="amd64"
       [ "$arch" = "aarch64" ] && go_arch="arm64"
       [ "$arch" = "armv7l" ]  && go_arch="armv6l"
       local go_tar="go${GO_VERSION}.linux-${go_arch}.tar.gz"
-      local go_url="https://go.dev/dl/${go_tar}"
-      info "Downloading $go_url ..."
-      curl -fsSL -o "/tmp/$go_tar" "$go_url"
-      info "Extracting to /usr/local/go ..."
-      sudo rm -rf /usr/local/go
-      sudo tar -C /usr/local -xzf "/tmp/$go_tar"
+      run_silent "go-download" curl -fsSL -o "/tmp/$go_tar" "https://go.dev/dl/${go_tar}"
+      run_silent "go-extract" sudo rm -rf /usr/local/go
+      run_silent "go-extract" sudo tar -C /usr/local -xzf "/tmp/$go_tar"
       rm -f "/tmp/$go_tar"
       export PATH="/usr/local/go/bin:$PATH"
       ;;
     windows)
-      local arch
+      local arch go_arch="amd64"
       arch="$(uname -m)"
-      local go_arch="amd64"
-      [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ] && go_arch="arm64"
+      { [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ]; } && go_arch="arm64"
       local go_msi="go${GO_VERSION}.windows-${go_arch}.msi"
-      local go_url="https://go.dev/dl/${go_msi}"
-      info "Downloading $go_url ..."
-      curl -fsSL -o "/tmp/$go_msi" "$go_url"
-      info "Installing Go via MSI (may require elevation)..."
-      # msiexec needs a Windows-style path
+      run_silent "go-download" curl -fsSL -o "/tmp/$go_msi" "https://go.dev/dl/${go_msi}"
       local win_path
       win_path="$(cygpath -w "/tmp/$go_msi" 2>/dev/null || echo "/tmp/$go_msi")"
-      msiexec.exe /i "$win_path" /quiet /norestart 2>/dev/null || {
-        warn "Silent MSI install failed. Please run the installer manually: /tmp/$go_msi"
-        warn "Or download from https://go.dev/dl/"
-      }
+      run_silent "go-install" msiexec.exe /i "$win_path" /quiet /norestart 2>/dev/null || true
       rm -f "/tmp/$go_msi"
-      # Refresh PATH (Go installs to C:\Go\bin on Windows)
       export PATH="/c/Go/bin:$PATH"
       ;;
   esac
-
-  command_exists go    || fail "Go installation failed — 'go' not found in PATH"
-  command_exists gofmt || fail "Go installation failed — 'gofmt' not found in PATH"
-  ok "Go $(go version | grep -oE 'go[0-9]+\.[0-9]+\.[0-9]+') installed"
+  # Re-bootstrap PATH so newly installed Go bin dir is picked up
+  bootstrap_path
+  command_exists go    || step_fail "Go installation failed"
+  command_exists gofmt || step_fail "Go installation failed"
+  step_ok "Go $(go version | grep -oE 'go[0-9]+\.[0-9]+\.[0-9]+')"
 }
 
-# Check for Python 3.10+ (needed for training — warn early, don't block install)
-check_python() {
-  local python_cmd=""
-  for cmd in python3.13 python3.12 python3.11 python3.10 python3 python; do
-    if command_exists "$cmd"; then
-      local ver
-      ver="$($cmd --version 2>/dev/null | grep -oE '3\.[0-9]+' | head -1)" || continue
-      local minor
-      minor="$(echo "$ver" | cut -d. -f2)"
-      if [ "${minor:-0}" -ge 10 ] 2>/dev/null; then
-        python_cmd="$cmd"
-        break
-      fi
-    fi
-  done
+# --- Phase 4: Execute the plan — install/upgrade only what's needed ---
+execute_dep_plan() {
+  echo ""
+  local i name status
+  for i in "${!DEP_NAMES[@]}"; do
+    name="${DEP_NAMES[$i]}"
+    status="${DEP_STATUSES[$i]}"
+    [ "$status" = "ok" ] || [ "$status" = "warn" ] && continue
 
-  if [ -n "$python_cmd" ]; then
-    ok "Python 3.10+ found ($($python_cmd --version)) — training features available"
-  else
-    warn "Python 3.10+ not found. Training features will not work until you install it."
-    warn "  macOS:   brew install python@3.12"
-    warn "  Linux:   sudo apt install python3.12  (or equivalent)"
-    warn "  Windows: https://www.python.org/downloads/"
+    case "$name" in
+      "Xcode CLT")    install_xcode_clt ;;
+      "curl")         install_curl ;;
+      "git")          install_git ;;
+      "Node.js")      install_node ;;
+      "yarn")         install_yarn ;;
+      "Build tools")  install_build_tools ;;
+      "Go")           install_go ;;
+    esac
+  done
+}
+
+# --- Phase 5: Verify everything works ---
+verify_dependencies() {
+  local failed=""
+
+  if [ "$OS" = "macos" ] && ! /usr/bin/xcrun --find clang >/dev/null 2>&1; then
+    failed="${failed} Xcode CLT"
   fi
+  command_exists curl  || failed="${failed} curl"
+  command_exists git   || failed="${failed} git"
+  command_exists node  || failed="${failed} node"
+  command_exists yarn  || failed="${failed} yarn"
+  command_exists go    || failed="${failed} go"
+
+  if [ -n "$failed" ]; then
+    step_fail "Dependencies still missing after install:${failed} — check ${INSTALL_LOG}"
+  fi
+}
+
+# --- Main entry point ---
+install_dependencies() {
+  section "Dependencies"
+  audit_dependencies
+  print_dep_plan
+  if [ "$DEP_WORK_NEEDED" = true ]; then
+    execute_dep_plan
+    echo ""
+    verify_dependencies
+    printf "\n  ${CHECK}  ${BOLD}All dependencies satisfied${RESET}\n"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Resolve the target version
+# ---------------------------------------------------------------------------
+resolve_version() {
+  if [ "$USE_NIGHTLY" = true ]; then
+    INSTALL_REF="main"
+    step_ok "Target: main (nightly)"
+    return
+  fi
+
+  start_spinner "Checking for latest release..."
+  local api_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
+  local release_json
+  release_json="$(curl -fsSL "$api_url" 2>/dev/null)" || {
+    INSTALL_REF="main"
+    step_warn "Could not fetch releases — using main branch"
+    return
+  }
+
+  INSTALL_REF="$(echo "$release_json" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+
+  if [ -z "$INSTALL_REF" ]; then
+    INSTALL_REF="main"
+    step_warn "No releases found — using main branch"
+    return
+  fi
+
+  step_ok "Target: ${INSTALL_REF}"
 }
 
 # ---------------------------------------------------------------------------
 # Clone / update repo
 # ---------------------------------------------------------------------------
-ensure_repo() {
-  # If we're already inside the sulla-desktop repo, use that
-  if [ -f "package.json" ] && grep -q '"sulla-desktop"' package.json 2>/dev/null; then
-    REPO_DIR="$(pwd)"
-    ok "Already inside sulla-desktop repo"
-    return
-  fi
+checkout_version() {
+  # Always fetch latest from remote
+  run_silent "fetch" git fetch origin --tags --force 2>/dev/null || true
 
-  # Always clone into the user's home directory
-  local target="$HOME/$REPO_DIR"
-
-  if [ -d "$target" ] && [ -d "$target/.git" ]; then
-    # Repo dir exists with a valid .git — just update
-    info "Updating existing repo at $target ..."
-    cd "$target"
-    # Stash any local changes before pulling to prevent ff-only failures
-    local stashed=false
-    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-      warn "Local changes detected — stashing before update..."
-      git stash --include-untracked 2>/dev/null && stashed=true
-    fi
-    git pull --ff-only || {
-      warn "git pull --ff-only failed — trying rebase..."
-      git pull --rebase || warn "git pull failed — continuing with existing code"
-    }
-    if [ "$stashed" = true ]; then
-      git stash pop 2>/dev/null || warn "Could not restore stashed changes (may need manual 'git stash pop')"
-    fi
-    REPO_DIR="$(pwd)"
-  elif [ -d "$target" ]; then
-    # Dir exists but is not a valid git repo (partial clone) — remove and re-clone
-    warn "Found incomplete $target from a previous run — removing and re-cloning..."
-    rm -rf "$target"
-    git clone "$REPO_URL" "$target"
-    cd "$target"
-    REPO_DIR="$(pwd)"
+  if [ "$INSTALL_REF" = "main" ]; then
+    run_silent "checkout" git checkout main 2>/dev/null || true
+    # Force-reset to match remote — installer should always use latest code
+    run_silent "reset" git reset --hard origin/main 2>/dev/null || true
   else
-    info "Cloning sulla-desktop into $target ..."
-    git clone "$REPO_URL" "$target"
-    cd "$target"
-    REPO_DIR="$(pwd)"
+    local current_tag
+    current_tag="$(git describe --tags --exact-match 2>/dev/null || true)"
+    if [ "$current_tag" = "$INSTALL_REF" ]; then
+      return
+    fi
+    run_silent "checkout" git checkout "$INSTALL_REF" 2>/dev/null || {
+      run_silent "fetch-tag" git fetch origin "refs/tags/$INSTALL_REF:refs/tags/$INSTALL_REF" 2>/dev/null || true
+      run_silent "checkout" git checkout "$INSTALL_REF" || step_fail "Failed to checkout ${INSTALL_REF}"
+    }
   fi
-  ok "Repo ready at $REPO_DIR"
+}
+
+# Safely remove the install directory.
+# Guards against empty/dangerous paths and verifies it looks like our repo.
+safe_remove_install_dir() {
+  local dir="$1"
+
+  # Never remove empty, root, or home paths
+  if [ -z "$dir" ] || [ "$dir" = "/" ] || [ "$dir" = "$HOME" ]; then
+    step_fail "Refusing to remove dangerous path: '${dir}'"
+  fi
+
+  # Must be an absolute path under $HOME
+  case "$dir" in
+    "$HOME"/*) ;; # OK — under home directory
+    *) step_fail "Refusing to remove path outside \$HOME: '${dir}'" ;;
+  esac
+
+  # Must contain our repo marker (package.json with sulla-desktop)
+  if [ -d "$dir" ]; then
+    if [ -f "$dir/package.json" ] && grep -q '"sulla-desktop"' "$dir/package.json" 2>/dev/null; then
+      rm -rf "$dir"
+    elif [ -d "$dir/.git" ]; then
+      # Has .git but no package.json — still likely ours, allow removal
+      rm -rf "$dir"
+    else
+      step_fail "Directory '${dir}' does not look like a sulla-desktop repo — refusing to remove"
+    fi
+  fi
 }
 
 # ---------------------------------------------------------------------------
-# Install deps, build, launch
+# Reset first-run state so the app re-runs its setup wizard on next launch.
+# Removes only the settings file and fallback lock — does NOT touch the Lima
+# VM, Docker containers, volumes, or any other user data.
+# ---------------------------------------------------------------------------
+reset_first_run_state() {
+  local removed=false
+
+  # 1. settings.json — its absence triggers _isFirstRun = true
+  case "$OS" in
+    macos)
+      local settings_file="$HOME/Library/Preferences/rancher-desktop/settings.json"
+      local fallback_file="$HOME/Library/Application Support/Sulla Desktop/sulla-settings-fallback.json"
+      ;;
+    linux)
+      local settings_file="$HOME/.config/rancher-desktop/settings.json"
+      local fallback_file="$HOME/.config/Sulla Desktop/sulla-settings-fallback.json"
+      ;;
+    windows)
+      local settings_file="$LOCALAPPDATA/rancher-desktop/settings.json"
+      local fallback_file="$LOCALAPPDATA/Sulla Desktop/sulla-settings-fallback.json"
+      ;;
+  esac
+
+  if [ -f "$settings_file" ]; then
+    rm -f "$settings_file"
+    removed=true
+  fi
+
+  # 2. Fallback file — contains sullaInstalled flag that also blocks first-run
+  if [ -f "$fallback_file" ]; then
+    rm -f "$fallback_file"
+    removed=true
+  fi
+
+  if [ "$removed" = true ]; then
+    echo "  [nightly] Reset first-run state (containers & data preserved)" >> "$INSTALL_LOG"
+  fi
+}
+
+ensure_repo() {
+  start_spinner "Setting up repository..."
+
+  # If we're already inside the sulla-desktop repo, use that
+  if [ -f "package.json" ] && grep -q '"sulla-desktop"' package.json 2>/dev/null; then
+    REPO_DIR="$(pwd)"
+    checkout_version
+    step_ok "Repository ready (in-place)"
+    return
+  fi
+
+  # Nightly: wipe repo and reset first-run state so setup runs again.
+  # This does NOT delete user data (Lima VM, containers, volumes).
+  if [ "$USE_NIGHTLY" = true ] && [ -d "$INSTALL_DIR" ]; then
+    safe_remove_install_dir "$INSTALL_DIR"
+    reset_first_run_state
+  fi
+
+  if [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
+    cd "$INSTALL_DIR"
+    REPO_DIR="$(pwd)"
+  elif [ -d "$INSTALL_DIR" ]; then
+    safe_remove_install_dir "$INSTALL_DIR"
+    run_silent "clone" git clone "$REPO_URL" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    REPO_DIR="$(pwd)"
+  else
+    run_silent "clone" git clone "$REPO_URL" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    REPO_DIR="$(pwd)"
+  fi
+
+  checkout_version
+  step_ok "Repository ready (${INSTALL_REF})"
+}
+
+# ---------------------------------------------------------------------------
+# Artifact verification — check real files, not exit codes
+# ---------------------------------------------------------------------------
+
+# Verify that yarn install produced a working node_modules tree.
+# Only checks what yarn install actually creates — node_modules.
+# Platform binaries (rdctl, docker, kubectl) and preload.js are
+# produced by postinstall/build, verified separately in build_app.
+verify_install_artifacts() {
+  [ -f "node_modules/.yarn-integrity" ] || return 1
+  [ -d "node_modules/electron" ]        || return 1
+  return 0
+}
+
+# Verify that yarn build produced a launchable application.
+# Only checks what yarn build creates — files in dist/.
+verify_build_artifacts() {
+  [ -f "dist/app/background.js" ] || return 1
+  [ -f "dist/app/index.html" ]    || return 1
+  return 0
+}
+
+# Dump full install verification results — shows every check with pass/fail
+dump_install_verification() {
+  echo ""
+  printf "  ${WHITE}${BOLD}Install Verification Report${RESET}\n"
+  printf "  ${DIM}──────────────────────────${RESET}\n"
+
+  local all_ok=true
+
+  # node_modules integrity
+  if [ -f "node_modules/.yarn-integrity" ]; then
+    printf "  ${CHECK}  node_modules/.yarn-integrity\n"
+  else
+    printf "  ${CROSS}  node_modules/.yarn-integrity ${RED}MISSING${RESET}\n"
+    all_ok=false
+  fi
+
+  # Electron
+  if [ -d "node_modules/electron" ]; then
+    printf "  ${CHECK}  node_modules/electron/\n"
+  else
+    printf "  ${CROSS}  node_modules/electron/ ${RED}MISSING${RESET}\n"
+    all_ok=false
+  fi
+
+  # Show last 30 lines of install log for context
+  echo ""
+  printf "  ${DIM}Last 30 lines of %s:${RESET}\n" "$INSTALL_LOG"
+  tail -30 "$INSTALL_LOG" 2>/dev/null | while IFS= read -r line; do
+    printf "  ${DIM}  %s${RESET}\n" "$line"
+  done
+  echo ""
+
+  if [ "$all_ok" = true ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Dump full build verification results
+dump_build_verification() {
+  echo ""
+  printf "  ${WHITE}${BOLD}Build Verification Report${RESET}\n"
+  printf "  ${DIM}────────────────────────${RESET}\n"
+
+  if [ -f "dist/app/background.js" ]; then
+    printf "  ${CHECK}  dist/app/background.js\n"
+  else
+    printf "  ${CROSS}  dist/app/background.js ${RED}MISSING${RESET}\n"
+  fi
+
+  if [ -f "dist/app/index.html" ]; then
+    printf "  ${CHECK}  dist/app/index.html\n"
+  else
+    printf "  ${CROSS}  dist/app/index.html ${RED}MISSING${RESET}\n"
+  fi
+
+  # Show what IS in dist/app
+  echo ""
+  printf "  ${DIM}Contents of dist/app/:${RESET}\n"
+  if [ -d "dist/app" ]; then
+    ls -la dist/app/ 2>/dev/null | while IFS= read -r line; do
+      printf "  ${DIM}  %s${RESET}\n" "$line"
+    done
+  else
+    printf "  ${DIM}  (directory does not exist)${RESET}\n"
+  fi
+
+  # Show last 30 lines of install log for context
+  echo ""
+  printf "  ${DIM}Last 30 lines of %s:${RESET}\n" "$INSTALL_LOG"
+  tail -30 "$INSTALL_LOG" 2>/dev/null | while IFS= read -r line; do
+    printf "  ${DIM}  %s${RESET}\n" "$line"
+  done
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Pre-build PATH verification — catch missing tools before Node subprocesses
+# fail with cryptic ENOENT errors deep in postinstall scripts.
+# ---------------------------------------------------------------------------
+verify_build_path() {
+  local missing=""
+  command_exists node   || missing="${missing} node"
+  command_exists yarn   || missing="${missing} yarn"
+  command_exists git    || missing="${missing} git"
+  command_exists go     || missing="${missing} go"
+  command_exists gofmt  || missing="${missing} gofmt"
+  if [ -n "$missing" ]; then
+    echo "PATH=$PATH" >> "$INSTALL_LOG"
+    step_fail "Build cannot proceed — tools not in PATH:${missing}. Check ${INSTALL_LOG}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Install deps & build — with artifact verification
 # ---------------------------------------------------------------------------
 install_deps() {
-  # Remove stale package-lock.json (we use yarn.lock)
   [ -f "package-lock.json" ] && rm -f package-lock.json
 
-  # Ensure Node version manager has the right Node active in this shell
   if [ "$OS" = "windows" ]; then
     eval "$(fnm env --shell bash 2>/dev/null)" || true
     fnm use "$NODE_VERSION" >/dev/null 2>&1 || true
   else
-    ensure_nvm
+    install_nvm
     nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
 
-  # Always run yarn install — it's already idempotent and handles
-  # partially-built states (e.g. node_modules present but Go binaries missing).
-  # The postinstall script builds Go binaries, downloads deps, etc.
-  info "Installing dependencies (this may take a few minutes on first run)..."
-  yarn install --ignore-engines || {
-    warn "yarn install failed — retrying with clean state..."
-    rm -rf node_modules
-    yarn install --ignore-engines
-  }
-  ok "Dependencies installed"
-}
+  # Re-bootstrap PATH so Go, gofmt, git, and any other tools installed
+  # during the dependency phase are visible to Node subprocesses (yarn
+  # postinstall scripts call gofmt, git describe, etc.)
+  bootstrap_path
 
-build_app() {
-  if [ -d "dist" ] && [ -f "dist/app/background.js" ]; then
-    ok "Build artifacts present — skipping build (run 'yarn build' to rebuild)"
+  # Verify all build tools are reachable before handing off to Node
+  verify_build_path
+
+  # Idempotent: if all install artifacts already exist, skip entirely
+  if verify_install_artifacts; then
+    step_ok "Packages already installed — verified"
     return
   fi
 
-  # Clean up partial build artifacts from a failed previous run
-  if [ -d "dist" ]; then
-    warn "Found incomplete build from a previous run — cleaning up..."
+  # On Linux, node-pty ships no prebuilds and must compile from source via
+  # node-gyp.  Ensure node-gyp is globally available so lifecycle scripts
+  # can find it regardless of installation order.
+  if [ "$OS" = "linux" ] && ! command_exists node-gyp; then
+    start_spinner "Installing node-gyp (needed for native modules on Linux)..."
+    run_silent "node-gyp" npm install -g node-gyp
+    step_ok "node-gyp installed"
+  fi
+
+  start_spinner "Installing packages..."
+  run_with_status "Installing packages" yarn install --ignore-engines --ignore-platform || true
+  stop_spinner
+
+  # Don't trust the exit code — verify artifacts instead.
+  if verify_install_artifacts; then
+    step_ok "Packages installed"
+  else
+    dump_install_verification
+    step_fail "Package installation incomplete — see report above"
+  fi
+}
+
+build_app() {
+  # Idempotent: if build artifacts are already valid for this ref, skip
+  if verify_build_artifacts; then
+    local build_ref=""
+    [ -f "dist/.build-ref" ] && build_ref="$(cat dist/.build-ref 2>/dev/null)"
+    if [ "$build_ref" = "$INSTALL_REF" ]; then
+      step_ok "Build up to date (${INSTALL_REF})"
+      return
+    fi
+    if [ -z "$build_ref" ]; then
+      # No ref marker but valid build — accept it
+      step_ok "Build artifacts present (cached)"
+      return
+    fi
+    # Stale build from a different ref — rebuild
+    step_warn "Stale build (${build_ref}) — rebuilding for ${INSTALL_REF}"
     rm -rf dist
   fi
 
-  # Scale --max-old-space-size to available RAM (leave 2 GB for OS)
+  if [ -d "dist" ]; then
+    rm -rf dist
+  fi
+
+  # Re-verify PATH before build (nvm/fnm may have altered it)
+  bootstrap_path
+  verify_build_path
+
   local ram_gb
   ram_gb="$(get_ram_gb)"
-  local heap_mb=8192  # default 8 GB
+  local heap_mb=8192
   if [ "${ram_gb:-0}" -le 8 ] 2>/dev/null; then
     heap_mb=4096
   elif [ "${ram_gb:-0}" -le 16 ] 2>/dev/null; then
@@ -533,29 +1295,34 @@ build_app() {
   else
     heap_mb=12288
   fi
-  info "Building Sulla Desktop (heap=${heap_mb}MB, this may take several minutes)..."
-  NODE_OPTIONS="--max-old-space-size=$heap_mb" yarn build
 
-  # Verify build succeeded
-  if [ ! -f "dist/app/background.js" ]; then
-    fail "Build failed — dist/app/background.js not found. Check build output above."
+  start_spinner "Compiling desktop application..."
+  run_with_status "Compiling" env NODE_OPTIONS="--max-old-space-size=$heap_mb" yarn build || true
+  stop_spinner
+
+  # Verify by artifacts, not exit code
+  if verify_build_artifacts; then
+    echo "$INSTALL_REF" > dist/.build-ref
+    step_ok "Desktop application compiled"
+  else
+    dump_build_verification
+    step_fail "Compilation failed — see report above"
   fi
-  ok "Build complete"
 }
 
 create_shortcut() {
+  start_spinner "Creating application shortcut..."
   case "$OS" in
     macos)
       local source_app="$REPO_DIR/Sulla Desktop.app"
       local desktop_app="$HOME/Desktop/Sulla Desktop.app"
       if [ ! -d "$source_app" ]; then
-        warn "Sulla Desktop.app not found at $source_app — skipping Desktop copy"
+        step_warn "Shortcut skipped — .app bundle not found"
         return
       fi
-      info "Copying Sulla Desktop.app to Desktop..."
       rm -rf "$desktop_app"
       ditto "$source_app" "$desktop_app"
-      ok "Desktop app copied to $desktop_app"
+      step_ok "Desktop shortcut created"
       ;;
     linux)
       local desktop_file="$HOME/.local/share/applications/sulla-desktop.desktop"
@@ -564,19 +1331,17 @@ create_shortcut() {
 [Desktop Entry]
 Name=Sulla Desktop
 Comment=Personal AI Assistant
-Exec=bash -c 'cd "$REPO_DIR" && NODE_NO_WARNINGS=1 npx electron .'
+Exec=bash -c 'export SULLA_PROJECT_DIR="$REPO_DIR" && cd "$REPO_DIR" && NODE_NO_WARNINGS=1 npx electron .'
 Icon=$REPO_DIR/assets/logo-robot-light-nobg.png
 Terminal=false
 Type=Application
 Categories=Utility;Development;
 StartupNotify=true
 DESKTOP
-      # Update desktop database if available
       command_exists update-desktop-database && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-      ok "Linux .desktop entry created at $desktop_file"
+      step_ok "Desktop shortcut created"
       ;;
     windows)
-      # Create a shortcut on the Windows Desktop via PowerShell
       local desktop_path
       desktop_path="$(cmd.exe /C 'echo %USERPROFILE%\Desktop' 2>/dev/null | tr -d '\r')" \
         || desktop_path="$HOME/Desktop"
@@ -588,21 +1353,24 @@ DESKTOP
           \$ws = New-Object -ComObject WScript.Shell;
           \$sc = \$ws.CreateShortcut('${desktop_path}\\Sulla Desktop.lnk');
           \$sc.TargetPath = 'cmd.exe';
-          \$sc.Arguments = '/c cd /d \"${repo_win_path}\" && npx electron .';
+          \$sc.Arguments = '/c cd /d \"${repo_win_path}\" && set SULLA_PROJECT_DIR=${repo_win_path} && npx electron .';
           \$sc.WorkingDirectory = '${repo_win_path}';
           \$sc.Description = 'Sulla Desktop — Personal AI Assistant';
           \$sc.Save()
-        " 2>/dev/null && ok "Windows desktop shortcut created" \
-          || warn "Could not create desktop shortcut automatically"
+        " 2>/dev/null && step_ok "Desktop shortcut created" \
+          || step_warn "Could not create desktop shortcut"
       else
-        warn "PowerShell not available — skipping desktop shortcut creation"
+        step_warn "Shortcut skipped — PowerShell not available"
       fi
       ;;
   esac
 }
 
+# ---------------------------------------------------------------------------
+# Launch as background daemon
+# ---------------------------------------------------------------------------
 launch_app() {
-  info "Launching Sulla Desktop..."
+  start_spinner "Launching Sulla Desktop..."
 
   local log_dir
   log_dir="$(get_log_dir)"
@@ -611,33 +1379,72 @@ launch_app() {
 
   case "$OS" in
     macos|linux)
-      # Redirect Electron's stdout/stderr to a log file so it doesn't crash with
-      # "write EIO" when the parent shell (e.g. curl | bash pipe) exits.
-      NODE_NO_WARNINGS=1 nohup npx electron . >>"$log_file" 2>&1 &
+      SULLA_PROJECT_DIR="$REPO_DIR" NODE_NO_WARNINGS=1 nohup npx electron . >>"$log_file" 2>&1 &
       local pid=$!
       disown "$pid" 2>/dev/null || true
-      ok "Sulla Desktop running (PID $pid)"
-      echo ""
-      echo "  Logs:       $log_file"
-      echo "  To stop:    kill $pid"
-      echo "  To restart: cd $REPO_DIR && NODE_NO_WARNINGS=1 npx electron ."
-      echo ""
+      # Give it a moment to ensure it started
+      sleep 1
+      if kill -0 "$pid" 2>/dev/null; then
+        step_ok "Sulla Desktop running (PID ${pid})"
+      else
+        step_warn "Sulla Desktop may not have started — check ${log_file}"
+      fi
       ;;
     windows)
-      # On Windows (Git Bash/MSYS2), nohup/disown may not work reliably.
-      # Use start to launch in a new detached process.
       local repo_win_path
       repo_win_path="$(cygpath -w "$REPO_DIR" 2>/dev/null || echo "$REPO_DIR")"
       local log_win_path
       log_win_path="$(cygpath -w "$log_file" 2>/dev/null || echo "$log_file")"
+      cmd.exe /C "start /B cmd /C \"cd /d ${repo_win_path} && set NODE_NO_WARNINGS=1 && set SULLA_PROJECT_DIR=${repo_win_path} && npx electron . >> ${log_win_path} 2>&1\"" 2>/dev/null \
+        || SULLA_PROJECT_DIR="$REPO_DIR" NODE_NO_WARNINGS=1 npx electron . >>"$log_file" 2>&1 &
+      step_ok "Sulla Desktop launched"
+      ;;
+  esac
 
-      cmd.exe /C "start /B cmd /C \"cd /d ${repo_win_path} && set NODE_NO_WARNINGS=1 && npx electron . >> ${log_win_path} 2>&1\"" 2>/dev/null \
-        || NODE_NO_WARNINGS=1 npx electron . >>"$log_file" 2>&1 &
-      ok "Sulla Desktop launched"
-      echo ""
-      echo "  Logs:       $log_file"
-      echo "  To restart: cd $REPO_DIR && npx electron ."
-      echo ""
+  APP_LOG_FILE="$log_file"
+}
+
+# ---------------------------------------------------------------------------
+# Final success banner
+# ---------------------------------------------------------------------------
+print_success() {
+  # Ensure no spinner is still running before printing the banner
+  stop_spinner 2>/dev/null
+
+  echo ""
+  echo ""
+  printf "  ${GREEN}${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}\n"
+  printf "  ${GREEN}${BOLD}║                                                          ║${RESET}\n"
+  printf "  ${GREEN}${BOLD}║   ${CHECK}  ${WHITE}Installation Complete!${GREEN}                            ║${RESET}\n"
+  printf "  ${GREEN}${BOLD}║                                                          ║${RESET}\n"
+  printf "  ${GREEN}${BOLD}║   ${RESET}${DIM}Everything was installed properly.${GREEN}${BOLD}                  ║${RESET}\n"
+  printf "  ${GREEN}${BOLD}║   ${RESET}${DIM}Sulla is booting up — you can now close this terminal.${GREEN}${BOLD}║${RESET}\n"
+  printf "  ${GREEN}${BOLD}║                                                          ║${RESET}\n"
+  printf "  ${GREEN}${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}\n"
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Auto-close the terminal window after a brief pause
+# ---------------------------------------------------------------------------
+auto_close_terminal() {
+  sleep 3
+  case "$OS" in
+    macos)
+      # Close the Terminal.app or iTerm2 window via AppleScript
+      if [ "$TERM_PROGRAM" = "Apple_Terminal" ]; then
+        osascript -e 'tell application "Terminal" to close front window' 2>/dev/null || true
+      elif [ "$TERM_PROGRAM" = "iTerm.app" ]; then
+        osascript -e 'tell application "iTerm2" to close current session of current window' 2>/dev/null || true
+      fi
+      ;;
+    linux)
+      # Send SIGHUP to the parent shell to close the terminal
+      kill -HUP "$PPID" 2>/dev/null || true
+      ;;
+    windows)
+      # Exit the Git Bash / MSYS2 window
+      exit 0
       ;;
   esac
 }
@@ -646,47 +1453,50 @@ launch_app() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  for arg in "$@"; do
+    case "$arg" in
+      --nightly) USE_NIGHTLY=true ;;
+      --help|-h)
+        echo "Usage: install.sh [--nightly]"
+        echo ""
+        echo "  --nightly   Install from the latest main branch (may be unstable)"
+        echo "              Default: installs the latest stable release"
+        exit 0
+        ;;
+    esac
+  done
+
+  hide_cursor
   echo ""
-  echo "╔══════════════════════════════════════════════════════════════╗"
-  echo "║            Sulla Desktop — Installer                       ║"
-  echo "╚══════════════════════════════════════════════════════════════╝"
+  printf "  ${BOLD}${WHITE}Sulla Desktop${RESET} ${DIM}— Installer${RESET}\n"
   echo ""
 
-  OS="$(detect_os)"
-  info "Detected OS: $OS ($(uname -m))"
-  echo ""
+  # Phase 1: Pre-flight
+  preflight_checks
 
-  info "Pre-flight checks..."
-  preflight_disk_space "$HOME"
-  preflight_display
-  echo ""
+  # Phase 2: Dependencies
+  install_dependencies
 
-  info "Checking dependencies..."
-  ensure_curl
-  ensure_git
-  ensure_node
-  ensure_yarn
-  ensure_build_tools
-  ensure_go
-  check_python
-  echo ""
-
-  info "Setting up repository..."
+  # Phase 3: Version & Repo
+  section "Setup"
+  resolve_version
   ensure_repo
-  echo ""
 
-  info "Installing & building..."
+  # Phase 4: Build
+  section "Build"
   install_deps
   build_app
   create_shortcut
-  echo ""
 
+  # Phase 5: Launch
+  section "Launch"
   launch_app
 
-  echo "╔══════════════════════════════════════════════════════════════╗"
-  echo "║  Installation complete! Sulla Desktop is running.            ║"
-  echo "╚══════════════════════════════════════════════════════════════╝"
-  echo ""
+  # Done — kill any lingering spinner and show the final banner
+  stop_spinner 2>/dev/null
+  show_cursor
+  print_success
+  auto_close_terminal
 }
 
 main "$@"

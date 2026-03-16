@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { redisClient } from "../../database/RedisClient";
+import { BaseTool, ToolResponse } from '../base';
+import { redisClient } from '../../database/RedisClient';
 
 /**
  * Redis Get Tool - Worker class for execution
  */
 export class RedisGetWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { key } = input;
 
@@ -15,12 +15,12 @@ export class RedisGetWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Redis GET ${key}: ${value || '(nil)'}`
+        responseString: `Redis GET ${ key }: ${ value || '(nil)' }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting Redis key: ${(error as Error).message}`
+        responseString: `Error getting Redis key: ${ (error as Error).message }`,
       };
     }
   }

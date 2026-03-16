@@ -1,7 +1,12 @@
 <template>
-  <div class="agent-form" :class="{ dark: isDark }">
+  <div
+    class="agent-form"
+    :class="{ dark: isDark }"
+  >
     <div class="form-inner">
-      <h2 class="form-title">{{ isEditMode ? 'Edit Agent' : 'Create New Agent' }}</h2>
+      <h2 class="form-title">
+        {{ isEditMode ? 'Edit Agent' : 'Create New Agent' }}
+      </h2>
 
       <label class="form-label">Agent ID <span class="required">*</span></label>
       <input
@@ -11,9 +16,19 @@
         :disabled="isEditMode"
         placeholder="my-agent-name"
         @input="enforceSlug"
-      />
-      <p v-if="!isEditMode" class="form-hint">Lowercase letters, numbers, and hyphens only. Becomes the folder name.</p>
-      <p v-if="errors.id" class="form-error">{{ errors.id }}</p>
+      >
+      <p
+        v-if="!isEditMode"
+        class="form-hint"
+      >
+        Lowercase letters, numbers, and hyphens only. Becomes the folder name.
+      </p>
+      <p
+        v-if="errors.id"
+        class="form-error"
+      >
+        {{ errors.id }}
+      </p>
 
       <label class="form-label">Agent Name <span class="required">*</span></label>
       <input
@@ -21,8 +36,13 @@
         class="form-input"
         :class="{ dark: isDark, error: errors.name }"
         placeholder="My Agent"
-      />
-      <p v-if="errors.name" class="form-error">{{ errors.name }}</p>
+      >
+      <p
+        v-if="errors.name"
+        class="form-error"
+      >
+        {{ errors.name }}
+      </p>
 
       <label class="form-label">Description</label>
       <textarea
@@ -31,34 +51,62 @@
         :class="{ dark: isDark }"
         placeholder="What does this agent do?"
         rows="3"
-      ></textarea>
+      />
 
       <label class="form-label">Type <span class="required">*</span></label>
-      <select v-model="form.type" class="form-select" :class="{ dark: isDark }">
-        <option value="planner">Planner</option>
-        <option value="worker">Worker</option>
-        <option value="judge">Judge</option>
+      <select
+        v-model="form.type"
+        class="form-select"
+        :class="{ dark: isDark }"
+      >
+        <option value="planner">
+          Planner
+        </option>
+        <option value="worker">
+          Worker
+        </option>
+        <option value="judge">
+          Judge
+        </option>
       </select>
 
-      <hr class="form-separator" :class="{ dark: isDark }" />
+      <hr
+        class="form-separator"
+        :class="{ dark: isDark }"
+      >
 
-      <h3 class="form-section-title">Agent Assignment</h3>
+      <h3 class="form-section-title">
+        Agent Assignment
+      </h3>
 
-      <label class="default-agent-toggle" :class="{ dark: isDark }">
+      <label
+        class="default-agent-toggle"
+        :class="{ dark: isDark }"
+      >
         <input
-          type="checkbox"
           v-model="form.isDefault"
+          type="checkbox"
           @change="onDefaultToggle"
-        />
+        >
         <span class="toggle-label">Set as Default Agent</span>
       </label>
-      <p class="form-hint">The default agent handles all triggers that don't have a specific agent assigned.</p>
-      <p v-if="currentDefaultAgentId && currentDefaultAgentId !== form.id && form.isDefault" class="form-hint form-hint-warn">
+      <p class="form-hint">
+        The default agent handles all triggers that don't have a specific agent assigned.
+      </p>
+      <p
+        v-if="currentDefaultAgentId && currentDefaultAgentId !== form.id && form.isDefault"
+        class="form-hint form-hint-warn"
+      >
         This will replace "{{ currentDefaultAgentId }}" as the default agent.
       </p>
 
       <label class="form-label">Trigger Assignments</label>
-      <p class="form-hint" style="margin-bottom: 8px;">Assign this agent to handle specific triggers. Leave empty to only use as default.</p>
+      <p
+        class="form-hint"
+        style="margin-bottom: 8px;"
+      >
+        Assign this agent to handle specific triggers. Leave empty to only use as default.
+      </p>
       <div class="trigger-list">
         <label
           v-for="trigger in TRIGGER_TYPES"
@@ -67,30 +115,66 @@
           :class="{ dark: isDark }"
         >
           <input
+            v-model="form.triggers"
             type="checkbox"
             :value="trigger.value"
-            v-model="form.triggers"
             @change="emit('dirty')"
-          />
+          >
           <span class="skill-name">{{ trigger.label }}</span>
-          <span v-if="triggerCurrentAgents[trigger.value] && triggerCurrentAgents[trigger.value] !== form.id" class="trigger-current-agent">
+          <span
+            v-if="triggerCurrentAgents[trigger.value] && triggerCurrentAgents[trigger.value] !== form.id"
+            class="trigger-current-agent"
+          >
             (currently: {{ triggerCurrentAgents[trigger.value] }})
           </span>
         </label>
       </div>
 
-      <hr class="form-separator" :class="{ dark: isDark }" />
+      <hr
+        class="form-separator"
+        :class="{ dark: isDark }"
+      >
 
       <div class="form-section-header">
-        <h3 class="form-section-title">Skills</h3>
-        <div v-if="!skillsLoading && skillsFolders.length > 0" class="bulk-actions">
-          <button class="bulk-btn" :class="{ dark: isDark }" @click="selectAllSkills">Select All</button>
-          <button class="bulk-btn" :class="{ dark: isDark }" @click="unselectAllSkills">Unselect All</button>
+        <h3 class="form-section-title">
+          Skills
+        </h3>
+        <div
+          v-if="!skillsLoading && skillsFolders.length > 0"
+          class="bulk-actions"
+        >
+          <button
+            class="bulk-btn"
+            :class="{ dark: isDark }"
+            @click="selectAllSkills"
+          >
+            Select All
+          </button>
+          <button
+            class="bulk-btn"
+            :class="{ dark: isDark }"
+            @click="unselectAllSkills"
+          >
+            Unselect All
+          </button>
         </div>
       </div>
-      <p v-if="skillsLoading" class="form-hint">Loading skills...</p>
-      <p v-else-if="skillsFolders.length === 0" class="form-hint">No skills folders found.</p>
-      <div v-else class="skills-list">
+      <p
+        v-if="skillsLoading"
+        class="form-hint"
+      >
+        Loading skills...
+      </p>
+      <p
+        v-else-if="skillsFolders.length === 0"
+        class="form-hint"
+      >
+        No skills folders found.
+      </p>
+      <div
+        v-else
+        class="skills-list"
+      >
         <label
           v-for="skill in skillsFolders"
           :key="skill"
@@ -98,38 +182,98 @@
           :class="{ dark: isDark }"
         >
           <input
+            v-model="form.skills"
             type="checkbox"
             :value="skill"
-            v-model="form.skills"
             @change="emit('dirty')"
-          />
+          >
           <span class="skill-name">{{ skill }}</span>
         </label>
       </div>
 
-      <hr class="form-separator" :class="{ dark: isDark }" />
+      <hr
+        class="form-separator"
+        :class="{ dark: isDark }"
+      >
 
       <div class="form-section-header">
-        <h3 class="form-section-title">Tools</h3>
-        <div v-if="!toolsLoading && toolCategories.length > 0" class="bulk-actions">
-          <button class="bulk-btn" :class="{ dark: isDark }" @click="selectAllTools">Select All</button>
-          <button class="bulk-btn" :class="{ dark: isDark }" @click="unselectAllTools">Unselect All</button>
+        <h3 class="form-section-title">
+          Tools
+        </h3>
+        <div
+          v-if="!toolsLoading && toolCategories.length > 0"
+          class="bulk-actions"
+        >
+          <button
+            class="bulk-btn"
+            :class="{ dark: isDark }"
+            @click="selectAllTools"
+          >
+            Select All
+          </button>
+          <button
+            class="bulk-btn"
+            :class="{ dark: isDark }"
+            @click="unselectAllTools"
+          >
+            Unselect All
+          </button>
         </div>
       </div>
-      <div v-if="!toolsLoading && toolCategories.length > 0" class="tool-filter-bar">
-        <select v-model="toolFilter" class="tool-filter-select" :class="{ dark: isDark }">
-          <option value="all">All operations</option>
-          <option v-for="op in ALL_OPERATION_TYPES" :key="op" :value="op">{{ op.charAt(0).toUpperCase() + op.slice(1) }}</option>
+      <div
+        v-if="!toolsLoading && toolCategories.length > 0"
+        class="tool-filter-bar"
+      >
+        <select
+          v-model="toolFilter"
+          class="tool-filter-select"
+          :class="{ dark: isDark }"
+        >
+          <option value="all">
+            All operations
+          </option>
+          <option
+            v-for="op in ALL_OPERATION_TYPES"
+            :key="op"
+            :value="op"
+          >
+            {{ op.charAt(0).toUpperCase() + op.slice(1) }}
+          </option>
         </select>
-        <span class="tool-filter-count" :class="{ dark: isDark }">
+        <span
+          class="tool-filter-count"
+          :class="{ dark: isDark }"
+        >
           {{ filteredToolCategories.flatMap(c => c.tools).length }} tools
         </span>
       </div>
-      <p v-if="toolsLoading" class="form-hint">Loading tools...</p>
-      <p v-else-if="toolCategories.length === 0" class="form-hint">No tools found.</p>
-      <p v-else-if="filteredToolCategories.length === 0" class="form-hint">No tools match this filter.</p>
-      <div v-else class="tools-tree">
-        <div v-for="cat in filteredToolCategories" :key="cat.category" class="tool-category">
+      <p
+        v-if="toolsLoading"
+        class="form-hint"
+      >
+        Loading tools...
+      </p>
+      <p
+        v-else-if="toolCategories.length === 0"
+        class="form-hint"
+      >
+        No tools found.
+      </p>
+      <p
+        v-else-if="filteredToolCategories.length === 0"
+        class="form-hint"
+      >
+        No tools match this filter.
+      </p>
+      <div
+        v-else
+        class="tools-tree"
+      >
+        <div
+          v-for="cat in filteredToolCategories"
+          :key="cat.category"
+          class="tool-category"
+        >
           <button
             class="tool-category-header"
             :class="{ dark: isDark }"
@@ -138,11 +282,16 @@
             <svg
               class="tool-chevron"
               :class="{ expanded: expandedCategories.has(cat.category) }"
-              width="10" height="10" viewBox="0 0 24 24"
-              fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round"
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
             >
-              <polyline points="9 18 15 12 9 6"/>
+              <polyline points="9 18 15 12 9 6" />
             </svg>
             <input
               type="checkbox"
@@ -150,11 +299,14 @@
               :indeterminate="isCategoryPartiallySelected(cat)"
               @click.stop
               @change="toggleCategoryTools(cat, $event)"
-            />
+            >
             <span class="tool-category-name">{{ cat.category }}</span>
             <span class="tool-category-count">{{ cat.tools.length }}</span>
           </button>
-          <div v-if="expandedCategories.has(cat.category)" class="tool-category-tools">
+          <div
+            v-if="expandedCategories.has(cat.category)"
+            class="tool-category-tools"
+          >
             <label
               v-for="tool in cat.tools"
               :key="tool.name"
@@ -163,11 +315,11 @@
               :title="tool.description"
             >
               <input
+                v-model="form.tools"
                 type="checkbox"
                 :value="tool.name"
-                v-model="form.tools"
                 @change="emit('dirty')"
-              />
+              >
               <span class="tool-name">{{ tool.name }}</span>
             </label>
           </div>
@@ -175,12 +327,22 @@
       </div>
 
       <div class="form-actions">
-        <button class="save-btn" :class="{ dark: isDark }" :disabled="saving" @click="save">
+        <button
+          class="save-btn"
+          :class="{ dark: isDark }"
+          :disabled="saving"
+          @click="save"
+        >
           {{ saving ? (isEditMode ? 'Saving...' : 'Creating...') : (isEditMode ? 'Save Changes' : 'Create Agent') }}
         </button>
       </div>
 
-      <p v-if="saveError" class="form-error save-error">{{ saveError }}</p>
+      <p
+        v-if="saveError"
+        class="form-error save-error"
+      >
+        {{ saveError }}
+      </p>
     </div>
   </div>
 </template>
@@ -191,16 +353,16 @@ import { ipcRenderer } from 'electron';
 import yaml from 'yaml';
 
 const props = defineProps<{
-  isDark: boolean;
-  content?: string;
+  isDark:    boolean;
+  content?:  string;
   filePath?: string;
-  fileExt?: string;
+  fileExt?:  string;
   readOnly?: boolean;
 }>();
 
 const emit = defineEmits<{
-  'dirty': [];
-  'saved': [agentPath: string];
+  dirty: [];
+  saved: [agentPath: string];
 }>();
 
 const isEditMode = computed(() => {
@@ -208,15 +370,15 @@ const isEditMode = computed(() => {
 });
 
 interface ToolEntry {
-  name: string;
-  description: string;
+  name:           string;
+  description:    string;
   operationTypes: string[];
 }
 
 interface ToolCategoryEntry {
-  category: string;
+  category:    string;
   description: string;
-  tools: ToolEntry[];
+  tools:       ToolEntry[];
 }
 
 const TRIGGER_TYPES = [
@@ -231,14 +393,14 @@ const TRIGGER_TYPES = [
 type TriggerType = typeof TRIGGER_TYPES[number]['value'];
 
 const form = reactive({
-  id: '',
-  name: '',
+  id:          '',
+  name:        '',
   description: '',
-  type: 'worker',
-  isDefault: false,
-  triggers: [] as string[],
-  skills: [] as string[],
-  tools: [] as string[],
+  type:        'worker',
+  isDefault:   false,
+  triggers:    [] as string[],
+  skills:      [] as string[],
+  tools:       [] as string[],
 });
 
 const errors = reactive({ id: '', name: '' });
@@ -429,8 +591,8 @@ async function save() {
 
   try {
     const root = await ipcRenderer.invoke('filesystem-get-root');
-    const agentsDir = `${root}/agents`;
-    const agentDir = `${agentsDir}/${form.id}`;
+    const agentsDir = `${ root }/agents`;
+    const agentDir = `${ agentsDir }/${ form.id }`;
 
     if (!isEditMode.value) {
       // Create the agent directory
@@ -439,21 +601,21 @@ async function save() {
 
     // Build and write agent.yaml
     const agentYaml = yaml.stringify({
-      name: form.name.trim(),
+      name:        form.name.trim(),
       description: form.description.trim(),
-      type: form.type,
-      skills: form.skills,
-      tools: form.tools,
+      type:        form.type,
+      skills:      form.skills,
+      tools:       form.tools,
     });
 
-    await ipcRenderer.invoke('filesystem-write-file', `${agentDir}/agent.yaml`, agentYaml);
+    await ipcRenderer.invoke('filesystem-write-file', `${ agentDir }/agent.yaml`, agentYaml);
 
     if (!isEditMode.value) {
       // Create soul.md from prompt template (only on new agent).
       // environment.md is NOT created — the global environment prompt is always
       // injected by enrichPrompt() and should not be overridable per-agent.
       const templates = await ipcRenderer.invoke('agents-get-prompt-templates');
-      await ipcRenderer.invoke('filesystem-write-file', `${agentDir}/soul.md`, templates.soul);
+      await ipcRenderer.invoke('filesystem-write-file', `${ agentDir }/soul.md`, templates.soul);
     }
 
     // Persist default agent setting
@@ -495,14 +657,9 @@ async function save() {
   width: 100%;
   height: 100%;
   overflow-y: auto;
-  background: #ffffff;
-  color: #333;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-.agent-form.dark {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
 }
 
 .form-inner {
@@ -512,27 +669,23 @@ async function save() {
 }
 
 .form-title {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-semibold);
   margin: 0 0 24px 0;
 }
 
 .form-label {
   display: block;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.3px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
   margin: 16px 0 6px 0;
 }
 
-.agent-form.dark .form-label {
-  color: #94a3b8;
-}
-
 .required {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 .form-input,
@@ -541,11 +694,11 @@ async function save() {
   display: block;
   width: 100%;
   padding: 8px 12px;
-  font-size: 13px;
-  border: 1px solid #cbd5e1;
+  font-size: var(--fs-code);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: #fff;
-  color: #333;
+  background: var(--bg-input);
+  color: var(--text-primary);
   outline: none;
   box-sizing: border-box;
   font-family: inherit;
@@ -554,20 +707,12 @@ async function save() {
 .form-input:focus,
 .form-textarea:focus,
 .form-select:focus {
-  border-color: #0078d4;
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(0,120,212,0.15);
 }
 
-.form-input.dark,
-.form-textarea.dark,
-.form-select.dark {
-  background: #1e293b;
-  border-color: #334155;
-  color: #e2e8f0;
-}
-
 .form-input.error {
-  border-color: #ef4444;
+  border-color: var(--status-error);
 }
 
 .form-input.disabled {
@@ -585,14 +730,14 @@ async function save() {
 }
 
 .form-hint {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin: 4px 0 0 0;
 }
 
 .form-error {
-  font-size: 12px;
-  color: #ef4444;
+  font-size: var(--fs-code);
+  color: var(--text-error);
   margin: 4px 0 0 0;
 }
 
@@ -606,17 +751,17 @@ async function save() {
 
 .save-btn {
   padding: 8px 20px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   border: none;
   border-radius: 6px;
-  background: #0078d4;
-  color: #fff;
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
   cursor: pointer;
 }
 
 .save-btn:hover {
-  background: #006abc;
+  background: var(--accent-primary-hover);
 }
 
 .save-btn:disabled {
@@ -624,22 +769,10 @@ async function save() {
   cursor: not-allowed;
 }
 
-.save-btn.dark {
-  background: #0078d4;
-}
-
-.save-btn.dark:hover {
-  background: #1a8ae8;
-}
-
 .form-separator {
   border: none;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-default);
   margin: 24px 0 16px 0;
-}
-
-.form-separator.dark {
-  border-top-color: #334155;
 }
 
 .form-section-header {
@@ -650,8 +783,8 @@ async function save() {
 }
 
 .form-section-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--fs-body);
+  font-weight: var(--weight-semibold);
   margin: 0;
 }
 
@@ -662,27 +795,17 @@ async function save() {
 
 .bulk-btn {
   padding: 3px 8px;
-  font-size: 11px;
-  border: 1px solid #cbd5e1;
+  font-size: var(--fs-body-sm);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: transparent;
-  color: #64748b;
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
 .bulk-btn:hover {
-  background: rgba(0,0,0,0.04);
-  color: #333;
-}
-
-.bulk-btn.dark {
-  border-color: #334155;
-  color: #94a3b8;
-}
-
-.bulk-btn.dark:hover {
-  background: rgba(255,255,255,0.06);
-  color: #e2e8f0;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .tool-filter-bar {
@@ -694,28 +817,18 @@ async function save() {
 
 .tool-filter-select {
   padding: 4px 8px;
-  font-size: 12px;
-  border: 1px solid #cbd5e1;
+  font-size: var(--fs-code);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
-  background: #fff;
-  color: #333;
+  background: var(--bg-input);
+  color: var(--text-primary);
   outline: none;
   cursor: pointer;
 }
 
-.tool-filter-select.dark {
-  background: #1e293b;
-  border-color: #334155;
-  color: #e2e8f0;
-}
-
 .tool-filter-count {
-  font-size: 11px;
-  color: #94a3b8;
-}
-
-.tool-filter-count.dark {
-  color: #64748b;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
 }
 
 .skills-list {
@@ -731,15 +844,11 @@ async function save() {
   padding: 6px 8px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-code);
 }
 
 .skill-checkbox:hover {
-  background: rgba(0,0,0,0.04);
-}
-
-.skill-checkbox.dark:hover {
-  background: rgba(255,255,255,0.04);
+  background: var(--bg-hover);
 }
 
 .skill-checkbox input[type="checkbox"] {
@@ -767,18 +876,14 @@ async function save() {
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   border-radius: 4px;
   text-align: left;
 }
 
 .tool-category-header:hover {
-  background: rgba(0,0,0,0.04);
-}
-
-.tool-category-header.dark:hover {
-  background: rgba(255,255,255,0.04);
+  background: var(--bg-hover);
 }
 
 .tool-category-header input[type="checkbox"] {
@@ -800,8 +905,8 @@ async function save() {
 }
 
 .tool-category-count {
-  font-size: 10px;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
   margin-left: auto;
 }
 
@@ -816,15 +921,11 @@ async function save() {
   padding: 3px 8px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-code);
 }
 
 .tool-checkbox:hover {
-  background: rgba(0,0,0,0.04);
-}
-
-.tool-checkbox.dark:hover {
-  background: rgba(255,255,255,0.04);
+  background: var(--bg-hover);
 }
 
 .tool-checkbox input[type="checkbox"] {
@@ -834,11 +935,7 @@ async function save() {
 
 .tool-name {
   user-select: none;
-  color: #64748b;
-}
-
-.agent-form.dark .tool-name {
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .default-agent-toggle {
@@ -848,16 +945,12 @@ async function save() {
   padding: 8px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-code);
   margin: 8px 0 4px 0;
 }
 
 .default-agent-toggle:hover {
-  background: rgba(0,0,0,0.04);
-}
-
-.default-agent-toggle.dark:hover {
-  background: rgba(255,255,255,0.04);
+  background: var(--bg-hover);
 }
 
 .default-agent-toggle input[type="checkbox"] {
@@ -866,12 +959,12 @@ async function save() {
 }
 
 .toggle-label {
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   user-select: none;
 }
 
 .form-hint-warn {
-  color: #f59e0b;
+  color: var(--status-warning);
 }
 
 .trigger-list {
@@ -881,8 +974,8 @@ async function save() {
 }
 
 .trigger-current-agent {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin-left: auto;
 }
 </style>

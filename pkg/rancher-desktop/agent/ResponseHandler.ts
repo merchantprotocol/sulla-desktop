@@ -20,7 +20,7 @@ export class ResponseHandler {
     // If the model returned a JSON blob, unwrap it into readable text.
     if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
       try {
-        const parsed = JSON.parse(trimmed) as any;
+        const parsed = JSON.parse(trimmed);
         const payload = parsed && typeof parsed === 'object' && parsed.response && typeof parsed.response === 'object'
           ? parsed.response
           : parsed;
@@ -39,17 +39,17 @@ export class ResponseHandler {
           if (payload.details && typeof payload.details === 'object') {
             const d = payload.details;
             if (typeof d.whatWasDone === 'string' && d.whatWasDone.trim()) {
-              out.push(`What was done: ${d.whatWasDone.trim()}`);
+              out.push(`What was done: ${ d.whatWasDone.trim() }`);
             }
             if (typeof d.whatRemains === 'string' && d.whatRemains.trim()) {
-              out.push(`What remains: ${d.whatRemains.trim()}`);
+              out.push(`What remains: ${ d.whatRemains.trim() }`);
             }
           }
 
           if (Array.isArray(payload.nextSteps) && payload.nextSteps.length > 0) {
             const steps = payload.nextSteps.map((s: any) => String(s || '').trim()).filter(Boolean);
             if (steps.length > 0) {
-              out.push(['Next steps:', ...steps.map((s: string) => `- ${s}`)].join('\n'));
+              out.push(['Next steps:', ...steps.map((s: string) => `- ${ s }`)].join('\n'));
             }
           }
 
@@ -92,8 +92,8 @@ export class ResponseHandler {
       const mode = await getCurrentMode();
       const llm = await getLLMService(mode);
       const refined = await llm.chat([{
-        role: 'user',
-        content: `Refine this response for clarity and coherence. Keep it concise. Only output the refined response, nothing else:\n\n${ response.content }`
+        role:    'user',
+        content: `Refine this response for clarity and coherence. Keep it concise. Only output the refined response, nothing else:\n\n${ response.content }`,
       }]);
       const reply = refined?.content;
 

@@ -1,16 +1,17 @@
-import { BaseTool, ToolResponse } from "../base";
-import { resolveBridge, isBridgeResolved } from "./resolve_bridge";
+import { BaseTool, ToolResponse } from '../base';
+import { resolveBridge, isBridgeResolved } from './resolve_bridge';
+import { wrapWithBlockingWarning } from './detect_blocking';
 
 /**
  * Get Page Snapshot Tool - Returns an actionable Markdown snapshot of the
  * currently active website asset (buttons, links, form fields).
  */
 export class GetPageSnapshotWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const result = resolveBridge(input.assetId);
+    const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
 
     try {
@@ -18,20 +19,23 @@ export class GetPageSnapshotWorker extends BaseTool {
       if (!markdown.trim()) {
         return {
           successBoolean: true,
-          responseString: `[${result.assetId}] Page snapshot is empty — the page may have no interactive elements.`,
+          responseString: `[${ result.assetId }] Page snapshot is empty — the page may have no interactive elements.`,
         };
       }
 
+      const url = await result.bridge.getPageUrl();
+      const raw = `[asset: ${ result.assetId }]\n${ markdown }`;
+      const { responseString, detection } = wrapWithBlockingWarning(raw, markdown, url);
+
       return {
-        successBoolean: true,
-        responseString: `[asset: ${result.assetId}]\n${markdown}`,
+        successBoolean: !detection.blocked,
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting page snapshot: ${(error as Error).message}`,
+        responseString: `Error getting page snapshot: ${ (error as Error).message }`,
       };
     }
   }
 }
-

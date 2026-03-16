@@ -16,10 +16,10 @@ export class CustomService extends OpenAICompatibleService {
     }
 
     return new CustomService({
-      id: 'custom',
-      model: valMap.model || '',
+      id:      'custom',
+      model:   valMap.model || '',
       baseUrl: valMap.base_url || '',
-      apiKey: valMap.api_key || '',
+      apiKey:  valMap.api_key || '',
     });
   }
 

@@ -15,6 +15,7 @@ import { integrations } from '../agent/integrations/catalog';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { LOCAL_MODELS } from '../shared/localModels';
 import type { LocalModelOption } from '../shared/localModels';
+import { useTheme } from '../composables/useTheme';
 
 // Nav items for the Language Model Settings sidebar
 const navItems = [
@@ -71,18 +72,25 @@ const OLLAMA_MODELS = [
   },
   {
     name: 'deepseek-coder:33b', displayName: 'DeepSeek Coder 33B', size: '19GB', minMemoryGB: 24, minCPUs: 6, description: 'Advanced coding model, excellent for development',
-  }
+  },
 ];
 
 interface InstalledModel {
-  name: string;
-  size: number;
+  name:        string;
+  size:        number;
   modified_at: string;
-  digest: string;
+  digest:      string;
 }
 
 export default defineComponent({
   name: 'language-model-settings',
+
+  setup() {
+    // Initialize theme system so this window receives theme changes
+    const { currentTheme, isDark } = useTheme();
+
+    return { currentTheme, isDark };
+  },
 
   data() {
     return {
@@ -96,56 +104,56 @@ export default defineComponent({
         memoryPercent: 0,
         status:        'unknown' as string,
       },
-      statsInterval:    null as ReturnType<typeof setInterval> | null,
-      loadingStats:     false,
+      statsInterval:         null as ReturnType<typeof setInterval> | null,
+      loadingStats:          false,
       // Which tab is being viewed (local or remote)
-      viewingTab:       'local' as 'local' | 'remote',
+      viewingTab:            'local' as 'local' | 'remote',
       // Which mode is currently active (saved in settings)
-      activeMode:       'local' as 'local' | 'remote',
+      activeMode:            'local' as 'local' | 'remote',
       // Local model settings
-      activeModel:      'qwen2:0.5b', // The currently saved/active local model
-      pendingModel:     'qwen2:0.5b', // The model selected in dropdown
-      installedModels:  [] as InstalledModel[],
-      loadingModels:    false,
-      downloadingModel: null as string | null,
-      downloadProgress: 0,
+      activeModel:           'qwen2:0.5b', // The currently saved/active local model
+      pendingModel:          'qwen2:0.5b', // The model selected in dropdown
+      installedModels:       [] as InstalledModel[],
+      loadingModels:         false,
+      downloadingModel:      null as string | null,
+      downloadProgress:      0,
       // Remote model settings
-      remoteProviders:      REMOTE_PROVIDERS,
-      selectedProvider:     'grok',
-      selectedRemoteModel:  'grok-4-1-fast-reasoning',
-      apiKey:               '',
-      apiKeyVisible:        false,
+      remoteProviders:       REMOTE_PROVIDERS,
+      selectedProvider:      'grok',
+      selectedRemoteModel:   'grok-4-1-fast-reasoning',
+      apiKey:                '',
+      apiKeyVisible:         false,
       // Dynamic model loading
-      dynamicModels:        {} as Record<string, Array<{id: string; name: string; description: string; pricing?: string}>>,
-      loadingRemoteModels:  false,
-      modelLoadError:       '' as string,
-      remoteRetryCount:     3, // Number of retries before falling back to local LLM
-      remoteTimeoutSeconds: 60, // Remote API timeout limit in seconds
+      dynamicModels:         {} as Record<string, { id: string; name: string; description: string; pricing?: string }[]>,
+      loadingRemoteModels:   false,
+      modelLoadError:        '' as string,
+      remoteRetryCount:      3, // Number of retries before falling back to local LLM
+      remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
       // Local Ollama settings
-      localTimeoutSeconds:  120, // Local Ollama timeout limit in seconds
-      localRetryCount:      2, // Number of retries for local Ollama
+      localTimeoutSeconds:   120, // Local Ollama timeout limit in seconds
+      localRetryCount:       2, // Number of retries for local Ollama
       // Ollama model status tracking
-      modelStatuses: {} as Record<string, 'installed' | 'missing' | 'failed'>,
+      modelStatuses:         {} as Record<string, 'installed' | 'missing' | 'failed'>,
       checkingModelStatuses: false,
       // Heartbeat settings
-      heartbeatEnabled:     true,
+      heartbeatEnabled:      true,
       heartbeatDelayMinutes: 30,
-      heartbeatPrompt:      '',
-      heartbeatProvider:    'default' as string, // 'default' = use primary provider, or a specific provider id
+      heartbeatPrompt:       '',
+      heartbeatProvider:     'default' as string, // 'default' = use primary provider, or a specific provider id
 
       // Soul prompt settings
-      soulPrompt: '',
-      botName: 'Sulla',
+      soulPrompt:      '',
+      botName:         'Sulla',
       primaryUserName: '',
 
       // Default prompts for reset
-      soulPromptDefault: soulPrompt,
+      soulPromptDefault:      soulPrompt,
       heartbeatPromptDefault: heartbeatPrompt,
 
       // Primary / Secondary provider selection
       primaryProvider:      'ollama' as string,
       secondaryProvider:    'ollama' as string,
-      availableProviders:   [{ id: 'ollama', name: 'Ollama (Local)' }] as Array<{ id: string; name: string }>,
+      availableProviders:   [{ id: 'ollama', name: 'Ollama (Local)' }] as { id: string; name: string }[],
 
       // Activation state
       activating:           false,
@@ -159,9 +167,15 @@ export default defineComponent({
       localModels:              LOCAL_MODELS,
       localModelDownloadStatus: {} as Record<string, boolean>,
       localModelSelected:       '' as string,
-      localModelDownloading:    null as string | null,
-      localModelError:          '' as string,
-      loadingLocalModels:       false,
+      localModelDownloading:      null as string | null,
+      localModelDownloadProgress: 0,
+      localModelError:            '' as string,
+      loadingLocalModels:         false,
+      activatedLocalModel:        '' as string,
+      systemTotalMemoryGB:        0,
+      systemAvailableMemoryGB:    0,
+      systemAvailableDiskGB:      0,
+
     };
   },
 
@@ -187,7 +201,7 @@ export default defineComponent({
         this.heartbeatPrompt = String(val || '');
       },
     },
-    availableModels(): Array<{ name: string; displayName: string; size: string; description: string }> {
+    availableModels(): { name: string; displayName: string; size: string; description: string }[] {
       return OLLAMA_MODELS;
     },
     pendingModelDescription(): string {
@@ -204,7 +218,7 @@ export default defineComponent({
     isPendingDifferentFromActive(): boolean {
       return this.pendingModel !== this.activeModel;
     },
-    formattedInstalledModels(): Array<InstalledModel & { formattedSize: string }> {
+    formattedInstalledModels(): (InstalledModel & { formattedSize: string })[] {
       return this.installedModels.map(model => ({
         ...model,
         formattedSize: this.formatBytes(model.size),
@@ -213,7 +227,7 @@ export default defineComponent({
     currentProvider(): typeof REMOTE_PROVIDERS[0] | undefined {
       return this.remoteProviders.find(p => p.id === this.selectedProvider);
     },
-    currentProviderModels(): Array<{ id: string; name: string; description: string; pricing?: string }> {
+    currentProviderModels(): { id: string; name: string; description: string; pricing?: string }[] {
       // Use dynamic models if available, fallback to static ones
       return this.dynamicModels[this.selectedProvider] || this.currentProvider?.models || [];
     },
@@ -247,7 +261,7 @@ export default defineComponent({
     // Listen for settings write errors from main process
     ipcRenderer.on('settings-write-error', (_event: unknown, error: any) => {
       console.error('[LM Settings] Settings write error from main process:', error);
-      this.activationError = `Failed to save settings: ${error?.message || 'Unknown error'}`;
+      this.activationError = `Failed to save settings: ${ error?.message || 'Unknown error' }`;
     });
 
     this.activeMode = await SullaSettingsModel.get('activeMode', 'local');
@@ -275,19 +289,20 @@ export default defineComponent({
     this.localTimeoutSeconds = await SullaSettingsModel.get('localTimeoutSeconds', 120);
     this.localRetryCount = await SullaSettingsModel.get('localRetryCount', 2);
     this.heartbeatEnabled = await SullaSettingsModel.get('heartbeatEnabled', true);
+
     // Load model from database
     this.activeModel = await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
     this.pendingModel = this.activeModel;
 
     console.log('Loaded settings values:', {
-      activeMode: this.activeMode,
-      viewingTab: this.viewingTab,
-      selectedProvider: this.selectedProvider,
-      selectedRemoteModel: this.selectedRemoteModel,
+      activeMode:           this.activeMode,
+      viewingTab:           this.viewingTab,
+      selectedProvider:     this.selectedProvider,
+      selectedRemoteModel:  this.selectedRemoteModel,
       remoteTimeoutSeconds: this.remoteTimeoutSeconds,
-      localTimeoutSeconds: this.localTimeoutSeconds,
-      remoteRetryCount: this.remoteRetryCount,
-      localRetryCount: this.localRetryCount
+      localTimeoutSeconds:  this.localTimeoutSeconds,
+      remoteRetryCount:     this.remoteRetryCount,
+      localRetryCount:      this.localRetryCount,
     });
 
     // Load primary/secondary provider settings
@@ -300,7 +315,7 @@ export default defineComponent({
       await integrationService.initialize();
 
       const EXCLUDED_IDS = ['activepieces'];
-      const providers: Array<{ id: string; name: string }> = [
+      const providers: { id: string; name: string }[] = [
         { id: 'ollama', name: 'Ollama (Local)' },
       ];
 
@@ -321,12 +336,32 @@ export default defineComponent({
     }
 
     await this.loadModels();
-    
+
     // Load remote models if API key exists
     if (this.selectedProvider && this.apiKey.trim()) {
       await this.loadRemoteModels();
     }
-    
+
+    // Listen for download progress events from main process
+    ipcRenderer.on('local-model-download-progress', (
+      _event: unknown,
+      data: { modelKey: string; received: number; total: number; percent: number },
+    ) => {
+      if (data.modelKey === this.localModelDownloading) {
+        this.localModelDownloadProgress = data.percent;
+      }
+    });
+
+    // Load system resource info for fitness indicators
+    this.loadSystemResources();
+
+    // Load which local model is currently activated
+    const currentLocalModel = await SullaSettingsModel.get('sullaModel', '');
+
+    if (currentLocalModel && LOCAL_MODELS.some(m => m.name === currentLocalModel)) {
+      this.activatedLocalModel = currentLocalModel;
+    }
+
     ipcRenderer.send('dialog/ready');
   },
 
@@ -337,8 +372,8 @@ export default defineComponent({
         await this.loadRemoteModels();
       }
     },
-    
-    // Watch for provider changes to automatically load models  
+
+    // Watch for provider changes to automatically load models
     async selectedProvider(newProvider: string, oldProvider: string) {
       if (newProvider && newProvider !== oldProvider && this.apiKey.trim()) {
         await this.loadRemoteModels();
@@ -398,13 +433,14 @@ export default defineComponent({
           ? { model: preferredModel, type: 'local' }
           : { model: preferredModel, type: 'remote', provider: newProvider },
       );
-    }
+    },
   },
 
   beforeUnmount() {
     // Clean up IPC listeners
     ipcRenderer.removeAllListeners('settings-write-error');
     ipcRenderer.removeAllListeners('model-changed');
+    ipcRenderer.removeAllListeners('local-model-download-progress');
   },
 
   methods: {
@@ -433,12 +469,12 @@ export default defineComponent({
             clearTimeout(timeoutId);
             // Convert XMLHttpRequest to Response-like object
             const response = {
-              ok: xhr.status >= 200 && xhr.status < 300,
-              status: xhr.status,
+              ok:         xhr.status >= 200 && xhr.status < 300,
+              status:     xhr.status,
               statusText: xhr.statusText,
-              text: () => Promise.resolve(xhr.responseText),
-              json: () => Promise.resolve(JSON.parse(xhr.responseText || '{}')),
-              body: null, // Not supported
+              text:       () => Promise.resolve(xhr.responseText),
+              json:       () => Promise.resolve(JSON.parse(xhr.responseText || '{}')),
+              body:       null, // Not supported
             };
             resolve(response as any);
           };
@@ -456,12 +492,12 @@ export default defineComponent({
           xhr.timeout = 5000; // Default timeout
           xhr.onload = () => {
             const response = {
-              ok: xhr.status >= 200 && xhr.status < 300,
-              status: xhr.status,
+              ok:         xhr.status >= 200 && xhr.status < 300,
+              status:     xhr.status,
               statusText: xhr.statusText,
-              text: () => Promise.resolve(xhr.responseText),
-              json: () => Promise.resolve(JSON.parse(xhr.responseText || '{}')),
-              body: null,
+              text:       () => Promise.resolve(xhr.responseText),
+              json:       () => Promise.resolve(JSON.parse(xhr.responseText || '{}')),
+              body:       null,
             };
             resolve(response as any);
           };
@@ -502,7 +538,7 @@ export default defineComponent({
           this.silentFetch('http://127.0.0.1:30114/api/ps', { signal: AbortSignal.timeout(3000) }),
         ]);
 
-        if (!tagsRes || !tagsRes.ok) {
+        if (!tagsRes?.ok) {
           this.containerStats.status = 'offline';
 
           return;
@@ -646,7 +682,7 @@ export default defineComponent({
       this.activeModel = this.pendingModel;
       try {
         await SullaSettingsModel.set('sullaModel', this.pendingModel, 'string');
-        console.log(`[LM Settings] Model activated: ${this.pendingModel}`);
+        console.log(`[LM Settings] Model activated: ${ this.pendingModel }`);
       } catch (err) {
         console.error('Failed to save model setting:', err);
       }
@@ -656,7 +692,7 @@ export default defineComponent({
     async onProviderChange() {
       // Clear current model selection
       this.selectedRemoteModel = '';
-      
+
       // Load models for the new provider if we have an API key
       if (this.apiKey.trim()) {
         await this.loadRemoteModels();
@@ -679,15 +715,15 @@ export default defineComponent({
 
       try {
         const modelList = await fetchModelsForProvider(this.selectedProvider, this.apiKey);
-        
+
         // Transform models to match expected format
         const transformedModels = modelList.map(modelInfo => ({
-          id: modelInfo.id,
-          name: modelInfo.name,
-          description: modelInfo.description || `${modelInfo.name} model`,
-          pricing: modelInfo.pricing ? 
-            `Input: $${modelInfo.pricing.input || 0}/1M tokens, Output: $${modelInfo.pricing.output || 0}/1M tokens` : 
-            undefined
+          id:          modelInfo.id,
+          name:        modelInfo.name,
+          description: modelInfo.description || `${ modelInfo.name } model`,
+          pricing:     modelInfo.pricing
+            ? `Input: $${ modelInfo.pricing.input || 0 }/1M tokens, Output: $${ modelInfo.pricing.output || 0 }/1M tokens`
+            : undefined,
         }));
 
         this.dynamicModels[this.selectedProvider] = transformedModels;
@@ -697,9 +733,9 @@ export default defineComponent({
           this.selectedRemoteModel = transformedModels[0].id;
         }
       } catch (error) {
-        this.modelLoadError = `Failed to load models: ${error instanceof Error ? error.message : String(error)}`;
+        this.modelLoadError = `Failed to load models: ${ error instanceof Error ? error.message : String(error) }`;
         console.error('[LM Settings] Failed to load remote models:', error);
-        
+
         // Fallback to static models on error
         const provider = this.remoteProviders.find(p => p.id === this.selectedProvider);
         if (provider && provider.models.length > 0 && !this.selectedRemoteModel) {
@@ -718,15 +754,15 @@ export default defineComponent({
       try {
         // Clear the cache for this provider
         clearModelCache(this.selectedProvider);
-        
+
         // Clear current models and reload
         this.dynamicModels[this.selectedProvider] = [];
         this.selectedRemoteModel = '';
-        
+
         // Force reload models from API
         await this.loadRemoteModels();
       } catch (error) {
-        this.modelLoadError = `Failed to refresh models: ${error instanceof Error ? error.message : String(error)}`;
+        this.modelLoadError = `Failed to refresh models: ${ error instanceof Error ? error.message : String(error) }`;
         console.error('[LM Settings] Model refresh failed:', error);
       }
     },
@@ -741,7 +777,7 @@ export default defineComponent({
           signal: AbortSignal.timeout(5000),
         });
 
-        if (!ollamaRes || !ollamaRes.ok) {
+        if (!ollamaRes?.ok) {
           this.activationError = 'Cannot connect to Ollama. Make sure the service is running.';
 
           return;
@@ -749,7 +785,7 @@ export default defineComponent({
 
         // Check if selected model is installed
         if (!this.isPendingModelInstalled) {
-          this.activationError = `Model "${this.pendingModel}" is not installed. Please download it first.`;
+          this.activationError = `Model "${ this.pendingModel }" is not installed. Please download it first.`;
 
           return;
         }
@@ -761,7 +797,7 @@ export default defineComponent({
         this.viewingTab = 'local';
         console.log('Activated local model, activeMode and viewingTab set to local');
         this.activeModel = this.pendingModel;
-        console.log(`[LM Settings] Local model activated: ${this.pendingModel}`);
+        console.log(`[LM Settings] Local model activated: ${ this.pendingModel }`);
 
         // Emit event for other windows to update
         ipcRenderer.send('model-changed', { model: this.pendingModel, type: 'local' });
@@ -798,7 +834,7 @@ export default defineComponent({
         const timeoutMs = Math.max(1000, Math.min(300, this.remoteTimeoutSeconds)) * 1000;
 
         if (provider.id === 'grok' || provider.id === 'openai' || provider.id === 'kimi' || provider.id === 'nvidia') {
-          const testUrl = `${provider.baseUrl}/chat/completions`;
+          const testUrl = `${ provider.baseUrl }/chat/completions`;
           const testBody = {
             model:       this.selectedRemoteModel,
             messages:    [{ role: 'user', content: 'Reply with the word: OK' }],
@@ -816,7 +852,7 @@ export default defineComponent({
               method:  'POST',
               headers: {
                 'Content-Type':  'application/json',
-                Authorization:   `Bearer ${this.apiKey}`,
+                Authorization:   `Bearer ${ this.apiKey }`,
               },
               body:    JSON.stringify(testBody),
               signal:  AbortSignal.timeout(timeoutMs),
@@ -826,7 +862,7 @@ export default defineComponent({
               const errorText = await testRes.text();
               console.error('[Remote Test] Error response:', testRes.status, errorText);
 
-              this.activationError = `Remote model test failed: ${testRes.status}. Check model, key, and timeout.`;
+              this.activationError = `Remote model test failed: ${ testRes.status }. Check model, key, and timeout.`;
               console.error('Remote model test error:', errorText);
 
               return;
@@ -838,11 +874,11 @@ export default defineComponent({
             return;
           }
         } else if (provider.id === 'anthropic') {
-          const testUrl = `${provider.baseUrl}/messages`;
+          const testUrl = `${ provider.baseUrl }/messages`;
           const testBody = {
-            model: this.selectedRemoteModel,
+            model:      this.selectedRemoteModel,
             max_tokens: 10,
-            messages: [{ role: 'user', content: 'Reply with the word: OK' }]
+            messages:   [{ role: 'user', content: 'Reply with the word: OK' }],
           };
 
           console.log('[Remote Test] Provider:', provider.id);
@@ -852,13 +888,13 @@ export default defineComponent({
 
           try {
             const testRes = await fetch(testUrl, {
-              method: 'POST',
+              method:  'POST',
               headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': this.apiKey,
-                'anthropic-version': '2023-06-01'
+                'Content-Type':      'application/json',
+                'x-api-key':         this.apiKey,
+                'anthropic-version': '2023-06-01',
               },
-              body: JSON.stringify(testBody),
+              body:   JSON.stringify(testBody),
               signal: AbortSignal.timeout(timeoutMs),
             });
 
@@ -866,7 +902,7 @@ export default defineComponent({
               const errorText = await testRes.text();
               console.error('[Remote Test] Error response:', testRes.status, errorText);
 
-              this.activationError = `Remote model test failed: ${testRes.status}. Check model, key, and timeout.`;
+              this.activationError = `Remote model test failed: ${ testRes.status }. Check model, key, and timeout.`;
               console.error('Remote model test error:', errorText);
 
               return;
@@ -890,7 +926,7 @@ export default defineComponent({
         this.viewingTab = 'remote';
         console.log('Activated remote model, activeMode and viewingTab set to remote');
         this.activeModel = this.pendingModel;
-        console.log(`[LM Settings] Remote model activated: ${this.selectedProvider}/${this.selectedRemoteModel}`);
+        console.log(`[LM Settings] Remote model activated: ${ this.selectedProvider }/${ this.selectedRemoteModel }`);
 
         // Emit event for other windows to update
         ipcRenderer.send('model-changed', { model: this.selectedRemoteModel, type: 'remote', provider: this.selectedProvider });
@@ -906,10 +942,10 @@ export default defineComponent({
       this.checkingModelStatuses = true;
       try {
         // Ollama availability already checked in loadModels(), proceed with model checks
-        
+
         // Check status of key models by checking against installed models list
         const keyModels = ['nomic-embed-text', this.activeModel].filter((model, index, arr) => arr.indexOf(model) === index);
-        
+
         for (const modelName of keyModels) {
           try {
             // Check if model is in the installed models list from /api/tags
@@ -961,36 +997,35 @@ export default defineComponent({
     },
 
     async writeExperimentalSettings(extra: Record<string, unknown> = {}) {
-
       try {
         // Save all settings to database
         const settingsToSave = {
-          botName: String(this.botName || ''),
-          primaryUserName: String(this.primaryUserName || ''),
-          primaryProvider: String(this.primaryProvider || 'ollama'),
-          secondaryProvider: String(this.secondaryProvider || 'ollama'),
-          remoteProvider: String(this.selectedProvider || ''),
-          remoteModel: String(this.selectedRemoteModel || ''),
-          remoteApiKey: String(this.apiKey || ''),
-          remoteRetryCount: Number(this.remoteRetryCount) || 3,
-          remoteTimeoutSeconds: Number(this.remoteTimeoutSeconds) || 60,
-          localTimeoutSeconds: Number(this.localTimeoutSeconds) || 120,
-          localRetryCount: Number(this.localRetryCount) || 2,
-          heartbeatEnabled: Boolean(this.heartbeatEnabled),
+          botName:               String(this.botName || ''),
+          primaryUserName:       String(this.primaryUserName || ''),
+          primaryProvider:       String(this.primaryProvider || 'ollama'),
+          secondaryProvider:     String(this.secondaryProvider || 'ollama'),
+          remoteProvider:        String(this.selectedProvider || ''),
+          remoteModel:           String(this.selectedRemoteModel || ''),
+          remoteApiKey:          String(this.apiKey || ''),
+          remoteRetryCount:      Number(this.remoteRetryCount) || 3,
+          remoteTimeoutSeconds:  Number(this.remoteTimeoutSeconds) || 60,
+          localTimeoutSeconds:   Number(this.localTimeoutSeconds) || 120,
+          localRetryCount:       Number(this.localRetryCount) || 2,
+          heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 30,
-          heartbeatPrompt: String(this.heartbeatPrompt || ''),
-          heartbeatProvider: String(this.heartbeatProvider || 'default'),
+          heartbeatPrompt:       String(this.heartbeatPrompt || ''),
+          heartbeatProvider:     String(this.heartbeatProvider || 'default'),
           ...extra,
         };
 
         // Define cast types for settings
         const settingCasts: Record<string, string> = {
-          remoteRetryCount: 'number',
-          remoteTimeoutSeconds: 'number',
-          localTimeoutSeconds: 'number',
-          localRetryCount: 'number',
+          remoteRetryCount:      'number',
+          remoteTimeoutSeconds:  'number',
+          localTimeoutSeconds:   'number',
+          localRetryCount:       'number',
           heartbeatDelayMinutes: 'number',
-          heartbeatEnabled: 'boolean',
+          heartbeatEnabled:      'boolean',
         };
 
         for (const [key, value] of Object.entries(settingsToSave)) {
@@ -1001,6 +1036,56 @@ export default defineComponent({
         console.error('[LM Settings] Error in writeExperimentalSettings:', err);
         throw err;
       }
+    },
+
+    async loadSystemResources() {
+      try {
+        const result: { totalMemoryGB: number; availableMemoryGB: number; availableDiskGB: number } =
+          await ipcRenderer.invoke('system-resources');
+
+        this.systemTotalMemoryGB = result.totalMemoryGB;
+        this.systemAvailableMemoryGB = result.availableMemoryGB;
+        this.systemAvailableDiskGB = result.availableDiskGB;
+      } catch (err) {
+        console.warn('[LM Settings] Failed to load system resources:', err);
+      }
+    },
+
+    resourceFitness(model: LocalModelOption): 'green' | 'yellow' | 'red' {
+      const totalMem = this.systemTotalMemoryGB;
+      const availDisk = this.systemAvailableDiskGB;
+
+      if (totalMem === 0) return 'green';
+
+      let sizeGB = 0;
+
+      if (model.size.endsWith('GB')) {
+        sizeGB = parseFloat(model.size);
+      } else if (model.size.endsWith('MB')) {
+        sizeGB = parseFloat(model.size) / 1024;
+      }
+
+      if (totalMem < model.minMemoryGB || (availDisk > 0 && availDisk < sizeGB)) {
+        return 'red';
+      }
+
+      const memHeadroom = totalMem - model.minMemoryGB;
+      const diskHeadroom = availDisk > 0 ? availDisk - sizeGB : 999;
+
+      if (memHeadroom < 4 || diskHeadroom < sizeGB) {
+        return 'yellow';
+      }
+
+      return 'green';
+    },
+
+    resourceFitnessLabel(model: LocalModelOption): string {
+      const fit = this.resourceFitness(model);
+
+      if (fit === 'green') return 'Resources OK';
+      if (fit === 'yellow') return 'Tight fit';
+
+      return 'Insufficient';
     },
 
     async loadLocalModelStatuses() {
@@ -1030,15 +1115,18 @@ export default defineComponent({
 
     async downloadLocalModel(modelName: string) {
       this.localModelDownloading = modelName;
+      this.localModelDownloadProgress = 0;
       this.localModelError = '';
       try {
         await ipcRenderer.invoke('local-model-download', modelName);
         this.localModelDownloadStatus[modelName] = true;
+        this.localModelDownloadProgress = 100;
       } catch (err) {
         console.error('[LM Settings] Failed to download local model:', err);
-        this.localModelError = `Failed to download ${modelName}. Check your internet connection.`;
+        this.localModelError = `Failed to download ${ modelName }. Check your internet connection.`;
       } finally {
         this.localModelDownloading = null;
+        this.localModelDownloadProgress = 0;
       }
     },
 
@@ -1061,10 +1149,13 @@ export default defineComponent({
         this.primaryProvider = 'ollama';
         await this.writeExperimentalSettings();
 
+        // Track the activated model for visual indicator
+        this.activatedLocalModel = this.localModelSelected;
+
         // Emit event for other windows
         ipcRenderer.send('model-changed', { model: this.localModelSelected, type: 'local' });
 
-        console.log(`[LM Settings] Local GGUF model activated: ${this.localModelSelected}`);
+        console.log(`[LM Settings] Local GGUF model activated: ${ this.localModelSelected }`);
       } catch (err) {
         console.error('[LM Settings] Failed to activate local GGUF model:', err);
         this.localModelError = 'Failed to activate model.';
@@ -1144,9 +1235,11 @@ export default defineComponent({
                 'status-unknown': containerStats.status === 'unknown' || containerStats.status === 'not_found',
               }"
             >
-              {{ containerStats.status === 'docker_unavailable' ? 'Docker Unavailable' :
-                 containerStats.status === 'not_found' ? 'Container Not Found' :
-                 containerStats.status.charAt(0).toUpperCase() + containerStats.status.slice(1) }}
+              {{ containerStats.status === 'docker_unavailable'
+                ? 'Docker Unavailable'
+                : containerStats.status === 'not_found'
+                  ? 'Container Not Found'
+                  : containerStats.status.charAt(0).toUpperCase() + containerStats.status.slice(1) }}
             </span>
           </div>
 
@@ -1284,9 +1377,9 @@ export default defineComponent({
 
           <div
             v-if="availableProviders.length <= 1"
-            style="margin-top: 1rem; padding: 1rem; border-radius: 8px; border: 1px solid var(--border, #e2e8f0); background: var(--surface-alt, #f8fafc);"
+            class="info-box"
           >
-            <p style="font-size: 0.9rem; color: var(--muted);">
+            <p>
               Only Ollama (local) is available. To add remote providers, go to
               <strong>Integrations</strong> and configure an AI provider (e.g. Grok, OpenAI, Anthropic).
             </p>
@@ -1300,8 +1393,19 @@ export default defineComponent({
         >
           <h2>Local Models</h2>
           <p class="description">
-            Select and manage locally downloaded GGUF models. Downloaded models appear in full color; models not yet downloaded are grayed out but still selectable.
+            Select and manage locally downloaded GGUF models. The colored dot indicates resource fitness: green = plenty of resources, yellow = tight fit, red = insufficient.
           </p>
+
+          <!-- System Resources Summary -->
+          <div
+            v-if="systemTotalMemoryGB > 0"
+            class="system-resources-bar"
+          >
+            <span>System: {{ systemTotalMemoryGB }}GB RAM total</span>
+            <span v-if="systemAvailableDiskGB > 0">
+              &middot; {{ systemAvailableDiskGB }}GB disk free
+            </span>
+          </div>
 
           <div
             v-if="localModelError"
@@ -1329,17 +1433,37 @@ export default defineComponent({
                 'is-downloaded': localModelDownloadStatus[model.name],
                 'is-not-downloaded': !localModelDownloadStatus[model.name],
                 'is-selected': localModelSelected === model.name,
+                'is-activated': activatedLocalModel === model.name,
               }"
               @click="selectLocalModel(model.name)"
             >
               <div class="local-model-header">
                 <span class="local-model-name">{{ model.displayName }}</span>
-                <span
-                  class="local-model-badge"
-                  :class="localModelDownloadStatus[model.name] ? 'badge-downloaded' : 'badge-not-downloaded'"
-                >
-                  {{ localModelDownloadStatus[model.name] ? 'Downloaded' : 'Not Downloaded' }}
-                </span>
+                <div class="local-model-badges">
+                  <!-- Resource fitness indicator -->
+                  <span
+                    class="fitness-badge"
+                    :class="'fitness-' + resourceFitness(model)"
+                    :title="resourceFitnessLabel(model)"
+                  >
+                    {{ resourceFitnessLabel(model) }}
+                  </span>
+                  <!-- Activated badge -->
+                  <span
+                    v-if="activatedLocalModel === model.name"
+                    class="local-model-badge badge-activated"
+                  >
+                    Active
+                  </span>
+                  <!-- Download status badge -->
+                  <span
+                    v-else
+                    class="local-model-badge"
+                    :class="localModelDownloadStatus[model.name] ? 'badge-downloaded' : 'badge-not-downloaded'"
+                  >
+                    {{ localModelDownloadStatus[model.name] ? 'Downloaded' : 'Not Downloaded' }}
+                  </span>
+                </div>
               </div>
               <div class="local-model-meta">
                 <span>{{ model.size }}</span>
@@ -1350,16 +1474,33 @@ export default defineComponent({
                 {{ model.description }}
               </p>
 
+              <!-- Download progress bar — always visible during download -->
               <div
-                v-if="localModelSelected === model.name && !localModelDownloadStatus[model.name]"
+                v-if="localModelDownloading === model.name"
+                class="local-model-download-progress"
+              >
+                <div class="download-status-text">
+                  Downloading {{ model.displayName }}... {{ localModelDownloadProgress }}%
+                </div>
+                <div class="progress-bar-lg">
+                  <div
+                    class="progress-fill-lg"
+                    :style="{ width: localModelDownloadProgress + '%' }"
+                  />
+                </div>
+              </div>
+
+              <!-- Download button — only when selected, not downloaded, and not currently downloading -->
+              <div
+                v-else-if="localModelSelected === model.name && !localModelDownloadStatus[model.name]"
                 class="local-model-actions"
               >
                 <button
                   class="btn role-primary"
-                  :disabled="localModelDownloading === model.name"
+                  :disabled="!!localModelDownloading"
                   @click.stop="downloadLocalModel(model.name)"
                 >
-                  {{ localModelDownloading === model.name ? 'Downloading...' : 'Download Model' }}
+                  Download Model
                 </button>
               </div>
             </div>
@@ -1370,11 +1511,14 @@ export default defineComponent({
             class="local-model-activate"
           >
             <button
-              class="btn role-primary activate-btn"
-              :disabled="!localModelDownloadStatus[localModelSelected] || !!localModelDownloading"
+              class="btn activate-btn"
+              :class="activatedLocalModel === localModelSelected ? 'is-active' : 'role-primary'"
+              :disabled="!localModelDownloadStatus[localModelSelected] || !!localModelDownloading || activatedLocalModel === localModelSelected"
               @click="activateSelectedGgufModel"
             >
-              Activate {{ localModels.find(m => m.name === localModelSelected)?.displayName || localModelSelected }}
+              {{ activatedLocalModel === localModelSelected
+                ? (localModels.find(m => m.name === localModelSelected)?.displayName || localModelSelected) + ' is Active'
+                : 'Activate ' + (localModels.find(m => m.name === localModelSelected)?.displayName || localModelSelected) }}
             </button>
             <p
               v-if="!localModelDownloadStatus[localModelSelected]"
@@ -1395,7 +1539,10 @@ export default defineComponent({
             Configure the agent's identity and system prompt. The bot name and user name will be prefixed to the soul prompt.
           </p>
 
-          <div class="form-group" style="margin-bottom: 1.5rem;">
+          <div
+            class="form-group"
+            style="margin-bottom: 1.5rem;"
+          >
             <label class="form-label">Bot Name</label>
             <input
               v-model="botName"
@@ -1409,7 +1556,10 @@ export default defineComponent({
             </p>
           </div>
 
-          <div class="form-group" style="margin-bottom: 2rem;">
+          <div
+            class="form-group"
+            style="margin-bottom: 2rem;"
+          >
             <label class="form-label">Your Human's Name</label>
             <input
               v-model="primaryUserName"
@@ -1536,7 +1686,6 @@ export default defineComponent({
             </div>
           </div>
         </div>
-
       </div>
     </div>
 
@@ -1565,19 +1714,19 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--body-bg);
-  color: var(--body-text);
+  background: var(--bg-page, var(--body-bg));
+  color: var(--text-primary, var(--body-text));
 }
 
 .lm-header {
   height: 3rem;
-  font-size: 1.5rem;
+  font-size: var(--fs-heading);
   line-height: 2rem;
   display: flex;
   align-items: center;
   padding: 0 0.75rem;
   width: 100%;
-  border-bottom: 1px solid var(--header-border);
+  border-bottom: 1px solid var(--border-default, var(--header-border));
 
   h1 {
     flex: 1;
@@ -1595,28 +1744,28 @@ export default defineComponent({
 
 .lm-nav {
   width: 200px;
-  border-right: 1px solid var(--header-border);
+  border-right: 1px solid var(--border-default, var(--header-border));
   padding-top: 0.75rem;
   flex-shrink: 0;
 
   .nav-item {
-    font-size: 1.125rem;
+    font-size: var(--fs-heading);
     line-height: 1.75rem;
     padding: 0.5rem 0.75rem;
     cursor: pointer;
     user-select: none;
-    color: var(--muted);
+    color: var(--text-muted, var(--muted));
     transition: background 0.15s, color 0.15s;
 
     &:hover {
-      background: var(--nav-active);
-      color: var(--body-text);
+      background: var(--bg-surface-hover, var(--nav-active));
+      color: var(--text-primary, var(--body-text));
     }
 
     &.active {
-      background: var(--primary-light-bg, rgba(59, 130, 246, 0.05));
-      color: var(--primary, #3b82f6);
-      border-left: 2px solid var(--primary, #3b82f6);
+      background: var(--bg-active, var(--primary-light-bg, rgba(59, 130, 246, 0.05)));
+      color: var(--accent-primary, var(--primary, #3b82f6));
+      border-left: 2px solid var(--accent-primary, var(--primary, #3b82f6));
       font-weight: 500;
     }
   }
@@ -1629,8 +1778,8 @@ export default defineComponent({
 }
 
 .active-mode-banner {
-  background: var(--primary-bg, rgba(59, 130, 246, 0.1));
-  border: 1px solid var(--primary, #3b82f6);
+  background: var(--bg-info, var(--primary-bg, rgba(59, 130, 246, 0.1)));
+  border: 1px solid var(--accent-primary, var(--primary, #3b82f6));
   border-radius: 6px;
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
@@ -1640,11 +1789,11 @@ export default defineComponent({
 
   .active-label {
     font-weight: 600;
-    color: var(--primary, #3b82f6);
+    color: var(--accent-primary, var(--primary, #3b82f6));
   }
 
   .active-value {
-    color: var(--body-text);
+    color: var(--text-primary, var(--body-text));
   }
 }
 
@@ -1652,7 +1801,7 @@ export default defineComponent({
   display: flex;
   gap: 0;
   margin-bottom: 1.5rem;
-  border-bottom: 2px solid var(--input-border);
+  border-bottom: 2px solid var(--border-default, var(--input-border));
 }
 
 .model-tab {
@@ -1665,8 +1814,8 @@ export default defineComponent({
   border-bottom: 2px solid transparent;
   margin-bottom: -2px;
   cursor: pointer;
-  font-size: 0.95rem;
-  color: var(--muted);
+  font-size: var(--fs-body);
+  color: var(--text-muted, var(--muted));
   transition: all 0.2s;
   outline: none;
 
@@ -1676,20 +1825,20 @@ export default defineComponent({
   }
 
   &:focus-visible {
-    outline: 2px solid var(--primary, #3b82f6);
+    outline: 2px solid var(--accent-primary, var(--primary, #3b82f6));
     outline-offset: -2px;
   }
 
   &:hover {
-    color: var(--body-text);
-    background: var(--nav-active);
+    color: var(--text-primary, var(--body-text));
+    background: var(--bg-surface-hover, var(--nav-active));
   }
 
   &.active {
-    color: var(--primary, #3b82f6);
-    border-bottom-color: var(--primary, #3b82f6);
+    color: var(--accent-primary, var(--primary, #3b82f6));
+    border-bottom-color: var(--accent-primary, var(--primary, #3b82f6));
     font-weight: 500;
-    background: var(--primary-bg, rgba(59, 130, 246, 0.1));
+    background: var(--bg-active, var(--primary-bg, rgba(59, 130, 246, 0.1)));
   }
 }
 
@@ -1701,46 +1850,46 @@ export default defineComponent({
   min-width: 200px;
 
   &.is-active {
-    background: var(--success, #22c55e) !important;
-    border-color: var(--success, #22c55e) !important;
-    color: white !important;
+    background: var(--status-success, var(--success, #22c55e)) !important;
+    border-color: var(--status-success, var(--success, #22c55e)) !important;
+    color: var(--text-on-accent, #fff) !important;
     opacity: 1 !important;
     cursor: default;
   }
 
   &.is-active:disabled {
-    background: var(--success, #22c55e) !important;
-    border-color: var(--success, #22c55e) !important;
-    color: white !important;
+    background: var(--status-success, var(--success, #22c55e)) !important;
+    border-color: var(--status-success, var(--success, #22c55e)) !important;
+    color: var(--text-on-accent, #fff) !important;
     opacity: 1 !important;
   }
 }
 
 .activation-error {
-  background: var(--error-bg, rgba(239, 68, 68, 0.1));
-  border: 1px solid var(--error, #ef4444);
+  background: var(--bg-error, rgba(239, 68, 68, 0.1));
+  border: 1px solid var(--border-error, var(--status-error, #ef4444));
   border-radius: 6px;
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
-  color: var(--error, #ef4444);
-  font-size: 0.9rem;
+  color: var(--text-error, var(--status-error, #ef4444));
+  font-size: var(--fs-body);
 }
 
 .tab-content {
   h2 {
     margin: 0 0 0.5rem;
-    font-size: 1.1rem;
+    font-size: var(--fs-heading);
     font-weight: 500;
   }
 
   h3 {
     margin: 1.5rem 0 0.75rem;
-    font-size: 1rem;
+    font-size: var(--fs-body);
     font-weight: 500;
   }
 
   .description {
-    color: var(--muted);
+    color: var(--text-muted, var(--muted));
     margin-bottom: 1.5rem;
   }
 }
@@ -1759,27 +1908,27 @@ export default defineComponent({
   .status-badge {
     padding: 0.25rem 0.75rem;
     border-radius: 9999px;
-    font-size: 0.85rem;
+    font-size: var(--fs-code);
     font-weight: 500;
 
     &.status-running {
-      background: rgba(34, 197, 94, 0.15);
-      color: #22c55e;
+      background: var(--bg-success);
+      color: var(--status-success);
     }
 
     &.status-stopped {
-      background: rgba(234, 179, 8, 0.15);
-      color: #eab308;
+      background: var(--bg-warning);
+      color: var(--status-warning);
     }
 
     &.status-error {
-      background: rgba(239, 68, 68, 0.15);
-      color: #ef4444;
+      background: var(--bg-error);
+      color: var(--status-error);
     }
 
     &.status-unknown {
-      background: rgba(156, 163, 175, 0.15);
-      color: #9ca3af;
+      background: var(--bg-hover);
+      color: var(--text-muted);
     }
   }
 }
@@ -1792,8 +1941,8 @@ export default defineComponent({
 }
 
 .metric-card {
-  background: var(--input-bg, rgba(0, 0, 0, 0.1));
-  border: 1px solid var(--input-border);
+  background: var(--bg-surface, var(--input-bg));
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 8px;
   padding: 1rem;
 
@@ -1805,19 +1954,19 @@ export default defineComponent({
   }
 
   .metric-title {
-    font-size: 0.9rem;
-    color: var(--muted);
+    font-size: var(--fs-body);
+    color: var(--text-muted, var(--muted));
   }
 
   .metric-value {
-    font-size: 1.5rem;
+    font-size: var(--fs-heading);
     font-weight: 600;
     margin-bottom: 0.75rem;
   }
 
   .metric-bar {
     height: 8px;
-    background: var(--input-border);
+    background: var(--border-default, var(--input-border));
     border-radius: 4px;
     overflow: hidden;
   }
@@ -1828,28 +1977,28 @@ export default defineComponent({
     transition: width 0.3s ease;
 
     &.cpu-bar {
-      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      background: linear-gradient(90deg, var(--accent-primary), var(--text-accent, #8b5cf6));
     }
 
     &.memory-bar {
-      background: linear-gradient(90deg, #22c55e, #eab308);
+      background: linear-gradient(90deg, var(--status-success), var(--status-warning));
     }
   }
 
   .metric-subtext {
-    font-size: 0.8rem;
-    color: var(--muted);
+    font-size: var(--fs-body-sm);
+    color: var(--text-muted, var(--muted));
     margin-top: 0.5rem;
   }
 }
 
 .not-running-message {
-  background: var(--input-bg, rgba(0, 0, 0, 0.1));
-  border: 1px solid var(--input-border);
+  background: var(--bg-surface, var(--input-bg));
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 8px;
   padding: 2rem;
   text-align: center;
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
 
   p {
     margin: 0;
@@ -1857,8 +2006,8 @@ export default defineComponent({
 }
 
 .active-model-section {
-  background: var(--input-bg, rgba(0, 0, 0, 0.1));
-  border: 1px solid var(--input-border);
+  background: var(--bg-surface, var(--input-bg));
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 8px;
   padding: 1rem;
 
@@ -1872,7 +2021,7 @@ export default defineComponent({
     padding: 0.25rem 0;
 
     .config-label {
-      color: var(--muted);
+      color: var(--text-muted, var(--muted));
       min-width: 80px;
     }
 
@@ -1884,9 +2033,23 @@ export default defineComponent({
 
 .lm-footer {
   padding: 1rem 1.5rem;
-  border-top: 1px solid var(--header-border);
+  border-top: 1px solid var(--border-default, var(--header-border));
   display: flex;
   justify-content: flex-end;
+}
+
+.info-box {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface-alt, var(--bg-surface));
+
+  p {
+    font-size: var(--fs-body);
+    color: var(--text-muted, var(--muted));
+    margin: 0;
+  }
 }
 
 // Models tab styles
@@ -1900,14 +2063,14 @@ export default defineComponent({
   }
 
   .setting-description {
-    color: var(--muted);
-    font-size: 0.875rem;
+    color: var(--text-muted, var(--muted));
+    font-size: var(--fs-body);
     margin-top: 0.5rem;
     opacity: 0.6;
     margin-bottom: 0.5rem;
 
     .provider-signup-link {
-      color: var(--primary, #3b82f6);
+      color: var(--text-link, var(--primary, #3b82f6));
       text-decoration: none;
       font-weight: 500;
 
@@ -1935,12 +2098,12 @@ export default defineComponent({
 }
 
 .current-model {
-  font-size: 0.875rem;
-  color: var(--muted);
+  font-size: var(--fs-body);
+  color: var(--text-muted, var(--muted));
   margin-bottom: 0.5rem;
 
   strong {
-    color: var(--body-text);
+    color: var(--text-primary, var(--body-text));
   }
 }
 
@@ -1948,11 +2111,16 @@ export default defineComponent({
   width: 100%;
   max-width: 400px;
   padding: 0.5rem;
-  font-size: 0.9rem;
-  border: 1px solid var(--input-border);
+  font-size: var(--fs-body);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background-color: var(--bg-input, var(--input-bg));
+  color: var(--text-primary, var(--input-text));
+
+  option {
+    background-color: var(--bg-input, var(--input-bg));
+    color: var(--text-primary, var(--input-text));
+  }
 
   &:focus {
     outline: none;
@@ -1969,12 +2137,12 @@ export default defineComponent({
   width: 100%;
   max-width: 900px;
   padding: 0.75rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-code);
   line-height: 1.5;
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 6px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background-color: var(--bg-input, var(--input-bg));
+  color: var(--text-primary, var(--input-text));
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   resize: vertical;
   min-height: 520px;
@@ -1994,11 +2162,11 @@ export default defineComponent({
 .text-input {
   flex: 1;
   padding: 0.5rem;
-  font-size: 0.9rem;
-  border: 1px solid var(--input-border);
+  font-size: var(--fs-body);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background-color: var(--bg-input, var(--input-bg));
+  color: var(--text-primary, var(--input-text));
 
   &:focus {
     outline: none;
@@ -2023,8 +2191,8 @@ export default defineComponent({
   gap: 0.75rem;
 
   .toggle-label {
-    font-size: 0.9rem;
-    color: var(--body-text);
+    font-size: var(--fs-body);
+    color: var(--text-primary, var(--body-text));
   }
 }
 
@@ -2047,7 +2215,7 @@ export default defineComponent({
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: var(--input-border);
+    background-color: var(--border-default, var(--input-border));
     transition: 0.3s;
     border-radius: 24px;
 
@@ -2058,14 +2226,14 @@ export default defineComponent({
       width: 18px;
       left: 3px;
       bottom: 3px;
-      background-color: white;
+      background-color: var(--text-on-accent, white);
       transition: 0.3s;
       border-radius: 50%;
     }
   }
 
   input:checked + .slider {
-    background-color: var(--primary, #3b82f6);
+    background-color: var(--accent-primary, var(--primary, #3b82f6));
   }
 
   input:checked + .slider::before {
@@ -2082,11 +2250,11 @@ export default defineComponent({
   width: 100%;
   max-width: 600px;
   padding: 0.75rem;
-  font-size: 0.9rem;
-  border: 1px solid var(--input-border);
+  font-size: var(--fs-body);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background-color: var(--bg-input, var(--input-bg));
+  color: var(--text-primary, var(--input-text));
   font-family: inherit;
   resize: vertical;
   min-height: 100px;
@@ -2107,19 +2275,19 @@ export default defineComponent({
 }
 
 .model-status {
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   margin-bottom: 0.5rem;
 
   &.not-installed {
-    color: var(--warning, #f59e0b);
+    color: var(--status-warning, var(--warning, #f59e0b));
   }
 
   &.installed {
-    color: var(--success, #22c55e);
+    color: var(--status-success, var(--success, #22c55e));
   }
 
   &.downloading {
-    color: var(--primary);
+    color: var(--accent-primary, var(--primary));
   }
 }
 
@@ -2131,28 +2299,28 @@ export default defineComponent({
   width: 100%;
   max-width: 400px;
   height: 8px;
-  background: var(--input-border);
+  background: var(--border-default, var(--input-border));
   border-radius: 4px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: var(--primary);
+  background: var(--accent-primary, var(--primary));
   transition: width 0.3s ease;
 }
 
 .progress-text {
-  font-size: 0.75rem;
-  color: var(--muted);
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted, var(--muted));
   margin-top: 0.25rem;
 }
 
 .model-status-section {
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 6px;
   padding: 1rem;
-  background: var(--input-bg);
+  background: var(--bg-surface, var(--input-bg));
 }
 
 .downloaded-models-list {
@@ -2162,9 +2330,9 @@ export default defineComponent({
 .model-list {
   max-height: 200px;
   overflow-y: auto;
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 4px;
-  background: var(--body-bg);
+  background: var(--bg-page, var(--body-bg));
 }
 
 .model-item {
@@ -2172,8 +2340,8 @@ export default defineComponent({
   justify-content: space-between;
   align-items: center;
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--input-border);
-  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border-default, var(--input-border));
+  font-size: var(--fs-code);
 }
 
 .model-item:last-child {
@@ -2182,12 +2350,12 @@ export default defineComponent({
 
 .model-name {
   font-weight: 500;
-  color: var(--body-text);
+  color: var(--text-primary, var(--body-text));
 }
 
 .model-size {
-  color: var(--muted);
-  font-size: 0.8rem;
+  color: var(--text-muted, var(--muted));
+  font-size: var(--fs-body-sm);
 }
 
 .key-models-status {
@@ -2201,13 +2369,13 @@ export default defineComponent({
   margin-bottom: 0.75rem;
   padding: 0.5rem;
   border-radius: 4px;
-  background: var(--body-bg);
-  border: 1px solid var(--input-border);
+  background: var(--bg-page, var(--body-bg));
+  border: 1px solid var(--border-default, var(--input-border));
 }
 
 .status-label {
-  font-size: 0.85rem;
-  color: var(--body-text);
+  font-size: var(--fs-code);
+  color: var(--text-primary, var(--body-text));
   font-weight: 500;
   flex: 1;
 }
@@ -2215,30 +2383,30 @@ export default defineComponent({
 .status-badge {
   padding: 0.25rem 0.5rem;
   border-radius: 12px;
-  font-size: 0.75rem;
+  font-size: var(--fs-body-sm);
   font-weight: 500;
   text-transform: uppercase;
 }
 
 .status-installed {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
+  background: var(--bg-success);
+  color: var(--status-success);
 }
 
 .status-missing {
-  background: rgba(234, 179, 8, 0.15);
-  color: #eab308;
+  background: var(--bg-warning);
+  color: var(--status-warning);
 }
 
 .status-failed {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: var(--bg-error);
+  color: var(--status-error);
 }
 
 .no-models-message {
   padding: 1rem;
   text-align: center;
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
 }
 
 .download-section {
@@ -2249,10 +2417,10 @@ export default defineComponent({
   input {
     flex: 1;
     padding: 0.5rem 0.75rem;
-    border: 1px solid var(--input-border);
+    border: 1px solid var(--border-default, var(--input-border));
     border-radius: 4px;
-    background: var(--input-bg);
-    color: var(--input-text);
+    background-color: var(--bg-input, var(--input-bg));
+    color: var(--text-primary, var(--input-text));
 
     &:focus {
       outline: none;
@@ -2268,13 +2436,13 @@ export default defineComponent({
   th, td {
     padding: 0.75rem;
     text-align: left;
-    border-bottom: 1px solid var(--header-border);
+    border-bottom: 1px solid var(--border-default, var(--header-border));
   }
 
   th {
     font-weight: 500;
-    color: var(--muted);
-    font-size: 0.875rem;
+    color: var(--text-muted, var(--muted));
+    font-size: var(--fs-body);
   }
 
   .model-name {
@@ -2291,22 +2459,22 @@ export default defineComponent({
 
 .pages-list {
   width: 250px;
-  border: 1px solid var(--header-border);
+  border: 1px solid var(--border-default, var(--header-border));
   border-radius: 4px;
   overflow: auto;
 
   .page-item {
     padding: 0.75rem;
-    border-bottom: 1px solid var(--header-border);
+    border-bottom: 1px solid var(--border-default, var(--header-border));
     cursor: pointer;
 
     &:hover {
-      background: var(--dropdown-hover-bg);
+      background: var(--bg-surface-hover, var(--dropdown-hover-bg));
     }
 
     &.selected {
-      background: var(--primary);
-      color: var(--primary-text);
+      background: var(--accent-primary, var(--primary));
+      color: var(--text-on-accent, var(--primary-text));
     }
 
     .page-title {
@@ -2315,8 +2483,8 @@ export default defineComponent({
     }
 
     .page-type {
-      font-size: 0.75rem;
-      color: var(--muted);
+      font-size: var(--fs-body-sm);
+      color: var(--text-muted, var(--muted));
     }
 
     &.selected .page-type {
@@ -2330,7 +2498,7 @@ export default defineComponent({
   flex: 1;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--header-border);
+  border: 1px solid var(--border-default, var(--header-border));
   border-radius: 4px;
   padding: 1rem;
 
@@ -2342,14 +2510,14 @@ export default defineComponent({
 
     h3 {
       margin: 0;
-      font-size: 1rem;
+      font-size: var(--fs-body);
     }
 
     .badge {
-      font-size: 0.75rem;
+      font-size: var(--fs-body-sm);
       padding: 0.25rem 0.5rem;
-      background: var(--muted);
-      color: var(--body-bg);
+      background: var(--text-muted, var(--muted));
+      color: var(--bg-page, var(--body-bg));
       border-radius: 4px;
     }
   }
@@ -2357,10 +2525,10 @@ export default defineComponent({
   .editor-textarea {
     flex: 1;
     padding: 0.75rem;
-    border: 1px solid var(--input-border);
+    border: 1px solid var(--border-default, var(--input-border));
     border-radius: 4px;
-    background: var(--input-bg);
-    color: var(--input-text);
+    background-color: var(--bg-input, var(--input-bg));
+    color: var(--text-primary, var(--input-text));
     resize: none;
     font-family: inherit;
 
@@ -2385,7 +2553,7 @@ export default defineComponent({
 }
 
 .service-card {
-  border: 1px solid var(--header-border);
+  border: 1px solid var(--border-default, var(--header-border));
   border-radius: 8px;
   padding: 1.25rem;
 
@@ -2397,13 +2565,13 @@ export default defineComponent({
 
     h3 {
       margin: 0;
-      font-size: 1rem;
+      font-size: var(--fs-body);
     }
   }
 
   p {
-    color: var(--muted);
-    font-size: 0.875rem;
+    color: var(--text-muted, var(--muted));
+    font-size: var(--fs-body);
     margin: 0 0 1rem;
   }
 
@@ -2414,36 +2582,36 @@ export default defineComponent({
 }
 
 .status-badge {
-  font-size: 0.75rem;
+  font-size: var(--fs-body-sm);
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
   text-transform: capitalize;
 
   &.running {
-    background: #22c55e;
-    color: white;
+    background: var(--status-success);
+    color: var(--text-on-accent, #fff);
   }
 
   &.stopped {
-    background: #ef4444;
-    color: white;
+    background: var(--status-error);
+    color: var(--text-on-accent, #fff);
   }
 
   &.error {
-    background: #f59e0b;
-    color: white;
+    background: var(--status-warning);
+    color: var(--text-on-accent, #fff);
   }
 
   &.unknown {
-    background: var(--muted);
-    color: white;
+    background: var(--text-muted, var(--muted));
+    color: var(--text-on-accent, #fff);
   }
 }
 
 // Logs tab styles
 .logs-container {
   height: calc(100vh - 280px);
-  border: 1px solid var(--header-border);
+  border: 1px solid var(--border-default, var(--header-border));
   border-radius: 4px;
   overflow: auto;
 }
@@ -2452,7 +2620,7 @@ export default defineComponent({
   margin: 0;
   padding: 1rem;
   font-family: monospace;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -2461,7 +2629,7 @@ export default defineComponent({
 .loading, .empty-state {
   padding: 2rem;
   text-align: center;
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
 }
 
 .btn {
@@ -2469,12 +2637,12 @@ export default defineComponent({
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   transition: background 0.15s;
 
   &.role-primary {
-    background: var(--primary);
-    color: var(--primary-text);
+    background: var(--accent-primary, var(--primary));
+    color: var(--text-on-accent, var(--primary-text));
 
     &:hover {
       opacity: 0.9;
@@ -2487,18 +2655,18 @@ export default defineComponent({
   }
 
   &.role-secondary {
-    background: var(--input-bg);
-    border: 1px solid var(--input-border);
-    color: var(--body-text);
+    background-color: var(--bg-input, var(--input-bg));
+    border: 1px solid var(--border-default, var(--input-border));
+    color: var(--text-primary, var(--body-text));
 
     &:hover {
-      background: var(--dropdown-hover-bg);
+      background-color: var(--bg-surface-hover, var(--dropdown-hover-bg));
     }
   }
 
   &.btn-sm {
     padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
+    font-size: var(--fs-body-sm);
   }
 }
 // Local Models tab styles
@@ -2509,15 +2677,27 @@ export default defineComponent({
   margin-bottom: 1.5rem;
 }
 
+// System resources summary bar
+.system-resources-bar {
+  display: flex;
+  gap: 0.5rem;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted, var(--muted));
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-surface, var(--input-bg));
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
 .local-model-card {
-  border: 1px solid var(--input-border);
+  border: 2px solid var(--border-default, var(--input-border));
   border-radius: 8px;
   padding: 1rem;
   cursor: pointer;
-  transition: border-color 0.15s, opacity 0.15s, background 0.15s;
+  transition: border-color 0.2s, opacity 0.15s, background 0.2s, box-shadow 0.2s;
 
   &.is-not-downloaded {
-    opacity: 0.45;
+    opacity: 0.9;
   }
 
   &.is-downloaded {
@@ -2525,12 +2705,30 @@ export default defineComponent({
   }
 
   &.is-selected {
-    border-color: var(--primary, #3b82f6);
-    background: var(--primary-bg, rgba(59, 130, 246, 0.06));
+    border-color: var(--accent-primary, var(--primary, #3b82f6));
+    background: var(--bg-active, var(--primary-bg, rgba(59, 130, 246, 0.06)));
+  }
+
+  // Activated model gets a prominent green treatment
+  &.is-activated {
+    border-color: var(--status-success, var(--success, #22c55e));
+    background: var(--bg-success);
+    box-shadow: 0 0 0 1px var(--status-success, var(--success, #22c55e));
+    opacity: 1;
+  }
+
+  &.is-activated.is-selected {
+    border-color: var(--status-success, var(--success, #22c55e));
+    background: var(--bg-success);
+    box-shadow: 0 0 0 1px var(--status-success, var(--success, #22c55e));
   }
 
   &:hover {
-    border-color: var(--primary, #3b82f6);
+    border-color: var(--accent-primary, var(--primary, #3b82f6));
+  }
+
+  &.is-activated:hover {
+    border-color: var(--status-success, var(--success, #22c55e));
   }
 }
 
@@ -2541,44 +2739,110 @@ export default defineComponent({
   margin-bottom: 0.5rem;
 }
 
+.local-model-badges {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
 .local-model-name {
   font-weight: 600;
-  font-size: 1rem;
+  font-size: var(--fs-body);
 }
 
 .local-model-badge {
-  font-size: 0.75rem;
+  font-size: var(--fs-body-sm);
   padding: 0.2rem 0.6rem;
   border-radius: 12px;
   font-weight: 500;
 
   &.badge-downloaded {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
+    background: var(--bg-success);
+    color: var(--status-success);
   }
 
   &.badge-not-downloaded {
-    background: rgba(156, 163, 175, 0.15);
-    color: #9ca3af;
+    background: var(--bg-hover);
+    color: var(--text-muted);
+  }
+
+  &.badge-activated {
+    background: var(--status-success, var(--success, #22c55e));
+    color: var(--text-on-accent, #fff);
+    font-weight: 600;
+  }
+}
+
+// Resource fitness indicator dot + label
+.fitness-badge {
+  font-size: var(--fs-body-sm);
+  padding: 0.15rem 0.5rem;
+  border-radius: 12px;
+  font-weight: 500;
+
+  &.fitness-green {
+    background: var(--bg-success);
+    color: var(--status-success, #22c55e);
+  }
+
+  &.fitness-yellow {
+    background: var(--bg-warning);
+    color: var(--status-warning, #f59e0b);
+  }
+
+  &.fitness-red {
+    background: var(--bg-error);
+    color: var(--status-error, #ef4444);
   }
 }
 
 .local-model-meta {
   display: flex;
   gap: 1rem;
-  font-size: 0.8rem;
-  color: var(--muted);
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted, var(--muted));
   margin-bottom: 0.35rem;
 }
 
 .local-model-desc {
-  font-size: 0.85rem;
-  color: var(--muted);
+  font-size: var(--fs-code);
+  color: var(--text-muted, var(--muted));
   margin: 0;
 }
 
 .local-model-actions {
   margin-top: 0.75rem;
+}
+
+// Prominent download progress indicator
+.local-model-download-progress {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg-info, var(--primary-bg, rgba(59, 130, 246, 0.08)));
+  border: 1px solid var(--accent-primary, var(--primary, #3b82f6));
+  border-radius: 6px;
+
+  .download-status-text {
+    font-size: var(--fs-body);
+    font-weight: 500;
+    color: var(--accent-primary, var(--primary, #3b82f6));
+    margin-bottom: 0.5rem;
+  }
+}
+
+.progress-bar-lg {
+  width: 100%;
+  height: 12px;
+  background: var(--border-default, var(--input-border));
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.progress-fill-lg {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary, var(--primary, #3b82f6)), var(--text-accent, #6366f1));
+  border-radius: 6px;
+  transition: width 0.3s ease;
 }
 
 .local-model-activate {

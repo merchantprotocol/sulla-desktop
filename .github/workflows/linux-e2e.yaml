@@ -22,8 +22,8 @@ jobs:
       - uses: ./.github/actions/yarn-install
       - name: Disable admin-access before start up
         run: |
-          mkdir -p $HOME/.config/rancher-desktop
-          cat <<EOF > $HOME/.config/rancher-desktop/settings.json
+          mkdir -p $HOME/.config/sulla-desktop
+          cat <<EOF > $HOME/.config/sulla-desktop/settings.json
             {
               "version": 5,
               "application": {
@@ -50,6 +50,6 @@ jobs:
           path: ./e2e/reports/*
       - name: Clean up test environment
         run: |
-          rm -f $HOME/.config/rancher-desktop.defaults.json
-          rm -f $HOME/.config/rancher-desktop.locked.json
+          rm -f $HOME/.config/sulla-desktop.defaults.json
+          rm -f $HOME/.config/sulla-desktop.locked.json
         if: always()

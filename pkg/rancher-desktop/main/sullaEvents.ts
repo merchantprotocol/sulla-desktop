@@ -27,7 +27,7 @@ function assertInsideSullaHome(targetPath: string): string {
   const root = getSullaHomeDir();
   const resolved = path.resolve(targetPath);
   if (!resolved.startsWith(root + path.sep) && resolved !== root) {
-    throw new Error(`Path is outside sulla home: ${resolved}`);
+    throw new Error(`Path is outside sulla home: ${ resolved }`);
   }
   return resolved;
 }
@@ -36,18 +36,17 @@ function assertInsideSullaHome(targetPath: string): string {
  * Initialize Sulla-specific IPC handlers.
  */
 export function initSullaEvents(): void {
-
   // ─────────────────────────────────────────────────────────────
   // Settings handlers
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('sulla-settings-get', async (_event: unknown, property: string, defaultValue: any = null) => {
+  ipcMainProxy.handle('sulla-settings-get', async(_event: unknown, property: string, defaultValue: any = null) => {
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
 
     return SullaSettingsModel.get(property, defaultValue);
   });
 
-  ipcMainProxy.handle('sulla-settings-set', async (_event: unknown, property: string, value: any) => {
+  ipcMainProxy.handle('sulla-settings-set', async(_event: unknown, property: string, value: any) => {
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
 
     await SullaSettingsModel.set(property, value);
@@ -63,7 +62,7 @@ export function initSullaEvents(): void {
     return root;
   });
 
-  ipcMainProxy.handle('filesystem-get-git-changes', async (event, path) => {
+  ipcMainProxy.handle('filesystem-get-git-changes', async(event, path) => {
     const { execSync } = require('child_process');
     try {
       const output = execSync('git status --porcelain', { cwd: path, encoding: 'utf8' });
@@ -86,10 +85,10 @@ export function initSullaEvents(): void {
    * Discover git repositories at `dirPath` and up to 3 levels of subdirectories.
    * Returns an array of { root, name } for each unique repo found.
    */
-  ipcMainProxy.handle('git-discover-repos', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-discover-repos', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     const repoRoots = new Set<string>();
-    const results: Array<{ root: string; name: string }> = [];
+    const results: { root: string; name: string }[] = [];
 
     function probe(dir: string): string | null {
       try {
@@ -125,7 +124,7 @@ export function initSullaEvents(): void {
     return results;
   });
 
-  ipcMainProxy.handle('git-branch', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-branch', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
       return execSync('git rev-parse --abbrev-ref HEAD', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' }).trim();
@@ -134,11 +133,11 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-list-branches', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-list-branches', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
       const output = execSync('git branch -a --no-color', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
-      const branches: Array<{ name: string; current: boolean; remote: boolean }> = [];
+      const branches: { name: string; current: boolean; remote: boolean }[] = [];
       const seen = new Set<string>();
       for (const line of output.split('\n')) {
         const trimmed = line.trim();
@@ -156,27 +155,27 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-checkout-branch', async (_event: unknown, dirPath: string, branchName: string) => {
+  ipcMainProxy.handle('git-checkout-branch', async(_event: unknown, dirPath: string, branchName: string) => {
     const { execSync } = require('child_process');
     try {
-      execSync(`git checkout "${branchName}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      execSync(`git checkout "${ branchName }"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
       return { success: true, error: '' };
     } catch (err: any) {
       return { success: false, error: err.stderr || err.message };
     }
   });
 
-  ipcMainProxy.handle('git-create-branch', async (_event: unknown, dirPath: string, branchName: string) => {
+  ipcMainProxy.handle('git-create-branch', async(_event: unknown, dirPath: string, branchName: string) => {
     const { execSync } = require('child_process');
     try {
-      execSync(`git checkout -b "${branchName}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      execSync(`git checkout -b "${ branchName }"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
       return { success: true, error: '' };
     } catch (err: any) {
       return { success: false, error: err.stderr || err.message };
     }
   });
 
-  ipcMainProxy.handle('git-status-full', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-status-full', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
       const output = execSync('git status --porcelain -uall', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
@@ -201,11 +200,11 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-stage', async (_event: unknown, dirPath: string, files: string[]) => {
+  ipcMainProxy.handle('git-stage', async(_event: unknown, dirPath: string, files: string[]) => {
     const { execSync } = require('child_process');
     try {
-      const fileArgs = files.map((f: string) => `"${f}"`).join(' ');
-      execSync(`git add ${fileArgs}`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      const fileArgs = files.map((f: string) => `"${ f }"`).join(' ');
+      execSync(`git add ${ fileArgs }`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
       return true;
     } catch (err: any) {
       console.error('[git-stage] Error:', err.message);
@@ -213,11 +212,11 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-unstage', async (_event: unknown, dirPath: string, files: string[]) => {
+  ipcMainProxy.handle('git-unstage', async(_event: unknown, dirPath: string, files: string[]) => {
     const { execSync } = require('child_process');
     try {
-      const fileArgs = files.map((f: string) => `"${f}"`).join(' ');
-      execSync(`git reset HEAD ${fileArgs}`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      const fileArgs = files.map((f: string) => `"${ f }"`).join(' ');
+      execSync(`git reset HEAD ${ fileArgs }`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
       return true;
     } catch (err: any) {
       console.error('[git-unstage] Error:', err.message);
@@ -225,10 +224,10 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-diff', async (_event: unknown, dirPath: string, file: string, staged: boolean) => {
+  ipcMainProxy.handle('git-diff', async(_event: unknown, dirPath: string, file: string, staged: boolean) => {
     const { execSync } = require('child_process');
     try {
-      const cmd = staged ? `git diff --cached "${file}"` : `git diff "${file}"`;
+      const cmd = staged ? `git diff --cached "${ file }"` : `git diff "${ file }"`;
       return execSync(cmd, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
     } catch {
       return '';
@@ -236,30 +235,30 @@ export function initSullaEvents(): void {
   });
 
   // Get the HEAD (committed) version of a file for diff comparison
-  ipcMainProxy.handle('git-show-head', async (_event: unknown, dirPath: string, file: string) => {
+  ipcMainProxy.handle('git-show-head', async(_event: unknown, dirPath: string, file: string) => {
     const { execSync } = require('child_process');
     try {
-      return execSync(`git show HEAD:"${file}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return execSync(`git show HEAD:"${ file }"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
     } catch {
       return '';
     }
   });
 
   // Get the staged version of a file for diff comparison
-  ipcMainProxy.handle('git-show-staged', async (_event: unknown, dirPath: string, file: string) => {
+  ipcMainProxy.handle('git-show-staged', async(_event: unknown, dirPath: string, file: string) => {
     const { execSync } = require('child_process');
     try {
-      return execSync(`git show :"${file}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      return execSync(`git show :"${ file }"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
     } catch {
       return '';
     }
   });
 
-  ipcMainProxy.handle('git-commit', async (_event: unknown, dirPath: string, message: string) => {
+  ipcMainProxy.handle('git-commit', async(_event: unknown, dirPath: string, message: string) => {
     const { execSync } = require('child_process');
     try {
       const escaped = message.replace(/"/g, '\\"');
-      execSync(`git commit -m "${escaped}"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
+      execSync(`git commit -m "${ escaped }"`, { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
       return true;
     } catch (err: any) {
       console.error('[git-commit] Error:', err.message);
@@ -267,7 +266,7 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-pull', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-pull', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
       const output = execSync('git pull', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
@@ -277,7 +276,7 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-push', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-push', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
       const output = execSync('git push', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
@@ -292,7 +291,7 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-fetch', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-fetch', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
       execSync('git fetch --all', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
@@ -302,7 +301,7 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-stash', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-stash', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
       const output = execSync('git stash', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
@@ -312,7 +311,7 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-stash-pop', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-stash-pop', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
       const output = execSync('git stash pop', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
@@ -322,7 +321,7 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-discard-all', async (_event: unknown, dirPath: string) => {
+  ipcMainProxy.handle('git-discard-all', async(_event: unknown, dirPath: string) => {
     const { execSync } = require('child_process');
     try {
       execSync('git checkout -- .', { cwd: dirPath, encoding: 'utf8', stdio: 'pipe' });
@@ -333,11 +332,11 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('git-add-gitignore', async (_event: unknown, repoRoot: string, pattern: string) => {
+  ipcMainProxy.handle('git-add-gitignore', async(_event: unknown, repoRoot: string, pattern: string) => {
     try {
       const gitignorePath = path.join(repoRoot, '.gitignore');
       let content = '';
-      try { content = fs.readFileSync(gitignorePath, 'utf8'); } catch { /* file may not exist */ }
+      try { content = fs.readFileSync(gitignorePath, 'utf8') } catch { /* file may not exist */ }
       // Check if pattern already exists
       const lines = content.split('\n');
       if (lines.some(l => l.trim() === pattern.trim())) {
@@ -346,7 +345,7 @@ export function initSullaEvents(): void {
       // Append pattern
       const newContent = content.endsWith('\n') || content === '' ? content + pattern + '\n' : content + '\n' + pattern + '\n';
       fs.writeFileSync(gitignorePath, newContent, 'utf8');
-      return { success: true, output: `Added "${pattern}" to .gitignore` };
+      return { success: true, output: `Added "${ pattern }" to .gitignore` };
     } catch (err: any) {
       return { success: false, output: err.message };
     }
@@ -376,7 +375,7 @@ export function initSullaEvents(): void {
         if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
-    console.log('[filesystem-read-dir] returned', result.length, 'entries for', dirPath, ':', result.map(e => `${e.isDir ? 'D' : 'F'} ${e.name}`).join(', '));
+    console.log('[filesystem-read-dir] returned', result.length, 'entries for', dirPath, ':', result.map(e => `${ e.isDir ? 'D' : 'F' } ${ e.name }`).join(', '));
     return result;
   });
 
@@ -404,9 +403,9 @@ export function initSullaEvents(): void {
   ipcMainProxy.handle('filesystem-save-dialog', async(_event: unknown, defaultName: string, defaultPath?: string) => {
     const { dialog } = require('electron');
     const result = await dialog.showSaveDialog({
-      title: 'Save File',
+      title:       'Save File',
       defaultPath: defaultPath ? path.join(defaultPath, defaultName) : defaultName,
-      properties: ['createDirectory', 'showOverwriteConfirmation'],
+      properties:  ['createDirectory', 'showOverwriteConfirmation'],
     });
     if (result.canceled || !result.filePath) return null;
     return result.filePath;
@@ -429,7 +428,7 @@ export function initSullaEvents(): void {
     const dir = assertInsideSullaHome(dirPath);
     const filePath = path.join(dir, fileName);
     assertInsideSullaHome(filePath);
-    if (fs.existsSync(filePath)) throw new Error(`File already exists: ${fileName}`);
+    if (fs.existsSync(filePath)) throw new Error(`File already exists: ${ fileName }`);
     fs.writeFileSync(filePath, '', 'utf-8');
     return filePath;
   });
@@ -438,7 +437,7 @@ export function initSullaEvents(): void {
     const dir = assertInsideSullaHome(dirPath);
     const newDir = path.join(dir, dirName);
     assertInsideSullaHome(newDir);
-    if (fs.existsSync(newDir)) throw new Error(`Directory already exists: ${dirName}`);
+    if (fs.existsSync(newDir)) throw new Error(`Directory already exists: ${ dirName }`);
     fs.mkdirSync(newDir, { recursive: true });
     return newDir;
   });
@@ -456,7 +455,7 @@ export function initSullaEvents(): void {
       const stem = baseName.slice(0, baseName.length - ext.length);
       let i = 1;
       while (fs.existsSync(target)) {
-        target = path.join(resolvedDest, `${stem} (${i})${ext}`);
+        target = path.join(resolvedDest, `${ stem } (${ i })${ ext }`);
         i++;
       }
     }
@@ -472,7 +471,7 @@ export function initSullaEvents(): void {
     const target = path.join(resolvedDest, baseName);
     assertInsideSullaHome(target);
     if (resolvedSrc === target) return target;
-    if (fs.existsSync(target)) throw new Error(`"${baseName}" already exists in destination`);
+    if (fs.existsSync(target)) throw new Error(`"${ baseName }" already exists in destination`);
     fs.renameSync(resolvedSrc, target);
     return target;
   });
@@ -510,7 +509,7 @@ export function initSullaEvents(): void {
       const stem = fileName.slice(0, fileName.length - ext.length);
       let i = 1;
       while (fs.existsSync(target)) {
-        target = path.join(dir, `${stem} (${i})${ext}`);
+        target = path.join(dir, `${ stem } (${ i })${ ext }`);
         i++;
       }
     }
@@ -559,6 +558,38 @@ export function initSullaEvents(): void {
   import('./trainingController').then(tc => tc.initScheduleOnStartup()).catch(() => {});
 
   /**
+   * Return system resource info for the renderer's fitness indicators.
+   */
+  ipcMainProxy.handle('system-resources', async() => {
+    const os = require('os');
+    const totalMemoryGB = Math.round((os.totalmem() / (1024 ** 3)) * 10) / 10;
+    const freeMemoryGB = Math.round((os.freemem() / (1024 ** 3)) * 10) / 10;
+
+    let availableDiskGB = 0;
+
+    try {
+      const { execSync } = require('child_process');
+      const { app } = require('electron');
+      const userDataPath = app.getPath('userData');
+      const dfOutput = execSync(`df -k "${ userDataPath }"`, { encoding: 'utf-8' });
+      const lines = dfOutput.trim().split('\n');
+
+      if (lines.length >= 2) {
+        const parts = lines[1].split(/\s+/);
+        const availKB = parseInt(parts[3], 10);
+
+        if (!isNaN(availKB)) {
+          availableDiskGB = Math.round((availKB / (1024 ** 2)) * 10) / 10;
+        }
+      }
+    } catch {
+      // Ignore disk space check failures
+    }
+
+    return { totalMemoryGB, availableMemoryGB: freeMemoryGB, availableDiskGB };
+  });
+
+  /**
    * Check which LOCAL_MODELS keys have their GGUF file downloaded on disk.
    * Returns a Record<modelKey, boolean>.
    */
@@ -577,12 +608,25 @@ export function initSullaEvents(): void {
 
   /**
    * Download a GGUF model by key. Returns { ok: true } on success.
-   * The download is blocking — the renderer should show a spinner.
+   * Sends 'local-model-download-progress' events to the renderer during download.
    */
-  ipcMainProxy.handle('local-model-download', async(_event: unknown, modelKey: string) => {
+  ipcMainProxy.handle('local-model-download', async(event: unknown, modelKey: string) => {
     const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
     const svc = getLlamaCppService();
-    await svc.downloadModel(modelKey);
+
+    const sender = (event as { sender?: Electron.WebContents })?.sender;
+    let lastReportedPercent = -1;
+    const onProgress = (received: number, total: number) => {
+      const percent = Math.round((received / total) * 100);
+
+      if (percent !== lastReportedPercent && sender) {
+        lastReportedPercent = percent;
+        sender.send('local-model-download-progress', { modelKey, received, total, percent });
+      }
+    };
+
+    await svc.downloadModel(modelKey, onProgress);
+
     return { ok: true };
   });
 
@@ -681,7 +725,7 @@ export function initSullaEvents(): void {
 
   // ─── Training Queue IPC ───
 
-  ipcMainProxy.handle('training-queue-add', async(_event: unknown, entries: Array<{ filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }>) => {
+  ipcMainProxy.handle('training-queue-add', async(_event: unknown, entries: { filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }[]) => {
     const tc = await import('./trainingController');
     return tc.addToQueue(entries);
   });
@@ -757,7 +801,7 @@ export function initSullaEvents(): void {
   // Docker handlers
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('docker-list-containers', async () => {
+  ipcMainProxy.handle('docker-list-containers', async() => {
     const { execSync } = require('child_process');
 
     try {
@@ -829,7 +873,7 @@ export function initSullaEvents(): void {
           path:        agentDir,
         });
       } catch (err) {
-        console.warn(`[Sulla] Failed to parse agent.yaml in ${entry.name}:`, err);
+        console.warn(`[Sulla] Failed to parse agent.yaml in ${ entry.name }:`, err);
       }
     }
 
@@ -846,7 +890,7 @@ export function initSullaEvents(): void {
     }
 
     if (!fs.existsSync(agentDir)) {
-      throw new Error(`Agent directory not found: ${agentId}`);
+      throw new Error(`Agent directory not found: ${ agentId }`);
     }
 
     fs.rmSync(agentDir, { recursive: true, force: true });
@@ -867,25 +911,31 @@ export function initSullaEvents(): void {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
     const formattedTime = now.toLocaleString('en-US', {
       timeZone: tz,
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+      weekday:  'long',
+      year:     'numeric',
+      month:    'long',
+      day:      'numeric',
+      hour:     '2-digit',
+      minute:   '2-digit',
+      second:   '2-digit',
+      hour12:   true,
     });
 
     return [
-      { key: '{{formattedTime}}',        label: 'Current Date/Time',     preview: formattedTime },
-      { key: '{{timeZone}}',             label: 'Time Zone',             preview: tz },
-      { key: '{{primaryUserName}}',      label: "Human's Name",          preview: primaryUserName || '(not set)' },
-      { key: '{{botName}}',              label: 'Bot Name',              preview: botName },
-      { key: '{{sulla_home}}',           label: 'Sulla Home Dir',        preview: resolveSullaHomeDir() },
-      { key: '{{projects_dir}}',         label: 'Projects Dir',          preview: projectsDir },
-      { key: '{{skills_dir}}',           label: 'Skills Dir',            preview: resolveSullaSkillsDir() },
-      { key: '{{workspaces_dir}}',       label: 'Workspaces Dir',        preview: resolveSullaWorkspacesDir() },
-      { key: '{{agents_dir}}',           label: 'Agents Dir',            preview: resolveSullaAgentsDir() },
-      { key: '{{workflows_dir}}',        label: 'Workflows Dir',         preview: resolveSullaWorkflowsDir() },
-      { key: '{{active_projects_file}}', label: 'Active Projects File',  preview: nodePath.join(projectsDir, 'ACTIVE_PROJECTS.md') },
-      { key: '{{skills_index}}',         label: 'Skills Index',          preview: '(resolved at runtime)' },
-      { key: '{{tool_categories}}',      label: 'Tool Categories',       preview: '(resolved at runtime)' },
-      { key: '{{installed_extensions}}', label: 'Installed Extensions',  preview: '(resolved at runtime)' },
+      { key: '{{formattedTime}}', label: 'Current Date/Time', preview: formattedTime },
+      { key: '{{timeZone}}', label: 'Time Zone', preview: tz },
+      { key: '{{primaryUserName}}', label: "Human's Name", preview: primaryUserName || '(not set)' },
+      { key: '{{botName}}', label: 'Bot Name', preview: botName },
+      { key: '{{sulla_home}}', label: 'Sulla Home Dir', preview: resolveSullaHomeDir() },
+      { key: '{{projects_dir}}', label: 'Projects Dir', preview: projectsDir },
+      { key: '{{skills_dir}}', label: 'Skills Dir', preview: resolveSullaSkillsDir() },
+      { key: '{{workspaces_dir}}', label: 'Workspaces Dir', preview: resolveSullaWorkspacesDir() },
+      { key: '{{agents_dir}}', label: 'Agents Dir', preview: resolveSullaAgentsDir() },
+      { key: '{{workflows_dir}}', label: 'Workflows Dir', preview: resolveSullaWorkflowsDir() },
+      { key: '{{active_projects_file}}', label: 'Active Projects File', preview: nodePath.join(projectsDir, 'ACTIVE_PROJECTS.md') },
+      { key: '{{skills_index}}', label: 'Skills Index', preview: '(resolved at runtime)' },
+      { key: '{{tool_categories}}', label: 'Tool Categories', preview: '(resolved at runtime)' },
+      { key: '{{installed_extensions}}', label: 'Installed Extensions', preview: '(resolved at runtime)' },
     ];
   });
 
@@ -921,7 +971,7 @@ export function initSullaEvents(): void {
   // ── Integration Config API (YAML-defined integrations) ──────────
 
   /** List available integrations and their endpoints */
-  ipcMainProxy.handle('configapi-list-integrations', async () => {
+  ipcMainProxy.handle('configapi-list-integrations', async() => {
     const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
     const loader = getIntegrationConfigLoader();
     const names = loader.getAvailableIntegrations();
@@ -936,9 +986,11 @@ export function initSullaEvents(): void {
         method:      ep.endpoint.method,
         description: ep.endpoint.description,
         auth:        ep.endpoint.auth,
-        queryParams: ep.query_params ? Object.entries(ep.query_params).map(([k, v]) => ({
-          key: k, ...v,
-        })) : [],
+        queryParams: ep.query_params
+          ? Object.entries(ep.query_params).map(([k, v]) => ({
+            key: k, ...v,
+          }))
+          : [],
       }));
 
       return {
@@ -952,7 +1004,7 @@ export function initSullaEvents(): void {
   });
 
   /** Reload integrations from disk */
-  ipcMainProxy.handle('configapi-reload', async () => {
+  ipcMainProxy.handle('configapi-reload', async() => {
     const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
     const loader = getIntegrationConfigLoader();
     await loader.loadAll();
@@ -960,7 +1012,7 @@ export function initSullaEvents(): void {
   });
 
   /** Execute an API call through a YAML-configured integration */
-  ipcMainProxy.handle('configapi-call', async (
+  ipcMainProxy.handle('configapi-call', async(
     _event: unknown,
     slug: string,
     endpointName: string,
@@ -971,7 +1023,7 @@ export function initSullaEvents(): void {
     const loader = getIntegrationConfigLoader();
     const client = loader.getClient(slug);
     if (!client) {
-      throw new Error(`Integration "${slug}" not found`);
+      throw new Error(`Integration "${ slug }" not found`);
     }
 
     const result = await client.call(endpointName, params, options || {});

@@ -40,7 +40,7 @@ function cleanMessage(msg: Record<string, unknown>): Record<string, unknown> | n
     if (typeof msg.content === 'string') {
       clean.content = msg.content;
     } else if (Array.isArray(msg.content)) {
-      const textParts = (msg.content as any[])
+      const textParts = (msg.content)
         .filter((p: any) => typeof p === 'string' || p?.type === 'text')
         .map((p: any) => typeof p === 'string' ? p : p?.text ?? '');
       clean.content = textParts.join('\n');
@@ -60,11 +60,11 @@ function cleanMessage(msg: Record<string, unknown>): Record<string, unknown> | n
 
 export interface PreprocessResult {
   /** Number of conversations written to training dir */
-  conversations: number;
+  conversations:  number;
   /** Number of session files processed (including skipped) */
   filesProcessed: number;
   /** Number of session files skipped (empty or no user+assistant pair) */
-  filesSkipped: number;
+  filesSkipped:   number;
 }
 
 /**
@@ -96,11 +96,11 @@ export function preprocessTrainingData(logPath?: string): PreprocessResult {
 
   const log = (msg: string) => {
     if (logPath) {
-      try { fs.appendFileSync(logPath, msg + '\n', 'utf-8'); } catch { /* best-effort */ }
+      try { fs.appendFileSync(logPath, msg + '\n', 'utf-8') } catch { /* best-effort */ }
     }
   };
 
-  log(`[preprocess] Found ${sessionFiles.length} conversation file(s) in ${conversationsDir}`);
+  log(`[preprocess] Found ${ sessionFiles.length } conversation file(s) in ${ conversationsDir }`);
 
   const outputFile = path.join(
     trainingDir,
@@ -161,7 +161,7 @@ export function preprocessTrainingData(logPath?: string): PreprocessResult {
     try {
       fs.appendFileSync(outputFile, entry + '\n', 'utf-8');
       result.conversations++;
-      log(`[preprocess] ${ filename }: ${messages.length} messages → training`);
+      log(`[preprocess] ${ filename }: ${ messages.length } messages → training`);
     } catch (err) {
       log(`[preprocess] Failed to write entry for ${ filename }: ${ err }`);
       continue;

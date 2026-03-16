@@ -17,6 +17,11 @@ import { getIntegrationService } from '../services/IntegrationService';
 export class AnthropicService extends BaseLanguageModel {
   protected declare config: LLMServiceConfig;
   private retryCount = 3;
+  private defaultTimeoutMs = 60_000;
+
+  override getContextWindow(): number {
+    return 200_000;
+  }
 
   /**
    * Create from IntegrationService credentials (active account).
@@ -30,10 +35,10 @@ export class AnthropicService extends BaseLanguageModel {
     }
 
     return new AnthropicService({
-      id: 'anthropic',
-      model: valMap.model || 'claude-sonnet-4-20250514',
+      id:      'anthropic',
+      model:   valMap.model || 'claude-sonnet-4-20250514',
       baseUrl: 'https://api.anthropic.com/v1',
-      apiKey: valMap.api_key || '',
+      apiKey:  valMap.api_key || '',
     });
   }
 
@@ -52,7 +57,7 @@ export class AnthropicService extends BaseLanguageModel {
 
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
     const endpoint = '/messages';
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = `${ this.baseUrl }${ endpoint }`;
     const body = this.buildRequestBody(messages, options);
     const conversationId = typeof options?.conversationId === 'string' ? options.conversationId : undefined;
     const nodeName = typeof options?.nodeName === 'string' ? options.nodeName : undefined;
@@ -64,12 +69,13 @@ export class AnthropicService extends BaseLanguageModel {
         if (options?.signal?.aborted) throw new DOMException('Operation aborted', 'AbortError');
 
         if (attempt > 0) {
-          console.log(`[AnthropicService] Retry ${attempt}/${this.retryCount} after ${Math.pow(2, attempt-1)}s backoff`);
+          console.log(`[AnthropicService] Retry ${ attempt }/${ this.retryCount } after ${ Math.pow(2, attempt - 1) }s backoff`);
           await new Promise(r => setTimeout(r, Math.pow(2, attempt - 1) * 1000));
           if (options?.signal?.aborted) throw new DOMException('Aborted during retry backoff', 'AbortError');
         }
 
-        const fetchOpts = this.buildFetchOptions(body, options?.signal);
+        const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
+        const fetchOpts = this.buildFetchOptions(body, signal);
         const res = await fetch(url, fetchOpts);
 
         if (!res.ok) {
@@ -77,7 +83,7 @@ export class AnthropicService extends BaseLanguageModel {
           if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
             continue;
           }
-          throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+          throw new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
         }
 
         const rawResponse = await res.json();
@@ -85,7 +91,7 @@ export class AnthropicService extends BaseLanguageModel {
         return rawResponse;
       } catch (err) {
         lastError = err;
-        console.log(`[AnthropicService] Error on attempt ${attempt}:`, err);
+        console.log(`[AnthropicService] Error on attempt ${ attempt }:`, err);
 
         if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
           break;
@@ -134,10 +140,10 @@ export class AnthropicService extends BaseLanguageModel {
     {
       const pass1: any[] = [];
       for (const msg of processedMessages) {
-        if (msg.role === 'user' && Array.isArray(msg.content)
-            && msg.content.some((b: any) => b?.type === 'tool_result')) {
+        if (msg.role === 'user' && Array.isArray(msg.content) &&
+            msg.content.some((b: any) => b?.type === 'tool_result')) {
           const prev = pass1[pass1.length - 1];
-          if (!prev || prev.role !== 'assistant' || !Array.isArray(prev.content)) {
+          if (prev?.role !== 'assistant' || !Array.isArray(prev.content)) {
             continue;
           }
           const prevToolUseIds = new Set(
@@ -155,11 +161,11 @@ export class AnthropicService extends BaseLanguageModel {
       const pass2: any[] = [];
       for (let i = 0; i < pass1.length; i++) {
         const msg = pass1[i];
-        if (msg.role === 'assistant' && Array.isArray(msg.content)
-            && msg.content.some((b: any) => b?.type === 'tool_use')) {
+        if (msg.role === 'assistant' && Array.isArray(msg.content) &&
+            msg.content.some((b: any) => b?.type === 'tool_use')) {
           const next = pass1[i + 1];
-          if (!next || next.role !== 'user' || !Array.isArray(next.content)
-              || !next.content.some((b: any) => b?.type === 'tool_result')) {
+          if (next?.role !== 'user' || !Array.isArray(next.content) ||
+              !next.content.some((b: any) => b?.type === 'tool_result')) {
             const textBlocks = msg.content.filter((b: any) => b?.type === 'text' && b?.text?.trim());
             if (textBlocks.length > 0) {
               pass2.push({ role: 'assistant', content: textBlocks.map((b: any) => b.text).join('\n') });
@@ -177,9 +183,9 @@ export class AnthropicService extends BaseLanguageModel {
       const merged: any[] = [];
       for (const msg of processedMessages) {
         const prev = merged[merged.length - 1];
-        if (prev && prev.role === msg.role
-            && typeof prev.content === 'string' && typeof msg.content === 'string') {
-          prev.content = `${prev.content}\n\n${msg.content}`;
+        if (prev && prev.role === msg.role &&
+            typeof prev.content === 'string' && typeof msg.content === 'string') {
+          prev.content = `${ prev.content }\n\n${ msg.content }`;
         } else {
           merged.push(msg);
         }
@@ -189,14 +195,14 @@ export class AnthropicService extends BaseLanguageModel {
 
     // Anthropic requires the final turn to be a user message.
     const lastProcessedMessage = processedMessages[processedMessages.length - 1];
-    if (!lastProcessedMessage || lastProcessedMessage.role !== 'user') {
+    if (lastProcessedMessage?.role !== 'user') {
       processedMessages.push({ role: 'user', content: 'continue' });
     }
 
     const anthropicBody: any = {
-      model: this.model,
+      model:      this.model,
       max_tokens: options.maxTokens ?? 1024,
-      messages: processedMessages,
+      messages:   processedMessages,
     };
 
     if (systemMessage?.content) {
@@ -211,9 +217,9 @@ export class AnthropicService extends BaseLanguageModel {
       anthropicBody.tools = options.tools.map((tool: any) => {
         if (tool.type === 'function') {
           return {
-            type: 'custom',
-            name: tool.function.name,
-            description: tool.function.description,
+            type:         'custom',
+            name:         tool.function.name,
+            description:  tool.function.description,
             input_schema: tool.function.parameters || { type: 'object', properties: {} },
           };
         }
@@ -229,7 +235,7 @@ export class AnthropicService extends BaseLanguageModel {
    */
   protected buildFetchOptions(body: any, signal?: AbortSignal): RequestInit {
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      'Content-Type':      'application/json',
       'anthropic-version': '2024-10-22',
     };
 
@@ -240,7 +246,7 @@ export class AnthropicService extends BaseLanguageModel {
     return {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body:   JSON.stringify(body),
       signal,
     };
   }
@@ -263,29 +269,29 @@ export class AnthropicService extends BaseLanguageModel {
       .map((b: any) => b.text)
       .join('\n');
 
-    let toolCalls: Array<{ id?: string; name: string; args: any }> = [];
+    let toolCalls: { id?: string; name: string; args: any }[] = [];
     if (raw.content?.some((b: any) => b.type === 'tool_use')) {
       toolCalls = raw.content
         .filter((b: any) => b.type === 'tool_use')
         .map((b: any) => ({
-          id: b.id,
+          id:   b.id,
           name: b.name,
           args: b.input || {},
         }));
     }
 
     return {
-      content: content.trim(),
+      content:  content.trim(),
       metadata: {
-        tokens_used: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
-        time_spent: 0,
-        prompt_tokens: usage.input_tokens ?? 0,
-        completion_tokens: usage.output_tokens ?? 0,
-        model: this.model,
-        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-        finish_reason: this.normalizeFinishReason(finishReason),
-        reasoning: reasoning.trim() || undefined,
-        parsed_content: undefined,
+        tokens_used:        (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
+        time_spent:         0,
+        prompt_tokens:      usage.input_tokens ?? 0,
+        completion_tokens:  usage.output_tokens ?? 0,
+        model:              this.model,
+        tool_calls:         toolCalls.length > 0 ? toolCalls : undefined,
+        finish_reason:      this.normalizeFinishReason(finishReason),
+        reasoning:          reasoning.trim() || undefined,
+        parsed_content:     undefined,
         rawProviderContent: Array.isArray(raw.content) && raw.content.length > 0 ? raw.content : undefined,
       },
     };

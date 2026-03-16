@@ -12,21 +12,21 @@ describe('ToolRegistry.searchTools', () => {
     registry.descriptions.set('get_workflows', 'Get workflows from n8n');
     registry.descriptions.set('pg_execute', 'Execute a PostgreSQL statement and return execution results.');
 
-    registry.loaders.set('get_workflows', async () => ({
-      name: 'get_workflows',
+    registry.loaders.set('get_workflows', async() => ({
+      name:        'get_workflows',
       description: 'Get workflows from n8n',
-      jsonSchema: { type: 'object', properties: {} },
+      jsonSchema:  { type: 'object', properties: {} },
     }));
-    registry.loaders.set('pg_execute', async () => ({
-      name: 'pg_execute',
+    registry.loaders.set('pg_execute', async() => ({
+      name:        'pg_execute',
       description: 'Execute a PostgreSQL statement and return execution results.',
-      jsonSchema: { type: 'object', properties: {} },
+      jsonSchema:  { type: 'object', properties: {} },
     }));
 
     return registry as ToolRegistry;
   }
 
-  it('searches across all categories when category is omitted', async () => {
+  it('searches across all categories when category is omitted', async() => {
     const registry = makeRegistry();
 
     const tools = await registry.searchTools('get_workflows');
@@ -34,7 +34,7 @@ describe('ToolRegistry.searchTools', () => {
     expect(tools.map((tool: any) => tool.name)).toContain('get_workflows');
   });
 
-  it('uses fuzzy fallback when no direct query match exists', async () => {
+  it('uses fuzzy fallback when no direct query match exists', async() => {
     const registry = makeRegistry();
 
     const tools = await registry.searchTools('get_executions');

@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { redisClient } from "../../database/RedisClient";
+import { BaseTool, ToolResponse } from '../base';
+import { redisClient } from '../../database/RedisClient';
 
 /**
  * Redis Hget Tool - Worker class for execution
  */
 export class RedisHgetWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { key, field } = input;
 
@@ -15,12 +15,12 @@ export class RedisHgetWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Redis HGET ${key} ${field}: ${value || '(nil)'}`
+        responseString: `Redis HGET ${ key } ${ field }: ${ value || '(nil)' }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error getting Redis hash field: ${(error as Error).message}`
+        responseString: `Error getting Redis hash field: ${ (error as Error).message }`,
       };
     }
   }

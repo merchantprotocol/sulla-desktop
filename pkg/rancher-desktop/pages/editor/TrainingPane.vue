@@ -1,21 +1,49 @@
 <template>
-  <div class="training-pane" :class="{ dark: isDark }">
+  <div
+    class="training-pane"
+    :class="{ dark: isDark }"
+  >
     <!-- Loading -->
-    <div v-if="!installChecked" class="tp-loading">
+    <div
+      v-if="!installChecked"
+      class="tp-loading"
+    >
       <span class="tp-loading-text">Checking installation…</span>
     </div>
 
-    <div v-else-if="!envInstalled" class="tp-install-screen">
+    <div
+      v-else-if="!envInstalled"
+      class="tp-install-screen"
+    >
       <!-- Before install starts: centered prompt -->
-      <div v-if="!envInstalling && !installError" class="tp-install-prompt">
+      <div
+        v-if="!envInstalling && !installError"
+        class="tp-install-prompt"
+      >
         <div class="tp-install-icon">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
+          <svg
+            width="48"
+            height="48"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line
+              x1="12"
+              y1="15"
+              x2="12"
+              y2="3"
+            />
           </svg>
         </div>
-        <h2 class="tp-install-title">Install Training Setup</h2>
+        <h2 class="tp-install-title">
+          Install Training Setup
+        </h2>
         <p class="tp-install-desc">
           This will install the Python training dependencies and download the
           <strong>{{ installModelName }}</strong> model<span v-if="installModelRepo"> ({{ installModelRepo }})</span>.
@@ -23,7 +51,10 @@
         </p>
 
         <!-- Disk space info -->
-        <div class="tp-disk-info" :class="{ insufficient: !hasEnoughSpace }">
+        <div
+          class="tp-disk-info"
+          :class="{ insufficient: !hasEnoughSpace }"
+        >
           <div class="tp-disk-row">
             <span class="tp-disk-label">Required space:</span>
             <span class="tp-disk-value">{{ formatBytes(requiredBytes) }}</span>
@@ -32,11 +63,33 @@
             <span class="tp-disk-label">Available space:</span>
             <span class="tp-disk-value">{{ formatBytes(availableBytes) }}</span>
           </div>
-          <div v-if="!hasEnoughSpace" class="tp-disk-warning">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
+          <div
+            v-if="!hasEnoughSpace"
+            class="tp-disk-warning"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line
+                x1="12"
+                y1="9"
+                x2="12"
+                y2="13"
+              />
+              <line
+                x1="12"
+                y1="17"
+                x2="12.01"
+                y2="17"
+              />
             </svg>
             Not enough disk space. Free up at least {{ formatBytes(requiredBytes - availableBytes) }} to continue.
           </div>
@@ -53,13 +106,23 @@
       </div>
 
       <!-- During install: progress + logs -->
-      <div v-if="envInstalling" class="tp-install-progress">
-        <h2 class="tp-progress-title">Installing Training Environment</h2>
-        <p class="tp-progress-desc">{{ installDescription || 'Starting...' }}</p>
+      <div
+        v-if="envInstalling"
+        class="tp-install-progress"
+      >
+        <h2 class="tp-progress-title">
+          Installing Training Environment
+        </h2>
+        <p class="tp-progress-desc">
+          {{ installDescription || 'Starting...' }}
+        </p>
 
         <!-- Progress bar -->
         <div class="tp-progress-track">
-          <div class="tp-progress-fill" :style="{ width: progressPct + '%' }"/>
+          <div
+            class="tp-progress-fill"
+            :style="{ width: progressPct + '%' }"
+          />
         </div>
         <div class="tp-progress-labels">
           <span>{{ installPhase === 'model' ? 'Downloading model' : 'Installing dependencies' }}</span>
@@ -67,41 +130,71 @@
         </div>
 
         <!-- File download detail -->
-        <div v-if="installPhase === 'model' && installFileName" class="tp-file-detail">
+        <div
+          v-if="installPhase === 'model' && installFileName"
+          class="tp-file-detail"
+        >
           <span>{{ installFileName }}</span>
-          <span v-if="downloadDetail" class="tp-file-size">{{ downloadDetail }}</span>
+          <span
+            v-if="downloadDetail"
+            class="tp-file-size"
+          >{{ downloadDetail }}</span>
         </div>
 
         <!-- Live log output -->
         <div class="tp-log-box">
-          <pre class="tp-log-output" ref="logOutputRef">{{ installLogContent || 'Waiting for output…' }}</pre>
+          <pre
+            ref="logOutputRef"
+            class="tp-log-output"
+          >{{ installLogContent || 'Waiting for output…' }}</pre>
         </div>
       </div>
 
       <!-- Error state -->
-      <div v-if="!envInstalling && installError" class="tp-install-prompt">
+      <div
+        v-if="!envInstalling && installError"
+        class="tp-install-prompt"
+      >
         <div class="tp-error-box">
           <strong>Installation failed:</strong> {{ installError }}
         </div>
-        <button class="tp-btn-install" @click="startInstall">
+        <button
+          class="tp-btn-install"
+          @click="startInstall"
+        >
           Retry Installation
         </button>
-        <div v-if="installLogContent" class="tp-log-box tp-log-error">
+        <div
+          v-if="installLogContent"
+          class="tp-log-box tp-log-error"
+        >
           <pre class="tp-log-output">{{ installLogContent }}</pre>
         </div>
       </div>
     </div>
 
     <!-- ==================== WIZARD STEPS ==================== -->
-    <div v-else class="tp-wizard">
-
+    <div
+      v-else
+      class="tp-wizard"
+    >
       <!-- ─── DASHBOARD ─── -->
-      <TrainingDashboard v-if="currentStep === -1" :is-dark="isDark" @open-training-log="$emit('open-training-log', $event)" />
+      <TrainingDashboard
+        v-if="currentStep === -1"
+        :is-dark="isDark"
+        @open-training-log="$emit('open-training-log', $event)"
+      />
 
       <!-- ─── STEP 1: Document Selection ─── -->
-      <div v-if="currentStep === 0" class="tp-step tp-step-select">
+      <div
+        v-if="currentStep === 0"
+        class="tp-step tp-step-select"
+      >
         <!-- Left: File tree + continue button -->
-        <div class="tp-select-tree" :class="{ dark: isDark }">
+        <div
+          class="tp-select-tree"
+          :class="{ dark: isDark }"
+        >
           <div class="tp-select-tree-header">
             <span class="tp-select-tree-title">Your Files</span>
             <span class="tp-select-tree-count">
@@ -110,11 +203,32 @@
             </span>
           </div>
           <div class="tp-select-tree-content">
-            <div v-if="treeLoading === '__root__'" class="tp-tree-status">Loading…</div>
-            <div v-else-if="loadError" class="tp-tree-status tp-tree-error">{{ loadError }}</div>
-            <div v-else-if="treeRoot.length === 0" class="tp-tree-status">No files found.</div>
-            <div v-else class="tp-tree-list">
-              <template v-for="node in treeRoot" :key="node.path">
+            <div
+              v-if="treeLoading === '__root__'"
+              class="tp-tree-status"
+            >
+              Loading…
+            </div>
+            <div
+              v-else-if="loadError"
+              class="tp-tree-status tp-tree-error"
+            >
+              {{ loadError }}
+            </div>
+            <div
+              v-else-if="treeRoot.length === 0"
+              class="tp-tree-status"
+            >
+              No files found.
+            </div>
+            <div
+              v-else
+              class="tp-tree-list"
+            >
+              <template
+                v-for="node in treeRoot"
+                :key="node.path"
+              >
                 <TreeNode
                   :node="node"
                   :depth="0"
@@ -132,8 +246,14 @@
             </div>
           </div>
           <!-- Pinned action bar below tree -->
-          <div class="tp-select-tree-actions" :class="{ dark: isDark }">
-            <span class="tp-selection-summary" v-if="selectedFolders.length > 0 || selectedFiles.length > 0">
+          <div
+            class="tp-select-tree-actions"
+            :class="{ dark: isDark }"
+          >
+            <span
+              v-if="selectedFolders.length > 0 || selectedFiles.length > 0"
+              class="tp-selection-summary"
+            >
               {{ selectedFolders.length + selectedFiles.length }} item{{ (selectedFolders.length + selectedFiles.length) !== 1 ? 's' : '' }} selected
             </span>
             <button
@@ -142,27 +262,45 @@
               @click="$emit('step-change', 1)"
             >
               Continue
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="9 18 15 12 9 6"/>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="9 18 15 12 9 6" />
               </svg>
             </button>
           </div>
         </div>
-
       </div>
 
       <!-- ─── STEP 2: Craft Prompt ─── -->
-      <div v-if="currentStep === 1" class="tp-step tp-step-prompt">
+      <div
+        v-if="currentStep === 1"
+        class="tp-step tp-step-prompt"
+      >
         <div class="tp-fullpage-content">
-          <h2 class="tp-page-title">Craft Your Prompt</h2>
+          <h2 class="tp-page-title">
+            Craft Your Prompt
+          </h2>
           <p class="tp-page-desc">
             Write or select a prompt template that guides how your documents are turned into training data.
             This prompt is sent to an LLM to generate high-quality examples from each document.
           </p>
 
           <!-- Prompt template selector -->
-          <div class="tp-prompt-templates" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Template</h3>
+          <div
+            class="tp-prompt-templates"
+            :class="{ dark: isDark }"
+          >
+            <h3 class="tp-section-title">
+              Template
+            </h3>
             <div class="tp-template-grid">
               <button
                 v-for="tmpl in promptTemplates"
@@ -171,19 +309,28 @@
                 :class="{ dark: isDark, selected: selectedTemplate === tmpl.id }"
                 @click="selectTemplate(tmpl.id)"
               >
-                <div class="tp-template-name">{{ tmpl.name }}</div>
-                <div class="tp-template-desc">{{ tmpl.description }}</div>
+                <div class="tp-template-name">
+                  {{ tmpl.name }}
+                </div>
+                <div class="tp-template-desc">
+                  {{ tmpl.description }}
+                </div>
               </button>
             </div>
           </div>
 
           <!-- Custom prompt textarea -->
-          <div class="tp-prompt-editor" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Prompt</h3>
+          <div
+            class="tp-prompt-editor"
+            :class="{ dark: isDark }"
+          >
+            <h3 class="tp-section-title">
+              Prompt
+            </h3>
             <textarea
+              v-model="customPrompt"
               class="tp-prompt-textarea"
               :class="{ dark: isDark }"
-              v-model="customPrompt"
               rows="8"
               placeholder="Enter your custom prompt here. Use {document} as a placeholder for the document text and {filename} for the file name."
             />
@@ -194,214 +341,452 @@
         </div>
 
         <div class="tp-step-actions">
-          <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 0)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 18 9 12 15 6"/>
+          <button
+            class="tp-btn-back"
+            :class="{ dark: isDark }"
+            @click="$emit('step-change', 0)"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
             </svg>
             Back
           </button>
-          <button class="tp-btn-primary" @click="$emit('step-change', 2)">
+          <button
+            class="tp-btn-primary"
+            @click="$emit('step-change', 2)"
+          >
             Continue
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6" />
             </svg>
           </button>
         </div>
       </div>
 
       <!-- ─── STEP 3: Pre-Process (choose LLM + generate training data) ─── -->
-      <div v-if="currentStep === 2" class="tp-step tp-step-generate">
+      <div
+        v-if="currentStep === 2"
+        class="tp-step tp-step-generate"
+      >
         <!-- Left: main controls -->
-        <div class="tp-generate-main" :class="{ dark: isDark }">
+        <div
+          class="tp-generate-main"
+          :class="{ dark: isDark }"
+        >
           <div class="tp-generate-main-scroll">
-          <h2 class="tp-page-title">Generate Training Data</h2>
-          <p class="tp-page-desc" style="margin-bottom: 16px;">
-            Select a model to read your documents and generate training examples from your prompt template.
-          </p>
-
-          <!-- LLM Model selection for processing -->
-          <div class="tp-llm-section" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Choose a Model for Processing</h3>
-            <p class="tp-model-section-desc" :class="{ dark: isDark }">
-              Select which LLM will read your documents and generate the training prompts. More capable models
-              produce higher-quality questions but cost more and take longer. You can use any model from your
-              locally installed models or your connected integrations (OpenAI, Anthropic, etc.).
+            <h2 class="tp-page-title">
+              Generate Training Data
+            </h2>
+            <p
+              class="tp-page-desc"
+              style="margin-bottom: 16px;"
+            >
+              Select a model to read your documents and generate training examples from your prompt template.
             </p>
 
-            <!-- Local models -->
-            <div v-if="localLlmModels.length > 0" class="tp-llm-group">
-              <div class="tp-llm-group-label" :class="{ dark: isDark }">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
-                  <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
-                  <line x1="6" y1="6" x2="6.01" y2="6"/>
-                  <line x1="6" y1="18" x2="6.01" y2="18"/>
-                </svg>
-                Local Models
-                <span class="tp-llm-group-badge">Free</span>
-              </div>
-              <div class="tp-llm-list">
-                <button
-                  v-for="model in localLlmModels"
-                  :key="'local-' + model.id"
-                  class="tp-llm-card"
-                  :class="{ dark: isDark, selected: processLlm === model.id && processLlmProvider === 'local' }"
-                  @click="selectProcessLlm(model.id, 'local')"
+            <!-- LLM Model selection for processing -->
+            <div
+              class="tp-llm-section"
+              :class="{ dark: isDark }"
+            >
+              <h3 class="tp-section-title">
+                Choose a Model for Processing
+              </h3>
+              <p
+                class="tp-model-section-desc"
+                :class="{ dark: isDark }"
+              >
+                Select which LLM will read your documents and generate the training prompts. More capable models
+                produce higher-quality questions but cost more and take longer. You can use any model from your
+                locally installed models or your connected integrations (OpenAI, Anthropic, etc.).
+              </p>
+
+              <!-- Local models -->
+              <div
+                v-if="localLlmModels.length > 0"
+                class="tp-llm-group"
+              >
+                <div
+                  class="tp-llm-group-label"
+                  :class="{ dark: isDark }"
                 >
-                  <div class="tp-model-radio" :class="{ selected: processLlm === model.id && processLlmProvider === 'local' }" />
-                  <div class="tp-llm-card-info">
-                    <div class="tp-model-name">{{ model.name }}</div>
-                    <div class="tp-llm-card-meta">Local · No cost · Slower</div>
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            <!-- Remote / integration models -->
-            <div v-if="remoteLlmModels.length > 0" class="tp-llm-group">
-              <div class="tp-llm-group-label" :class="{ dark: isDark }">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                </svg>
-                Cloud Models (via Integrations)
-              </div>
-              <div class="tp-llm-list">
-                <button
-                  v-for="model in remoteLlmModels"
-                  :key="'remote-' + model.id"
-                  class="tp-llm-card"
-                  :class="{ dark: isDark, selected: processLlm === model.id && processLlmProvider === model.provider }"
-                  @click="selectProcessLlm(model.id, model.provider)"
-                >
-                  <div class="tp-model-radio" :class="{ selected: processLlm === model.id && processLlmProvider === model.provider }" />
-                  <div class="tp-llm-card-info">
-                    <div class="tp-model-name">{{ model.name }}</div>
-                    <div class="tp-llm-card-meta">{{ model.provider }} · API cost applies · Fast</div>
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            <div v-if="localLlmModels.length === 0 && remoteLlmModels.length === 0" class="tp-model-empty" :class="{ dark: isDark }">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-              </svg>
-              <p>No models available. Install a local model or connect an integration (OpenAI, Anthropic, etc.) in Settings.</p>
-            </div>
-          </div>
-
-          <!-- Estimates panel -->
-          <div v-if="processLlm" class="tp-estimates" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Estimated Cost & Time</h3>
-            <div class="tp-estimates-grid">
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Documents</div>
-                <div class="tp-estimate-value">{{ selectedFolders.length + selectedFiles.length }} items</div>
-              </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Est. Chunks</div>
-                <div class="tp-estimate-value">{{ estChunks }}</div>
-              </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Est. Tokens</div>
-                <div class="tp-estimate-value">{{ estTokensFormatted }}</div>
-              </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Est. Cost</div>
-                <div class="tp-estimate-value" :class="{ 'tp-estimate-free': processLlmProvider === 'local' }">
-                  {{ processLlmProvider === 'local' ? 'Free' : estCostFormatted }}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect
+                      x="2"
+                      y="2"
+                      width="20"
+                      height="8"
+                      rx="2"
+                      ry="2"
+                    />
+                    <rect
+                      x="2"
+                      y="14"
+                      width="20"
+                      height="8"
+                      rx="2"
+                      ry="2"
+                    />
+                    <line
+                      x1="6"
+                      y1="6"
+                      x2="6.01"
+                      y2="6"
+                    />
+                    <line
+                      x1="6"
+                      y1="18"
+                      x2="6.01"
+                      y2="18"
+                    />
+                  </svg>
+                  Local Models
+                  <span class="tp-llm-group-badge">Free</span>
+                </div>
+                <div class="tp-llm-list">
+                  <button
+                    v-for="model in localLlmModels"
+                    :key="'local-' + model.id"
+                    class="tp-llm-card"
+                    :class="{ dark: isDark, selected: processLlm === model.id && processLlmProvider === 'local' }"
+                    @click="selectProcessLlm(model.id, 'local')"
+                  >
+                    <div
+                      class="tp-model-radio"
+                      :class="{ selected: processLlm === model.id && processLlmProvider === 'local' }"
+                    />
+                    <div class="tp-llm-card-info">
+                      <div class="tp-model-name">
+                        {{ model.name }}
+                      </div>
+                      <div class="tp-llm-card-meta">
+                        Local · No cost · Slower
+                      </div>
+                    </div>
+                  </button>
                 </div>
               </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Est. Time</div>
-                <div class="tp-estimate-value">{{ estTimeFormatted }}</div>
-              </div>
-              <div class="tp-estimate-card" :class="{ dark: isDark }">
-                <div class="tp-estimate-label">Model</div>
-                <div class="tp-estimate-value tp-estimate-model">{{ processLlm }}</div>
-              </div>
-            </div>
-            <div class="tp-estimate-disclaimer" :class="{ dark: isDark }">
-              These are rough estimates based on average document sizes. Actual costs and time may vary
-              depending on document complexity and model response lengths.
-            </div>
-          </div>
 
-          <!-- Output filename -->
-          <div class="tp-output-filename" :class="{ dark: isDark }">
-            <label class="tp-config-label">Output File Name</label>
-            <div class="tp-output-filename-row">
-              <input
-                type="text"
-                class="tp-config-input"
+              <!-- Remote / integration models -->
+              <div
+                v-if="remoteLlmModels.length > 0"
+                class="tp-llm-group"
+              >
+                <div
+                  class="tp-llm-group-label"
+                  :class="{ dark: isDark }"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                  </svg>
+                  Cloud Models (via Integrations)
+                </div>
+                <div class="tp-llm-list">
+                  <button
+                    v-for="model in remoteLlmModels"
+                    :key="'remote-' + model.id"
+                    class="tp-llm-card"
+                    :class="{ dark: isDark, selected: processLlm === model.id && processLlmProvider === model.provider }"
+                    @click="selectProcessLlm(model.id, model.provider)"
+                  >
+                    <div
+                      class="tp-model-radio"
+                      :class="{ selected: processLlm === model.id && processLlmProvider === model.provider }"
+                    />
+                    <div class="tp-llm-card-info">
+                      <div class="tp-model-name">
+                        {{ model.name }}
+                      </div>
+                      <div class="tp-llm-card-meta">
+                        {{ model.provider }} · API cost applies · Fast
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                v-if="localLlmModels.length === 0 && remoteLlmModels.length === 0"
+                class="tp-model-empty"
                 :class="{ dark: isDark }"
-                v-model="outputFilename"
-                placeholder="training-data"
-              />
-              <span class="tp-output-ext">.jsonl</span>
+              >
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  opacity="0.4"
+                >
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
+                <p>No models available. Install a local model or connect an integration (OpenAI, Anthropic, etc.) in Settings.</p>
+              </div>
             </div>
-            <div class="tp-config-doc" :class="{ dark: isDark }">
-              Name your output training file. The processed data will be saved as
-              <strong>{{ outputFilenameClean }}.jsonl</strong> in your training data directory.
-            </div>
-          </div>
 
-          <!-- Processing summary -->
-          <div class="tp-process-summary" :class="{ dark: isDark }">
-            <div class="tp-process-row">
-              <span class="tp-process-label">Selected items</span>
-              <span class="tp-process-value">{{ selectedFolders.length + selectedFiles.length }}</span>
+            <!-- Estimates panel -->
+            <div
+              v-if="processLlm"
+              class="tp-estimates"
+              :class="{ dark: isDark }"
+            >
+              <h3 class="tp-section-title">
+                Estimated Cost & Time
+              </h3>
+              <div class="tp-estimates-grid">
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Documents
+                  </div>
+                  <div class="tp-estimate-value">
+                    {{ selectedFolders.length + selectedFiles.length }} items
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Est. Chunks
+                  </div>
+                  <div class="tp-estimate-value">
+                    {{ estChunks }}
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Est. Tokens
+                  </div>
+                  <div class="tp-estimate-value">
+                    {{ estTokensFormatted }}
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Est. Cost
+                  </div>
+                  <div
+                    class="tp-estimate-value"
+                    :class="{ 'tp-estimate-free': processLlmProvider === 'local' }"
+                  >
+                    {{ processLlmProvider === 'local' ? 'Free' : estCostFormatted }}
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Est. Time
+                  </div>
+                  <div class="tp-estimate-value">
+                    {{ estTimeFormatted }}
+                  </div>
+                </div>
+                <div
+                  class="tp-estimate-card"
+                  :class="{ dark: isDark }"
+                >
+                  <div class="tp-estimate-label">
+                    Model
+                  </div>
+                  <div class="tp-estimate-value tp-estimate-model">
+                    {{ processLlm }}
+                  </div>
+                </div>
+              </div>
+              <div
+                class="tp-estimate-disclaimer"
+                :class="{ dark: isDark }"
+              >
+                These are rough estimates based on average document sizes. Actual costs and time may vary
+                depending on document complexity and model response lengths.
+              </div>
             </div>
-            <div class="tp-process-row">
-              <span class="tp-process-label">Prompt template</span>
-              <span class="tp-process-value">{{ selectedTemplateName }}</span>
-            </div>
-            <div class="tp-process-row">
-              <span class="tp-process-label">Processing model</span>
-              <span class="tp-process-value">{{ processLlm || '—' }}</span>
-            </div>
-            <div class="tp-process-row">
-              <span class="tp-process-label">Output file</span>
-              <span class="tp-process-value"><code>{{ outputFilenameClean }}.jsonl</code></span>
-            </div>
-          </div>
 
-          <!-- Processing state -->
-          <div v-if="!preprocessing && !preprocessDone" class="tp-process-ready" :class="{ dark: isDark }">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-              <polyline points="16 16 12 12 8 16"/>
-              <line x1="12" y1="12" x2="12" y2="21"/>
-              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
-            </svg>
-            <p>Ready to process. Select a model above and click the button below to start generating training data.</p>
-          </div>
-
-          <div v-if="preprocessing" class="tp-process-active" :class="{ dark: isDark }">
-            <div class="tp-process-spinner-row">
-              <span class="tp-btn-spinner tp-spinner-lg" />
-              <span>Processing documents…</span>
+            <!-- Output filename -->
+            <div
+              class="tp-output-filename"
+              :class="{ dark: isDark }"
+            >
+              <label class="tp-config-label">Output File Name</label>
+              <div class="tp-output-filename-row">
+                <input
+                  v-model="outputFilename"
+                  type="text"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                  placeholder="training-data"
+                >
+                <span class="tp-output-ext">.jsonl</span>
+              </div>
+              <div
+                class="tp-config-doc"
+                :class="{ dark: isDark }"
+              >
+                Name your output training file. The processed data will be saved as
+                <strong>{{ outputFilenameClean }}.jsonl</strong> in your training data directory.
+              </div>
             </div>
-          </div>
 
-          <!-- Results after processing -->
-          <div v-if="preprocessDone" class="tp-process-done" :class="{ dark: isDark }">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-              <polyline points="22 4 12 14.01 9 11.01"/>
-            </svg>
-            <div>
-              <strong>Processing complete</strong>
-              <p>{{ totalExamples }} training examples generated across {{ dataFiles.length }} file{{ dataFiles.length !== 1 ? 's' : '' }}</p>
+            <!-- Processing summary -->
+            <div
+              class="tp-process-summary"
+              :class="{ dark: isDark }"
+            >
+              <div class="tp-process-row">
+                <span class="tp-process-label">Selected items</span>
+                <span class="tp-process-value">{{ selectedFolders.length + selectedFiles.length }}</span>
+              </div>
+              <div class="tp-process-row">
+                <span class="tp-process-label">Prompt template</span>
+                <span class="tp-process-value">{{ selectedTemplateName }}</span>
+              </div>
+              <div class="tp-process-row">
+                <span class="tp-process-label">Processing model</span>
+                <span class="tp-process-value">{{ processLlm || '—' }}</span>
+              </div>
+              <div class="tp-process-row">
+                <span class="tp-process-label">Output file</span>
+                <span class="tp-process-value"><code>{{ outputFilenameClean }}.jsonl</code></span>
+              </div>
             </div>
-          </div>
 
+            <!-- Processing state -->
+            <div
+              v-if="!preprocessing && !preprocessDone"
+              class="tp-process-ready"
+              :class="{ dark: isDark }"
+            >
+              <svg
+                width="40"
+                height="40"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                opacity="0.4"
+              >
+                <polyline points="16 16 12 12 8 16" />
+                <line
+                  x1="12"
+                  y1="12"
+                  x2="12"
+                  y2="21"
+                />
+                <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+              </svg>
+              <p>Ready to process. Select a model above and click the button below to start generating training data.</p>
+            </div>
+
+            <div
+              v-if="preprocessing"
+              class="tp-process-active"
+              :class="{ dark: isDark }"
+            >
+              <div class="tp-process-spinner-row">
+                <span class="tp-btn-spinner tp-spinner-lg" />
+                <span>Processing documents…</span>
+              </div>
+            </div>
+
+            <!-- Results after processing -->
+            <div
+              v-if="preprocessDone"
+              class="tp-process-done"
+              :class="{ dark: isDark }"
+            >
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+              <div>
+                <strong>Processing complete</strong>
+                <p>{{ totalExamples }} training examples generated across {{ dataFiles.length }} file{{ dataFiles.length !== 1 ? 's' : '' }}</p>
+              </div>
+            </div>
           </div><!-- /tp-generate-main-scroll -->
 
           <!-- Pinned action bar -->
-          <div class="tp-step-actions" :class="{ dark: isDark }">
-            <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 1)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 18 9 12 15 6"/>
+          <div
+            class="tp-step-actions"
+            :class="{ dark: isDark }"
+          >
+            <button
+              class="tp-btn-back"
+              :class="{ dark: isDark }"
+              @click="$emit('step-change', 1)"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="15 18 9 12 15 6" />
               </svg>
               Back
             </button>
@@ -411,9 +796,22 @@
                 :disabled="preprocessing || !processLlm || (selectedFolders.length === 0 && selectedFiles.length === 0)"
                 @click="enqueueAndSchedule"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10"/>
-                  <polyline points="12 6 12 12 16 14"/>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                  />
+                  <polyline points="12 6 12 12 16 14" />
                 </svg>
                 Schedule Nightly Training
               </button>
@@ -422,14 +820,30 @@
                 :disabled="preprocessing || !processLlm || (selectedFolders.length === 0 && selectedFiles.length === 0)"
                 @click="enqueueAndProcess"
               >
-                <span v-if="preprocessing" class="tp-btn-spinner" />
+                <span
+                  v-if="preprocessing"
+                  class="tp-btn-spinner"
+                />
                 {{ preprocessing ? 'Processing…' : 'Manually Process Now' }}
               </button>
             </template>
-            <div v-else-if="scheduledForNightly && !preprocessDone" class="tp-scheduled-badge" :class="{ dark: isDark }">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                <polyline points="22 4 12 14.01 9 11.01"/>
+            <div
+              v-else-if="scheduledForNightly && !preprocessDone"
+              class="tp-scheduled-badge"
+              :class="{ dark: isDark }"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
               Queued for nightly training
             </div>
@@ -440,19 +854,32 @@
               @click="$emit('step-change', 3)"
             >
               Continue
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="9 18 15 12 9 6"/>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="9 18 15 12 9 6" />
               </svg>
             </button>
           </div>
         </div><!-- /tp-generate-main -->
-
       </div>
 
       <!-- ─── STEP 4 (Train Wizard Step 1): Select Data Files ─── -->
-      <div v-if="currentStep === 3" class="tp-step tp-step-datafiles">
+      <div
+        v-if="currentStep === 3"
+        class="tp-step tp-step-datafiles"
+      >
         <div class="tp-fullpage-content">
-          <h2 class="tp-page-title">Select Training Data</h2>
+          <h2 class="tp-page-title">
+            Select Training Data
+          </h2>
           <p class="tp-page-desc">
             Choose which training data files to use for fine-tuning. These are the JSONL files
             generated from your documents or collected from chat sessions.
@@ -460,17 +887,34 @@
 
           <!-- Refresh -->
           <div style="margin-bottom: 16px;">
-            <button class="tp-btn-secondary tp-btn-sm" :class="{ dark: isDark }" @click="loadDataFiles">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="23 4 23 10 17 10"/>
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            <button
+              class="tp-btn-secondary tp-btn-sm"
+              :class="{ dark: isDark }"
+              @click="loadDataFiles"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
               </svg>
               Refresh
             </button>
           </div>
 
           <!-- Loading -->
-          <div v-if="dataFilesLoading" class="tp-process-active" :class="{ dark: isDark }">
+          <div
+            v-if="dataFilesLoading"
+            class="tp-process-active"
+            :class="{ dark: isDark }"
+          >
             <div class="tp-process-spinner-row">
               <span class="tp-btn-spinner tp-spinner-lg" />
               <span>Loading data files…</span>
@@ -478,24 +922,44 @@
           </div>
 
           <!-- Empty state -->
-          <div v-else-if="dataFiles.length === 0" class="tp-process-ready" :class="{ dark: isDark }">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
+          <div
+            v-else-if="dataFiles.length === 0"
+            class="tp-process-ready"
+            :class="{ dark: isDark }"
+          >
+            <svg
+              width="40"
+              height="40"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              opacity="0.4"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
             </svg>
             <p>No training data files found. Go back to the Create Training Data wizard to generate some.</p>
           </div>
 
           <!-- File list with checkboxes -->
-          <div v-else class="tp-datafiles-list">
-            <div class="tp-datafiles-header" :class="{ dark: isDark }">
+          <div
+            v-else
+            class="tp-datafiles-list"
+          >
+            <div
+              class="tp-datafiles-header"
+              :class="{ dark: isDark }"
+            >
               <label class="tp-datafiles-check-all">
                 <input
                   type="checkbox"
                   :checked="selectedDataFiles.length === dataFiles.length"
                   :indeterminate="selectedDataFiles.length > 0 && selectedDataFiles.length < dataFiles.length"
                   @change="toggleAllDataFiles"
-                />
+                >
                 Select All
               </label>
               <span class="tp-datafiles-count">
@@ -516,10 +980,15 @@
                 :checked="selectedDataFiles.includes(file.path)"
                 @click.stop
                 @change="toggleDataFile(file.path)"
-              />
+              >
               <div class="tp-datafile-info">
-                <div class="tp-datafile-name">{{ file.filename }}</div>
-                <div class="tp-datafile-meta" :class="{ dark: isDark }">
+                <div class="tp-datafile-name">
+                  {{ file.filename }}
+                </div>
+                <div
+                  class="tp-datafile-meta"
+                  :class="{ dark: isDark }"
+                >
                   {{ file.examples }} examples · {{ formatBytes(file.size) }} · {{ sourceLabel(file.source) }} · {{ formatDate(file.modifiedAt) }}
                 </div>
               </div>
@@ -527,27 +996,64 @@
           </div>
 
           <!-- Scale based on selected files -->
-          <div v-if="selectedDataFiles.length > 0" class="tp-scale" :class="{ dark: isDark }" style="margin-top: 20px;">
+          <div
+            v-if="selectedDataFiles.length > 0"
+            class="tp-scale"
+            :class="{ dark: isDark }"
+            style="margin-top: 20px;"
+          >
             <div class="tp-scale-header">
               <span class="tp-scale-label">{{ selectedDataExamples }} training examples</span>
-              <span class="tp-scale-badge" :class="selectedDataScale">{{ selectedDataScaleLabel }}</span>
+              <span
+                class="tp-scale-badge"
+                :class="selectedDataScale"
+              >{{ selectedDataScaleLabel }}</span>
             </div>
             <div class="tp-scale-bar">
-              <div class="tp-scale-fill" :class="selectedDataScale" :style="{ width: selectedDataScalePct + '%' }" />
+              <div
+                class="tp-scale-fill"
+                :class="selectedDataScale"
+                :style="{ width: selectedDataScalePct + '%' }"
+              />
               <div class="tp-scale-marks">
-                <span class="tp-scale-mark" :style="{ left: '0%' }">0</span>
-                <span class="tp-scale-mark" :style="{ left: '10%' }">100</span>
-                <span class="tp-scale-mark" :style="{ left: '50%' }">500</span>
-                <span class="tp-scale-mark" :style="{ left: '100%' }">1000+</span>
+                <span
+                  class="tp-scale-mark"
+                  :style="{ left: '0%' }"
+                >0</span>
+                <span
+                  class="tp-scale-mark"
+                  :style="{ left: '10%' }"
+                >100</span>
+                <span
+                  class="tp-scale-mark"
+                  :style="{ left: '50%' }"
+                >500</span>
+                <span
+                  class="tp-scale-mark"
+                  :style="{ left: '100%' }"
+                >1000+</span>
               </div>
             </div>
           </div>
         </div>
 
         <div class="tp-step-actions">
-          <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 2)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 18 9 12 15 6"/>
+          <button
+            class="tp-btn-back"
+            :class="{ dark: isDark }"
+            @click="$emit('step-change', 2)"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
             </svg>
             Back
           </button>
@@ -557,17 +1063,31 @@
             @click="$emit('step-change', 4)"
           >
             Continue
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6" />
             </svg>
           </button>
         </div>
       </div>
 
       <!-- ─── STEP 5 (Train Wizard Step 2): Model & Training Settings ─── -->
-      <div v-if="currentStep === 4" class="tp-step tp-step-model">
+      <div
+        v-if="currentStep === 4"
+        class="tp-step tp-step-model"
+      >
         <div class="tp-fullpage-content">
-          <h2 class="tp-page-title">Model & Training Settings</h2>
+          <h2 class="tp-page-title">
+            Model & Training Settings
+          </h2>
           <p class="tp-page-desc">
             Choose the base model you want to fine-tune and configure your training parameters.
             LoRA (Low-Rank Adaptation) lets you customize a model quickly without retraining
@@ -575,28 +1095,61 @@
           </p>
 
           <!-- Downloaded models -->
-          <div class="tp-model-section" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Your Downloaded Models</h3>
-            <p class="tp-model-section-desc" :class="{ dark: isDark }">
+          <div
+            class="tp-model-section"
+            :class="{ dark: isDark }"
+          >
+            <h3 class="tp-section-title">
+              Your Downloaded Models
+            </h3>
+            <p
+              class="tp-model-section-desc"
+              :class="{ dark: isDark }"
+            >
               These are models already downloaded to your machine that support fine-tuning.
               Select one to use as your base model.
             </p>
 
-            <div v-if="downloadedModelsLoading" class="tp-model-loading">
+            <div
+              v-if="downloadedModelsLoading"
+              class="tp-model-loading"
+            >
               <span class="tp-btn-spinner tp-spinner-lg" />
               <span>Loading models…</span>
             </div>
 
-            <div v-else-if="downloadedModels.length === 0" class="tp-model-empty" :class="{ dark: isDark }">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                <line x1="12" y1="22.08" x2="12" y2="12"/>
+            <div
+              v-else-if="downloadedModels.length === 0"
+              class="tp-model-empty"
+              :class="{ dark: isDark }"
+            >
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                opacity="0.4"
+              >
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line
+                  x1="12"
+                  y1="22.08"
+                  x2="12"
+                  y2="12"
+                />
               </svg>
               <p>No trainable models found. Download a model from the Models page first, or paste a HuggingFace repo below.</p>
             </div>
 
-            <div v-else class="tp-model-list">
+            <div
+              v-else
+              class="tp-model-list"
+            >
               <button
                 v-for="model in downloadedModels"
                 :key="model.key"
@@ -605,10 +1158,17 @@
                 @click="selectedModel = model.key"
               >
                 <div class="tp-model-card-left">
-                  <div class="tp-model-radio" :class="{ selected: selectedModel === model.key }" />
+                  <div
+                    class="tp-model-radio"
+                    :class="{ selected: selectedModel === model.key }"
+                  />
                   <div>
-                    <div class="tp-model-name">{{ model.displayName }}</div>
-                    <div class="tp-model-repo">{{ model.trainingRepo }}</div>
+                    <div class="tp-model-name">
+                      {{ model.displayName }}
+                    </div>
+                    <div class="tp-model-repo">
+                      {{ model.trainingRepo }}
+                    </div>
                   </div>
                 </div>
               </button>
@@ -616,41 +1176,92 @@
           </div>
 
           <!-- HuggingFace URL input (accordion) -->
-          <div class="tp-hf-section" :class="{ dark: isDark }">
-            <button class="tp-hf-toggle" :class="{ dark: isDark }" @click="hfExpanded = !hfExpanded">
+          <div
+            class="tp-hf-section"
+            :class="{ dark: isDark }"
+          >
+            <button
+              class="tp-hf-toggle"
+              :class="{ dark: isDark }"
+              @click="hfExpanded = !hfExpanded"
+            >
               <svg
                 class="tp-hf-toggle-icon"
                 :class="{ open: hfExpanded }"
-                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               >
-                <line x1="12" y1="5" x2="12" y2="19"/>
-                <line x1="5" y1="12" x2="19" y2="12"/>
+                <line
+                  x1="12"
+                  y1="5"
+                  x2="12"
+                  y2="19"
+                />
+                <line
+                  x1="5"
+                  y1="12"
+                  x2="19"
+                  y2="12"
+                />
               </svg>
               Add a Model from HuggingFace
             </button>
-            <div v-if="hfExpanded" class="tp-hf-body">
-              <p class="tp-model-section-desc" :class="{ dark: isDark }">
+            <div
+              v-if="hfExpanded"
+              class="tp-hf-body"
+            >
+              <p
+                class="tp-model-section-desc"
+                :class="{ dark: isDark }"
+              >
                 Want to train a model that isn't listed above? Paste a HuggingFace model URL or repo ID below.
                 The model weights will be downloaded before training begins.
               </p>
               <div class="tp-hf-input-row">
                 <input
+                  v-model="hfInput"
                   type="text"
                   class="tp-hf-input"
                   :class="{ dark: isDark, error: !!hfError }"
-                  v-model="hfInput"
-                  @input="onHfInputChange"
                   placeholder="e.g. unsloth/Qwen3.5-9B or https://huggingface.co/unsloth/Qwen3.5-9B"
-                />
+                  @input="onHfInputChange"
+                >
               </div>
-              <div v-if="hfError" class="tp-hf-error">{{ hfError }}</div>
-              <div v-else-if="hfParsedRepo" class="tp-hf-parsed" :class="{ dark: isDark }">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="20 6 9 17 4 12"/>
+              <div
+                v-if="hfError"
+                class="tp-hf-error"
+              >
+                {{ hfError }}
+              </div>
+              <div
+                v-else-if="hfParsedRepo"
+                class="tp-hf-parsed"
+                :class="{ dark: isDark }"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
                 </svg>
                 Resolved: <strong>{{ hfParsedRepo }}</strong>
               </div>
-              <div class="tp-hf-examples" :class="{ dark: isDark }">
+              <div
+                class="tp-hf-examples"
+                :class="{ dark: isDark }"
+              >
                 <span class="tp-hf-examples-label">Accepted formats:</span>
                 <code>unsloth/Qwen3.5-9B</code>
                 <code>https://huggingface.co/unsloth/Qwen3.5-9B</code>
@@ -660,14 +1271,27 @@
           </div>
 
           <!-- Training parameters — single column with thorough docs -->
-          <div class="tp-train-config" :class="{ dark: isDark }">
-            <h3 class="tp-section-title">Training Parameters</h3>
+          <div
+            class="tp-train-config"
+            :class="{ dark: isDark }"
+          >
+            <h3 class="tp-section-title">
+              Training Parameters
+            </h3>
 
             <div class="tp-config-stack">
               <div class="tp-config-field">
                 <label class="tp-config-label">Learning Rate</label>
-                <input type="text" class="tp-config-input" :class="{ dark: isDark }" v-model="trainLearningRate" />
-                <div class="tp-config-doc" :class="{ dark: isDark }">
+                <input
+                  v-model="trainLearningRate"
+                  type="text"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                >
+                <div
+                  class="tp-config-doc"
+                  :class="{ dark: isDark }"
+                >
                   Controls how much the model's weights change with each training step. A higher learning rate
                   means faster learning but risks overshooting and producing unstable results. A lower rate is
                   more stable but takes longer and may under-learn your data. For LoRA fine-tuning, values between
@@ -678,8 +1302,18 @@
 
               <div class="tp-config-field">
                 <label class="tp-config-label">Epochs</label>
-                <input type="number" class="tp-config-input" :class="{ dark: isDark }" v-model.number="trainEpochs" min="1" max="20" />
-                <div class="tp-config-doc" :class="{ dark: isDark }">
+                <input
+                  v-model.number="trainEpochs"
+                  type="number"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                  min="1"
+                  max="20"
+                >
+                <div
+                  class="tp-config-doc"
+                  :class="{ dark: isDark }"
+                >
                   An epoch is one complete pass through your entire training dataset. More epochs mean the model
                   sees your data more times. With small datasets (&lt;100 examples), 2-5 epochs helps the model
                   learn thoroughly. With larger datasets (500+), 1-2 epochs is usually sufficient. Too many epochs
@@ -690,8 +1324,18 @@
 
               <div class="tp-config-field">
                 <label class="tp-config-label">LoRA Rank</label>
-                <input type="number" class="tp-config-input" :class="{ dark: isDark }" v-model.number="trainLoraRank" min="4" max="128" />
-                <div class="tp-config-doc" :class="{ dark: isDark }">
+                <input
+                  v-model.number="trainLoraRank"
+                  type="number"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                  min="4"
+                  max="128"
+                >
+                <div
+                  class="tp-config-doc"
+                  :class="{ dark: isDark }"
+                >
                   LoRA works by adding small trainable matrices to the model's layers instead of modifying
                   every weight. The <em>rank</em> controls the size of these matrices — think of it as the
                   model's capacity to learn new things. A rank of <strong>8</strong> is minimal and fast but
@@ -703,8 +1347,18 @@
 
               <div class="tp-config-field">
                 <label class="tp-config-label">Eval Split (%)</label>
-                <input type="number" class="tp-config-input" :class="{ dark: isDark }" v-model.number="trainEvalSplit" min="0" max="50" />
-                <div class="tp-config-doc" :class="{ dark: isDark }">
+                <input
+                  v-model.number="trainEvalSplit"
+                  type="number"
+                  class="tp-config-input"
+                  :class="{ dark: isDark }"
+                  min="0"
+                  max="50"
+                >
+                <div
+                  class="tp-config-doc"
+                  :class="{ dark: isDark }"
+                >
                   The percentage of your training data held out for evaluation. This data is never used for
                   training — instead, the model is tested against it after each epoch to measure how well
                   it's actually learning (vs. just memorizing). A <strong>20%</strong> split is standard. Set
@@ -718,9 +1372,22 @@
         </div>
 
         <div class="tp-step-actions">
-          <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 3)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 18 9 12 15 6"/>
+          <button
+            class="tp-btn-back"
+            :class="{ dark: isDark }"
+            @click="$emit('step-change', 3)"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
             </svg>
             Back
           </button>
@@ -730,31 +1397,51 @@
             @click="$emit('step-change', 5)"
           >
             Continue
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6" />
             </svg>
           </button>
         </div>
       </div>
 
       <!-- ─── STEP 5: Train & Deploy ─── -->
-      <div v-if="currentStep === 5" class="tp-step tp-step-train">
+      <div
+        v-if="currentStep === 5"
+        class="tp-step tp-step-train"
+      >
         <div class="tp-fullpage-content">
-          <h2 class="tp-page-title">Train & Deploy</h2>
+          <h2 class="tp-page-title">
+            Train & Deploy
+          </h2>
           <p class="tp-page-desc">
             Run LoRA fine-tuning on your processed training data. The output model will be saved
             and ready for use.
           </p>
 
           <!-- Summary card -->
-          <div class="tp-train-summary" :class="{ dark: isDark }">
+          <div
+            class="tp-train-summary"
+            :class="{ dark: isDark }"
+          >
             <div class="tp-train-summary-row">
               <span class="tp-train-summary-label">Training Examples</span>
               <span class="tp-train-summary-value">{{ totalExamples }}</span>
             </div>
             <div class="tp-train-summary-row">
               <span class="tp-train-summary-label">Data Quality</span>
-              <span class="tp-scale-badge" :class="dataScale">{{ dataScaleLabel }}</span>
+              <span
+                class="tp-scale-badge"
+                :class="dataScale"
+              >{{ dataScaleLabel }}</span>
             </div>
             <div class="tp-train-summary-row">
               <span class="tp-train-summary-label">Base Model</span>
@@ -775,11 +1462,34 @@
           </div>
 
           <!-- Data quality warning -->
-          <div v-if="dataScale === 'poor'" class="tp-train-warning" :class="{ dark: isDark }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
+          <div
+            v-if="dataScale === 'poor'"
+            class="tp-train-warning"
+            :class="{ dark: isDark }"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line
+                x1="12"
+                y1="9"
+                x2="12"
+                y2="13"
+              />
+              <line
+                x1="12"
+                y1="17"
+                x2="12.01"
+                y2="17"
+              />
             </svg>
             <div>
               <strong>Low training data</strong>
@@ -789,24 +1499,61 @@
         </div>
 
         <div class="tp-step-actions">
-          <button class="tp-btn-back" :class="{ dark: isDark }" @click="$emit('step-change', 4)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 18 9 12 15 6"/>
+          <button
+            class="tp-btn-back"
+            :class="{ dark: isDark }"
+            @click="$emit('step-change', 4)"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
             </svg>
             Back
           </button>
-          <button class="tp-btn-primary tp-btn-train" :disabled="totalExamples === 0 || trainingLoading" @click="startTraining">
-            <svg v-if="!trainingLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3"/>
+          <button
+            class="tp-btn-primary tp-btn-train"
+            :disabled="totalExamples === 0 || trainingLoading"
+            @click="startTraining"
+          >
+            <svg
+              v-if="!trainingLoading"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
             </svg>
-            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
-              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+            <svg
+              v-else
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="animate-spin"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
             </svg>
             {{ trainingLoading ? 'Starting Training...' : 'Start Training' }}
           </button>
         </div>
       </div>
-
     </div>
   </div>
 </template>
@@ -818,17 +1565,17 @@ import TreeNode from './TreeNode.vue';
 import TrainingDashboard from './TrainingDashboard.vue';
 
 interface TreeEntry {
-  path: string;
-  name: string;
-  isDir: boolean;
+  path:        string;
+  name:        string;
+  isDir:       boolean;
   hasChildren: boolean;
-  size: number;
-  ext: string;
-  category?: string;
+  size:        number;
+  ext:         string;
+  category?:   string;
 }
 
 export default defineComponent({
-  name: 'TrainingPane',
+  name:       'TrainingPane',
   components: { TreeNode, TrainingDashboard },
 
   props: {
@@ -875,12 +1622,12 @@ export default defineComponent({
 
     // ─── Training data state (Step 2) ───
     interface DataFile {
-      filename: string;
-      path: string;
-      size: number;
+      filename:   string;
+      path:       string;
+      size:       number;
       modifiedAt: string;
-      examples: number;
-      source: 'sessions' | 'documents' | 'processed';
+      examples:   number;
+      source:     'sessions' | 'documents' | 'processed';
     }
     const dataFiles = ref<DataFile[]>([]);
     const dataFilesLoading = ref(false);
@@ -992,7 +1739,7 @@ export default defineComponent({
       const key = sortKey.value;
       const dir = sortDir.value === 'asc' ? 1 : -1;
       return [...dataFiles.value].sort((a, b) => {
-        const av = a[key], bv = b[key];
+        const av = a[key]; const bv = b[key];
         if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
         return String(av).localeCompare(String(bv)) * dir;
       });
@@ -1013,34 +1760,34 @@ export default defineComponent({
     }
 
     function formatDate(iso: string): string {
-      try { return new Date(iso).toLocaleString(); } catch { return iso; }
+      try { return new Date(iso).toLocaleString() } catch { return iso }
     }
 
     // ─── Step 2: Prompt crafting ───
     interface PromptTemplate {
-      id: string;
-      name: string;
+      id:          string;
+      name:        string;
       description: string;
-      prompt: string;
+      prompt:      string;
     }
     const promptTemplates: PromptTemplate[] = [
       {
-        id: 'qa',
-        name: 'Q&A',
+        id:          'qa',
+        name:        'Q&A',
         description: 'Generate question-answer pairs for factual recall',
-        prompt: 'Generate diverse Q&A pairs from the following document. Each question should test knowledge of the content.\n\nDocument ({filename}):\n{document}',
+        prompt:      'Generate diverse Q&A pairs from the following document. Each question should test knowledge of the content.\n\nDocument ({filename}):\n{document}',
       },
       {
-        id: 'conversational',
-        name: 'Conversational',
+        id:          'conversational',
+        name:        'Conversational',
         description: 'Simulate chat — user asks, respond as me',
-        prompt: 'Simulate a conversation where the user asks about topics from this document. Respond in the author\'s voice and style.\n\nDocument ({filename}):\n{document}',
+        prompt:      'Simulate a conversation where the user asks about topics from this document. Respond in the author\'s voice and style.\n\nDocument ({filename}):\n{document}',
       },
       {
-        id: 'style',
-        name: 'Style Transfer',
+        id:          'style',
+        name:        'Style Transfer',
         description: 'Rewrite content in my personal voice',
-        prompt: 'Analyze the writing style of this document and generate examples that capture the author\'s tone, vocabulary, and approach.\n\nDocument ({filename}):\n{document}',
+        prompt:      'Analyze the writing style of this document and generate examples that capture the author\'s tone, vocabulary, and approach.\n\nDocument ({filename}):\n{document}',
       },
     ];
     const selectedTemplate = ref('qa');
@@ -1061,8 +1808,8 @@ export default defineComponent({
 
     // ─── Step 3: Model & Settings ───
     interface DownloadedModel {
-      key: string;
-      displayName: string;
+      key:          string;
+      displayName:  string;
       trainingRepo: string;
     }
     const downloadedModels = ref<DownloadedModel[]>([]);
@@ -1110,14 +1857,14 @@ export default defineComponent({
       // Try to extract from URL-like patterns
       // Match: (https?://)?(www\.)?(huggingface\.co|hf\.co)/org/model(/anything)?
       const urlPattern = /^(?:https?:\/\/)?(?:www\.)?(?:huggingface\.co|hf\.co)\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)/;
-      const urlMatch = trimmed.match(urlPattern);
+      const urlMatch = urlPattern.exec(trimmed);
       if (urlMatch) {
         return urlMatch[1];
       }
 
       // Try bare org/model format (e.g. "unsloth/Qwen3.5-9B")
       const repoPattern = /^([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)$/;
-      const repoMatch = trimmed.match(repoPattern);
+      const repoMatch = repoPattern.exec(trimmed);
       if (repoMatch) {
         return repoMatch[1];
       }
@@ -1146,8 +1893,8 @@ export default defineComponent({
 
     // ─── Step 3: Pre-process — LLM model selection for prompt generation ───
     interface LlmModelOption {
-      id: string;
-      name: string;
+      id:       string;
+      name:     string;
       provider: string;
     }
     const localLlmModels = ref<LlmModelOption[]>([]);
@@ -1209,9 +1956,9 @@ export default defineComponent({
 
     const estTokensFormatted = computed(() => {
       const t = estTokens.value;
-      if (t < 1000) return `~${t}`;
-      if (t < 1_000_000) return `~${(t / 1000).toFixed(0)}K`;
-      return `~${(t / 1_000_000).toFixed(1)}M`;
+      if (t < 1000) return `~${ t }`;
+      if (t < 1_000_000) return `~${ (t / 1000).toFixed(0) }K`;
+      return `~${ (t / 1_000_000).toFixed(1) }M`;
     });
 
     const estCostFormatted = computed(() => {
@@ -1221,22 +1968,22 @@ export default defineComponent({
       const outputTokens = estChunks.value * 500;
       const cost = (inputTokens * 3 + outputTokens * 15) / 1_000_000;
       if (cost < 0.01) return '< $0.01';
-      return `~$${cost.toFixed(2)}`;
+      return `~$${ cost.toFixed(2) }`;
     });
 
     const estTimeFormatted = computed(() => {
       if (processLlmProvider.value === 'local') {
         // Local models: ~2-5 seconds per chunk
         const secs = estChunks.value * 3;
-        if (secs < 60) return `~${secs}s`;
-        if (secs < 3600) return `~${Math.round(secs / 60)} min`;
-        return `~${(secs / 3600).toFixed(1)} hrs`;
+        if (secs < 60) return `~${ secs }s`;
+        if (secs < 3600) return `~${ Math.round(secs / 60) } min`;
+        return `~${ (secs / 3600).toFixed(1) } hrs`;
       }
       // API models: ~0.5-1 second per chunk
       const secs = estChunks.value * 0.8;
-      if (secs < 60) return `~${Math.round(secs)}s`;
-      if (secs < 3600) return `~${Math.round(secs / 60)} min`;
-      return `~${(secs / 3600).toFixed(1)} hrs`;
+      if (secs < 60) return `~${ Math.round(secs) }s`;
+      if (secs < 3600) return `~${ Math.round(secs / 60) } min`;
+      return `~${ (secs / 3600).toFixed(1) } hrs`;
     });
 
     // ─── Step 4: Pre-process state ───
@@ -1417,15 +2164,15 @@ export default defineComponent({
       const pct = Math.round((installBytesReceived.value / installBytesTotal.value) * 100);
       const received = (installBytesReceived.value / (1024 * 1024)).toFixed(1);
       const total = (installBytesTotal.value / (1024 * 1024)).toFixed(1);
-      return `${received} / ${total} MB (${pct}%)`;
+      return `${ received } / ${ total } MB (${ pct }%)`;
     });
 
     function formatBytes(bytes: number): string {
       if (bytes <= 0) return '\u2014';
       if (bytes < 1_000_000_000) {
-        return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+        return `${ (bytes / (1024 * 1024)).toFixed(0) } MB`;
       }
-      return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      return `${ (bytes / (1024 * 1024 * 1024)).toFixed(1) } GB`;
     }
 
     async function checkInstallStatus() {
@@ -1557,21 +2304,21 @@ export default defineComponent({
     async function restoreSettings() {
       try {
         const create = await ipcRenderer.invoke('training-wizard-settings-load', 'create') as Record<string, any>;
-        if (create.selectedFolders?.length)    selectedFolders.value = create.selectedFolders;
-        if (create.selectedFiles?.length)      selectedFiles.value = create.selectedFiles;
-        if (create.selectedTemplate)           selectedTemplate.value = create.selectedTemplate;
-        if (create.customPrompt)               customPrompt.value = create.customPrompt;
-        if (create.processLlm)                 processLlm.value = create.processLlm;
-        if (create.processLlmProvider)         processLlmProvider.value = create.processLlmProvider;
-        if (create.outputFilename)             outputFilename.value = create.outputFilename;
+        if (create.selectedFolders?.length) selectedFolders.value = create.selectedFolders;
+        if (create.selectedFiles?.length) selectedFiles.value = create.selectedFiles;
+        if (create.selectedTemplate) selectedTemplate.value = create.selectedTemplate;
+        if (create.customPrompt) customPrompt.value = create.customPrompt;
+        if (create.processLlm) processLlm.value = create.processLlm;
+        if (create.processLlmProvider) processLlmProvider.value = create.processLlmProvider;
+        if (create.outputFilename) outputFilename.value = create.outputFilename;
 
         const train = await ipcRenderer.invoke('training-wizard-settings-load', 'train') as Record<string, any>;
-        if (train.selectedDataFiles?.length)   selectedDataFiles.value = train.selectedDataFiles;
-        if (train.selectedModel)               selectedModel.value = train.selectedModel;
-        if (train.trainEpochs != null)         trainEpochs.value = train.trainEpochs;
-        if (train.trainLearningRate)           trainLearningRate.value = train.trainLearningRate;
-        if (train.trainLoraRank != null)       trainLoraRank.value = train.trainLoraRank;
-        if (train.trainEvalSplit != null)      trainEvalSplit.value = train.trainEvalSplit;
+        if (train.selectedDataFiles?.length) selectedDataFiles.value = train.selectedDataFiles;
+        if (train.selectedModel) selectedModel.value = train.selectedModel;
+        if (train.trainEpochs != null) trainEpochs.value = train.trainEpochs;
+        if (train.trainLearningRate) trainLearningRate.value = train.trainLearningRate;
+        if (train.trainLoraRank != null) trainLoraRank.value = train.trainLoraRank;
+        if (train.trainEvalSplit != null) trainEvalSplit.value = train.trainEvalSplit;
       } catch {
         // Settings not available yet — use defaults
       }
@@ -1647,7 +2394,7 @@ export default defineComponent({
         // Training started successfully - result contains log info
         console.log('[TrainingPane] Training started:', result);
         // Navigate to Training Dashboard by triggering click event
-        const dashboardLink = document.querySelector('.tw-dashboard-link') as HTMLElement;
+        const dashboardLink = document.querySelector('.tw-dashboard-link')!;
         if (dashboardLink) {
           const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
           dashboardLink.dispatchEvent(clickEvent);
@@ -1660,7 +2407,7 @@ export default defineComponent({
       }
     };
 
-    onMounted(async () => {
+    onMounted(async() => {
       await checkInstallStatus();
       loadDownloadedModels();
       loadLlmModels();
@@ -1789,12 +2536,11 @@ export default defineComponent({
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #ffffff;
+  background: var(--bg-primary);
   overflow: hidden;
 }
 .training-pane.dark {
-  background: #0f172a;
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 
 /* ─── Loading ─── */
@@ -1805,8 +2551,8 @@ export default defineComponent({
   flex: 1;
 }
 .tp-loading-text {
-  font-size: 0.875rem;
-  color: #94a3b8;
+  font-size: var(--fs-body);
+  color: var(--text-muted);
 }
 
 /* ─── Install screen ─── */
@@ -1827,50 +2573,33 @@ export default defineComponent({
   gap: 0.75rem;
 }
 .tp-install-icon {
-  color: #0284c7;
+  color: var(--text-info);
   margin-bottom: 0.5rem;
 }
-.dark .tp-install-icon {
-  color: #38bdf8;
-}
 .tp-install-title {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
   margin: 0;
-}
-.dark .tp-install-title {
-  color: #f1f5f9;
 }
 .tp-install-desc {
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   line-height: 1.5;
-  color: #64748b;
+  color: var(--text-secondary);
   margin: 0;
-}
-.dark .tp-install-desc {
-  color: #94a3b8;
 }
 .tp-disk-info {
   width: 100%;
   padding: 0.75rem 1rem;
   border-radius: 0.5rem;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  font-size: 0.8125rem;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  font-size: var(--fs-code);
   text-align: left;
 }
-.dark .tp-disk-info {
-  background: #1e293b;
-  border-color: #334155;
-}
 .tp-disk-info.insufficient {
-  border-color: #fca5a5;
-  background: #fef2f2;
-}
-.dark .tp-disk-info.insufficient {
-  border-color: #7f1d1d;
-  background: #450a0a;
+  border-color: var(--text-error);
+  background: var(--bg-error);
 }
 .tp-disk-row {
   display: flex;
@@ -1878,17 +2607,11 @@ export default defineComponent({
   padding: 0.2rem 0;
 }
 .tp-disk-label {
-  color: #64748b;
-}
-.dark .tp-disk-label {
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 .tp-disk-value {
-  font-weight: 600;
-  color: #0f172a;
-}
-.dark .tp-disk-value {
-  color: #f1f5f9;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
 }
 .tp-disk-warning {
   display: flex;
@@ -1896,36 +2619,32 @@ export default defineComponent({
   gap: 0.375rem;
   margin-top: 0.5rem;
   padding-top: 0.5rem;
-  border-top: 1px solid #fca5a5;
-  color: #dc2626;
-  font-size: 0.75rem;
-  font-weight: 500;
-}
-.dark .tp-disk-warning {
-  border-top-color: #7f1d1d;
-  color: #fca5a5;
+  border-top: 1px solid var(--border-error);
+  color: var(--text-error);
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
 }
 .tp-btn-install {
   margin-top: 0.5rem;
   padding: 0.75rem 2rem;
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-semibold);
   border: none;
   border-radius: 0.5rem;
-  background: #0284c7;
-  color: #ffffff;
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
   cursor: pointer;
   transition: background 0.15s, transform 0.1s;
 }
 .tp-btn-install:hover:not(.disabled) {
-  background: #0369a1;
+  background: var(--accent-primary-hover);
   transform: translateY(-1px);
 }
 .tp-btn-install:active:not(.disabled) {
   transform: translateY(0);
 }
 .tp-btn-install.disabled {
-  background: #94a3b8;
+  background: var(--bg-surface-hover);
   cursor: not-allowed;
   opacity: 0.6;
 }
@@ -1937,84 +2656,69 @@ export default defineComponent({
   gap: 0.75rem;
 }
 .tp-progress-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
   margin: 0;
-}
-.dark .tp-progress-title {
-  color: #f1f5f9;
 }
 .tp-progress-desc {
-  font-size: 0.875rem;
-  color: #64748b;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
   margin: 0;
-}
-.dark .tp-progress-desc {
-  color: #94a3b8;
 }
 .tp-progress-track {
   width: 100%;
   height: 0.5rem;
-  background: #e2e8f0;
+  background: var(--bg-surface-hover);
   border-radius: 9999px;
   overflow: hidden;
 }
-.dark .tp-progress-track {
-  background: #334155;
-}
 .tp-progress-fill {
   height: 100%;
-  background: #0284c7;
+  background: var(--accent-primary);
   border-radius: 9999px;
   transition: width 0.3s ease;
 }
 .tp-progress-labels {
   display: flex;
   justify-content: space-between;
-  font-size: 0.75rem;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-muted);
 }
 .tp-file-detail {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0.5rem 0.75rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-surface-hover);
   border-radius: 0.5rem;
-  font-size: 0.875rem;
-  color: #475569;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
 }
 .dark .tp-file-detail {
-  background: #1e293b;
-  border-color: #334155;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 .tp-file-size {
-  font-size: 0.75rem;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-muted);
 }
 .tp-log-box {
   min-height: 12rem;
   max-height: 20rem;
   overflow-y: auto;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 0.5rem;
-  background: #1e293b;
-}
-.dark .tp-log-box {
-  border-color: #334155;
-  background: #0f172a;
+  background: var(--bg-surface);
 }
 .tp-log-output {
   margin: 0;
   padding: 1rem;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
   line-height: 1.6;
   white-space: pre-wrap;
-  color: #cbd5e1;
+  color: var(--text-muted);
 }
 .tp-log-error {
   margin-top: 1rem;
@@ -2023,16 +2727,11 @@ export default defineComponent({
   width: 100%;
   padding: 0.75rem 1rem;
   border-radius: 0.5rem;
-  border: 1px solid #fca5a5;
-  background: #fef2f2;
-  color: #991b1b;
-  font-size: 0.875rem;
+  border: 1px solid var(--border-error);
+  background: var(--bg-error);
+  color: var(--text-error);
+  font-size: var(--fs-body);
   text-align: left;
-}
-.dark .tp-error-box {
-  background: #450a0a;
-  border-color: #7f1d1d;
-  color: #fca5a5;
 }
 
 /* ─── Wizard container ─── */
@@ -2056,12 +2755,9 @@ export default defineComponent({
   align-items: center;
   justify-content: space-between;
   padding: 12px 24px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-default);
   flex-shrink: 0;
   gap: 12px;
-}
-.dark .tp-step-actions {
-  border-top-color: #334155;
 }
 
 .tp-btn-primary {
@@ -2069,18 +2765,18 @@ export default defineComponent({
   align-items: center;
   gap: 6px;
   padding: 8px 20px;
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-size: var(--fs-body);
+  font-weight: var(--weight-semibold);
   border: none;
   border-radius: 6px;
-  background: #0284c7;
-  color: #fff;
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
   cursor: pointer;
   transition: background 0.15s;
   margin-left: auto;
 }
 .tp-btn-primary:hover:not(:disabled) {
-  background: #0369a1;
+  background: var(--accent-primary-hover);
 }
 .tp-btn-primary:disabled {
   opacity: 0.4;
@@ -2092,27 +2788,24 @@ export default defineComponent({
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  border: 1px solid #e2e8f0;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: #fff;
-  color: #334155;
+  background: var(--bg-surface);
+  color: var(--border-default, #334155);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 .tp-btn-secondary.dark {
-  background: #1e293b;
-  border-color: #334155;
-  color: #cbd5e1;
+  color: var(--text-muted);
 }
 .tp-btn-secondary:hover:not(:disabled) {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
+  background: var(--bg-surface-alt);
+  border-color: var(--text-primary);
 }
 .tp-btn-secondary.dark:hover:not(:disabled) {
-  background: #334155;
-  border-color: #475569;
+  border-color: var(--text-secondary);
 }
 .tp-btn-secondary:disabled {
   opacity: 0.4;
@@ -2124,15 +2817,11 @@ export default defineComponent({
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  font-size: 0.8125rem;
-  font-weight: 600;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
   border-radius: 6px;
-  background: #dcfce7;
-  color: #16a34a;
-}
-.tp-scheduled-badge.dark {
-  background: #14532d;
-  color: #86efac;
+  background: var(--bg-success);
+  color: var(--text-success);
 }
 
 .tp-btn-back {
@@ -2140,29 +2829,25 @@ export default defineComponent({
   align-items: center;
   gap: 4px;
   padding: 8px 14px;
-  font-size: 0.8125rem;
-  font-weight: 500;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
   border: none;
   border-radius: 6px;
   background: none;
-  color: #64748b;
+  color: var(--text-secondary);
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
 .tp-btn-back:hover {
-  color: #0f172a;
-  background: #f1f5f9;
-}
-.tp-btn-back.dark:hover {
-  color: #e2e8f0;
-  background: #1e293b;
+  color: var(--text-primary);
+  background: var(--bg-surface-alt);
 }
 
 .tp-btn-spinner {
   width: 12px;
   height: 12px;
   border: 2px solid rgba(51, 65, 85, 0.3);
-  border-top-color: #334155;
+  border-top-color: var(--border-default, #334155);
   border-radius: 50%;
   animation: tp-spin 0.6s linear infinite;
   flex-shrink: 0;
@@ -2184,25 +2869,19 @@ export default defineComponent({
 }
 .tp-select-tree-header {
   padding: 12px 14px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
-}
-.dark .tp-select-tree-header {
-  border-bottom-color: #334155;
 }
 .tp-select-tree-title {
   display: block;
-  font-size: 12px;
-  font-weight: 600;
-  color: #334155;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  color: var(--border-default, #334155);
   margin-bottom: 2px;
 }
-.dark .tp-select-tree-title {
-  color: #e2e8f0;
-}
 .tp-select-tree-count {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
 }
 .tp-select-tree-content {
   flex: 1;
@@ -2212,11 +2891,11 @@ export default defineComponent({
 .tp-tree-status {
   padding: 1.5rem;
   text-align: center;
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-muted);
 }
 .tp-tree-error {
-  color: #ef4444;
+  color: var(--text-error);
 }
 .tp-tree-list {
   padding: 4px 0;
@@ -2228,16 +2907,13 @@ export default defineComponent({
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-default);
   flex-shrink: 0;
   gap: 8px;
 }
-.tp-select-tree-actions.dark {
-  border-top-color: #334155;
-}
 .tp-btn-continue-sm {
   padding: 6px 14px;
-  font-size: 0.8125rem;
+  font-size: var(--fs-code);
 }
 
 /* Right info panel */
@@ -2253,37 +2929,28 @@ export default defineComponent({
   padding: 32px 40px;
 }
 .tp-info-title {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #0f172a;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
   margin: 0 0 8px 0;
 }
-.dark .tp-info-title {
-  color: #f1f5f9;
-}
 .tp-info-desc {
-  font-size: 0.9375rem;
+  font-size: var(--fs-body);
   line-height: 1.6;
-  color: #475569;
+  color: var(--text-secondary);
   margin: 0 0 28px 0;
   max-width: 600px;
-}
-.dark .tp-info-desc {
-  color: #94a3b8;
 }
 .tp-info-section {
   margin-bottom: 24px;
 }
 .tp-info-subtitle {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #334155;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  color: var(--border-default, #334155);
   margin: 0 0 8px 0;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.dark .tp-info-subtitle {
-  color: #cbd5e1;
+  letter-spacing: var(--tracking-wide);
 }
 .tp-info-chips {
   display: flex;
@@ -2294,36 +2961,25 @@ export default defineComponent({
   display: inline-block;
   padding: 3px 10px;
   border-radius: 4px;
-  font-size: 0.8125rem;
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-weight: 500;
-  background: #f1f5f9;
-  color: #475569;
-  border: 1px solid #e2e8f0;
-}
-.dark .tp-info-chip {
-  background: #1e293b;
-  color: #94a3b8;
-  border-color: #334155;
+  font-size: var(--fs-code);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
+  border: 1px solid var(--bg-surface-hover);
 }
 .tp-info-list {
   margin: 0;
   padding-left: 20px;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   line-height: 1.8;
-  color: #475569;
-}
-.dark .tp-info-list {
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 .tp-info-text {
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   line-height: 1.6;
-  color: #475569;
+  color: var(--text-secondary);
   margin: 0;
-}
-.dark .tp-info-text {
-  color: #94a3b8;
 }
 
 /* ─── STEP 3: Generate Data ─── */
@@ -2349,34 +3005,24 @@ export default defineComponent({
   padding: 24px 32px;
 }
 .tp-review-title {
-  font-size: 1.375rem;
-  font-weight: 700;
-  color: #0f172a;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
   margin: 0 0 6px 0;
 }
-.dark .tp-review-title {
-  color: #f1f5f9;
-}
 .tp-review-desc {
-  font-size: 0.9375rem;
-  color: #64748b;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
   margin: 0 0 24px 0;
-}
-.dark .tp-review-desc {
-  color: #94a3b8;
 }
 
 /* Scale indicator */
 .tp-scale {
   padding: 1rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 0.5rem;
-  background: #f8fafc;
+  background: var(--bg-surface);
   margin-bottom: 16px;
-}
-.tp-scale.dark {
-  background: #1e293b;
-  border-color: #334155;
 }
 .tp-scale-header {
   display: flex;
@@ -2385,51 +3031,41 @@ export default defineComponent({
   margin-bottom: 0.5rem;
 }
 .tp-scale-label {
-  font-size: 0.6875rem;
-  font-weight: 600;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #64748b;
-}
-.dark .tp-scale-label {
-  color: #94a3b8;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
 }
 .tp-scale-badge {
   display: inline-block;
   padding: 2px 10px;
   border-radius: 9999px;
-  font-size: 0.6875rem;
-  font-weight: 700;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-bold);
 }
-.tp-scale-badge.poor { background: #fef2f2; color: #dc2626; }
-.dark .tp-scale-badge.poor { background: #450a0a; color: #fca5a5; }
-.tp-scale-badge.fair { background: #fef3c7; color: #d97706; }
-.dark .tp-scale-badge.fair { background: #78350f; color: #fcd34d; }
-.tp-scale-badge.good { background: #dbeafe; color: #2563eb; }
-.dark .tp-scale-badge.good { background: #1e3a5f; color: #60a5fa; }
-.tp-scale-badge.great { background: #dcfce7; color: #16a34a; }
-.dark .tp-scale-badge.great { background: #14532d; color: #4ade80; }
+.tp-scale-badge.poor { background: var(--bg-error); color: var(--text-error); }
+.tp-scale-badge.fair { background: var(--bg-warning); color: var(--text-warning); }
+.tp-scale-badge.good { background: var(--bg-info); color: var(--text-info); }
+.tp-scale-badge.great { background: var(--bg-success); color: var(--text-success); }
 
 .tp-scale-bar {
   position: relative;
   height: 8px;
-  background: #e2e8f0;
+  background: var(--bg-surface-hover);
   border-radius: 9999px;
   overflow: hidden;
   margin-bottom: 1.25rem;
-}
-.dark .tp-scale-bar {
-  background: #334155;
 }
 .tp-scale-fill {
   height: 100%;
   border-radius: 9999px;
   transition: width 0.4s ease;
 }
-.tp-scale-fill.poor { background: #ef4444; }
-.tp-scale-fill.fair { background: #f59e0b; }
-.tp-scale-fill.good { background: #3b82f6; }
-.tp-scale-fill.great { background: #22c55e; }
+.tp-scale-fill.poor { background: var(--status-error); }
+.tp-scale-fill.fair { background: var(--status-warning); }
+.tp-scale-fill.good { background: var(--accent-primary); }
+.tp-scale-fill.great { background: var(--status-success); }
 
 .tp-scale-marks {
   position: absolute;
@@ -2439,16 +3075,13 @@ export default defineComponent({
 }
 .tp-scale-mark {
   position: absolute;
-  font-size: 0.625rem;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
   transform: translateX(-50%);
 }
 .tp-scale-detail {
-  font-size: 0.75rem;
-  color: #64748b;
-}
-.dark .tp-scale-detail {
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
 }
 
 /* Stats cards */
@@ -2464,36 +3097,26 @@ export default defineComponent({
 .tp-card {
   padding: 1rem;
   border-radius: 0.5rem;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-}
-.tp-card.dark {
-  background: #1e293b;
-  border-color: #334155;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
 }
 .tp-card-label {
-  font-size: 0.6875rem;
-  font-weight: 600;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #64748b;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
   margin-bottom: 0.25rem;
 }
-.dark .tp-card-label {
-  color: #94a3b8;
-}
 .tp-card-value {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #0f172a;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
   line-height: 1.2;
 }
-.dark .tp-card-value {
-  color: #f1f5f9;
-}
 .tp-card-sub {
-  font-size: 0.75rem;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-muted);
   margin-top: 0.125rem;
 }
 
@@ -2506,20 +3129,14 @@ export default defineComponent({
   align-items: center;
   justify-content: space-between;
   padding: 0.5rem 0;
-  border-bottom: 1px solid #e2e8f0;
-}
-.tp-table-header.dark {
-  border-bottom-color: #334155;
+  border-bottom: 1px solid var(--border-default);
 }
 .tp-table-title {
-  font-size: 0.6875rem;
-  font-weight: 600;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #64748b;
-}
-.dark .tp-table-title {
-  color: #94a3b8;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
 }
 .tp-btn-refresh {
   background: none;
@@ -2527,17 +3144,13 @@ export default defineComponent({
   padding: 4px;
   border-radius: 4px;
   cursor: pointer;
-  color: #64748b;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
 }
 .tp-btn-refresh:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-.tp-btn-refresh.dark:hover {
-  background: #334155;
-  color: #e2e8f0;
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
 }
 
 .tp-table-wrapper {
@@ -2547,8 +3160,8 @@ export default defineComponent({
 .tp-table-status {
   padding: 2rem;
   text-align: center;
-  font-size: 0.875rem;
-  color: #94a3b8;
+  font-size: var(--fs-body);
+  color: var(--text-muted);
 }
 .tp-table-empty {
   display: flex;
@@ -2557,63 +3170,52 @@ export default defineComponent({
   justify-content: center;
   padding: 3rem 1rem;
   gap: 0.5rem;
-  color: #94a3b8;
-  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-size: var(--fs-body);
 }
 .tp-table-empty-hint {
-  font-size: 0.75rem;
-  color: #64748b;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
 }
 .tp-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8125rem;
+  font-size: var(--fs-code);
 }
 .tp-table thead th {
   text-align: left;
   padding: 0.5rem 0.75rem;
-  font-size: 0.6875rem;
-  font-weight: 600;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #64748b;
-  border-bottom: 1px solid #e2e8f0;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
 }
-.tp-table.dark thead th {
-  color: #94a3b8;
-  border-bottom-color: #334155;
-}
-.tp-table thead th:hover { color: #0f172a; }
-.tp-table.dark thead th:hover { color: #e2e8f0; }
+.tp-table thead th:hover { color: var(--text-primary); }
+.tp-table.dark thead th:hover { color: var(--text-primary); }
 .tp-sort-arrow {
-  font-size: 0.625rem;
+  font-size: var(--fs-caption);
   margin-left: 2px;
 }
 .tp-table tbody tr {
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--border-subtle);
 }
-.tp-table.dark tbody tr {
-  border-bottom-color: #1e293b;
-}
-.tp-table tbody tr:hover { background: #f8fafc; }
-.tp-table.dark tbody tr:hover { background: #1e293b; }
+.tp-table tbody tr:hover { background: var(--bg-surface); }
 .tp-table td {
   padding: 0.5rem 0.75rem;
-  color: #334155;
-}
-.tp-table.dark td {
-  color: #cbd5e1;
+  color: var(--border-default, #334155);
 }
 .tp-cell-file {
   max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
 }
 .tp-cell-size {
   white-space: nowrap;
@@ -2621,63 +3223,50 @@ export default defineComponent({
 }
 .tp-cell-date {
   white-space: nowrap;
-  font-size: 0.75rem;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-muted);
 }
 .tp-cell-examples {
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 .tp-badge {
   display: inline-block;
   padding: 1px 8px;
   border-radius: 9999px;
-  font-size: 0.6875rem;
-  font-weight: 600;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-semibold);
 }
-.tp-badge.documents { background: #dbeafe; color: #1e40af; }
-.dark .tp-badge.documents { background: #1e3a5f; color: #60a5fa; }
-.tp-badge.sessions { background: #fef3c7; color: #92400e; }
-.dark .tp-badge.sessions { background: #78350f; color: #fcd34d; }
-.tp-badge.processed { background: #dcfce7; color: #166534; }
-.dark .tp-badge.processed { background: #14532d; color: #4ade80; }
+.tp-badge.documents { background: var(--bg-info); color: var(--text-info); }
+.tp-badge.sessions { background: var(--bg-warning); color: var(--text-warning); }
+.tp-badge.processed { background: var(--bg-success); color: var(--text-success); }
 
 /* ─── Select Data Files step ─── */
 .tp-datafiles-list {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   overflow: hidden;
-}
-.dark .tp-datafiles-list {
-  border-color: #334155;
 }
 .tp-datafiles-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 12px;
-}
-.tp-datafiles-header.dark {
-  background: #1e293b;
-  border-bottom-color: #334155;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--bg-surface-hover);
+  font-size: var(--fs-code);
 }
 .tp-datafiles-check-all {
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  font-weight: 600;
-  color: #334155;
-}
-.dark .tp-datafiles-check-all {
-  color: #e2e8f0;
+  font-weight: var(--weight-semibold);
+  color: var(--border-default, #334155);
 }
 .tp-datafiles-count {
-  color: #94a3b8;
-  font-size: 11px;
+  color: var(--text-muted);
+  font-size: var(--fs-body-sm);
 }
 .tp-datafile-row {
   display: flex;
@@ -2685,56 +3274,41 @@ export default defineComponent({
   gap: 10px;
   padding: 10px 14px;
   cursor: pointer;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--border-subtle);
   transition: background 0.1s;
 }
 .tp-datafile-row:last-child {
   border-bottom: none;
 }
 .tp-datafile-row:hover {
-  background: #f8fafc;
-}
-.tp-datafile-row.dark {
-  border-bottom-color: #1e293b;
-}
-.tp-datafile-row.dark:hover {
-  background: #1e293b;
+  background: var(--bg-surface);
 }
 .tp-datafile-row.selected {
-  background: #eff6ff;
-}
-.tp-datafile-row.selected.dark {
-  background: #1e3a5f;
+  background: var(--bg-info);
 }
 .tp-datafile-info {
   flex: 1;
   min-width: 0;
 }
 .tp-datafile-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: #0f172a;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dark .tp-datafile-name {
-  color: #f1f5f9;
-}
 .tp-datafile-meta {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin-top: 2px;
-}
-.tp-datafile-meta.dark {
-  color: #64748b;
 }
 .tp-btn-sm {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-code);
 }
 
 /* ─── STEP 3: Train Model ─── */
@@ -2748,87 +3322,61 @@ export default defineComponent({
   max-width: 700px;
 }
 .tp-train-title {
-  font-size: 1.375rem;
-  font-weight: 700;
-  color: #0f172a;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
   margin: 0 0 6px 0;
 }
-.dark .tp-train-title {
-  color: #f1f5f9;
-}
 .tp-train-desc {
-  font-size: 0.9375rem;
-  color: #64748b;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
   margin: 0 0 24px 0;
-}
-.dark .tp-train-desc {
-  color: #94a3b8;
 }
 
 /* Summary card */
 .tp-train-summary {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--bg-surface);
   padding: 0;
   margin-bottom: 20px;
   overflow: hidden;
-}
-.tp-train-summary.dark {
-  background: #1e293b;
-  border-color: #334155;
 }
 .tp-train-summary-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  border-bottom: 1px solid #e2e8f0;
-}
-.tp-train-summary.dark .tp-train-summary-row {
-  border-bottom-color: #334155;
+  border-bottom: 1px solid var(--border-default);
 }
 .tp-train-summary-row:last-child {
   border-bottom: none;
 }
 .tp-train-summary-label {
-  font-size: 0.8125rem;
-  color: #64748b;
-}
-.dark .tp-train-summary-label {
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
 }
 .tp-train-summary-value {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #0f172a;
-}
-.dark .tp-train-summary-value {
-  color: #f1f5f9;
+  font-size: var(--fs-body);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
 }
 
 /* Training config */
 .tp-train-config {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--bg-surface);
   padding: 20px;
   margin-bottom: 20px;
 }
-.tp-train-config.dark {
-  background: #1e293b;
-  border-color: #334155;
-}
 .tp-config-title {
-  font-size: 0.8125rem;
-  font-weight: 600;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: #334155;
+  letter-spacing: var(--tracking-wide);
+  color: var(--border-default, #334155);
   margin: 0 0 16px 0;
-}
-.dark .tp-config-title {
-  color: #e2e8f0;
 }
 .tp-config-field {
   margin-bottom: 14px;
@@ -2838,41 +3386,30 @@ export default defineComponent({
 }
 .tp-config-label {
   display: block;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #334155;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  color: var(--border-default, #334155);
   margin-bottom: 4px;
-}
-.dark .tp-config-label {
-  color: #cbd5e1;
 }
 .tp-config-input {
   width: 100%;
   max-width: 200px;
   padding: 6px 10px;
-  font-size: 0.875rem;
-  border: 1px solid #e2e8f0;
+  font-size: var(--fs-body);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: #fff;
-  color: #0f172a;
+  background: var(--bg-page);
+  color: var(--text-primary);
   outline: none;
   transition: border-color 0.15s;
 }
 .tp-config-input:focus {
-  border-color: #0284c7;
-}
-.tp-config-input.dark {
-  background: #0f172a;
-  border-color: #475569;
-  color: #e2e8f0;
-}
-.tp-config-input.dark:focus {
-  border-color: #38bdf8;
+  border-color: var(--text-info);
 }
 .tp-config-hint {
   display: block;
-  font-size: 0.75rem;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-muted);
   margin-top: 3px;
 }
 
@@ -2883,32 +3420,27 @@ export default defineComponent({
   gap: 10px;
   padding: 12px 16px;
   border-radius: 8px;
-  border: 1px solid #fca5a5;
-  background: #fef2f2;
-  color: #991b1b;
-  font-size: 0.8125rem;
+  border: 1px solid var(--border-error);
+  background: var(--bg-error);
+  color: var(--text-error);
+  font-size: var(--fs-code);
   line-height: 1.5;
-}
-.tp-train-warning.dark {
-  background: #450a0a;
-  border-color: #7f1d1d;
-  color: #fca5a5;
 }
 .tp-train-warning p {
   margin: 2px 0 0 0;
-  font-weight: 400;
+  font-weight: var(--weight-normal);
 }
 .tp-train-warning strong {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 /* Train button */
 .tp-btn-train {
-  background: #16a34a;
+  background: var(--status-success);
   gap: 8px;
 }
 .tp-btn-train:hover:not(:disabled) {
-  background: #15803d;
+  background: var(--status-success);
 }
 
 /* ─── Shared full-page content ─── */
@@ -2918,37 +3450,28 @@ export default defineComponent({
   padding: 24px 32px;
 }
 .tp-page-title {
-  font-size: 1.375rem;
-  font-weight: 700;
-  color: #0f172a;
+  font-size: var(--fs-heading);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
   margin: 0 0 6px 0;
 }
-.dark .tp-page-title {
-  color: #f1f5f9;
-}
 .tp-page-desc {
-  font-size: 0.9375rem;
-  color: #64748b;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
   margin: 0 0 24px 0;
   line-height: 1.6;
 }
-.dark .tp-page-desc {
-  color: #94a3b8;
-}
 .tp-section-title {
-  font-size: 0.8125rem;
-  font-weight: 600;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: #334155;
+  letter-spacing: var(--tracking-wide);
+  color: var(--border-default, #334155);
   margin: 0 0 12px 0;
 }
-.dark .tp-section-title {
-  color: #e2e8f0;
-}
 .tp-selection-summary {
-  font-size: 0.8125rem;
-  color: #64748b;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
 }
 .tp-step-actions-left {
   display: flex;
@@ -2970,47 +3493,33 @@ export default defineComponent({
 }
 .tp-template-card {
   padding: 14px;
-  border: 2px solid #e2e8f0;
+  border: 2px solid var(--border-default);
   border-radius: 8px;
-  background: #fff;
+  background: var(--bg-page);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s, background 0.15s;
 }
-.tp-template-card.dark {
-  background: #1e293b;
-  border-color: #334155;
-}
 .tp-template-card:hover {
-  border-color: #94a3b8;
+  border-color: var(--text-muted);
 }
 .tp-template-card.dark:hover {
-  border-color: #64748b;
+  border-color: var(--text-secondary);
 }
 .tp-template-card.selected {
-  border-color: #0284c7;
-  background: #eff6ff;
-}
-.tp-template-card.selected.dark {
-  border-color: #38bdf8;
-  background: #0c4a6e;
+  border-color: var(--text-info);
+  background: var(--bg-info);
 }
 .tp-template-name {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: var(--fs-body);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
   margin-bottom: 4px;
 }
-.dark .tp-template-name {
-  color: #f1f5f9;
-}
 .tp-template-desc {
-  font-size: 0.75rem;
-  color: #64748b;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
   line-height: 1.4;
-}
-.dark .tp-template-desc {
-  color: #94a3b8;
 }
 
 /* Prompt editor */
@@ -3020,63 +3529,48 @@ export default defineComponent({
 .tp-prompt-textarea {
   width: 100%;
   padding: 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: #fff;
-  color: #0f172a;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  font-size: 0.8125rem;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
   line-height: 1.6;
   resize: vertical;
   outline: none;
   transition: border-color 0.15s;
 }
 .tp-prompt-textarea:focus {
-  border-color: #0284c7;
-}
-.tp-prompt-textarea.dark {
-  background: #0f172a;
-  border-color: #475569;
-  color: #e2e8f0;
-}
-.tp-prompt-textarea.dark:focus {
-  border-color: #38bdf8;
+  border-color: var(--text-info);
 }
 .tp-prompt-hint {
   margin-top: 6px;
-  font-size: 0.75rem;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-muted);
 }
 .tp-prompt-hint code {
-  background: #f1f5f9;
+  background: var(--bg-surface-alt);
   padding: 1px 4px;
   border-radius: 3px;
-  font-size: 0.6875rem;
+  font-size: var(--fs-body-sm);
 }
-.dark .tp-prompt-hint code {
-  background: #334155;
-}
-
 /* ─── Step 3: Model selection ─── */
 .tp-model-section {
   margin-bottom: 24px;
 }
 .tp-model-section-desc {
-  font-size: 0.8125rem;
-  color: #64748b;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
   margin: 0 0 12px 0;
   line-height: 1.5;
-}
-.tp-model-section-desc.dark {
-  color: #94a3b8;
 }
 .tp-model-loading {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 20px;
-  font-size: 0.875rem;
-  color: #64748b;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
 }
 .tp-model-empty {
   display: flex;
@@ -3085,14 +3579,11 @@ export default defineComponent({
   gap: 8px;
   padding: 24px 16px;
   text-align: center;
-  border: 1px dashed #e2e8f0;
+  border: 1px dashed var(--border-default);
   border-radius: 8px;
-  color: #94a3b8;
-  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-size: var(--fs-code);
   line-height: 1.5;
-}
-.tp-model-empty.dark {
-  border-color: #334155;
 }
 .tp-model-list {
   display: flex;
@@ -3103,31 +3594,23 @@ export default defineComponent({
   display: flex;
   align-items: center;
   padding: 12px 14px;
-  border: 2px solid #e2e8f0;
+  border: 2px solid var(--border-default);
   border-radius: 8px;
-  background: #fff;
+  background: var(--bg-page);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s, background 0.15s;
   width: 100%;
 }
-.tp-model-card.dark {
-  background: #1e293b;
-  border-color: #334155;
-}
 .tp-model-card:hover {
-  border-color: #94a3b8;
+  border-color: var(--text-muted);
 }
 .tp-model-card.dark:hover {
-  border-color: #64748b;
+  border-color: var(--text-secondary);
 }
 .tp-model-card.selected {
-  border-color: #0284c7;
-  background: #eff6ff;
-}
-.tp-model-card.selected.dark {
-  border-color: #38bdf8;
-  background: #0c4a6e;
+  border-color: var(--text-info);
+  background: var(--bg-info);
 }
 .tp-model-card-left {
   display: flex;
@@ -3138,50 +3621,34 @@ export default defineComponent({
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  border: 2px solid #cbd5e1;
+  border: 2px solid var(--border-strong);
   flex-shrink: 0;
   transition: all 0.15s;
 }
-.dark .tp-model-radio {
-  border-color: #475569;
-}
 .tp-model-radio.selected {
-  border-color: #0284c7;
+  border-color: var(--text-info);
   border-width: 5px;
 }
-.dark .tp-model-radio.selected {
-  border-color: #38bdf8;
-}
 .tp-model-name {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: var(--fs-body);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
   line-height: 1.3;
 }
-.dark .tp-model-name {
-  color: #f1f5f9;
-}
 .tp-model-repo {
-  font-size: 0.6875rem;
-  color: #94a3b8;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
   margin-top: 1px;
-}
-.dark .tp-model-repo {
-  color: #64748b;
 }
 
 /* HuggingFace URL input (accordion) */
 .tp-hf-section {
   margin-bottom: 24px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--bg-surface);
   overflow: hidden;
-}
-.tp-hf-section.dark {
-  background: #1e293b;
-  border-color: #334155;
 }
 .tp-hf-toggle {
   display: flex;
@@ -3192,24 +3659,18 @@ export default defineComponent({
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #334155;
+  font-size: var(--fs-body);
+  font-weight: var(--weight-semibold);
+  color: var(--border-default, #334155);
   text-align: left;
 }
 .tp-hf-toggle:hover {
-  background: #f1f5f9;
-}
-.tp-hf-toggle.dark {
-  color: #e2e8f0;
-}
-.tp-hf-toggle.dark:hover {
-  background: #334155;
+  background: var(--bg-surface-alt);
 }
 .tp-hf-toggle-icon {
   flex-shrink: 0;
   transition: transform 0.2s;
-  color: #64748b;
+  color: var(--text-secondary);
 }
 .tp-hf-toggle-icon.open {
   transform: rotate(45deg);
@@ -3224,33 +3685,25 @@ export default defineComponent({
 .tp-hf-input {
   flex: 1;
   padding: 9px 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: #fff;
-  color: #0f172a;
-  font-size: 0.8125rem;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-size: var(--fs-code);
+  font-family: var(--font-mono);
   outline: none;
   transition: border-color 0.15s;
 }
 .tp-hf-input:focus {
-  border-color: #0284c7;
-}
-.tp-hf-input.dark {
-  background: #0f172a;
-  border-color: #475569;
-  color: #e2e8f0;
-}
-.tp-hf-input.dark:focus {
-  border-color: #38bdf8;
+  border-color: var(--text-info);
 }
 .tp-hf-input.error {
-  border-color: #ef4444;
+  border-color: var(--text-error);
 }
 .tp-hf-error {
   margin-top: 6px;
-  font-size: 0.75rem;
-  color: #ef4444;
+  font-size: var(--fs-code);
+  color: var(--text-error);
   line-height: 1.4;
 }
 .tp-hf-parsed {
@@ -3258,11 +3711,8 @@ export default defineComponent({
   align-items: center;
   gap: 6px;
   margin-top: 8px;
-  font-size: 0.8125rem;
-  color: #16a34a;
-}
-.tp-hf-parsed.dark {
-  color: #4ade80;
+  font-size: var(--fs-code);
+  color: var(--text-success);
 }
 .tp-hf-examples {
   display: flex;
@@ -3270,23 +3720,17 @@ export default defineComponent({
   align-items: center;
   gap: 6px;
   margin-top: 10px;
-  font-size: 0.6875rem;
-  color: #94a3b8;
-}
-.tp-hf-examples.dark {
-  color: #64748b;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
 }
 .tp-hf-examples-label {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 .tp-hf-examples code {
-  background: #e2e8f0;
+  background: var(--bg-surface-hover);
   padding: 2px 6px;
   border-radius: 3px;
-  font-size: 0.625rem;
-}
-.dark .tp-hf-examples code {
-  background: #334155;
+  font-size: var(--fs-caption);
 }
 
 /* Training config — single column stack */
@@ -3297,19 +3741,13 @@ export default defineComponent({
 }
 .tp-config-doc {
   margin-top: 6px;
-  font-size: 0.75rem;
-  color: #64748b;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
   line-height: 1.6;
 }
-.tp-config-doc.dark {
-  color: #94a3b8;
-}
 .tp-config-doc strong {
-  color: #334155;
-  font-weight: 600;
-}
-.dark .tp-config-doc strong {
-  color: #e2e8f0;
+  color: var(--border-default, #334155);
+  font-weight: var(--weight-semibold);
 }
 .tp-config-doc em {
   font-style: italic;
@@ -3319,13 +3757,9 @@ export default defineComponent({
 .tp-explainer {
   margin-bottom: 24px;
   padding: 16px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: #f8fafc;
-}
-.tp-explainer.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface);
 }
 .tp-explainer-steps {
   display: flex;
@@ -3336,24 +3770,21 @@ export default defineComponent({
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  font-size: 0.8125rem;
-  color: #334155;
+  font-size: var(--fs-code);
+  color: var(--border-default, #334155);
   line-height: 1.5;
-}
-.dark .tp-explainer-step {
-  color: #cbd5e1;
 }
 .tp-explainer-num {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: #0284c7;
-  color: #fff;
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.6875rem;
-  font-weight: 700;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-bold);
   flex-shrink: 0;
   margin-top: 1px;
 }
@@ -3369,31 +3800,23 @@ export default defineComponent({
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: #64748b;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-secondary);
   margin-bottom: 8px;
   padding-bottom: 6px;
-  border-bottom: 1px solid #e2e8f0;
-}
-.tp-llm-group-label.dark {
-  color: #94a3b8;
-  border-bottom-color: #334155;
+  border-bottom: 1px solid var(--border-default);
 }
 .tp-llm-group-badge {
   display: inline-block;
   padding: 1px 6px;
   border-radius: 9999px;
-  font-size: 0.625rem;
-  font-weight: 700;
-  background: #dcfce7;
-  color: #166534;
-}
-.dark .tp-llm-group-badge {
-  background: #14532d;
-  color: #4ade80;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-bold);
+  background: var(--bg-success);
+  color: var(--text-success);
 }
 .tp-llm-list {
   display: flex;
@@ -3405,43 +3828,32 @@ export default defineComponent({
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border: 1.5px solid #e2e8f0;
+  border: 1.5px solid var(--border-default);
   border-radius: 6px;
-  background: #fff;
+  background: var(--bg-page);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s, background 0.15s;
   width: 100%;
 }
-.tp-llm-card.dark {
-  background: #1e293b;
-  border-color: #334155;
-}
 .tp-llm-card:hover {
-  border-color: #94a3b8;
+  border-color: var(--text-muted);
 }
 .tp-llm-card.dark:hover {
-  border-color: #64748b;
+  border-color: var(--text-secondary);
 }
 .tp-llm-card.selected {
-  border-color: #0284c7;
-  background: #eff6ff;
-}
-.tp-llm-card.selected.dark {
-  border-color: #38bdf8;
-  background: #0c4a6e;
+  border-color: var(--text-info);
+  background: var(--bg-info);
 }
 .tp-llm-card-info {
   flex: 1;
   min-width: 0;
 }
 .tp-llm-card-meta {
-  font-size: 0.6875rem;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin-top: 1px;
-}
-.dark .tp-llm-card-meta {
-  color: #64748b;
 }
 
 /* Estimates panel */
@@ -3459,50 +3871,37 @@ export default defineComponent({
 }
 .tp-estimate-card {
   padding: 10px 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: #f8fafc;
-}
-.tp-estimate-card.dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: var(--bg-surface);
 }
 .tp-estimate-label {
-  font-size: 0.625rem;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #94a3b8;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-muted);
   margin-bottom: 2px;
 }
 .tp-estimate-value {
-  font-size: 0.9375rem;
-  font-weight: 700;
-  color: #0f172a;
-}
-.dark .tp-estimate-value {
-  color: #f1f5f9;
+  font-size: var(--fs-body);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 .tp-estimate-free {
-  color: #16a34a;
-}
-.dark .tp-estimate-free {
-  color: #4ade80;
+  color: var(--text-success);
 }
 .tp-estimate-model {
-  font-size: 0.75rem;
-  font-weight: 600;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: var(--fs-code);
+  font-weight: var(--weight-semibold);
+  font-family: var(--font-mono);
   word-break: break-all;
 }
 .tp-estimate-disclaimer {
-  font-size: 0.6875rem;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   line-height: 1.5;
   font-style: italic;
-}
-.tp-estimate-disclaimer.dark {
-  color: #64748b;
 }
 
 /* ─── Step 4: Pre-process ─── */
@@ -3524,60 +3923,42 @@ export default defineComponent({
   align-items: center;
   padding: 0 12px;
   height: 38px;
-  background: #e2e8f0;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface-hover);
+  border: 1px solid var(--bg-surface-hover);
   border-left: none;
   border-radius: 0 6px 6px 0;
-  font-size: 0.8125rem;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  color: #64748b;
-  font-weight: 600;
-}
-.dark .tp-output-ext {
-  background: #334155;
-  border-color: #475569;
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-weight: var(--weight-semibold);
 }
 
 .tp-process-summary {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--bg-surface);
   padding: 0;
   margin-bottom: 20px;
   overflow: hidden;
-}
-.tp-process-summary.dark {
-  background: #1e293b;
-  border-color: #334155;
 }
 .tp-process-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  border-bottom: 1px solid #e2e8f0;
-}
-.tp-process-summary.dark .tp-process-row {
-  border-bottom-color: #334155;
+  border-bottom: 1px solid var(--border-default);
 }
 .tp-process-row:last-child {
   border-bottom: none;
 }
 .tp-process-label {
-  font-size: 0.8125rem;
-  color: #64748b;
-}
-.dark .tp-process-label {
-  color: #94a3b8;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
 }
 .tp-process-value {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #0f172a;
-}
-.dark .tp-process-value {
-  color: #f1f5f9;
+  font-size: var(--fs-body);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
 }
 
 .tp-process-ready {
@@ -3587,8 +3968,8 @@ export default defineComponent({
   gap: 8px;
   padding: 32px;
   text-align: center;
-  color: #94a3b8;
-  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-size: var(--fs-body);
 }
 
 .tp-process-active {
@@ -3598,23 +3979,20 @@ export default defineComponent({
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 0.9375rem;
-  color: #0284c7;
-  font-weight: 500;
-}
-.dark .tp-process-spinner-row {
-  color: #38bdf8;
+  font-size: var(--fs-body);
+  color: var(--text-info);
+  font-weight: var(--weight-medium);
 }
 .tp-spinner-lg {
   width: 18px;
   height: 18px;
   border-width: 2.5px;
   border-color: rgba(2, 132, 199, 0.3);
-  border-top-color: #0284c7;
+  border-top-color: var(--text-info);
 }
 .dark .tp-spinner-lg {
   border-color: rgba(56, 189, 248, 0.3);
-  border-top-color: #38bdf8;
+  border-top-color: var(--text-info);
 }
 
 .tp-process-done {
@@ -3623,20 +4001,15 @@ export default defineComponent({
   gap: 10px;
   padding: 14px 16px;
   border-radius: 8px;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  color: #166534;
-  font-size: 0.875rem;
+  background: var(--bg-success);
+  border: 1px solid var(--status-success);
+  color: var(--text-success);
+  font-size: var(--fs-body);
   line-height: 1.5;
-}
-.tp-process-done.dark {
-  background: #14532d;
-  border-color: #166534;
-  color: #4ade80;
 }
 .tp-process-done p {
   margin: 2px 0 0 0;
-  font-weight: 400;
+  font-weight: var(--weight-normal);
 }
 
 /* ─── Step 6: Iterate ─── */
@@ -3649,13 +4022,10 @@ export default defineComponent({
   align-items: center;
   gap: 8px;
   padding: 40px 20px;
-  border: 1px dashed #e2e8f0;
+  border: 1px dashed var(--border-default);
   border-radius: 8px;
   text-align: center;
-  color: #94a3b8;
-  font-size: 0.875rem;
-}
-.dark .tp-iterate-placeholder {
-  border-color: #334155;
+  color: var(--text-muted);
+  font-size: var(--fs-body);
 }
 </style>

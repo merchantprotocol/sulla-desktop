@@ -9,7 +9,7 @@ const PTY_MAX_RETRIES = 20;
 
 interface TerminalSession {
   ptyProcess: pty.IPty;
-  clients: Set<WebSocket>;
+  clients:    Set<WebSocket>;
 }
 
 /**
@@ -19,8 +19,8 @@ interface TerminalSession {
  */
 export class WebSocketTerminalServer {
   private server: http.Server | null = null;
-  private wss: WebSocketServer | null = null;
-  private sessions: Map<string, TerminalSession> = new Map();
+  private wss:    WebSocketServer | null = null;
+  private sessions = new Map<string, TerminalSession>();
 
   private trySpawnPty(cols: number, rows: number, command?: string): pty.IPty {
     const limactlPath = resolveLimactlPath({});
@@ -34,10 +34,10 @@ export class WebSocketTerminalServer {
       name: 'xterm-256color',
       cols,
       rows,
-      env: {
+      env:  {
         ...process.env,
         LIMA_HOME: limaHome,
-        TERM: 'xterm-256color',
+        TERM:      'xterm-256color',
       } as Record<string, string>,
     });
   }
@@ -93,10 +93,10 @@ export class WebSocketTerminalServer {
 
         // Clear the booting message and let the shell prompt take over
         ws.send('\x1B[2K\r');
-        console.log(`[TerminalServer] PTY connected on attempt ${attempt}`);
+        console.log(`[TerminalServer] PTY connected on attempt ${ attempt }`);
         return;
       } catch (err) {
-        console.log(`[TerminalServer] Spawn attempt ${attempt}/${PTY_MAX_RETRIES} failed:`, String(err));
+        console.log(`[TerminalServer] Spawn attempt ${ attempt }/${ PTY_MAX_RETRIES } failed:`, String(err));
         ws.send('.');
       }
 
@@ -122,11 +122,11 @@ export class WebSocketTerminalServer {
         // Not JSON — raw terminal input
       }
 
-      if (parsed && parsed.type === 'start') {
+      if (parsed?.type === 'start') {
         const cols = parsed.cols || 80;
         const rows = parsed.rows || 24;
         const command = parsed.command || undefined;
-        sessionId = parsed.sessionId || `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        sessionId = parsed.sessionId || `session-${ Date.now() }-${ Math.random().toString(36).slice(2, 8) }`;
 
         // Join existing session
         if (sessionId && this.sessions.has(sessionId)) {
@@ -154,7 +154,7 @@ export class WebSocketTerminalServer {
         return;
       }
 
-      if (parsed && parsed.type === 'resize' && session) {
+      if (parsed?.type === 'resize' && session) {
         session.ptyProcess.resize(parsed.cols || 80, parsed.rows || 24);
         return;
       }
@@ -187,7 +187,7 @@ export class WebSocketTerminalServer {
         });
 
         this.server.listen(port, '127.0.0.1', () => {
-          console.log(`[TerminalServer] WebSocket server listening on ws://127.0.0.1:${port}`);
+          console.log(`[TerminalServer] WebSocket server listening on ws://127.0.0.1:${ port }`);
           resolve();
         });
 

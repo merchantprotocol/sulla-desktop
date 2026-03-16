@@ -29,19 +29,20 @@ export type ArchiveDownloadOptions = DownloadOptions & {
   entryName?: string;
 };
 
-async function fetchWithRetry(url: string) {
-  while (true) {
+async function fetchWithRetry(url: string, maxAttempts = 3) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fetch(url, { redirect: 'follow' });
     } catch (ex: any) {
-      if (ex && ex.errno === 'EAI_AGAIN') {
-        console.log(`Recoverable error downloading ${ url }, retrying...`);
+      if (ex?.errno === 'EAI_AGAIN' && attempt < maxAttempts) {
+        console.log(`DNS resolution failed for ${ url }, attempt ${ attempt }/${ maxAttempts }...`);
         continue;
       }
       console.dir(ex);
       throw ex;
     }
   }
+  throw new Error(`Failed to fetch ${ url } after ${ maxAttempts } attempts`);
 }
 
 function checkDownloadStatusOrThrow(url: string, response: Response): void {

@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { postgresClient } from "../../database/PostgresClient";
+import { BaseTool, ToolResponse } from '../base';
+import { postgresClient } from '../../database/PostgresClient';
 
 /**
  * Pg Count Tool - Worker class for execution
  */
 export class PgCountWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { sql, params = [] } = input;
 
@@ -16,12 +16,12 @@ export class PgCountWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `PostgreSQL Count Result: ${count}`
+        responseString: `PostgreSQL Count Result: ${ count }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing PostgreSQL count query: ${(error as Error).message}`
+        responseString: `Error executing PostgreSQL count query: ${ (error as Error).message }`,
       };
     }
   }

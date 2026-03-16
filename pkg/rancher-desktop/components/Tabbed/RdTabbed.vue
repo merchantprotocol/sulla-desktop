@@ -32,7 +32,7 @@ export default defineComponent({
 
     :deep(.tabs) {
       border: none;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--border-default);
 
       &:focus {
         outline: none;
@@ -61,10 +61,10 @@ export default defineComponent({
       margin-right: 0;
       margin-bottom: -1px;
       padding-right: 0;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--border-default);
 
       &.active {
-        border-color: var(--primary);
+        border-color: var(--border-accent);
         background-color: transparent;
 
         a {

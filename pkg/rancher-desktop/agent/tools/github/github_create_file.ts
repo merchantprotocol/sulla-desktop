@@ -1,13 +1,13 @@
-import { BaseTool, ToolResponse } from "../base";
-import { Octokit } from "@octokit/rest";
+import { BaseTool, ToolResponse } from '../base';
+import { Octokit } from '@octokit/rest';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * GitHub Create File Tool - Worker class for execution
  */
 export class GitHubCreateFileWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { owner, repo, path, content, message, branch } = input;
 
@@ -16,7 +16,7 @@ export class GitHubCreateFileWorker extends BaseTool {
     if (!tokenValue) {
       return {
         successBoolean: false,
-        responseString: "Error: GitHub token not configured."
+        responseString: 'Error: GitHub token not configured.',
       };
     }
 
@@ -33,21 +33,21 @@ export class GitHubCreateFileWorker extends BaseTool {
       });
 
       const responseString = `File created successfully:
-Repository: ${owner}/${repo}
-Path: ${path}
-Branch: ${branch || 'default'}
-Commit SHA: ${response.data.commit.sha}
-Commit URL: ${response.data.commit.html_url}
-Content SHA: ${response.data.content?.sha || 'N/A'}`;
+Repository: ${ owner }/${ repo }
+Path: ${ path }
+Branch: ${ branch || 'default' }
+Commit SHA: ${ response.data.commit.sha }
+Commit URL: ${ response.data.commit.html_url }
+Content SHA: ${ response.data.content?.sha || 'N/A' }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error creating file: ${(error as Error).message}`
+        responseString: `Error creating file: ${ (error as Error).message }`,
       };
     }
   }

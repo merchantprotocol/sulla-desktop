@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { runCommand } from "../util/CommandRunner";
+import { BaseTool, ToolResponse } from '../base';
+import { runCommand } from '../util/CommandRunner';
 
 /**
  * Lima Shell Tool - Worker class for execution
  */
 export class LimaShellWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { instance, command } = input;
 
@@ -22,20 +22,20 @@ export class LimaShellWorker extends BaseTool {
       if (res.exitCode !== 0) {
         return {
           successBoolean: false,
-          responseString: `Error executing command in Lima VM: ${res.stderr || res.stdout}`
+          responseString: `Error executing command in Lima VM: ${ res.stderr || res.stdout }`,
         };
       }
 
-      const responseString = `Command executed in Lima VM ${instance}${command ? `: ${command}` : ' (interactive shell)'}\nOutput:\n${res.stdout}`;
+      const responseString = `Command executed in Lima VM ${ instance }${ command ? `: ${ command }` : ' (interactive shell)' }\nOutput:\n${ res.stdout }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing limactl shell: ${(error as Error).message}`
+        responseString: `Error executing limactl shell: ${ (error as Error).message }`,
       };
     }
   }

@@ -22,8 +22,8 @@ export function buildGuestBridgeScript(): string {
   if (window.__sullaBridgeInjected) return;
   window.__sullaBridgeInjected = true;
 
-  var CHANNEL = ${JSON.stringify(BRIDGE_CHANNEL)};
-  var GLOBAL  = ${JSON.stringify(GLOBAL_NAME)};
+  var CHANNEL = ${ JSON.stringify(BRIDGE_CHANNEL) };
+  var GLOBAL  = ${ JSON.stringify(GLOBAL_NAME) };
 
   /* ------------------------------------------------------------------ */
   /*  Host communication helper                                         */
@@ -49,11 +49,18 @@ export function buildGuestBridgeScript(): string {
   /* ------------------------------------------------------------------ */
   function isVisible(el) {
     if (!el) return false;
-    var style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-    if (el.offsetParent !== null) return true;
-    var rect = el.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+    // Walk up the DOM within this document checking computed styles.
+    // We intentionally avoid offsetParent / getBoundingClientRect because
+    // those report zero dimensions when the containing iframe is hidden
+    // via display:none (v-show on the parent page), even though the
+    // elements are perfectly valid within the iframe's own DOM.
+    var cur = el;
+    while (cur && cur !== document.documentElement) {
+      var style = window.getComputedStyle(cur);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      cur = cur.parentElement;
+    }
+    return true;
   }
 
   function handleize(text) {

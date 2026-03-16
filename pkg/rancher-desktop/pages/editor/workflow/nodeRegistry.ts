@@ -1,17 +1,17 @@
 import type { WorkflowNodeCategory, WorkflowNodeSubtype } from './types';
 
 export interface NodeTypeDefinition {
-  subtype: WorkflowNodeSubtype;
-  category: WorkflowNodeCategory;
-  label: string;
-  description: string;
-  iconSvg: string;
-  useImageIcon?: boolean;
-  defaultLabel: string;
-  defaultConfig: () => Record<string, any>;
+  subtype:             WorkflowNodeSubtype;
+  category:            WorkflowNodeCategory;
+  label:               string;
+  description:         string;
+  iconSvg:             string;
+  useImageIcon?:       boolean;
+  defaultLabel:        string;
+  defaultConfig:       () => Record<string, any>;
   hasMultipleOutputs?: boolean;
   /** When true, the node renders custom positioned handles instead of the default top/bottom pair */
-  hasCustomHandles?: boolean;
+  hasCustomHandles?:   boolean;
 }
 
 // SVG icons — all stroke-based, 20x20 viewBox, matching TriggerNodePanel.vue pattern
@@ -26,7 +26,7 @@ const ICONS = {
 
   chatCompletions: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
 
-  agent: '', // Uses <img> with sulla-node-icon.png
+  agent: '', // Uses <img> with robot-512-nobg.png
 
   router: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 6a9 9 0 0 1 9 0"/><path d="M6 12a6 6 0 0 1 6 6"/></svg>',
 
@@ -129,23 +129,23 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
 
   // ── Routing ──
   {
-    subtype:       'router',
-    category:      'routing',
-    label:         'Router',
-    description:   'LLM-based classification routing',
-    iconSvg:       ICONS.router,
-    defaultLabel:  'Router',
-    defaultConfig: () => ({ classificationPrompt: '', routes: [] }),
+    subtype:            'router',
+    category:           'routing',
+    label:              'Router',
+    description:        'LLM-based classification routing',
+    iconSvg:            ICONS.router,
+    defaultLabel:       'Router',
+    defaultConfig:      () => ({ classificationPrompt: '', routes: [] }),
     hasMultipleOutputs: true,
   },
   {
-    subtype:       'condition',
-    category:      'routing',
-    label:         'Condition',
-    description:   'Rule-based if/else branching',
-    iconSvg:       ICONS.condition,
-    defaultLabel:  'Condition',
-    defaultConfig: () => ({ rules: [], combinator: 'and' }),
+    subtype:            'condition',
+    category:           'routing',
+    label:              'Condition',
+    description:        'Rule-based if/else branching',
+    iconSvg:            ICONS.condition,
+    defaultLabel:       'Condition',
+    defaultConfig:      () => ({ rules: [], combinator: 'and' }),
     hasMultipleOutputs: true,
   },
 
@@ -160,13 +160,13 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     defaultConfig: () => ({ delayAmount: 5, delayUnit: 'seconds' }),
   },
   {
-    subtype:       'loop',
-    category:      'flow-control',
-    label:         'Loop',
-    description:   'Repeat until condition or max iterations',
-    iconSvg:       ICONS.loop,
-    defaultLabel:  'Loop',
-    defaultConfig: () => ({ maxIterations: 10, condition: '', conditionMode: 'template' }),
+    subtype:          'loop',
+    category:         'flow-control',
+    label:            'Loop',
+    description:      'Repeat until condition or max iterations',
+    iconSvg:          ICONS.loop,
+    defaultLabel:     'Loop',
+    defaultConfig:    () => ({ maxIterations: 10, condition: '', conditionMode: 'template' }),
     hasCustomHandles: true,
   },
   {
@@ -236,11 +236,11 @@ export function getNodesByCategory(category: WorkflowNodeCategory): NodeTypeDefi
 }
 
 export const CATEGORY_LABELS: Record<WorkflowNodeCategory, string> = {
-  'trigger':      'Triggers',
-  'agent':        'Agent',
-  'routing':      'Routing',
+  trigger:        'Triggers',
+  agent:          'Agent',
+  routing:        'Routing',
   'flow-control': 'Flow Control',
-  'io':           'I/O',
+  io:             'I/O',
 };
 
 export const CATEGORY_ORDER: WorkflowNodeCategory[] = [

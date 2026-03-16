@@ -1111,7 +1111,7 @@
 		--tw-prose-invert-pre-bg: #00000080;
 		--tw-prose-invert-th-borders: oklch(44.6% .03 256.802);
 		--tw-prose-invert-td-borders: oklch(37.3% .034 259.733);
-		font-size: 1rem;
+		font-size: var(--fs-body);
 		line-height: 1.75
 	}
 
@@ -2088,37 +2088,37 @@
 	}
 
 	.text-2xl {
-		font-size: var(--text-2xl);
+		font-size: var(--fs-heading);
 		line-height: var(--tw-leading, var(--text-2xl--line-height))
 	}
 
 	.text-3xl {
-		font-size: var(--text-3xl);
+		font-size: var(--fs-heading);
 		line-height: var(--tw-leading, var(--text-3xl--line-height))
 	}
 
 	.text-5xl {
-		font-size: var(--text-5xl);
+		font-size: var(--fs-heading);
 		line-height: var(--tw-leading, var(--text-5xl--line-height))
 	}
 
 	.text-base {
-		font-size: var(--text-base);
+		font-size: var(--fs-code);
 		line-height: var(--tw-leading, var(--text-base--line-height))
 	}
 
 	.text-sm {
-		font-size: var(--text-sm);
+		font-size: var(--fs-body-sm);
 		line-height: var(--tw-leading, var(--text-sm--line-height))
 	}
 
 	.text-xl {
-		font-size: var(--text-xl);
+		font-size: var(--fs-heading);
 		line-height: var(--tw-leading, var(--text-xl--line-height))
 	}
 
 	.text-xs {
-		font-size: var(--text-xs);
+		font-size: var(--fs-caption);
 		line-height: var(--tw-leading, var(--text-xs--line-height))
 	}
 
@@ -2605,7 +2605,7 @@
 		}
 
 		.sm\:text-sm {
-			font-size: var(--text-sm);
+			font-size: var(--fs-body-sm);
 			line-height: var(--tw-leading, var(--text-sm--line-height))
 		}
 	}
@@ -2679,7 +2679,7 @@
 		}
 
 		.md\:text-sm {
-			font-size: var(--text-sm);
+			font-size: var(--fs-body-sm);
 			line-height: var(--tw-leading, var(--text-sm--line-height))
 		}
 
@@ -2829,7 +2829,7 @@
 		}
 
 		.lg\:text-sm {
-			font-size: var(--text-sm);
+			font-size: var(--fs-body-sm);
 			line-height: var(--tw-leading, var(--text-sm--line-height))
 		}
 	}

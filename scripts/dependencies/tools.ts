@@ -94,9 +94,17 @@ export class Helm extends GlobalDependency(GitHubDependency) {
     const arch = context.isM1 ? 'arm64' : 'amd64';
     const helmURL = `https://get.helm.sh/helm-v${ context.versions.helm }-${ context.goPlatform }-${ arch }.tar.gz`;
 
+    let expectedChecksum: string | undefined;
+
+    try {
+      expectedChecksum = (await getResource(`${ helmURL }.sha256sum`)).split(/\s+/, 1)[0];
+    } catch (e: any) {
+      console.warn(`WARNING: Could not fetch helm checksum: ${ e.message ?? e }`);
+    }
+
     await downloadTarGZ(helmURL, path.join(context.binDir, exeName(context, 'helm')), {
-      expectedChecksum: (await getResource(`${ helmURL }.sha256sum`)).split(/\s+/, 1)[0],
-      entryName:        `${ context.goPlatform }-${ arch }/${ exeName(context, 'helm') }`,
+      expectedChecksum,
+      entryName: `${ context.goPlatform }-${ arch }/${ exeName(context, 'helm') }`,
     });
   }
 }
@@ -196,6 +204,17 @@ export class Trivy extends GlobalDependency(GitHubDependency) {
     // https://github.com/aquasecurity/trivy/releases/download/v0.18.3/trivy_0.18.3_checksums.txt
     // https://github.com/aquasecurity/trivy/releases/download/v0.18.3/trivy_0.18.3_macOS-64bit.tar.gz
 
+    const trivyDir = context.dependencyPlatform === 'wsl' ? 'staging' : 'internal';
+    const trivyPath = path.join(context.resourcesDir, 'linux', trivyDir, 'trivy');
+
+    // Skip network calls entirely if already downloaded
+    try {
+      await fs.promises.access(trivyPath, fs.constants.X_OK);
+      console.log(`${ trivyPath } already exists, skipping trivy download.`);
+
+      return;
+    } catch { /* not found, proceed with download */ }
+
     const versionWithV = `v${ context.versions.trivy }`;
     const trivyURLBase = `https://github.com/${ this.githubOwner }/${ this.githubRepo }/releases`;
     const trivyOS = context.isM1 ? 'Linux-ARM64' : 'Linux-64bit';
@@ -203,8 +222,6 @@ export class Trivy extends GlobalDependency(GitHubDependency) {
     const trivyURL = `${ trivyURLBase }/download/${ versionWithV }/${ trivyBasename }.tar.gz`;
     const checksumURL = `${ trivyURLBase }/download/${ versionWithV }/trivy_${ context.versions.trivy }_checksums.txt`;
     const trivySHA = await findChecksum(checksumURL, `${ trivyBasename }.tar.gz`);
-    const trivyDir = context.dependencyPlatform === 'wsl' ? 'staging' : 'internal';
-    const trivyPath = path.join(context.resourcesDir, 'linux', trivyDir, 'trivy');
 
     // trivy.tgz files are top-level tarballs - not wrapped in a labelled directory :(
     await downloadTarGZ(trivyURL, trivyPath, { expectedChecksum: trivySHA });
@@ -218,11 +235,19 @@ export class Steve extends GlobalDependency(GitHubDependency) {
   readonly releaseFilter = 'published-pre';
 
   async download(context: DownloadContext): Promise<void> {
+    const stevePath = path.join(context.internalDir, exeName(context, 'steve'));
+
+    try {
+      await fs.promises.access(stevePath, fs.constants.X_OK);
+      console.log(`${ stevePath } already exists, skipping steve download.`);
+
+      return;
+    } catch { /* not found, proceed with download */ }
+
     const steveURLBase = `https://github.com/${ this.githubOwner }/${ this.githubRepo }/releases/download/v${ context.versions.steve }`;
     const arch = context.isM1 ? 'arm64' : 'amd64';
     const steveExecutable = `steve-${ context.goPlatform }-${ arch }`;
     const steveURL = `${ steveURLBase }/${ steveExecutable }.tar.gz`;
-    const stevePath = path.join(context.internalDir, exeName(context, 'steve'));
     const steveSHA = await findChecksum(`${ steveURL }.sha512sum`, `${ steveExecutable }.tar.gz`);
 
     await downloadTarGZ(
@@ -242,11 +267,6 @@ export class RancherDashboard extends GlobalDependency(GitHubDependency) {
   readonly releaseFilter = 'custom';
 
   async download(context: DownloadContext): Promise<void> {
-    const baseURL = `https://github.com/rancher-sandbox/${ this.githubRepo }/releases/download/desktop-v${ context.versions.rancherDashboard }`;
-    const executableName = 'rancher-dashboard-desktop-embed';
-    const url = `${ baseURL }/${ executableName }.tar.gz`;
-    const destPath = path.join(context.resourcesDir, 'rancher-dashboard.tgz');
-    const expectedChecksum = await findChecksum(`${ url }.sha512sum`, `${ executableName }.tar.gz`);
     const rancherDashboardDir = path.join(context.resourcesDir, 'rancher-dashboard');
 
     if (fs.existsSync(rancherDashboardDir)) {
@@ -254,6 +274,12 @@ export class RancherDashboard extends GlobalDependency(GitHubDependency) {
 
       return;
     }
+
+    const baseURL = `https://github.com/rancher-sandbox/${ this.githubRepo }/releases/download/desktop-v${ context.versions.rancherDashboard }`;
+    const executableName = 'rancher-dashboard-desktop-embed';
+    const url = `${ baseURL }/${ executableName }.tar.gz`;
+    const destPath = path.join(context.resourcesDir, 'rancher-dashboard.tgz');
+    const expectedChecksum = await findChecksum(`${ url }.sha512sum`, `${ executableName }.tar.gz`);
 
     await download(
       url,

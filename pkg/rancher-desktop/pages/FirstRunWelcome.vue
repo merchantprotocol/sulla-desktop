@@ -1,36 +1,102 @@
 <template>
-  <div class="max-w-lg mx-0 p-6 bg-white dark:bg-gray-800/30">
+  <div class="max-w-lg mx-0 p-6">
     <form @submit.prevent="handleNextWelcome">
-      <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">Create Your Account</h2>
-      <p class="mb-6 text-gray-600 dark:text-gray-400">Set up your account details and preferences.</p>
+      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
+        Create Your Account
+      </h2>
+      <p class="mb-6 secondary-text">
+        Set up your account details and preferences.
+      </p>
 
-      <rd-fieldset legend-text="User Account" class="mb-6 dark:text-gray-100">
+      <rd-fieldset
+        legend-text="User Account"
+        class="mb-6 heading-text"
+      >
         <div class="mb-4">
-          <label for="primaryUserName" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Primary User Name:</label>
-          <input id="primaryUserName" type="text" v-model="primaryUserName" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" placeholder="Enter your name (optional)">
+          <label
+            for="primaryUserName"
+            class="block text-sm font-medium mb-1 label-text"
+          >Primary User Name:</label>
+          <input
+            id="primaryUserName"
+            v-model="primaryUserName"
+            type="text"
+            class="w-full p-2 border rounded-md form-input"
+            placeholder="Enter your name (optional)"
+          >
         </div>
         <div class="mb-4">
-          <label for="email" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email:</label>
-          <input id="email" type="email" v-model="sullaEmail" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" :class="{ 'border-red-500': !!emailError }" placeholder="Enter email">
-          <p v-if="emailError" class="text-red-500 text-sm mt-1">{{ emailError }}</p>
+          <label
+            for="email"
+            class="block text-sm font-medium mb-1 label-text"
+          >Email:</label>
+          <input
+            id="email"
+            v-model="sullaEmail"
+            type="email"
+            class="w-full p-2 border rounded-md form-input"
+            :class="{ 'input-error': !!emailError }"
+            placeholder="Enter email"
+          >
+          <p
+            v-if="emailError"
+            class="text-sm mt-1 error-text"
+          >
+            {{ emailError }}
+          </p>
         </div>
         <div class="mb-4">
-          <label for="password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password:</label>
-          <input id="password" type="password" v-model="sullaPassword" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" :class="{ 'border-red-500': !!passwordError }" placeholder="Enter password">
-          <p v-if="passwordError" class="text-red-500 text-sm mt-1">{{ passwordError }}</p>
+          <label
+            for="password"
+            class="block text-sm font-medium mb-1 label-text"
+          >Password:</label>
+          <input
+            id="password"
+            v-model="sullaPassword"
+            type="password"
+            class="w-full p-2 border rounded-md form-input"
+            :class="{ 'input-error': !!passwordError }"
+            placeholder="Enter password"
+          >
+          <p
+            v-if="passwordError"
+            class="text-sm mt-1 error-text"
+          >
+            {{ passwordError }}
+          </p>
         </div>
       </rd-fieldset>
 
-      <rd-fieldset legend-text="Updates" class="mb-6 dark:text-gray-100">
+      <rd-fieldset
+        legend-text="Updates"
+        class="mb-6 heading-text"
+      >
         <label class="flex items-center">
-          <input type="checkbox" checked="true" v-model="sullaSubscribeToUpdates" class="mr-2">
-          <span class="text-sm text-gray-700 dark:text-gray-300">Subscribe to updates and newsletters</span>
+          <input
+            v-model="sullaSubscribeToUpdates"
+            type="checkbox"
+            checked="true"
+            class="mr-2"
+          >
+          <span class="text-sm label-text">Subscribe to updates and newsletters</span>
         </label>
       </rd-fieldset>
 
       <div class="flex justify-between mt-5">
-        <button v-if="showBack" type="button" @click="$emit('back')" class="px-6 py-2 text-gray-500 rounded-md transition-colors font-medium hover:opacity-90 bg-gray-100 hover:bg-gray-200 cursor-pointer">Back</button>
-        <button type="submit" class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90" :style="{ backgroundColor: '#30a5e9' }">Next</button>
+        <button
+          v-if="showBack"
+          type="button"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 cursor-pointer btn-back"
+          @click="$emit('back')"
+        >
+          Back
+        </button>
+        <button
+          type="submit"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary"
+        >
+          Next
+        </button>
       </div>
     </form>
   </div>
@@ -93,7 +159,7 @@ const validatePassword = () => {
 };
 
 // Load settings on mount
-onMounted(async () => {
+onMounted(async() => {
   // Load sullaEmail from SullaSettingsModel
   const loadedEmail = await SullaSettingsModel.get('sullaEmail');
   sullaEmail.value = loadedEmail || '';
@@ -111,7 +177,7 @@ onMounted(async () => {
   primaryUserName.value = loadedPrimaryUserName || '';
 });
 
-const handleNextWelcome = async () => {
+const handleNextWelcome = async() => {
   const emailValid = validateEmail();
   const passwordValid = validatePassword();
 
@@ -121,7 +187,7 @@ const handleNextWelcome = async () => {
 
   // Load and set service password and encryption key
   console.log('[FirstRunWelcome] Loading service password and encryption key...');
-  
+
   const sullaServicePassword = await SullaSettingsModel.get('sullaServicePassword', SullaSettingsModel.generatePassword());
   await SullaSettingsModel.set('sullaServicePassword', sullaServicePassword, 'string');
   console.log('[FirstRunWelcome] Loaded sullaServicePassword:', sullaServicePassword);
@@ -131,6 +197,17 @@ const handleNextWelcome = async () => {
   await SullaSettingsModel.set('sullaN8nEncryptionKey', loadedKey, 'string');
   console.log('[FirstRunWelcome] Loaded sullaN8nEncryptionKey:', loadedKey);
 
+  // Pre-generate n8n API key ID and JWT token for recipe migrations
+  const n8nServiceUserId = '00000000-0000-0000-0000-000000000001';
+  const sullaN8nApiKeyId = await SullaSettingsModel.get('sullaN8nApiKeyId', SullaSettingsModel.generateN8nApiKeyId());
+  await SullaSettingsModel.set('sullaN8nApiKeyId', sullaN8nApiKeyId, 'string');
+  const sullaN8nApiKey = await SullaSettingsModel.get('sullaN8nApiKey');
+  if (!sullaN8nApiKey) {
+    const generatedKey = await SullaSettingsModel.generateN8nApiKeyToken(n8nServiceUserId, loadedKey);
+    await SullaSettingsModel.set('sullaN8nApiKey', generatedKey, 'string');
+    await SullaSettingsModel.set('serviceAccountApiKey', generatedKey, 'string');
+    console.log('[FirstRunWelcome] Generated sullaN8nApiKey');
+  }
 
   // Save to SullaSettingsModel
   await SullaSettingsModel.set('primaryUserName', primaryUserName.value, 'string');
@@ -140,6 +217,27 @@ const handleNextWelcome = async () => {
   await SullaSettingsModel.set('firstRunCredentialsNeeded', false, 'boolean');
 
   console.log('[FirstRunWelcome] Settings committed successfully');
+
+  // Submit email subscription to worker if opted in
+  if (sullaSubscribeToUpdates.value && sullaEmail.value?.trim()) {
+    fetch('https://email-submission.jonathon-44b.workers.dev/', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        email:  sullaEmail.value.trim(),
+        name:   primaryUserName.value?.trim() || '',
+        source: 'sulla-desktop',
+      }),
+    }).then((res) => {
+      if (!res.ok) {
+        console.warn('[FirstRunWelcome] Subscription request failed:', res.status);
+      } else {
+        console.log('[FirstRunWelcome] Subscription submitted successfully');
+      }
+    }).catch((err) => {
+      console.warn('[FirstRunWelcome] Subscription request error:', err);
+    });
+  }
 
   // Check if ready to trigger custom environment
   if (await SullaSettingsModel.get('sullaEmail', false) &&
@@ -167,8 +265,55 @@ const handleNextWelcome = async () => {
   margin-top: 1.5rem;
 }
 
+/* Text color classes */
+.heading-text {
+  color: var(--text-primary);
+}
+
+.secondary-text {
+  color: var(--text-secondary);
+}
+
+.label-text {
+  color: var(--text-secondary);
+}
+
+.error-text {
+  color: var(--text-error);
+}
+
+/* Form input styling */
+.form-input {
+  background-color: var(--bg-input);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.input-error {
+  border-color: var(--border-error);
+}
+
+/* Button styles */
+.btn-back {
+  color: var(--text-secondary);
+  background-color: var(--bg-surface-alt);
+
+  &:hover {
+    background-color: var(--bg-surface-hover);
+  }
+}
+
+.btn-primary {
+  background-color: var(--accent-primary);
+  color: var(--text-on-accent);
+
+  &:hover {
+    background-color: var(--accent-primary-hover);
+  }
+}
+
 input[type="checkbox"]:checked {
-  accent-color: #30a5e9;
+  accent-color: var(--accent-primary);
 }
 
 /* Hover effects */
@@ -177,11 +322,7 @@ button:hover {
 }
 
 input:hover, select:hover {
-  border-color: #374151; /* darker gray border */
-  background-color: #f3f4f6; /* slightly darker background */
-}
-
-.dark input:hover, .dark select:hover {
-  background-color: #4b5563 !important; /* darker background for dark mode */
+  border-color: var(--border-strong);
+  background-color: var(--bg-surface-alt);
 }
 </style>

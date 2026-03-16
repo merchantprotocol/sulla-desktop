@@ -4,9 +4,7 @@ import type { ComputedRef, Ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { IpcRendererEvent } from 'electron';
 
-
 export class StartupProgressController {
-
   private readonly WS_URL = 'ws://localhost:30118/';
   private readinessInterval: ReturnType<typeof setInterval> | null = null;
   private k8sReady = false;
@@ -14,7 +12,7 @@ export class StartupProgressController {
   private wsProbeAttempted = false;
 
   /**
-   * 
+   *
    */
   static createState() {
     const progressCurrent = ref(0);
@@ -32,39 +30,39 @@ export class StartupProgressController {
       modelName:           ref(''),
       modelDownloadStatus: ref(''),
 
-      modelMode:           ref<'local' | 'remote'>('local'),
+      modelMode: ref<'local' | 'remote'>('local'),
     };
   }
 
   /**
-   * 
-   * @param state 
+   *
+   * @param state
    */
   constructor(public readonly state: ReturnType<typeof StartupProgressController.createState>) {}
 
   /**
-   * 
+   *
    */
   start(): void {
     console.log('[StartupProgressController] start() called');
     // Check if we've seen the startup splash in this session
     const hasSeenSplash = sessionStorage.getItem('sulla-startup-splash-seen') === 'true';
-    
+
     // If not seen, show overlay immediately on new bootup
     if (!hasSeenSplash) {
       this.state.showOverlay.value = true;
     }
-    
+
     // Initialize overlay state immediately so popup shows right away
     this.state.progressMax.value = 100;
     this.state.progressCurrent.value = 0;
     console.log('[StartupProgressController] initial state: progressMax=', this.state.progressMax.value, 'progressCurrent=', this.state.progressCurrent.value);
     this.state.progressDescription.value = 'Initializing...';
     this.state.systemReady.value = false;
-    
+
     // Listen for main process restart to show overlay
     ipcRenderer.on('sulla-main-started' as any, this.handleMainStarted);
-    
+
     ipcRenderer.on('k8s-progress', this.handleProgress);
 
     this.startReadinessCheck();
@@ -82,7 +80,7 @@ export class StartupProgressController {
 
   private readonly handleModelStatus = (
     event: IpcRendererEvent,
-    payload: { status: string; model?: string }
+    payload: { status: string; model?: string },
   ) => {
     this.state.modelDownloading.value =
       payload.status.includes('Downloading') ||
@@ -104,7 +102,7 @@ export class StartupProgressController {
     this.receivedProgress = true;
     // Show overlay on any progress event
     this.state.showOverlay.value = true;
-    
+
     // If we got a real progress update, use those values instead of restart placeholder
     if (progress.max > 0) {
       this.state.progressCurrent.value = progress.current;
@@ -162,7 +160,7 @@ export class StartupProgressController {
     }
 
     const cleanup = () => {
-      try { ws.close(); } catch {}
+      try { ws.close() } catch {}
     };
 
     // Give the probe 5 seconds to connect
@@ -173,15 +171,18 @@ export class StartupProgressController {
 
     ws.onopen = () => {
       clearTimeout(timeout);
-      console.log('[StartupProgressController] WebSocket probe connected');
-      if (!this.receivedProgress) {
-        console.log('[StartupProgressController] No progress events received — services already running, closing overlay');
-        this.state.systemReady.value = true;
-        this.state.showOverlay.value = false;
-        this.state.progressDescription.value = 'System ready!';
-        this.state.startupPhase.value = 'ready';
-        sessionStorage.setItem('sulla-startup-splash-seen', 'true');
+      console.log('[StartupProgressController] WebSocket probe connected — services are running, closing overlay');
+      // Stop the readiness interval so it doesn't trigger a page reload
+      if (this.readinessInterval) {
+        clearInterval(this.readinessInterval);
+        this.readinessInterval = null;
       }
+      this.k8sReady = true;
+      this.state.systemReady.value = true;
+      this.state.showOverlay.value = false;
+      this.state.progressDescription.value = 'System ready!';
+      this.state.startupPhase.value = 'ready';
+      sessionStorage.setItem('sulla-startup-splash-seen', 'true');
       cleanup();
     };
 
@@ -193,9 +194,8 @@ export class StartupProgressController {
   }
 
   private startReadinessCheck(): void {
-    this.readinessInterval = setInterval(async () => {
+    this.readinessInterval = setInterval(async() => {
       if (!this.k8sReady) return;
-
 
       if (this.state.modelDownloading.value) {
         return; // model status already updating via event
@@ -214,5 +214,4 @@ export class StartupProgressController {
       this.readinessInterval = null;
     }, 3000);
   }
-
 }

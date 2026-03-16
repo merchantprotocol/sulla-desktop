@@ -1,14 +1,14 @@
 import { BaseModel } from '../BaseModel';
 
 interface IntegrationValueAttributes {
-  value_id: number;
+  value_id:       number;
   integration_id: string;
-  account_id: string;
-  property: string;
-  value: string;
-  is_default: boolean;
-  created_at: Date;
-  updated_at: Date;
+  account_id:     string;
+  property:       string;
+  value:          string;
+  is_default:     boolean;
+  created_at:     Date;
+  updated_at:     Date;
 }
 
 export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes> {
@@ -25,7 +25,7 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
   ];
 
   protected readonly casts: Record<string, string> = {
-    value_id: 'integer',
+    value_id:   'integer',
     is_default: 'boolean',
     created_at: 'timestamp',
     updated_at: 'timestamp',
@@ -47,7 +47,7 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
   ): Promise<IntegrationValueModel | null> {
     const rows = await this.where({
       integration_id: integrationId,
-      account_id: accountId,
+      account_id:     accountId,
       property,
     });
     return rows[0] || null;
@@ -60,7 +60,7 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
   ): Promise<IntegrationValueModel[]> {
     return this.where({
       integration_id: integrationId,
-      account_id: accountId,
+      account_id:     accountId,
     });
   }
 
@@ -110,7 +110,7 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
 
     const model = await this.create({
       integration_id: integrationId,
-      account_id: accountId,
+      account_id:     accountId,
       property,
       value,
     });
@@ -144,7 +144,7 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     systemProperties: string[],
   ): Promise<IntegrationValueModel[]> {
     const all = await this.findByAccount(integrationId, accountId);
-    return all.filter(m => !systemProperties.includes(m.attributes.property as string));
+    return all.filter(m => !systemProperties.includes(m.attributes.property!));
   }
 
   /** Get the default account_id for an integration. Returns 'default' if none marked. */

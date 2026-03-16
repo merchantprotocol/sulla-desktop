@@ -75,11 +75,11 @@ export default defineConfigWithVueTs(
           },
         ],
       }],
-      'new-cap':               'off',
+      'new-cap':                                           'off',
       // This one assumes all callbacks have errors in the first argument, which isn't likely.
-      'n/no-callback-literal': 'off',
-      'no-global-assign':      ['error', { exceptions: ['console'] }],
-      'vue/comma-dangle':      ['error', 'always-multiline'],
+      'n/no-callback-literal':                             'off',
+      'no-global-assign':                                  ['error', { exceptions: ['console'] }],
+      'vue/comma-dangle':                                  ['error', 'always-multiline'],
     },
   },
   {

@@ -2,7 +2,7 @@
   "name": "sulla-desktop",
   "productName": "Sulla Desktop",
   "license": "Apache-2.0",
-  "version": "0.1.0-beta",
+  "version": "1.0.0",
   "author": {
     "name": "Jonathon Byrdziak",
     "email": "jonathonbyrd@gmail.com"
@@ -13,7 +13,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git@github.com:sulla-ai/sulla-desktop.git"
+    "url": "git@github.com:merchantprotocol/sulla-desktop.git"
   },
   "build": {
     "artifactName": "Sulla-Desktop-${version}-${arch}.${ext}",

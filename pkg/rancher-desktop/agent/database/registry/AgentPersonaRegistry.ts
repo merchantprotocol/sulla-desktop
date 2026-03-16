@@ -3,50 +3,62 @@ import { computed, reactive } from 'vue';
 import type { PersonaEmotion, PersonaStatus, PersonaTemplateId } from '@pkg/agent';
 import { AgentPersonaService } from '@pkg/agent';
 
-
-export type ChatMessage = {
-  id: string;
+export interface ChatMessage {
+  id:        string;
   channelId: string;
-  role: 'user' | 'assistant' | 'error' | 'system';
-  content: string;
-  kind?: 'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message';
+  threadId?: string;
+  role:      'user' | 'assistant' | 'error' | 'system';
+  content:   string;
+  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'html';
   image?: {
-    dataUrl: string;
-    alt?: string;
+    dataUrl:      string;
+    alt?:         string;
     contentType?: string;
-    path?: string;
+    path?:        string;
   };
   toolCard?: {
-    toolRunId: string;
-    toolName: string;
-    status: 'running' | 'success' | 'failed';
-    args?: Record<string, unknown>;
-    result?: unknown;
-    error?: string | null;
+    toolRunId:    string;
+    toolName:     string;
+    description?: string;
+    status:       'running' | 'success' | 'failed';
+    args?:        Record<string, unknown>;
+    result?:      unknown;
+    error?:       string | null;
   };
   channelMeta?: {
-    senderId: string;
+    senderId:      string;
     senderChannel: string;
   };
-};
+  workflowNode?: {
+    workflowRunId: string;
+    nodeId:        string;
+    nodeLabel:     string;
+    status:        'running' | 'completed' | 'failed' | 'waiting';
+    prompt?:       string;
+    output?:       string;
+    error?:        string;
+    nodeIndex:     number;
+    totalNodes:    number;
+  };
+}
 
-export type AgentRegistryEntry = {
+export interface AgentRegistryEntry {
   isRunning: boolean;
 
-  agentId: string;
+  agentId:   string;
   agentName: string;
 
   templateId: PersonaTemplateId;
-  emotion: PersonaEmotion;
+  emotion:    PersonaEmotion;
 
-  status: PersonaStatus;
+  status:          PersonaStatus;
   tokensPerSecond: number;
   totalTokensUsed: number;
-  temperature: number;
+  temperature:     number;
 
   messages: ChatMessage[];
-  loading: boolean;
-};
+  loading:  boolean;
+}
 
 export class AgentPersonaRegistry {
   private readonly backgroundAgentId = 'heartbeat';
@@ -57,30 +69,30 @@ export class AgentPersonaRegistry {
   readonly state = reactive<{ agents: AgentRegistryEntry[]; activeAgentId: string }>({
     agents: [
       {
-        isRunning: true,
-        agentId: 'sulla-desktop',
-        agentName: 'Sulla',
-        templateId: 'glass-core',
-        emotion: 'calm',
-        status: 'online',
+        isRunning:       true,
+        agentId:         'sulla-desktop',
+        agentName:       'Sulla',
+        templateId:      'glass-core',
+        emotion:         'calm',
+        status:          'online',
         tokensPerSecond: 847,
         totalTokensUsed: 0,
-        temperature: 0.7,
-        messages: [],
-        loading: false,
+        temperature:     0.7,
+        messages:        [],
+        loading:         false,
       },
       {
-        isRunning: true,
-        agentId: 'heartbeat',
-        agentName: 'Heartbeat',
-        templateId: 'terminal',
-        emotion: 'focus',
-        status: 'idle',
+        isRunning:       true,
+        agentId:         'heartbeat',
+        agentName:       'Heartbeat',
+        templateId:      'terminal',
+        emotion:         'focus',
+        status:          'idle',
         tokensPerSecond: 120,
         totalTokensUsed: 0,
-        temperature: 0.2,
-        messages: [],
-        loading: false,
+        temperature:     0.2,
+        messages:        [],
+        loading:         false,
       },
     ],
     activeAgentId: 'sulla-desktop',
@@ -93,14 +105,21 @@ export class AgentPersonaRegistry {
     });
   }
 
-  // Kept for full backward compatibility with any other code
-  getOrCreatePersonaService(agentId: string): AgentPersonaService {
-    if (!this.personaServices.has(agentId)) {
+  /**
+   * Get or create a persona service.
+   * @param agentId  The WebSocket channel / agent ID (e.g. 'sulla-desktop')
+   * @param tabId    Optional tab identifier. When provided a separate persona
+   *                 instance is created per tab so each tab has its own messages,
+   *                 threadId, and localStorage scope while sharing the same WS channel.
+   */
+  getOrCreatePersonaService(agentId: string, tabId?: string): AgentPersonaService {
+    const key = tabId ? `${ agentId }_${ tabId }` : agentId;
+    if (!this.personaServices.has(key)) {
       const agentData = this.state.agents.find(a => a.agentId === agentId);
-      const service = new AgentPersonaService(this, agentData, agentId);
-      this.personaServices.set(agentId, service);
+      const service = new AgentPersonaService(this, agentData, agentId, tabId);
+      this.personaServices.set(key, service);
     }
-    return this.personaServices.get(agentId)!;
+    return this.personaServices.get(key)!;
   }
 
   getPersonaService(agentId: string): AgentPersonaService | undefined {
@@ -112,8 +131,8 @@ export class AgentPersonaRegistry {
   }
 
   readonly visibleAgents = computed(() => this.state.agents.filter(a => a.isRunning));
-  readonly activeAgent = computed(() => 
-    this.state.agents.find(a => a.agentId === this.state.activeAgentId) || this.state.agents[0]
+  readonly activeAgent = computed(() =>
+    this.state.agents.find(a => a.agentId === this.state.activeAgentId) || this.state.agents[0],
   );
 
   setActiveAgent(agentId: string): void {
@@ -131,7 +150,7 @@ export class AgentPersonaRegistry {
 
   private notifyActiveAgentListeners(): void {
     const agent = this.activeAgent.value;
-    this.activeAgentListeners.forEach(l => { try { l(agent); } catch {} });
+    this.activeAgentListeners.forEach(l => { try { l(agent) } catch {} });
   }
 
   setAgentRunning(agentId: string, isRunning: boolean): void {
@@ -202,7 +221,7 @@ export class AgentPersonaRegistry {
   setHeartbeatEnabled(enabled: boolean): void {
     this.setAgentRunning(this.backgroundAgentId, enabled);
   }
-  
+
   upsertAgent(agent: AgentRegistryEntry): void {
     const idx = this.state.agents.findIndex(a => a.agentId === agent.agentId);
     if (idx >= 0) {
@@ -211,7 +230,7 @@ export class AgentPersonaRegistry {
     }
     this.state.agents.push({
       ...agent,
-      totalTokensUsed: agent.totalTokensUsed ?? 0
+      totalTokensUsed: agent.totalTokensUsed ?? 0,
     });
   }
 

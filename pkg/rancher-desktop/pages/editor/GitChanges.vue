@@ -1,5 +1,8 @@
 <template>
-  <div class="git-container" v-html="gitTreeHtml"></div>
+  <div
+    class="git-container"
+    v-html="gitTreeHtml"
+  />
 </template>
 
 <script lang="ts">
@@ -7,12 +10,12 @@ import { defineComponent, computed } from 'vue';
 
 export default defineComponent({
   name: 'GitChanges',
-  
+
   props: {
     gitChanges: {
-      type: Array as () => {status: string, file: string}[],
-      default: () => []
-    }
+      type:    Array as () => { status: string, file: string }[],
+      default: () => [],
+    },
   },
 
   setup(props) {
@@ -26,22 +29,22 @@ export default defineComponent({
           current = current[part];
         }
       });
-      
+
       const render = (node: Record<string, any>, prefix = ''): string => {
         return Object.keys(node).map(key => {
-          const full = prefix ? `${prefix}/${key}` : key;
+          const full = prefix ? `${ prefix }/${ key }` : key;
           const indent = prefix.split('/').length * 12;
-          return `<div class="git-change" style="padding-left: ${indent}px">${key}</div>` + (Object.keys(node[key]).length ? render(node[key], full) : '');
+          return `<div class="git-change" style="padding-left: ${ indent }px">${ key }</div>` + (Object.keys(node[key]).length ? render(node[key], full) : '');
         }).join('');
       };
-      
+
       return render(tree);
     });
 
     return {
-      gitTreeHtml
+      gitTreeHtml,
     };
-  }
+  },
 });
 </script>
 
@@ -52,12 +55,12 @@ export default defineComponent({
 
 .git-change {
   padding: 4px 0;
-  font-size: 13px;
-  color: #333;
+  font-size: var(--fs-code);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 :deep(.dark) .git-change {
-  color: #ccc;
+  color: var(--text-primary);
 }
 </style>

@@ -1,16 +1,32 @@
 <template>
-  <div class="tl-viewer" :class="{ dark: isDark }">
+  <div
+    class="tl-viewer"
+    :class="{ dark: isDark }"
+  >
     <div class="tl-header">
       <span class="tl-title">Training Log</span>
-      <span v-if="logFilename" class="tl-filename">{{ logFilename }}</span>
-      <span v-if="running" class="tl-running-badge">Running</span>
-      <div style="flex:1"></div>
+      <span
+        v-if="logFilename"
+        class="tl-filename"
+      >{{ logFilename }}</span>
+      <span
+        v-if="running"
+        class="tl-running-badge"
+      >Running</span>
+      <div style="flex:1" />
       <label class="tl-autoscroll">
-        <input type="checkbox" v-model="autoScroll" />
+        <input
+          v-model="autoScroll"
+          type="checkbox"
+        >
         Auto-scroll
       </label>
     </div>
-    <div ref="logContainer" class="tl-log-container" @scroll="onScroll">
+    <div
+      ref="logContainer"
+      class="tl-log-container"
+      @scroll="onScroll"
+    >
       <pre class="tl-log-content">{{ logContent || 'Waiting for output…' }}</pre>
     </div>
   </div>
@@ -22,7 +38,7 @@ import { defineComponent, ref, watch, onMounted, onBeforeUnmount, nextTick } fro
 const { ipcRenderer } = require('electron');
 
 export default defineComponent({
-  name: 'TrainingLogViewer',
+  name:  'TrainingLogViewer',
   props: {
     isDark:      { type: Boolean, default: false },
     logFilename: { type: String, default: '' },
@@ -137,31 +153,25 @@ export default defineComponent({
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-family: var(--font-mono);
 }
 .tl-header {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 6px 12px;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 0.75rem;
+  border-bottom: 1px solid var(--bg-surface-hover);
+  font-size: var(--fs-body-sm);
   flex-shrink: 0;
 }
-.dark .tl-header {
-  border-bottom-color: #334155;
-}
 .tl-title {
-  font-weight: 700;
-  color: #334155;
-}
-.dark .tl-title {
-  color: #e2e8f0;
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 .tl-filename {
-  color: #94a3b8;
-  font-family: 'SF Mono', monospace;
-  font-size: 0.6875rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
 }
 .tl-running-badge {
   display: inline-flex;
@@ -169,16 +179,12 @@ export default defineComponent({
   gap: 4px;
   padding: 1px 8px;
   border-radius: 4px;
-  font-size: 0.6875rem;
-  font-weight: 700;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
-  background: #dbeafe;
-  color: #2563eb;
+  background: var(--bg-info);
+  color: var(--text-info);
   animation: tl-pulse 1.5s ease-in-out infinite;
-}
-.dark .tl-running-badge {
-  background: #1e3a5f;
-  color: #93c5fd;
 }
 @keyframes tl-pulse {
   0%, 100% { opacity: 1; }
@@ -188,8 +194,8 @@ export default defineComponent({
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 0.6875rem;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   cursor: pointer;
   user-select: none;
 }
@@ -202,16 +208,13 @@ export default defineComponent({
   overflow-y: auto;
   overflow-x: auto;
   padding: 8px 12px;
-  background: #0f172a;
-}
-.dark .tl-log-container {
-  background: #020617;
+  background: var(--bg-page);
 }
 .tl-log-content {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: var(--fs-body-sm);
   line-height: 1.6;
-  color: #94a3b8;
+  color: var(--text-muted);
   white-space: pre-wrap;
   word-break: break-word;
 }

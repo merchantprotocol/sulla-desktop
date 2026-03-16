@@ -15,6 +15,11 @@ import { getIntegrationService } from '../services/IntegrationService';
 export class GoogleService extends BaseLanguageModel {
   protected declare config: LLMServiceConfig;
   private retryCount = 3;
+  private defaultTimeoutMs = 60_000;
+
+  override getContextWindow(): number {
+    return 1_000_000;
+  }
 
   /**
    * Create from IntegrationService credentials (active account).
@@ -28,10 +33,10 @@ export class GoogleService extends BaseLanguageModel {
     }
 
     return new GoogleService({
-      id: 'google',
-      model: valMap.model || 'gemini-2.0-flash',
+      id:      'google',
+      model:   valMap.model || 'gemini-2.0-flash',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-      apiKey: valMap.api_key || '',
+      apiKey:  valMap.api_key || '',
     });
   }
 
@@ -50,8 +55,8 @@ export class GoogleService extends BaseLanguageModel {
 
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
     const effectiveModel = options.model ?? this.model;
-    const endpoint = `/models/${effectiveModel}:generateContent`;
-    const url = `${this.baseUrl}${endpoint}`;
+    const endpoint = `/models/${ effectiveModel }:generateContent`;
+    const url = `${ this.baseUrl }${ endpoint }`;
     const body = this.buildRequestBody(messages, options);
     const conversationId = typeof options?.conversationId === 'string' ? options.conversationId : undefined;
     const nodeName = typeof options?.nodeName === 'string' ? options.nodeName : undefined;
@@ -63,12 +68,13 @@ export class GoogleService extends BaseLanguageModel {
         if (options?.signal?.aborted) throw new DOMException('Operation aborted', 'AbortError');
 
         if (attempt > 0) {
-          console.log(`[GoogleService] Retry ${attempt}/${this.retryCount} after ${Math.pow(2, attempt-1)}s backoff`);
+          console.log(`[GoogleService] Retry ${ attempt }/${ this.retryCount } after ${ Math.pow(2, attempt - 1) }s backoff`);
           await new Promise(r => setTimeout(r, Math.pow(2, attempt - 1) * 1000));
           if (options?.signal?.aborted) throw new DOMException('Aborted during retry backoff', 'AbortError');
         }
 
-        const fetchOpts = this.buildFetchOptions(body, options?.signal);
+        const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
+        const fetchOpts = this.buildFetchOptions(body, signal);
         const res = await fetch(url, fetchOpts);
 
         if (!res.ok) {
@@ -76,7 +82,7 @@ export class GoogleService extends BaseLanguageModel {
           if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
             continue;
           }
-          throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+          throw new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
         }
 
         const rawResponse = await res.json();
@@ -84,7 +90,7 @@ export class GoogleService extends BaseLanguageModel {
         return rawResponse;
       } catch (err) {
         lastError = err;
-        console.log(`[GoogleService] Error on attempt ${attempt}:`, err);
+        console.log(`[GoogleService] Error on attempt ${ attempt }:`, err);
 
         if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
           break;
@@ -121,7 +127,7 @@ export class GoogleService extends BaseLanguageModel {
       });
 
     const contents: any[] = sanitizedMessages.map(m => ({
-      role: m.role === 'assistant' ? 'model' : m.role,
+      role:  m.role === 'assistant' ? 'model' : m.role,
       parts: Array.isArray(m.content) ? [{ text: JSON.stringify(m.content) }] : [{ text: m.content }],
     }));
 
@@ -140,13 +146,13 @@ export class GoogleService extends BaseLanguageModel {
     };
 
     if (this.apiKey) {
-      headers.Authorization = `Bearer ${this.apiKey}`;
+      headers.Authorization = `Bearer ${ this.apiKey }`;
     }
 
     return {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body:   JSON.stringify(body),
       signal,
     };
   }
@@ -160,17 +166,17 @@ export class GoogleService extends BaseLanguageModel {
     const usage = raw.usageMetadata ?? {};
 
     return {
-      content: content.trim(),
+      content:  content.trim(),
       metadata: {
-        tokens_used: (usage.promptTokenCount ?? 0) + (usage.candidatesTokenCount ?? 0),
-        time_spent: 0,
-        prompt_tokens: usage.promptTokenCount ?? 0,
+        tokens_used:       (usage.promptTokenCount ?? 0) + (usage.candidatesTokenCount ?? 0),
+        time_spent:        0,
+        prompt_tokens:     usage.promptTokenCount ?? 0,
         completion_tokens: usage.candidatesTokenCount ?? 0,
-        model: this.model,
-        tool_calls: undefined,
-        finish_reason: this.normalizeFinishReason(finishReason),
-        reasoning: undefined,
-        parsed_content: undefined,
+        model:             this.model,
+        tool_calls:        undefined,
+        finish_reason:     this.normalizeFinishReason(finishReason),
+        reasoning:         undefined,
+        parsed_content:    undefined,
       },
     };
   }

@@ -1,19 +1,19 @@
-import { BaseTool, ToolResponse } from "../base";
-import { calendarClient } from "../../services/CalendarClient";
+import { BaseTool, ToolResponse } from '../base';
+import { calendarClient } from '../../services/CalendarClient';
 
 /**
  * Calendar Create Tool - Worker class for execution
  */
 export class CalendarCreateWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
       const event = await calendarClient.create(input);
       if (!event) {
         return {
           successBoolean: false,
-          responseString: "Failed to create calendar event: no event returned."
+          responseString: 'Failed to create calendar event: no event returned.',
         };
       }
 
@@ -21,23 +21,23 @@ export class CalendarCreateWorker extends BaseTool {
       const startDate = new Date(event.start).toLocaleString();
       const endDate = event.end ? new Date(event.end).toLocaleString() : 'N/A';
       const responseString = `Event created successfully:
-Title: ${event.title || 'N/A'}
-Start: ${startDate}
-End: ${endDate}
-Description: ${event.description || 'N/A'}
-Location: ${event.location || 'N/A'}
-Attendees: ${event.people ? event.people.join(', ') : 'N/A'}
-Status: ${event.status || 'N/A'}
-ID: ${event.id || 'N/A'}`;
+Title: ${ event.title || 'N/A' }
+Start: ${ startDate }
+End: ${ endDate }
+Description: ${ event.description || 'N/A' }
+Location: ${ event.location || 'N/A' }
+Attendees: ${ event.people ? event.people.join(', ') : 'N/A' }
+Status: ${ event.status || 'N/A' }
+ID: ${ event.id || 'N/A' }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error creating calendar event: ${(error as Error).message}`
+        responseString: `Error creating calendar event: ${ (error as Error).message }`,
       };
     }
   }

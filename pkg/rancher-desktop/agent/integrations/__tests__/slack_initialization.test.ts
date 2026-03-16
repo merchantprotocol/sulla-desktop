@@ -4,20 +4,20 @@ import { beforeAll, afterAll, describe, expect, it } from '@jest/globals';
 
 const SLACK_ID = 'slack';
 
-type IntegrationValueShape = {
-  value_id: number;
+interface IntegrationValueShape {
+  value_id:       number;
   integration_id: string;
-  property: string;
-  value: string;
-  created_at: Date;
-  updated_at: Date;
-};
+  property:       string;
+  value:          string;
+  created_at:     Date;
+  updated_at:     Date;
+}
 
 let service: any;
 let SullaIntegrations: any;
 let registry: any;
 
-beforeAll(async () => {
+beforeAll(async() => {
   (globalThis as any).TextEncoder = TextEncoder;
   (globalThis as any).TextDecoder = TextDecoder;
 
@@ -54,12 +54,12 @@ beforeAll(async () => {
   await registry.invalidate(SLACK_ID);
 }, 30000);
 
-afterAll(async () => {
+afterAll(async() => {
   await registry.invalidate(SLACK_ID);
 }, 30000);
 
 describe('Slack integration initialization (production path)', () => {
-  it('initializes Slack integration through SullaIntegrations and registry', async () => {
+  it('initializes Slack integration through SullaIntegrations and registry', async() => {
     await SullaIntegrations();
     const slack = await registry.get(SLACK_ID);
 
@@ -90,22 +90,22 @@ describe('Slack integration initialization (production path)', () => {
     const channels = Array.isArray(channelsList?.channels) ? channelsList.channels : [];
 
     console.log('[slack_initialization.production] auth.test', {
-      team: authTest?.team,
-      user: authTest?.user,
+      team:   authTest?.team,
+      user:   authTest?.user,
       teamId: authTest?.team_id,
       userId: authTest?.user_id,
     });
     console.log('[slack_initialization.production] team.info', {
-      teamName: teamInfo?.team?.name,
+      teamName:   teamInfo?.team?.name,
       teamDomain: teamInfo?.team?.domain,
-      teamId: teamInfo?.team?.id,
+      teamId:     teamInfo?.team?.id,
     });
     console.log('[slack_initialization.production] users.list', {
-      fetchedUsers: users.length,
+      fetchedUsers:  users.length,
       sampleUserIds: users.slice(0, 3).map((u: any) => u?.id),
     });
     console.log('[slack_initialization.production] conversations.list', {
-      fetchedChannels: channels.length,
+      fetchedChannels:  channels.length,
       sampleChannelIds: channels.slice(0, 3).map((c: any) => c?.id),
     });
   }, 120000);

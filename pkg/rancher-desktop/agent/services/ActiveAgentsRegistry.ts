@@ -11,16 +11,16 @@ import { redisClient } from '../database/RedisClient';
 // ============================================================================
 
 export interface ActiveAgent {
-  agentId: string;
-  name: string;
-  role: string;
-  channel: string;
-  type: 'heartbeat' | 'frontend' | 'agent' | 'human';
-  status: 'running' | 'idle' | 'offline';
-  startedAt: number;
+  agentId:      string;
+  name:         string;
+  role:         string;
+  channel:      string;
+  type:         'heartbeat' | 'frontend' | 'agent' | 'human';
+  status:       'running' | 'idle' | 'offline';
+  startedAt:    number;
   lastActiveAt: number;
-  description: string;
-  statusNote?: string;
+  description:  string;
+  statusNote?:  string;
 }
 
 // ============================================================================
@@ -43,7 +43,6 @@ export function getActiveAgentsRegistry(): ActiveAgentsRegistry {
 }
 
 export class ActiveAgentsRegistry {
-
   private normalizeStatusNote(note: string): string {
     return String(note || '')
       .replace(/\s+/g, ' ')
@@ -105,6 +104,7 @@ export class ActiveAgentsRegistry {
 
   async getAllAgents(): Promise<ActiveAgent[]> {
     const raw = await redisClient.hgetall(REGISTRY_HASH);
+    if (!raw) return [];
     const agents: ActiveAgent[] = [];
     for (const value of Object.values(raw)) {
       try {
@@ -154,7 +154,7 @@ export class ActiveAgentsRegistry {
         const name = a.name || a.agentId;
         const role = a.role || a.type;
         const currentWork = a.statusNote || 'idle';
-        return `- **${name}** (${role}) · channel: \`${a.channel}\` · ${a.status} · currently: ${currentWork} · last active ${age}m ago`;
+        return `- **${ name }** (${ role }) · channel: \`${ a.channel }\` · ${ a.status } · currently: ${ currentWork } · last active ${ age }m ago`;
       });
 
     const parts = [

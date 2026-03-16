@@ -5,18 +5,18 @@ import type { ToolOperation } from './base';
 type ToolLoader = () => Promise<any>;
 
 export interface ToolEntry {
-  name: string;
+  name:        string;
   description: string;
-  category: string;
-  loader: ToolLoader;
+  category:    string;
+  loader:      ToolLoader;
 }
 
 export interface ToolRegistration {
-  name: string;
-  description: string;
-  category: string;
-  schemaDef?: any;
-  workerClass: new () => any;
+  name:            string;
+  description:     string;
+  category:        string;
+  schemaDef?:      any;
+  workerClass:     new () => any;
   operationTypes?: ToolOperation[];
 }
 
@@ -25,15 +25,16 @@ export interface ToolRegistration {
  * Used for registering tool metadata without importing heavy deps.
  */
 export interface ToolManifest {
-  name: string;
-  description: string;
-  category: string;
-  schemaDef: Record<string, any>;
+  name:            string;
+  description:     string;
+  category:        string;
+  schemaDef:       Record<string, any>;
   operationTypes?: ToolOperation[];
-  loader: () => Promise<any>;
+  loader:          () => Promise<any>;
 }
 
-export class ToolRegistry { private static registrations = new Map<string, ToolRegistration>();
+export class ToolRegistry {
+  private static registrations = new Map<string, ToolRegistration>();
   private loaders = new Map<string, ToolLoader>();
   private instances = new Map<string, any>();
   private llmSchemaCache = new Map<string, any>();
@@ -42,31 +43,50 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
   private schemaDefs = new Map<string, Record<string, any>>();
   private operationTypesMap = new Map<string, ToolOperation[]>();
   private categoriesList = [
-    'meta', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'n8n', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
+    'meta', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
     // Integration catalog categories (AP backed)
-    'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml'
+    'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
 
   private categoryDescriptions: Record<string, string> = {
-    meta: "Tools for browsing available tools, installing skills, and meta management.", bridge: "Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.", browser: "Web search tools like Brave and DuckDuckGo.", calendar: "Tools for managing calendar events.", docker: "Tools for Docker container management.", extensions: "Tools for browsing the extension marketplace catalog, listing installed extensions, installing new extensions, and uninstalling extensions. Extensions are Docker Compose stacks managed by Sulla Desktop.", fs: "File system operations tools for creating, reading, writing, moving, copying, and deleting files/directories.", github: "GitHub repository management tools.", kubectl: "Kubernetes cluster management tools.", n8n: "Tools for managing n8n workflows, executions, credentials, tags, variables, and data tables.", slack: "Slack messaging and reaction tools.", workspace: "Tools for managing workspace folders in the Rancher Desktop data directory.", redis: "Redis key/value store operations.", pg: "PostgreSQL database queries and transactions.", rdctl: "Sulla Desktop / rdctl management commands.", integrations: "Tools for checking integration status and retrieving integration credentials.", lima: "Lima VM instance management.", playwright: "Tools for interacting with website assets — click elements, fill forms, scroll, and read page text. DOM changes, navigation, and dialog alerts are streamed automatically.", skills: "Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.", projects: "Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.",
+    meta:               'Tools for browsing available tools, installing skills, and meta management.',
+    bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',
+    browser:            'Web search tools like Brave and DuckDuckGo.',
+    calendar:           'Tools for managing calendar events.',
+    docker:             'Tools for Docker container management.',
+    extensions:         'Tools for browsing the extension marketplace catalog, listing installed extensions, installing new extensions, and uninstalling extensions. Extensions are Docker Compose stacks managed by Sulla Desktop.',
+    fs:                 'File system operations tools for creating, reading, writing, moving, copying, and deleting files/directories.',
+    github:             'GitHub repository management tools.',
+    kubectl:            'Kubernetes cluster management tools.',
+    slack:              'Slack messaging and reaction tools.',
+    workspace:          'Tools for managing workspace folders in the Rancher Desktop data directory.',
+    redis:              'Redis key/value store operations.',
+    pg:                 'PostgreSQL database queries and transactions.',
+    rdctl:              'Sulla Desktop / rdctl management commands.',
+    integrations:       'Tools for checking integration status and retrieving integration credentials.',
+    lima:               'Lima VM instance management.',
+    playwright:         'Tools for interacting with website assets — click elements, fill forms, scroll, and read page text. DOM changes, navigation, and dialog alerts are streamed automatically.',
+    skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
+    projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',
     // Integration catalog categories (tools executed via ActivePieces)
-    communication: "Email, messaging, SMS, and video conferencing tools — Gmail, Slack, Teams, Zoom, Discord, Telegram, Twilio, WhatsApp, and more.",
-    developer_tools: "DevOps, CI/CD, monitoring, hosting, CMS, and web scraping tools — GitHub, GitLab, Vercel, Sentry, Datadog, Jenkins, Webflow, and more.",
-    productivity: "Docs, spreadsheets, calendars, forms, notes, and time tracking — Notion, Google Sheets, Airtable, Todoist, Typeform, Clockify, and more.",
-    project_management: "Issue tracking, sprints, boards, and task management — Jira, Linear, Asana, Trello, ClickUp, Monday.com, and more.",
-    crm_sales: "CRM, pipeline, lead, and contact management — HubSpot, Salesforce, Pipedrive, Zoho CRM, Apollo, and more.",
-    marketing: "Email marketing, campaigns, outreach, and lead generation — Mailchimp, ConvertKit, ActiveCampaign, Google Ads, and more.",
-    customer_support: "Helpdesk, live chat, ticketing, and feedback — Zendesk, Freshdesk, Intercom, Crisp, Help Scout, and more.",
-    social_media: "Social posting, scheduling, analytics, and engagement — X/Twitter, LinkedIn, Instagram, YouTube, TikTok, Buffer, and more.",
-    finance: "Payments, invoicing, accounting, and subscriptions — Stripe, QuickBooks, Xero, PayPal, Chargebee, and more.",
-    file_storage: "Cloud storage, file transfer, and object storage — Dropbox, Box, S3, Google Cloud Storage, SFTP, and more.",
-    ecommerce: "Online store management, orders, products, and fulfillment — Shopify, WooCommerce, BigCommerce, Etsy, and more.",
-    analytics: "Web analytics, product analytics, dashboards, and BI — Google Analytics, Mixpanel, PostHog, Metabase, Snowflake, and more.",
-    automation: "Webhooks, queues, scheduling, code execution, and file conversion — HTTP, RSS, RabbitMQ, Amazon SQS, CloudConvert, and more.",
-    database: "SQL, NoSQL, vector, and serverless databases — MySQL, PostgreSQL, MongoDB, Redis, Supabase, Pinecone, and more.",
-    design: "Image editing, asset generation, and design collaboration — Figma, Canva, Cloudinary, Miro, Bannerbear, and more.",
-    hr_recruiting: "HR, payroll, recruiting, and employee management — BambooHR, Greenhouse, Lever, Gusto, Deel, and more.",
-    ai_ml: "AI models, speech, translation, and video generation — OpenAI, Anthropic, Groq, Mistral, ElevenLabs, DeepL, and more." };
+    communication:      'Email, messaging, SMS, and video conferencing tools — Gmail, Slack, Teams, Zoom, Discord, Telegram, Twilio, WhatsApp, and more.',
+    developer_tools:    'DevOps, CI/CD, monitoring, hosting, CMS, and web scraping tools — GitHub, GitLab, Vercel, Sentry, Datadog, Jenkins, Webflow, and more.',
+    productivity:       'Docs, spreadsheets, calendars, forms, notes, and time tracking — Notion, Google Sheets, Airtable, Todoist, Typeform, Clockify, and more.',
+    project_management: 'Issue tracking, sprints, boards, and task management — Jira, Linear, Asana, Trello, ClickUp, Monday.com, and more.',
+    crm_sales:          'CRM, pipeline, lead, and contact management — HubSpot, Salesforce, Pipedrive, Zoho CRM, Apollo, and more.',
+    marketing:          'Email marketing, campaigns, outreach, and lead generation — Mailchimp, ConvertKit, ActiveCampaign, Google Ads, and more.',
+    customer_support:   'Helpdesk, live chat, ticketing, and feedback — Zendesk, Freshdesk, Intercom, Crisp, Help Scout, and more.',
+    social_media:       'Social posting, scheduling, analytics, and engagement — X/Twitter, LinkedIn, Instagram, YouTube, TikTok, Buffer, and more.',
+    finance:            'Payments, invoicing, accounting, and subscriptions — Stripe, QuickBooks, Xero, PayPal, Chargebee, and more.',
+    file_storage:       'Cloud storage, file transfer, and object storage — Dropbox, Box, S3, Google Cloud Storage, SFTP, and more.',
+    ecommerce:          'Online store management, orders, products, and fulfillment — Shopify, WooCommerce, BigCommerce, Etsy, and more.',
+    analytics:          'Web analytics, product analytics, dashboards, and BI — Google Analytics, Mixpanel, PostHog, Metabase, Snowflake, and more.',
+    automation:         'Webhooks, queues, scheduling, code execution, and file conversion — HTTP, RSS, RabbitMQ, Amazon SQS, CloudConvert, and more.',
+    database:           'SQL, NoSQL, vector, and serverless databases — MySQL, PostgreSQL, MongoDB, Redis, Supabase, Pinecone, and more.',
+    design:             'Image editing, asset generation, and design collaboration — Figma, Canva, Cloudinary, Miro, Bannerbear, and more.',
+    hr_recruiting:      'HR, payroll, recruiting, and employee management — BambooHR, Greenhouse, Lever, Gusto, Deel, and more.',
+    ai_ml:              'AI models, speech, translation, and video generation — OpenAI, Anthropic, Groq, Mistral, ElevenLabs, DeepL, and more.',
+  };
 
   static register(registration: ToolRegistration) {
     this.registrations.set(registration.name, registration);
@@ -98,16 +118,16 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
       if (this.loaders.has(m.name)) continue;
       this.schemaDefs.set(m.name, m.schemaDef);
       this.operationTypesMap.set(m.name, Array.isArray(m.operationTypes) ? [...m.operationTypes] : []);
-      this.register(m.name, m.description, m.category, async () => {
+      this.register(m.name, m.description, m.category, async() => {
         const mod = await m.loader();
         const workerClass: any = mod && typeof mod === 'object'
           ? Object.values(mod).find((v: any) =>
-              typeof v === 'function' &&
+            typeof v === 'function' &&
               v?.prototype &&
               typeof v.prototype._validatedCall === 'function')
           : null;
         if (!workerClass) {
-          throw new Error(`Tool ${m.name}: loader did not export a worker class`);
+          throw new Error(`Tool ${ m.name }: loader did not export a worker class`);
         }
         const instance = new workerClass();
         instance.schemaDef = m.schemaDef;
@@ -118,7 +138,7 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
         return instance;
       });
     }
-    console.log(`[ToolRegistry] Registered ${manifests.length} tool manifests`);
+    console.log(`[ToolRegistry] Registered ${ manifests.length } tool manifests`);
   }
 
   registerAllRegistrations(registrations: ToolRegistration[]) {
@@ -128,10 +148,10 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
       }
       this.operationTypesMap.set(reg.name, Array.isArray(reg.operationTypes) ? [...reg.operationTypes] : []);
       const entry = {
-        name: reg.name,
+        name:        reg.name,
         description: reg.description,
-        category: reg.category,
-        loader: async () => {
+        category:    reg.category,
+        loader:      async() => {
           const instance = new reg.workerClass();
           instance.schemaDef = reg.schemaDef || {};
           instance.name = reg.name;
@@ -145,14 +165,14 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
       };
       return entry;
     });
-    console.log(`Registering ${entries.length} entries`);
+    console.log(`Registering ${ entries.length } entries`);
     this.registerAll(entries);
   }
 
   async getTool(name: string): Promise<any> {
     if (this.instances.has(name)) return this.instances.get(name)!;
     const loader = this.loaders.get(name);
-    if (!loader) throw new Error(`Tool ${name} not registered`);
+    if (!loader) throw new Error(`Tool ${ name } not registered`);
     const tool = await loader();
     this.instances.set(name, tool);
     return tool;
@@ -180,7 +200,7 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
       const description = this.descriptions.get(toolOrName) || '';
       const parameters = ToolRegistry.schemaDefToJsonSchema(schemaDef);
       const formatted = {
-        type: 'function',
+        type:     'function',
         function: { name: toolOrName, description, parameters },
       };
       this.llmSchemaCache.set(toolOrName, formatted);
@@ -197,9 +217,9 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
 
     const parameters = tool.jsonSchema;
     const formatted = {
-      type: 'function',
+      type:     'function',
       function: {
-        name: tool.name,
+        name:        tool.name,
         description: tool.description,
         parameters,
       },
@@ -221,35 +241,35 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
       const field: any = { description: spec.description || '' };
 
       switch (spec.type) {
-        case 'string':  field.type = 'string'; break;
-        case 'number':  field.type = 'number'; break;
-        case 'boolean': field.type = 'boolean'; break;
-        case 'enum':
-          field.type = 'string';
-          field.enum = spec.enum;
-          break;
-        case 'array':
-          field.type = 'array';
-          if (spec.items) {
-            const itemField: any = { type: spec.items.type === 'enum' ? 'string' : spec.items.type };
-            if (spec.items.enum) itemField.enum = spec.items.enum;
-            if (spec.items.description) itemField.description = spec.items.description;
-            field.items = itemField;
-          }
-          break;
-        case 'object':
-          field.type = 'object';
-          if (spec.properties) {
-            field.properties = Object.fromEntries(
-              Object.entries(spec.properties).map(([k, v]: [string, any]) => {
-                const sub: any = { type: v.type === 'enum' ? 'string' : v.type };
-                if (v.enum) sub.enum = v.enum;
-                if (v.description) sub.description = v.description;
-                return [k, sub];
-              })
-            );
-          }
-          break;
+      case 'string': field.type = 'string'; break;
+      case 'number': field.type = 'number'; break;
+      case 'boolean': field.type = 'boolean'; break;
+      case 'enum':
+        field.type = 'string';
+        field.enum = spec.enum;
+        break;
+      case 'array':
+        field.type = 'array';
+        if (spec.items) {
+          const itemField: any = { type: spec.items.type === 'enum' ? 'string' : spec.items.type };
+          if (spec.items.enum) itemField.enum = spec.items.enum;
+          if (spec.items.description) itemField.description = spec.items.description;
+          field.items = itemField;
+        }
+        break;
+      case 'object':
+        field.type = 'object';
+        if (spec.properties) {
+          field.properties = Object.fromEntries(
+            Object.entries(spec.properties).map(([k, v]: [string, any]) => {
+              const sub: any = { type: v.type === 'enum' ? 'string' : v.type };
+              if (v.enum) sub.enum = v.enum;
+              if (v.description) sub.description = v.description;
+              return [k, sub];
+            }),
+          );
+        }
+        break;
       }
 
       if (spec.default !== undefined) field.default = spec.default;
@@ -265,16 +285,16 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
   }
 
   getLLMToolsForCategory(category: string): () => Promise<any[]> {
-    return async () => {
+    return async() => {
       const names = this.categories.get(category) || [];
       return Promise.all(names.map(name => this.convertToolToLLM(name)));
     };
   }
 
   getAllLLMTools(): () => Promise<any[]> {
-    return async () => {
+    return async() => {
       if (this.loaders.size > 40) {
-        console.warn(`Loading ${this.loaders.size} tools — prefer category filtering`);
+        console.warn(`Loading ${ this.loaders.size } tools — prefer category filtering`);
       }
       const allNames = Array.from(this.loaders.keys());
       return Promise.all(allNames.map(name => this.convertToolToLLM(name)));
@@ -286,8 +306,8 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
   }
 
   // For browse_tools — cheap metadata only, no loading instances or schemas
-  getCategoryToolMetadata(category: string): () => Promise<Array<{ name: string; description: string; category: string }>> {
-    return async () => {
+  getCategoryToolMetadata(category: string): () => Promise<{ name: string; description: string; category: string }[]> {
+    return async() => {
       const names = this.categories.get(category) || [];
       return names.map(name => ({
         name,
@@ -342,7 +362,7 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
       const directMatches = names.filter(name => {
         if (name.toLowerCase().includes(q)) return true;
         const desc = this.descriptions.get(name);
-        return desc && desc.toLowerCase().includes(q);
+        return desc?.toLowerCase().includes(q);
       });
 
       if (directMatches.length > 0) {
@@ -383,7 +403,7 @@ export class ToolRegistry { private static registrations = new Map<string, ToolR
 
   getCategoriesWithDescriptions(): { category: string; description: string }[] {
     return this.getCategories().map(cat => ({
-      category: cat,
+      category:    cat,
       description: this.categoryDescriptions[cat] || 'No description available.',
     }));
   }

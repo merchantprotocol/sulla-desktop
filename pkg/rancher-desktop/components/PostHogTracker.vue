@@ -16,9 +16,9 @@ function trackPageView() {
     trackedPages.add(props.pageName);
     const normalizedPage = props.pageName.trim().toLowerCase().replace(/\s+/g, '-');
     capture('$pageview', {
-      page: props.pageName,
+      page:         props.pageName,
       $screen_name: props.pageName,
-      $current_url: `app://sulla-desktop/${normalizedPage}`,
+      $current_url: `app://sulla-desktop/${ normalizedPage }`,
     });
   }
 }
@@ -27,7 +27,7 @@ function untrackPageView() {
   trackedPages.delete(props.pageName);
 }
 
-onMounted(async () => {
+onMounted(async() => {
   await trackPageView();
 });
 
@@ -35,7 +35,7 @@ onUnmounted(() => {
   untrackPageView();
 });
 
-watch(enabled, async (isEnabled, wasEnabled) => {
+watch(enabled, async(isEnabled, wasEnabled) => {
   if (isEnabled && !wasEnabled) {
     await trackPageView();
   }

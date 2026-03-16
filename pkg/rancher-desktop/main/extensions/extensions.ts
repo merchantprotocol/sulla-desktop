@@ -189,7 +189,7 @@ export class ExtensionImpl implements Extension {
     }
   }
 
-  get extraUrls(): Promise<Array<{ label: string; url: string }>> {
+  get extraUrls(): Promise<{ label: string; url: string }[]> {
     return Promise.resolve([]);
   }
 

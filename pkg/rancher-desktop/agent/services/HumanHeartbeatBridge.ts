@@ -9,13 +9,13 @@ import { redisClient } from '../database/RedisClient';
 // ============================================================================
 
 export interface HumanPresence {
-  available: boolean;
-  lastSeen: number;
-  currentView: string;
+  available:       boolean;
+  lastSeen:        number;
+  currentView:     string;
   currentActivity: string;
-  activeChannel: string;
-  idleMinutes: number;
-  metadata?: Record<string, unknown>;
+  activeChannel:   string;
+  idleMinutes:     number;
+  metadata?:       Record<string, unknown>;
 }
 
 // ============================================================================
@@ -38,7 +38,6 @@ export function getHumanHeartbeatBridge(): HumanHeartbeatBridge {
 }
 
 export class HumanHeartbeatBridge {
-
   // ------------------------------------------------------------------
   // HUMAN PRESENCE
   // ------------------------------------------------------------------
@@ -62,7 +61,7 @@ export class HumanHeartbeatBridge {
   }
 
   async getPresence(): Promise<HumanPresence> {
-    const raw = await redisClient.hgetall(HUMAN_PRESENCE_HASH);
+    const raw = await redisClient.hgetall(HUMAN_PRESENCE_HASH) || {} as Record<string, string>;
 
     const lastSeen = parseInt(raw.lastSeen || '0', 10);
     const idleMinutes = lastSeen > 0
@@ -70,13 +69,13 @@ export class HumanHeartbeatBridge {
       : 999;
 
     return {
-      available: raw.available === 'true',
+      available:       raw.available === 'true',
       lastSeen,
-      currentView: raw.currentView || 'unknown',
+      currentView:     raw.currentView || 'unknown',
       currentActivity: raw.currentActivity || 'unknown',
-      activeChannel: raw.activeChannel || '',
+      activeChannel:   raw.activeChannel || '',
       idleMinutes,
-      metadata: raw.metadata ? JSON.parse(raw.metadata) : undefined,
+      metadata:        raw.metadata ? JSON.parse(raw.metadata) : undefined,
     };
   }
 
@@ -84,18 +83,18 @@ export class HumanHeartbeatBridge {
     const p = await this.getPresence();
 
     if (!p.lastSeen || p.idleMinutes > 60) {
-      return `**Jonathon (human):** Offline / Away (last seen ${p.idleMinutes}m ago)`;
+      return `**Jonathon (human):** Offline / Away (last seen ${ p.idleMinutes }m ago)`;
     }
 
     const parts = [
-      `**Jonathon (human):** ${p.available ? 'Available' : 'Busy'}`,
-      `idle ${p.idleMinutes}m`,
-      `viewing "${p.currentView}"`,
-      `activity: ${p.currentActivity}`,
+      `**Jonathon (human):** ${ p.available ? 'Available' : 'Busy' }`,
+      `idle ${ p.idleMinutes }m`,
+      `viewing "${ p.currentView }"`,
+      `activity: ${ p.currentActivity }`,
     ];
 
     if (p.activeChannel) {
-      parts.push(`on channel \`${p.activeChannel}\``);
+      parts.push(`on channel \`${ p.activeChannel }\``);
     }
 
     return parts.join(' · ');

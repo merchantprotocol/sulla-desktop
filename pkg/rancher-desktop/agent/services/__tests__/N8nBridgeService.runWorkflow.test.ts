@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it, jest } from '@jest/globals';
 let N8nBridgeServiceClass: any;
 
 describe('N8nBridgeService.runWorkflow', () => {
-  beforeAll(async () => {
+  beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
 
@@ -12,10 +12,10 @@ describe('N8nBridgeService.runWorkflow', () => {
     N8nBridgeServiceClass = mod.N8nBridgeService;
   });
 
-  it('falls back with workflowData when n8n run endpoint throws missing nodeName error', async () => {
-    const service = new N8nBridgeServiceClass() as any;
+  it('falls back with workflowData when n8n run endpoint throws missing nodeName error', async() => {
+    const service = new N8nBridgeServiceClass();
 
-    const requestMock = jest.fn(async (endpoint: string, options?: { method?: string; body?: string }) => {
+    const requestMock = jest.fn(async(endpoint: string, options?: { method?: string; body?: string }) => {
       if (requestMock.mock.calls.length === 1) {
         expect(endpoint).toBe('/rest/workflows/wf_1/run');
         expect(options?.method).toBe('POST');
@@ -25,12 +25,12 @@ describe('N8nBridgeService.runWorkflow', () => {
       if (requestMock.mock.calls.length === 2) {
         expect(endpoint).toBe('/rest/workflows/wf_1');
         return {
-          id: 'wf_1',
+          id:   'wf_1',
           data: {
-            name: 'Workflow One',
-            nodes: [],
+            name:        'Workflow One',
+            nodes:       [],
             connections: {},
-            settings: {},
+            settings:    {},
           },
         };
       }
@@ -43,7 +43,7 @@ describe('N8nBridgeService.runWorkflow', () => {
         return { executionId: 'exec_123' };
       }
 
-      throw new Error(`Unexpected request call: ${endpoint}`);
+      throw new Error(`Unexpected request call: ${ endpoint }`);
     });
 
     service.request = requestMock;
@@ -55,22 +55,22 @@ describe('N8nBridgeService.runWorkflow', () => {
     expect(requestMock.mock.calls.map((call: any[]) => call[0])).not.toContain('/rest/workflows/run');
   });
 
-  it('falls back to /rest/workflows/run when workflow-specific retry endpoint is not found', async () => {
-    const service = new N8nBridgeServiceClass() as any;
+  it('falls back to /rest/workflows/run when workflow-specific retry endpoint is not found', async() => {
+    const service = new N8nBridgeServiceClass();
 
-    const requestMock = jest.fn(async (endpoint: string, options?: { method?: string; body?: string }) => {
+    const requestMock = jest.fn(async(endpoint: string, options?: { method?: string; body?: string }) => {
       if (requestMock.mock.calls.length === 1) {
         throw new Error("n8n request failed 500 Internal Server Error: {\"code\":0,\"message\":\"Cannot read properties of undefined (reading 'nodeName')\"}");
       }
 
       if (requestMock.mock.calls.length === 2) {
         return {
-          id: 'wf_2',
+          id:   'wf_2',
           data: {
-            id: 'wf_2',
-            nodes: [],
+            id:          'wf_2',
+            nodes:       [],
             connections: {},
-            settings: {},
+            settings:    {},
           },
         };
       }
@@ -87,7 +87,7 @@ describe('N8nBridgeService.runWorkflow', () => {
         return { executionId: 'exec_legacy' };
       }
 
-      throw new Error(`Unexpected request call: ${endpoint}`);
+      throw new Error(`Unexpected request call: ${ endpoint }`);
     });
 
     service.request = requestMock;
@@ -98,24 +98,24 @@ describe('N8nBridgeService.runWorkflow', () => {
     expect(requestMock).toHaveBeenCalledTimes(4);
   });
 
-  it('surfaces workflow-specific retry error when legacy /rest/workflows/run is unsupported', async () => {
-    const service = new N8nBridgeServiceClass() as any;
+  it('surfaces workflow-specific retry error when legacy /rest/workflows/run is unsupported', async() => {
+    const service = new N8nBridgeServiceClass();
     const workflowId = 'EQhRGIv6zeJQ9AgU';
     const workflowRetryError = "n8n request failed 500 Internal Server Error: {\"code\":0,\"message\":\"Cannot read properties of undefined (reading 'nodeName')\"}";
 
-    const requestMock = jest.fn(async (endpoint: string) => {
+    const requestMock = jest.fn(async(endpoint: string) => {
       if (requestMock.mock.calls.length === 1) {
         throw new Error(workflowRetryError);
       }
 
       if (requestMock.mock.calls.length === 2) {
         return {
-          id: workflowId,
+          id:   workflowId,
           data: {
-            id: workflowId,
-            nodes: [],
+            id:          workflowId,
+            nodes:       [],
             connections: {},
-            settings: {},
+            settings:    {},
           },
         };
       }
@@ -129,7 +129,7 @@ describe('N8nBridgeService.runWorkflow', () => {
         throw new Error('n8n request failed 404 Not Found: Cannot POST /rest/workflows/run');
       }
 
-      throw new Error(`Unexpected request call: ${endpoint}`);
+      throw new Error(`Unexpected request call: ${ endpoint }`);
     });
 
     service.request = requestMock;
@@ -138,32 +138,32 @@ describe('N8nBridgeService.runWorkflow', () => {
     expect(requestMock).toHaveBeenCalledTimes(4);
   });
 
-  it('falls back to /rest/workflows/run when workflow-specific retry still throws missing id/nodeName errors', async () => {
-    const service = new N8nBridgeServiceClass() as any;
+  it('falls back to /rest/workflows/run when workflow-specific retry still throws missing id/nodeName errors', async() => {
+    const service = new N8nBridgeServiceClass();
     const workflowId = 'EQhRGIv6zeJQ9AgU';
 
-    const requestMock = jest.fn(async (endpoint: string, options?: { method?: string; body?: string }) => {
+    const requestMock = jest.fn(async(endpoint: string, options?: { method?: string; body?: string }) => {
       if (requestMock.mock.calls.length === 1) {
-        expect(endpoint).toBe(`/rest/workflows/${workflowId}/run`);
+        expect(endpoint).toBe(`/rest/workflows/${ workflowId }/run`);
         throw new Error("n8n request failed 500 Internal Server Error: {\"code\":0,\"message\":\"Cannot read properties of undefined (reading 'nodeName')\"}");
       }
 
       if (requestMock.mock.calls.length === 2) {
-        expect(endpoint).toBe(`/rest/workflows/${workflowId}`);
+        expect(endpoint).toBe(`/rest/workflows/${ workflowId }`);
         return {
-          id: workflowId,
+          id:   workflowId,
           data: {
-            id: workflowId,
-            name: 'Daily AI Intelligence Monitor',
-            nodes: [],
+            id:          workflowId,
+            name:        'Daily AI Intelligence Monitor',
+            nodes:       [],
             connections: {},
-            settings: {},
+            settings:    {},
           },
         };
       }
 
       if (requestMock.mock.calls.length === 3) {
-        expect(endpoint).toBe(`/rest/workflows/${workflowId}/run`);
+        expect(endpoint).toBe(`/rest/workflows/${ workflowId }/run`);
         throw new Error("n8n request failed 500 Internal Server Error: {\"code\":0,\"message\":\"Cannot read properties of undefined (reading 'id')\"}");
       }
 
@@ -174,7 +174,7 @@ describe('N8nBridgeService.runWorkflow', () => {
         return { executionId: 'exec_prod_recovered' };
       }
 
-      throw new Error(`Unexpected request call: ${endpoint}`);
+      throw new Error(`Unexpected request call: ${ endpoint }`);
     });
 
     service.request = requestMock;

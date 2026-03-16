@@ -342,7 +342,7 @@ export default defineComponent({
         }
 
         display: flex;
-        font-size: 1.3rem;
+        font-size: var(--fs-heading);
         line-height: 2rem;
       }
 

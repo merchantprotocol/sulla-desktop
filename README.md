@@ -1,17 +1,17 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/sulla-ai/sulla-desktop/main/resources/icons/logo-sulla-desktop-nobg.png" alt="Sulla Desktop" width="200" />
+  <img src="https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/resources/icons/logo-sulla-desktop-nobg.png" alt="Sulla Desktop" width="200" />
   <h1>Sulla Desktop</h1>
   <p><strong>Your private AI executive assistant that runs on your machine.</strong></p>
   <p>Fully open-source, desktop-native autonomous agent with persistent memory, calendar engine, Docker workspaces, and n8n automation — all yours to own and extend.</p>
   <p>
-    <a href="https://github.com/sulla-ai/sulla-desktop/releases/latest">
-      <img src="https://img.shields.io/github/v/release/sulla-ai/sulla-desktop?label=Latest&color=green" alt="Latest Release" />
+    <a href="https://github.com/merchantprotocol/sulla-desktop/releases/latest">
+      <img src="https://img.shields.io/github/v/release/merchantprotocol/sulla-desktop?label=Latest&color=green" alt="Latest Release" />
     </a>
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache 2.0 License" />
     </a>
-    <a href="https://github.com/sulla-ai/sulla-desktop/stargazers">
-      <img src="https://img.shields.io/github/stars/sulla-ai/sulla-desktop?style=flat&color=yellow" alt="GitHub Stars" />
+    <a href="https://github.com/merchantprotocol/sulla-desktop/stargazers">
+      <img src="https://img.shields.io/github/stars/merchantprotocol/sulla-desktop?style=flat&color=yellow" alt="GitHub Stars" />
     </a>
   </p>
 </div>
@@ -41,13 +41,16 @@ You’ll Be Able To:
 
 ## Core Specs
 
-- Persistent vector long-term memory  
-- Observational short-term context layer  
-- Calendar engine with auto-wake events  
-- Docker workspaces for isolated dev  
-- n8n integration — search/import thousands of templates  
-- Dynamic tool registry + skill nodes  
-- Runs on consumer hardware (8–16 GB RAM recommended)  
+- Node-graph workflow editor with parallel execution, loops, and checkpoints
+- Multi-agent system with per-agent integrations and orchestrator escalation
+- Integrated terminal, Monaco code editor, and Git pane
+- Training system — capture conversations and fine-tune models
+- Calendar engine with auto-wake events
+- Docker workspaces with container management and shell access
+- n8n integration — search/import thousands of templates
+- Live monitoring dashboard with per-endpoint graphs
+- Multiple theme presets (default, nord, ocean, protocol) with dark/light modes
+- Runs on consumer hardware (8–16 GB RAM recommended)
 - Fully open-source (Apache 2.0) — fork, extend, own it
 
 ## Install
@@ -55,7 +58,7 @@ You’ll Be Able To:
 One command. Works on **macOS**, **Linux**, and **Windows** (Git Bash or WSL).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sulla-ai/sulla-desktop/main/install.sh | bash
+curl -fsSL https://sulladesktop.com/install.sh | sh
 ```
 
 **What it does:**
@@ -71,7 +74,7 @@ The script is idempotent — safe to run multiple times. It skips anything alrea
 ### Manual install
 
 ```bash
-git clone https://github.com/sulla-ai/sulla-desktop.git
+git clone https://github.com/merchantprotocol/sulla-desktop.git
 cd sulla-desktop
 yarn install
 NODE_OPTIONS="--max-old-space-size=12288" yarn build
@@ -99,8 +102,8 @@ Workflow velocity and delegation confidence build in 7–30 days of consistent u
 **Is it fully local?**  
 Core agent, memory, tools, and execution run 100% on your machine. LLM inference can be local (Ollama) or remote (your choice for speed/privacy balance).
 
-**How do I extend it?**  
-Add custom skill nodes, SOPs, or tools via code. Everything is modular and documented.
+**How do I extend it?**
+Build custom workflow nodes, add tool integrations, or create new agent configurations. Everything is modular and documented.
 
 **Who is this really for?**  
 Anyone who lives in n8n, codes by vibe, or has more high-leverage tasks than time — and wants to stop paying specialists to do what their own machine can handle.

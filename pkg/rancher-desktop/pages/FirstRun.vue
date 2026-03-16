@@ -1,26 +1,56 @@
 <template>
-  <div class="h-screen overflow-hidden font-sans page-root" :class="{ dark: isDark }">
+  <div
+    class="h-full overflow-hidden font-sans page-root"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="FirstRun" />
-    <div class="flex h-screen flex-col">
-
-      <SimpleHeader :is-dark="isDark" :toggle-theme="toggleTheme" :on-stop="stopApp" :home-url="'#/FirstRun'"/>
+    <div class="flex h-full flex-col">
+      <SimpleHeader
+        :is-dark="isDark"
+        :toggle-theme="toggleTheme"
+        :on-stop="stopApp"
+        :home-url="'#/FirstRun'"
+      />
 
       <!-- Main agent interface -->
-      <div ref="chatScrollContainer" id="chat-scroll-container" class="flex min-h-0 flex-1 overflow-y-auto">
+      <div
+        id="chat-scroll-container"
+        ref="chatScrollContainer"
+        class="flex min-h-0 flex-1 overflow-y-auto"
+      >
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
           <div class="relative flex w-full max-w-8xl flex-1 justify-center sm:px-2 lg:px-8 xl:px-12">
-            <div class="hidden lg:relative lg:block lg:flex-none lg:w-72 xl:w-80 bg-slate-50 dark:bg-slate-800/30">
+            <div class="hidden lg:relative lg:block lg:flex-none lg:w-72 xl:w-80 sidebar-bg">
               <div class="sticky top-[15px] pt-[15px] h-[calc(100vh-5rem-15px)] w-full overflow-x-hidden overflow-y-auto">
-
                 <div class="p-4">
-                  <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4">Installation Steps</h3>
+                  <h3 class="text-lg font-semibold mb-4 sidebar-title">
+                    Installation Steps
+                  </h3>
                   <div class="space-y-3">
-                    <div v-for="(name, index) in stepNames" :key="index" class="p-4 rounded-lg border-2 transition-all" :class="index === currentStep ? 'bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'" :style="index === currentStep ? { borderColor: '#30a5e9' } : {}">
+                    <div
+                      v-for="(name, index) in stepNames"
+                      :key="index"
+                      class="p-4 rounded-lg border-2 transition-all"
+                      :class="index === currentStep ? 'step-active' : 'step-inactive'"
+                    >
                       <div class="flex items-center">
-                        <div class="w-10 h-10 rounded-full flex items-center justify-center mr-4 font-bold text-lg" :class="index === currentStep ? 'text-white' : 'bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200'" :style="index === currentStep ? { backgroundColor: '#30a5e9' } : {}">{{ index + 1 }}</div>
+                        <div
+                          class="w-10 h-10 rounded-full flex items-center justify-center mr-4 font-bold text-lg"
+                          :class="index === currentStep ? 'step-number-active' : 'step-number-inactive'"
+                        >
+                          {{ index + 1 }}
+                        </div>
                         <div class="flex-1">
-                          <div class="text-sm font-semibold" :class="index === currentStep ? '' : 'text-gray-700 dark:text-gray-300'" :style="index === currentStep ? { color: '#30a5e9' } : {}">{{ name }}</div>
-                          <div class="text-xs mt-1" :class="index === currentStep ? '' : 'text-gray-500 dark:text-gray-400'" :style="index === currentStep ? { color: '#7d8f99' } : {}">
+                          <div
+                            class="text-sm font-semibold"
+                            :class="index === currentStep ? 'step-name-active' : 'step-name-inactive'"
+                          >
+                            {{ name }}
+                          </div>
+                          <div
+                            class="text-xs mt-1"
+                            :class="index === currentStep ? 'step-desc-active' : 'step-desc-inactive'"
+                          >
                             {{ index === currentStep ? 'In Progress' : index < currentStep ? 'Completed' : 'Pending' }}
                           </div>
                         </div>
@@ -28,31 +58,46 @@
                     </div>
                   </div>
 
-                  <div v-if="currentStep > 0 && currentStep < 3 && (startupController.state.progressMax.value > 0 || startupController.state.progressMax.value === -1)" class="mt-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                    <h4 class="text-sm font-semibold mb-2 dark:text-gray-100">Startup Progress</h4>
-                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mb-2">
-                      <div class="h-2.5 rounded-full" :style="{ width: `${progressPercent}%`, backgroundColor: '#30a5e9' }"></div>
+                  <div
+                    v-if="currentStep > 0 && currentStep < 3 && (startupController.state.progressMax.value > 0 || startupController.state.progressMax.value === -1)"
+                    class="mt-6 p-4 rounded-lg progress-container"
+                  >
+                    <h4 class="text-sm font-semibold mb-2 progress-title">
+                      Startup Progress
+                    </h4>
+                    <div class="w-full rounded-full h-2.5 mb-2 progress-track">
+                      <div
+                        class="h-2.5 rounded-full progress-bar"
+                        :style="{ width: `${progressPercent}%` }"
+                      />
                     </div>
-                    <p class="text-xs text-gray-600 dark:text-gray-400">{{ startupController.state.progressDescription }}</p>
-
+                    <p class="text-xs progress-description">
+                      {{ startupController.state.progressDescription }}
+                    </p>
                   </div>
                 </div>
-
               </div>
             </div>
 
-            <div class="max-w-2xl min-w-0 flex-auto px-4 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16">
-              <div ref="transcriptEl" id="chat-messages-list" class="pb-40">
-                <component :is="steps[currentStep]" @next="next" @back="back" :startup-controller="startupController" :show-back="currentStep > 0" />
+            <div class="max-w-[768px] min-w-0 flex-auto px-4 lg:pr-0 lg:pl-8 xl:px-16">
+              <div
+                id="chat-messages-list"
+                ref="transcriptEl"
+                class="pb-40"
+              >
+                <component
+                  :is="steps[currentStep]"
+                  :startup-controller="startupController"
+                  :show-back="currentStep > 0"
+                  @next="next"
+                  @back="back"
+                />
               </div>
             </div>
 
             <div class="hidden xl:sticky xl:top-0 xl:-mr-6 xl:block xl:max-h-[calc(100vh-12rem)] xl:flex-none xl:overflow-y-auto xl:pr-6">
-              <div class="w-72">
-
-              </div>
+              <div class="w-72" />
             </div>
-
           </div>
         </div>
       </div>
@@ -61,10 +106,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, provide, onMounted, computed } from 'vue';
+import { ref, provide, computed } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { defaultSettings, Settings } from '@pkg/config/settings';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 
 import FirstRunResources from './FirstRunResources.vue';
 import FirstRunWelcome from './FirstRunWelcome.vue';
@@ -76,14 +122,7 @@ import { StartupProgressController } from './agent/StartupProgressController';
 
 import SimpleHeader from './agent/SimpleHeader.vue';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-
-const isDark = ref(false);
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-};
+const { isDark, toggleTheme } = useTheme();
 
 const currentStep = ref(0);
 const stepNames = ['Resources', 'Account', 'Remote Model', 'Waiting'];
@@ -93,7 +132,7 @@ const settings = ref(defaultSettings);
 
 const startupController = new StartupProgressController(StartupProgressController.createState());
 
-const stopApp = async () => {
+const stopApp = async() => {
   await ipcRenderer.invoke('app-quit');
 };
 
@@ -115,18 +154,9 @@ const progressPercent = computed(() => {
   return percent;
 });
 
-onMounted(() => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
-});
-
 provide('settings', settings);
 
-const next = async () => {
+const next = async() => {
   console.log('[FirstRun] next() called, currentStep before:', currentStep.value);
 
   currentStep.value += 1;
@@ -146,7 +176,7 @@ const back = () => {
   }
 };
 
-const commitChanges = async (settings: RecursivePartial<Settings>) => {
+const commitChanges = async(settings: RecursivePartial<Settings>) => {
   try {
     return await ipcRenderer.invoke('settings-write' as any, settings);
   } catch (ex) {
@@ -161,13 +191,13 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 </script>
 <style lang="scss" scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 .page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 .button-area {
@@ -176,7 +206,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 }
 
 .welcome-text {
-  color: var(--body-text);
+  color: var(--text-primary);
   margin-bottom: 1rem;
   line-height: 1.5;
 }
@@ -188,11 +218,11 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 .model-select {
   width: 100%;
   padding: 0.5rem;
-  font-size: 0.9rem;
-  border: 1px solid var(--border);
+  font-size: var(--fs-body);
+  border: 1px solid var(--border-default);
   border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background: var(--bg-input);
+  color: var(--text-primary);
   margin-top: 0.5rem;
 
   option {
@@ -200,20 +230,87 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
   }
 
   option:disabled {
-    color: var(--disabled);
+    color: var(--text-dim);
     font-style: italic;
   }
 }
 
 .model-description {
   margin-top: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--muted);
+  font-size: var(--fs-code);
+  color: var(--text-muted);
   font-style: italic;
 }
 
 .model-disabled {
-  color: var(--disabled);
+  color: var(--text-dim);
+}
+
+/* Sidebar */
+.sidebar-bg {
+  background: var(--bg-surface);
+}
+
+.sidebar-title {
+  color: var(--text-primary);
+}
+
+/* Step items */
+.step-active {
+  background: var(--bg-surface-alt);
+  border-color: var(--accent-primary);
+}
+
+.step-inactive {
+  background: var(--bg-surface);
+  border-color: var(--border-default);
+}
+
+.step-number-active {
+  background-color: var(--accent-primary);
+  color: #fff;
+}
+
+.step-number-inactive {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.step-name-active {
+  color: var(--accent-primary);
+}
+
+.step-name-inactive {
+  color: var(--text-secondary);
+}
+
+.step-desc-active {
+  color: var(--text-muted);
+}
+
+.step-desc-inactive {
+  color: var(--text-muted);
+}
+
+/* Progress section */
+.progress-container {
+  background: var(--bg-surface);
+}
+
+.progress-title {
+  color: var(--text-primary);
+}
+
+.progress-track {
+  background: var(--bg-surface-hover);
+}
+
+.progress-bar {
+  background-color: var(--accent-primary);
+}
+
+.progress-description {
+  color: var(--text-muted);
 }
 </style>
 
@@ -223,18 +320,10 @@ html {
 }
 
 :root {
-  --progress-bg: #ddd;
-  --scrollbar-thumb: #999;
-  --darker: #666;
-  --error: #dc3545;
-  --checkbox-tick-disabled: #999;
-}
-
-.dark {
-  --progress-bg: #333;
-  --scrollbar-thumb: #666;
-  --darker: #333;
-  --error: #dc3545;
-  --checkbox-tick-disabled: #666;
+  --progress-bg: var(--bg-surface-hover);
+  --scrollbar-thumb: var(--text-muted);
+  --darker: var(--text-dim);
+  --error: var(--text-error);
+  --checkbox-tick-disabled: var(--text-muted);
 }
 </style>

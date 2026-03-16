@@ -1,13 +1,13 @@
-import { BaseTool, ToolResponse } from "../base";
-import { Octokit } from "@octokit/rest";
+import { BaseTool, ToolResponse } from '../base';
+import { Octokit } from '@octokit/rest';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * GitHub Create Pull Request Tool
  */
 export class GitHubCreatePRWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { owner, repo, title, head, base } = input;
@@ -17,7 +17,7 @@ export class GitHubCreatePRWorker extends BaseTool {
     if (!tokenValue) {
       return {
         successBoolean: false,
-        responseString: "Error: GitHub token not configured.",
+        responseString: 'Error: GitHub token not configured.',
       };
     }
 
@@ -29,20 +29,20 @@ export class GitHubCreatePRWorker extends BaseTool {
         repo,
         title,
         head,
-        base: base || 'main',
-        body: input.body || '',
+        base:  base || 'main',
+        body:  input.body || '',
         draft: input.draft === true,
       });
 
       const pr = response.data;
       return {
         successBoolean: true,
-        responseString: `Pull request created: #${pr.number} "${pr.title}"\nURL: ${pr.html_url}\nState: ${pr.state}\nHead: ${pr.head.ref} → Base: ${pr.base.ref}`,
+        responseString: `Pull request created: #${ pr.number } "${ pr.title }"\nURL: ${ pr.html_url }\nState: ${ pr.state }\nHead: ${ pr.head.ref } → Base: ${ pr.base.ref }`,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error creating pull request: ${(error as Error).message}`,
+        responseString: `Error creating pull request: ${ (error as Error).message }`,
       };
     }
   }

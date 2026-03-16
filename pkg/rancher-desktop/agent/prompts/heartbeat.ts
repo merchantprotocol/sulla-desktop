@@ -63,7 +63,7 @@ Do NOT bounce between projects in one cycle. Pick one, make progress, finish.
 
 ## Execution Standards
 
-- Use tools — exec, fs, docker, n8n, git, playwright, memory, calendar, projects, skills, bridge
+- Use tools — exec, fs, docker, N8n-Workflows, git, playwright, memory, calendar, projects, skills, bridge
 - If you need to create something reusable, use create_skill
 - Load existing skills before reinventing them — meta_search first
 - Log everything important: add_observational_memory for findings, update project PRDs with progress

@@ -129,11 +129,21 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
       }
     }
   }
+  const warnings: string[] = [];
+
   async function process(name: string) {
     running.add(name);
     const item = dependenciesByName[name];
 
-    await item.dependency.download(item.context);
+    try {
+      await item.dependency.download(item.context);
+    } catch (e: any) {
+      // Log the failure but don't block other dependencies.
+      // Non-critical tools (trivy, wasm-shims, etc.) can fail without
+      // preventing the app from launching.
+      console.warn(`WARNING: Failed to download ${ name }: ${ e.message ?? e }`);
+      warnings.push(name);
+    }
     done.add(name);
     for (const dependent of reverseDependencies[name]) {
       if (!running.has(dependent)) {
@@ -176,6 +186,14 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
       message.unshift('Timed out downloading dependencies');
     }
     throw new Error(message.join('\n'));
+  }
+
+  if (warnings.length > 0) {
+    console.warn(`\nPostinstall completed with ${ warnings.length } warning(s):`);
+    for (const name of warnings) {
+      console.warn(`  - ${ name }`);
+    }
+    console.warn('These dependencies are non-critical and can be retried later.\n');
   }
 }
 
@@ -264,7 +282,7 @@ const keepScriptAlive = setTimeout(() => { }, 24 * 3600 * 1000);
         const helper = path.join(ptyPrebuildsDir, dir, 'spawn-helper');
         if (fs.existsSync(helper)) {
           fs.chmodSync(helper, 0o755);
-          console.log(`Fixed execute permission: ${helper}`);
+          console.log(`Fixed execute permission: ${ helper }`);
         }
       }
     }
@@ -285,7 +303,20 @@ const keepScriptAlive = setTimeout(() => { }, 24 * 3600 * 1000);
 */
 function getStampVersion(): string {
   const gitCommand = 'git describe --match v[0-9]* --dirty=.m --always --tags';
-  const stdout = childProcess.execSync(gitCommand, { encoding: 'utf-8' });
 
-  return stdout;
+  try {
+    return childProcess.execSync(gitCommand, { encoding: 'utf-8' }).trim();
+  } catch (err) {
+    // git may not be in PATH (e.g. minimal CI images, fresh installs before
+    // Xcode CLT is fully configured).  Fall back to package.json version so
+    // the build can still proceed.
+    console.warn(`WARNING: git describe failed (${ (err as Error).message }), falling back to package.json version`);
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+
+      return pkg.version ?? '0.0.0-unknown';
+    } catch {
+      return '0.0.0-unknown';
+    }
+  }
 }

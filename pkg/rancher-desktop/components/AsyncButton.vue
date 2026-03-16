@@ -302,6 +302,6 @@ export default defineComponent({
 // refresh mode has icon + text. We need to fix the positioning of the icon and sizing
 .manual-refresh i {
   margin: 0 0 0 8px !important;
-  font-size: 1rem !important;
+  font-size: var(--fs-body) !important;
 }
 </style>

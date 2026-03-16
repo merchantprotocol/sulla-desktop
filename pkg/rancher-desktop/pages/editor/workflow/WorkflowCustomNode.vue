@@ -2,42 +2,73 @@
   <div
     class="workflow-custom-node"
     :class="{
-      dark: isDark,
-      selected: selected,
-      'exec-running':   data.execution?.status === 'running',
+      selected,
+      'exec-running': data.execution?.status === 'running',
       'exec-completed': data.execution?.status === 'completed',
-      'exec-failed':    data.execution?.status === 'failed',
-      'exec-waiting':   data.execution?.status === 'waiting',
-      'exec-skipped':   data.execution?.status === 'skipped',
+      'exec-failed': data.execution?.status === 'failed',
+      'exec-waiting': data.execution?.status === 'waiting',
+      'exec-skipped': data.execution?.status === 'skipped',
     }"
   >
     <!-- Loop node: 4 custom handles with labels -->
     <template v-if="data.subtype === 'loop'">
       <!-- In (top): label above the dot -->
       <div class="loop-handle-top">
-        <span class="loop-handle-label loop-label-in" :class="{ dark: isDark }">In</span>
-        <Handle type="target" id="loop-entry" :position="Position.Top" class="node-handle" />
+        <span
+          class="loop-handle-label loop-label-in"
+          :class="{ dark: isDark }"
+        >In</span>
+        <Handle
+          id="loop-entry"
+          type="target"
+          :position="Position.Top"
+          class="node-handle"
+        />
       </div>
 
       <!-- Start (bottom): dot then label below, like condition True/False -->
       <div class="loop-handles-bottom">
         <div class="route-handle-col">
-          <Handle type="source" id="loop-start" :position="Position.Bottom" class="node-handle route-handle-dot" />
-          <span class="route-handle-label" :class="{ dark: isDark }">Start</span>
+          <Handle
+            id="loop-start"
+            type="source"
+            :position="Position.Bottom"
+            class="node-handle route-handle-dot"
+          />
+          <span
+            class="route-handle-label"
+            :class="{ dark: isDark }"
+          >Start</span>
         </div>
       </div>
 
       <!-- Back (right): dot with label below it, left-aligned -->
       <div class="loop-handle-right">
-        <Handle type="target" id="loop-back" :position="Position.Right" class="node-handle" />
-        <span class="loop-handle-label loop-label-back" :class="{ dark: isDark }">Back</span>
+        <Handle
+          id="loop-back"
+          type="target"
+          :position="Position.Right"
+          class="node-handle"
+        />
+        <span
+          class="loop-handle-label loop-label-back"
+          :class="{ dark: isDark }"
+        >Back</span>
       </div>
 
       <!-- Exit (left): dot then label below, right-aligned so "t" is at the dot -->
       <div class="loop-handle-left">
         <div class="route-handle-col loop-exit-col">
-          <Handle type="source" id="loop-exit" :position="Position.Left" class="node-handle route-handle-dot" />
-          <span class="route-handle-label" :class="{ dark: isDark }">Exit</span>
+          <Handle
+            id="loop-exit"
+            type="source"
+            :position="Position.Left"
+            class="node-handle route-handle-dot"
+          />
+          <span
+            class="route-handle-label"
+            :class="{ dark: isDark }"
+          >Exit</span>
         </div>
       </div>
     </template>
@@ -57,8 +88,12 @@
         :src="sullaIconUrl"
         class="node-icon-img"
         alt="Agent"
+      >
+      <span
+        v-else
+        class="node-icon-svg"
+        v-html="iconSvg"
       />
-      <span v-else class="node-icon-svg" v-html="iconSvg"></span>
     </div>
 
     <!-- Thinking bubble — appears when agent node is running and has thinking messages -->
@@ -69,46 +104,132 @@
       @click.stop="thinkingExpanded = !thinkingExpanded"
     >
       <!-- Collapsed: small bubble with animated dots -->
-      <div v-if="!thinkingExpanded" class="thinking-bubble-collapsed nodrag nowheel nopan">
+      <div
+        v-if="!thinkingExpanded"
+        class="thinking-bubble-collapsed nodrag nowheel nopan"
+      >
         <span class="thinking-dots">
-          <span class="dot"></span>
-          <span class="dot"></span>
-          <span class="dot"></span>
+          <span class="dot" />
+          <span class="dot" />
+          <span class="dot" />
         </span>
       </div>
 
       <!-- Expanded: scrollable conversation panel -->
-      <div v-else class="thinking-bubble-expanded nodrag nowheel nopan" @click.stop>
+      <div
+        v-else
+        class="thinking-bubble-expanded nodrag nowheel nopan"
+        @click.stop
+      >
         <div class="thinking-bubble-header">
           <span class="thinking-bubble-title">Agent Thinking</span>
-          <button class="thinking-bubble-close" @click.stop="thinkingExpanded = false">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          <button
+            class="thinking-bubble-close"
+            @click.stop="thinkingExpanded = false"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <line
+                x1="18"
+                y1="6"
+                x2="6"
+                y2="18"
+              /><line
+                x1="6"
+                y1="6"
+                x2="18"
+                y2="18"
+              />
             </svg>
           </button>
         </div>
-        <div class="thinking-bubble-messages" ref="messagesContainer" @wheel.stop>
+        <div
+          ref="messagesContainer"
+          class="thinking-bubble-messages"
+          @wheel.stop
+        >
           <div
             v-for="(msg, idx) in thinkingMessages"
             :key="idx"
             class="thinking-msg"
             :class="msg.role"
           >
-            <div class="thinking-msg-content">{{ msg.content }}</div>
+            <div class="thinking-msg-content">
+              {{ msg.content }}
+            </div>
           </div>
         </div>
       </div>
     </div>
 
     <!-- Label -->
-    <div class="node-label">{{ data.label }}</div>
+    <div class="node-label">
+      {{ data.label }}
+    </div>
 
     <!-- Execution status badge -->
-    <div v-if="data.execution" class="node-exec-badge" :class="data.execution.status">
-      <svg v-if="data.execution.status === 'running'" class="exec-spinner" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-      <svg v-else-if="data.execution.status === 'completed'" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-      <svg v-else-if="data.execution.status === 'failed'" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      <svg v-else-if="data.execution.status === 'waiting'" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+    <div
+      v-if="data.execution"
+      class="node-exec-badge"
+      :class="data.execution.status"
+    >
+      <svg
+        v-if="data.execution.status === 'running'"
+        class="exec-spinner"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+      ><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+      <svg
+        v-else-if="data.execution.status === 'completed'"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+      ><polyline points="20 6 9 17 4 12" /></svg>
+      <svg
+        v-else-if="data.execution.status === 'failed'"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+      ><line
+        x1="18"
+        y1="6"
+        x2="6"
+        y2="18"
+      /><line
+        x1="6"
+        y1="6"
+        x2="18"
+        y2="18"
+      /></svg>
+      <svg
+        v-else-if="data.execution.status === 'waiting'"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+      ><circle
+        cx="12"
+        cy="12"
+        r="10"
+      /><path d="M12 6v6l4 2" /></svg>
     </div>
 
     <!-- Source handle (bottom) — hidden when node has route handles or custom handles (loop) -->
@@ -120,19 +241,25 @@
     />
 
     <!-- Route output handles (bottom) — one per configured route -->
-    <div v-if="routeHandles.length > 0" class="route-handles-bar">
+    <div
+      v-if="routeHandles.length > 0"
+      class="route-handles-bar"
+    >
       <div
         v-for="route in routeHandles"
         :key="route.id"
         class="route-handle-col"
       >
         <Handle
-          type="source"
           :id="route.id"
+          type="source"
           :position="Position.Bottom"
           class="node-handle route-handle-dot"
         />
-        <span class="route-handle-label" :class="{ dark: isDark }">{{ route.label }}</span>
+        <span
+          class="route-handle-label"
+          :class="{ dark: isDark }"
+        >{{ route.label }}</span>
       </div>
     </div>
   </div>
@@ -145,10 +272,10 @@ import { getNodeDefinition } from './nodeRegistry';
 import type { WorkflowNodeData, NodeThinkingMessage } from './types';
 
 const props = defineProps<{
-  id: string;
-  data: WorkflowNodeData;
+  id:       string;
+  data:     WorkflowNodeData;
   selected: boolean;
-  isDark: boolean;
+  isDark:   boolean;
 }>();
 
 const sullaIconUrl = new URL('../../../../../resources/icons/robot-512-nobg.png', import.meta.url).href;
@@ -185,7 +312,7 @@ const routeHandles = computed(() => {
   // Condition nodes always have True/False outputs
   if (props.data.subtype === 'condition') {
     return [
-      { id: 'condition-true',  label: 'True' },
+      { id: 'condition-true', label: 'True' },
       { id: 'condition-false', label: 'False' },
     ];
   }
@@ -194,8 +321,8 @@ const routeHandles = computed(() => {
   const routes = props.data.config?.routes;
   if (!Array.isArray(routes) || routes.length === 0) return [];
   return routes.map((r: any, idx: number) => ({
-    id:    `route-${idx}`,
-    label: r.label || `Route ${idx + 1}`,
+    id:    `route-${ idx }`,
+    label: r.label || `Route ${ idx + 1 }`,
   }));
 });
 
@@ -213,25 +340,33 @@ const routeHandles = computed(() => {
 }
 
 .node-icon-box {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border-strong);
+  background: #161b22;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  color: var(--text-secondary);
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.workflow-custom-node.dark .node-icon-box {
-  background: #2d2d44;
-  border-color: #4a4a6a;
+.workflow-custom-node:hover .node-icon-box {
+  transform: translateY(-2px);
+  border-color: var(--status-success);
+  box-shadow:
+    0 0 12px rgba(46, 160, 67, 0.4),
+    0 4px 20px rgba(46, 160, 67, 0.35),
+    0 8px 32px rgba(46, 160, 67, 0.15);
 }
 
 .workflow-custom-node.selected .node-icon-box {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+  border-color: var(--status-success);
+  box-shadow:
+    0 0 12px rgba(46, 160, 67, 0.4),
+    0 4px 20px rgba(46, 160, 67, 0.35),
+    0 8px 32px rgba(46, 160, 67, 0.15);
 }
 
 .node-icon-img {
@@ -239,52 +374,50 @@ const routeHandles = computed(() => {
   height: 24px;
   border-radius: 4px;
   object-fit: contain;
+  filter: grayscale(1) brightness(0.62);
 }
 
 .node-icon-svg {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
-.workflow-custom-node.dark .node-icon-svg {
-  color: #94a3b8;
+.workflow-custom-node .node-icon-svg {
+  color: var(--text-muted);
 }
 
 .workflow-custom-node.selected .node-icon-svg {
-  color: #6366f1;
+  color: var(--text-success);
 }
 
-.workflow-custom-node.dark.selected .node-icon-svg {
-  color: #818cf8;
+.workflow-custom-node.selected .node-icon-svg {
+  color: var(--text-success);
 }
 
 .node-label {
-  font-size: 11px;
-  color: #475569;
+  font-family: var(--font-mono), 'Courier New', monospace;
+  font-size: 9px;
+  color: var(--text-secondary);
   text-align: center;
-  max-width: 80px;
+  max-width: 72px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   line-height: 1.2;
 }
 
-.workflow-custom-node.dark .node-label {
-  color: #94a3b8;
+.workflow-custom-node .node-label {
+  color: var(--text-muted);
 }
 
 .node-handle {
-  width: 8px;
-  height: 8px;
-  background: #6366f1;
-  border: 2px solid #fff;
+  width: 7px;
+  height: 7px;
+  background: var(--status-success);
+  border: 1.5px solid var(--bg-page);
   border-radius: 50%;
-}
-
-.workflow-custom-node.dark .node-handle {
-  border-color: #1a1a2e;
 }
 
 .route-handles-bar {
@@ -307,9 +440,9 @@ const routeHandles = computed(() => {
 }
 
 .route-handle-label {
-  font-size: 8px;
-  font-weight: 500;
-  color: #475569;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
   white-space: nowrap;
   line-height: 1;
   text-align: center;
@@ -319,7 +452,7 @@ const routeHandles = computed(() => {
 }
 
 .route-handle-label.dark {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 /* ── Loop handle positioning ── */
@@ -375,24 +508,24 @@ const routeHandles = computed(() => {
 }
 
 .loop-handle-label {
-  font-size: 7px;
-  font-weight: 600;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
   white-space: nowrap;
   line-height: 1;
   pointer-events: none;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: var(--tracking-wide);
 }
 
 .loop-handle-label.dark {
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 /* In: label above the dot, raised 1.5x font height */
 .loop-label-in {
   margin-top: -11px;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 /* Back: adjust dot position */
@@ -406,7 +539,7 @@ const routeHandles = computed(() => {
 .loop-label-back {
   margin-top: 12px;
   margin-left: 0px;
-  color: #475569;
+  color: var(--text-secondary);
   text-transform: none;
 }
 
@@ -437,8 +570,8 @@ const routeHandles = computed(() => {
 }
 
 .thinking-bubble-collapsed {
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-default);
   border-radius: 12px 12px 12px 4px;
   padding: 4px 8px;
   display: flex;
@@ -454,8 +587,8 @@ const routeHandles = computed(() => {
 }
 
 .thinking-bubble.dark .thinking-bubble-collapsed {
-  background: #2d2d44;
-  border-color: #4a4a6a;
+  background: var(--bg-surface-alt);
+  border-color: var(--border-strong);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
@@ -469,7 +602,7 @@ const routeHandles = computed(() => {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #6366f1;
+  background: var(--accent-primary);
   animation: dot-bounce 1.4s ease-in-out infinite;
 }
 
@@ -496,8 +629,8 @@ const routeHandles = computed(() => {
 .thinking-bubble-expanded {
   width: 280px;
   max-height: 320px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
   display: flex;
@@ -507,8 +640,8 @@ const routeHandles = computed(() => {
 }
 
 .thinking-bubble.dark .thinking-bubble-expanded {
-  background: #1e1e32;
-  border-color: #4a4a6a;
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
@@ -517,20 +650,16 @@ const routeHandles = computed(() => {
   align-items: center;
   justify-content: space-between;
   padding: 6px 10px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
 }
 
-.thinking-bubble.dark .thinking-bubble-header {
-  border-bottom-color: #3a3a5a;
-}
-
 .thinking-bubble-title {
-  font-size: 8px;
-  font-weight: 600;
-  color: #6366f1;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--text-info);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--tracking-wider);
 }
 
 .thinking-bubble-close {
@@ -541,20 +670,15 @@ const routeHandles = computed(() => {
   height: 18px;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   border-radius: 4px;
   cursor: pointer;
   padding: 0;
 }
 
 .thinking-bubble-close:hover {
-  background: #f1f5f9;
-  color: #475569;
-}
-
-.thinking-bubble.dark .thinking-bubble-close:hover {
-  background: #2d2d44;
-  color: #e2e8f0;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
 }
 
 .thinking-bubble-messages {
@@ -579,7 +703,7 @@ const routeHandles = computed(() => {
 }
 
 .thinking-msg-content {
-  font-size: 9px;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   padding: 5px 8px;
   border-radius: 8px;
@@ -589,20 +713,15 @@ const routeHandles = computed(() => {
 }
 
 .thinking-msg.assistant .thinking-msg-content {
-  background: #f1f5f9;
-  color: #334155;
-}
-
-.thinking-bubble.dark .thinking-msg.assistant .thinking-msg-content {
-  background: #2d2d44;
-  color: #e2e8f0;
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
 }
 
 .thinking-msg.system .thinking-msg-content {
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-style: italic;
-  font-size: 8px;
+  font-size: var(--fs-caption);
 }
 
 /* Scrollbar styling */
@@ -615,34 +734,30 @@ const routeHandles = computed(() => {
 }
 
 .thinking-bubble-messages::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--bg-surface-hover);
   border-radius: 2px;
-}
-
-.thinking-bubble.dark .thinking-bubble-messages::-webkit-scrollbar-thumb {
-  background: #4a4a6a;
 }
 
 /* ── Execution status styles ── */
 
 .workflow-custom-node.exec-running .node-icon-box {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+  border-color: var(--status-success);
+  box-shadow: 0 0 12px rgba(46, 160, 67, 0.4);
   animation: exec-pulse 1.5s ease-in-out infinite;
 }
 
 .workflow-custom-node.exec-completed .node-icon-box {
-  border-color: #22c55e;
+  border-color: var(--status-success);
   box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
 }
 
 .workflow-custom-node.exec-failed .node-icon-box {
-  border-color: #ef4444;
+  border-color: var(--status-error);
   box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
 }
 
 .workflow-custom-node.exec-waiting .node-icon-box {
-  border-color: #f59e0b;
+  border-color: var(--status-warning);
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
   animation: exec-pulse 2s ease-in-out infinite;
 }
@@ -656,8 +771,8 @@ const routeHandles = computed(() => {
 }
 
 @keyframes exec-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3); }
-  50%      { box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15); }
+  0%, 100% { box-shadow: 0 0 12px rgba(46, 160, 67, 0.4); }
+  50%      { box-shadow: 0 0 18px rgba(46, 160, 67, 0.25); }
 }
 
 .workflow-custom-node.exec-waiting .node-icon-box {
@@ -680,19 +795,19 @@ const routeHandles = computed(() => {
 }
 
 .node-exec-badge.running {
-  color: #6366f1;
+  color: var(--text-info);
 }
 
 .node-exec-badge.completed {
-  color: #22c55e;
+  color: var(--text-success);
 }
 
 .node-exec-badge.failed {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 .node-exec-badge.waiting {
-  color: #f59e0b;
+  color: var(--status-warning);
 }
 
 .exec-spinner {

@@ -72,36 +72,36 @@ jobs:
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       if: matrix.platform == 'mac'
       with:
-        name: Rancher Desktop.${{ matrix.arch }}.dmg
-        path: dist/Rancher Desktop*.dmg
+        name: Sulla Desktop.${{ matrix.arch }}.dmg
+        path: dist/Sulla-Desktop*.dmg
         if-no-files-found: error
     - name: Upload mac zip
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       if: matrix.platform == 'mac'
       with:
-        name: Rancher Desktop-mac.${{ matrix.arch }}.zip
-        path: dist/Rancher Desktop*.zip
+        name: Sulla Desktop-mac.${{ matrix.arch }}.zip
+        path: dist/Sulla-Desktop*.zip
         if-no-files-found: error
     - name: Upload Windows installer
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       if: matrix.platform == 'win'
       with:
-        name: Rancher Desktop Setup.msi
-        path: dist/Rancher.Desktop*.msi
+        name: Sulla Desktop Setup.msi
+        path: dist/Sulla.Desktop*.msi
         if-no-files-found: error
     - name: Upload Windows zip
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       if: matrix.platform == 'win'
       with:
-        name: Rancher Desktop-win.zip
-        path: dist/Rancher Desktop-*-win.zip
+        name: Sulla Desktop-win.zip
+        path: dist/Sulla-Desktop-*-win.zip
         if-no-files-found: error
     - name: Upload Linux zip
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       if: matrix.platform == 'linux'
       with:
-        name: Rancher Desktop-linux.zip
-        path: dist/rancher-desktop-*-linux.zip
+        name: Sulla Desktop-linux.zip
+        path: dist/sulla-desktop-*-linux.zip
         if-no-files-found: error
     - name: Trigger OBS build
       if: matrix.platform == 'linux' && github.ref_type == 'branch' && ( startsWith(github.ref_name, 'main') || startsWith(github.ref_name, 'release-') )
@@ -113,17 +113,17 @@ jobs:
         # in pull requests GITHUB_REF_NAME is in the form "<pr_number>/merge";
         # remove slashes since they aren't valid in filenames
         no_slash_ref_name="${GITHUB_REF_NAME//\//-}"
-        zip_name="rancher-desktop-linux-${no_slash_ref_name}.zip"
+        zip_name="sulla-desktop-linux-${no_slash_ref_name}.zip"
 
         # Copy zip file to S3
         aws s3 cp \
-          dist/rancher-desktop-*-linux.zip \
-          "s3://rancher-desktop-assets-for-obs/$zip_name"
+          dist/sulla-desktop-*-linux.zip \
+          "s3://sulla-desktop-assets-for-obs/$zip_name"
 
         # Trigger OBS services for relevant package in dev channel
         curl -X POST \
           -H "Authorization: Token ${OBS_WEBHOOK_TOKEN}" \
-          "https://build.opensuse.org/trigger/runservice?project=isv:Rancher:dev&package=rancher-desktop-${GITHUB_REF_NAME}"
+          "https://build.opensuse.org/trigger/runservice?project=isv:Sulla:dev&package=sulla-desktop-${GITHUB_REF_NAME}"
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -149,16 +149,16 @@ jobs:
     - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
       name: Download artifact
       with:
-        name: Rancher Desktop-win.zip
+        name: Sulla Desktop-win.zip
     - name: Generate test signing certificate
       shell: powershell
       run: |
         $cert = New-SelfSignedCertificate `
           -Type Custom `
-          -Subject "CN=Rancher-Sandbox, C=CA" `
+          -Subject "CN=Sulla-Desktop, C=US" `
           -KeyUsage DigitalSignature `
           -CertStoreLocation Cert:\CurrentUser\My `
-          -FriendlyName "Rancher-Sandbox Code Signing" `
+          -FriendlyName "Sulla Desktop Code Signing" `
           -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
         Write-Output $cert
         Write-Output "CSC_FINGERPRINT=$($cert.Thumbprint)" `
@@ -166,12 +166,12 @@ jobs:
       timeout-minutes: 1
     - name: Sign artifact
       shell: powershell
-      run: yarn sign (Get-Item "Rancher Desktop*-win.zip")
+      run: yarn sign (Get-Item "Sulla-Desktop*-win.zip")
       timeout-minutes: 10
     - name: Verify installer signature
       shell: powershell
       run: |
-        $usedCert = (Get-AuthenticodeSignature -FilePath 'dist\Rancher*Desktop*.msi').SignerCertificate
+        $usedCert = (Get-AuthenticodeSignature -FilePath 'dist\Sulla.Desktop*.msi').SignerCertificate
         Write-Output $usedCert
         if ($usedCert.Thumbprint -ne $env:CSC_FINGERPRINT) {
           Throw "Installer signed with wrong certificate"
@@ -202,7 +202,7 @@ jobs:
     - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
       name: Download artifact
       with:
-        name: Rancher Desktop-mac.${{ matrix.arch }}.zip
+        name: Sulla Desktop-mac.${{ matrix.arch }}.zip
     - name: Generate test signing certificate
       run: |
         openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem \
@@ -231,7 +231,7 @@ jobs:
       run: echo "M1=1" >> "${GITHUB_ENV}"
     - name: Sign artifact
       run: |
-        for zip in Rancher\ Desktop-*mac*.zip; do
+        for zip in Sulla-Desktop-*mac*.zip; do
           echo "::group::Signing ${zip}"
           yarn sign --skip-notarize --skip-constraints "${zip}"
           echo "::endgroup::"

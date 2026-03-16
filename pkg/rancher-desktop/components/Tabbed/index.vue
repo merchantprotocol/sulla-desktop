@@ -403,7 +403,7 @@ export default {
       color: #fff;
       border-radius: 6px;
       padding: 1px 7px;
-      font-size: 11px;
+      font-size: var(--fs-body-sm);
     }
   }
 }

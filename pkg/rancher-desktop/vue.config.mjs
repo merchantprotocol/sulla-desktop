@@ -100,14 +100,13 @@ export default {
     for (const [name, entry] of Object.entries(workerEntries)) {
       config.entry(name).add(entry);
     }
-
   },
 
   configureWebpack: (config) => {
     config.externals = {
       'puppeteer-extra-plugin': 'commonjs puppeteer-extra-plugin',
       'puppeteer-extra':        'commonjs puppeteer-extra',
-      'puppeteer':              'commonjs puppeteer',
+      puppeteer:                'commonjs puppeteer',
       'clone-deep':             'commonjs clone-deep',
       '@composio/core':         'commonjs @composio/core',
       '@composio/client':       'commonjs @composio/client',
@@ -122,7 +121,7 @@ export default {
     const origFilename = config.output.filename;
     config.output.filename = (pathData) => {
       if (pathData.chunk?.name?.endsWith('.worker')) {
-        return `${pathData.chunk.name}.bundle.js`;
+        return `${ pathData.chunk.name }.bundle.js`;
       }
       return typeof origFilename === 'function' ? origFilename(pathData) : origFilename;
     };
@@ -138,7 +137,7 @@ export default {
       }
     }
   },
-  
+
   css: {
     loaderOptions: {
       sass: {
@@ -178,12 +177,7 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'lm-settings.html'),
       filename: 'lm-settings.html',
     },
-    'model-training': {
-      entry:    path.join(import.meta.dirname, 'entry', 'model-training.ts'),
-      template: path.join(import.meta.dirname, 'public', 'model-training.html'),
-      filename: 'model-training.html',
-    },
-    'editor': {
+    editor: {
       entry:    path.join(import.meta.dirname, 'entry', 'editor.ts'),
       template: path.join(import.meta.dirname, 'public', 'editor.html'),
       filename: 'editor.html',

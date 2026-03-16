@@ -1,8 +1,8 @@
-import { BaseTool, ToolResponse } from "../base";
-import { registry } from "../../integrations";
-import { slackClient } from "../../integrations/slack/SlackClient";
-import type { SlackClient } from "../../integrations/slack/SlackClient";
-import { getIntegrationService } from "../../services/IntegrationService";
+import { BaseTool, ToolResponse } from '../base';
+import { registry } from '../../integrations';
+import { slackClient } from '../../integrations/slack/SlackClient';
+import type { SlackClient } from '../../integrations/slack/SlackClient';
+import { getIntegrationService } from '../../services/IntegrationService';
 
 const SLACK_ID = 'slack';
 const DEFAULT_RECOVERY_ATTEMPTS = 3;
@@ -11,20 +11,20 @@ const DEFAULT_VALIDATE_DATA_PULL = true;
 
 function runtimeContext() {
   return {
-    pid: typeof process !== 'undefined' ? process.pid : null,
-    nodeEnv: typeof process !== 'undefined' ? process.env.NODE_ENV || null : null,
+    pid:         typeof process !== 'undefined' ? process.pid : null,
+    nodeEnv:     typeof process !== 'undefined' ? process.env.NODE_ENV || null : null,
     processType: typeof process !== 'undefined' ? ((process as any).type || 'node') : 'unknown',
-    platform: typeof process !== 'undefined' ? process.platform : 'unknown',
-    hasWindow: typeof window !== 'undefined',
+    platform:    typeof process !== 'undefined' ? process.platform : 'unknown',
+    hasWindow:   typeof window !== 'undefined',
   };
 }
 
 export class SlackConnectionHealthWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const invocationId = `health-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const invocationId = `health-${ Date.now() }-${ Math.random().toString(36).slice(2, 8) }`;
     const startedAt = Date.now();
     const reinitializeIfNeeded = input?.reinitializeIfNeeded !== false;
     const validateAuth = input?.validateAuth !== false;
@@ -55,24 +55,24 @@ export class SlackConnectionHealthWorker extends BaseTool {
       console.log('[slack_connection_health] Integration values fetched', {
         invocationId,
         connectedInDb: !!connectionStatus?.connected,
-        hasBotToken: !!botToken,
-        hasAppToken: !!appToken,
+        hasBotToken:   !!botToken,
+        hasAppToken:   !!appToken,
       });
 
       console.log('[slack_connection_health] Pre-check state:', {
         invocationId,
         singletonIsConnected: slackClient.isConnected(),
-        registryType: typeof registry,
-        registryHasGet: typeof registry?.get,
-        runtime: runtimeContext(),
+        registryType:         typeof registry,
+        registryHasGet:       typeof registry?.get,
+        runtime:              runtimeContext(),
       });
 
       console.log('[slack_connection_health] Requesting registry.get(slack)...', { invocationId });
       let slack = await registry.get<SlackClient>(SLACK_ID);
       console.log('[slack_connection_health] registry.get result:', {
         invocationId,
-        gotClient: !!slack,
-        clientType: slack ? typeof slack : 'null',
+        gotClient:     !!slack,
+        clientType:    slack ? typeof slack : 'null',
         isSlackClient: slack === (slackClient as unknown),
       });
 
@@ -86,7 +86,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
       let singletonConnected = slackClient.isConnected();
       let lastInitializeError = slackClient.getLastInitializeError?.() || null;
 
-      const runAuthTest = async (client: SlackClient | null) => {
+      const runAuthTest = async(client: SlackClient | null) => {
         if (!client || !validateAuth) {
           console.log('[slack_connection_health] Skipping auth.test', {
             invocationId,
@@ -118,7 +118,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
         }
       };
 
-      const runDataPullTest = async (client: SlackClient | null) => {
+      const runDataPullTest = async(client: SlackClient | null) => {
         if (!client || !validateDataPull) {
           console.log('[slack_connection_health] Skipping users.list pull', {
             invocationId,
@@ -131,7 +131,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
         try {
           console.log('[slack_connection_health] Running users.list data pull', { invocationId });
           const response = await client.apiCall('users.list', { limit: 1 });
-          const members = Array.isArray((response as any)?.members) ? (response as any).members : [];
+          const members = Array.isArray((response)?.members) ? (response).members : [];
 
           dataPullCount = members.length;
           dataPullOk = response?.ok !== false;
@@ -185,19 +185,19 @@ export class SlackConnectionHealthWorker extends BaseTool {
           console.log('[slack_connection_health] Registry get after invalidate', {
             invocationId,
             attempt,
-            gotClient: !!slack,
+            gotClient:     !!slack,
             isSlackClient: slack === (slackClient as unknown),
           });
 
           // If registry still null, try direct singleton init as last resort
           if (!slack && slackClient) {
-            console.warn(`[slack_connection_health] Registry returned null, attempting direct slackClient.initialize() (attempt ${attempt})`);
+            console.warn(`[slack_connection_health] Registry returned null, attempting direct slackClient.initialize() (attempt ${ attempt })`);
             await slackClient.initialize();
             slack = slackClient as unknown as SlackClient;
             console.log('[slack_connection_health] Direct singleton init complete', {
               invocationId,
               attempt,
-              singletonConnected: slackClient.isConnected(),
+              singletonConnected:  slackClient.isConnected(),
               lastInitializeError: slackClient.getLastInitializeError?.() || null,
             });
           }
@@ -234,13 +234,13 @@ export class SlackConnectionHealthWorker extends BaseTool {
       const healthy = !!slack && (!validateAuth || authOk !== false) && (!validateDataPull || dataPullOk !== false);
       const details = {
         invocationId,
-        runtime: runtimeContext(),
-        durationMs: Date.now() - startedAt,
+        runtime:               runtimeContext(),
+        durationMs:            Date.now() - startedAt,
         healthy,
-        connectedInDb: !!connectionStatus?.connected,
+        connectedInDb:         !!connectionStatus?.connected,
         singletonConnected,
-        hasBotToken: !!botToken,
-        hasAppToken: !!appToken,
+        hasBotToken:           !!botToken,
+        hasAppToken:           !!appToken,
         registryClientPresent: !!slack,
         validateAuth,
         authOk,
@@ -259,20 +259,19 @@ export class SlackConnectionHealthWorker extends BaseTool {
 
       return {
         successBoolean: healthy,
-        responseString: `Slack connection health check:\n${JSON.stringify(details, null, 2)}`,
+        responseString: `Slack connection health check:\n${ JSON.stringify(details, null, 2) }`,
       };
     } catch (error) {
       console.error('[slack_connection_health] Invocation failed', {
         invocationId,
-        runtime: runtimeContext(),
+        runtime:    runtimeContext(),
         durationMs: Date.now() - startedAt,
         error,
       });
       return {
         successBoolean: false,
-        responseString: `Slack connection health check failed: ${(error as Error).message}`,
+        responseString: `Slack connection health check failed: ${ (error as Error).message }`,
       };
     }
   }
 }
-

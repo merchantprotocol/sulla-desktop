@@ -1,5 +1,8 @@
 <template>
-  <div ref="terminalElement" class="terminal-wrapper"></div>
+  <div
+    ref="terminalElement"
+    class="terminal-wrapper"
+  />
 </template>
 
 <script lang="ts">
@@ -13,31 +16,31 @@ export default defineComponent({
 
   props: {
     isDark: {
-      type: Boolean,
+      type:    Boolean,
       default: true,
     },
     wsUrl: {
-      type: String,
+      type:    String,
       default: 'ws://127.0.0.1:6108',
     },
     sessionId: {
-      type: String,
+      type:    String,
       default: '',
     },
     fontSize: {
-      type: Number,
+      type:    Number,
       default: 14,
     },
     fontFamily: {
-      type: String,
+      type:    String,
       default: 'Menlo, Monaco, "Courier New", monospace',
     },
     command: {
-      type: String,
+      type:    String,
       default: '',
     },
     readOnly: {
-      type: Boolean,
+      type:    Boolean,
       default: false,
     },
   },
@@ -51,16 +54,22 @@ export default defineComponent({
     let socket: WebSocket | null = null;
     let resizeObserver: ResizeObserver | null = null;
 
+    const getCssVar = (varName: string, fallback: string): string => {
+      const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+
+      return value || fallback;
+    };
+
     const getTheme = () => ({
-      background: props.isDark ? '#1e293b' : '#f8fafc',
-      foreground: props.isDark ? '#ccc' : '#333',
-      cursor: props.isDark ? '#ccc' : '#333',
+      background:          getCssVar('--bg-surface', props.isDark ? '#1e293b' : '#f8fafc'),
+      foreground:          getCssVar('--text-primary', props.isDark ? '#ccc' : '#333'),
+      cursor:              getCssVar('--text-primary', props.isDark ? '#ccc' : '#333'),
       selectionBackground: props.isDark ? '#3b82f680' : '#3b82f640',
       selectionForeground: props.isDark ? '#ffffff' : '#000000',
     });
 
     const sendResize = () => {
-      if (!fitAddon || !socket || socket.readyState !== WebSocket.OPEN) return;
+      if (!fitAddon || socket?.readyState !== WebSocket.OPEN) return;
       const dims = fitAddon.proposeDimensions();
       if (dims) {
         socket.send(JSON.stringify({
@@ -96,11 +105,11 @@ export default defineComponent({
         // Send start message to create/join a PTY session in the Lima VM
         const dims = fitAddon!.proposeDimensions();
         socket!.send(JSON.stringify({
-          type: 'start',
+          type:      'start',
           sessionId: props.sessionId || undefined,
-          cols: dims?.cols || 80,
-          rows: dims?.rows || 24,
-          command: props.command || undefined,
+          cols:      dims?.cols || 80,
+          rows:      dims?.rows || 24,
+          command:   props.command || undefined,
         }));
         emit('connected');
       };
@@ -124,9 +133,9 @@ export default defineComponent({
 
       terminal = new Terminal({
         cursorBlink: true,
-        theme: getTheme(),
-        fontFamily: props.fontFamily,
-        fontSize: props.fontSize,
+        theme:       getTheme(),
+        fontFamily:  props.fontFamily,
+        fontSize:    props.fontSize,
       });
 
       fitAddon = new FitAddon();
@@ -136,7 +145,7 @@ export default defineComponent({
 
       terminal.onData((data: string) => {
         if (props.readOnly) return;
-        if (socket && socket.readyState === WebSocket.OPEN) {
+        if (socket?.readyState === WebSocket.OPEN) {
           socket.send(data);
         }
       });
@@ -190,5 +199,10 @@ export default defineComponent({
 .terminal-wrapper :deep(.xterm-viewport) {
   overflow-y: hidden !important;
   background-color: inherit !important;
+}
+
+.terminal-wrapper :deep(.xterm-scrollable-element) {
+  background-color: var(--bg-surface) !important;
+  color: #f1f5f9;
 }
 </style>

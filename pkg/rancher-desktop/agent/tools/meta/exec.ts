@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from "../base";
-import { runCommand } from "../util/CommandRunner";
+import { BaseTool, ToolResponse } from '../base';
+import { runCommand } from '../util/CommandRunner';
 
 /**
  * Exec Tool - Worker class for execution
@@ -9,15 +9,16 @@ import { runCommand } from "../util/CommandRunner";
  * they cannot affect the host machine.
  */
 export class ExecWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
 
   schemaDef = {
-    command: { type: 'string' as const, optional: true, description: 'The exact shell command to run' },
-    cmd:     { type: 'string' as const, optional: true, description: 'Alias for command' },
-    cwd:     { type: 'string' as const, optional: true, description: 'Working directory inside the VM to run the command in' },
-    timeout: { type: 'number' as const, optional: true, description: 'Timeout in milliseconds (default 120000). Use higher values for long-running installs.' },
-    stdin:   { type: 'string' as const, optional: true, description: 'Optional stdin data to pipe into the command' },
+    command:     { type: 'string' as const, optional: true, description: 'The exact shell command to run' },
+    cmd:         { type: 'string' as const, optional: true, description: 'Alias for command' },
+    description: { type: 'string' as const, optional: true, description: 'A short description of what this command does (e.g. "Install dependencies", "Check disk usage"). Displayed to the user.' },
+    cwd:         { type: 'string' as const, optional: true, description: 'Working directory inside the VM to run the command in' },
+    timeout:     { type: 'number' as const, optional: true, description: 'Timeout in milliseconds (default 120000). Use higher values for long-running installs.' },
+    stdin:       { type: 'string' as const, optional: true, description: 'Optional stdin data to pipe into the command' },
   };
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
@@ -26,7 +27,7 @@ export class ExecWorker extends BaseTool {
     if (!command) {
       return {
         successBoolean: false,
-        responseString: 'Input validation failed: Missing required field: command (or cmd)'
+        responseString: 'Input validation failed: Missing required field: command (or cmd)',
       };
     }
 
@@ -35,7 +36,7 @@ export class ExecWorker extends BaseTool {
     const stdin = input.stdin ? String(input.stdin) : undefined;
 
     // Prepend cd if a working directory was requested
-    const finalCommand = cwd ? `cd ${cwd} && ${command}` : command;
+    const finalCommand = cwd ? `cd ${ cwd } && ${ command }` : command;
 
     try {
       const res = await runCommand(finalCommand, [], {
@@ -48,18 +49,18 @@ export class ExecWorker extends BaseTool {
       if (res.exitCode !== 0) {
         return {
           successBoolean: false,
-          responseString: `Command failed with exit code ${res.exitCode}:\n${res.stderr || res.stdout}`
+          responseString: `Command failed with exit code ${ res.exitCode }:\n${ res.stderr || res.stdout }`,
         };
       }
 
       return {
         successBoolean: true,
-        responseString: res.stdout || '(no output)'
+        responseString: res.stdout || '(no output)',
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing command: ${(error as Error).message}`
+        responseString: `Error executing command: ${ (error as Error).message }`,
       };
     }
   }

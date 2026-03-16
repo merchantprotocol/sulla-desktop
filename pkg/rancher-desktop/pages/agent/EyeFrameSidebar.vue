@@ -35,25 +35,23 @@
             transform: 'scale(0.35)',
             transformOrigin: 'top left',
             width: '285.7143%',
-            height: '285.7143%'
+            height: '285.7143%',
           }"
         partition="persist:sulla"
         allowpopups
         webpreferences="allowRunningInsecureContent=yes, webSecurity=no, nodeIntegrationInSubFrames=yes"
-      ></webview>
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 defineProps<{
-  src: string;
-  title: string;
-  active: boolean;
+  src:      string;
+  title:    string;
+  active:   boolean;
   expanded: boolean;
 }>();
 
-defineEmits<{
-  (e: 'toggle-expand'): void;
-}>();
+defineEmits<(e: 'toggle-expand') => void>();
 </script>

@@ -10,7 +10,7 @@ const mockSlackClientInitialize: any = jest.fn();
 
 jest.unstable_mockModule('../../../integrations', () => ({
   registry: {
-    get: mockGet,
+    get:        mockGet,
     invalidate: mockInvalidate,
   },
 }));
@@ -18,13 +18,13 @@ jest.unstable_mockModule('../../../integrations', () => ({
 jest.unstable_mockModule('../../../integrations/slack/SlackClient', () => ({
   slackClient: {
     isConnected: mockSlackClientIsConnected,
-    initialize: mockSlackClientInitialize,
+    initialize:  mockSlackClientInitialize,
   },
 }));
 
 jest.unstable_mockModule('../../../services/IntegrationService', () => ({
   getIntegrationService: () => ({
-    initialize: mockInitializeService,
+    initialize:          mockInitializeService,
     getConnectionStatus: mockGetConnectionStatus,
     getIntegrationValue: mockGetIntegrationValue,
   }),
@@ -52,7 +52,7 @@ describe('slack_connection_health tool', () => {
     mockSlackClientInitialize.mockReset();
   });
 
-  it('returns healthy when client is present and auth.test succeeds', async () => {
+  it('returns healthy when client is present and auth.test succeeds', async() => {
     const { SlackConnectionHealthWorker, slackConnectionHealthRegistration } = await loadSlackConnectionHealthTool();
 
     mockInitializeService.mockResolvedValueOnce(undefined);
@@ -65,7 +65,7 @@ describe('slack_connection_health tool', () => {
     mockSlackClientIsConnected.mockReturnValue(true);
 
     mockGet.mockResolvedValueOnce({
-      apiCall: jest.fn(async (method: string) => {
+      apiCall: jest.fn(async(method: string) => {
         if (method === 'auth.test') {
           return { ok: true };
         }
@@ -85,7 +85,7 @@ describe('slack_connection_health tool', () => {
     expect(mockInvalidate).not.toHaveBeenCalled();
   });
 
-  it('reinitializes when registry client is null and succeeds after retry', async () => {
+  it('reinitializes when registry client is null and succeeds after retry', async() => {
     const { SlackConnectionHealthWorker, slackConnectionHealthRegistration } = await loadSlackConnectionHealthTool();
 
     mockInitializeService.mockResolvedValueOnce(undefined);
@@ -100,7 +100,7 @@ describe('slack_connection_health tool', () => {
     mockGet
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
-        apiCall: jest.fn(async (method: string) => {
+        apiCall: jest.fn(async(method: string) => {
           if (method === 'users.list') {
             return { ok: true, members: [{ id: 'U456' }] };
           }
@@ -117,7 +117,7 @@ describe('slack_connection_health tool', () => {
     expect(mockInvalidate).toHaveBeenCalledWith('slack');
   });
 
-  it('returns failure when auth is bad and reinitialize disabled', async () => {
+  it('returns failure when auth is bad and reinitialize disabled', async() => {
     const { SlackConnectionHealthWorker, slackConnectionHealthRegistration } = await loadSlackConnectionHealthTool();
 
     mockInitializeService.mockResolvedValueOnce(undefined);
@@ -130,7 +130,7 @@ describe('slack_connection_health tool', () => {
     mockSlackClientIsConnected.mockReturnValue(true);
 
     mockGet.mockResolvedValueOnce({
-      apiCall: jest.fn(async () => ({ ok: false, error: 'invalid_auth' })),
+      apiCall: jest.fn(async() => ({ ok: false, error: 'invalid_auth' })),
     });
 
     const worker = configureWorker(new SlackConnectionHealthWorker(), slackConnectionHealthRegistration);

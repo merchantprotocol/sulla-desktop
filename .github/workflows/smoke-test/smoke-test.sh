@@ -7,7 +7,7 @@
 
 # Environment variables as inputs:
 #   RD_SKIP_INSTALL (Linux)
-#     Skip installing Rancher Desktop, and assume it was installed from the repo.
+#     Skip installing Sulla Desktop, and assume it was installed from the repo.
 
 # Required tools:
 # - jq
@@ -77,7 +77,7 @@ get_platform() {
     esac
 }
 
-# Assume the first argument given is a path to the Rancher Desktop .dmg disk
+# Assume the first argument given is a path to the Sulla Desktop .dmg disk
 # image; install it, and set the global variable RDCTL to the path of the rdctl
 # executable.
 install_darwin() {
@@ -86,8 +86,8 @@ install_darwin() {
     mountpoint=$(mktemp -d -t rd-dmg-)
     cleanups+=("rm -rf '$mountpoint'")
 
-    local srcApp="${mountpoint}/Rancher Desktop.app"
-    local destApp="/Applications/Rancher Desktop.app"
+    local srcApp="${mountpoint}/Sulla Desktop.app"
+    local destApp="/Applications/Sulla Desktop.app"
 
     codesign --verify --deep --strict --verbose=2 --check-notarization "$archiveName"
     hdiutil attach "$archiveName" -mountpoint "$mountpoint"
@@ -115,14 +115,14 @@ install_darwin() {
         # For macOS, currently only x86_64 runners support nested virtualization
         # https://github.com/actions/runner-images/issues/9460
         # Abort the script (gracefully) instead of trying to run RD.
-        echo "Skipping actually running on Rancher Desktop because arm64 runners do not have nested virtualization" >&2
+        echo "Skipping actually running Sulla Desktop because arm64 runners do not have nested virtualization" >&2
         exit 0
     fi
 
     RDCTL="$destApp/Contents/Resources/resources/darwin/bin/rdctl"
 }
 
-# Assume the first argument given is a path to the Rancher Desktop zip file;
+# Assume the first argument given is a path to the Sulla Desktop zip file;
 # install it, and set the global variable RDCTL to the path of the rdctl
 # executable.  If the archive is an AppImage file instead, then this function
 # instead sets APPIMAGE_PID.
@@ -144,13 +144,13 @@ install_linux() {
             APPIMAGE_PID=$!
             return
         else
-            sudo mkdir -p /opt/rancher-desktop
-            sudo unzip -d /opt/rancher-desktop "$archiveName"
-            sudo chmod 4755 /opt/rancher-desktop/chrome-sandbox
+            sudo mkdir -p /opt/sulla-desktop
+            sudo unzip -d /opt/sulla-desktop "$archiveName"
+            sudo chmod 4755 /opt/sulla-desktop/chrome-sandbox
         fi
     fi
 
-    RDCTL="/opt/rancher-desktop/resources/resources/linux/bin/rdctl"
+    RDCTL="/opt/sulla-desktop/resources/resources/linux/bin/rdctl"
 }
 
 # Helper function on Windows to verify the signature of a file (provided as the
@@ -174,7 +174,7 @@ win32_verify() {
     fi
 }
 
-# Assume the first argument given is a path to the Rancher Desktop installer;
+# Assume the first argument given is a path to the Sulla Desktop installer;
 # install it, and set the global variable RDCTL to the path of the rdctl
 # executable.
 install_win32() {
@@ -202,7 +202,7 @@ install_win32() {
         exit 1
     fi
     local installDirectory
-    installDirectory=$(cygpath --unix 'C:\Program Files\Rancher Desktop')
+    installDirectory=$(cygpath --unix 'C:\Program Files\Sulla Desktop')
     local rdctl="$installDirectory/resources/resources/win32/bin/rdctl.exe"
 
     local -a keys
@@ -236,13 +236,13 @@ wait_for_backend() {
 
     while [[ $(date +%s) -lt $deadline ]]; do
         if [[ -n "${APPIMAGE_PID:-}" ]] && [[ -z "${RDCTL:-}" ]]; then
-            rd_pid=$(pidof --separator $'\n' rancher-desktop | sort -n | head -n 1 || echo missing)
+            rd_pid=$(pidof --separator $'\n' sulla-desktop | sort -n | head -n 1 || echo missing)
             if [[ -e /proc/$rd_pid/exe ]]; then
                 RDCTL=$(dirname "$(readlink /proc/$rd_pid/exe)")/resources/resources/linux/bin/rdctl
                 continue
             fi
             state=NOT_RUNNING
-        elif [[ $platform == linux ]] && [[ ! -e $HOME/.local/share/rancher-desktop/rd-engine.json ]]; then
+        elif [[ $platform == linux ]] && [[ ! -e $HOME/.local/share/sulla-desktop/rd-engine.json ]]; then
             state=NO_SERVER_CONFIG
         else
             state=$("$RDCTL" api /v1/backend_state || echo '{"vmState": "NO_RESPONSE"}')

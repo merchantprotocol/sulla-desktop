@@ -5,8 +5,7 @@
 
 import { App, LogLevel } from '@slack/bolt';
 import type { AllMiddlewareArgs, SlackEventMiddlewareArgs } from '@slack/bolt';
-import type { ChatPostMessageResponse } from '@slack/web-api';
-import type { WebAPICallResult } from '@slack/web-api';
+import type { ChatPostMessageResponse, WebAPICallResult } from '@slack/web-api';
 import {
   WebSocketClientService,
   type WebSocketMessage,
@@ -21,7 +20,6 @@ import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import type { AgentGraphState } from '../../nodes/Graph';
 import { withSuppressedConnectionStatus } from '../integrationFlags';
 import { incomingMessage } from './prompts/incoming_message';
-
 
 const INTEGRATION_ID = 'slack';
 const TOKEN_PROPERTY = 'bot_token';
@@ -57,33 +55,33 @@ function extractMessageFacts(args: any): string[] {
   const facts: string[] = [];
   const event = args.event;
   const message = args.message;
-  
-  facts.push(`Event Type: ${event.type}`);
-  facts.push(`User ID: ${event.user}`);
-  facts.push(`Channel: ${event.channel}`);
-  facts.push(`Channel Type: ${event.channel_type || 'unknown'}`);
-  facts.push(`Timestamp: ${event.ts}`);
-  facts.push(`Message Text: "${event.text || 'No text'}"`);
-  
+
+  facts.push(`Event Type: ${ event.type }`);
+  facts.push(`User ID: ${ event.user }`);
+  facts.push(`Channel: ${ event.channel }`);
+  facts.push(`Channel Type: ${ event.channel_type || 'unknown' }`);
+  facts.push(`Timestamp: ${ event.ts }`);
+  facts.push(`Message Text: "${ event.text || 'No text' }"`);
+
   if (event.thread_ts) {
-    facts.push(`Thread Timestamp: ${event.thread_ts}`);
+    facts.push(`Thread Timestamp: ${ event.thread_ts }`);
   }
-  
+
   if (message.subtype) {
-    facts.push(`Message Subtype: ${message.subtype}`);
+    facts.push(`Message Subtype: ${ message.subtype }`);
   }
-  
+
   if (message.blocks && message.blocks.length > 0) {
-    facts.push(`Has Blocks: Yes (${message.blocks.length} blocks)`);
+    facts.push(`Has Blocks: Yes (${ message.blocks.length } blocks)`);
   }
-  
+
   return facts;
 }
 
 export class SlackClient {
-  private app: App | null = null;
+  private app:                 App | null = null;
   private connected = false;
-  private initializePromise: Promise<boolean> | null = null;
+  private initializePromise:   Promise<boolean> | null = null;
   private lastInitializeError: string | null = null;
   private intentionallyClosed = false;
   private eventsRegistered = false;
@@ -98,6 +96,7 @@ export class SlackClient {
     }
     return SlackClient.instance;
   }
+
   private botToken?: string;
   private appToken?: string;
 
@@ -177,13 +176,13 @@ export class SlackClient {
   private buildSlackThreadGraphId(event: any): string {
     const channel = String(event?.channel || 'unknown');
     const threadTs = String(event?.thread_ts || event?.ts || Date.now());
-    return `slack_${channel}_${threadTs}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+    return `slack_${ channel }_${ threadTs }`.replace(/[^a-zA-Z0-9_-]/g, '_');
   }
 
   private async executeAgentGraphForSlack(content: string, threadId: string): Promise<string> {
     const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(SLACK_GRAPH_CHANNEL, threadId, {
       userVisibleBrowser: false,
-      isTrustedUser: 'verify',
+      isTrustedUser:      'verify',
     }) as {
       graph: any;
       state: AgentGraphState;
@@ -197,11 +196,11 @@ export class SlackClient {
 
     state.metadata.wsChannel = SLACK_GRAPH_CHANNEL;
     state.messages.push({
-      id: nextMessageId(),
-      role: 'user',
+      id:        nextMessageId(),
+      role:      'user',
       content,
       timestamp: Date.now(),
-      metadata: { source: 'slack' },
+      metadata:  { source: 'slack' },
     } as any);
 
     state.metadata.cycleComplete = false;
@@ -237,18 +236,18 @@ export class SlackClient {
     const messageId = generateUUID();
     const fullMessage = `
 SLACK APP MENTION
-- Channel: ${event?.channel || 'unknown'}
-- User ID: ${event?.user || 'unknown'}
-- Thread TS: ${event?.thread_ts || event?.ts || 'none'}
-- Message: ${mentionText || '(empty)'}
+- Channel: ${ event?.channel || 'unknown' }
+- User ID: ${ event?.user || 'unknown' }
+- Thread TS: ${ event?.thread_ts || event?.ts || 'none' }
+- Message: ${ mentionText || '(empty)' }
 
-${incomingMessage}`.trim();
+${ incomingMessage }`.trim();
 
     console.log('[SlackClient] Running app_mention through AgentGraph directly', {
       messageId,
-      slackChannel: event?.channel,
+      slackChannel:  event?.channel,
       slackThreadTs: event?.thread_ts || event?.ts,
-      preview: mentionText.slice(0, 80),
+      preview:       mentionText.slice(0, 80),
     });
 
     const responseText = await this.executeAgentGraphForSlack(fullMessage, this.buildSlackThreadGraphId(event));
@@ -283,7 +282,7 @@ ${incomingMessage}`.trim();
     if (this.eventsRegistered || !this.app) return;
     this.eventsRegistered = true;
 
-    this.app.event(/.*/, async (args) => {
+    this.app.event(/.*/, async(args) => {
       console.log('[SlackClient] Event received:', args.event.type, args.event);
 
       const event: any = args.event;
@@ -298,7 +297,7 @@ ${incomingMessage}`.trim();
 
       const slackEventForwardId = generateUUID();
       console.log('[SlackClient] Forwarding slack_event to tasker channel', {
-        channel: SLACK_GRAPH_CHANNEL,
+        channel:   SLACK_GRAPH_CHANNEL,
         messageId: slackEventForwardId,
         eventType: args.event.type || 'unknown',
       });
@@ -306,35 +305,35 @@ ${incomingMessage}`.trim();
       WS_SERVICE.send(SLACK_GRAPH_CHANNEL, {
         type: 'slack_event',
         data: {
-          type: args.event.type || 'unknown',
-          event: args.event,
+          type:    args.event.type || 'unknown',
+          event:   args.event,
           context: args.context,
         },
-        id: slackEventForwardId,
+        id:        slackEventForwardId,
         timestamp: Date.now(),
-        channel: SLACK_GRAPH_CHANNEL,
+        channel:   SLACK_GRAPH_CHANNEL,
       });
     });
 
-    this.app.message(async (args) => {
+    this.app.message(async(args) => {
       const event: any = args.event;
       console.log('[SlackClient] Message landed', event.text);
       if (args.message.subtype === 'bot_message') return;
 
       const facts = extractMessageFacts(args);
-      const factsText = facts.map(fact => `- ${fact}`).join('\n');
-      const fullMessage = `${factsText}\n\n${incomingMessage}`;
+      const factsText = facts.map(fact => `- ${ fact }`).join('\n');
+      const fullMessage = `${ factsText }\n\n${ incomingMessage }`;
 
       WS_SERVICE.send(SLACK_GRAPH_CHANNEL, {
-        type: 'user_message',
-        data: { content: fullMessage },
-        id: generateUUID(),
+        type:      'user_message',
+        data:      { content: fullMessage },
+        id:        generateUUID(),
         timestamp: Date.now(),
-        channel: SLACK_GRAPH_CHANNEL,
+        channel:   SLACK_GRAPH_CHANNEL,
       });
     });
 
-    this.app.error(async (error) => {
+    this.app.error(async(error) => {
       console.error('[SlackClient] Bolt error:', error);
     });
   }
@@ -360,11 +359,11 @@ ${incomingMessage}`.trim();
 
   private async _doInitialize(): Promise<boolean> {
     console.log('[SlackClient] _doInitialize() entered', {
-      hasApp: !!this.app,
-      connected: this.connected,
+      hasApp:              !!this.app,
+      connected:           this.connected,
       intentionallyClosed: this.intentionallyClosed,
-      hasInjectedBot: !!this.botToken,
-      hasInjectedApp: !!this.appToken,
+      hasInjectedBot:      !!this.botToken,
+      hasInjectedApp:      !!this.appToken,
     });
 
     // If we have a stale app instance, stop it cleanly first
@@ -385,7 +384,7 @@ ${incomingMessage}`.trim();
       const appRows = await Promise.all([
         service.getIntegrationValue(INTEGRATION_ID, APP_TOKEN_PROPERTY),
         ...APP_TOKEN_FALLBACK_PROPERTIES.map(property =>
-          service.getIntegrationValue(INTEGRATION_ID, property)
+          service.getIntegrationValue(INTEGRATION_ID, property),
         ),
       ]);
       const botRow = await service.getIntegrationValue(INTEGRATION_ID, TOKEN_PROPERTY);
@@ -395,8 +394,8 @@ ${incomingMessage}`.trim();
       console.log('[SlackClient] Token resolution:', {
         hasBotToken: !!botToken,
         hasAppToken: !!appToken,
-        botPrefix: botToken ? botToken.substring(0, 5) : 'none',
-        appPrefix: appToken ? appToken.substring(0, 5) : 'none',
+        botPrefix:   botToken ? botToken.substring(0, 5) : 'none',
+        appPrefix:   appToken ? appToken.substring(0, 5) : 'none',
       });
     }
 
@@ -418,10 +417,10 @@ ${incomingMessage}`.trim();
 
     console.log('[SlackClient] Creating Bolt App with Socket Mode...');
     this.app = new App({
-      token: botToken,
-      appToken: appToken,
+      token:      botToken,
+      appToken,
       socketMode: true,
-      logLevel: LogLevel.INFO,
+      logLevel:   LogLevel.INFO,
     });
 
     // Register event/message handlers before start so they're ready
@@ -478,7 +477,7 @@ ${incomingMessage}`.trim();
     channel: string,
     text: string,
     thread_ts?: string,
-    blocks?: any[]
+    blocks?: any[],
   ): Promise<ChatPostMessageResponse & { ts: string }> {
     await this.ensureConnected();
     const result = await this.app!.client.chat.postMessage({
@@ -488,11 +487,11 @@ ${incomingMessage}`.trim();
       blocks,
       mrkdwn: true,
     });
-    
+
     if (!result.ts) {
       throw new Error('Slack API did not return a timestamp for the message');
     }
-    
+
     return result as ChatPostMessageResponse & { ts: string };
   }
 
@@ -500,7 +499,7 @@ ${incomingMessage}`.trim();
     channel: string,
     thread_ts: string,
     text: string,
-    blocks?: any[]
+    blocks?: any[],
   ): Promise<WebAPICallResult & { ts: string }> {
     return this.sendMessage(channel, text, thread_ts, blocks);
   }
@@ -509,7 +508,7 @@ ${incomingMessage}`.trim();
     channel: string,
     ts: string,
     text: string,
-    blocks?: any[]
+    blocks?: any[],
   ): Promise<WebAPICallResult> {
     await this.ensureConnected();
     return this.app!.client.chat.update({ channel, ts, text, blocks });
@@ -540,14 +539,14 @@ ${incomingMessage}`.trim();
     let cursor: string | undefined;
 
     do {
-        const response = await this.app!.client.conversations.list({
+      const response = await this.app!.client.conversations.list({
         types: types.join(','),
         limit: 1000,
         cursor,
-        });
+      });
 
-        channels = channels.concat(response.channels ?? []);
-        cursor = response.response_metadata?.next_cursor;
+      channels = channels.concat(response.channels ?? []);
+      cursor = response.response_metadata?.next_cursor;
     } while (cursor);
 
     return channels;
@@ -606,7 +605,7 @@ ${incomingMessage}`.trim();
     channel: string,
     limit = 50,
     oldest?: string,
-    latest?: string
+    latest?: string,
   ): Promise<any[]> {
     await this.ensureConnected();
     const res = await this.app!.client.conversations.history({
@@ -631,9 +630,9 @@ ${incomingMessage}`.trim();
   // ────────────────────────────────────────────────
 
   onMessage(
-    callback: (args: SlackEventMiddlewareArgs<'message'> & AllMiddlewareArgs) => Promise<void>
+    callback: (args: SlackEventMiddlewareArgs<'message'> & AllMiddlewareArgs) => Promise<void>,
   ): void {
-    this.app!.message(async (args) => {
+    this.app!.message(async(args) => {
       // Filter out bot messages if desired
       if (args.message.subtype === 'bot_message') return;
       await callback(args);
@@ -641,15 +640,15 @@ ${incomingMessage}`.trim();
   }
 
   onMention(
-    callback: (args: SlackEventMiddlewareArgs<'app_mention'> & AllMiddlewareArgs) => Promise<void>
+    callback: (args: SlackEventMiddlewareArgs<'app_mention'> & AllMiddlewareArgs) => Promise<void>,
   ): void {
     this.app!.event('app_mention', callback);
   }
 
   onDM(
-    callback: (args: SlackEventMiddlewareArgs<'message'> & AllMiddlewareArgs) => Promise<void>
+    callback: (args: SlackEventMiddlewareArgs<'message'> & AllMiddlewareArgs) => Promise<void>,
   ): void {
-    this.app!.message(/./, async (args) => {  // all messages
+    this.app!.message(/./, async(args) => {  // all messages
       if (args.message.channel_type !== 'im') return;
       await callback(args);
     });

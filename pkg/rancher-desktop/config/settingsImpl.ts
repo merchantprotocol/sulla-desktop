@@ -70,9 +70,9 @@ export function save(cfg: Settings) {
     settings = cfg;
   } catch (err) {
     if (err) {
-      const { dialog } = require('electron');
+      const { showErrorDialogWithReport } = require('@pkg/main/errorReporter');
 
-      dialog.showErrorBox('Unable To Save Settings File', parseSaveError(err));
+      showErrorDialogWithReport('Unable To Save Settings File', parseSaveError(err), 'settings-save');
     } else {
       console.log('Settings file saved\n');
     }

@@ -36,6 +36,6 @@ export default defineComponent({
   .badge {
     line-height: initial;
     letter-spacing: initial;
-    font-size: 10px;
+    font-size: var(--fs-caption);
   }
 </style>

@@ -1,34 +1,124 @@
 <template>
-  <div class="file-tree-sidebar" :class="{ dark: isDark }">
+  <div
+    class="file-tree-sidebar"
+    :class="{ dark: isDark }"
+  >
     <div class="file-tree-header">
       <span class="file-tree-title">EXPLORER</span>
       <div class="file-tree-actions">
-        <button class="action-btn" title="New File" @click="newFileAtRoot">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <button
+          class="action-btn"
+          title="New File"
+          @click="newFileAtRoot"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
             <polyline points="14 2 14 8 20 8" />
-            <line x1="12" y1="18" x2="12" y2="12" />
-            <line x1="9" y1="15" x2="15" y2="15" />
+            <line
+              x1="12"
+              y1="18"
+              x2="12"
+              y2="12"
+            />
+            <line
+              x1="9"
+              y1="15"
+              x2="15"
+              y2="15"
+            />
           </svg>
         </button>
-        <button class="action-btn" title="New Folder" @click="newFolderAtRoot">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <button
+          class="action-btn"
+          title="New Folder"
+          @click="newFolderAtRoot"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-            <line x1="12" y1="11" x2="12" y2="17" />
-            <line x1="9" y1="14" x2="15" y2="14" />
+            <line
+              x1="12"
+              y1="11"
+              x2="12"
+              y2="17"
+            />
+            <line
+              x1="9"
+              y1="14"
+              x2="15"
+              y2="14"
+            />
           </svg>
         </button>
-        <button class="action-btn" title="Upload File" @click="triggerUpload">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <button
+          class="action-btn"
+          title="Upload File"
+          @click="triggerUpload"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
             <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
+            <line
+              x1="12"
+              y1="3"
+              x2="12"
+              y2="15"
+            />
           </svg>
         </button>
-        <button class="action-btn" title="Close Panel" @click="$emit('close')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
+        <button
+          class="action-btn"
+          title="Close Panel"
+          @click="$emit('close')"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="18"
+              y1="6"
+              x2="6"
+              y2="18"
+            />
+            <line
+              x1="6"
+              y1="6"
+              x2="18"
+              y2="18"
+            />
           </svg>
         </button>
       </div>
@@ -38,9 +128,12 @@
         multiple
         style="display: none"
         @change="onUploadInput"
-      />
+      >
     </div>
-    <div v-if="loading && entries.length === 0" class="file-tree-loading">
+    <div
+      v-if="loading && entries.length === 0"
+      class="file-tree-loading"
+    >
       Loading…
     </div>
     <div
@@ -75,7 +168,10 @@
       :has-clipboard="!!fileClipboard"
       @action="onContextAction"
     />
-    <InlinePrompt ref="inlinePromptRef" :is-dark="isDark" />
+    <InlinePrompt
+      ref="inlinePromptRef"
+      :is-dark="isDark"
+    />
   </div>
 </template>
 
@@ -87,12 +183,13 @@ import FileContextMenu from './FileContextMenu.vue';
 import InlinePrompt from '../editor/InlinePrompt.vue';
 
 export interface FileEntry {
-  name: string;
-  path: string;
-  isDir: boolean;
-  size: number;
-  ext: string;
+  name:        string;
+  path:        string;
+  isDir:       boolean;
+  size:        number;
+  ext:         string;
   editorType?: 'code';
+  line?:       number;
 }
 
 export default defineComponent({
@@ -101,7 +198,7 @@ export default defineComponent({
   components: { FileTreeNode, FileContextMenu, InlinePrompt },
 
   props: {
-    isDark: { type: Boolean, default: false },
+    isDark:        { type: Boolean, default: false },
     highlightPath: { type: String, default: '' },
   },
 
@@ -124,7 +221,7 @@ export default defineComponent({
         rootPath.value = await ipcRenderer.invoke('filesystem-get-root');
         console.log('[FileTree] loadRoot rootPath:', rootPath.value);
         const result = await ipcRenderer.invoke('filesystem-read-dir', rootPath.value);
-        console.log('[FileTree] loadRoot entries:', result.length, result.map((e: FileEntry) => `${e.isDir ? 'D' : 'F'} ${e.name} (ext: ${e.ext})`));
+        console.log('[FileTree] loadRoot entries:', result.length, result.map((e: FileEntry) => `${ e.isDir ? 'D' : 'F' } ${ e.name } (ext: ${ e.ext })`));
         entries.value = result;
       } catch (err) {
         console.error('[FileTree] Failed to load root:', err);
@@ -138,7 +235,7 @@ export default defineComponent({
       loadingDirs.value.add(dirPath);
       try {
         const result = await ipcRenderer.invoke('filesystem-read-dir', dirPath);
-        console.log('[FileTree] loadChildren result for', dirPath, ':', result.length, 'entries:', result.map((e: FileEntry) => `${e.isDir ? 'D' : 'F'} ${e.name}`));
+        console.log('[FileTree] loadChildren result for', dirPath, ':', result.length, 'entries:', result.map((e: FileEntry) => `${ e.isDir ? 'D' : 'F' } ${ e.name }`));
         childrenMap.value = { ...childrenMap.value, [dirPath]: result };
       } catch (err) {
         console.error('[FileTree] Failed to load dir:', dirPath, err);
@@ -300,7 +397,7 @@ export default defineComponent({
         }
         case 'delete': {
           const name = targetPath.substring(targetPath.lastIndexOf('/') + 1);
-          const confirmed = confirm(`Delete "${name}"? This cannot be undone.`);
+          const confirmed = confirm(`Delete "${ name }"? This cannot be undone.`);
           if (!confirmed) return;
           await ipcRenderer.invoke('filesystem-delete', targetPath);
           await refreshParentOrRoot(targetPath);
@@ -328,17 +425,17 @@ export default defineComponent({
         case 'open-code-editor':
           // Emit file-selected with forced code editor
           emit('file-selected', {
-            name: targetPath.split('/').pop() || '',
-            path: targetPath,
-            isDir: false,
-            size: 0,
-            ext: targetPath.split('.').pop() || '',
-            editorType: 'code'
+            name:       targetPath.split('/').pop() || '',
+            path:       targetPath,
+            isDir:      false,
+            size:       0,
+            ext:        targetPath.split('.').pop() || '',
+            editorType: 'code',
           });
           break;
         }
       } catch (err: any) {
-        console.error(`Context action "${type}" failed:`, err);
+        console.error(`Context action "${ type }" failed:`, err);
         alert(err?.message || 'Operation failed');
       }
     }
@@ -383,7 +480,7 @@ export default defineComponent({
           );
           await ipcRenderer.invoke('filesystem-upload', destDir, file.name, base64);
         } catch (err: any) {
-          console.error(`Upload failed for ${file.name}:`, err);
+          console.error(`Upload failed for ${ file.name }:`, err);
         }
       }
     }
@@ -433,7 +530,7 @@ export default defineComponent({
     }
 
     // Watch for highlightPath changes to expand directories
-    watch(() => props.highlightPath, async (newPath: string) => {
+    watch(() => props.highlightPath, async(newPath: string) => {
       if (!newPath) return;
 
       // Split the path into segments to expand each directory
@@ -468,16 +565,16 @@ export default defineComponent({
       if (!rootPath.value) return;
       try {
         const freshRoot = await ipcRenderer.invoke('filesystem-read-dir', rootPath.value);
-        const oldNames = entries.value.map(e => `${e.name}:${e.isDir}`).join(',');
-        const newNames = freshRoot.map((e: FileEntry) => `${e.name}:${e.isDir}`).join(',');
+        const oldNames = entries.value.map(e => `${ e.name }:${ e.isDir }`).join(',');
+        const newNames = freshRoot.map((e: FileEntry) => `${ e.name }:${ e.isDir }`).join(',');
         if (oldNames !== newNames) {
           entries.value = freshRoot;
         }
         // Also refresh any expanded directories
         for (const dirPath of expandedDirs.value) {
           const freshChildren = await ipcRenderer.invoke('filesystem-read-dir', dirPath);
-          const oldChildNames = (childrenMap.value[dirPath] || []).map((e: FileEntry) => `${e.name}:${e.isDir}`).join(',');
-          const newChildNames = freshChildren.map((e: FileEntry) => `${e.name}:${e.isDir}`).join(',');
+          const oldChildNames = (childrenMap.value[dirPath] || []).map((e: FileEntry) => `${ e.name }:${ e.isDir }`).join(',');
+          const newChildNames = freshChildren.map((e: FileEntry) => `${ e.name }:${ e.isDir }`).join(',');
           if (oldChildNames !== newChildNames) {
             childrenMap.value = { ...childrenMap.value, [dirPath]: freshChildren };
           }
@@ -543,17 +640,12 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #f8fafc;
-  color: #333;
+  background: var(--bg-surface);
+  color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 13px;
+  font-size: var(--fs-code);
   user-select: none;
   overflow: hidden;
-}
-
-.file-tree-sidebar.dark {
-  background: #1e293b;
-  color: #ccc;
 }
 
 .file-tree-header {
@@ -561,20 +653,14 @@ export default defineComponent({
   align-items: center;
   padding: 0 8px 0 12px;
   height: 35px;
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
   font-weight: 600;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: #64748b;
-  background: #f8fafc;
-  border-bottom: 1px solid #cbd5e1;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
-}
-
-.dark .file-tree-header {
-  color: #94a3b8;
-  background: #1e293b;
-  border-bottom-color: #3c3c3c;
 }
 
 .file-tree-actions {
@@ -594,38 +680,29 @@ export default defineComponent({
   background: none;
   border-radius: 4px;
   cursor: pointer;
-  color: #666;
+  color: var(--text-muted);
 }
 
 .action-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: #333;
-}
-
-.dark .action-btn {
-  color: #999;
-}
-
-.dark .action-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ccc;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .file-tree-scroll.drop-active {
-  background: rgba(0, 120, 212, 0.06);
-  outline: 2px dashed rgba(0, 120, 212, 0.3);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.06));
+  outline: 2px dashed var(--accent-primary, rgba(0, 120, 212, 0.3));
   outline-offset: -2px;
 }
 
 .dark .file-tree-scroll.drop-active {
-  background: rgba(0, 120, 212, 0.1);
-  outline-color: rgba(0, 120, 212, 0.4);
+  background: var(--bg-surface,rgba(0, 120, 212, 0.1));
+  outline-color: var(--accent-primary, rgba(0, 120, 212, 0.4));
 }
 
 .file-tree-loading {
   padding: 16px 12px;
-  color: #999;
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--fs-body-sm);
 }
 
 .file-tree-scroll {
@@ -644,11 +721,7 @@ export default defineComponent({
 }
 
 .file-tree-scroll::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--bg-hover);
   border-radius: 3px;
-}
-
-.dark .file-tree-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
 }
 </style>

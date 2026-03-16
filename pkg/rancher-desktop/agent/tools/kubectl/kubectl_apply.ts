@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { runCommand } from "../util/CommandRunner";
+import { BaseTool, ToolResponse } from '../base';
+import { runCommand } from '../util/CommandRunner';
 
 /**
  * Kubectl Apply Tool - Worker class for execution
  */
 export class KubectlApplyWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { file, namespace, dryRun } = input;
 
@@ -26,20 +26,20 @@ export class KubectlApplyWorker extends BaseTool {
       if (res.exitCode !== 0) {
         return {
           successBoolean: false,
-          responseString: `Error applying manifest: ${res.stderr || res.stdout}`
+          responseString: `Error applying manifest: ${ res.stderr || res.stdout }`,
         };
       }
 
-      const responseString = `Applied manifest from ${file}${namespace ? ` in namespace ${namespace}` : ''}${dryRun && dryRun !== 'none' ? ` (dry-run: ${dryRun})` : ''}\nOutput:\n${res.stdout}`;
+      const responseString = `Applied manifest from ${ file }${ namespace ? ` in namespace ${ namespace }` : '' }${ dryRun && dryRun !== 'none' ? ` (dry-run: ${ dryRun })` : '' }\nOutput:\n${ res.stdout }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing kubectl apply: ${(error as Error).message}`
+        responseString: `Error executing kubectl apply: ${ (error as Error).message }`,
       };
     }
   }

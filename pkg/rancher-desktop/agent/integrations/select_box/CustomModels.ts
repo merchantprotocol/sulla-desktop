@@ -25,7 +25,7 @@ export class CustomModels extends SelectBoxProvider {
         return [];
       }
 
-      const body = await response.json() as { data?: Array<{ id: string }> };
+      const body = await response.json() as { data?: { id: string }[] };
 
       if (body.data && body.data.length > 0) {
         return body.data.map(m => ({ value: m.id, label: m.id }));

@@ -39,7 +39,8 @@ import { Snapshots } from '@pkg/main/snapshots/snapshots';
 import { Snapshot, SnapshotDialog } from '@pkg/main/snapshots/types';
 import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
-import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
+import { submitErrorReport } from '@pkg/main/errorReporter';
+import { hookSullaEnd, sullaEnd, onMainProxyLoad, markSullaRestarting } from '@pkg/sulla';
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { spawnFile } from '@pkg/utils/childProcess';
 import getCommandLineArgs from '@pkg/utils/commandLine';
@@ -142,7 +143,25 @@ process.on('unhandledRejection', (reason: any, promise: any) => {
     // Do nothing: a connection to the kubernetes server was broken
   } else {
     console.error('UnhandledRejectionWarning:', reason);
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+
+    submitErrorReport({
+      error_type:    err.name || 'unhandledRejection',
+      error_message: err.message,
+      stack_trace:   err.stack || '',
+      user_context:  'unhandledRejection in main process (background.ts)',
+    }).catch(() => {});
   }
+});
+
+process.on('uncaughtException', (err: Error) => {
+  console.error('UncaughtException:', err);
+  submitErrorReport({
+    error_type:    err.name || 'uncaughtException',
+    error_message: err.message,
+    stack_trace:   err.stack || '',
+    user_context:  'uncaughtException in main process (background.ts)',
+  }).catch(() => {});
 });
 
 Electron.app.on('second-instance', async() => {
@@ -211,7 +230,20 @@ Electron.protocol.registerSchemesAsPrivileged([{ scheme: 'app' }, {
 
 hookSullaEnd(Electron, mainEvents, window);
 
-const SULLA_WEB_REQUEST_LOG_DIR = path.join(process.cwd(), 'log');
+/** Resolve the project root without relying on process.cwd() which throws
+ *  ENOENT when the working directory has been removed (e.g. nightly reinstall). */
+function getSullaProjectDir(): string {
+  if (process.env.SULLA_PROJECT_DIR) {
+    return process.env.SULLA_PROJECT_DIR;
+  }
+  try {
+    return process.cwd();
+  } catch {
+    return Electron.app.getAppPath();
+  }
+}
+
+const SULLA_WEB_REQUEST_LOG_DIR = path.join(getSullaProjectDir(), 'log');
 const SULLA_WEB_REQUEST_LOG_FILE = path.join(SULLA_WEB_REQUEST_LOG_DIR, 'background-web-requests.log');
 
 function writeSullaWebRequestEvent(event: SullaWebRequestLogEvent): void {
@@ -238,13 +270,13 @@ function writeSullaWebRequestEvent(event: SullaWebRequestLogEvent): void {
     ].join('\n') + '\n', { encoding: 'utf-8' });
 
     console.log('[SullaWebRequest]', {
-      timestamp: new Date().toISOString(),
-      direction: event.direction,
-      method: event.method || 'unknown',
-      statusCode: typeof event.statusCode === 'number' ? event.statusCode : 'n/a',
+      timestamp:    new Date().toISOString(),
+      direction:    event.direction,
+      method:       event.method || 'unknown',
+      statusCode:   typeof event.statusCode === 'number' ? event.statusCode : 'n/a',
       resourceType: event.resourceType || 'unknown',
-      url: event.url || 'unknown',
-      payload: event.payload ?? {},
+      url:          event.url || 'unknown',
+      payload:      event.payload ?? {},
     });
   } catch (error) {
     console.error('[SullaWebRequestLogger] Failed to write event:', error);
@@ -256,17 +288,11 @@ Electron.app.whenReady().then(() => {
 
   const fixer = new SullaWebRequestFixer(writeSullaWebRequestEvent);
   fixer.attachToSession(session);
-
 });
 
-////////////////////////////////////////////////////////////////////////////////
+/// /////////////////////////////////////////////////////////////////////////////
 // SULLA DESKTOP - END
-////////////////////////////////////////////////////////////////////////////////
-
-
-
-
-
+/// /////////////////////////////////////////////////////////////////////////////
 
 Electron.app.whenReady().then(async() => {
   try {
@@ -398,7 +424,6 @@ Electron.app.whenReady().then(async() => {
     // Training deps are NOT installed at startup.
     // They are installed on-demand when the user opens the Model Training
     // window and clicks "Install Training Environment".
-
   } catch (ex: any) {
     console.error(`Error starting up: ${ ex }`, ex.stack);
     gone = true;
@@ -504,10 +529,9 @@ async function initUI() {
   buildApplicationMenu();
 
   Electron.app.setAboutPanelOptions({
-    // TODO: Update this to 2021-... as dev progresses
     // also needs to be updated in electron-builder.yml
-    copyright:          'Copyright © 2026 Jonathon Byrdziak',
-    applicationName:    `${ Electron.app.name } by Jonathon Byrdziak`,
+    copyright:          'Copyright © 2025-2026 Merchant Protocol LLC',
+    applicationName:    `${ Electron.app.name } by Merchant Protocol`,
     applicationVersion: `Version ${ await getVersion() }`,
     iconPath:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
   });
@@ -706,38 +730,65 @@ function isK8sError(object: any): object is K8sError {
   return 'errCode' in object;
 }
 
+// When true, the app is restarting (not fully quitting) — skip container/VM teardown
+let isRestarting = false;
+
+mainEvents.on('restarting', () => {
+  console.log('[Shutdown] background.ts received "restarting" event — setting isRestarting=true');
+  isRestarting = true;
+  markSullaRestarting();
+});
+
 Electron.app.on('before-quit', async(event) => {
+  const triggerStack = new Error('before-quit trigger trace').stack;
+
+  console.log(`[Shutdown] before-quit fired — gone=${ gone }, isRestarting=${ isRestarting }`);
+  console.log(`[Shutdown] before-quit call stack:\n${ triggerStack }`);
   if (gone) {
+    console.log('[Shutdown] before-quit: already gone, emitting "quit" and returning');
     mainEvents.emit('quit');
 
     return;
   }
   event.preventDefault();
+  console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');
   httpCommandServer?.closeServer();
   httpCredentialHelperServer.closeServer();
 
+  /// /////////////////////////////////////////////////////////////////////////////
+  // SULLA DESKTOP - START
+  // Commands to shut down database connections
+  /// /////////////////////////////////////////////////////////////////////////////
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // SULLA DESKTOP - START
-    // Commands to shut down database connections
-    ////////////////////////////////////////////////////////////////////////////////
+  console.log('[Shutdown] before-quit: calling sullaEnd()');
+  await sullaEnd(event);
+  console.log('[Shutdown] before-quit: sullaEnd() complete');
 
+  /// /////////////////////////////////////////////////////////////////////////////
+  // SULLA DESKTOP - END
+  /// /////////////////////////////////////////////////////////////////////////////
 
-      await sullaEnd(event);
+  if (isRestarting) {
+    // Restart: skip container/VM teardown so the app relaunches fast
+    console.log('[Shutdown] RESTART PATH — skipping k8smanager.stop(), extensions/shutdown, shutdown-integrations');
+    gone = true;
+    Electron.app.quit();
 
+    return;
+  }
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // SULLA DESKTOP - END
-    ////////////////////////////////////////////////////////////////////////////////
-
+  console.log('[Shutdown] FULL QUIT PATH — stopping k8smanager, extensions, integrations');
   try {
+    console.log('[Shutdown] calling extensions/shutdown...');
     await mainEvents.tryInvoke('extensions/shutdown');
+    console.log('[Shutdown] calling k8smanager?.stop() (this stops Docker + Lima VM)...');
     await k8smanager?.stop();
+    console.log('[Shutdown] calling shutdown-integrations...');
     await mainEvents.tryInvoke('shutdown-integrations');
 
-    console.log(`2: Child exited cleanly.`);
+    console.log(`[Shutdown] Full quit completed cleanly.`);
   } catch (ex: any) {
-    console.log(`2: Child exited with code ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`);
+    console.log(`[Shutdown] Full quit error: ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`);
     handleFailure(ex);
   } finally {
     gone = true;
@@ -801,14 +852,9 @@ ipcMainProxy.handle('start-backend' as any, () => {
   }
 });
 
-
-
-
-////////////////////////////////////////////////////////////////////////////////
+/// /////////////////////////////////////////////////////////////////////////////
 // SULLA DESKTOP
-////////////////////////////////////////////////////////////////////////////////
-
-
+/// /////////////////////////////////////////////////////////////////////////////
 
 await onMainProxyLoad(ipcMainProxy);
 
@@ -819,9 +865,21 @@ ipcMainProxy.on('model-changed', (_event, data) => {
   });
 });
 
+// Error reporting — fire-and-forget from renderer
+ipcMainProxy.on('error-report/submit', (_event, report) => {
+  submitErrorReport(report).catch((err) => {
+    console.error('[ErrorReporter] Failed to submit:', err);
+  });
+});
+
+// Error reporting — invoke from renderer (awaitable)
+ipcMainProxy.handle('error-report/invoke' as any, async(_event: any, report: any) => {
+  return await submitErrorReport(report);
+});
+
 ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
   console.log('Starting Sulla custom environment...');
-  
+
   const firstKubernetesIsInstalled = await SullaSettingsModel.get('firstKubernetesIsInstalled', false);
   if (firstKubernetesIsInstalled !== true) {
     console.log('Sulla custom environment: Lima/Kubernetes not yet installed, skipping.');
@@ -844,14 +902,9 @@ ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
   }
 });
 
-
-
-
-////////////////////////////////////////////////////////////////////////////////
+/// /////////////////////////////////////////////////////////////////////////////
 // SULLA DESKTOP
-////////////////////////////////////////////////////////////////////////////////
-
-
+/// /////////////////////////////////////////////////////////////////////////////
 
 ipcMainProxy.on('images-namespaces-read', (event) => {
   if ([K8s.State.STARTED, K8s.State.DISABLED].includes(k8smanager.state)) {
@@ -1893,5 +1946,9 @@ async function runRdctlSetup(newSettings: settings.Settings): Promise<void> {
   const rdctlPath = executable('rdctl');
   const args = ['setup', `--auto-start=${ newSettings.application.autoStart }`];
 
-  await spawnFile(rdctlPath, args);
+  try {
+    await spawnFile(rdctlPath, args);
+  } catch (err: any) {
+    console.error(`[Startup] rdctl setup failed (exit code ${ err.code }): ${ err.message }`);
+  }
 }

@@ -47,13 +47,54 @@
         </div>
       </div>
     </div>
-    <button
-      data-test="accept-btn"
-      class="role-primary primary-action"
-      @click="close"
-    >
-      Close
-    </button>
+    <div class="actions-bar">
+      <div class="report-section">
+        <div
+          v-if="reportStatus === 'success'"
+          class="report-confirmation"
+        >
+          Thank you! Your report has been submitted.
+        </div>
+        <div
+          v-else-if="reportStatus === 'error'"
+          class="report-error"
+        >
+          Could not submit report. Please try again or file an issue on GitHub.
+        </div>
+        <template v-else>
+          <label class="notify-checkbox">
+            <input
+              v-model="wantNotification"
+              type="checkbox"
+            >
+            Notify me when this is fixed
+          </label>
+          <input
+            v-if="wantNotification"
+            v-model="notifyEmail"
+            type="email"
+            class="email-input"
+            placeholder="your@email.com"
+          >
+        </template>
+      </div>
+      <div class="action-buttons">
+        <button
+          data-test="report-btn"
+          class="role-primary"
+          :disabled="reportStatus === 'sending' || reportStatus === 'success'"
+          @click="sendReport"
+        >
+          {{ reportButtonLabel }}
+        </button>
+        <button
+          data-test="accept-btn"
+          @click="close"
+        >
+          Close
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -66,8 +107,8 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 
 export default defineComponent({
-  name:   'kubernetes-error-dialog',
-  layout: 'dialog',
+  name:       'kubernetes-error-dialog',
+  layout:     'dialog',
   components: { PostHogTracker },
   data() {
     return {
@@ -75,8 +116,11 @@ export default defineComponent({
       mainMessage:        '',
       lastCommand:        '',
       lastCommandComment: '',
-      lastLogLines:       [],
+      lastLogLines:       [] as string[],
       appVersion:         '',
+      reportStatus:       'idle' as 'idle' | 'sending' | 'success' | 'error',
+      wantNotification:   false,
+      notifyEmail:        '',
     };
   },
   computed: {
@@ -93,6 +137,13 @@ export default defineComponent({
     },
     versionString(): string {
       return `Sulla Desktop ${ this.appVersion } - ${ this.platform } (${ this.arch })`;
+    },
+    reportButtonLabel(): string {
+      switch (this.reportStatus) {
+      case 'sending': return 'Sending...';
+      case 'success': return 'Sent!';
+      default: return 'Send Report';
+      }
     },
   },
   beforeMount() {
@@ -118,6 +169,35 @@ export default defineComponent({
     },
     showLogs() {
       ipcRenderer.send('show-logs');
+    },
+    async sendReport() {
+      if (this.reportStatus === 'sending' || this.reportStatus === 'success') {
+        return;
+      }
+
+      this.reportStatus = 'sending';
+
+      const stackParts = [
+        this.lastCommand ? `Command: ${ this.lastCommand }` : '',
+        this.lastCommandComment ? `Context: ${ this.lastCommandComment }` : '',
+        this.joinedLastLogLines ? `Log lines:\n${ this.joinedLastLogLines }` : '',
+      ].filter(Boolean);
+
+      const report = {
+        error_type:    'app_error',
+        error_message: `${ this.titlePart }: ${ this.mainMessage }`,
+        stack_trace:   stackParts.join('\n\n'),
+        user_context:  `KubernetesError dialog — ${ this.versionString }`,
+        notify_email:  this.wantNotification && this.notifyEmail ? this.notifyEmail : undefined,
+      };
+
+      try {
+        const result = await ipcRenderer.invoke('error-report/invoke', report);
+
+        this.reportStatus = result?.success ? 'success' : 'error';
+      } catch {
+        this.reportStatus = 'error';
+      }
     },
   },
 });
@@ -182,7 +262,63 @@ export default defineComponent({
     }
   }
 
-  .primary-action {
-    align-self: flex-end;
+  .actions-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .report-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    flex: 1;
+  }
+
+  .notify-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+    user-select: none;
+
+    input[type="checkbox"] {
+      cursor: pointer;
+    }
+  }
+
+  .email-input {
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    max-width: 260px;
+    background: var(--input-bg);
+    color: var(--input-text);
+
+    &:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+  }
+
+  .report-confirmation {
+    font-size: 0.85rem;
+    color: var(--success);
+  }
+
+  .report-error {
+    font-size: 0.85rem;
+    color: var(--error);
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
   }
 </style>

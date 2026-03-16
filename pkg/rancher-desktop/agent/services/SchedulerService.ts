@@ -13,7 +13,7 @@ const ACK_TIMEOUT_MS = 3_000;
 
 interface ScheduledJob {
   eventId: number;
-  job: schedule.Job;
+  job:     schedule.Job;
 }
 
 let schedulerServiceInstance: SchedulerService | null = null;
@@ -27,7 +27,7 @@ export function getSchedulerService(): SchedulerService {
 
 export class SchedulerService {
   private initialized = false;
-  private scheduledJobs: Map<number, ScheduledJob> = new Map();
+  private scheduledJobs = new Map<number, ScheduledJob>();
   private readonly wsService = getWebSocketClientService();
   private wsInitialized = false;
   private unsubscribeFrontend: (() => void) | null = null;
@@ -48,7 +48,7 @@ export class SchedulerService {
         this.scheduleEvent(event.attributes as any);
       }
 
-      console.log(`[SchedulerService] Scheduled ${events.length} upcoming events`);
+      console.log(`[SchedulerService] Scheduled ${ events.length } upcoming events`);
     } catch (err) {
       console.error('[SchedulerService] Initialization failed:', err);
     }
@@ -63,19 +63,19 @@ export class SchedulerService {
     const now = new Date();
 
     if (startTime <= now) {
-      console.log(`[SchedulerService] Skipping past event: ${event.id} - ${event.title}`);
+      console.log(`[SchedulerService] Skipping past event: ${ event.id } - ${ event.title }`);
       return;
     }
 
-    const job = schedule.scheduleJob(startTime, async () => {
-      console.log(`[SchedulerService] CRON JOB FIRED for event: ${event.id} - "${event.title}"`);
+    const job = schedule.scheduleJob(startTime, async() => {
+      console.log(`[SchedulerService] CRON JOB FIRED for event: ${ event.id } - "${ event.title }"`);
       await this.triggerEvent(event);
       this.scheduledJobs.delete(event.id);
     });
 
     if (job) {
       this.scheduledJobs.set(event.id, { eventId: event.id, job });
-      console.log(`[SchedulerService] Scheduled event: ${event.id} - ${event.title} at ${startTime.toISOString()}`);
+      console.log(`[SchedulerService] Scheduled event: ${ event.id } - ${ event.title } at ${ startTime.toISOString() }`);
     }
   }
 
@@ -84,7 +84,7 @@ export class SchedulerService {
     if (scheduled) {
       scheduled.job.cancel();
       this.scheduledJobs.delete(eventId);
-      console.log(`[SchedulerService] Cancelled scheduled event: ${eventId}`);
+      console.log(`[SchedulerService] Cancelled scheduled event: ${ eventId }`);
     }
   }
 
@@ -94,20 +94,20 @@ export class SchedulerService {
 
   async triggerEvent(event: any): Promise<void> {
     try {
-      console.log(`[SchedulerService] Sending event prompt via WS: ${event.id} - "${event.title}"`);
+      console.log(`[SchedulerService] Sending event prompt via WS: ${ event.id } - "${ event.title }"`);
       const prompt = this.buildEventPrompt(event);
-      console.log(`[SchedulerService] Built prompt (${prompt.length} chars)`);
+      console.log(`[SchedulerService] Built prompt (${ prompt.length } chars)`);
 
       const acknowledged = await this.sendToFrontend(event, prompt);
       if (acknowledged) {
-        console.log(`[SchedulerService] Frontend acknowledged event ${event.id}`);
+        console.log(`[SchedulerService] Frontend acknowledged event ${ event.id }`);
         return;
       }
 
-      console.warn(`[SchedulerService] Frontend did not ACK event ${event.id} - using backend`);
+      console.warn(`[SchedulerService] Frontend did not ACK event ${ event.id } - using backend`);
       void this.sendToBackend(event, prompt);
     } catch (err) {
-      console.error(`[SchedulerService] Failed to trigger event ${event.id}:`, err);
+      console.error(`[SchedulerService] Failed to trigger event ${ event.id }:`, err);
     }
   }
 
@@ -137,11 +137,11 @@ export class SchedulerService {
     return {
       type: 'user_message',
       data: {
-        role: 'user',
-        content: prompt,
+        role:     'user',
+        content:  prompt,
         metadata: {
-          origin: 'scheduler',
-          eventId: event.id,
+          origin:     'scheduler',
+          eventId:    event.id,
           eventTitle: event.title,
         },
       },
@@ -155,7 +155,7 @@ export class SchedulerService {
 
     const sent = await this.wsService.send(FRONTEND_CHANNEL_ID, message);
     if (!sent) {
-      console.warn(`[SchedulerService] Failed to send event ${event.id} to frontend`);
+      console.warn(`[SchedulerService] Failed to send event ${ event.id } to frontend`);
       return false;
     }
 
@@ -175,7 +175,7 @@ export class SchedulerService {
     this.wsService.connect(BACKEND_CHANNEL_ID);
     const sent = await this.wsService.send(BACKEND_CHANNEL_ID, message);
     if (!sent) {
-      console.error(`[SchedulerService] Failed to send event ${event.id} to backend`);
+      console.error(`[SchedulerService] Failed to send event ${ event.id } to backend`);
     }
   }
 
@@ -185,35 +185,35 @@ export class SchedulerService {
     const endDate = new Date(event.end_time || event.end);
     const startFormatted = startDate.toLocaleString('en-US', {
       timeZone: timezone,
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
+      weekday:  'long',
+      year:     'numeric',
+      month:    'long',
+      day:      'numeric',
+      hour:     '2-digit',
+      minute:   '2-digit',
+      hour12:   true,
     });
     const endFormatted = endDate.toLocaleTimeString('en-US', {
       timeZone: timezone,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
+      hour:     '2-digit',
+      minute:   '2-digit',
+      hour12:   true,
     });
 
     const parts = [
-      `${eventPrompt}`,
+      `${ eventPrompt }`,
       `## Event Details`,
       ``,
-      `Title: ${event.title}`,
-      `Description: ${event.description ?? 'None'}`,
-      `Invitees: ${event.people?.join(', ') ?? 'None'}`,
-      `Start datetime: ${startFormatted}`,
-      `End datetime: ${endFormatted}`,
-      `All day: ${event.all_day ?? event.allDay ?? false}`,
-      `Created: ${event.created_at ?? event.createdAt ?? 'N/A'}`,
+      `Title: ${ event.title }`,
+      `Description: ${ event.description ?? 'None' }`,
+      `Invitees: ${ event.people?.join(', ') ?? 'None' }`,
+      `Start datetime: ${ startFormatted }`,
+      `End datetime: ${ endFormatted }`,
+      `All day: ${ event.all_day ?? event.allDay ?? false }`,
+      `Created: ${ event.created_at ?? event.createdAt ?? 'N/A' }`,
     ];
 
-    if (event.location) parts.push(`Location: ${event.location}`);
+    if (event.location) parts.push(`Location: ${ event.location }`);
 
     return parts.join('\n');
   }

@@ -1,27 +1,49 @@
 <template>
-  <div class="min-h-screen text-sm font-sans page-root" :class="{ dark: isDark }">
+  <div
+    class="h-full text-sm font-sans page-root overflow-y-auto"
+    :class="{ dark: isDark }"
+  >
     <PostHogTracker page-name="AgentIntegrationDetail" />
-    <div class="flex min-h-screen flex-col">
-      <AgentHeader :is-dark="isDark" :toggle-theme="toggleTheme" />
+    <div class="flex min-h-full flex-col">
+      <AgentHeader
+        :is-dark="isDark"
+        :toggle-theme="toggleTheme"
+      />
 
       <div class="flex-1 overflow-auto">
         <div class="mx-auto max-w-6xl px-4 py-8">
           <!-- Back button -->
           <button
-            @click="$router.push('/Integrations')"
             class="mb-6 flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+            @click="$router.push('/Integrations')"
           >
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+            <svg
+              class="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M15 19l-7-7 7-7"
+              />
             </svg>
             Back to Integrations
           </button>
 
-          <div v-if="integration" class="grid grid-cols-1 gap-8 lg:grid-cols-2">
+          <div
+            v-if="integration"
+            class="grid grid-cols-1 gap-8 lg:grid-cols-2"
+          >
             <!-- Main Content -->
             <div class="lg:col-span-2 space-y-8">
               <!-- Media -->
-              <div v-if="integration.media && integration.media.length > 0" class="space-y-4">
+              <div
+                v-if="integration.media && integration.media.length > 0"
+                class="space-y-4"
+              >
                 <div class="relative">
                   <!-- Carousel Container -->
                   <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
@@ -42,44 +64,75 @@
                           :alt="integration.media[currentImageIndex].alt"
                           class="h-full w-full object-cover"
                         >
-                        <div v-else class="flex h-full w-full items-center justify-center bg-slate-100 dark:bg-slate-800">
+                        <div
+                          v-else
+                          class="flex h-full w-full items-center justify-center bg-slate-100 dark:bg-slate-800"
+                        >
                           <span class="text-sm text-slate-400">Image unavailable</span>
                         </div>
-                        <div v-if="integration.media[currentImageIndex].caption" class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-4">
-                          <p class="text-sm text-white">{{ integration.media[currentImageIndex].caption }}</p>
+                        <div
+                          v-if="integration.media[currentImageIndex].caption"
+                          class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-4"
+                        >
+                          <p class="text-sm text-white">
+                            {{ integration.media[currentImageIndex].caption }}
+                          </p>
                         </div>
                       </div>
-                      
+
                       <!-- Navigation Arrows -->
                       <button
                         v-if="integration.media.length > 1"
-                        @click="previousImage"
                         class="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70 transition-colors"
+                        @click="previousImage"
                       >
-                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                        <svg
+                          class="h-4 w-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M15 19l-7-7 7-7"
+                          />
                         </svg>
                       </button>
                       <button
                         v-if="integration.media.length > 1"
-                        @click="nextImage"
                         class="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70 transition-colors"
+                        @click="nextImage"
                       >
-                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                        <svg
+                          class="h-4 w-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M9 5l7 7-7 7"
+                          />
                         </svg>
                       </button>
                     </div>
                   </div>
-                  
+
                   <!-- Thumbnail Navigation -->
-                  <div v-if="integration.media.length > 1" class="mt-4 flex gap-2 overflow-x-auto justify-end">
+                  <div
+                    v-if="integration.media.length > 1"
+                    class="mt-4 flex gap-2 overflow-x-auto justify-end"
+                  >
                     <button
                       v-for="(image, index) in integration.media"
                       :key="index"
-                      @click="currentImageIndex = index"
                       class="flex-shrink-0 overflow-hidden rounded-lg border-2 transition-all"
                       :class="currentImageIndex === index ? 'border-blue-500' : 'border-gray-200 dark:border-gray-700'"
+                      @click="currentImageIndex = index"
                     >
                       <img
                         :src="image.type === 'youtube' ? `https://img.youtube.com/vi/${image.url}/hqdefault.jpg` : (resolveMediaSrc(image.url) || '')"
@@ -100,7 +153,10 @@
                     :alt="integration.name"
                     class="h-12 w-12 object-contain"
                   >
-                  <span v-else class="text-3xl">{{ isImageIcon(integration.icon) ? '🔌' : integration.icon }}</span>
+                  <span
+                    v-else
+                    class="text-3xl"
+                  >{{ isImageIcon(integration.icon) ? '🔌' : integration.icon }}</span>
                 </div>
                 <div class="flex-1">
                   <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-2">
@@ -117,7 +173,7 @@
                       <div
                         class="h-2 w-2 rounded-full"
                         :class="integration.connected ? 'bg-green-500' : 'bg-gray-300'"
-                      ></div>
+                      />
                       <span class="text-xs text-slate-500 dark:text-slate-400">
                         {{ integration.connected
                           ? (connectedAccounts.length > 1
@@ -143,8 +199,18 @@
                     </div>
                   </div>
                   <div class="flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400">
-                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <svg
+                      class="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
                     </svg>
                     <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
                   </div>
@@ -174,16 +240,29 @@
               </div> -->
 
               <!-- Connected Accounts List -->
-              <div v-if="connectedAccounts.length > 0" class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800">
+              <div
+                v-if="connectedAccounts.length > 0"
+                class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800"
+              >
                 <div class="flex items-center justify-between mb-4">
                   <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
                     Connected Accounts
                   </h3>
                   <button
-                    @click="startAddAccount"
                     class="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
+                    @click="startAddAccount"
                   >
-                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                    <svg
+                      class="h-3.5 w-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    ><path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M12 4v16m8-8H4"
+                    /></svg>
                     Add Another Account
                   </button>
                 </div>
@@ -198,34 +277,40 @@
                       : 'border-gray-200 bg-white dark:border-gray-700 dark:bg-slate-800'"
                   >
                     <div class="flex items-center gap-3">
-                      <div class="h-2.5 w-2.5 rounded-full bg-green-500"></div>
+                      <div class="h-2.5 w-2.5 rounded-full bg-green-500" />
                       <div>
                         <div class="flex items-center gap-2">
                           <span class="text-sm font-medium text-slate-900 dark:text-white">Connected to {{ acct.label }}</span>
-                          <span v-if="acct.active" class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">ACTIVE</span>
+                          <span
+                            v-if="acct.active"
+                            class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                          >ACTIVE</span>
                         </div>
-                        <p v-if="acct.connected_at" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        <p
+                          v-if="acct.connected_at"
+                          class="text-xs text-slate-500 dark:text-slate-400 mt-0.5"
+                        >
                           Since {{ new Date(acct.connected_at).toLocaleDateString() }}
                         </p>
                       </div>
                     </div>
                     <div class="flex items-center gap-2">
                       <button
-                        @click="startEditAccount(acct.account_id)"
                         class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 transition-colors"
+                        @click="startEditAccount(acct.account_id)"
                       >
                         Edit Credentials
                       </button>
                       <button
                         v-if="!acct.active"
-                        @click="setAccountActive(acct.account_id)"
                         class="rounded-md px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                        @click="setAccountActive(acct.account_id)"
                       >
                         Set Active
                       </button>
                       <button
-                        @click="disconnectAccount(acct.account_id)"
                         class="rounded-md px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                        @click="disconnectAccount(acct.account_id)"
                       >
                         Disconnect
                       </button>
@@ -235,7 +320,10 @@
               </div>
 
               <!-- Connect Card (first time or adding new account) -->
-              <div v-if="showConnectionForm" class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800">
+              <div
+                v-if="showConnectionForm"
+                class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800"
+              >
                 <div class="flex items-center justify-between mb-4">
                   <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
                     {{ isEditingAccount
@@ -244,80 +332,135 @@
                   </h3>
                   <button
                     v-if="isAddingAccount || isEditingAccount"
-                    @click="cancelAddAccount"
                     class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium"
+                    @click="cancelAddAccount"
                   >
                     Cancel
                   </button>
                 </div>
-                
+
                 <!-- Form Guide -->
-                <div v-if="integration.formGuide" class="mb-6">
+                <div
+                  v-if="integration.formGuide"
+                  class="mb-6"
+                >
                   <p class="text-sm text-slate-600 dark:text-slate-400">
                     <span class="font-medium">Where to find this information:</span> {{ integration.formGuide }}
                   </p>
                 </div>
 
                 <!-- OAuth sign-in section (completely independent of credentials form) -->
-                <div v-if="(integration.authType === 'oauth' || integration.oauth) && !isEditingAccount" class="space-y-2 mb-6">
+                <div
+                  v-if="(integration.authType === 'oauth' || integration.oauth) && !isEditingAccount"
+                  class="space-y-2 mb-6"
+                >
                   <button
-                    @click="handleOAuthConnect()"
                     :disabled="isLoading"
                     class="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 flex items-center justify-center"
+                    @click="handleOAuthConnect()"
                   >
-                    <svg v-if="isLoading" class="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a8 8 0 01-16 0v4a8 8 0 0016 0z"></path>
+                    <svg
+                      v-if="isLoading"
+                      class="animate-spin h-4 w-4 mr-2"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        class="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        stroke-width="4"
+                      />
+                      <path
+                        class="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8v4a8 8 0 01-16 0v4a8 8 0 0016 0z"
+                      />
                     </svg>
                     {{ isLoading ? 'Authorizing...' : `Sign in with ${integration.name}` }}
                   </button>
                   <p class="text-xs text-slate-500 dark:text-slate-400">
                     Your browser will open to sign in and authorize access.
                   </p>
-                  <p v-if="oauthError" class="text-xs text-red-500">{{ oauthError }}</p>
+                  <p
+                    v-if="oauthError"
+                    class="text-xs text-red-500"
+                  >
+                    {{ oauthError }}
+                  </p>
                 </div>
 
                 <!-- Divider when both OAuth and credentials are available -->
-                <div v-if="integration.oauth && integration.authType !== 'oauth' && !isEditingAccount" class="flex items-center gap-3 mb-6">
-                  <div class="flex-1 border-t border-slate-300 dark:border-slate-600"></div>
+                <div
+                  v-if="integration.oauth && integration.authType !== 'oauth' && !isEditingAccount"
+                  class="flex items-center gap-3 mb-6"
+                >
+                  <div class="flex-1 border-t border-slate-300 dark:border-slate-600" />
                   <span class="text-xs text-slate-400 dark:text-slate-500 uppercase">or connect with credentials</span>
-                  <div class="flex-1 border-t border-slate-300 dark:border-slate-600"></div>
+                  <div class="flex-1 border-t border-slate-300 dark:border-slate-600" />
                 </div>
 
                 <!-- Credentials section (account label + properties + connect button) -->
                 <div v-if="integration.authType !== 'oauth' || isEditingAccount">
                   <!-- Account Label (required only for new accounts) -->
-                  <div v-if="connectedAccounts.length === 0 || isAddingAccount" class="space-y-2 mb-4">
-                    <label for="__account_label" class="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  <div
+                    v-if="connectedAccounts.length === 0 || isAddingAccount"
+                    class="space-y-2 mb-4"
+                  >
+                    <label
+                      for="__account_label"
+                      class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+                    >
                       Account Label
                       <span class="text-red-500">*</span>
                     </label>
                     <input
                       id="__account_label"
-                      type="text"
                       v-model="newAccountLabel"
+                      type="text"
                       placeholder="e.g. Work Gmail, Personal Gmail, Team Slack"
                       class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-slate-700 dark:text-white"
-                      :class="{ 'border-red-500': errors['__account_label'] }"
+                      :class="{ 'border-red-500': errors.__account_label }"
                     >
                     <p class="text-xs text-slate-500 dark:text-slate-400">
                       A friendly name to identify this account (e.g. your email address or team name)
                     </p>
-                    <p v-if="errors['__account_label']" class="text-xs text-red-500">
-                      {{ errors['__account_label'] }}
+                    <p
+                      v-if="errors.__account_label"
+                      class="text-xs text-red-500"
+                    >
+                      {{ errors.__account_label }}
                     </p>
                   </div>
-                  
+
                   <!-- Configuration Form (credential fields) -->
-                  <div v-if="integration.properties && integration.properties.length > 0" class="space-y-4 mb-6">
-                    <div v-for="property in integration.properties" :key="property.key" class="space-y-2">
-                      <label :for="property.key" class="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  <div
+                    v-if="integration.properties && integration.properties.length > 0"
+                    class="space-y-4 mb-6"
+                  >
+                    <div
+                      v-for="property in integration.properties"
+                      :key="property.key"
+                      class="space-y-2"
+                    >
+                      <label
+                        :for="property.key"
+                        class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+                      >
                         {{ property.title }}
-                        <span v-if="property.required" class="text-red-500">*</span>
+                        <span
+                          v-if="property.required"
+                          class="text-red-500"
+                        >*</span>
                       </label>
 
                       <!-- Select field -->
-                      <div v-if="property.type === 'select'" class="relative">
+                      <div
+                        v-if="property.type === 'select'"
+                        class="relative"
+                      >
                         <select
                           :id="property.key"
                           v-model="formData[property.key]"
@@ -325,7 +468,12 @@
                           class="w-full appearance-none rounded-lg border border-gray-300 px-3 py-2 pr-8 text-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-slate-700 dark:text-white"
                           :class="{ 'border-red-500': errors[property.key] }"
                         >
-                          <option value="" disabled>{{ selectOptionsLoading[property.key] ? 'Loading...' : property.placeholder || 'Select...' }}</option>
+                          <option
+                            value=""
+                            disabled
+                          >
+                            {{ selectOptionsLoading[property.key] ? 'Loading...' : property.placeholder || 'Select...' }}
+                          </option>
                           <option
                             v-for="opt in (selectOptions[property.key] || [])"
                             :key="opt.value"
@@ -335,8 +483,18 @@
                           </option>
                         </select>
                         <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
-                          <svg class="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                          <svg
+                            class="h-4 w-4 text-slate-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M19 9l-7 7-7-7"
+                            />
                           </svg>
                         </div>
                         <button
@@ -346,8 +504,18 @@
                           title="Refresh options"
                           @click="fetchSelectOptions(property)"
                         >
-                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          <svg
+                            class="h-3.5 w-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                            />
                           </svg>
                         </button>
                       </div>
@@ -356,32 +524,54 @@
                       <input
                         v-else
                         :id="property.key"
-                        :type="property.type"
                         v-model="formData[property.key]"
+                        :type="property.type"
                         :placeholder="property.placeholder"
                         :required="property.required"
                         class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-slate-700 dark:text-white"
                         :class="{ 'border-red-500': errors[property.key] }"
                         @blur="onDependencyFieldBlur(property.key)"
                       >
-                      <p v-if="property.hint" class="text-xs text-slate-500 dark:text-slate-400">
+                      <p
+                        v-if="property.hint"
+                        class="text-xs text-slate-500 dark:text-slate-400"
+                      >
                         {{ property.hint }}
                       </p>
-                      <p v-if="errors[property.key]" class="text-xs text-red-500">
+                      <p
+                        v-if="errors[property.key]"
+                        class="text-xs text-red-500"
+                      >
                         {{ errors[property.key] }}
                       </p>
                     </div>
                   </div>
-                  
+
                   <div class="space-y-2">
                     <button
-                      @click="handleConnect()"
                       :disabled="isLoading"
                       class="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 flex items-center justify-center"
+                      @click="handleConnect()"
                     >
-                      <svg v-if="isLoading" class="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a8 8 0 01-16 0v4a8 8 0 0016 0z"></path>
+                      <svg
+                        v-if="isLoading"
+                        class="animate-spin h-4 w-4 mr-2"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          class="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          stroke-width="4"
+                        />
+                        <path
+                          class="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8v4a8 8 0 01-16 0v4a8 8 0 0016 0z"
+                        />
                       </svg>
                       {{ isLoading
                         ? (isEditingAccount ? 'Saving...' : 'Connecting...')
@@ -433,10 +623,17 @@
               <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 <!-- Installation Guide - 70% width (8 columns) -->
                 <div class="lg:col-span-8">
-                  <div v-if="integration.installationGuide" class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800">
-                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">{{ integration.installationGuide.title }}</h3>
-                    <p class="text-sm text-slate-600 dark:text-slate-300 mb-6">{{ integration.installationGuide.description }}</p>
-                    
+                  <div
+                    v-if="integration.installationGuide"
+                    class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800"
+                  >
+                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+                      {{ integration.installationGuide.title }}
+                    </h3>
+                    <p class="text-sm text-slate-600 dark:text-slate-300 mb-6">
+                      {{ integration.installationGuide.description }}
+                    </p>
+
                     <div class="space-y-6">
                       <div
                         v-for="(step, index) in integration.installationGuide.steps"
@@ -447,20 +644,41 @@
                           <div class="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-medium">
                             {{ index + 1 }}
                           </div>
-                          <h4 class="font-medium text-slate-900 dark:text-white">{{ step.title }}</h4>
+                          <h4 class="font-medium text-slate-900 dark:text-white">
+                            {{ step.title }}
+                          </h4>
                         </div>
                         <div class="prose prose-sm max-w-none dark:prose-invert">
-                          <div class="whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{{ step.content }}</div>
+                          <div class="whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                            {{ step.content }}
+                          </div>
                         </div>
                       </div>
                     </div>
-                    
-                    <div v-if="integration.installationGuide.importantNotes && integration.installationGuide.importantNotes.length > 0" class="mt-6 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-                      <h5 class="font-medium text-amber-900 dark:text-amber-100 mb-2">Important Notes</h5>
+
+                    <div
+                      v-if="integration.installationGuide.importantNotes && integration.installationGuide.importantNotes.length > 0"
+                      class="mt-6 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800"
+                    >
+                      <h5 class="font-medium text-amber-900 dark:text-amber-100 mb-2">
+                        Important Notes
+                      </h5>
                       <ul class="space-y-1 text-sm text-amber-800 dark:text-amber-200">
-                        <li v-for="(note, index) in integration.installationGuide.importantNotes" :key="index" class="flex items-start gap-2">
-                          <svg class="h-4 w-4 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                        <li
+                          v-for="(note, index) in integration.installationGuide.importantNotes"
+                          :key="index"
+                          class="flex items-start gap-2"
+                        >
+                          <svg
+                            class="h-4 w-4 mt-0.5 flex-shrink-0"
+                            fill="currentColor"
+                            viewBox="0 0 20 20"
+                          >
+                            <path
+                              fill-rule="evenodd"
+                              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                              clip-rule="evenodd"
+                            />
                           </svg>
                           {{ note }}
                         </li>
@@ -472,8 +690,13 @@
                 <!-- Right Column - 30% width (4 columns) -->
                 <div class="lg:col-span-4 space-y-8">
                   <!-- Additional Resources -->
-                  <div v-if="integration.guideLinks && integration.guideLinks.length > 0" class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800">
-                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Additional Resources</h3>
+                  <div
+                    v-if="integration.guideLinks && integration.guideLinks.length > 0"
+                    class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800"
+                  >
+                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+                      Additional Resources
+                    </h3>
                     <div class="space-y-3">
                       <a
                         v-for="link in integration.guideLinks"
@@ -485,8 +708,18 @@
                       >
                         <div class="flex items-center gap-3">
                           <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700">
-                            <svg class="h-4 w-4 text-slate-600 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            <svg
+                              class="h-4 w-4 text-slate-600 dark:text-slate-400"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                              />
                             </svg>
                           </div>
                           <div>
@@ -494,8 +727,18 @@
                             <p class="text-xs text-slate-600 dark:text-slate-400">{{ link.description }}</p>
                           </div>
                         </div>
-                        <svg class="h-4 w-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        <svg
+                          class="h-4 w-4 text-slate-400 flex-shrink-0"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                          />
                         </svg>
                       </a>
                     </div>
@@ -503,23 +746,41 @@
 
                   <!-- Quick Info -->
                   <div class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800">
-                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Quick Info</h3>
+                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+                      Quick Info
+                    </h3>
                     <div class="space-y-3">
                       <div>
-                        <p class="text-xs font-medium text-slate-500 dark:text-slate-400">Category</p>
-                        <p class="text-sm text-slate-900 dark:text-white">{{ integration.category }}</p>
+                        <p class="text-xs font-medium text-slate-500 dark:text-slate-400">
+                          Category
+                        </p>
+                        <p class="text-sm text-slate-900 dark:text-white">
+                          {{ integration.category }}
+                        </p>
                       </div>
                       <div>
-                        <p class="text-xs font-medium text-slate-500 dark:text-slate-400">Version</p>
-                        <p class="text-sm text-slate-900 dark:text-white">{{ integration.version || '1.0.0' }}</p>
+                        <p class="text-xs font-medium text-slate-500 dark:text-slate-400">
+                          Version
+                        </p>
+                        <p class="text-sm text-slate-900 dark:text-white">
+                          {{ integration.version || '1.0.0' }}
+                        </p>
                       </div>
                       <div>
-                        <p class="text-xs font-medium text-slate-500 dark:text-slate-400">Last Updated</p>
-                        <p class="text-sm text-slate-900 dark:text-white capitalize">{{ formatFuzzyTime(integration.lastUpdated) }}</p>
+                        <p class="text-xs font-medium text-slate-500 dark:text-slate-400">
+                          Last Updated
+                        </p>
+                        <p class="text-sm text-slate-900 dark:text-white capitalize">
+                          {{ formatFuzzyTime(integration.lastUpdated) }}
+                        </p>
                       </div>
                       <div>
-                        <p class="text-xs font-medium text-slate-500 dark:text-slate-400">Developer</p>
-                        <p class="text-sm text-slate-900 dark:text-white">{{ integration.developer }}</p>
+                        <p class="text-xs font-medium text-slate-500 dark:text-slate-400">
+                          Developer
+                        </p>
+                        <p class="text-sm text-slate-900 dark:text-white">
+                          {{ integration.developer }}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -554,10 +815,15 @@
           </div>
 
           <!-- Loading State -->
-          <div v-else class="flex h-64 items-center justify-center">
+          <div
+            v-else
+            class="flex h-64 items-center justify-center"
+          >
             <div class="text-center">
-              <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600"></div>
-              <p class="text-sm text-slate-600 dark:text-slate-400">Loading integration details...</p>
+              <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" />
+              <p class="text-sm text-slate-600 dark:text-slate-400">
+                Loading integration details...
+              </p>
             </div>
           </div>
         </div>
@@ -578,9 +844,9 @@ import { formatFuzzyTime } from '@pkg/utils/dateFormat';
 import type { IntegrationAccount } from '@pkg/agent/services/IntegrationService';
 import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useTheme } from '@pkg/composables/useTheme';
 
-const THEME_STORAGE_KEY = 'agentTheme';
-const isDark = ref(false);
+const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const route = useRoute();
 const router = useRouter();
 const integrationService = getIntegrationService();
@@ -588,7 +854,7 @@ const integrationService = getIntegrationService();
 /** Safely resolve an integration icon/media path — returns null if the asset doesn't exist */
 function safeIconSrc(path: string): string | null {
   try {
-    return require(`@pkg/assets/images/${path}`);
+    return require(`@pkg/assets/images/${ path }`);
   } catch {
     return null;
   }
@@ -612,7 +878,7 @@ const errors = ref<Record<string, string>>({});
 const isLoading = ref(false);
 
 // Select box state
-const selectOptions = ref<Record<string, Array<{ value: string; label: string; description?: string }>>>({});
+const selectOptions = ref<Record<string, { value: string; label: string; description?: string }[]>>({});
 const selectOptionsLoading = ref<Record<string, boolean>>({});
 
 // Multi-account state
@@ -640,25 +906,20 @@ const showConnectionForm = computed(() => connectedAccounts.value.length === 0 |
 
 // Carousel functions
 const nextImage = () => {
-  if (integration.value && integration.value.media) {
+  if (integration.value?.media) {
     currentImageIndex.value = (currentImageIndex.value + 1) % integration.value.media.length;
   }
 };
 
 const previousImage = () => {
-  if (integration.value && integration.value.media) {
-    currentImageIndex.value = currentImageIndex.value === 0 
-      ? integration.value.media.length - 1 
+  if (integration.value?.media) {
+    currentImageIndex.value = currentImageIndex.value === 0
+      ? integration.value.media.length - 1
       : currentImageIndex.value - 1;
   }
 };
 
-const toggleTheme = () => {
-  isDark.value = !isDark.value;
-  localStorage.setItem(THEME_STORAGE_KEY, isDark.value ? 'dark' : 'light');
-};
-
-const refreshAccounts = async () => {
+const refreshAccounts = async() => {
   if (!integration.value) return;
   accounts.value = await integrationService.getAccounts(integration.value.id);
   activeAccountId.value = await integrationService.getActiveAccountId(integration.value.id);
@@ -682,7 +943,7 @@ const cancelAddAccount = () => {
   errors.value = {};
 };
 
-const loadFormDataForAccount = async (integrationId: string, accountId: string) => {
+const loadFormDataForAccount = async(integrationId: string, accountId: string) => {
   const formValues = await integrationService.getFormValues(integrationId, accountId);
   const formDataObj: Record<string, string> = {};
 
@@ -695,7 +956,7 @@ const loadFormDataForAccount = async (integrationId: string, accountId: string) 
   fetchAllSelectOptions();
 };
 
-const startEditAccount = async (accountId: string) => {
+const startEditAccount = async(accountId: string) => {
   if (!integration.value) return;
 
   isLoading.value = true;
@@ -715,14 +976,14 @@ const startEditAccount = async (accountId: string) => {
 };
 
 /** Set a specific account as the active one */
-const setAccountActive = async (accountId: string) => {
+const setAccountActive = async(accountId: string) => {
   if (!integration.value) return;
   await integrationService.setActiveAccount(integration.value.id, accountId);
   await refreshAccounts();
 };
 
 /** Disconnect (and delete) a specific account */
-const disconnectAccount = async (accountId: string) => {
+const disconnectAccount = async(accountId: string) => {
   if (!integration.value) return;
   isLoading.value = true;
   try {
@@ -748,7 +1009,7 @@ const disconnectAccount = async (accountId: string) => {
 // ─── Select box helpers ─────────────────────────────────────────
 
 /** Fetch options for a single select property from IntegrationService */
-const fetchSelectOptions = async (property: { key: string; selectBoxId?: string; selectDependsOn?: string[] }) => {
+const fetchSelectOptions = async(property: { key: string; selectBoxId?: string; selectDependsOn?: string[] }) => {
   if (!integration.value || !property.selectBoxId) return;
 
   selectOptionsLoading.value[property.key] = true;
@@ -800,46 +1061,46 @@ const fetchAllSelectOptions = () => {
 // Validation functions
 const validateField = (property: any, value: string): string | null => {
   if (property.required && (!value || value.trim() === '')) {
-    return `${property.title} is required`;
+    return `${ property.title } is required`;
   }
-  
+
   if (!value) return null;
-  
+
   if (property.validation) {
     const { pattern, minLength, maxLength, min, max } = property.validation;
-    
+
     if (pattern && !new RegExp(pattern).test(value)) {
-      return `${property.title} format is invalid`;
+      return `${ property.title } format is invalid`;
     }
-    
+
     if (minLength && value.length < minLength) {
-      return `${property.title} must be at least ${minLength} characters`;
+      return `${ property.title } must be at least ${ minLength } characters`;
     }
-    
+
     if (maxLength && value.length > maxLength) {
-      return `${property.title} must be no more than ${maxLength} characters`;
+      return `${ property.title } must be no more than ${ maxLength } characters`;
     }
-    
+
     if (property.type === 'number') {
       const numValue = Number(value);
       if (min !== undefined && numValue < min) {
-        return `${property.title} must be at least ${min}`;
+        return `${ property.title } must be at least ${ min }`;
       }
       if (max !== undefined && numValue > max) {
-        return `${property.title} must be no more than ${max}`;
+        return `${ property.title } must be no more than ${ max }`;
       }
     }
   }
-  
+
   return null;
 };
 
 const validateForm = (): boolean => {
   if (!integration.value?.properties) return true;
-  
+
   errors.value = {};
   let isValid = true;
-  
+
   for (const property of integration.value.properties) {
     const error = validateField(property, formData.value[property.key] || '');
     if (error) {
@@ -847,11 +1108,11 @@ const validateForm = (): boolean => {
       isValid = false;
     }
   }
-  
+
   return isValid;
 };
 
-const handleOAuthConnect = async () => {
+const handleOAuthConnect = async() => {
   if (!integration.value) return;
 
   errors.value = {};
@@ -908,7 +1169,7 @@ const handleOAuthConnect = async () => {
   }
 };
 
-const handleConnect = async () => {
+const handleConnect = async() => {
   if (!integration.value) return;
 
   errors.value = {};
@@ -939,9 +1200,9 @@ const handleConnect = async () => {
     // Save credential fields for this account (new or existing)
     const formInputs = Object.entries(formData.value).map(([key, value]) => ({
       integration_id: integration.value!.id,
-      account_id: targetAccountId,
-      property: key,
-      value: value
+      account_id:     targetAccountId,
+      property:       key,
+      value,
     }));
     await integrationService.setFormValues(formInputs);
 
@@ -972,14 +1233,7 @@ const handleConnect = async () => {
   }
 };
 
-onMounted(async () => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    isDark.value = saved === 'dark';
-  } catch {
-    isDark.value = false;
-  }
-
+onMounted(async() => {
   // Initialize integration service
   await integrationService.initialize();
 
@@ -1008,11 +1262,10 @@ onMounted(async () => {
     selectedAccountId.value = activeAccountId.value;
 
     await loadFormDataForAccount(integrationId, selectedAccountId.value);
-    
+
     // Load connection status (check any account)
     integration.value.connected = await integrationService.isAnyAccountConnected(integrationId);
     mergedIntegrations.value[integrationId].connected = integration.value.connected;
-
   } catch (error) {
     console.error('Failed to load integration data:', error);
   }
@@ -1021,13 +1274,8 @@ onMounted(async () => {
 
 <style scoped>
 .page-root {
-  background: #ffffff;
-  color: #0d0d0d;
-}
-
-.page-root.dark {
-  background: #0f172a;
-  color: #fafafa;
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 /* Custom styles for integration detail page */

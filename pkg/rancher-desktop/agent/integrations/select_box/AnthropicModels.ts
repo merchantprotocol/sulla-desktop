@@ -22,7 +22,7 @@ export class AnthropicModels extends SelectBoxProvider {
         return this.getStaticModels();
       }
 
-      const body = await response.json() as { data?: Array<{ id: string; display_name?: string }> };
+      const body = await response.json() as { data?: { id: string; display_name?: string }[] };
 
       if (body.data && body.data.length > 0) {
         return body.data.map(m => ({ value: m.id, label: m.display_name || m.id }));

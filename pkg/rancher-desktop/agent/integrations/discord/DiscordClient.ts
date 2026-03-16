@@ -3,9 +3,7 @@
 // Exposes high-level methods for sending messages, reacting, fetching users/history/etc.
 // Handles connection lifecycle, graceful shutdown, reconnection
 
-import { Client, GatewayIntentBits } from 'discord.js';
-import { ReactionEmoji } from 'discord.js';
-import { ChannelType } from 'discord.js';
+import { Client, GatewayIntentBits, ReactionEmoji, ChannelType } from 'discord.js';
 import type { WebSocketMessage } from '../../services/WebSocketClientService';
 import {
   WebSocketClientService,
@@ -46,31 +44,31 @@ function generateUUID(): string {
 
 function extractMessageFacts(message: Message): string[] {
   const facts: string[] = [];
-  
-  facts.push(`Message ID: ${message.id}`);
-  facts.push(`Author ID: ${message.author.id}`);
-  facts.push(`Author Username: ${message.author.username}`);
-  facts.push(`Channel ID: ${message.channel.id}`);
-  facts.push(`Channel Type: ${message.channel.type}`);
-  facts.push(`Timestamp: ${message.createdTimestamp}`);
-  facts.push(`Message Content: "${message.content || 'No content'}"`);
-  
+
+  facts.push(`Message ID: ${ message.id }`);
+  facts.push(`Author ID: ${ message.author.id }`);
+  facts.push(`Author Username: ${ message.author.username }`);
+  facts.push(`Channel ID: ${ message.channel.id }`);
+  facts.push(`Channel Type: ${ message.channel.type }`);
+  facts.push(`Timestamp: ${ message.createdTimestamp }`);
+  facts.push(`Message Content: "${ message.content || 'No content' }"`);
+
   if (message.reference?.messageId) {
-    facts.push(`Replying to Message ID: ${message.reference.messageId}`);
+    facts.push(`Replying to Message ID: ${ message.reference.messageId }`);
   }
-  
+
   if (message.attachments.size > 0) {
-    facts.push(`Attachments: ${message.attachments.size} files`);
+    facts.push(`Attachments: ${ message.attachments.size } files`);
   }
-  
+
   if (message.embeds.length > 0) {
-    facts.push(`Embeds: ${message.embeds.length} embeds`);
+    facts.push(`Embeds: ${ message.embeds.length } embeds`);
   }
-  
+
   if (message.mentions.users.size > 0) {
-    facts.push(`Mentions: ${message.mentions.users.size} users`);
+    facts.push(`Mentions: ${ message.mentions.users.size } users`);
   }
-  
+
   return facts;
 }
 
@@ -137,7 +135,7 @@ export class DiscordClient {
       console.log('[DiscordClient] Connected to Discord → forwarding events to internal WS');
 
       // Forward events
-      this.client.on(Events.MessageCreate, async (message) => {
+      this.client.on(Events.MessageCreate, async(message) => {
         console.log('[DiscordClient] Message received:', message.content);
 
         // Ignore bot messages
@@ -145,19 +143,19 @@ export class DiscordClient {
 
         // Extract key facts from the message
         const facts = extractMessageFacts(message);
-        const factsText = facts.map(fact => `- ${fact}`).join('\n');
+        const factsText = facts.map(fact => `- ${ fact }`).join('\n');
 
         // Create the complete message with facts + prompt
-        const fullMessage = `${factsText}\n\n${incomingMessage}`;
+        const fullMessage = `${ factsText }\n\n${ incomingMessage }`;
 
         WS_SERVICE.send(DISCORD_EVENTS_CHANNEL, {
           type: 'user_message',
           data: {
-            content: fullMessage
+            content: fullMessage,
           },
-          id: generateUUID(),
+          id:        generateUUID(),
           timestamp: Date.now(),
-          channel: DISCORD_EVENTS_CHANNEL,
+          channel:   DISCORD_EVENTS_CHANNEL,
         });
       });
 
@@ -166,16 +164,16 @@ export class DiscordClient {
         WS_SERVICE.send(DISCORD_EVENTS_CHANNEL, {
           type: 'discord_event',
           data: {
-            type: 'guild_join',
+            type:  'guild_join',
             guild: {
-              id: guild.id,
-              name: guild.name,
+              id:          guild.id,
+              name:        guild.name,
               memberCount: guild.memberCount,
             },
           },
-          id: generateUUID(),
+          id:        generateUUID(),
           timestamp: Date.now(),
-          channel: DISCORD_EVENTS_CHANNEL,
+          channel:   DISCORD_EVENTS_CHANNEL,
         });
       });
 
@@ -198,17 +196,17 @@ export class DiscordClient {
   async sendMessage(
     channelId: string,
     content: string,
-    replyToMessageId?: string
+    replyToMessageId?: string,
   ): Promise<Message> {
     await this.ensureConnected();
     const channel = await this.client!.channels.fetch(channelId);
-    
-    if (!channel || !channel.isTextBased()) {
-      throw new Error(`Channel ${channelId} not found or is not text-based`);
+
+    if (!channel?.isTextBased()) {
+      throw new Error(`Channel ${ channelId } not found or is not text-based`);
     }
 
     const options: any = { content };
-    
+
     if (replyToMessageId) {
       const replyMessage = await (channel as TextChannel).messages.fetch(replyToMessageId);
       if (replyMessage) {
@@ -222,18 +220,18 @@ export class DiscordClient {
   async replyInThread(
     channelId: string,
     messageId: string,
-    content: string
+    content: string,
   ): Promise<Message> {
     await this.ensureConnected();
     const channel = await this.client!.channels.fetch(channelId);
-    
-    if (!channel || !channel.isTextBased()) {
-      throw new Error(`Channel ${channelId} not found or is not text-based`);
+
+    if (!channel?.isTextBased()) {
+      throw new Error(`Channel ${ channelId } not found or is not text-based`);
     }
 
     const message = await (channel as TextChannel).messages.fetch(messageId);
     if (!message) {
-      throw new Error(`Message ${messageId} not found`);
+      throw new Error(`Message ${ messageId } not found`);
     }
 
     return message.reply({ content });
@@ -242,18 +240,18 @@ export class DiscordClient {
   async editMessage(
     channelId: string,
     messageId: string,
-    content: string
+    content: string,
   ): Promise<Message> {
     await this.ensureConnected();
     const channel = await this.client!.channels.fetch(channelId);
-    
-    if (!channel || !channel.isTextBased()) {
-      throw new Error(`Channel ${channelId} not found or is not text-based`);
+
+    if (!channel?.isTextBased()) {
+      throw new Error(`Channel ${ channelId } not found or is not text-based`);
     }
 
     const message = await (channel as TextChannel).messages.fetch(messageId);
     if (!message) {
-      throw new Error(`Message ${messageId} not found`);
+      throw new Error(`Message ${ messageId } not found`);
     }
 
     return message.edit(content);
@@ -262,14 +260,14 @@ export class DiscordClient {
   async addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
     await this.ensureConnected();
     const channel = await this.client!.channels.fetch(channelId);
-    
-    if (!channel || !channel.isTextBased()) {
-      throw new Error(`Channel ${channelId} not found or is not text-based`);
+
+    if (!channel?.isTextBased()) {
+      throw new Error(`Channel ${ channelId } not found or is not text-based`);
     }
 
     const message = await (channel as TextChannel).messages.fetch(messageId);
     if (!message) {
-      throw new Error(`Message ${messageId} not found`);
+      throw new Error(`Message ${ messageId } not found`);
     }
 
     await message.react(emoji);
@@ -278,14 +276,14 @@ export class DiscordClient {
   async removeReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
     await this.ensureConnected();
     const channel = await this.client!.channels.fetch(channelId);
-    
-    if (!channel || !channel.isTextBased()) {
-      throw new Error(`Channel ${channelId} not found or is not text-based`);
+
+    if (!channel?.isTextBased()) {
+      throw new Error(`Channel ${ channelId } not found or is not text-based`);
     }
 
     const message = await (channel as TextChannel).messages.fetch(messageId);
     if (!message) {
-      throw new Error(`Message ${messageId} not found`);
+      throw new Error(`Message ${ messageId } not found`);
     }
 
     await message.reactions.cache.get(emoji)?.users.remove(this.client!.user!.id);
@@ -297,7 +295,7 @@ export class DiscordClient {
     // This method will return the guild if the bot is already a member
     const guild = this.client!.guilds.cache.get(guildId);
     if (!guild) {
-      throw new Error(`Bot is not a member of guild ${guildId}. Use an invite link to add the bot.`);
+      throw new Error(`Bot is not a member of guild ${ guildId }. Use an invite link to add the bot.`);
     }
     return guild;
   }
@@ -315,15 +313,15 @@ export class DiscordClient {
     await this.ensureConnected();
     const guild = this.client!.guilds.cache.get(guildId);
     if (!guild) {
-      throw new Error(`Guild ${guildId} not found`);
+      throw new Error(`Guild ${ guildId } not found`);
     }
 
     return Array.from(guild.channels.cache.values())
       .filter(channel => channel.isTextBased())
       .map(channel => ({
-        id: channel.id,
-        name: channel.name,
-        type: channel.type,
+        id:      channel.id,
+        name:    channel.name,
+        type:    channel.type,
         guildId: channel.guild.id,
       }));
   }
@@ -332,20 +330,20 @@ export class DiscordClient {
     await this.ensureConnected();
     const user = await this.client!.users.fetch(userId);
     if (!user) {
-      throw new Error(`User ${userId} not found`);
+      throw new Error(`User ${ userId } not found`);
     }
     return user;
   }
 
   async getChannelHistory(
     channelId: string,
-    limit = 50
+    limit = 50,
   ): Promise<Message[]> {
     await this.ensureConnected();
     const channel = await this.client!.channels.fetch(channelId);
-    
-    if (!channel || !channel.isTextBased()) {
-      throw new Error(`Channel ${channelId} not found or is not text-based`);
+
+    if (!channel?.isTextBased()) {
+      throw new Error(`Channel ${ channelId } not found or is not text-based`);
     }
 
     const messages = await (channel as TextChannel).messages.fetch({ limit });
@@ -355,14 +353,14 @@ export class DiscordClient {
   async getThreadReplies(channelId: string, messageId: string): Promise<Message[]> {
     await this.ensureConnected();
     const channel = await this.client!.channels.fetch(channelId);
-    
-    if (!channel || !channel.isTextBased()) {
-      throw new Error(`Channel ${channelId} not found or is not text-based`);
+
+    if (!channel?.isTextBased()) {
+      throw new Error(`Channel ${ channelId } not found or is not text-based`);
     }
 
     const message = await (channel as TextChannel).messages.fetch(messageId);
     if (!message) {
-      throw new Error(`Message ${messageId} not found`);
+      throw new Error(`Message ${ messageId } not found`);
     }
 
     if (!message.thread) {

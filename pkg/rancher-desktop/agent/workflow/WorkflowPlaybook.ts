@@ -18,10 +18,8 @@
 import type {
   WorkflowDefinition,
   WorkflowNodeSerialized,
-  WorkflowEdgeSerialized,
+  WorkflowEdgeSerialized, WorkflowNodeSubtype,
 } from '@pkg/pages/editor/workflow/types';
-
-import type { WorkflowNodeSubtype } from '@pkg/pages/editor/workflow/types';
 
 import type {
   WorkflowPlaybookState,
@@ -29,20 +27,23 @@ import type {
   LoopIterationState,
 } from './types';
 
-// ── Default hand-back contract ──
+// ── Default completion contract ──
 // Appended to every sub-agent prompt so the orchestrator gets a structured response.
+// Uses <AGENT_DONE> XML wrapper consistent with the agent graph completion protocol.
 // Can be overridden per agent node via the completionContract config field.
 
 export const DEFAULT_HANDBACK_CONTRACT = `
 
 --- COMPLETION CONTRACT ---
-When you have finished your work, you MUST end your final message with the following structured hand-back block. This is required for the orchestrator to process your results.
+When you have fully completed your task, end your final message with:
 
-HAND_BACK
-Summary: [1-3 paragraph summary of what was accomplished, key decisions made, and any important context]
-Artifact: [file path to the primary output artifact, or "none" if no file was created]
-Needs user input: [yes/no — whether the user needs to review or approve before proceeding]
-Suggested next action: [optional — what should happen next in the workflow]
+<AGENT_DONE>
+<KEY_RESULT>
+Summary: [1-3 paragraphs of what was accomplished]
+Artifact: [primary output file path, or "none"]
+Needs user input: [yes/no]
+</KEY_RESULT>
+</AGENT_DONE>
 --- END CONTRACT ---
 `;
 
@@ -56,7 +57,7 @@ export function createPlaybookState(
   definition: WorkflowDefinition,
   triggerPayload: unknown,
 ): WorkflowPlaybookState {
-  const executionId = `wfp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const executionId = `wfp-${ Date.now() }-${ Math.random().toString(36).slice(2, 8) }`;
 
   // Find trigger nodes — they are the starting frontier
   const triggerNodeIds = definition.nodes
@@ -64,7 +65,7 @@ export function createPlaybookState(
     .map(n => n.id);
 
   if (triggerNodeIds.length === 0) {
-    throw new Error(`Workflow "${definition.id}" has no trigger nodes`);
+    throw new Error(`Workflow "${ definition.id }" has no trigger nodes`);
   }
 
   // Auto-complete trigger nodes (they just pass through the payload)
@@ -286,10 +287,10 @@ function collectLoopBodyNodes(
 
 /** A single node's spawn info used inside a parallel batch. */
 export interface ParallelNodeSpawn {
-  nodeId: string;
+  nodeId:  string;
   agentId: string;
-  prompt: string;
-  config: Record<string, unknown>;
+  prompt:  string;
+  config:  Record<string, unknown>;
 }
 
 export type PlaybookStepResult =
@@ -322,8 +323,8 @@ function resolveTemplate(
     }
 
     // Find by label or nodeId
-    const output = upstreamOutputs.find(o => o.label === name || o.nodeId === name)
-      ?? Object.values(nodeOutputs).find(o => o.label === name || o.nodeId === name);
+    const output = upstreamOutputs.find(o => o.label === name || o.nodeId === name) ??
+      Object.values(nodeOutputs).find(o => o.label === name || o.nodeId === name);
 
     if (!output) return _match;
     if (field === 'threadId') return output.threadId ?? '';
@@ -374,7 +375,7 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
 
   if (playbook.status !== 'running') {
     return {
-      action: 'workflow_completed',
+      action:          'workflow_completed',
       updatedPlaybook: playbook,
     };
   }
@@ -382,8 +383,8 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
   // If there's a pending decision that the agent hasn't resolved yet, re-prompt
   if (playbook.pendingDecision) {
     return {
-      action: 'prompt_agent',
-      prompt: playbook.pendingDecision.prompt,
+      action:          'prompt_agent',
+      prompt:          playbook.pendingDecision.prompt,
       updatedPlaybook: playbook,
     };
   }
@@ -397,11 +398,11 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
     // No more nodes to process — workflow is done
     const now = new Date().toISOString();
     return {
-      action: 'workflow_completed',
+      action:          'workflow_completed',
       updatedPlaybook: {
         ...playbook,
-        status: 'completed',
-        completedAt: now,
+        status:         'completed',
+        completedAt:    now,
         currentNodeIds: [],
       },
     };
@@ -411,7 +412,7 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
   // When multiple ready nodes are all parallelizable (agent/tool-call/response/sub-workflow),
   // batch them into a single spawn_parallel_agents action for concurrent execution.
   if (readyNodes.length > 1) {
-    const parallelizableNodes: Array<{ nodeId: string; node: WorkflowNodeSerialized }> = [];
+    const parallelizableNodes: { nodeId: string; node: WorkflowNodeSerialized }[] = [];
 
     for (const id of readyNodes) {
       const n = getNode(definition, id);
@@ -446,8 +447,8 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
 
       if (spawns.length > 1) {
         return {
-          action: 'spawn_parallel_agents',
-          nodes: spawns,
+          action:          'spawn_parallel_agents',
+          nodes:           spawns,
           updatedPlaybook: playbook,
         };
       }
@@ -460,9 +461,9 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
 
   if (!node) {
     return {
-      action: 'workflow_failed',
-      error: `Node "${nodeId}" not found in workflow definition`,
-      updatedPlaybook: { ...playbook, status: 'failed', error: `Node "${nodeId}" not found` },
+      action:          'workflow_failed',
+      error:           `Node "${ nodeId }" not found in workflow definition`,
+      updatedPlaybook: { ...playbook, status: 'failed', error: `Node "${ nodeId }" not found` },
     };
   }
 
@@ -488,59 +489,59 @@ function processNode(
   const nodeId = node.id;
 
   switch (subtype) {
-    // ── Agent nodes — spawn independent graph ──
-    case 'agent':
-      return handleAgentNode(playbook, nodeId, node, config, upstreamOutputs, triggerPayload);
+  // ── Agent nodes — spawn independent graph ──
+  case 'agent':
+    return handleAgentNode(playbook, nodeId, node, config, upstreamOutputs, triggerPayload);
 
     // ── Tool call — execute integration API ──
-    case 'tool-call':
-      return handleToolCallNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
+  case 'tool-call':
+    return handleToolCallNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
     // ── Router — ask the orchestrating agent to decide ──
-    case 'router':
-      return handleRouterNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
+  case 'router':
+    return handleRouterNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
     // ── Condition — ask the orchestrating agent to evaluate ──
-    case 'condition':
-      return handleConditionNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
+  case 'condition':
+    return handleConditionNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
     // ── Wait — pause execution ──
-    case 'wait':
-      return handleWaitNode(playbook, nodeId, config);
+  case 'wait':
+    return handleWaitNode(playbook, nodeId, config);
 
     // ── Parallel — structural pass-through ──
-    case 'parallel':
-      return completeNodeAndAdvance(playbook, nodeId, node, upstreamOutputs.map(o => o.result));
+  case 'parallel':
+    return completeNodeAndAdvance(playbook, nodeId, node, upstreamOutputs.map(o => o.result));
 
     // ── Merge — combine upstream results ──
-    case 'merge':
-      return completeNodeAndAdvance(playbook, nodeId, node, {
-        strategy: config.strategy || 'wait-all',
-        merged: upstreamOutputs.map(o => ({ nodeId: o.nodeId, label: o.label, result: o.result })),
-      });
+  case 'merge':
+    return completeNodeAndAdvance(playbook, nodeId, node, {
+      strategy: config.strategy || 'wait-all',
+      merged:   upstreamOutputs.map(o => ({ nodeId: o.nodeId, label: o.label, result: o.result })),
+    });
 
     // ── Loop — iterate body nodes between loop-start and loop-back ──
-    case 'loop':
-      return handleLoopNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
+  case 'loop':
+    return handleLoopNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
     // ── Sub-workflow — load and execute another workflow ──
-    case 'sub-workflow':
-      return handleSubWorkflowNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
+  case 'sub-workflow':
+    return handleSubWorkflowNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
     // ── Response — send output ──
-    case 'response':
-      return handleResponseNode(playbook, nodeId, node, config, upstreamOutputs, triggerPayload);
+  case 'response':
+    return handleResponseNode(playbook, nodeId, node, config, upstreamOutputs, triggerPayload);
 
     // ── User input — pause for user ──
-    case 'user-input':
-      return handleUserInputNode(playbook, nodeId, config);
+  case 'user-input':
+    return handleUserInputNode(playbook, nodeId, config);
 
     // ── Transfer — terminate this workflow and hand off to another ──
-    case 'transfer':
-      return handleTransferNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
+  case 'transfer':
+    return handleTransferNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
-    default:
-      return completeNodeAndAdvance(playbook, nodeId, node, null);
+  default:
+    return completeNodeAndAdvance(playbook, nodeId, node, null);
   }
 }
 
@@ -554,7 +555,7 @@ function handleAgentNode(
   upstreamOutputs: PlaybookNodeOutput[],
   triggerPayload: unknown,
 ): PlaybookStepResult {
-  const agentId = (config.agentId as string) || '';
+  const agentId = (config.agentId as string) || 'sulla-desktop';
   const additionalPrompt = (config.additionalPrompt as string) || '';
   const userMessageTemplate = (config.userMessage as string) || '';
 
@@ -562,26 +563,26 @@ function handleAgentNode(
   if (userMessageTemplate.trim()) {
     prompt = resolveTemplate(userMessageTemplate, triggerPayload, playbook.nodeOutputs, upstreamOutputs);
     if (additionalPrompt) {
-      prompt = `${additionalPrompt}\n\n${prompt}`;
+      prompt = `${ additionalPrompt }\n\n${ prompt }`;
     }
   } else {
     const upstreamContext = upstreamOutputs
-      .map(o => `[${o.label}]: ${typeof o.result === 'string' ? o.result : JSON.stringify(o.result)}`)
+      .map(o => `[${ o.label }]: ${ typeof o.result === 'string' ? o.result : JSON.stringify(o.result) }`)
       .join('\n\n');
 
     prompt = [
       additionalPrompt,
-      upstreamContext ? `\nUpstream context:\n${upstreamContext}` : '',
+      upstreamContext ? `\nUpstream context:\n${ upstreamContext }` : '',
       typeof triggerPayload === 'string' && upstreamOutputs.length === 0 ? triggerPayload : '',
     ].filter(Boolean).join('\n');
   }
 
   // Append the completion contract — custom override or default
   const completionContract = (config.completionContract as string) || '';
-  prompt += completionContract.trim() ? `\n\n${completionContract}` : DEFAULT_HANDBACK_CONTRACT;
+  prompt += completionContract.trim() ? `\n\n${ completionContract }` : DEFAULT_HANDBACK_CONTRACT;
 
   return {
-    action: 'spawn_sub_agent',
+    action:          'spawn_sub_agent',
     nodeId,
     agentId,
     prompt,
@@ -608,11 +609,11 @@ function handleToolCallNode(
   }
 
   return {
-    action: 'spawn_sub_agent',
+    action:  'spawn_sub_agent',
     nodeId,
     agentId: '__tool_call__',
-    prompt: '',
-    config: {
+    prompt:  '',
+    config:  {
       ...config,
       defaults: resolvedDefaults,
     },
@@ -628,32 +629,32 @@ function handleRouterNode(
   triggerPayload: unknown,
 ): PlaybookStepResult {
   const classificationPrompt = (config.classificationPrompt as string) || '';
-  const routes = (config.routes as Array<{ label: string; description: string }>) || [];
+  const routes = (config.routes as { label: string; description: string }[]) || [];
 
   if (routes.length === 0) {
     return completeNodeAndAdvance(playbook, nodeId, getNode(playbook.definition, nodeId)!, 'no routes configured');
   }
 
   const routeDescriptions = routes
-    .map((r, i) => `${i + 1}. "${r.label}": ${r.description}`)
+    .map((r, i) => `${ i + 1 }. "${ r.label }": ${ r.description }`)
     .join('\n');
 
   const inputContext = upstreamOutputs
-    .map(o => `[${o.label}]: ${typeof o.result === 'string' ? o.result : JSON.stringify(o.result)}`)
+    .map(o => `[${ o.label }]: ${ typeof o.result === 'string' ? o.result : JSON.stringify(o.result) }`)
     .join('\n');
 
   const prompt = `You are at a routing decision point in a workflow.
 
-${classificationPrompt ? `Context: ${classificationPrompt}\n` : ''}
-${inputContext ? `Upstream data:\n${inputContext}\n` : ''}
+${ classificationPrompt ? `Context: ${ classificationPrompt }\n` : '' }
+${ inputContext ? `Upstream data:\n${ inputContext }\n` : '' }
 Choose exactly ONE of these routes by responding with ONLY the route label:
 
-${routeDescriptions}
+${ routeDescriptions }
 
 Respond with the exact label text of your chosen route, nothing else.`;
 
   return {
-    action: 'prompt_agent',
+    action:          'prompt_agent',
     prompt,
     updatedPlaybook: {
       ...playbook,
@@ -661,10 +662,10 @@ Respond with the exact label text of your chosen route, nothing else.`;
         nodeId,
         subtype: 'router',
         prompt,
-        routes: routes.map((r, i) => ({
-          label: r.label,
+        routes:  routes.map((r, i) => ({
+          label:       r.label,
           description: r.description,
-          handleId: `route-${i}`,
+          handleId:    `route-${ i }`,
         })),
       },
     },
@@ -678,29 +679,29 @@ function handleConditionNode(
   upstreamOutputs: PlaybookNodeOutput[],
   _triggerPayload: unknown,
 ): PlaybookStepResult {
-  const rules = (config.rules as Array<{ field: string; operator: string; value: string }>) || [];
+  const rules = (config.rules as { field: string; operator: string; value: string }[]) || [];
   const combinator = (config.combinator as string) || 'and';
 
   const inputContext = upstreamOutputs
-    .map(o => `[${o.label}]: ${typeof o.result === 'string' ? o.result : JSON.stringify(o.result)}`)
+    .map(o => `[${ o.label }]: ${ typeof o.result === 'string' ? o.result : JSON.stringify(o.result) }`)
     .join('\n');
 
   const rulesDescription = rules
-    .map(r => `- "${r.field}" ${r.operator} "${r.value}"`)
+    .map(r => `- "${ r.field }" ${ r.operator } "${ r.value }"`)
     .join('\n');
 
   const prompt = `You are at a condition evaluation point in a workflow.
 
 Evaluate whether the following condition is TRUE or FALSE.
 
-Rules (${combinator === 'and' ? 'ALL must be true' : 'ANY can be true'}):
-${rulesDescription}
+Rules (${ combinator === 'and' ? 'ALL must be true' : 'ANY can be true' }):
+${ rulesDescription }
 
-${inputContext ? `Available data:\n${inputContext}\n` : ''}
+${ inputContext ? `Available data:\n${ inputContext }\n` : '' }
 Respond with exactly "true" or "false", nothing else.`;
 
   return {
-    action: 'prompt_agent',
+    action:          'prompt_agent',
     prompt,
     updatedPlaybook: {
       ...playbook,
@@ -731,7 +732,7 @@ function handleWaitNode(
   const durationMs = amount * (multipliers[unit] || 1000);
 
   return {
-    action: 'wait',
+    action:          'wait',
     nodeId,
     durationMs,
     updatedPlaybook: playbook,
@@ -759,7 +760,7 @@ function handleSubWorkflowNode(
     : triggerPayload;
 
   return {
-    action: 'spawn_sub_workflow',
+    action:          'spawn_sub_workflow',
     nodeId,
     workflowId,
     payload,
@@ -792,7 +793,7 @@ function handleLoopNode(
     // No body connected — complete immediately via loop-exit
     return completeNodeAndAdvance(playbook, nodeId, node, {
       iteration: 0,
-      reason: 'no_body_connected',
+      reason:    'no_body_connected',
     }, 'loop-exit');
   }
 
@@ -800,12 +801,12 @@ function handleLoopNode(
 
   if (!iterState) {
     // First entry — initialize loop state
-    const threadId = `loop_${nodeId}_${Date.now()}`;
+    const threadId = `loop_${ nodeId }_${ Date.now() }`;
     iterState = {
-      currentIteration: 0,
+      currentIteration:        0,
       threadId,
       accumulatedConversation: [],
-      iterationResults: [],
+      iterationResults:        [],
       bodyNodeIds,
       bodyStartNodeIds,
     };
@@ -826,8 +827,8 @@ function handleLoopNode(
       const output = playbook.nodeOutputs[bodyId];
       if (output.category === 'agent' && output.result) {
         iterState.accumulatedConversation.push({
-          role: 'assistant',
-          content: typeof output.result === 'string' ? output.result : JSON.stringify(output.result),
+          role:      'assistant',
+          content:   typeof output.result === 'string' ? output.result : JSON.stringify(output.result),
           iteration: iterState.currentIteration,
         });
       }
@@ -851,21 +852,21 @@ function handleLoopNode(
     if (conditionMode === 'llm') {
       // LLM evaluation — prompt the orchestrator
       const lastBodyOutput = Object.values(bodyOutputs)
-        .map(o => `[${o.label}]: ${typeof o.result === 'string' ? o.result : JSON.stringify(o.result)}`)
+        .map(o => `[${ o.label }]: ${ typeof o.result === 'string' ? o.result : JSON.stringify(o.result) }`)
         .join('\n');
 
-      const prompt = `You are evaluating a loop stop condition after iteration ${iterState.currentIteration}.
+      const prompt = `You are evaluating a loop stop condition after iteration ${ iterState.currentIteration }.
 
-Condition to evaluate: ${condition}
+Condition to evaluate: ${ condition }
 
 Latest iteration output:
-${lastBodyOutput}
+${ lastBodyOutput }
 
 Should the loop STOP? Respond with exactly "true" to stop or "false" to continue.`;
 
       loopState[nodeId] = iterState;
       return {
-        action: 'prompt_agent',
+        action:          'prompt_agent',
         prompt,
         updatedPlaybook: {
           ...playbook,
@@ -888,7 +889,7 @@ Should the loop STOP? Respond with exactly "true" to stop or "false" to continue
       }
 
       // Check "contains" pattern: "{{X.result}} contains Y" → already resolved to "actualValue contains Y"
-      const containsMatch = resolved.match(/^(.+?)\s+contains\s+(.+)$/i);
+      const containsMatch = /^(.+?)\s+contains\s+(.+)$/i.exec(resolved);
       if (containsMatch) {
         const [, haystack, needle] = containsMatch;
         if (haystack.toLowerCase().includes(needle.toLowerCase().trim())) {
@@ -932,14 +933,14 @@ function startLoopIteration(
   }
 
   return {
-    action: 'node_completed',
-    nodeId: loopNodeId,
-    result: { continue: true, iteration: iterState.currentIteration },
+    action:          'node_completed',
+    nodeId:          loopNodeId,
+    result:          { continue: true, iteration: iterState.currentIteration },
     updatedPlaybook: {
       ...playbook,
-      currentNodeIds: Array.from(frontier),
+      currentNodeIds:   Array.from(frontier),
       completedNodeIds: updatedCompleted,
-      nodeOutputs: updatedOutputs,
+      nodeOutputs:      updatedOutputs,
       loopState,
     },
   };
@@ -969,19 +970,19 @@ function completeLoop(
   delete updatedLoopState[loopNodeId];
 
   const finalResult = {
-    totalIterations: iterState.currentIteration,
+    totalIterations:  iterState.currentIteration,
     exitReason,
-    conversation: iterState.accumulatedConversation,
+    conversation:     iterState.accumulatedConversation,
     iterationResults: iterState.iterationResults,
-    threadId: iterState.threadId,
+    threadId:         iterState.threadId,
   };
 
   return completeNodeAndAdvance(
     {
       ...playbook,
       completedNodeIds: updatedCompleted,
-      nodeOutputs: updatedOutputs,
-      loopState: Object.keys(updatedLoopState).length > 0 ? updatedLoopState : undefined,
+      nodeOutputs:      updatedOutputs,
+      loopState:        Object.keys(updatedLoopState).length > 0 ? updatedLoopState : undefined,
     },
     loopNodeId,
     node,
@@ -1002,23 +1003,23 @@ function handleResponseNode(
 
   // Build upstream context for the orchestrator
   const upstreamContext = upstreamOutputs
-    .map(o => `[${o.label}]: ${typeof o.result === 'string' ? o.result : JSON.stringify(o.result)}`)
+    .map(o => `[${ o.label }]: ${ typeof o.result === 'string' ? o.result : JSON.stringify(o.result) }`)
     .join('\n\n');
 
   let prompt: string;
   if (template.trim()) {
     // The template is an instruction to the orchestrator (e.g. "let the user know what the first step is")
-    prompt = `[Workflow Response Node]\nYou need to respond to the user.\n\nInstruction: ${template}\n\n${upstreamContext ? `Upstream context:\n${upstreamContext}\n\n` : ''}Respond directly to the user based on the instruction above.`;
+    prompt = `[Workflow Response Node]\nYou need to respond to the user.\n\nInstruction: ${ template }\n\n${ upstreamContext ? `Upstream context:\n${ upstreamContext }\n\n` : '' }Respond directly to the user based on the instruction above.`;
   } else {
     // No template — pass through upstream output as the response instruction
     const passthrough = upstreamOutputs.length > 0
       ? upstreamOutputs.map(o => typeof o.result === 'string' ? o.result : JSON.stringify(o.result)).join('\n\n')
       : String(triggerPayload || '');
-    prompt = `[Workflow Response Node]\nRespond to the user with the following:\n\n${passthrough}`;
+    prompt = `[Workflow Response Node]\nRespond to the user with the following:\n\n${ passthrough }`;
   }
 
   return {
-    action: 'prompt_agent',
+    action:          'prompt_agent',
     prompt,
     updatedPlaybook: {
       ...playbook,
@@ -1042,7 +1043,7 @@ function handleUserInputNode(
   // The orchestrator will present the prompt to the user, then the workflow
   // pauses until the user's next message resolves the pending decision.
   return {
-    action: 'await_user_input',
+    action:          'await_user_input',
     nodeId,
     promptText,
     updatedPlaybook: {
@@ -1050,7 +1051,7 @@ function handleUserInputNode(
       pendingDecision: {
         nodeId,
         subtype: 'user-input',
-        prompt: promptText,
+        prompt:  promptText,
       },
     },
   };
@@ -1075,8 +1076,8 @@ function handleTransferNode(
     for (const [loopNodeId, iterState] of Object.entries(playbook.loopState)) {
       if (iterState.bodyNodeIds.includes(nodeId)) {
         return {
-          action: 'workflow_failed',
-          error: `Transfer node "${nodeId}" cannot be used inside a loop (loop node "${loopNodeId}"). Use a sub-workflow or response node instead.`,
+          action:          'workflow_failed',
+          error:           `Transfer node "${ nodeId }" cannot be used inside a loop (loop node "${ loopNodeId }"). Use a sub-workflow or response node instead.`,
           updatedPlaybook: { ...playbook, status: 'failed', error: `Transfer inside loop is not allowed` },
         };
       }
@@ -1086,8 +1087,8 @@ function handleTransferNode(
   // Guard: transfer is not allowed inside a parallel branch
   if (isInsideParallelBranch(playbook.definition, nodeId)) {
     return {
-      action: 'workflow_failed',
-      error: `Transfer node "${nodeId}" cannot be used inside a parallel branch. Use a sub-workflow or response node instead.`,
+      action:          'workflow_failed',
+      error:           `Transfer node "${ nodeId }" cannot be used inside a parallel branch. Use a sub-workflow or response node instead.`,
       updatedPlaybook: { ...playbook, status: 'failed', error: `Transfer inside parallel branch is not allowed` },
     };
   }
@@ -1098,7 +1099,7 @@ function handleTransferNode(
     : triggerPayload;
 
   return {
-    action: 'transfer_workflow',
+    action:          'transfer_workflow',
     nodeId,
     targetWorkflowId,
     payload,
@@ -1187,81 +1188,81 @@ export function resolveDecision(
 
   const node = getNode(playbook.definition, decision.nodeId);
   if (!node) {
-    return { action: 'workflow_failed', error: `Decision node "${decision.nodeId}" not found`, updatedPlaybook: playbook };
+    return { action: 'workflow_failed', error: `Decision node "${ decision.nodeId }" not found`, updatedPlaybook: playbook };
   }
 
   switch (decision.subtype) {
-    case 'router': {
-      const routes = decision.routes || [];
-      const response = agentResponse.trim();
-      const matchedRoute = routes.find(
-        r => r.label.toLowerCase() === response.toLowerCase(),
-      );
-      const handleId = matchedRoute?.handleId || routes[0]?.handleId || 'route-0';
+  case 'router': {
+    const routes = decision.routes || [];
+    const response = agentResponse.trim();
+    const matchedRoute = routes.find(
+      r => r.label.toLowerCase() === response.toLowerCase(),
+    );
+    const handleId = matchedRoute?.handleId || routes[0]?.handleId || 'route-0';
 
-      return completeNodeAndAdvance(
-        { ...playbook, pendingDecision: undefined },
-        decision.nodeId,
-        node,
-        response,
-        handleId,
-      );
+    return completeNodeAndAdvance(
+      { ...playbook, pendingDecision: undefined },
+      decision.nodeId,
+      node,
+      response,
+      handleId,
+    );
+  }
+
+  case 'condition': {
+    const response = agentResponse.trim().toLowerCase();
+    const passed = response === 'true' || response === 'yes';
+    const handleId = passed ? 'condition-true' : 'condition-false';
+
+    return completeNodeAndAdvance(
+      { ...playbook, pendingDecision: undefined },
+      decision.nodeId,
+      node,
+      passed,
+      handleId,
+    );
+  }
+
+  case 'loop' as any: {
+    // LLM condition evaluation response — "true" means stop, "false" means continue
+    const response = agentResponse.trim().toLowerCase();
+    const shouldStop = response === 'true' || response === 'yes';
+    const loopNodeId = decision.nodeId;
+
+    const loopState = { ...(playbook.loopState || {}) };
+    const iterState = loopState[loopNodeId];
+
+    if (!iterState) {
+      return { action: 'workflow_failed', error: `No loop state for node "${ loopNodeId }"`, updatedPlaybook: playbook };
     }
 
-    case 'condition': {
-      const response = agentResponse.trim().toLowerCase();
-      const passed = response === 'true' || response === 'yes';
-      const handleId = passed ? 'condition-true' : 'condition-false';
+    const clearedPlaybook = { ...playbook, pendingDecision: undefined };
 
-      return completeNodeAndAdvance(
-        { ...playbook, pendingDecision: undefined },
-        decision.nodeId,
-        node,
-        passed,
-        handleId,
-      );
+    if (shouldStop) {
+      return completeLoop(clearedPlaybook, loopNodeId, node, iterState, loopState, 'condition_met');
     }
 
-    case 'loop' as any: {
-      // LLM condition evaluation response — "true" means stop, "false" means continue
-      const response = agentResponse.trim().toLowerCase();
-      const shouldStop = response === 'true' || response === 'yes';
-      const loopNodeId = decision.nodeId;
+    // Continue iterating
+    return startLoopIteration(clearedPlaybook, loopNodeId, iterState, loopState);
+  }
 
-      const loopState = { ...(playbook.loopState || {}) };
-      const iterState = loopState[loopNodeId];
+  case 'user-input':
+  case 'response': {
+    return completeNodeAndAdvance(
+      { ...playbook, pendingDecision: undefined },
+      decision.nodeId,
+      node,
+      agentResponse,
+    );
+  }
 
-      if (!iterState) {
-        return { action: 'workflow_failed', error: `No loop state for node "${loopNodeId}"`, updatedPlaybook: playbook };
-      }
-
-      const clearedPlaybook = { ...playbook, pendingDecision: undefined };
-
-      if (shouldStop) {
-        return completeLoop(clearedPlaybook, loopNodeId, node, iterState, loopState, 'condition_met');
-      }
-
-      // Continue iterating
-      return startLoopIteration(clearedPlaybook, loopNodeId, iterState, loopState);
-    }
-
-    case 'user-input':
-    case 'response': {
-      return completeNodeAndAdvance(
-        { ...playbook, pendingDecision: undefined },
-        decision.nodeId,
-        node,
-        agentResponse,
-      );
-    }
-
-    default:
-      return completeNodeAndAdvance(
-        { ...playbook, pendingDecision: undefined },
-        decision.nodeId,
-        node,
-        agentResponse,
-      );
+  default:
+    return completeNodeAndAdvance(
+      { ...playbook, pendingDecision: undefined },
+      decision.nodeId,
+      node,
+      agentResponse,
+    );
   }
 }
 
@@ -1276,7 +1277,7 @@ export function completeSubAgent(
 ): PlaybookStepResult {
   const node = getNode(playbook.definition, nodeId);
   if (!node) {
-    return { action: 'workflow_failed', error: `Sub-agent node "${nodeId}" not found`, updatedPlaybook: playbook };
+    return { action: 'workflow_failed', error: `Sub-agent node "${ nodeId }" not found`, updatedPlaybook: playbook };
   }
 
   const now = new Date().toISOString();
@@ -1330,8 +1331,8 @@ export function completeSubAgent(
 export function abortPlaybook(playbook: WorkflowPlaybookState): WorkflowPlaybookState {
   return {
     ...playbook,
-    status: 'aborted',
-    completedAt: new Date().toISOString(),
+    status:          'aborted',
+    completedAt:     new Date().toISOString(),
     pendingDecision: undefined,
   };
 }

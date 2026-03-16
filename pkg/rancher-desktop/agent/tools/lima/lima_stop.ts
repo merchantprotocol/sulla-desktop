@@ -1,12 +1,12 @@
-import { BaseTool, ToolResponse } from "../base";
-import { runCommand } from "../util/CommandRunner";
+import { BaseTool, ToolResponse } from '../base';
+import { runCommand } from '../util/CommandRunner';
 
 /**
  * Lima Stop Tool - Worker class for execution
  */
 export class LimaStopWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { instance } = input;
 
@@ -18,20 +18,20 @@ export class LimaStopWorker extends BaseTool {
       if (res.exitCode !== 0) {
         return {
           successBoolean: false,
-          responseString: `Error stopping Lima VM: ${res.stderr || res.stdout}`
+          responseString: `Error stopping Lima VM: ${ res.stderr || res.stdout }`,
         };
       }
 
-      const responseString = `Lima VM ${instance} stopped\nOutput:\n${res.stdout}`;
+      const responseString = `Lima VM ${ instance } stopped\nOutput:\n${ res.stdout }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error executing limactl stop: ${(error as Error).message}`
+        responseString: `Error executing limactl stop: ${ (error as Error).message }`,
       };
     }
   }

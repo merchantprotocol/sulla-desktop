@@ -85,7 +85,7 @@ footer {
   flex-direction: row;
   padding: 5px 10px;
   background-color: var(--footer-bg);
-  font-size: 12px;
+  font-size: var(--fs-body-sm);
 
   .left-column {
     display: flex;

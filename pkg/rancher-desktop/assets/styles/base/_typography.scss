@@ -1,49 +1,49 @@
 HTML, BODY {
-  font-family: $body-font;
-  font-size: 14px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
 }
 
 H1, H2, H3, H4, H5, H6 {
-  color: var(--body-text);
+  color: var(--text-primary);
   font-style: normal;
-  font-weight: 400;
+  font-weight: var(--weight-normal);
   margin: 0 0 10px 0;
 }
 
 H1 {
-  font-size: 24px;
+  font-size: var(--fs-heading);
 }
 
 H2 {
-  font-size: 21px;
+  font-size: var(--fs-heading);
 }
 
 H3 {
-  font-size: 18px;
+  font-size: var(--fs-heading);
 }
 
 H4 {
-  font-size: 16px;
+  font-size: var(--fs-heading);
 }
 
 H5 {
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 H6 {
-  font-size: 12px;
+  font-size: var(--fs-body);
   text-transform: uppercase;
 }
 
 P {
-  font-weight: 400;
+  font-weight: var(--weight-normal);
   font-style: normal;
   margin: 0;
 }
 
 //code
 code, samp, kbd, .monospace {
-  font-family: $mono-font;
+  font-family: var(--font-mono);
   text-align: left;
 }
 

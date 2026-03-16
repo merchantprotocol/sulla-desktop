@@ -29,19 +29,19 @@ export interface WorkflowDispatchOptions {
   /** The trigger type (e.g. 'calendar', 'chat-app', 'sulla-desktop') */
   triggerType: TriggerNodeSubtype;
   /** The user message or payload that triggered this */
-  message: string;
+  message:     string;
   /** Optional: skip LLM selection and run this specific workflow */
   workflowId?: string;
 }
 
 export interface WorkflowDispatchResult {
-  workflowId: string;
+  workflowId:   string;
   workflowName: string;
-  definition: WorkflowDefinition;
+  definition:   WorkflowDefinition;
 }
 
 interface WorkflowCandidate {
-  definition: WorkflowDefinition;
+  definition:         WorkflowDefinition;
   triggerDescription: string;
 }
 
@@ -61,36 +61,36 @@ export class WorkflowRegistry {
   async dispatch(options: WorkflowDispatchOptions): Promise<WorkflowDispatchResult | null> {
     const { triggerType, message, workflowId } = options;
 
-    console.log(`[WorkflowRegistry] dispatch() called — triggerType="${triggerType}", workflowId="${workflowId || '(auto)'}", message="${message.slice(0, 80)}"`);
+    console.log(`[WorkflowRegistry] dispatch() called — triggerType="${ triggerType }", workflowId="${ workflowId || '(auto)' }", message="${ message.slice(0, 80) }"`);
 
     let definition: WorkflowDefinition;
 
     if (workflowId) {
-      console.log(`[WorkflowRegistry] Direct dispatch to workflowId="${workflowId}"`);
+      console.log(`[WorkflowRegistry] Direct dispatch to workflowId="${ workflowId }"`);
       definition = this.loadWorkflow(workflowId);
     } else {
       const candidates = this.findCandidates(triggerType);
 
       if (candidates.length === 0) {
-        console.log(`[WorkflowRegistry] No workflows found for trigger type: ${triggerType}`);
+        console.log(`[WorkflowRegistry] No workflows found for trigger type: ${ triggerType }`);
         return null;
       }
 
       if (candidates.length === 1) {
-        console.log(`[WorkflowRegistry] Single candidate found: "${candidates[0].definition.name}" (${candidates[0].definition.id})`);
+        console.log(`[WorkflowRegistry] Single candidate found: "${ candidates[0].definition.name }" (${ candidates[0].definition.id })`);
         definition = candidates[0].definition;
       } else {
-        console.log(`[WorkflowRegistry] ${candidates.length} candidates found, using LLM to select`);
+        console.log(`[WorkflowRegistry] ${ candidates.length } candidates found, using LLM to select`);
         const selected = await this.selectWorkflow(candidates, message);
         if (!selected) {
-          console.log(`[WorkflowRegistry] LLM could not select a workflow for: "${message.slice(0, 100)}"`);
+          console.log(`[WorkflowRegistry] LLM could not select a workflow for: "${ message.slice(0, 100) }"`);
           return null;
         }
         definition = selected;
       }
     }
 
-    console.log(`[WorkflowRegistry] Selected workflow "${definition.name}" (${definition.id}) via ${triggerType}`);
+    console.log(`[WorkflowRegistry] Selected workflow "${ definition.name }" (${ definition.id }) via ${ triggerType }`);
 
     return {
       workflowId:   definition.id,
@@ -105,15 +105,15 @@ export class WorkflowRegistry {
   findCandidates(triggerType: TriggerNodeSubtype): WorkflowCandidate[] {
     const candidates: WorkflowCandidate[] = [];
 
-    console.log(`[WorkflowRegistry] findCandidates() — looking for triggerType="${triggerType}" in dir="${this.workflowsDir}"`);
+    console.log(`[WorkflowRegistry] findCandidates() — looking for triggerType="${ triggerType }" in dir="${ this.workflowsDir }"`);
 
     if (!fs.existsSync(this.workflowsDir)) {
-      console.log(`[WorkflowRegistry] Workflows dir does not exist: ${this.workflowsDir}`);
+      console.log(`[WorkflowRegistry] Workflows dir does not exist: ${ this.workflowsDir }`);
       return candidates;
     }
 
     const entries = fs.readdirSync(this.workflowsDir, { withFileTypes: true });
-    console.log(`[WorkflowRegistry] Found ${entries.length} entries in workflows dir`);
+    console.log(`[WorkflowRegistry] Found ${ entries.length } entries in workflows dir`);
 
     for (const entry of entries) {
       if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
@@ -123,7 +123,7 @@ export class WorkflowRegistry {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const definition: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-        console.log(`[WorkflowRegistry] Scanning "${entry.name}": name="${definition.name}", enabled=${definition.enabled}`);
+        console.log(`[WorkflowRegistry] Scanning "${ entry.name }": name="${ definition.name }", enabled=${ definition.enabled }`);
 
         if (!definition.enabled) {
           console.log(`[WorkflowRegistry]   → Skipped (disabled)`);
@@ -133,7 +133,7 @@ export class WorkflowRegistry {
         let matched = false;
         for (const node of definition.nodes) {
           if (node.data.category === 'trigger') {
-            console.log(`[WorkflowRegistry]   → Trigger node found: subtype="${node.data.subtype}", looking for="${triggerType}", match=${node.data.subtype === triggerType}`);
+            console.log(`[WorkflowRegistry]   → Trigger node found: subtype="${ node.data.subtype }", looking for="${ triggerType }", match=${ node.data.subtype === triggerType }`);
           }
           if (
             node.data.category === 'trigger' &&
@@ -148,34 +148,49 @@ export class WorkflowRegistry {
           }
         }
         if (!matched) {
-          console.log(`[WorkflowRegistry]   → No matching trigger for "${triggerType}"`);
+          console.log(`[WorkflowRegistry]   → No matching trigger for "${ triggerType }"`);
         }
       } catch (err) {
-        console.warn(`[WorkflowRegistry] Failed to parse ${entry.name}:`, err);
+        console.warn(`[WorkflowRegistry] Failed to parse ${ entry.name }:`, err);
       }
     }
 
-    console.log(`[WorkflowRegistry] findCandidates() result: ${candidates.length} candidate(s)`);
+    console.log(`[WorkflowRegistry] findCandidates() result: ${ candidates.length } candidate(s)`);
     return candidates;
   }
 
   /**
-   * Load a specific workflow by ID.
+   * Load a specific workflow by ID (scans files since filenames are name-slugs, not IDs).
    */
   loadWorkflow(workflowId: string): WorkflowDefinition {
-    const yamlPath = path.join(this.workflowsDir, `${workflowId}.yaml`);
-
-    if (fs.existsSync(yamlPath)) {
-      return yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+    if (!fs.existsSync(this.workflowsDir)) {
+      throw new Error(`Workflow not found: ${ workflowId }`);
     }
 
-    const jsonPath = path.join(this.workflowsDir, `${workflowId}.json`);
+    const entries = fs.readdirSync(this.workflowsDir, { withFileTypes: true });
+    const needle = workflowId.toLowerCase();
 
-    if (fs.existsSync(jsonPath)) {
-      return JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    for (const entry of entries) {
+      if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+      try {
+        const filePath = path.join(this.workflowsDir, entry.name);
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const parsed: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+
+        // Match by id, slug, or filename (without extension)
+        const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
+
+        if (
+          parsed.id === workflowId ||
+          ((parsed as any).slug && (parsed as any).slug.toLowerCase() === needle) ||
+          fileBaseName.toLowerCase() === needle
+        ) {
+          return parsed;
+        }
+      } catch { /* skip unparseable files */ }
     }
 
-    throw new Error(`Workflow not found: ${workflowId}`);
+    throw new Error(`Workflow not found: ${ workflowId }`);
   }
 
   /**
@@ -189,14 +204,14 @@ export class WorkflowRegistry {
     const llm = await getLLMService('remote');
 
     const workflowList = candidates
-      .map((c, i) => `${i + 1}. "${c.definition.name}": ${c.triggerDescription}`)
+      .map((c, i) => `${ i + 1 }. "${ c.definition.name }": ${ c.triggerDescription }`)
       .join('\n');
 
     const systemPrompt = `You are a workflow router. Given a user message, select which workflow should handle it.
 Respond with ONLY the number (1, 2, 3, etc.) of the best matching workflow. If none are a good match, respond with "0".
 
 Available workflows:
-${workflowList}`;
+${ workflowList }`;
 
     const response = await llm.chat([
       { role: 'system', content: systemPrompt },

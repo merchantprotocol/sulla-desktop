@@ -1,13 +1,13 @@
-import { BaseTool, ToolResponse } from "../base";
-import { Octokit } from "@octokit/rest";
+import { BaseTool, ToolResponse } from '../base';
+import { Octokit } from '@octokit/rest';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * GitHub Update File Tool - Update an existing file in a GitHub repository
  */
 export class GitHubUpdateFileWorker extends BaseTool {
-  name: string = '';
-  description: string = '';
+  name = '';
+  description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { owner, repo, path, content, message, branch } = input;
 
@@ -16,7 +16,7 @@ export class GitHubUpdateFileWorker extends BaseTool {
     if (!tokenValue) {
       return {
         successBoolean: false,
-        responseString: "Error: GitHub token not configured."
+        responseString: 'Error: GitHub token not configured.',
       };
     }
 
@@ -36,14 +36,14 @@ export class GitHubUpdateFileWorker extends BaseTool {
         if (Array.isArray(currentFile.data)) {
           return {
             successBoolean: false,
-            responseString: `Error: Path '${path}' is a directory, not a file.`
+            responseString: `Error: Path '${ path }' is a directory, not a file.`,
           };
         }
 
         if (currentFile.data.type !== 'file') {
           return {
             successBoolean: false,
-            responseString: `Error: Path '${path}' is not a file.`
+            responseString: `Error: Path '${ path }' is not a file.`,
           };
         }
 
@@ -52,7 +52,7 @@ export class GitHubUpdateFileWorker extends BaseTool {
         if (error.status === 404) {
           return {
             successBoolean: false,
-            responseString: `Error: File '${path}' does not exist. Use github_create_file to create new files.`
+            responseString: `Error: File '${ path }' does not exist. Use github_create_file to create new files.`,
           };
         }
         throw error;
@@ -65,27 +65,27 @@ export class GitHubUpdateFileWorker extends BaseTool {
         path,
         message,
         content: Buffer.from(content).toString('base64'),
-        sha: currentSha,
+        sha:     currentSha,
         branch,
       });
 
       const responseString = `File updated successfully:
-Repository: ${owner}/${repo}
-Path: ${path}
-Branch: ${branch || 'default'}
-Previous SHA: ${currentSha}
-New SHA: ${response.data.content?.sha || 'N/A'}
-Commit SHA: ${response.data.commit.sha}
-Commit URL: ${response.data.commit.html_url}`;
+Repository: ${ owner }/${ repo }
+Path: ${ path }
+Branch: ${ branch || 'default' }
+Previous SHA: ${ currentSha }
+New SHA: ${ response.data.content?.sha || 'N/A' }
+Commit SHA: ${ response.data.commit.sha }
+Commit URL: ${ response.data.commit.html_url }`;
 
       return {
         successBoolean: true,
-        responseString
+        responseString,
       };
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error updating file: ${(error as Error).message}`
+        responseString: `Error updating file: ${ (error as Error).message }`,
       };
     }
   }

@@ -1,10 +1,10 @@
 
-# Rancher Desktop Network Documentation
+# Sulla Desktop Network Documentation
 
-The table of contents below provides references to all the projects that comprise the Rancher Desktop network stack on windows platform.
+The table of contents below provides references to all the projects that comprise the Sulla Desktop network stack on windows platform.
 
-- [Rancher Desktop Guest Agent](rancher-desktop-guest-agent.md)
-- [Rancher Desktop Networking](rancher-desktop-networking.md)
+- [Sulla Desktop Guest Agent](rancher-desktop-guest-agent.md)
+- [Sulla Desktop Networking](rancher-desktop-networking.md)
 
 ## Feature Parity
 

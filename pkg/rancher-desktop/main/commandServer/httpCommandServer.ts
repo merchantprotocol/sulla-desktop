@@ -977,7 +977,7 @@ export interface CommandWorkerInterface {
    * List the installed extensions with their versions.
    * If the extension manager is not ready, returns undefined.
    */
-  listExtensions(): Promise<Record<string, { version: string, metadata: ExtensionMetadata, labels: Record<string, string>, extraUrls: Array<{ label: string; url: string }>, status: 'running' | 'stopped' }> | undefined>;
+  listExtensions(): Promise<Record<string, { version: string, metadata: ExtensionMetadata, labels: Record<string, string>, extraUrls: { label: string; url: string }[], status: 'running' | 'stopped' }> | undefined>;
   /**
    * Install or uninstall the given extension, returning an appropriate HTTP status code.
    * @param state Whether to install or uninstall the extension.

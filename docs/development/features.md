@@ -13,8 +13,8 @@ Note:
 - Items under the [later] milestone and any spillover items from the [next] milestone are targeted for the release after.
 - Items under the [next] and [later] milestones might change based on user feedback, technical challenges, etc.
 
-[next]: https://github.com/sulla-ai/sulla-desktop/projects?query=next
-[later]: https://github.com/sulla-ai/sulla-desktop/projects?query=later
+[next]: https://github.com/merchantprotocol/sulla-desktop/projects?query=next
+[later]: https://github.com/merchantprotocol/sulla-desktop/projects?query=later
 
 ### OS & Platform Support
 
@@ -144,15 +144,21 @@ Note:
 
 :heavy_check_mark: k3s
 
-:calendar: Sulla Dashboard
+:heavy_check_mark: Sulla Dashboard
 
-:sun_with_face: Epinio
+:heavy_check_mark: n8n Workflow Automation
 
-:sun_with_face: NeuVector
+:heavy_check_mark: AI/LLM Providers (OpenAI, Anthropic, etc.)
 
-:sun_with_face: Marketplace
+:heavy_check_mark: Docker Container Management
 
-:sun_with_face: Kubewarden
+:heavy_check_mark: Kubernetes Cluster Management
+
+:heavy_check_mark: Slack Messaging
+
+:heavy_check_mark: GitHub Operations
+
+:calendar: Extension Marketplace
 
 ### Development
 

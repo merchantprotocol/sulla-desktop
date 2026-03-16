@@ -1,30 +1,56 @@
 <template>
-  <div class="agent-config" :class="{ dark: isDark }">
+  <div
+    class="agent-config"
+    :class="{ dark: isDark }"
+  >
     <div class="node-field">
-      <label class="node-field-label" :class="{ dark: isDark }">Agent</label>
+      <label
+        class="node-field-label"
+        :class="{ dark: isDark }"
+      >Agent</label>
       <select
         class="node-field-input"
         :class="{ dark: isDark }"
         :value="config.agentId || ''"
         @change="onAgentChange"
       >
-        <option value="">-- Select Agent --</option>
-        <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}</option>
+        <option value="">
+          -- Select Agent --
+        </option>
+        <option
+          v-for="a in agents"
+          :key="a.id"
+          :value="a.id"
+        >
+          {{ a.name }}
+        </option>
       </select>
     </div>
 
     <div class="node-field">
       <div class="field-header">
-        <label class="node-field-label" :class="{ dark: isDark }">Additional Prompt</label>
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Additional Prompt</label>
         <button
           class="var-insert-btn"
           :class="{ dark: isDark }"
           title="Insert variable"
           @click="openVarMenu('additionalPrompt', $event)"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="16 18 22 12 16 6"></polyline>
-            <polyline points="8 6 2 12 8 18"></polyline>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
           </svg>
         </button>
       </div>
@@ -37,21 +63,33 @@
         :value="config.additionalPrompt || ''"
         @input="onPromptChange"
         @contextmenu.prevent="onTextareaContextMenu('additionalPrompt', $event)"
-      ></textarea>
+      />
     </div>
 
     <div class="node-field">
       <div class="field-header">
-        <label class="node-field-label" :class="{ dark: isDark }">User Message</label>
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >User Message</label>
         <button
           class="var-insert-btn"
           :class="{ dark: isDark }"
           title="Insert variable"
           @click="openVarMenu('userMessage', $event)"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="16 18 22 12 16 6"></polyline>
-            <polyline points="8 6 2 12 8 18"></polyline>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
           </svg>
         </button>
       </div>
@@ -64,21 +102,33 @@
         :value="config.userMessage || ''"
         @input="onUserMessageChange"
         @contextmenu.prevent="onTextareaContextMenu('userMessage', $event)"
-      ></textarea>
+      />
     </div>
 
     <div class="node-field">
       <div class="field-header">
-        <label class="node-field-label" :class="{ dark: isDark }">Before Prompt</label>
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Before Prompt</label>
         <button
           class="var-insert-btn"
           :class="{ dark: isDark }"
           title="Insert variable"
           @click="openVarMenu('beforePrompt', $event)"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="16 18 22 12 16 6"></polyline>
-            <polyline points="8 6 2 12 8 18"></polyline>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
           </svg>
         </button>
       </div>
@@ -91,11 +141,14 @@
         :value="config.beforePrompt || ''"
         @input="onBeforePromptChange"
         @contextmenu.prevent="onTextareaContextMenu('beforePrompt', $event)"
-      ></textarea>
+      />
     </div>
 
     <div class="node-field">
-      <label class="node-field-label" :class="{ dark: isDark }">Success Criteria</label>
+      <label
+        class="node-field-label"
+        :class="{ dark: isDark }"
+      >Success Criteria</label>
       <textarea
         class="node-field-input node-field-textarea"
         :class="{ dark: isDark }"
@@ -103,11 +156,14 @@
         placeholder="How the orchestrator validates this agent's output..."
         :value="config.successCriteria || ''"
         @input="onSuccessCriteriaChange"
-      ></textarea>
+      />
     </div>
 
     <div class="node-field">
-      <label class="node-field-label" :class="{ dark: isDark }">Completion Contract</label>
+      <label
+        class="node-field-label"
+        :class="{ dark: isDark }"
+      >Completion Contract</label>
       <textarea
         class="node-field-input node-field-textarea"
         :class="{ dark: isDark }"
@@ -115,33 +171,57 @@
         placeholder="HAND_BACK&#10;Summary: [1-3 paragraph summary of what was accomplished]&#10;Artifact: /artifacts/[path-to-output-file]&#10;Needs user input: yes/no&#10;Suggested next action: [optional next step]"
         :value="config.completionContract || ''"
         @input="onCompletionContractChange"
-      ></textarea>
+      />
     </div>
 
-    <div class="node-field help-section" :class="{ dark: isDark }">
-      <p class="help-title" :class="{ dark: isDark }">How agents work</p>
-      <p class="help-text" :class="{ dark: isDark }">
+    <div
+      class="node-field help-section"
+      :class="{ dark: isDark }"
+    >
+      <p
+        class="help-title"
+        :class="{ dark: isDark }"
+      >
+        How agents work
+      </p>
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         Select a Sulla agent to run at this step. Use <strong>User Message</strong> to specify
         exactly what gets sent to the agent as its input.
       </p>
-      <p class="help-text" :class="{ dark: isDark }">
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         <strong>Before Prompt</strong> is shown to the orchestrator before the agent fires.
         <strong>Success Criteria</strong> is used by the orchestrator to validate the result after the agent completes.
       </p>
-      <p class="help-text" :class="{ dark: isDark }">
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         <strong>Completion Contract</strong> defines the format the sub-agent must use when handing back results.
         Leave empty to use the default HAND_BACK format. The orchestrator parses this to decide: approve, retry, or ask user.
       </p>
-      <p class="help-text" :class="{ dark: isDark }">
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
         Click the <code>&lt;/&gt;</code> icon or <strong>right-click</strong> in a textarea to
         insert <strong>variables</strong> from upstream nodes &mdash; e.g.
-        <code v-text="varToken('trigger.result')"></code>.
+        <code v-text="varToken('trigger.result')" />.
       </p>
     </div>
 
     <!-- Variable picker menu (teleported to body) -->
     <Teleport to="body">
-      <div v-if="varMenu.visible" class="var-menu-overlay" @click="closeVarMenu">
+      <div
+        v-if="varMenu.visible"
+        class="var-menu-overlay"
+        @click="closeVarMenu"
+      >
         <div
           ref="varMenuRef"
           class="var-menu"
@@ -149,37 +229,71 @@
           :style="varMenuStyle"
           @click.stop
         >
-          <div class="var-menu-header" :class="{ dark: isDark }">Insert Variable</div>
+          <div
+            class="var-menu-header"
+            :class="{ dark: isDark }"
+          >
+            Insert Variable
+          </div>
 
           <!-- Trigger (always available) -->
           <div class="var-menu-group">
-            <div class="var-menu-group-label" :class="{ dark: isDark }">Trigger</div>
-            <button class="var-menu-item" :class="{ dark: isDark }" @click="insertVariable('trigger.result')">
-              <code v-text="varToken('trigger.result')"></code>
+            <div
+              class="var-menu-group-label"
+              :class="{ dark: isDark }"
+            >
+              Trigger
+            </div>
+            <button
+              class="var-menu-item"
+              :class="{ dark: isDark }"
+              @click="insertVariable('trigger.result')"
+            >
+              <code v-text="varToken('trigger.result')" />
               <span class="var-desc">Trigger payload</span>
             </button>
           </div>
 
           <!-- Upstream nodes -->
-          <div v-if="upstreamNodes.length > 0" class="var-menu-group">
-            <div class="var-menu-group-label" :class="{ dark: isDark }">Upstream Nodes</div>
-            <template v-for="node in upstreamNodes" :key="node.nodeId">
-              <button class="var-menu-item" :class="{ dark: isDark }" @click="insertVariable(node.label + '.result')">
-                <code v-text="varToken(node.label + '.result')"></code>
+          <div
+            v-if="upstreamNodes.length > 0"
+            class="var-menu-group"
+          >
+            <div
+              class="var-menu-group-label"
+              :class="{ dark: isDark }"
+            >
+              Upstream Nodes
+            </div>
+            <template
+              v-for="node in upstreamNodes"
+              :key="node.nodeId"
+            >
+              <button
+                class="var-menu-item"
+                :class="{ dark: isDark }"
+                @click="insertVariable(node.label + '.result')"
+              >
+                <code v-text="varToken(node.label + '.result')" />
                 <span class="var-desc">Output from {{ node.label }}</span>
               </button>
               <button
                 v-if="node.category === 'agent'"
-                class="var-menu-item" :class="{ dark: isDark }"
+                class="var-menu-item"
+                :class="{ dark: isDark }"
                 @click="insertVariable(node.label + '.threadId')"
               >
-                <code v-text="varToken(node.label + '.threadId')"></code>
+                <code v-text="varToken(node.label + '.threadId')" />
                 <span class="var-desc">Thread ID from {{ node.label }}</span>
               </button>
             </template>
           </div>
 
-          <div v-if="upstreamNodes.length === 0" class="var-menu-empty" :class="{ dark: isDark }">
+          <div
+            v-if="upstreamNodes.length === 0"
+            class="var-menu-empty"
+            :class="{ dark: isDark }"
+          >
             No upstream nodes connected yet.
           </div>
         </div>
@@ -194,16 +308,16 @@ import { ipcRenderer } from 'electron';
 import type { AgentNodeConfig } from './types';
 
 export interface UpstreamNodeInfo {
-  nodeId: string;
-  label: string;
-  subtype: string;
+  nodeId:   string;
+  label:    string;
+  subtype:  string;
   category: string;
 }
 
 const props = defineProps<{
-  isDark: boolean;
-  nodeId: string;
-  config: AgentNodeConfig;
+  isDark:        boolean;
+  nodeId:        string;
+  config:        AgentNodeConfig;
   upstreamNodes: UpstreamNodeInfo[];
 }>();
 
@@ -212,10 +326,10 @@ const emit = defineEmits<{
 }>();
 
 interface AgentInfo {
-  id: string;
-  name: string;
+  id:          string;
+  name:        string;
   description: string;
-  type: string;
+  type:        string;
 }
 
 const agents = ref<AgentInfo[]>([]);
@@ -230,9 +344,9 @@ type VarMenuTarget = 'userMessage' | 'additionalPrompt' | 'beforePrompt';
 
 const varMenu = reactive({
   visible: false,
-  target: '' as VarMenuTarget,
-  rawX: 0,
-  rawY: 0,
+  target:  '' as VarMenuTarget,
+  rawX:    0,
+  rawY:    0,
 });
 
 /** Clamp menu position so it stays within the viewport */
@@ -346,11 +460,11 @@ function closeVarMenu() {
 }
 
 function varToken(name: string): string {
-  return `{{${name}}}`;
+  return `{{${ name }}}`;
 }
 
 function insertVariable(varName: string) {
-  const token = `{{${varName}}}`;
+  const token = `{{${ varName }}}`;
   const textareaRef = varMenu.target === 'userMessage' ? userMessageRef : varMenu.target === 'beforePrompt' ? beforePromptRef : additionalPromptRef;
   const textarea = textareaRef.value;
 
@@ -387,11 +501,7 @@ function insertVariable(varName: string) {
 
 .node-field {
   padding: 12px;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.agent-config.dark .node-field {
-  border-bottom-color: #3c3c5c;
+  border-bottom: 1px solid var(--border-default);
 }
 
 .field-header {
@@ -411,71 +521,49 @@ function insertVariable(varName: string) {
   justify-content: center;
   width: 24px;
   height: 24px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 4px;
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .var-insert-btn:hover {
-  background: #e2e8f0;
-  color: #6366f1;
-  border-color: #6366f1;
-}
-
-.var-insert-btn.dark {
-  background: #2d2d44;
-  border-color: #3c3c5c;
-  color: #94a3b8;
-}
-
-.var-insert-btn.dark:hover {
-  background: #3c3c5c;
-  color: #818cf8;
-  border-color: #818cf8;
+  background: var(--bg-surface-hover);
+  color: var(--text-info);
+  border-color: var(--border-accent);
 }
 
 .node-field-label {
   display: block;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-secondary);
   margin-bottom: 6px;
 }
 
 .node-field-label.dark {
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .node-field-input {
   width: 100%;
   padding: 6px 8px;
-  font-size: 13px;
-  border: 1px solid #e2e8f0;
+  font-size: var(--fs-code);
+  border: 1px solid var(--border-default);
   border-radius: 4px;
-  background: #fff;
-  color: #1e293b;
+  background: var(--bg-surface);
+  color: var(--text-primary);
   outline: none;
   box-sizing: border-box;
 }
 
 .node-field-input:focus {
-  border-color: #6366f1;
+  border-color: var(--border-accent);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
-}
-
-.node-field-input.dark {
-  background: #2d2d44;
-  border-color: #3c3c5c;
-  color: #e2e8f0;
-}
-
-.node-field-input.dark:focus {
-  border-color: #6366f1;
 }
 
 .node-field-textarea {
@@ -487,30 +575,30 @@ function insertVariable(varName: string) {
 .help-section { border-bottom: none; }
 
 .help-title {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #64748b;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-secondary);
   margin: 0 0 8px;
 }
-.help-title.dark { color: #94a3b8; }
+.help-title.dark { color: var(--text-muted); }
 
 .help-text {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   margin: 0 0 6px;
   line-height: 1.5;
 }
 .help-text:last-child { margin-bottom: 0; }
-.help-text.dark { color: #64748b; }
+.help-text.dark { color: var(--text-secondary); }
 
 .help-text code {
-  font-size: 10px;
+  font-size: var(--fs-caption);
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(99, 102, 241, 0.1);
-  color: #6366f1;
+  background: var(--bg-accent);
+  color: var(--text-info);
 }
 </style>
 
@@ -527,32 +615,26 @@ function insertVariable(varName: string) {
   width: 260px;
   max-height: 320px;
   overflow-y: auto;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.12);
   z-index: 10001;
 }
 
-.var-menu.dark {
-  background: #1e293b;
-  border-color: #3c3c5c;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-}
-
 .var-menu-header {
   padding: 8px 12px;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #64748b;
-  border-bottom: 1px solid #e2e8f0;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .var-menu-header.dark {
-  color: #94a3b8;
-  border-bottom-color: #3c3c5c;
+  color: var(--text-muted);
+  border-bottom-color: var(--border-default);
 }
 
 .var-menu-group {
@@ -561,15 +643,15 @@ function insertVariable(varName: string) {
 
 .var-menu-group-label {
   padding: 4px 12px;
-  font-size: 9px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #94a3b8;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-muted);
 }
 
 .var-menu-group-label.dark {
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .var-menu-item {
@@ -580,36 +662,28 @@ function insertVariable(varName: string) {
   padding: 6px 12px;
   border: none;
   background: transparent;
-  color: #1e293b;
-  font-size: 12px;
+  color: var(--text-primary);
+  font-size: var(--fs-code);
   cursor: pointer;
   text-align: left;
 }
 
 .var-menu-item:hover {
-  background: #f1f5f9;
-}
-
-.var-menu-item.dark {
-  color: #e2e8f0;
-}
-
-.var-menu-item.dark:hover {
-  background: #2d2d44;
+  background: var(--bg-surface-alt);
 }
 
 .var-menu-item code {
-  font-size: 11px;
+  font-size: var(--fs-body-sm);
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(99, 102, 241, 0.1);
-  color: #6366f1;
+  background: var(--bg-accent);
+  color: var(--text-info);
   white-space: nowrap;
 }
 
 .var-desc {
-  font-size: 10px;
-  color: #94a3b8;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -617,12 +691,12 @@ function insertVariable(varName: string) {
 
 .var-menu-empty {
   padding: 12px;
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
   text-align: center;
 }
 
 .var-menu-empty.dark {
-  color: #64748b;
+  color: var(--text-secondary);
 }
 </style>

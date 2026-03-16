@@ -69,14 +69,14 @@ export class RecipeExtensionImpl implements Extension {
     return this._dirOverride ?? this._dirFallback;
   }
 
-  protected _metadata:  Promise<ExtensionMetadata> | undefined;
-  protected _labels:    Promise<Record<string, string>> | undefined;
-  protected _manifest:  InstallationManifest | undefined;
+  protected _metadata: Promise<ExtensionMetadata> | undefined;
+  protected _labels:   Promise<Record<string, string>> | undefined;
+  protected _manifest: InstallationManifest | undefined;
 
-  protected readonly MANIFEST_FILE   = 'installation.yaml';
-  protected readonly VERSION_FILE    = 'version.txt';
-  protected readonly INSTALLED_LOCK  = 'installed.lock';
-  protected readonly RUNNING_STATE   = 'running.state';
+  protected readonly MANIFEST_FILE = 'installation.yaml';
+  protected readonly VERSION_FILE = 'version.txt';
+  protected readonly INSTALLED_LOCK = 'installed.lock';
+  protected readonly RUNNING_STATE = 'running.state';
 
   get image(): string {
     return `${ this.id }:${ this.version }`;
@@ -86,10 +86,10 @@ export class RecipeExtensionImpl implements Extension {
 
   get metadata(): Promise<ExtensionMetadata> {
     this._metadata ??= (async() => {
-      const icon = this.catalogEntry.logo
-        || this.catalogEntry.labels?.['com.docker.desktop.extension.icon']
-        || this.catalogEntry.labels?.['com.docker.extension.icon']
-        || '';
+      const icon = this.catalogEntry.logo ||
+        this.catalogEntry.labels?.['com.docker.desktop.extension.icon'] ||
+        this.catalogEntry.labels?.['com.docker.extension.icon'] ||
+        '';
 
       if (!icon) {
         throw new ExtensionErrorImpl(
@@ -110,7 +110,7 @@ export class RecipeExtensionImpl implements Extension {
     return this._labels;
   }
 
-  get extraUrls(): Promise<Array<{ label: string; url: string }>> {
+  get extraUrls(): Promise<{ label: string; url: string }[]> {
     return (async() => {
       const manifest = await this.getManifest();
 
@@ -180,7 +180,8 @@ export class RecipeExtensionImpl implements Extension {
     this._dirOverride = path.join(paths.extensionRoot, manifest.id);
 
     sullaLog({
-      topic: 'extensions', level: 'info',
+      topic:   'extensions',
+      level:   'info',
       message: `Installing recipe extension ${ this.id } (${ manifest.name })`,
       data:    { dir: this.dir, manifestId: manifest.id },
     });
@@ -275,6 +276,11 @@ export class RecipeExtensionImpl implements Extension {
 
     sullaLog({ topic: 'extensions', level: 'info', message: `Recipe extension ${ this.id } installed successfully.` });
 
+    // Save integration credentials declared in the manifest
+    if (manifest.integrations) {
+      await this.saveIntegrationCredentials(manifest.integrations);
+    }
+
     // Start the extension after install
     try {
       sullaLog({ topic: 'extensions', level: 'info', message: `[install:${ this.id }] post-install start: invoking start()` });
@@ -325,9 +331,7 @@ export class RecipeExtensionImpl implements Extension {
     //   https://raw.githubusercontent.com/<owner>/<repo>/refs/heads/<branch>/recipes/<name>/installation.yaml
     // We need:
     //   https://api.github.com/repos/<owner>/<repo>/contents/recipes/<name>
-    const rawMatch = installableUrl.match(
-      /raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/.+?\/(recipes\/[^/]+)\/[^/]+$/,
-    );
+    const rawMatch = /raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/.+?\/(recipes\/[^/]+)\/[^/]+$/.exec(installableUrl);
 
     if (!rawMatch) {
       // Fallback: just download the icon from the base URL
@@ -371,7 +375,7 @@ export class RecipeExtensionImpl implements Extension {
       return;
     }
 
-    const items: Array<{ name: string; path: string; download_url: string | null; type: string; url: string }> = await response.json() as any;
+    const items: { name: string; path: string; download_url: string | null; type: string; url: string }[] = await response.json();
 
     for (const item of items) {
       if (item.type === 'dir') {
@@ -483,14 +487,14 @@ export class RecipeExtensionImpl implements Extension {
           message: `Setup step ${ index + 1 } failed`,
           error:   err,
           data:    {
-            command: resolvedCommand,
-            cwd:     resolvedCwd,
-            code:    err?.code,
-            signal:  err?.signal,
-            stdout:  err?.stdout,
-            stderr:  err?.stderr,
+            command:  resolvedCommand,
+            cwd:      resolvedCwd,
+            code:     err?.code,
+            signal:   err?.signal,
+            stdout:   err?.stdout,
+            stderr:   err?.stderr,
             optional: isOptional,
-            stack:   err?.stack,
+            stack:    err?.stack,
           },
         });
         if (!isOptional) {
@@ -513,6 +517,7 @@ export class RecipeExtensionImpl implements Extension {
    *  - `json`       — JSON-stringify (produces a quoted string)
    *  - `md5`        — MD5 hex digest (always 32 chars)
    *  - `argon2`     — Argon2id password hash (e.g. `{{sullaServicePassword|argon2}}`)
+   *  - `bcrypt`     — bcrypt password hash (e.g. `{{sullaServicePassword|bcrypt}}`)
    */
   protected async applyModifier(value: string, modifier: string): Promise<string> {
     switch (modifier) {
@@ -530,7 +535,7 @@ export class RecipeExtensionImpl implements Extension {
       const salt = crypto.randomBytes(16);
 
       return await argon2id({
-        password: value,
+        password:    value,
         salt,
         parallelism: 1,
         iterations:  2,
@@ -538,6 +543,12 @@ export class RecipeExtensionImpl implements Extension {
         hashLength:  32,
         outputType:  'encoded',
       });
+    }
+    case 'bcrypt': {
+      const bcrypt = await import('bcryptjs');
+      const salt = await bcrypt.genSalt(10);
+
+      return await bcrypt.hash(value, salt);
     }
     default:
       sullaLog({ topic: 'extensions', level: 'warn', message: `Unknown variable modifier: ${ modifier }` });
@@ -755,6 +766,31 @@ export class RecipeExtensionImpl implements Extension {
    */
   protected async processComposeFile(): Promise<void> {
     await this.processAllRecipeFiles();
+  }
+
+  /**
+   * Save integration credentials declared in the manifest to the IntegrationService.
+   * Template variables in values are resolved before saving.
+   */
+  protected async saveIntegrationCredentials(integrations: Record<string, Record<string, string>>): Promise<void> {
+    try {
+      const svc = getIntegrationService();
+
+      for (const [integrationId, properties] of Object.entries(integrations)) {
+        for (const [property, rawValue] of Object.entries(properties)) {
+          const resolvedValue = await this.resolveVariables(rawValue);
+
+          await svc.setIntegrationValue({
+            integration_id: integrationId,
+            property,
+            value:          resolvedValue,
+          });
+        }
+        sullaLog({ topic: 'extensions', level: 'info', message: `[install:${ this.id }] saved integration credentials for ${ integrationId }` });
+      }
+    } catch (ex) {
+      sullaLog({ topic: 'extensions', level: 'warn', message: `[install:${ this.id }] failed to save integration credentials`, error: ex });
+    }
   }
 
   /**
