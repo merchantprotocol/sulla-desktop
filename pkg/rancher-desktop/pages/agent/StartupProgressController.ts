@@ -2,6 +2,7 @@ import { computed, ref } from 'vue';
 import type { ComputedRef, Ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { markHubReady } from '@pkg/agent/services/WebSocketClientService';
 import type { IpcRendererEvent } from 'electron';
 
 export class StartupProgressController {
@@ -172,6 +173,8 @@ export class StartupProgressController {
     ws.onopen = () => {
       clearTimeout(timeout);
       console.log('[StartupProgressController] WebSocket probe connected — services are running, closing overlay');
+      // Notify the shared readiness gate so deferred connections can proceed
+      markHubReady();
       // Stop the readiness interval so it doesn't trigger a page reload
       if (this.readinessInterval) {
         clearInterval(this.readinessInterval);

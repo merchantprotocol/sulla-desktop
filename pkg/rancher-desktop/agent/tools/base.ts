@@ -111,10 +111,23 @@ export abstract class BaseTool<TState = any> {
             try {
               parsedArray = JSON.parse(value);
             } catch {
-              errors.push(`Invalid JSON array for ${ key }`);
+              // Not valid JSON — wrap the raw string into a single-element array
+              // using the items schema to determine the correct shape.
+              const itemsSpec = spec.items as Record<string, unknown> | undefined;
+              if (itemsSpec?.type === 'object' && itemsSpec.properties) {
+                // Find the first required string property to assign the value to
+                const props = itemsSpec.properties as Record<string, { type: string; optional?: boolean }>;
+                const targetKey = Object.keys(props).find(k => props[k].type === 'string' && !props[k].optional) ?? Object.keys(props)[0];
+                parsedArray = [{ [targetKey]: value }];
+              } else {
+                parsedArray = [value];
+              }
             }
           }
-          if (!Array.isArray(parsedArray)) errors.push(`Expected array for ${ key }`);
+          if (!Array.isArray(parsedArray)) {
+            // Wrap non-array values (e.g. a single object) into an array
+            parsedArray = [parsedArray];
+          }
           result[key] = parsedArray;
         }
         break;

@@ -23,6 +23,73 @@ interface ConnectionConfig {
 
 const DEFAULT_WS_URL = 'ws://localhost:30118/';
 
+/**
+ * Shared readiness gate — resolves once the WebSocket hub on port 30118
+ * accepts a connection for the first time.  All channel connections created
+ * via WebSocketClientService.connect() are deferred until this gate opens,
+ * eliminating the noisy retry storm during startup.
+ */
+let hubReadyResolve: (() => void) | null = null;
+let hubReady: Promise<void> | null = null;
+let hubProbeRunning = false;
+
+function getHubReadyPromise(): Promise<void> {
+  if (!hubReady) {
+    hubReady = new Promise<void>((resolve) => {
+      hubReadyResolve = resolve;
+    });
+  }
+  return hubReady;
+}
+
+/** Mark the hub as ready from the outside (e.g. after startup probe succeeds). */
+export function markHubReady(): void {
+  if (hubReadyResolve) {
+    hubReadyResolve();
+    hubReadyResolve = null;
+  } else if (!hubReady) {
+    hubReady = Promise.resolve();
+  }
+}
+
+/** Probe the hub with a single WebSocket connection attempt.  Retries every 3 s until
+ *  the connection succeeds, then calls markHubReady().  Safe to call multiple times —
+ *  only the first invocation spawns a probe loop. */
+function probeHubUntilReady(): void {
+  if (hubProbeRunning) return;
+  hubProbeRunning = true;
+
+  const attempt = () => {
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(DEFAULT_WS_URL);
+    } catch {
+      setTimeout(attempt, 3000);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      try { ws.close(); } catch {}
+      setTimeout(attempt, 3000);
+    }, 5000);
+
+    ws.onopen = () => {
+      clearTimeout(timeout);
+      try { ws.close(); } catch {}
+      console.log('[WSService] Hub probe succeeded — marking ready');
+      markHubReady();
+    };
+
+    ws.onerror = () => {
+      clearTimeout(timeout);
+      try { ws.close(); } catch {}
+      setTimeout(attempt, 3000);
+    };
+  };
+
+  attempt();
+}
+
 function generateUUID(): string {
   const bytes = new Uint8Array(16);
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
@@ -80,6 +147,8 @@ class WebSocketConnection {
 
   connect(): void {
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return;
+    // If a reconnect timer is already scheduled, don't spawn a parallel attempt
+    if (this.reconnectTimer) return;
 
     this.cleanup();
 
@@ -309,7 +378,7 @@ export class WebSocketClientService {
       // "WebSocket is closed before the connection is established" and first-message delays.
       if (conn.isConnected() || conn.isConnecting()) return true;
       // Reuse the same connection instance so existing onMessage handlers remain attached.
-      conn.connect();
+      this.connectWhenReady(conn);
       return true;
     }
 
@@ -317,8 +386,15 @@ export class WebSocketClientService {
     this.connections.set(connectionId, conn);
     // Attach debug tap handler
     conn.onMessage((msg) => this.logMessage(connectionId, 'in', msg));
-    conn.connect();
+    this.connectWhenReady(conn);
     return true;
+  }
+
+  /** Wait for the hub readiness probe before opening the actual WebSocket. */
+  private connectWhenReady(conn: WebSocketConnection): void {
+    // Kick off the hub probe (no-op if already running)
+    probeHubUntilReady();
+    getHubReadyPromise().then(() => conn.connect());
   }
 
   async send(connectionId: string, message: unknown): Promise<boolean> {

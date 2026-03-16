@@ -27,25 +27,8 @@ import type {
   LoopIterationState,
 } from './types';
 
-// ── Default completion contract ──
-// Appended to every sub-agent prompt so the orchestrator gets a structured response.
-// Uses <AGENT_DONE> XML wrapper consistent with the agent graph completion protocol.
-// Can be overridden per agent node via the completionContract config field.
-
-export const DEFAULT_HANDBACK_CONTRACT = `
-
---- COMPLETION CONTRACT ---
-When you have fully completed your task, end your final message with:
-
-<AGENT_DONE>
-<KEY_RESULT>
-Summary: [1-3 paragraphs of what was accomplished]
-Artifact: [primary output file path, or "none"]
-Needs user input: [yes/no]
-</KEY_RESULT>
-</AGENT_DONE>
---- END CONTRACT ---
-`;
+// Completion contract is now handled exclusively by AgentNode.ts system prompt.
+// No duplicate contract appended here — single source of truth.
 
 // ── Playbook initialization ──
 
@@ -86,6 +69,11 @@ export function createPlaybookState(
 
   // The initial frontier is the nodes downstream of triggers
   const nextNodeIds = getDownstreamNodes(definition, triggerNodeIds);
+
+  console.log(`[Playbook:createPlaybookState] triggers=[${ triggerNodeIds.join(', ') }], downstream=[${ nextNodeIds.join(', ') }], defNodes=${ definition.nodes.length }, defEdges=${ definition.edges.length }`);
+  if (nextNodeIds.length === 0) {
+    console.error(`[Playbook:createPlaybookState] WARNING: No downstream nodes from triggers! Workflow will complete immediately.`);
+  }
 
   return {
     workflowId:       definition.id,
@@ -199,6 +187,18 @@ function areUpstreamComplete(
       return true;
     });
     return relevantEdges.length === 0 || relevantEdges.every(edge => completedSet.has(edge.source));
+  }
+
+  // Multi-trigger support: when ALL upstream nodes are triggers, require only
+  // ONE to be completed (a workflow starts when any trigger fires, not all).
+  const allUpstreamAreTriggers = incomingEdges.every(edge => {
+    const sourceNode = getNode(definition, edge.source);
+
+    return sourceNode?.data.category === 'trigger';
+  });
+
+  if (allUpstreamAreTriggers) {
+    return incomingEdges.some(edge => completedSet.has(edge.source));
   }
 
   return incomingEdges.every(edge => completedSet.has(edge.source));
@@ -394,7 +394,22 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
     areUpstreamComplete(definition, id, completedNodeIds, playbook.loopState),
   );
 
+  console.log(`[Playbook:processNextStep] currentNodeIds=[${ currentNodeIds.join(', ') }], readyNodes=[${ readyNodes.join(', ') }], completedCount=${ completedNodeIds.length }`);
+
   if (readyNodes.length === 0) {
+    // Log diagnostic: why are frontier nodes not ready?
+    if (currentNodeIds.length > 0) {
+      const reverseEdges = buildReverseEdges(definition);
+      const completedSet = new Set(completedNodeIds);
+      const diagnostics = currentNodeIds.map(id => {
+        const incoming = reverseEdges.get(id) || [];
+        const missing = incoming.filter(e => !completedSet.has(e.source)).map(e => e.source);
+
+        return `  ${ id }: ${ incoming.length } incoming, missing=[${ missing.join(', ') }]`;
+      });
+      console.error(`[Playbook:processNextStep] Frontier nodes blocked!\n${ diagnostics.join('\n') }`);
+    }
+
     // No more nodes to process — workflow is done
     const now = new Date().toISOString();
     return {
@@ -577,9 +592,11 @@ function handleAgentNode(
     ].filter(Boolean).join('\n');
   }
 
-  // Append the completion contract — custom override or default
+  // Custom completion contract override (if any) — otherwise AgentNode system prompt handles it
   const completionContract = (config.completionContract as string) || '';
-  prompt += completionContract.trim() ? `\n\n${ completionContract }` : DEFAULT_HANDBACK_CONTRACT;
+  if (completionContract.trim()) {
+    prompt += `\n\n${ completionContract }`;
+  }
 
   return {
     action:          'spawn_sub_agent',

@@ -74,10 +74,14 @@ export class EditorChatInterface {
     this.registry = new AgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(WORKBENCH_CHANNEL);
 
-    // Watch the persona's messages and mirror into our ref
+    // Watch the persona's messages and mirror into our ref.
+    // We watch the full array (deep) so sub-agent activity updates
+    // (thinkingLines.push, status change) also trigger a UI refresh,
+    // not only new message additions.
     this.watcher = watch(
-      () => this.persona.messages.length,
+      () => this.persona.messages,
       () => this.updateMessages(),
+      { deep: true },
     );
 
     this.updateMessages();
@@ -118,7 +122,16 @@ export class EditorChatInterface {
   }
 
   private updateMessages(): void {
-    this.messages.value = [...this.persona.messages];
+    const msgs = [...this.persona.messages];
+    const subAgentMsgs = msgs.filter(m => m.kind === 'sub_agent_activity');
+    if (subAgentMsgs.length > 0) {
+      console.log(`[EditorChatInterface] updateMessages() — total=${ msgs.length }, sub_agent_activity=${ subAgentMsgs.length }`, subAgentMsgs.map(m => ({
+        nodeId: m.subAgentActivity?.nodeId,
+        status: m.subAgentActivity?.status,
+        lines:  m.subAgentActivity?.thinkingLines?.length,
+      })));
+    }
+    this.messages.value = msgs;
   }
 
   async send(): Promise<void> {

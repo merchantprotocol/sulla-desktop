@@ -3,7 +3,7 @@ import type { ToolManifest } from '../registry';
 export const agentToolManifests: ToolManifest[] = [
   {
     name:        'spawn_agent',
-    description: 'Spawn one or more sub-agents to work on tasks independently. Each sub-agent runs with its own conversation thread and agent persona, then returns results when complete. Pass a single task for one agent, or multiple tasks for parallel execution. Use list_agents first to discover available agent configurations.',
+    description: 'Spawn one or more sub-agents to work on tasks independently. Each sub-agent runs with its own conversation thread and agent persona, then returns results. Supports parallel execution and async (fire-and-forget) mode. Use list_agents first to discover available agent configurations.',
     category:    'agents',
     schemaDef:   {
       tasks: {
@@ -18,9 +18,29 @@ export const agentToolManifests: ToolManifest[] = [
           },
         },
       },
+      parallel: {
+        type:        'boolean',
+        optional:    true,
+        description: 'When true, all tasks run in parallel (default). When false, tasks run sequentially one after another.',
+      },
+      async: {
+        type:        'boolean',
+        optional:    true,
+        description: 'When true, launches agents in the background and returns immediately with a jobId. Use check_agent_jobs to poll for results. Default: false (synchronous — blocks until all agents complete).',
+      },
     },
     operationTypes: ['execute'],
     loader:         () => import('./spawn_agent'),
+  },
+  {
+    name:        'check_agent_jobs',
+    description: 'Check the status and results of async sub-agent jobs launched with spawn_agent(async: true). Pass a jobId to check a specific job, or omit to list all pending/completed jobs.',
+    category:    'agents',
+    schemaDef:   {
+      jobId: { type: 'string', optional: true, description: 'The job ID returned by an async spawn_agent call. Omit to list all jobs.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./check_agent_jobs'),
   },
   {
     name:        'list_agents',
