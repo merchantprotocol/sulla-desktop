@@ -620,6 +620,8 @@ export class AgentPersonaService {
       }
 
       if (typeof msg.data === 'string') {
+        // Skip empty or whitespace-only messages
+        if (!msg.data.trim()) return;
         // Skip raw tool_use JSON that leaked from the LLM response
         if (msg.data.trimStart().startsWith('{"type":"tool_use"')) return;
         const message: ChatMessage = {
@@ -657,6 +659,8 @@ export class AgentPersonaService {
           finalContent = htmlMatch[1].trim();
         }
       }
+      // After all transformations, skip if content ended up empty
+      if (!finalContent.trim()) return;
 
       const message: ChatMessage = {
         id:        `${ Date.now() }_ws_${ msg.type }`,

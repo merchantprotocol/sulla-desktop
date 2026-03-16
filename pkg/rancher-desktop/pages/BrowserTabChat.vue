@@ -60,6 +60,12 @@
                 </div>
               </div>
 
+              <SubAgentBubble
+                v-else-if="m.kind === 'sub_agent_activity' && m.subAgentActivity"
+                :activity="m.subAgentActivity"
+                :is-dark="isDark"
+              />
+
               <div v-else-if="m.kind === 'thinking'" class="thinking-bubble max-w-[min(760px,92%)]">
                 <div class="thinking-bubble-inner">
                   <div class="thinking-bubble-content text-xs text-content-muted italic" v-html="renderMarkdown(m.content)" />
@@ -154,6 +160,7 @@ import AgentComposer from './agent/AgentComposer.vue';
 import ChatContextMenu from './chat/ChatContextMenu.vue';
 import ChatOptionsVariantB from './chat-options/ChatOptionsVariantB.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import SubAgentBubble from './editor/workflow/SubAgentBubble.vue';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import { useTheme } from '@pkg/composables/useTheme';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';

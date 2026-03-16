@@ -187,6 +187,12 @@
                   </div>
                 </div>
 
+                <SubAgentBubble
+                  v-else-if="m.kind === 'sub_agent_activity' && m.subAgentActivity"
+                  :activity="m.subAgentActivity"
+                  :is-dark="isDark"
+                />
+
                 <div
                   v-else-if="m.kind === 'thinking'"
                   class="thinking-bubble max-w-[min(760px,92%)]"
@@ -348,6 +354,7 @@ import AgentHeader from './agent/AgentHeader.vue';
 import AgentComposer from './agent/AgentComposer.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import SubAgentBubble from './editor/workflow/SubAgentBubble.vue';
 
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue';
 import DOMPurify from 'dompurify';
