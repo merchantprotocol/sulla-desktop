@@ -164,6 +164,9 @@ export interface BaseThreadState {
     /** True when this graph was spawned as a sub-agent (heartbeat, workflow, etc.) */
     isSubAgent: boolean;
 
+    /** Recursion depth counter for nested sub-agent spawning (0 = top-level) */
+    subAgentDepth: number;
+
     options: {
       abort?: AbortService;
     };
@@ -1530,6 +1533,7 @@ export async function createInitialThreadState<T extends BaseThreadState>(
     cycleComplete:        false,
     waitingForUser:       false,
     isSubAgent:           overrides.isSubAgent ?? false,
+    subAgentDepth:        overrides.subAgentDepth ?? 0,
     options:              overrides.options ?? { abort: undefined },
     currentNodeId:        overrides.currentNodeId ?? 'input_handler',
     consecutiveSameNode:  0,

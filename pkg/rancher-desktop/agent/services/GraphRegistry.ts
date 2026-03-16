@@ -300,6 +300,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
       // Environmental context (loaded each cycle by HeartbeatNode)
       agentsContext: '',
       isSubAgent:    false,
+      subAgentDepth: 0,
     },
   };
 
@@ -330,6 +331,7 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
       cycleComplete:  false,
       waitingForUser: false,
       isSubAgent:     false,
+      subAgentDepth:  0,
 
       llmModel,
       llmLocal,

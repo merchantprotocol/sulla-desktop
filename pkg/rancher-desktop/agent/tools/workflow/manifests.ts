@@ -8,7 +8,7 @@ export const workflowToolManifests: ToolManifest[] = [
     schemaDef:   {
       workflowId: { type: 'string', description: 'The workflow slug/ID to execute.' },
       message:    { type: 'string', optional: true, description: 'Message or payload to pass to the workflow. Defaults to the current user message.' },
-      forceNew:   { type: 'boolean', optional: true, description: 'Force fresh start even if a resumable checkpoint exists. Default: false.' },
+      resume:     { type: 'boolean', optional: true, description: 'Resume from the last checkpoint instead of starting fresh. Only set to true when the user explicitly asks to resume a previous run. Default: false.' },
     },
     operationTypes: ['execute'],
     loader:         () => import('./execute_workflow'),

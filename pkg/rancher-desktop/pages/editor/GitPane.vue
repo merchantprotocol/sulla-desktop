@@ -1145,7 +1145,6 @@ async function discoverAndRefresh() {
   loading.value = true;
   try {
     const discovered: { root: string; name: string }[] = await ipcRenderer.invoke('git-discover-repos', props.rootPath);
-    console.log('[GitPane] discovered repos:', JSON.stringify(discovered, null, 2));
 
     // Preserve existing UI state (open/closed) for repos we already know about
     const existingMap = new Map(repoStates.value.map(r => [r.root, r]));
