@@ -1557,7 +1557,24 @@ export default defineComponent({
     const chatStop = () => editorChat.stop();
     const chatUpdateQuery = (val: string) => { editorChat.query.value = val };
 
-    // Listen for workflow playbook events and update the canvas
+    // ── Canvas-path event dispatcher ──────────────────────────────────
+    // Receives workflow execution events forwarded by EditorChatInterface and
+    // dispatches them to the corresponding WorkflowEditor.vue methods.
+    //
+    // This is the CANVAS consumer. The CHAT consumer is AgentPersonaModel's
+    // `workflow_execution_event` case, which independently creates/updates
+    // ChatMessage objects. Both listen on the same WebSocket channel.
+    //
+    // Event → Method mapping:
+    //   workflow_started   → clearAllExecution()
+    //   node_started       → updateNodeExecution(nodeId, { status: 'running' })
+    //   node_completed     → updateNodeExecution(nodeId, { status: 'completed' })
+    //   node_failed        → updateNodeExecution(nodeId, { status: 'failed' })
+    //   node_thinking      → pushNodeThinking(nodeId, message)
+    //   edge_activated     → setEdgeAnimated(sourceId, targetId, true)
+    //   workflow_completed → no-op (individual nodes already show final state)
+    //   workflow_failed    → no-op
+    //   workflow_aborted   → no-op
     editorChat.onWorkflowEvent((event) => {
       if (!workflowEditorRef.value) return;
 

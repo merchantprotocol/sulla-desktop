@@ -19,7 +19,7 @@ import { parseJson } from './JsonParseService';
 // ============================================================================
 
 /** Max messages before triggering background summarization */
-const TRIGGER_WINDOW_SIZE = 20;
+const TRIGGER_WINDOW_SIZE = 45;
 
 /** Percentage of oldest messages to batch-summarize */
 const BATCH_SUMMARY_PERCENT = 0.25;

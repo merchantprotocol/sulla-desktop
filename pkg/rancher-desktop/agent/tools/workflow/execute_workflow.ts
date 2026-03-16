@@ -7,6 +7,7 @@ import { BaseTool, ToolResponse } from '../base';
 import { resolveSullaWorkflowsDir } from '@pkg/agent/utils/sullaPaths';
 import { createPlaybookState } from '../../workflow/WorkflowPlaybook';
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
+import type { WorkflowPlaybookState } from '../../workflow/types';
 
 export class ExecuteWorkflowWorker extends BaseTool {
   name = '';
@@ -78,6 +79,54 @@ export class ExecuteWorkflowWorker extends BaseTool {
         successBoolean: false,
         responseString: `Workflow "${ workflowId }" not found. Check your available workflows in the system prompt.`,
       };
+    }
+
+    // Auto-resume from last checkpoint if available
+    const forceNew = input.forceNew === true;
+
+    if (!forceNew) {
+      try {
+        const { WorkflowCheckpointModel } = await import('../../database/models/WorkflowCheckpointModel');
+        const recentExecs = await WorkflowCheckpointModel.recentExecutions(workflowId, 1);
+
+        if (recentExecs.length > 0) {
+          const latestCheckpoint = recentExecs[0];
+          const savedState = latestCheckpoint.attributes.playbook_state as unknown as WorkflowPlaybookState;
+
+          if (savedState?.definition && savedState.status !== 'completed' && savedState.status !== 'failed') {
+            const resumedState: WorkflowPlaybookState = {
+              ...savedState,
+              executionId:     `${ savedState.executionId }-resume-${ Date.now() }`,
+              status:          'running',
+              completedAt:     undefined,
+              error:           undefined,
+              pendingDecision: undefined,
+            };
+
+            if (this.state) {
+              (this.state).metadata.activeWorkflow = resumedState;
+            }
+
+            console.log(`[ExecuteWorkflow] Resuming workflow "${ definition.name }" from checkpoint — original=${ savedState.executionId }, new=${ resumedState.executionId }, completed=${ resumedState.completedNodeIds.length } nodes, frontier=[${ resumedState.currentNodeIds.join(', ') }]`);
+
+            return {
+              successBoolean: true,
+              responseString: JSON.stringify({
+                executionId:      resumedState.executionId,
+                originalExecId:   savedState.executionId,
+                workflowId:       definition.id,
+                workflowName:     definition.name,
+                status:           'resumed',
+                completedNodes:   resumedState.completedNodeIds.length,
+                frontierNodes:    resumedState.currentNodeIds,
+                message:          `Workflow "${ definition.name }" resumed from last checkpoint. ${ resumedState.completedNodeIds.length } nodes already completed. Continuing from frontier: [${ resumedState.currentNodeIds.join(', ') }].`,
+              }, null, 2),
+            };
+          }
+        }
+      } catch (err) {
+        console.warn(`[ExecuteWorkflow] Checkpoint lookup failed, starting fresh:`, err);
+      }
     }
 
     // Create the playbook state and load it into the agent's metadata

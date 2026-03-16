@@ -70,10 +70,6 @@ export interface PersonaSidebarAsset {
 
 // ─── Tool-name → human-friendly verb mapping ───────────────────────────────
 const TOOL_VERB_MAP: Record<string, string> = {
-  // Filesystem
-  fs_read_file: 'Reading', fs_write_file: 'Writing', fs_append_file: 'Writing',
-  fs_list_dir: 'Browsing files', fs_mkdir: 'Creating folder', fs_path_info: 'Inspecting',
-  fs_copy_path: 'Copying', fs_move_path: 'Moving', fs_delete_path: 'Deleting',
   // Execution
   exec: 'Running', exec_command: 'Running', shell: 'Running', bash: 'Running', run_command: 'Running',
   // Search
@@ -584,6 +580,31 @@ export class AgentPersonaService {
     return undefined;
   }
 
+  /**
+   * Route an incoming WebSocket message to the appropriate handler.
+   *
+   * This is the **chat-path** entry point for all WebSocket messages on this
+   * persona's channel. For `workflow_execution_event` messages specifically,
+   * this is one of TWO independent consumers (the other being the canvas path
+   * via `EditorChatInterface` → `AgentEditor.vue` → `WorkflowEditor.vue`).
+   *
+   * **Workflow events handled here** (creates/mutates `ChatMessage` objects
+   * with `kind: 'workflow_node'`, rendered by `WorkflowNodeCard.vue`):
+   * - `workflow_started` — creates a "Workflow Started" card (status: running)
+   * - `node_started` — creates a running node card with nodeId + nodeLabel
+   * - `node_completed` / `node_failed` / `node_waiting` — updates existing card
+   * - `workflow_completed` / `workflow_failed` — updates the start card's status
+   *
+   * **Workflow events NOT handled here** (canvas-only):
+   * - `edge_activated`, `node_thinking`
+   *
+   * The event payload originates from `Graph.emitPlaybookEvent()` in the main
+   * process. Any changes to the payload shape must be reflected here AND in the
+   * canvas-path dispatcher in `AgentEditor.vue`.
+   *
+   * @param agentId The channel / agent ID this message arrived on
+   * @param msg     The raw WebSocket message
+   */
   private handleWebSocketMessage(agentId: string, msg: WebSocketMessage): void {
     const dataPreview = msg.data
       ? (typeof msg.data === 'string'
@@ -853,6 +874,28 @@ export class AgentPersonaService {
       }
       return;
     }
+    // ── Chat-path workflow event handler ────────────────────────────────
+    // Creates and updates ChatMessage objects (kind: 'workflow_node') in the
+    // reactive messages array so the chat UI shows workflow progress cards.
+    //
+    // This is one of TWO independent consumers of `workflow_execution_event`:
+    //   1. EditorChatInterface → AgentEditor.vue → WorkflowEditor.vue (canvas)
+    //   2. This handler (chat message cards via WorkflowNodeCard.vue)
+    //
+    // Both listen on the same WebSocket channel. The event payload is emitted
+    // by Graph.emitPlaybookEvent() in the main process.
+    //
+    // Events handled here:
+    //   - workflow_started   → creates a "Workflow Started" card (status: running)
+    //   - node_started       → creates a new running node card
+    //   - node_completed     → finds running card by nodeId, updates to completed
+    //   - node_failed        → finds running card by nodeId, updates to failed
+    //   - node_waiting       → finds running card by nodeId, updates to waiting
+    //   - workflow_completed → finds start card, updates to completed
+    //   - workflow_failed    → finds start card, updates to failed
+    //
+    // Events NOT handled here (canvas-only):
+    //   - edge_activated, node_thinking
     case 'workflow_execution_event': {
       const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
       if (!data) return;

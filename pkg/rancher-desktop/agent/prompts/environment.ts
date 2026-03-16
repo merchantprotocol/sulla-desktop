@@ -1,3 +1,28 @@
+// Detailed integration API instructions — exported so BaseNode can conditionally inject them
+export const INTEGRATIONS_INSTRUCTIONS_BLOCK = `**How to call an integration API endpoint:**
+\`\`\`
+POST http://localhost:3000/v1/integrations/{accountId}/{slug}/{endpoint}/call
+Content-Type: application/json
+
+{ "params": { ... }, "body": { ... }, "raw": false }
+\`\`\`
+
+- \`accountId\`: credential set to use — get this from \`list_integration_accounts\` tool (common values: \`default\`, \`oauth\`, or a custom label like \`work\`)
+- \`slug\`: integration folder name (e.g., \`youtube\`, \`postmark\`, \`attio\`)
+- \`endpoint\`: endpoint name from the YAML config (e.g., \`search\`, \`email-send\`, \`records-list\`)
+- \`params\`: query and path parameters as a JSON object
+- \`body\`: request body for POST/PUT/PATCH endpoints
+- \`raw\`: set to \`true\` to get the raw API response
+
+**To understand an endpoint's parameters**, read the YAML config file listed next to each integration above. Each \`.v*.yaml\` file describes one endpoint with its parameters, types, required fields, and examples.
+
+**To manage credentials/accounts**, use these native tools:
+- \`list_integration_accounts\` — see available accounts and their IDs
+- \`set_active_integration_account\` — switch the default account
+- \`integration_get_credentials\` — inspect stored credentials
+
+**You MUST write Python scripts** (using \`exec\`) to call these integration APIs. The model cannot call them directly as tools — they are HTTP endpoints that you access programmatically. This gives you full control to process, filter, and combine results before responding.`;
+
 // Environment prompt content for agent awareness
 export const environmentPrompt = `---
 # Core Identity & Principles
@@ -74,29 +99,7 @@ You have access to third-party API integrations defined as YAML configs at \`{{s
 **Your available integrations:**
 {{integrations_index}}
 
-**How to call an integration API endpoint:**
-\`\`\`
-POST http://localhost:3000/v1/integrations/{accountId}/{slug}/{endpoint}/call
-Content-Type: application/json
-
-{ "params": { ... }, "body": { ... }, "raw": false }
-\`\`\`
-
-- \`accountId\`: credential set to use — get this from \`list_integration_accounts\` tool (common values: \`default\`, \`oauth\`, or a custom label like \`work\`)
-- \`slug\`: integration folder name (e.g., \`youtube\`, \`postmark\`, \`attio\`)
-- \`endpoint\`: endpoint name from the YAML config (e.g., \`search\`, \`email-send\`, \`records-list\`)
-- \`params\`: query and path parameters as a JSON object
-- \`body\`: request body for POST/PUT/PATCH endpoints
-- \`raw\`: set to \`true\` to get the raw API response
-
-**To understand an endpoint's parameters**, read the YAML config file listed next to each integration above. Each \`.v*.yaml\` file describes one endpoint with its parameters, types, required fields, and examples.
-
-**To manage credentials/accounts**, use these native tools:
-- \`list_integration_accounts\` — see available accounts and their IDs
-- \`set_active_integration_account\` — switch the default account
-- \`integration_get_credentials\` — inspect stored credentials
-
-**You MUST write Python scripts** (using \`exec\`) to call these integration APIs. The model cannot call them directly as tools — they are HTTP endpoints that you access programmatically. This gives you full control to process, filter, and combine results before responding.
+{{integrations_instructions}}
 
 ### Codebase
 Your agent codebase is at https://github.com/sulla-ai/sulla-desktop.
@@ -114,7 +117,7 @@ You can install extensions autonomously with \`install_extension\`. Once install
 
 ### Playwright & Web Interaction
 Full Playwright tool suite for browsing and interacting with websites.
-You activate assets with manage_active_asset(action: 'upsert', assetType: 'iframe', url: '...', title: '...').
+You open browser tabs with browser_tab(action: 'upsert', assetType: 'iframe', url: '...', title: '...').
 Remove them when finished. highly prefer these tools for any web task.
 
 # WORKFLOW SYSTEM

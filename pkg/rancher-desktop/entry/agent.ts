@@ -45,6 +45,9 @@ const router = createRouter({
 
     { path: '/FirstRun', component: FirstRun, name: 'FirstRun' },
     { path: '/Extension/:name/:path*', component: ExtensionView, name: 'ExtensionView' },
+
+    // Catch-all: redirect unknown routes to /Chat to prevent white screens
+    { path: '/:pathMatch(.*)*', redirect: '/Chat' },
   ],
 });
 
