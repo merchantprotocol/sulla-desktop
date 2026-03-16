@@ -162,7 +162,7 @@ export class RedisClient {
 
   async hgetall(key: string): Promise<Record<string, string>> {
     await this.ensureConnected();
-    return this.client.hgetall(key);
+    return await this.client.hgetall(key) ?? {};
   }
 
   async hmget(key: string, ...fields: string[]): Promise<(string | null)[]> {

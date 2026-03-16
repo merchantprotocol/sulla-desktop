@@ -367,7 +367,7 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
 
 /**
  * Load agent configuration from ~/sulla/agents/{agentId}/
- * Reads agent.yaml for config and compiles all .md files into a single prompt.
+ * Reads config.yaml for config and compiles all .md files into a single prompt.
  * Returns undefined if agent directory doesn't exist.
  */
 async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metadata']['agent']> {
@@ -383,9 +383,9 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
     return undefined;
   }
 
-  const yamlPath = path.join(agentDir, 'agent.yaml');
+  const yamlPath = path.join(agentDir, 'config.yaml');
   if (!fs.existsSync(yamlPath)) {
-    console.log(`[GraphRegistry] loadAgentConfig() — agent.yaml not found: ${ yamlPath }`);
+    console.log(`[GraphRegistry] loadAgentConfig() — config.yaml not found: ${ yamlPath }`);
     return undefined;
   }
   console.log(`[GraphRegistry] loadAgentConfig() — found agent at ${ agentDir }`);

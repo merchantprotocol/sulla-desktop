@@ -14,6 +14,7 @@ import { ConversationSummaryService } from '../services/ConversationSummaryServi
 import { ObservationalSummaryService } from '../services/ObservationalSummaryService';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir } from '../utils/sullaPaths';
 import { environmentPrompt } from '../prompts/environment';
+import { stripProtocolTags } from '../utils/stripProtocolTags';
 import fs from 'node:fs';
 
 // ============================================================================
@@ -122,7 +123,7 @@ async function getSoulPrompt(): Promise<string> {
  * Shows only integrations the agent is allowed to use, with their config paths,
  * descriptions, categories, and available endpoints.
  *
- * @param allowedIntegrations - slugs from agent.yaml integrations field.
+ * @param allowedIntegrations - slugs from config.yaml integrations field.
  *   Empty array = no integrations. ["*"] = all integrations.
  */
 async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<string> {
@@ -340,9 +341,9 @@ async function loadAgentPromptFiles(agentId: string): Promise<string | null> {
 
     if (mdFiles.length === 0) return null;
 
-    // Read agent.yaml for agent name (used in the identity prefix)
+    // Read config.yaml for agent name (used in the identity prefix)
     let agentName = agentId;
-    const yamlPath = path.join(agentDir, 'agent.yaml');
+    const yamlPath = path.join(agentDir, 'config.yaml');
     if (fs.existsSync(yamlPath)) {
       try {
         const yaml = await import('yaml');
@@ -1211,7 +1212,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
      */
   protected async appendResponse(state: BaseThreadState, content: string, rawProviderContent?: any): Promise<void> {
     const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
-    const normalizedContent = contentStr.trim();
+    const normalizedContent = stripProtocolTags(contentStr);
 
     // Determine if the raw provider content has tool_use blocks
     const hasToolUseBlocks = Array.isArray(rawProviderContent) &&
@@ -1222,8 +1223,19 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return;
     }
 
-    // Use native content array when tool_use blocks are present
-    const messageContent: any = hasToolUseBlocks ? rawProviderContent : normalizedContent;
+    // Use native content array when tool_use blocks are present.
+    // Strip protocol tags from text blocks inside native content arrays too.
+    let messageContent: any;
+    if (hasToolUseBlocks) {
+      messageContent = rawProviderContent.map((block: any) => {
+        if (block?.type === 'text' && typeof block.text === 'string') {
+          return { ...block, text: stripProtocolTags(block.text) };
+        }
+        return block;
+      });
+    } else {
+      messageContent = normalizedContent;
+    }
 
     const messageMeta: Record<string, any> = {
       nodeId:    this.id,
@@ -1402,7 +1414,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     role: 'assistant' | 'system' = 'assistant',
     kind = 'progress',
   ): Promise<boolean> {
-    if (!content.trim()) {
+    // Defence-in-depth: strip agent protocol XML before any user-visible output
+    content = stripProtocolTags(content);
+    if (!content) {
       return false;
     }
 
@@ -2048,6 +2062,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const reasoning = reply.metadata.reasoning || undefined;
       const toolCalls = reply.metadata.tool_calls || [];
 
+      const cleanedContent = stripProtocolTags(reply.content);
+
       if (toolCalls.length > 0) {
         tl.logToolCall(
           convId,
@@ -2056,11 +2072,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             name: tc.name,
             args: tc.args,
           })),
-          reply.content || null,
+          cleanedContent || null,
           { reasoning },
         );
-      } else if (reply.content) {
-        tl.logAssistantMessage(convId, reply.content, { reasoning });
+      } else if (cleanedContent) {
+        tl.logAssistantMessage(convId, cleanedContent, { reasoning });
       }
     } catch { /* best-effort — never block conversation */ }
   }

@@ -61,7 +61,7 @@ export class HumanHeartbeatBridge {
   }
 
   async getPresence(): Promise<HumanPresence> {
-    const raw = await redisClient.hgetall(HUMAN_PRESENCE_HASH);
+    const raw = await redisClient.hgetall(HUMAN_PRESENCE_HASH) || {} as Record<string, string>;
 
     const lastSeen = parseInt(raw.lastSeen || '0', 10);
     const idleMinutes = lastSeen > 0

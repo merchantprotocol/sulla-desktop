@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
+import { wrapWithBlockingWarning } from './detect_blocking';
 
 /**
  * Get Page Snapshot Tool - Returns an actionable Markdown snapshot of the
@@ -22,9 +23,13 @@ export class GetPageSnapshotWorker extends BaseTool {
         };
       }
 
+      const url = await result.bridge.getPageUrl();
+      const raw = `[asset: ${ result.assetId }]\n${ markdown }`;
+      const { responseString, detection } = wrapWithBlockingWarning(raw, markdown, url);
+
       return {
-        successBoolean: true,
-        responseString: `[asset: ${ result.assetId }]\n${ markdown }`,
+        successBoolean: !detection.blocked,
+        responseString,
       };
     } catch (error) {
       return {

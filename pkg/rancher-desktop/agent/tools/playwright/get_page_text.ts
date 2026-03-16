@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
+import { wrapWithBlockingWarning } from './detect_blocking';
 
 /**
  * Get Page Text Tool - Returns the visible text content of a website asset.
@@ -24,9 +25,12 @@ export class GetPageTextWorker extends BaseTool {
         };
       }
 
+      const raw = `[asset: ${ result.assetId }]\n# ${ title }\n**URL**: ${ url }\n\n${ text }`;
+      const { responseString, detection } = wrapWithBlockingWarning(raw, text, url);
+
       return {
-        successBoolean: true,
-        responseString: `[asset: ${ result.assetId }]\n# ${ title }\n**URL**: ${ url }\n\n${ text }`,
+        successBoolean: !detection.blocked,
+        responseString,
       };
     } catch (error) {
       return {

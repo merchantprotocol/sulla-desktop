@@ -216,7 +216,7 @@ export interface BaseThreadState {
 export interface AgentGraphState extends BaseThreadState {
   metadata: BaseThreadState['metadata'] & {
     agent?: {
-      // Config (loaded at graph creation from agent.yaml)
+      // Config (loaded at graph creation from config.yaml)
       name?:         string;
       description?:  string;
       type?:         string;

@@ -177,7 +177,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
       - name: ws
-        image: byrdziak/sulla-websocket:latest
+        image: ghcr.io/jonathonbyrdziak/sulla-websocket:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
