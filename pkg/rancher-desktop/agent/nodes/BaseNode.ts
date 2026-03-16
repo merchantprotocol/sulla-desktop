@@ -543,6 +543,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         .join('\n');
     }
 
+    // Filter n8n from {{tool_categories}} when n8n integration is not connected
+    const n8nEnabled = await this.isN8nEnabled();
+    if (!n8nEnabled) {
+      const currentCategories = vars['{{tool_categories}}'] || '';
+      vars['{{tool_categories}}'] = currentCategories
+        .split('\n')
+        .filter((line: string) => !line.startsWith('- n8n:'))
+        .join('\n');
+    }
+
     // Populate {{available_workflows}} based on trigger type and optional scope
     vars['{{available_workflows}}'] = await this.buildWorkflowIndex(state);
 
@@ -554,6 +564,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Strip browser/playwright instructions when the caller has no visible browser
     if ((state.metadata as any).userVisibleBrowser === false) {
       AwarenessMessage = AwarenessMessage.replace(/### Playwright & Web Interaction[\s\S]*?(?=\n#|$)/g, '');
+      AwarenessMessage = AwarenessMessage.replace(/\n{3,}/g, '\n\n');
+    }
+
+    // Strip n8n sections when n8n integration is not connected
+    if (!n8nEnabled) {
+      AwarenessMessage = AwarenessMessage.replace(/### N8n-Workflows \(Automation Engine\)[\s\S]*?(?=\n###|\n#[^#]|$)/g, '');
       AwarenessMessage = AwarenessMessage.replace(/\n{3,}/g, '\n\n');
     }
 
@@ -735,6 +751,20 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
      * Slow-path: calls ConversationSummaryService.summarizeNow() which batches
      * the oldest messages into observational memory, then trims observations.
      */
+
+  /**
+   * Check if n8n integration is connected via IntegrationService.
+   * Returns false if the service is unavailable or no account is connected.
+   */
+  protected async isN8nEnabled(): Promise<boolean> {
+    try {
+      const { getIntegrationService } = await import('../services/IntegrationService');
+      return await getIntegrationService().isAnyAccountConnected('n8n');
+    } catch {
+      return false;
+    }
+  }
+
   protected async ensureMessageBudget(state: BaseThreadState): Promise<void> {
     // Resolve current LLM to get its context window — adapts if model changes mid-conversation
     const llm = await getPrimaryService();
@@ -978,6 +1008,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           'set_field', 'wait_for_element',
         ]);
         llmTools = llmTools.filter((t: any) => !browserTools.has(t?.function?.name));
+      }
+
+      // Block n8n tools when n8n integration is not connected
+      if (!await this.isN8nEnabled()) {
+        const n8nToolNames = new Set(toolRegistry.getToolNamesForCategory('n8n'));
+        llmTools = llmTools.filter((t: any) => !n8nToolNames.has(t?.function?.name));
       }
     }
 
