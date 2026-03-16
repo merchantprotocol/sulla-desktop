@@ -1,6 +1,6 @@
 <template>
   <div
-    class="h-screen overflow-hidden font-sans page-root flex flex-col"
+    class="h-full overflow-hidden font-sans page-root flex flex-col"
     :class="{ dark: isDark }"
   >
     <AgentHeader
@@ -107,6 +107,25 @@
       </div>
     </template>
 
+    <!-- Document mode: raw HTML rendered in Shadow DOM -->
+    <template v-else-if="tabMode === 'document'">
+      <div class="flex-1 min-h-0 overflow-auto bg-[#0d1117]">
+        <HtmlMessageRenderer
+          v-if="tabContent"
+          :content="tabContent"
+          :is-dark="isDark"
+          :full-page="true"
+          class="h-full w-full"
+        />
+        <div
+          v-else
+          class="flex h-full items-center justify-center text-sm text-slate-500"
+        >
+          Document content unavailable
+        </div>
+      </div>
+    </template>
+
     <!-- Chat mode: independent chat session per tab -->
     <template v-else-if="tabMode === 'chat'">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -125,6 +144,7 @@ import AgentCalendar from './AgentCalendar.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
+import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
 import {
@@ -143,6 +163,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   calendar:     'Calendar',
   integrations: 'Integrations',
   extensions:   'Extensions',
+  document:     'Document',
 };
 
 const props = defineProps<{
@@ -154,6 +175,7 @@ const { isDark, toggleTheme } = useTheme();
 const { updateTab, getTab } = useBrowserTabs();
 
 const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
+const tabContent = computed(() => getTab(props.tabId)?.content || '');
 
 function onSetMode(mode: BrowserTabMode) {
   updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });

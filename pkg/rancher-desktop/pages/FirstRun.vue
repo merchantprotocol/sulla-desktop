@@ -1,10 +1,10 @@
 <template>
   <div
-    class="h-screen overflow-hidden font-sans page-root"
+    class="h-full overflow-hidden font-sans page-root"
     :class="{ dark: isDark }"
   >
     <PostHogTracker page-name="FirstRun" />
-    <div class="flex h-screen flex-col">
+    <div class="flex h-full flex-col">
       <SimpleHeader
         :is-dark="isDark"
         :toggle-theme="toggleTheme"

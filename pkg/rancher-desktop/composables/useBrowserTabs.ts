@@ -1,6 +1,6 @@
 import { reactive, readonly, watch } from 'vue';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document';
 
 export interface BrowserTab {
   id:       string;
@@ -10,6 +10,8 @@ export interface BrowserTab {
   loading:  boolean;
   mode:     BrowserTabMode;
   assetId?: string;
+  /** Raw HTML content for document-mode tabs (rendered in Shadow DOM) */
+  content?: string;
 }
 
 const STORAGE_KEY = 'sulla:browser-tabs';
@@ -29,7 +31,14 @@ function loadPersistedTabs(): BrowserTab[] {
 
 function persistTabs(tabList: BrowserTab[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tabList));
+    // Strip large HTML content to avoid blowing localStorage limits
+    const toStore = tabList.map((t) => {
+      if (t.content && t.content.length > 50_000) {
+        return { ...t, content: undefined };
+      }
+      return t;
+    });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
   } catch { /* best-effort */ }
 }
 

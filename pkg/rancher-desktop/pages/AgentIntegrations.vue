@@ -1,10 +1,10 @@
 <template>
   <div
     class="text-sm font-sans page-root"
-    :class="[{ dark: isDark }, embedded ? 'h-full' : 'min-h-screen']"
+    :class="[{ dark: isDark }, 'h-full']"
   >
     <PostHogTracker page-name="AgentIntegrations" />
-    <div class="flex flex-col" :class="embedded ? 'h-full' : 'min-h-screen'">
+    <div class="flex flex-col h-full">
       <AgentHeader
         v-if="!embedded"
         :is-dark="isDark"

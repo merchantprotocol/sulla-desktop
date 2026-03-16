@@ -1694,6 +1694,17 @@ export function createAgentGraph(): Graph<AgentGraphState> {
       return 'end';
     }
 
+    // If the agent executed tool calls this cycle but didn't emit an explicit
+    // wrapper (status is 'in_progress'), the LLM expects to see tool results
+    // and continue — treat it as an implicit CONTINUE.
+    if (agentStatus === 'in_progress' && state.metadata.hadToolCalls) {
+      const currentLoopCount = (state.metadata as any).agentLoopCount || 0;
+      const newLoopCount = currentLoopCount + 1;
+      (state.metadata as any).agentLoopCount = newLoopCount;
+      console.log(`[AgentGraph] Agent made tool calls without wrapper — implicit continue (cycle ${ newLoopCount })`);
+      return 'agent';
+    }
+
     // Default to DONE: only an explicit <AGENT_CONTINUE> keeps the loop going.
     // This matches LangGraph / OpenAI Assistants behaviour — the turn is over
     // unless the agent explicitly signals it wants to continue.

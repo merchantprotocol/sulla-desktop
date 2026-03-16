@@ -65,6 +65,16 @@
                 </div>
               </div>
 
+              <div v-else-if="m.kind === 'html'" class="max-w-[min(760px,92%)]">
+                <div class="flex gap-3">
+                  <div class="sulla-avatar" aria-hidden="true">S</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="sulla-name">Sulla</div>
+                    <HtmlMessageRenderer :content="m.content" :is-dark="isDark" />
+                  </div>
+                </div>
+              </div>
+
               <div v-else class="max-w-[min(760px,92%)]">
                 <div v-if="m.image" class="space-y-2">
                   <img :src="m.image.dataUrl" :alt="m.image.alt || ''" class="block h-auto max-w-full rounded-xl border border-black/10 dark:border-white/10">
@@ -141,7 +151,9 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import AgentComposer from './agent/AgentComposer.vue';
 import ChatOptionsVariantB from './chat-options/ChatOptionsVariantB.vue';
+import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
+import { useTheme } from '@pkg/composables/useTheme';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
 import type { BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 
@@ -163,6 +175,7 @@ if (!chatController.threadId.value) {
   chatController.newChat();
 }
 
+const { isDark } = useTheme();
 const { query, messages, hasMessages, graphRunning } = chatController;
 const loading = chatController.loading;
 const currentActivity = chatController.currentActivity;

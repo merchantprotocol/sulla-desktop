@@ -658,7 +658,18 @@ export class AgentPersonaService {
 
       const roleRaw = data?.role !== undefined ? String(data.role) : (msg.type === 'system_message' ? 'system' : 'assistant');
       const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
-      const kind = (typeof data?.kind === 'string') ? data.kind : undefined;
+      let kind = (typeof data?.kind === 'string') ? data.kind : undefined;
+      let finalContent = content;
+
+      // Auto-detect HTML: if the agent wraps its response in <html>...</html>,
+      // treat it as an HTML message and strip the wrapper tags.
+      if (!kind || kind === 'text' || kind === 'progress') {
+        const htmlMatch = finalContent.match(/^\s*<html>([\s\S]*)<\/html>\s*$/i);
+        if (htmlMatch) {
+          kind = 'html';
+          finalContent = htmlMatch[1].trim();
+        }
+      }
 
       const message: ChatMessage = {
         id:        `${ Date.now() }_ws_${ msg.type }`,
@@ -666,7 +677,7 @@ export class AgentPersonaService {
         threadId:  msgThreadId,
         role,
         kind,
-        content,
+        content:   finalContent,
       };
 
       // Attach sender metadata for channel messages so UI can render them distinctly
@@ -723,7 +734,8 @@ export class AgentPersonaService {
         this.currentActivity.value = toolNameToVerb(toolName);
 
         // Skip tool cards for chat message tools - they emit directly as chat messages
-        if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image') {
+        if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image' || toolName === 'emit_html_message'
+          || toolName === 'load_skill' || toolName === 'meta_search' || toolName === 'browse_tools') {
           return;
         }
 
@@ -854,6 +866,7 @@ export class AgentPersonaService {
             threadId:  msgThreadId,
             role,
             content,
+            ...(typeof msg.kind === 'string' && msg.kind ? { kind: msg.kind } : {}),
           });
         }
       }

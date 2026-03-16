@@ -1,10 +1,10 @@
 <template>
   <div
-    class="h-screen overflow-hidden font-sans page-root"
+    class="h-full overflow-hidden font-sans page-root"
     :class="{ dark: isDark }"
   >
     <PostHogTracker page-name="Agent" />
-    <div class="flex h-screen flex-col">
+    <div class="flex h-full flex-col">
       <AgentHeader
         :is-dark="isDark"
         :toggle-theme="toggleTheme"
@@ -200,6 +200,29 @@
                 </div>
 
                 <div
+                  v-else-if="m.kind === 'html'"
+                  class="max-w-[min(760px,92%)]"
+                >
+                  <div class="flex gap-3">
+                    <div
+                      class="sulla-avatar"
+                      aria-hidden="true"
+                    >
+                      S
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="sulla-name">
+                        Sulla
+                      </div>
+                      <HtmlMessageRenderer
+                        :content="m.content"
+                        :is-dark="isDark"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div
                   v-else
                   class="max-w-[min(760px,92%)]"
                 >
@@ -324,6 +347,7 @@
 import AgentHeader from './agent/AgentHeader.vue';
 import AgentComposer from './agent/AgentComposer.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue';
 import DOMPurify from 'dompurify';
@@ -901,4 +925,5 @@ watch(isDark, () => {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
 }
+
 </style>
