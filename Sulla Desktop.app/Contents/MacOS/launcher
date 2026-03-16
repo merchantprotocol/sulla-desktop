@@ -23,5 +23,11 @@ LOG_DIR="$HOME/Library/Logs/Sulla Desktop"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/launcher.log"
 
-cd "$PROJECT_DIR"
+# Export so the app can find its project root without relying on process.cwd()
+export SULLA_PROJECT_DIR="$PROJECT_DIR"
+
+cd "$PROJECT_DIR" || {
+  osascript -e 'display alert "Sulla Desktop" message "Could not access directory: '"$PROJECT_DIR"'. Please re-run the installer." as critical'
+  exit 1
+}
 exec npx electron . >>"$LOG_FILE" 2>&1

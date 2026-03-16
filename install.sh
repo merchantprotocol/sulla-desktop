@@ -1206,7 +1206,7 @@ create_shortcut() {
 [Desktop Entry]
 Name=Sulla Desktop
 Comment=Personal AI Assistant
-Exec=bash -c 'cd "$REPO_DIR" && NODE_NO_WARNINGS=1 npx electron .'
+Exec=bash -c 'export SULLA_PROJECT_DIR="$REPO_DIR" && cd "$REPO_DIR" && NODE_NO_WARNINGS=1 npx electron .'
 Icon=$REPO_DIR/assets/logo-robot-light-nobg.png
 Terminal=false
 Type=Application
@@ -1228,7 +1228,7 @@ DESKTOP
           \$ws = New-Object -ComObject WScript.Shell;
           \$sc = \$ws.CreateShortcut('${desktop_path}\\Sulla Desktop.lnk');
           \$sc.TargetPath = 'cmd.exe';
-          \$sc.Arguments = '/c cd /d \"${repo_win_path}\" && npx electron .';
+          \$sc.Arguments = '/c cd /d \"${repo_win_path}\" && set SULLA_PROJECT_DIR=${repo_win_path} && npx electron .';
           \$sc.WorkingDirectory = '${repo_win_path}';
           \$sc.Description = 'Sulla Desktop — Personal AI Assistant';
           \$sc.Save()
@@ -1254,7 +1254,7 @@ launch_app() {
 
   case "$OS" in
     macos|linux)
-      NODE_NO_WARNINGS=1 nohup npx electron . >>"$log_file" 2>&1 &
+      SULLA_PROJECT_DIR="$REPO_DIR" NODE_NO_WARNINGS=1 nohup npx electron . >>"$log_file" 2>&1 &
       local pid=$!
       disown "$pid" 2>/dev/null || true
       # Give it a moment to ensure it started
@@ -1270,8 +1270,8 @@ launch_app() {
       repo_win_path="$(cygpath -w "$REPO_DIR" 2>/dev/null || echo "$REPO_DIR")"
       local log_win_path
       log_win_path="$(cygpath -w "$log_file" 2>/dev/null || echo "$log_file")"
-      cmd.exe /C "start /B cmd /C \"cd /d ${repo_win_path} && set NODE_NO_WARNINGS=1 && npx electron . >> ${log_win_path} 2>&1\"" 2>/dev/null \
-        || NODE_NO_WARNINGS=1 npx electron . >>"$log_file" 2>&1 &
+      cmd.exe /C "start /B cmd /C \"cd /d ${repo_win_path} && set NODE_NO_WARNINGS=1 && set SULLA_PROJECT_DIR=${repo_win_path} && npx electron . >> ${log_win_path} 2>&1\"" 2>/dev/null \
+        || SULLA_PROJECT_DIR="$REPO_DIR" NODE_NO_WARNINGS=1 npx electron . >>"$log_file" 2>&1 &
       step_ok "Sulla Desktop launched"
       ;;
   esac

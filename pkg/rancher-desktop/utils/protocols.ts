@@ -21,7 +21,21 @@ function redirectedUrl(relPath: string) {
   }
 
   // Dev build or E2E tests - serve from dist/app
-  return path.join(process.cwd(), 'dist', 'app', relPath);
+  // Use SULLA_PROJECT_DIR env var when available; fall back to process.cwd()
+  // wrapped in try-catch to avoid ENOENT when the cwd has been removed.
+  let projectDir: string;
+
+  if (process.env.SULLA_PROJECT_DIR) {
+    projectDir = process.env.SULLA_PROJECT_DIR;
+  } else {
+    try {
+      projectDir = process.cwd();
+    } catch {
+      projectDir = Electron.app.getAppPath();
+    }
+  }
+
+  return path.join(projectDir, 'dist', 'app', relPath);
 }
 
 // Latch that is set when the app:// protocol handler has been registered.
