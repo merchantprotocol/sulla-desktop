@@ -20,14 +20,70 @@ limitations under the License.
  * Doing this avoids manually keeping these `rdctl` commands in sync with the supported settings.
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import ejs from 'ejs';
 import yaml from 'yaml';
 
 import { CURRENT_SETTINGS_VERSION } from '@pkg/config/settings';
+
+/**
+ * Resolve the full path to `gofmt`.  Checks (in order):
+ *   1. GOROOT/bin/gofmt  (set by the Go toolchain)
+ *   2. `go env GOROOT`/bin/gofmt  (works when `go` is in PATH)
+ *   3. Well-known installation directories per platform
+ *   4. Falls back to bare 'gofmt' and lets execFileSync search PATH
+ */
+function resolveGofmt(): string {
+  const exe = os.platform() === 'win32' ? 'gofmt.exe' : 'gofmt';
+
+  // 1. GOROOT env var
+  if (process.env.GOROOT) {
+    const p = path.join(process.env.GOROOT, 'bin', exe);
+
+    if (fs.existsSync(p)) {
+      return p;
+    }
+  }
+
+  // 2. Ask the go tool
+  try {
+    const goroot = execSync('go env GOROOT', { encoding: 'utf-8' }).trim();
+
+    if (goroot) {
+      const p = path.join(goroot, 'bin', exe);
+
+      if (fs.existsSync(p)) {
+        return p;
+      }
+    }
+  } catch { /* go not in PATH — continue */ }
+
+  // 3. Well-known paths
+  const candidates = os.platform() === 'win32'
+    ? ['C:\\Go\\bin', 'C:\\Program Files\\Go\\bin']
+    : [
+      '/usr/local/go/bin',
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      '/home/linuxbrew/.linuxbrew/bin',
+      path.join(os.homedir(), 'go', 'bin'),
+    ];
+
+  for (const dir of candidates) {
+    const p = path.join(dir, exe);
+
+    if (fs.existsSync(p)) {
+      return p;
+    }
+  }
+
+  // 4. Fall back to bare name — let the OS resolve via PATH
+  return exe;
+}
 
 interface commandFlagType {
   /**
@@ -384,7 +440,7 @@ class Generator {
     this.processInput(obj, argv[0]);
     await this.emitOutput(argv[1] ?? '-');
     if (argv[1]) {
-      execFileSync('gofmt', ['-w', argv[1]]);
+      execFileSync(resolveGofmt(), ['-w', argv[1]]);
     }
   }
 }

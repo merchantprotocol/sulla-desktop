@@ -303,7 +303,20 @@ const keepScriptAlive = setTimeout(() => { }, 24 * 3600 * 1000);
 */
 function getStampVersion(): string {
   const gitCommand = 'git describe --match v[0-9]* --dirty=.m --always --tags';
-  const stdout = childProcess.execSync(gitCommand, { encoding: 'utf-8' });
 
-  return stdout;
+  try {
+    return childProcess.execSync(gitCommand, { encoding: 'utf-8' }).trim();
+  } catch (err) {
+    // git may not be in PATH (e.g. minimal CI images, fresh installs before
+    // Xcode CLT is fully configured).  Fall back to package.json version so
+    // the build can still proceed.
+    console.warn(`WARNING: git describe failed (${ (err as Error).message }), falling back to package.json version`);
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+
+      return pkg.version ?? '0.0.0-unknown';
+    } catch {
+      return '0.0.0-unknown';
+    }
+  }
 }

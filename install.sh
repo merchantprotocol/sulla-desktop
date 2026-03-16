@@ -37,6 +37,51 @@ USE_NIGHTLY=false
 ERROR_REPORT_URL="https://error-reports.merchantprotocol.workers.dev"
 
 # ---------------------------------------------------------------------------
+# PATH Bootstrap — ensure common binary locations are reachable on all platforms
+# ---------------------------------------------------------------------------
+# Many tools (Go, Node, yarn, gofmt, git) may be installed in paths that are
+# not in the default PATH for non-interactive shells (e.g. when piped from
+# curl).  We add all well-known locations up front so every subsequent
+# command_exists check and subprocess (including Node/yarn postinstall scripts)
+# can find them without per-tool PATH hacks.
+bootstrap_path() {
+  local candidates=(
+    # macOS Homebrew — Apple Silicon
+    /opt/homebrew/bin
+    /opt/homebrew/sbin
+    # macOS Homebrew — Intel
+    /usr/local/bin
+    /usr/local/sbin
+    # Linux Homebrew (Linuxbrew)
+    /home/linuxbrew/.linuxbrew/bin
+    /home/linuxbrew/.linuxbrew/sbin
+    # Go — official installer location
+    /usr/local/go/bin
+    # Go — user GOPATH/bin
+    "$HOME/go/bin"
+    # Windows (Git Bash / MSYS2)
+    /c/Go/bin
+    /c/Program\ Files/Go/bin
+    # Cargo / Rust (fnm, other tools)
+    "$HOME/.cargo/bin"
+    # Common Linux paths that may be missing in minimal environments
+    /usr/bin
+    /usr/sbin
+    /bin
+    /sbin
+  )
+
+  for dir in "${candidates[@]}"; do
+    # Skip if already in PATH or doesn't exist
+    case ":$PATH:" in
+      *":$dir:"*) continue ;;
+    esac
+    [ -d "$dir" ] && export PATH="$dir:$PATH"
+  done
+}
+bootstrap_path
+
+# ---------------------------------------------------------------------------
 # Terminal UI — Colors & Symbols
 # ---------------------------------------------------------------------------
 BOLD="\033[1m"
@@ -546,7 +591,7 @@ audit_dependencies() {
 
   # Go — check standard install paths that may not be in PATH yet
   if ! command_exists go; then
-    for go_path in /usr/local/go/bin /c/Go/bin "$HOME/go/bin"; do
+    for go_path in /opt/homebrew/bin /usr/local/bin /home/linuxbrew/.linuxbrew/bin /usr/local/go/bin /c/Go/bin "$HOME/go/bin"; do
       if [ -x "$go_path/go" ]; then
         export PATH="$go_path:$PATH"
         break
@@ -829,6 +874,8 @@ install_go() {
       export PATH="/c/Go/bin:$PATH"
       ;;
   esac
+  # Re-bootstrap PATH so newly installed Go bin dir is picked up
+  bootstrap_path
   command_exists go    || step_fail "Go installation failed"
   command_exists gofmt || step_fail "Go installation failed"
   step_ok "Go $(go version | grep -oE 'go[0-9]+\.[0-9]+\.[0-9]+')"
@@ -1145,6 +1192,23 @@ dump_build_verification() {
 }
 
 # ---------------------------------------------------------------------------
+# Pre-build PATH verification — catch missing tools before Node subprocesses
+# fail with cryptic ENOENT errors deep in postinstall scripts.
+# ---------------------------------------------------------------------------
+verify_build_path() {
+  local missing=""
+  command_exists node   || missing="${missing} node"
+  command_exists yarn   || missing="${missing} yarn"
+  command_exists git    || missing="${missing} git"
+  command_exists go     || missing="${missing} go"
+  command_exists gofmt  || missing="${missing} gofmt"
+  if [ -n "$missing" ]; then
+    echo "PATH=$PATH" >> "$INSTALL_LOG"
+    step_fail "Build cannot proceed — tools not in PATH:${missing}. Check ${INSTALL_LOG}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Install deps & build — with artifact verification
 # ---------------------------------------------------------------------------
 install_deps() {
@@ -1158,15 +1222,13 @@ install_deps() {
     nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
 
-  # Re-establish Go PATH in case audit set it but the subshell lost it
-  if ! command_exists go; then
-    for go_path in /usr/local/go/bin /c/Go/bin "$HOME/go/bin"; do
-      if [ -x "$go_path/go" ]; then
-        export PATH="$go_path:$PATH"
-        break
-      fi
-    done
-  fi
+  # Re-bootstrap PATH so Go, gofmt, git, and any other tools installed
+  # during the dependency phase are visible to Node subprocesses (yarn
+  # postinstall scripts call gofmt, git describe, etc.)
+  bootstrap_path
+
+  # Verify all build tools are reachable before handing off to Node
+  verify_build_path
 
   # Idempotent: if all install artifacts already exist, skip entirely
   if verify_install_artifacts; then
@@ -1209,6 +1271,10 @@ build_app() {
   if [ -d "dist" ]; then
     rm -rf dist
   fi
+
+  # Re-verify PATH before build (nvm/fnm may have altered it)
+  bootstrap_path
+  verify_build_path
 
   local ram_gb
   ram_gb="$(get_ram_gb)"
