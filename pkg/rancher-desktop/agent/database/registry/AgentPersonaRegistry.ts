@@ -9,7 +9,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
-  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'html';
+  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'html' | 'sub_agent_activity';
   image?: {
     dataUrl:      string;
     alt?:         string;
@@ -39,6 +39,15 @@ export interface ChatMessage {
     error?:        string;
     nodeIndex:     number;
     totalNodes:    number;
+  };
+  subAgentActivity?: {
+    nodeId:          string;
+    nodeLabel:       string;
+    status:          'running' | 'completed' | 'failed' | 'blocked';
+    thinkingLines:   string[];
+    latestThinking?: string;
+    output?:         string;
+    error?:          string;
   };
 }
 

@@ -68,33 +68,33 @@ CRITICAL CONTINUITY RULES:
 
 DONE wrapper (use when goal fully completed):
 <AGENT_DONE>
-<KEY_RESULT>[one-line summary of accomplishment]</KEY_RESULT>
+[1-3 sentence summary of what was accomplished]
+Needs user input: [yes/no]
 </AGENT_DONE>
 
-BLOCKED wrapper (use when goal cannot be completed — missing dependency/credential/input):
+BLOCKED wrapper (use when you need user input, credentials, or a decision before you can continue):
 <AGENT_BLOCKED>
 <BLOCKER_REASON>[one-line concrete blocker]</BLOCKER_REASON>
 <UNBLOCK_REQUIREMENTS>[exact dependency/credential/input needed to proceed]</UNBLOCK_REQUIREMENTS>
 </AGENT_BLOCKED>
 
+IMPORTANT: If you have a question for the user, you MUST use the BLOCKED wrapper. Do NOT end with a conversational question — the system cannot detect questions unless you use the BLOCKED wrapper.
+
 CONTINUE wrapper (use when you made progress but the task is NOT yet complete):
 <AGENT_CONTINUE>
 <STATUS_REPORT>[one-line: what you are actively working on now]</STATUS_REPORT>
-OR
-<STATUS_MESSAGE>[one-line: what you are actively working on now]</STATUS_MESSAGE>
 </AGENT_CONTINUE>
 
-You MUST end every response with exactly ONE of these three wrappers.
+You MUST end every response with exactly ONE of these three wrappers. Never end a response without one.
 `;
 
 const AGENT_DONE_XML_REGEX = /<AGENT_DONE>([\s\S]*?)<\/AGENT_DONE>/i;
-const KEY_RESULT_XML_REGEX = /<KEY_RESULT>([\s\S]*?)<\/KEY_RESULT>/i;
 const AGENT_BLOCKED_XML_REGEX = /<AGENT_BLOCKED>([\s\S]*?)<\/AGENT_BLOCKED>/i;
 const BLOCKER_REASON_XML_REGEX = /<BLOCKER_REASON>([\s\S]*?)<\/BLOCKER_REASON>/i;
 const UNBLOCK_REQUIREMENTS_XML_REGEX = /<UNBLOCK_REQUIREMENTS>([\s\S]*?)<\/UNBLOCK_REQUIREMENTS>/i;
 const AGENT_CONTINUE_XML_REGEX = /<AGENT_CONTINUE>([\s\S]*?)<\/AGENT_CONTINUE>/i;
 const STATUS_REPORT_XML_REGEX = /<STATUS_REPORT>([\s\S]*?)<\/STATUS_REPORT>/i;
-const STATUS_MESSAGE_XML_REGEX = /<STATUS_MESSAGE>([\s\S]*?)<\/STATUS_MESSAGE>/i;
+const NEEDS_USER_INPUT_REGEX = /Needs user input:\s*(yes|no)/i;
 
 // ============================================================================
 // AGENT NODE
@@ -496,10 +496,11 @@ export class AgentNode extends BaseNode {
     const doneMatch = AGENT_DONE_XML_REGEX.exec(resultText);
     if (doneMatch) {
       const doneBlock = String(doneMatch[1] || '').trim();
-      const keyResultMatch = KEY_RESULT_XML_REGEX.exec(doneBlock);
-      const summary = keyResultMatch
-        ? String(keyResultMatch[1] || '').trim() || null
-        : doneBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
+      // Strip the "Needs user input: yes/no" line to get the summary
+      const summary = doneBlock
+        .replace(NEEDS_USER_INPUT_REGEX, '')
+        .trim()
+        .split('\n').map(l => l.trim()).filter(Boolean).join(' ') || null;
 
       return {
         status:              'done',
@@ -515,12 +516,9 @@ export class AgentNode extends BaseNode {
     if (continueMatch) {
       const continueBlock = String(continueMatch[1] || '').trim();
       const statusReportMatch = STATUS_REPORT_XML_REGEX.exec(continueBlock);
-      const statusMessageMatch = STATUS_MESSAGE_XML_REGEX.exec(continueBlock);
       const statusReport = statusReportMatch
         ? String(statusReportMatch[1] || '').trim() || null
-        : statusMessageMatch
-          ? String(statusMessageMatch[1] || '').trim() || null
-          : continueBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
+        : continueBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
 
       return {
         status:              'continue',

@@ -1035,6 +1035,25 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         });
       }
 
+      // Block dangerous/recursive tools for sub-agents (workflow workers)
+      if ((state.metadata as any).isSubAgent) {
+        const subAgentBlockedTools = new Set([
+          // Workflow/orchestration — prevents recursive workflow triggers
+          'execute_workflow', 'restart_from_checkpoint',
+          'spawn_agent', 'check_agent_jobs',
+          // Infrastructure — too destructive for unattended workers
+          'rdctl_reset', 'rdctl_shutdown', 'rdctl_set', 'rdctl_start',
+          'lima_create', 'lima_delete', 'lima_stop',
+          'docker_rm', 'docker_stop',
+          'kubectl_delete', 'kubectl_apply',
+          // Extension lifecycle — user-initiated only
+          'install_extension', 'uninstall_extension',
+          // Destructive git — sub-agents can read/commit but not push or discard
+          'git_push', 'git_stash', 'git_checkout',
+        ]);
+        llmTools = llmTools.filter((t: any) => !subAgentBlockedTools.has(t?.function?.name));
+      }
+
       // Block browser/playwright tools when caller has no visible browser
       if ((state.metadata as any).userVisibleBrowser === false) {
         const browserTools = new Set([
@@ -1496,6 +1515,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     const threadId = state.metadata.threadId;
 
+    // If the graph muted chat output (e.g. during internal planning like
+    // SPAWN_COUNT negotiation), skip the WebSocket send entirely.  The
+    // conversation logger still records the message for debugging.
+    const muted = !!(state.metadata as any)._muteWsChat;
+
     // Log to conversation logger so the Live Monitor can see all messages.
     const convId = (state.metadata as any).conversationId;
     if (convId && kind !== 'thinking') {
@@ -1503,6 +1527,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const { getConversationLogger } = require('../services/ConversationLogger');
         getConversationLogger().logMessage(convId, role, content.trim());
       } catch { /* best-effort */ }
+    }
+
+    if (muted) {
+      return true; // swallow the message — it's internal orchestrator chatter
     }
 
     // Get connection ID from state or use default
@@ -1537,6 +1565,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const workflowNodeId = (state.metadata as any).workflowNodeId;
     const workflowParentChannel = (state.metadata as any).workflowParentChannel;
     if (workflowNodeId && workflowParentChannel) {
+      console.log(`[BaseNode:wsChatMessage] Emitting node_thinking → channel="${ workflowParentChannel }", nodeId="${ workflowNodeId }", content="${ content.trim().slice(0, 80) }"`);
       try {
         const ws = getWebSocketClientService();
         ws.send(workflowParentChannel, {
@@ -1552,7 +1581,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           },
           timestamp: Date.now(),
         });
-      } catch { /* best-effort */ }
+      } catch (e) { console.warn(`[BaseNode:wsChatMessage] node_thinking emit failed:`, e); }
+    } else if ((state.metadata as any).isSubAgent) {
+      console.warn(`[BaseNode:wsChatMessage] Sub-agent "${ this.name }" missing workflow metadata — workflowNodeId=${ workflowNodeId }, workflowParentChannel=${ workflowParentChannel }`);
     }
 
     return sent;
