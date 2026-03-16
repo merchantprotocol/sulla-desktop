@@ -154,7 +154,9 @@ export class ExecuteWorkflowWorker extends BaseTool {
         (this.state).metadata.activeWorkflow = playbook;
       }
 
-      console.log(`[ExecuteWorkflow] Loaded workflow "${ definition.name }" (${ workflowId }) as playbook — executionId=${ playbook.executionId }, frontier=[${ playbook.currentNodeIds.join(', ') }]`);
+      // Verify state propagation
+      const verify = (this.state as any)?.metadata?.activeWorkflow;
+      console.log(`[ExecuteWorkflow] Loaded workflow "${ definition.name }" (${ workflowId }) as playbook — executionId=${ playbook.executionId }, frontier=[${ playbook.currentNodeIds.join(', ') }], stateVerify=${ verify?.status }/${ verify?.currentNodeIds?.length ?? 0 }`);
 
       return {
         successBoolean: true,

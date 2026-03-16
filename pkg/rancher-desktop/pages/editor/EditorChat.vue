@@ -176,6 +176,13 @@
           :is-dark="isDark"
         />
 
+        <!-- Sub-agent activity bubble -->
+        <SubAgentBubble
+          v-else-if="msg.kind === 'sub_agent_activity' && msg.subAgentActivity"
+          :activity="msg.subAgentActivity"
+          :is-dark="isDark"
+        />
+
         <!-- Thinking -->
         <div
           v-else-if="msg.kind === 'thinking'"
@@ -525,6 +532,7 @@ import type { ChatMessage } from '@pkg/agent';
 import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
 import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import WorkflowNodeCard from './workflow/WorkflowNodeCard.vue';
+import SubAgentBubble from './workflow/SubAgentBubble.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 
 const props = defineProps<{

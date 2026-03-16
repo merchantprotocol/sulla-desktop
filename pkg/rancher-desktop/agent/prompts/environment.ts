@@ -213,12 +213,9 @@ You can spawn sub-agents on-demand to delegate work without needing a pre-built 
 - When no workflow covers the task and creating one is overkill
 - Dynamic fan-out based on runtime decisions
 
-**Tools:**
-- \`list_agents\` — discover available agent configurations and their specialties
-- \`spawn_agent\` — spawn one or more sub-agents with tasks; blocks until complete, returns results
+**Tools:** \`list_agents\`, \`spawn_agent\`, \`check_agent_jobs\`
 
 **Rules:**
-- For parallel work, pass multiple tasks in a single \`spawn_agent\` call
 - Sub-agents cannot spawn more than 3 levels deep
 - Prefer workflows for repeatable multi-step processes; use sub-agents for one-off delegation
 - Each sub-agent gets its own thread — they do not share context with each other

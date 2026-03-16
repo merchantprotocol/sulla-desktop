@@ -1,4 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
+import { createJob, completeJob, failJob } from './jobRegistry';
+import type { AgentJobResult } from './jobRegistry';
 
 const MAX_DEPTH = 3;
 const MAX_TASKS = 10;
@@ -9,20 +11,13 @@ interface SpawnTask {
   label?:   string;
 }
 
-interface SpawnResult {
-  label:    string;
-  status:   'completed' | 'blocked' | 'error';
-  output:   string;
-  threadId: string;
-}
-
 export class SpawnAgentWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     // ── Validate tasks ──────────────────────────────────────────
-    let tasks: SpawnTask[] = input.tasks;
+    const tasks: SpawnTask[] = input.tasks;
 
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return {
@@ -47,6 +42,10 @@ export class SpawnAgentWorker extends BaseTool {
       }
     }
 
+    // ── Options ───────────────────────────────────────────────────
+    const parallel: boolean = input.parallel !== false; // default true
+    const async_: boolean = input.async === true;       // default false
+
     // ── Depth guard ─────────────────────────────────────────────
     const parentDepth: number = (this.state as any)?.metadata?.subAgentDepth ?? 0;
 
@@ -65,8 +64,8 @@ export class SpawnAgentWorker extends BaseTool {
     const parentConvId = (this.state as any)?.metadata?.conversationId;
     const trainingLogger = getTrainingDataLogger();
 
-    // ── Execute tasks ───────────────────────────────────────────
-    const executeSingle = async(task: SpawnTask, index: number): Promise<SpawnResult> => {
+    // ── Single task executor ────────────────────────────────────
+    const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const label = task.label || task.agentId || `task-${ index }`;
       const agentConfigChannel = task.agentId || parentChannel;
       const threadId = `spawn-agent-${ label.replace(/\s+/g, '-').toLowerCase() }-${ Date.now() }-${ index }`;
@@ -136,17 +135,25 @@ export class SpawnAgentWorker extends BaseTool {
       }
     };
 
-    // ── Single vs. parallel execution ───────────────────────────
-    let results: SpawnResult[];
+    // ── Execute all tasks (parallel or sequential) ──────────────
+    const executeAll = async(): Promise<AgentJobResult[]> => {
+      if (tasks.length === 1 || !parallel) {
+        // Sequential execution
+        const results: AgentJobResult[] = [];
 
-    if (tasks.length === 1) {
-      results = [await executeSingle(tasks[0], 0)];
-    } else {
+        for (let i = 0; i < tasks.length; i++) {
+          results.push(await executeSingle(tasks[i], i));
+        }
+
+        return results;
+      }
+
+      // Parallel execution
       const settled = await Promise.allSettled(
         tasks.map((task, i) => executeSingle(task, i)),
       );
 
-      results = settled.map((s, i) => {
+      return settled.map((s, i) => {
         if (s.status === 'fulfilled') {
           return s.value;
         }
@@ -158,9 +165,38 @@ export class SpawnAgentWorker extends BaseTool {
           threadId: '',
         };
       });
+    };
+
+    // ── Async mode: fire and forget ─────────────────────────────
+    if (async_) {
+      const job = createJob(tasks.length);
+
+      // Launch in background — do not await
+      executeAll()
+        .then((results) => {
+          completeJob(job.jobId, results);
+          console.log(`[spawn_agent] Async job ${ job.jobId } completed — ${ results.length } result(s)`);
+        })
+        .catch((err) => {
+          failJob(job.jobId, (err as Error).message);
+          console.error(`[spawn_agent] Async job ${ job.jobId } failed:`, err);
+        });
+
+      return {
+        successBoolean: true,
+        responseString: JSON.stringify({
+          mode:      'async',
+          jobId:     job.jobId,
+          taskCount: tasks.length,
+          parallel,
+          message:   `${ tasks.length } sub-agent(s) launched in the background. Use check_agent_jobs(jobId: "${ job.jobId }") to poll for results.`,
+        }, null, 2),
+      };
     }
 
-    // ── Format response ─────────────────────────────────────────
+    // ── Sync mode: block until complete ─────────────────────────
+    const results = await executeAll();
+
     const allSuccess = results.every(r => r.status === 'completed');
 
     const formatted = results.map(r =>

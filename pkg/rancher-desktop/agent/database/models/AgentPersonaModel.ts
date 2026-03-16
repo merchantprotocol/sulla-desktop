@@ -176,11 +176,6 @@ export class AgentPersonaService {
 
   readonly emotionClass = computed(() => `persona-profile-${ this.state.emotion }`);
 
-  private refreshWebSocketService(): void {
-    // Clone/refresh the service to avoid corruption from multiple connection attempts
-    this.wsService = getWebSocketClientService();
-  }
-
   /** Optional tab identifier — scopes localStorage keys so multiple tabs are independent */
   private readonly tabId?: string;
 
@@ -368,32 +363,22 @@ export class AgentPersonaService {
     const id = this.state.agentId;
     if (this.wsUnsub.has(id)) return;
 
-    console.log(`[AgentPersona:${ this.state.agentName }] Connecting WebSocket for ${ id }`);
+    console.log(`[AgentPersona:${ this.state.agentName }] Subscribing to WebSocket channel ${ id }`);
 
-    const maxAttempts = 3;
-    let attempts = 0;
+    // connect() is now gated behind the hub readiness probe — no need
+    // for manual retry logic here; WebSocketConnection handles reconnects.
+    this.wsService.connect(id);
 
-    const attemptConnect = () => {
-      attempts++;
-      this.refreshWebSocketService(); // Clone/refresh service for each attempt
-      this.wsService.connect(id);
+    const unsub = this.wsService.onMessage(id, (msg: WebSocketMessage) => {
+      this.handleWebSocketMessage(id, msg);
+    });
 
-      const unsub = this.wsService.onMessage(id, (msg: WebSocketMessage) => {
-        this.handleWebSocketMessage(id, msg);
-      });
-
-      if (unsub) {
-        this.wsUnsub.set(id, unsub);
-        console.log(`[AgentPersona:${ this.state.agentName }] WebSocket connected successfully on attempt ${ attempts }`);
-      } else if (attempts < maxAttempts) {
-        console.warn(`[AgentPersona:${ this.state.agentName }] WebSocket connection attempt ${ attempts } failed, retrying...`);
-        setTimeout(attemptConnect, 1000 * attempts); // Exponential backoff
-      } else {
-        console.error(`[AgentPersona:${ this.state.agentName }] Failed to connect WebSocket after ${ maxAttempts } attempts`);
-      }
-    };
-
-    attemptConnect();
+    if (unsub) {
+      this.wsUnsub.set(id, unsub);
+      console.log(`[AgentPersona:${ this.state.agentName }] Message handler attached for ${ id }`);
+    } else {
+      console.error(`[AgentPersona:${ this.state.agentName }] Failed to attach message handler for ${ id }`);
+    }
   }
 
   // Kept old signature for compatibility, but agentId is now ignored (service owns its channel)
@@ -615,9 +600,11 @@ export class AgentPersonaService {
     // ── Thread-ID filtering ──────────────────────────────────────────
     // If the incoming message carries a thread_id and this persona already
     // has an active threadId, drop messages that belong to a different thread.
+    // Exception: workflow_execution_event messages are cross-thread by design
+    // (sub-agent thread → parent orchestrator channel) so they bypass this filter.
     const msgThreadId = this.extractThreadId(msg);
     const myThreadId = this.state.threadId;
-    if (msgThreadId && myThreadId && msgThreadId !== myThreadId) {
+    if (msgThreadId && myThreadId && msgThreadId !== myThreadId && msg.type !== 'workflow_execution_event') {
       return; // belongs to a different chat tab — ignore
     }
 
@@ -908,10 +895,16 @@ export class AgentPersonaService {
     //   - workflow_failed    → finds start card, updates to failed
     //
     // Events NOT handled here (canvas-only):
-    //   - edge_activated, node_thinking
+    //   - edge_activated
+    // Events handled as sub-agent activity bubbles:
+    //   - node_thinking         → creates/updates sub_agent_activity card
+    //   - sub_agent_completed   → updates sub_agent_activity card to completed
+    //   - sub_agent_failed      → updates sub_agent_activity card to failed
     case 'workflow_execution_event': {
       const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
       if (!data) return;
+      console.log(`[AgentPersona:chat-path] workflow_execution_event received — type="${ data.type }", nodeId="${ data.nodeId || '' }", channel="${ agentId }"`);
+
       const eventType: string = data.type || '';
       const nodeId: string = data.nodeId || '';
       const nodeLabel: string = data.nodeLabel || '';
@@ -996,6 +989,82 @@ export class AgentPersonaService {
           if (data.error) startCard.workflowNode.error = String(data.error);
         }
       }
+      // ── Sub-agent activity: node_thinking → create/update activity bubble ──
+      if (eventType === 'node_thinking') {
+        const thinkingContent = typeof data.content === 'string' ? data.content : '';
+        if (!thinkingContent || !nodeId) {
+          console.warn(`[AgentPersona:chat-path] node_thinking SKIPPED — empty content or nodeId`, { thinkingContent: thinkingContent?.slice(0, 50), nodeId });
+          return;
+        }
+
+        // Find existing running sub_agent_activity card for this nodeId
+        const existing = [...this.messages].reverse().find(
+          m => m.subAgentActivity?.nodeId === nodeId && m.subAgentActivity?.status === 'running',
+        );
+
+        if (existing?.subAgentActivity) {
+          // Append to thinking lines
+          console.log(`[AgentPersona:chat-path] node_thinking UPDATE — nodeId="${ nodeId }", lines=${ existing.subAgentActivity.thinkingLines.length + 1 }, preview="${ thinkingContent.slice(0, 60) }"`);
+          existing.subAgentActivity.thinkingLines.push(thinkingContent);
+          existing.subAgentActivity.latestThinking = thinkingContent;
+        } else {
+          // Create a new sub_agent_activity card
+          console.log(`[AgentPersona:chat-path] node_thinking CREATE — nodeId="${ nodeId }", label="${ nodeLabel || nodeId }", preview="${ thinkingContent.slice(0, 60) }"`);
+          this.messages.push({
+            id:        `${ Date.now() }_sub_agent_${ nodeId }`,
+            channelId: agentId,
+            threadId:  msgThreadId,
+            role:      'assistant',
+            kind:      'sub_agent_activity',
+            content:   '',
+            subAgentActivity: {
+              nodeId,
+              nodeLabel: nodeLabel || nodeId,
+              status:    'running',
+              thinkingLines:  [thinkingContent],
+              latestThinking: thinkingContent,
+            },
+          });
+        }
+        return;
+      }
+
+      // ── Sub-agent activity: blocked → escalating question to orchestrator ──
+      if (eventType === 'sub_agent_blocked') {
+        const existing = [...this.messages].reverse().find(
+          m => m.subAgentActivity?.nodeId === nodeId && m.subAgentActivity?.status === 'running',
+        );
+        if (existing?.subAgentActivity) {
+          existing.subAgentActivity.status = 'blocked';
+          const question = typeof data.question === 'string' ? data.question : '';
+          if (question) {
+            existing.subAgentActivity.thinkingLines.push(`[Asking orchestrator] ${ question }`);
+            existing.subAgentActivity.latestThinking = 'Waiting for orchestrator...';
+          }
+        }
+        return;
+      }
+
+      // ── Sub-agent activity: completion/failure → update activity bubble status ──
+      if (eventType === 'sub_agent_completed' || eventType === 'sub_agent_failed') {
+        const existing = [...this.messages].reverse().find(
+          m => m.subAgentActivity?.nodeId === nodeId &&
+               (m.subAgentActivity?.status === 'running' || m.subAgentActivity?.status === 'blocked'),
+        );
+        if (existing?.subAgentActivity) {
+          existing.subAgentActivity.status = eventType === 'sub_agent_completed' ? 'completed' : 'failed';
+          if (data.output !== undefined) {
+            existing.subAgentActivity.output = typeof data.output === 'string'
+              ? data.output
+              : JSON.stringify(data.output);
+          }
+          if (data.error) {
+            existing.subAgentActivity.error = String(data.error);
+          }
+        }
+        return;
+      }
+
       // edge_activated and other sub-events are visual-only (canvas), skip chat
       return;
     }
