@@ -1,4 +1,4 @@
-import { reactive, readonly } from 'vue';
+import { reactive, readonly, watch } from 'vue';
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions';
 
@@ -12,7 +12,34 @@ export interface BrowserTab {
   assetId?: string;
 }
 
-const tabs = reactive<BrowserTab[]>([]);
+const STORAGE_KEY = 'sulla:browser-tabs';
+
+function loadPersistedTabs(): BrowserTab[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // Rehydrate: reset loading state
+    return parsed.map((t: any) => ({ ...t, loading: false }));
+  } catch {
+    return [];
+  }
+}
+
+function persistTabs(tabList: BrowserTab[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tabList));
+  } catch { /* best-effort */ }
+}
+
+const restoredTabs = loadPersistedTabs();
+const tabs = reactive<BrowserTab[]>(restoredTabs);
+
+// Persist tab state on every change
+watch(tabs, (current) => {
+  persistTabs([...current]);
+}, { deep: true });
 
 function generateId(): string {
   return `tab_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 8) }`;

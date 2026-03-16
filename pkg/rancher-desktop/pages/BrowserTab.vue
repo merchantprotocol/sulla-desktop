@@ -164,7 +164,7 @@ function onStartChat(_chatQuery: string) {
   updateTab(props.tabId, { mode: 'chat', title: 'New Chat' });
 }
 
-/** Bridge ID: use the agent's asset ID if this tab was created by manage_active_asset */
+/** Bridge ID: use the agent's asset ID if this tab was created by browser_tab */
 const bridgeId = () => {
   const bt = getTab(props.tabId);
 

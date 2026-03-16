@@ -13,7 +13,7 @@ import { BaseTool } from '../tools/base';
 import { ConversationSummaryService } from '../services/ConversationSummaryService';
 import { ObservationalSummaryService } from '../services/ObservationalSummaryService';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir } from '../utils/sullaPaths';
-import { environmentPrompt } from '../prompts/environment';
+import { environmentPrompt, INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import fs from 'node:fs';
 
@@ -484,6 +484,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Build filtered integrations index for agent prompt
       promptVars['{{integrations_index}}'] = await buildIntegrationsIndex(agentMeta.integrations);
 
+      // Conditionally include integration API instructions only when integrations exist
+      const agentIntIndex = promptVars['{{integrations_index}}'];
+      if (agentIntIndex.includes('No integrations configured') || agentIntIndex.includes('No matching integrations')) {
+        promptVars['{{integrations_instructions}}'] = '';
+      } else {
+        promptVars['{{integrations_instructions}}'] = INTEGRATIONS_INSTRUCTIONS_BLOCK;
+      }
+
       const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
       const identityPrefix = primaryUserName.trim()
         ? `You are ${ agentMeta.name || agentId } (agent: ${ agentId })\nThe Human's name is: ${ primaryUserName }\n\n`
@@ -548,6 +556,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Populate {{integrations_index}} filtered by agent's allowed integrations
     vars['{{integrations_index}}'] = await buildIntegrationsIndex(agentMeta?.integrations);
+
+    // Conditionally include integration API instructions only when integrations exist
+    const envIntIndex = vars['{{integrations_index}}'];
+    if (envIntIndex.includes('No integrations configured') || envIntIndex.includes('No matching integrations')) {
+      vars['{{integrations_instructions}}'] = '';
+    } else {
+      vars['{{integrations_instructions}}'] = INTEGRATIONS_INSTRUCTIONS_BLOCK;
+    }
 
     let AwarenessMessage = applyTemplateVars(ENVIRONMENT_PROMPT, vars);
 
@@ -746,7 +762,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const HARD_CHAR_BUDGET = inputBudgetTokens * 4;
     // Scale soft threshold: small models need earlier summarization
     // At 4K ctx -> ~5 msgs, at 128K -> 20 msgs, at 200K -> ~31 msgs (capped at 25)
-    const SOFT_MESSAGE_THRESHOLD = Math.max(5, Math.min(25, Math.floor(contextWindowTokens / 6400)));
+    const SOFT_MESSAGE_THRESHOLD = Math.max(45, Math.floor(contextWindowTokens / 4500));
 
     const messageCount = state.messages.length;
     const charWeight = state.messages.reduce((sum, m) => {
@@ -973,7 +989,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Block browser/playwright tools when caller has no visible browser
       if ((state.metadata as any).userVisibleBrowser === false) {
         const browserTools = new Set([
-          'manage_active_asset', 'click_element', 'get_form_values',
+          'browser_tab', 'click_element', 'get_form_values',
           'get_page_snapshot', 'get_page_text', 'scroll_to_element',
           'set_field', 'wait_for_element',
         ]);
@@ -1250,15 +1266,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       });
     }
 
-    // Deduplicate — don't push if last message is identical string content
-    if (typeof messageContent === 'string') {
-      const lastGraphMessage = state.messages[state.messages.length - 1] as ChatMessage | undefined;
-      if (
-        lastGraphMessage?.role === 'assistant' &&
-                typeof lastGraphMessage.content === 'string' &&
-                lastGraphMessage.content.trim() === messageContent
-      ) {
-        return;
+    // Deduplicate — skip if a recent assistant message is identical or near-identical
+    if (typeof messageContent === 'string' && messageContent.trim().length > 0) {
+      const DEDUP_WINDOW = 3;
+      const SIMILARITY_THRESHOLD = 0.85;
+      for (let i = state.messages.length - 1; i >= 0 && i >= state.messages.length - DEDUP_WINDOW; i--) {
+        const prev = state.messages[i];
+        if (prev.role === 'assistant' && typeof prev.content === 'string') {
+          if (prev.content.trim() === messageContent.trim() ||
+              BaseNode.jaccardSimilarity(prev.content, messageContent) > SIMILARITY_THRESHOLD) {
+            return;
+          }
+        }
       }
     }
 
@@ -1438,6 +1457,24 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     if (!this.isWebSocketConnected(connectionId)) {
       console.log(`[${ this.name }:BaseNode] Not Connected`);
       this.connectWebSocket(connectionId);
+    }
+
+    // During playbook reentry, route orchestrator responses as workflow events
+    // instead of assistant chat messages — prevents junk messages in chat UI.
+    const isPlaybookReentry = (state.metadata as any)._isPlaybookReentry;
+    if (isPlaybookReentry) {
+      const ws = getWebSocketClientService();
+      ws.send(connectionId, {
+        type: 'workflow_execution_event',
+        data: {
+          type:      'orchestrator_status',
+          content:   content.trim(),
+          thread_id: threadId,
+          timestamp: new Date().toISOString(),
+        },
+        timestamp: Date.now(),
+      });
+      return true;
     }
 
     // Send via WebSocket
@@ -1896,6 +1933,22 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     return null;
+  }
+
+  /**
+   * Jaccard similarity between two strings (word-level).
+   * Returns 0-1 where 1 means identical word sets.
+   */
+  protected static jaccardSimilarity(a: string, b: string): number {
+    const tokenize = (s: string) => new Set(s.toLowerCase().split(/\s+/).filter(Boolean));
+    const setA = tokenize(a);
+    const setB = tokenize(b);
+    let intersection = 0;
+    for (const token of setA) {
+      if (setB.has(token)) intersection++;
+    }
+    const union = setA.size + setB.size - intersection;
+    return union === 0 ? 1 : intersection / union;
   }
 
   /**
