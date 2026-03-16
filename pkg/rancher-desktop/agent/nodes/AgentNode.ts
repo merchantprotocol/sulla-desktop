@@ -3,6 +3,7 @@ import type { NodeRunPolicy } from './BaseNode';
 import type { BaseThreadState, NodeResult } from './Graph';
 import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
+import { stripProtocolTags } from '../utils/stripProtocolTags';
 
 // ============================================================================
 // AGENT PROMPT
@@ -188,7 +189,7 @@ export class AgentNode extends BaseNode {
       blocker_reason:       agentOutcome.blockerReason,
       unblock_requirements: agentOutcome.unblockRequirements,
       status_note:          statusNote,
-      response:             agentOutcome.status === 'done' ? agentResultText : null,
+      response:             agentOutcome.status === 'done' ? stripProtocolTags(agentResultText) : null,
       updatedAt:            Date.now(),
     };
 
