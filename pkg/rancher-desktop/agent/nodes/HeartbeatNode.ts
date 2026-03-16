@@ -324,6 +324,7 @@ If this is your first heartbeat and no projects exist, your first task should be
         cycleComplete:  false,
         waitingForUser: false,
         isSubAgent:     true,
+        subAgentDepth:  0,
 
         llmModel: parentState.metadata.llmModel,
         llmLocal: parentState.metadata.llmLocal,

@@ -98,10 +98,10 @@ export class ExecuteWorkflowWorker extends BaseTool {
       };
     }
 
-    // Auto-resume from last checkpoint if available
-    const forceNew = input.forceNew === true;
+    // Only resume from checkpoint if explicitly requested
+    const resume = input.resume === true;
 
-    if (!forceNew) {
+    if (resume) {
       try {
         const { WorkflowCheckpointModel } = await import('../../database/models/WorkflowCheckpointModel');
         const recentExecs = await WorkflowCheckpointModel.recentExecutions(definition.id, 1);

@@ -40,6 +40,16 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./exec'),
   },
   {
+    name:        'dom_observer',
+    description: 'Passive tool — do NOT call this directly. The system automatically delivers DOM change events from open browser tabs as dom_observer tool results. You receive these because you have browser tabs open. To stop receiving events for a tab, close it with browser_tab(action=\'remove\', assetId=\'...\').',
+    category:    'meta',
+    schemaDef:   {
+      assetIds: { type: 'array', optional: true, description: 'Asset IDs of the tabs that emitted events.', items: { type: 'string' } },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./dom_observer'),
+  },
+  {
     name:        'browser_tab',
     description: 'Open, navigate, or close browser tabs. Use to browse the web, search, or view any URL. Each tab runs a full browser you can interact with via Playwright tools. Reuse the same assetId to navigate an existing tab to a new URL.',
     category:    'meta',
