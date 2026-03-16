@@ -104,6 +104,7 @@ export class ActiveAgentsRegistry {
 
   async getAllAgents(): Promise<ActiveAgent[]> {
     const raw = await redisClient.hgetall(REGISTRY_HASH);
+    if (!raw) return [];
     const agents: ActiveAgent[] = [];
     for (const value of Object.values(raw)) {
       try {
