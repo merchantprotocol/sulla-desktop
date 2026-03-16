@@ -117,8 +117,14 @@ export function getRdctlPath(): string | null {
   // If we are running as a script (i.e. yarn postinstall), electron.app is undefined
   if (electron.app?.isPackaged) {
     basePath = process.resourcesPath;
+  } else if (process.env.SULLA_PROJECT_DIR) {
+    basePath = process.env.SULLA_PROJECT_DIR;
   } else {
-    basePath = process.cwd();
+    try {
+      basePath = process.cwd();
+    } catch {
+      return null;
+    }
   }
   const osSpecificName = os.platform().startsWith('win') ? `rdctl.exe` : 'rdctl';
   const rdctlPath = path.join(basePath, 'resources', os.platform(), 'bin', osSpecificName);

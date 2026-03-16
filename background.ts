@@ -230,7 +230,20 @@ Electron.protocol.registerSchemesAsPrivileged([{ scheme: 'app' }, {
 
 hookSullaEnd(Electron, mainEvents, window);
 
-const SULLA_WEB_REQUEST_LOG_DIR = path.join(process.cwd(), 'log');
+/** Resolve the project root without relying on process.cwd() which throws
+ *  ENOENT when the working directory has been removed (e.g. nightly reinstall). */
+function getSullaProjectDir(): string {
+  if (process.env.SULLA_PROJECT_DIR) {
+    return process.env.SULLA_PROJECT_DIR;
+  }
+  try {
+    return process.cwd();
+  } catch {
+    return Electron.app.getAppPath();
+  }
+}
+
+const SULLA_WEB_REQUEST_LOG_DIR = path.join(getSullaProjectDir(), 'log');
 const SULLA_WEB_REQUEST_LOG_FILE = path.join(SULLA_WEB_REQUEST_LOG_DIR, 'background-web-requests.log');
 
 function writeSullaWebRequestEvent(event: SullaWebRequestLogEvent): void {
