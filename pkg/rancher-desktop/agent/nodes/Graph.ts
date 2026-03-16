@@ -1683,7 +1683,6 @@ export function createAgentGraph(): Graph<AgentGraphState> {
 
     const agentMeta = (state.metadata as any).agent || {};
     const agentStatus = String(agentMeta.status || '').trim().toLowerCase();
-    const hadToolCalls = Boolean((state.metadata as any).hadToolCalls);
 
     if (agentStatus === 'done') {
       console.log('[AgentGraph] Agent reported DONE - ending');
@@ -1695,40 +1694,15 @@ export function createAgentGraph(): Graph<AgentGraphState> {
       return 'end';
     }
 
-    if (agentStatus !== 'continue' && !hadToolCalls) {
-      if (agentStatus === 'in_progress' || !agentStatus) {
-        // The LLM responded without a wrapper (AGENT_DONE/BLOCKED/CONTINUE).
-        // Retry once with a nudge before giving up.
-        const alreadyNudged = !!(state.metadata as any)._wrapperNudgeSent;
-
-        if (!alreadyNudged) {
-          console.warn(`[AgentGraph] Agent returned '${ agentStatus }' with no tool calls — sending wrapper nudge and retrying`);
-          (state.metadata as any)._wrapperNudgeSent = true;
-          state.messages.push({
-            role:     'system',
-            content:  'Your previous response was missing the required completion wrapper. You MUST end your response with exactly one of: <AGENT_DONE>, <AGENT_BLOCKED>, or <AGENT_CONTINUE>. Please respond to the user\'s last message and include the appropriate wrapper.',
-            metadata: { kind: 'wrapper_nudge', timestamp: Date.now() },
-          } as any);
-          return 'agent';
-        }
-
-        // Already nudged once — give up and show error
-        console.error(`[AgentGraph] Agent still returned '${ agentStatus }' after wrapper nudge — ending`);
-        (state.metadata as any)._wrapperNudgeSent = false; // reset for next user message
-        if (!state.messages.some((m: any) => m.metadata?.kind === 'agent_error')) {
-          state.messages.push({
-            role:     'assistant',
-            content:  'Something went wrong and I was unable to complete the request. This may be due to context length limitations with the current model. Please try again or consider switching to a model with a larger context window.',
-            metadata: { kind: 'agent_error', timestamp: Date.now() },
-          } as any);
-        }
-      }
-      console.log(`[AgentGraph] Agent status '${ agentStatus || 'unknown' }' is not CONTINUE - ending`);
+    // Default to DONE: only an explicit <AGENT_CONTINUE> keeps the loop going.
+    // This matches LangGraph / OpenAI Assistants behaviour — the turn is over
+    // unless the agent explicitly signals it wants to continue.
+    if (agentStatus !== 'continue') {
+      console.log(`[AgentGraph] Agent status '${ agentStatus || 'unknown' }' is not CONTINUE — defaulting to DONE`);
+      (state.metadata as any).agent.status = 'done';
+      state.metadata.cycleComplete = true;
       return 'end';
     }
-
-    // Clear nudge flag on successful wrapper usage
-    (state.metadata as any)._wrapperNudgeSent = false;
 
     // Track loop count for diagnostics
     const currentLoopCount = (state.metadata as any).agentLoopCount || 0;
