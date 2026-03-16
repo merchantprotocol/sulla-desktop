@@ -2,22 +2,16 @@
 // Central registry for all seeders
 // DatabaseManager imports this to run tracked seeders
 
-import { initialize as n8nUserSeeder } from './N8nUserSeeder';
-import { initialize as n8nSettingsSeeder } from './N8nSettingsSeeder';
 import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteCredentialsSeeder';
+
+// n8n user and settings seeders have been replaced by the recipe's
+// post-server-migration.sql which handles user creation, bcrypt password
+// hashing, JWT API key generation, and MCP settings via template variables.
 
 // Add future seeders here in the same way
 // import { initialize as someOtherSeeder } from './some-other-seeder';
 
 export const seedersRegistry = [
-  {
-    name: 'n8n-user-seeder',
-    run:  n8nUserSeeder,
-  },
-  {
-    name: 'n8n-settings-seeder',
-    run:  n8nSettingsSeeder,
-  },
   {
     name: 'firstrun-remote-credentials-seeder',
     run:  firstRunRemoteCredentialsSeeder,

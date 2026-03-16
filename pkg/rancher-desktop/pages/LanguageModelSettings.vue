@@ -15,6 +15,7 @@ import { integrations } from '../agent/integrations/catalog';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { LOCAL_MODELS } from '../shared/localModels';
 import type { LocalModelOption } from '../shared/localModels';
+import { useTheme } from '../composables/useTheme';
 
 // Nav items for the Language Model Settings sidebar
 const navItems = [
@@ -83,6 +84,13 @@ interface InstalledModel {
 
 export default defineComponent({
   name: 'language-model-settings',
+
+  setup() {
+    // Initialize theme system so this window receives theme changes
+    const { currentTheme, isDark } = useTheme();
+
+    return { currentTheme, isDark };
+  },
 
   data() {
     return {
@@ -1369,9 +1377,9 @@ export default defineComponent({
 
           <div
             v-if="availableProviders.length <= 1"
-            style="margin-top: 1rem; padding: 1rem; border-radius: 8px; border: 1px solid var(--border, #e2e8f0); background: var(--surface-alt, #f8fafc);"
+            class="info-box"
           >
-            <p style="font-size: var(--fs-body); color: var(--muted);">
+            <p>
               Only Ollama (local) is available. To add remote providers, go to
               <strong>Integrations</strong> and configure an AI provider (e.g. Grok, OpenAI, Anthropic).
             </p>
@@ -1706,8 +1714,8 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--body-bg);
-  color: var(--body-text);
+  background: var(--bg-page, var(--body-bg));
+  color: var(--text-primary, var(--body-text));
 }
 
 .lm-header {
@@ -1718,7 +1726,7 @@ export default defineComponent({
   align-items: center;
   padding: 0 0.75rem;
   width: 100%;
-  border-bottom: 1px solid var(--header-border);
+  border-bottom: 1px solid var(--border-default, var(--header-border));
 
   h1 {
     flex: 1;
@@ -1736,7 +1744,7 @@ export default defineComponent({
 
 .lm-nav {
   width: 200px;
-  border-right: 1px solid var(--header-border);
+  border-right: 1px solid var(--border-default, var(--header-border));
   padding-top: 0.75rem;
   flex-shrink: 0;
 
@@ -1746,18 +1754,18 @@ export default defineComponent({
     padding: 0.5rem 0.75rem;
     cursor: pointer;
     user-select: none;
-    color: var(--muted);
+    color: var(--text-muted, var(--muted));
     transition: background 0.15s, color 0.15s;
 
     &:hover {
-      background: var(--nav-active);
-      color: var(--body-text);
+      background: var(--bg-surface-hover, var(--nav-active));
+      color: var(--text-primary, var(--body-text));
     }
 
     &.active {
-      background: var(--primary-light-bg, rgba(59, 130, 246, 0.05));
-      color: var(--primary, #3b82f6);
-      border-left: 2px solid var(--primary, #3b82f6);
+      background: var(--bg-active, var(--primary-light-bg, rgba(59, 130, 246, 0.05)));
+      color: var(--accent-primary, var(--primary, #3b82f6));
+      border-left: 2px solid var(--accent-primary, var(--primary, #3b82f6));
       font-weight: 500;
     }
   }
@@ -1770,8 +1778,8 @@ export default defineComponent({
 }
 
 .active-mode-banner {
-  background: var(--primary-bg, rgba(59, 130, 246, 0.1));
-  border: 1px solid var(--primary, #3b82f6);
+  background: var(--bg-info, var(--primary-bg, rgba(59, 130, 246, 0.1)));
+  border: 1px solid var(--accent-primary, var(--primary, #3b82f6));
   border-radius: 6px;
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
@@ -1781,11 +1789,11 @@ export default defineComponent({
 
   .active-label {
     font-weight: 600;
-    color: var(--primary, #3b82f6);
+    color: var(--accent-primary, var(--primary, #3b82f6));
   }
 
   .active-value {
-    color: var(--body-text);
+    color: var(--text-primary, var(--body-text));
   }
 }
 
@@ -1793,7 +1801,7 @@ export default defineComponent({
   display: flex;
   gap: 0;
   margin-bottom: 1.5rem;
-  border-bottom: 2px solid var(--input-border);
+  border-bottom: 2px solid var(--border-default, var(--input-border));
 }
 
 .model-tab {
@@ -1807,7 +1815,7 @@ export default defineComponent({
   margin-bottom: -2px;
   cursor: pointer;
   font-size: var(--fs-body);
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
   transition: all 0.2s;
   outline: none;
 
@@ -1817,20 +1825,20 @@ export default defineComponent({
   }
 
   &:focus-visible {
-    outline: 2px solid var(--primary, #3b82f6);
+    outline: 2px solid var(--accent-primary, var(--primary, #3b82f6));
     outline-offset: -2px;
   }
 
   &:hover {
-    color: var(--body-text);
-    background: var(--nav-active);
+    color: var(--text-primary, var(--body-text));
+    background: var(--bg-surface-hover, var(--nav-active));
   }
 
   &.active {
-    color: var(--primary, #3b82f6);
-    border-bottom-color: var(--primary, #3b82f6);
+    color: var(--accent-primary, var(--primary, #3b82f6));
+    border-bottom-color: var(--accent-primary, var(--primary, #3b82f6));
     font-weight: 500;
-    background: var(--primary-bg, rgba(59, 130, 246, 0.1));
+    background: var(--bg-active, var(--primary-bg, rgba(59, 130, 246, 0.1)));
   }
 }
 
@@ -1842,28 +1850,28 @@ export default defineComponent({
   min-width: 200px;
 
   &.is-active {
-    background: var(--success, #22c55e) !important;
-    border-color: var(--success, #22c55e) !important;
-    color: white !important;
+    background: var(--status-success, var(--success, #22c55e)) !important;
+    border-color: var(--status-success, var(--success, #22c55e)) !important;
+    color: var(--text-on-accent, #fff) !important;
     opacity: 1 !important;
     cursor: default;
   }
 
   &.is-active:disabled {
-    background: var(--success, #22c55e) !important;
-    border-color: var(--success, #22c55e) !important;
-    color: white !important;
+    background: var(--status-success, var(--success, #22c55e)) !important;
+    border-color: var(--status-success, var(--success, #22c55e)) !important;
+    color: var(--text-on-accent, #fff) !important;
     opacity: 1 !important;
   }
 }
 
 .activation-error {
-  background: var(--error-bg, rgba(239, 68, 68, 0.1));
-  border: 1px solid var(--error, #ef4444);
+  background: var(--bg-error, rgba(239, 68, 68, 0.1));
+  border: 1px solid var(--border-error, var(--status-error, #ef4444));
   border-radius: 6px;
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
-  color: var(--error, #ef4444);
+  color: var(--text-error, var(--status-error, #ef4444));
   font-size: var(--fs-body);
 }
 
@@ -1881,7 +1889,7 @@ export default defineComponent({
   }
 
   .description {
-    color: var(--muted);
+    color: var(--text-muted, var(--muted));
     margin-bottom: 1.5rem;
   }
 }
@@ -1933,8 +1941,8 @@ export default defineComponent({
 }
 
 .metric-card {
-  background: var(--input-bg, rgba(0, 0, 0, 0.1));
-  border: 1px solid var(--input-border);
+  background: var(--bg-surface, var(--input-bg));
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 8px;
   padding: 1rem;
 
@@ -1947,7 +1955,7 @@ export default defineComponent({
 
   .metric-title {
     font-size: var(--fs-body);
-    color: var(--muted);
+    color: var(--text-muted, var(--muted));
   }
 
   .metric-value {
@@ -1958,7 +1966,7 @@ export default defineComponent({
 
   .metric-bar {
     height: 8px;
-    background: var(--input-border);
+    background: var(--border-default, var(--input-border));
     border-radius: 4px;
     overflow: hidden;
   }
@@ -1969,7 +1977,7 @@ export default defineComponent({
     transition: width 0.3s ease;
 
     &.cpu-bar {
-      background: linear-gradient(90deg, var(--accent-primary), #8b5cf6);
+      background: linear-gradient(90deg, var(--accent-primary), var(--text-accent, #8b5cf6));
     }
 
     &.memory-bar {
@@ -1979,18 +1987,18 @@ export default defineComponent({
 
   .metric-subtext {
     font-size: var(--fs-body-sm);
-    color: var(--muted);
+    color: var(--text-muted, var(--muted));
     margin-top: 0.5rem;
   }
 }
 
 .not-running-message {
-  background: var(--input-bg, rgba(0, 0, 0, 0.1));
-  border: 1px solid var(--input-border);
+  background: var(--bg-surface, var(--input-bg));
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 8px;
   padding: 2rem;
   text-align: center;
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
 
   p {
     margin: 0;
@@ -1998,8 +2006,8 @@ export default defineComponent({
 }
 
 .active-model-section {
-  background: var(--input-bg, rgba(0, 0, 0, 0.1));
-  border: 1px solid var(--input-border);
+  background: var(--bg-surface, var(--input-bg));
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 8px;
   padding: 1rem;
 
@@ -2013,7 +2021,7 @@ export default defineComponent({
     padding: 0.25rem 0;
 
     .config-label {
-      color: var(--muted);
+      color: var(--text-muted, var(--muted));
       min-width: 80px;
     }
 
@@ -2025,9 +2033,23 @@ export default defineComponent({
 
 .lm-footer {
   padding: 1rem 1.5rem;
-  border-top: 1px solid var(--header-border);
+  border-top: 1px solid var(--border-default, var(--header-border));
   display: flex;
   justify-content: flex-end;
+}
+
+.info-box {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface-alt, var(--bg-surface));
+
+  p {
+    font-size: var(--fs-body);
+    color: var(--text-muted, var(--muted));
+    margin: 0;
+  }
 }
 
 // Models tab styles
@@ -2041,14 +2063,14 @@ export default defineComponent({
   }
 
   .setting-description {
-    color: var(--muted);
+    color: var(--text-muted, var(--muted));
     font-size: var(--fs-body);
     margin-top: 0.5rem;
     opacity: 0.6;
     margin-bottom: 0.5rem;
 
     .provider-signup-link {
-      color: var(--primary, #3b82f6);
+      color: var(--text-link, var(--primary, #3b82f6));
       text-decoration: none;
       font-weight: 500;
 
@@ -2077,11 +2099,11 @@ export default defineComponent({
 
 .current-model {
   font-size: var(--fs-body);
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
   margin-bottom: 0.5rem;
 
   strong {
-    color: var(--body-text);
+    color: var(--text-primary, var(--body-text));
   }
 }
 
@@ -2090,10 +2112,15 @@ export default defineComponent({
   max-width: 400px;
   padding: 0.5rem;
   font-size: var(--fs-body);
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background-color: var(--bg-input, var(--input-bg));
+  color: var(--text-primary, var(--input-text));
+
+  option {
+    background-color: var(--bg-input, var(--input-bg));
+    color: var(--text-primary, var(--input-text));
+  }
 
   &:focus {
     outline: none;
@@ -2112,10 +2139,10 @@ export default defineComponent({
   padding: 0.75rem;
   font-size: var(--fs-code);
   line-height: 1.5;
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 6px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background-color: var(--bg-input, var(--input-bg));
+  color: var(--text-primary, var(--input-text));
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   resize: vertical;
   min-height: 520px;
@@ -2136,10 +2163,10 @@ export default defineComponent({
   flex: 1;
   padding: 0.5rem;
   font-size: var(--fs-body);
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background-color: var(--bg-input, var(--input-bg));
+  color: var(--text-primary, var(--input-text));
 
   &:focus {
     outline: none;
@@ -2165,7 +2192,7 @@ export default defineComponent({
 
   .toggle-label {
     font-size: var(--fs-body);
-    color: var(--body-text);
+    color: var(--text-primary, var(--body-text));
   }
 }
 
@@ -2188,7 +2215,7 @@ export default defineComponent({
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: var(--input-border);
+    background-color: var(--border-default, var(--input-border));
     transition: 0.3s;
     border-radius: 24px;
 
@@ -2199,14 +2226,14 @@ export default defineComponent({
       width: 18px;
       left: 3px;
       bottom: 3px;
-      background-color: white;
+      background-color: var(--text-on-accent, white);
       transition: 0.3s;
       border-radius: 50%;
     }
   }
 
   input:checked + .slider {
-    background-color: var(--primary, #3b82f6);
+    background-color: var(--accent-primary, var(--primary, #3b82f6));
   }
 
   input:checked + .slider::before {
@@ -2224,10 +2251,10 @@ export default defineComponent({
   max-width: 600px;
   padding: 0.75rem;
   font-size: var(--fs-body);
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background-color: var(--bg-input, var(--input-bg));
+  color: var(--text-primary, var(--input-text));
   font-family: inherit;
   resize: vertical;
   min-height: 100px;
@@ -2252,15 +2279,15 @@ export default defineComponent({
   margin-bottom: 0.5rem;
 
   &.not-installed {
-    color: var(--warning, #f59e0b);
+    color: var(--status-warning, var(--warning, #f59e0b));
   }
 
   &.installed {
-    color: var(--success, #22c55e);
+    color: var(--status-success, var(--success, #22c55e));
   }
 
   &.downloading {
-    color: var(--primary);
+    color: var(--accent-primary, var(--primary));
   }
 }
 
@@ -2272,28 +2299,28 @@ export default defineComponent({
   width: 100%;
   max-width: 400px;
   height: 8px;
-  background: var(--input-border);
+  background: var(--border-default, var(--input-border));
   border-radius: 4px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: var(--primary);
+  background: var(--accent-primary, var(--primary));
   transition: width 0.3s ease;
 }
 
 .progress-text {
   font-size: var(--fs-body-sm);
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
   margin-top: 0.25rem;
 }
 
 .model-status-section {
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 6px;
   padding: 1rem;
-  background: var(--input-bg);
+  background: var(--bg-surface, var(--input-bg));
 }
 
 .downloaded-models-list {
@@ -2303,9 +2330,9 @@ export default defineComponent({
 .model-list {
   max-height: 200px;
   overflow-y: auto;
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--border-default, var(--input-border));
   border-radius: 4px;
-  background: var(--body-bg);
+  background: var(--bg-page, var(--body-bg));
 }
 
 .model-item {
@@ -2313,7 +2340,7 @@ export default defineComponent({
   justify-content: space-between;
   align-items: center;
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--input-border);
+  border-bottom: 1px solid var(--border-default, var(--input-border));
   font-size: var(--fs-code);
 }
 
@@ -2323,11 +2350,11 @@ export default defineComponent({
 
 .model-name {
   font-weight: 500;
-  color: var(--body-text);
+  color: var(--text-primary, var(--body-text));
 }
 
 .model-size {
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
   font-size: var(--fs-body-sm);
 }
 
@@ -2342,13 +2369,13 @@ export default defineComponent({
   margin-bottom: 0.75rem;
   padding: 0.5rem;
   border-radius: 4px;
-  background: var(--body-bg);
-  border: 1px solid var(--input-border);
+  background: var(--bg-page, var(--body-bg));
+  border: 1px solid var(--border-default, var(--input-border));
 }
 
 .status-label {
   font-size: var(--fs-code);
-  color: var(--body-text);
+  color: var(--text-primary, var(--body-text));
   font-weight: 500;
   flex: 1;
 }
@@ -2379,7 +2406,7 @@ export default defineComponent({
 .no-models-message {
   padding: 1rem;
   text-align: center;
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
 }
 
 .download-section {
@@ -2390,10 +2417,10 @@ export default defineComponent({
   input {
     flex: 1;
     padding: 0.5rem 0.75rem;
-    border: 1px solid var(--input-border);
+    border: 1px solid var(--border-default, var(--input-border));
     border-radius: 4px;
-    background: var(--input-bg);
-    color: var(--input-text);
+    background-color: var(--bg-input, var(--input-bg));
+    color: var(--text-primary, var(--input-text));
 
     &:focus {
       outline: none;
@@ -2409,12 +2436,12 @@ export default defineComponent({
   th, td {
     padding: 0.75rem;
     text-align: left;
-    border-bottom: 1px solid var(--header-border);
+    border-bottom: 1px solid var(--border-default, var(--header-border));
   }
 
   th {
     font-weight: 500;
-    color: var(--muted);
+    color: var(--text-muted, var(--muted));
     font-size: var(--fs-body);
   }
 
@@ -2432,22 +2459,22 @@ export default defineComponent({
 
 .pages-list {
   width: 250px;
-  border: 1px solid var(--header-border);
+  border: 1px solid var(--border-default, var(--header-border));
   border-radius: 4px;
   overflow: auto;
 
   .page-item {
     padding: 0.75rem;
-    border-bottom: 1px solid var(--header-border);
+    border-bottom: 1px solid var(--border-default, var(--header-border));
     cursor: pointer;
 
     &:hover {
-      background: var(--dropdown-hover-bg);
+      background: var(--bg-surface-hover, var(--dropdown-hover-bg));
     }
 
     &.selected {
-      background: var(--primary);
-      color: var(--primary-text);
+      background: var(--accent-primary, var(--primary));
+      color: var(--text-on-accent, var(--primary-text));
     }
 
     .page-title {
@@ -2457,7 +2484,7 @@ export default defineComponent({
 
     .page-type {
       font-size: var(--fs-body-sm);
-      color: var(--muted);
+      color: var(--text-muted, var(--muted));
     }
 
     &.selected .page-type {
@@ -2471,7 +2498,7 @@ export default defineComponent({
   flex: 1;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--header-border);
+  border: 1px solid var(--border-default, var(--header-border));
   border-radius: 4px;
   padding: 1rem;
 
@@ -2489,8 +2516,8 @@ export default defineComponent({
     .badge {
       font-size: var(--fs-body-sm);
       padding: 0.25rem 0.5rem;
-      background: var(--muted);
-      color: var(--body-bg);
+      background: var(--text-muted, var(--muted));
+      color: var(--bg-page, var(--body-bg));
       border-radius: 4px;
     }
   }
@@ -2498,10 +2525,10 @@ export default defineComponent({
   .editor-textarea {
     flex: 1;
     padding: 0.75rem;
-    border: 1px solid var(--input-border);
+    border: 1px solid var(--border-default, var(--input-border));
     border-radius: 4px;
-    background: var(--input-bg);
-    color: var(--input-text);
+    background-color: var(--bg-input, var(--input-bg));
+    color: var(--text-primary, var(--input-text));
     resize: none;
     font-family: inherit;
 
@@ -2526,7 +2553,7 @@ export default defineComponent({
 }
 
 .service-card {
-  border: 1px solid var(--header-border);
+  border: 1px solid var(--border-default, var(--header-border));
   border-radius: 8px;
   padding: 1.25rem;
 
@@ -2543,7 +2570,7 @@ export default defineComponent({
   }
 
   p {
-    color: var(--muted);
+    color: var(--text-muted, var(--muted));
     font-size: var(--fs-body);
     margin: 0 0 1rem;
   }
@@ -2562,29 +2589,29 @@ export default defineComponent({
 
   &.running {
     background: var(--status-success);
-    color: white;
+    color: var(--text-on-accent, #fff);
   }
 
   &.stopped {
     background: var(--status-error);
-    color: white;
+    color: var(--text-on-accent, #fff);
   }
 
   &.error {
     background: var(--status-warning);
-    color: white;
+    color: var(--text-on-accent, #fff);
   }
 
   &.unknown {
-    background: var(--muted);
-    color: white;
+    background: var(--text-muted, var(--muted));
+    color: var(--text-on-accent, #fff);
   }
 }
 
 // Logs tab styles
 .logs-container {
   height: calc(100vh - 280px);
-  border: 1px solid var(--header-border);
+  border: 1px solid var(--border-default, var(--header-border));
   border-radius: 4px;
   overflow: auto;
 }
@@ -2602,7 +2629,7 @@ export default defineComponent({
 .loading, .empty-state {
   padding: 2rem;
   text-align: center;
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
 }
 
 .btn {
@@ -2614,8 +2641,8 @@ export default defineComponent({
   transition: background 0.15s;
 
   &.role-primary {
-    background: var(--primary);
-    color: var(--primary-text);
+    background: var(--accent-primary, var(--primary));
+    color: var(--text-on-accent, var(--primary-text));
 
     &:hover {
       opacity: 0.9;
@@ -2628,12 +2655,12 @@ export default defineComponent({
   }
 
   &.role-secondary {
-    background: var(--input-bg);
-    border: 1px solid var(--input-border);
-    color: var(--body-text);
+    background-color: var(--bg-input, var(--input-bg));
+    border: 1px solid var(--border-default, var(--input-border));
+    color: var(--text-primary, var(--body-text));
 
     &:hover {
-      background: var(--dropdown-hover-bg);
+      background-color: var(--bg-surface-hover, var(--dropdown-hover-bg));
     }
   }
 
@@ -2655,15 +2682,15 @@ export default defineComponent({
   display: flex;
   gap: 0.5rem;
   font-size: var(--fs-body-sm);
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
   padding: 0.5rem 0.75rem;
-  background: var(--input-bg, rgba(0, 0, 0, 0.05));
+  background: var(--bg-surface, var(--input-bg));
   border-radius: 6px;
   margin-bottom: 1rem;
 }
 
 .local-model-card {
-  border: 2px solid var(--input-border);
+  border: 2px solid var(--border-default, var(--input-border));
   border-radius: 8px;
   padding: 1rem;
   cursor: pointer;
@@ -2678,30 +2705,30 @@ export default defineComponent({
   }
 
   &.is-selected {
-    border-color: var(--primary, #3b82f6);
-    background: var(--primary-bg, rgba(59, 130, 246, 0.06));
+    border-color: var(--accent-primary, var(--primary, #3b82f6));
+    background: var(--bg-active, var(--primary-bg, rgba(59, 130, 246, 0.06)));
   }
 
   // Activated model gets a prominent green treatment
   &.is-activated {
-    border-color: var(--success, #22c55e);
-    background: rgba(34, 197, 94, 0.06);
-    box-shadow: 0 0 0 1px var(--success, #22c55e);
+    border-color: var(--status-success, var(--success, #22c55e));
+    background: var(--bg-success);
+    box-shadow: 0 0 0 1px var(--status-success, var(--success, #22c55e));
     opacity: 1;
   }
 
   &.is-activated.is-selected {
-    border-color: var(--success, #22c55e);
-    background: rgba(34, 197, 94, 0.1);
-    box-shadow: 0 0 0 1px var(--success, #22c55e);
+    border-color: var(--status-success, var(--success, #22c55e));
+    background: var(--bg-success);
+    box-shadow: 0 0 0 1px var(--status-success, var(--success, #22c55e));
   }
 
   &:hover {
-    border-color: var(--primary, #3b82f6);
+    border-color: var(--accent-primary, var(--primary, #3b82f6));
   }
 
   &.is-activated:hover {
-    border-color: var(--success, #22c55e);
+    border-color: var(--status-success, var(--success, #22c55e));
   }
 }
 
@@ -2740,8 +2767,8 @@ export default defineComponent({
   }
 
   &.badge-activated {
-    background: var(--success, #22c55e);
-    color: white;
+    background: var(--status-success, var(--success, #22c55e));
+    color: var(--text-on-accent, #fff);
     font-weight: 600;
   }
 }
@@ -2754,17 +2781,17 @@ export default defineComponent({
   font-weight: 500;
 
   &.fitness-green {
-    background: rgba(34, 197, 94, 0.15);
+    background: var(--bg-success);
     color: var(--status-success, #22c55e);
   }
 
   &.fitness-yellow {
-    background: rgba(245, 158, 11, 0.15);
+    background: var(--bg-warning);
     color: var(--status-warning, #f59e0b);
   }
 
   &.fitness-red {
-    background: rgba(239, 68, 68, 0.15);
+    background: var(--bg-error);
     color: var(--status-error, #ef4444);
   }
 }
@@ -2773,13 +2800,13 @@ export default defineComponent({
   display: flex;
   gap: 1rem;
   font-size: var(--fs-body-sm);
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
   margin-bottom: 0.35rem;
 }
 
 .local-model-desc {
   font-size: var(--fs-code);
-  color: var(--muted);
+  color: var(--text-muted, var(--muted));
   margin: 0;
 }
 
@@ -2791,14 +2818,14 @@ export default defineComponent({
 .local-model-download-progress {
   margin-top: 0.75rem;
   padding: 0.75rem;
-  background: var(--primary-bg, rgba(59, 130, 246, 0.08));
-  border: 1px solid var(--primary, #3b82f6);
+  background: var(--bg-info, var(--primary-bg, rgba(59, 130, 246, 0.08)));
+  border: 1px solid var(--accent-primary, var(--primary, #3b82f6));
   border-radius: 6px;
 
   .download-status-text {
     font-size: var(--fs-body);
     font-weight: 500;
-    color: var(--primary, #3b82f6);
+    color: var(--accent-primary, var(--primary, #3b82f6));
     margin-bottom: 0.5rem;
   }
 }
@@ -2806,14 +2833,14 @@ export default defineComponent({
 .progress-bar-lg {
   width: 100%;
   height: 12px;
-  background: var(--input-border);
+  background: var(--border-default, var(--input-border));
   border-radius: 6px;
   overflow: hidden;
 }
 
 .progress-fill-lg {
   height: 100%;
-  background: linear-gradient(90deg, var(--primary, #3b82f6), #6366f1);
+  background: linear-gradient(90deg, var(--accent-primary, var(--primary, #3b82f6)), var(--text-accent, #6366f1));
   border-radius: 6px;
   transition: width 0.3s ease;
 }

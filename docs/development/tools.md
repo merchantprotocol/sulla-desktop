@@ -32,16 +32,14 @@ tools/
 | Category | Description | Key Tools |
 |----------|-------------|-----------|
 | `meta` | Discovery, memory, execution | `browse_tools`, `exec`, `add_observational_memory`, `meta_search` |
-| `fs` | File system operations | `fs_read_file`, `fs_write_file`, `fs_list_dir`, `fs_delete_path` |
 | `slack` | Slack messaging | `slack_send_message`, `slack_search_users`, `slack_connection_health` |
 | `github` | GitHub operations | Repository, PR, issue management |
-| `n8n` | Workflow automation (35+ tools) | `create_workflow`, `get_workflow`, `patch_workflow` |
+| `n8n` | Workflow automation (complex ops) | `patch_workflow`, `validate_workflow`, `diagnose_webhook`, `restart_n8n_container` |
 | `docker` | Container management | Container and image operations |
 | `kubectl` | Kubernetes | Cluster management |
 | `integrations` | Integration credentials & accounts | `integration_get_credentials`, `list_integration_accounts`, `set_active_integration_account` |
 | `playwright` | Web interaction | `click_element`, `fill_form`, `scroll`, `read_dom` |
 | `skills` | Reusable skills | Search, load, create skills |
-| `projects` | Project PRDs | CRUD on PROJECT.md files |
 | `workspace` | Workspace management | Folder operations |
 | `redis` | Redis operations | Key-value store operations |
 | `pg` | PostgreSQL | Database queries |
@@ -146,7 +144,7 @@ If this is a new category, add it to the `categoriesList` in `tools/registry.ts`
 
 ```typescript
 interface ToolManifest {
-  name: string;                            // Unique tool name (e.g., 'fs_read_file')
+  name: string;                            // Unique tool name (e.g., 'patch_workflow')
   description: string;                     // Shown to the model during discovery
   category: string;                        // Category for grouping
   schemaDef: Record<string, FieldSchema>;  // Input parameter definitions

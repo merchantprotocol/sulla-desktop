@@ -6,7 +6,6 @@ import { toolRegistry } from './registry';
 
 import { calendarToolManifests } from './calendar/manifests';
 import { dockerToolManifests } from './docker/manifests';
-import { fsToolManifests } from './fs/manifests';
 import { githubToolManifests } from './github/manifests';
 import { integrationsToolManifests } from './integrations/manifests';
 import { kubectlToolManifests } from './kubectl/manifests';
@@ -29,7 +28,6 @@ toolRegistry.registerManifests([
   ...calendarToolManifests,
   ...dockerToolManifests,
   ...extensionsToolManifests,
-  ...fsToolManifests,
   ...githubToolManifests,
   ...integrationsToolManifests,
   ...kubectlToolManifests,

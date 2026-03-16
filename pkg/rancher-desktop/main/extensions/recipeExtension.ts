@@ -276,6 +276,11 @@ export class RecipeExtensionImpl implements Extension {
 
     sullaLog({ topic: 'extensions', level: 'info', message: `Recipe extension ${ this.id } installed successfully.` });
 
+    // Save integration credentials declared in the manifest
+    if (manifest.integrations) {
+      await this.saveIntegrationCredentials(manifest.integrations);
+    }
+
     // Start the extension after install
     try {
       sullaLog({ topic: 'extensions', level: 'info', message: `[install:${ this.id }] post-install start: invoking start()` });
@@ -512,6 +517,7 @@ export class RecipeExtensionImpl implements Extension {
    *  - `json`       — JSON-stringify (produces a quoted string)
    *  - `md5`        — MD5 hex digest (always 32 chars)
    *  - `argon2`     — Argon2id password hash (e.g. `{{sullaServicePassword|argon2}}`)
+   *  - `bcrypt`     — bcrypt password hash (e.g. `{{sullaServicePassword|bcrypt}}`)
    */
   protected async applyModifier(value: string, modifier: string): Promise<string> {
     switch (modifier) {
@@ -537,6 +543,12 @@ export class RecipeExtensionImpl implements Extension {
         hashLength:  32,
         outputType:  'encoded',
       });
+    }
+    case 'bcrypt': {
+      const bcrypt = await import('bcryptjs');
+      const salt = await bcrypt.genSalt(10);
+
+      return await bcrypt.hash(value, salt);
     }
     default:
       sullaLog({ topic: 'extensions', level: 'warn', message: `Unknown variable modifier: ${ modifier }` });
@@ -754,6 +766,31 @@ export class RecipeExtensionImpl implements Extension {
    */
   protected async processComposeFile(): Promise<void> {
     await this.processAllRecipeFiles();
+  }
+
+  /**
+   * Save integration credentials declared in the manifest to the IntegrationService.
+   * Template variables in values are resolved before saving.
+   */
+  protected async saveIntegrationCredentials(integrations: Record<string, Record<string, string>>): Promise<void> {
+    try {
+      const svc = getIntegrationService();
+
+      for (const [integrationId, properties] of Object.entries(integrations)) {
+        for (const [property, rawValue] of Object.entries(properties)) {
+          const resolvedValue = await this.resolveVariables(rawValue);
+
+          await svc.setIntegrationValue({
+            integration_id: integrationId,
+            property,
+            value:          resolvedValue,
+          });
+        }
+        sullaLog({ topic: 'extensions', level: 'info', message: `[install:${ this.id }] saved integration credentials for ${ integrationId }` });
+      }
+    } catch (ex) {
+      sullaLog({ topic: 'extensions', level: 'warn', message: `[install:${ this.id }] failed to save integration credentials`, error: ex });
+    }
   }
 
   /**

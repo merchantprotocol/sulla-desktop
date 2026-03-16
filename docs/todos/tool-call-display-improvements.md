@@ -8,7 +8,7 @@
 
 ## Problem Statement
 
-Users see tool calls in the chat but lack sufficient context about what each tool is doing. Bash/exec tools show the command being run (`IN: npm install`), but all other tools display only a raw internal name like `fs_read_file` with no preview of what's happening. Users must expand the card and parse raw JSON to understand the action.
+Users see tool calls in the chat but lack sufficient context about what each tool is doing. Bash/exec tools show the command being run (`IN: npm install`), but all other tools display only a raw internal name like `pg_query` with no preview of what's happening. Users must expand the card and parse raw JSON to understand the action.
 
 ---
 
@@ -26,18 +26,18 @@ Users see tool calls in the chat but lack sufficient context about what each too
 | Tool Type | Collapsed View | Expanded View |
 |-----------|---------------|---------------|
 | **Bash/exec tools** | Status dot + "Bash" + description (if any) + `IN: <command>` + `OUT: 0/1` | Full output text |
-| **All other tools** | Status dot + raw tool name (e.g. `fs_read_file`) + description (if any) | Raw JSON dump of `args` + raw JSON dump of `result` |
+| **All other tools** | Status dot + raw tool name (e.g. `pg_query`) + description (if any) | Raw JSON dump of `args` + raw JSON dump of `result` |
 
 ### Identified Problems
 
 1. **Non-exec tools show almost nothing in collapsed state** — No IN/OUT lines, no summary. Just a raw internal name and a colored dot.
 
-2. **Raw tool names instead of human-friendly labels** — The system already has `TOOL_VERB_MAP` in `AgentPersonaModel.ts` (lines 72-121) with 50+ mappings (e.g. `fs_read_file` -> "Reading", `git_commit` -> "Committing", `docker_build` -> "Building image"). This map is **only used for the activity status indicator**, never for tool card labels.
+2. **Raw tool names instead of human-friendly labels** — The system already has `TOOL_VERB_MAP` in `AgentPersonaModel.ts` (lines 72-121) with 50+ mappings (e.g. `pg_query` -> "Reading", `git_commit` -> "Committing", `docker_build` -> "Building image"). This map is **only used for the activity status indicator**, never for tool card labels.
 
 3. **`description` field is rarely populated** — Extracted from `args.description` (line 653), but most tools don't include a `description` argument. Only exec/bash tools tend to have it, so most tool cards have no description.
 
 4. **No contextual preview for non-exec tools** — Key information is buried in `args` and only visible when expanded:
-   - `fs_read_file` — file path hidden
+   - `pg_query` — file path hidden
    - `git_commit` — commit message hidden
    - `pg_query` — SQL query hidden
    - `docker_build` — image name hidden
@@ -62,7 +62,7 @@ Files to change:
 
 ### Phase 2: Human-Friendly Labels (Low Effort, High Impact)
 
-**Use `TOOL_VERB_MAP` for card labels** — Instead of showing `fs_read_file`, show "Read File" or "Reading". The mapping data already exists at `AgentPersonaModel.ts:72-121`.
+**Use `TOOL_VERB_MAP` for card labels** — Instead of showing `pg_query`, show "Read File" or "Reading". The mapping data already exists at `AgentPersonaModel.ts:72-121`.
 
 Approach:
 - Create a `TOOL_LABEL_MAP` (or extend verb map) that maps tool names to display-friendly labels
@@ -75,8 +75,8 @@ Approach:
 
 | Tool | Args Key to Surface | Example Preview |
 |------|-------------------|-----------------|
-| `fs_read_file` | `path` | `IN: /src/utils/config.ts` |
-| `fs_write_file` | `path` | `IN: /src/utils/config.ts` |
+| `pg_query` | `path` | `IN: /src/utils/config.ts` |
+| `slack_send_message` | `path` | `IN: /src/utils/config.ts` |
 | `git_commit` | `message` | `IN: "fix: resolve null pointer"` |
 | `git_checkout` | `branch` | `IN: feature/new-api` |
 | `pg_query` | `query` or `sql` | `IN: SELECT * FROM users WHERE...` |
@@ -98,8 +98,8 @@ Implementation:
 
 | Tool | Summary Format |
 |------|---------------|
-| `fs_read_file` | `OUT: 247 lines` |
-| `fs_write_file` | `OUT: written` |
+| `pg_query` | `OUT: 247 lines` |
+| `slack_send_message` | `OUT: written` |
 | `git_commit` | `OUT: abc1234` |
 | `git_status` | `OUT: 3 modified, 1 untracked` |
 | `pg_query` | `OUT: 12 rows` |
@@ -117,7 +117,7 @@ Implementation:
 
 **Render structured output instead of raw JSON for known tool types:**
 
-- `fs_read_file` results — syntax-highlighted code block
+- `pg_query` results — syntax-highlighted code block
 - `pg_query` results — simple HTML table
 - `git_diff` results — diff-highlighted output
 - `docker_ps` results — formatted container list
