@@ -20,7 +20,7 @@ import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send, openEditor } from '@pkg/window';
+import { openMain, send, openEditor, openDockerDashboard } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -52,16 +52,7 @@ export class Tray {
         openMain();
       },
     },
-    {
-      id:    'automations',
-      label: 'Open Automations',
-      icon:  path.join(paths.resources, 'icons', 'automation-play.png'),
-      type:  'normal',
-      click() {
-        void Electron.shell.openExternal('http://127.0.0.1:30119');
-      },
-    },
-    {
+{
       id:    'editor',
       label: 'Open Agent Workbench',
       icon:  path.join(paths.resources, 'icons', 'book-open-16.png'),
@@ -75,6 +66,26 @@ export class Tray {
       id:      'extensions',
       label:   'Extensions',
       submenu: [{ label: 'No extensions installed', enabled: false }],
+    },
+    { type: 'separator' },
+    {
+      id:    'docker-dashboard',
+      label: 'Docker Dashboard',
+      icon:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
+      type:  'normal',
+      click() {
+        openDockerDashboard();
+      },
+    },
+    {
+      id:      'dashboard',
+      label:   'Kubernetes Dashboard',
+      icon:    path.join(paths.resources, 'icons', 'kubernetes-icon-color.png'),
+      type:    'normal',
+      enabled: false,
+      click() {
+        openDashboard();
+      },
     },
     { type: 'separator' },
     {
