@@ -14,7 +14,18 @@ export interface BrowserTab {
   content?: string;
 }
 
+export interface ClosedTab {
+  id:       string;
+  url:      string;
+  title:    string;
+  favicon:  string;
+  mode:     BrowserTabMode;
+  closedAt: number;
+}
+
 const STORAGE_KEY = 'sulla:browser-tabs';
+const HISTORY_KEY = 'sulla:closed-tabs';
+const MAX_HISTORY = 25;
 
 function loadPersistedTabs(): BrowserTab[] {
   try {
@@ -48,6 +59,32 @@ const tabs = reactive<BrowserTab[]>(restoredTabs);
 // Persist tab state on every change
 watch(tabs, (current) => {
   persistTabs([...current]);
+}, { deep: true });
+
+// ── Closed-tab history ──
+
+function loadClosedTabs(): ClosedTab[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+function persistClosedTabs(list: ClosedTab[]): void {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, MAX_HISTORY)));
+  } catch { /* best-effort */ }
+}
+
+const closedTabs = reactive<ClosedTab[]>(loadClosedTabs());
+
+watch(closedTabs, (current) => {
+  persistClosedTabs([...current]);
 }, { deep: true });
 
 function generateId(): string {
@@ -87,6 +124,24 @@ export function useBrowserTabs() {
     const idx = tabs.findIndex(t => t.id === id);
 
     if (idx !== -1) {
+      const removed = tabs[idx];
+
+      // Save to closed-tab history (skip blank/welcome tabs)
+      if (removed.url !== 'about:blank' || removed.mode === 'chat') {
+        closedTabs.unshift({
+          id:       removed.id,
+          url:      removed.url,
+          title:    removed.title,
+          favicon:  removed.favicon,
+          mode:     removed.mode,
+          closedAt: Date.now(),
+        });
+        // Trim to max
+        if (closedTabs.length > MAX_HISTORY) {
+          closedTabs.splice(MAX_HISTORY);
+        }
+      }
+
       tabs.splice(idx, 1);
     }
 
@@ -94,6 +149,32 @@ export function useBrowserTabs() {
     if (tabs.length === 0) {
       createTab('about:blank', { mode: 'chat' });
     }
+  }
+
+  function restoreClosedTab(index: number): BrowserTab | null {
+    if (index < 0 || index >= closedTabs.length) return null;
+
+    const entry = closedTabs[index];
+    closedTabs.splice(index, 1);
+
+    // Re-create the tab with its original ID so localStorage-keyed
+    // thread state (messages, threadId) is automatically restored.
+    const tab: BrowserTab = {
+      id:      entry.id,
+      url:     entry.url,
+      title:   entry.title,
+      favicon: entry.favicon,
+      loading: false,
+      mode:    entry.mode,
+    };
+
+    tabs.push(tab);
+
+    return tab;
+  }
+
+  function clearClosedTabs() {
+    closedTabs.splice(0, closedTabs.length);
   }
 
   function updateTab(id: string, updates: Partial<Omit<BrowserTab, 'id'>>) {
@@ -110,10 +191,13 @@ export function useBrowserTabs() {
 
   return {
     tabs:      readonly(tabs),
+    closedTabs: readonly(closedTabs),
     createTab,
     closeTab,
     updateTab,
     getTab,
     ensureOneTab,
+    restoreClosedTab,
+    clearClosedTabs,
   };
 }

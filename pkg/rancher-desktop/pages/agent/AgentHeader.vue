@@ -1,6 +1,6 @@
 <template>
   <header class="sticky top-0 z-50 flex flex-none items-end justify-between bg-page pl-20 pr-4 pt-1 pb-0 transition duration-500 sm:pr-6 lg:pr-8 app-titlebar">
-    <div class="relative flex grow basis-0 items-center pb-2">
+    <div class="relative flex shrink-0 items-center pb-2">
       <a
         aria-label="Home page"
         href="#/"
@@ -17,17 +17,7 @@
         >
       </a>
     </div>
-    <div class="hidden lg:flex items-end gap-0.5 self-stretch">
-      <button
-        class="tab-new"
-        type="button"
-        aria-label="New tab"
-        @click="openNewBrowserTab"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="h-3 w-3">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-      </button>
+    <div class="hidden lg:flex items-end gap-0.5 self-stretch flex-1 min-w-0 ml-4">
       <router-link
         v-for="(tab, index) in orderedTabs"
         :key="tab.id"
@@ -68,8 +58,18 @@
           </svg>
         </button>
       </router-link>
+      <button
+        class="tab-new"
+        type="button"
+        aria-label="New tab"
+        @click="openNewBrowserTab"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="h-3.5 w-3.5">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
     </div>
-    <div class="relative flex basis-0 justify-end items-center gap-4 pb-2">
+    <div class="relative flex shrink-0 justify-end items-center gap-4 pb-2">
       <div
         v-if="route.path === '/Filesystem'"
         class="flex gap-2"
@@ -201,6 +201,119 @@
             />
           </svg>
         </button>
+      </div>
+      <!-- Three-dot menu -->
+      <div class="relative hidden lg:flex">
+        <button
+          type="button"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
+          aria-label="More options"
+          @click="isMoreMenuOpen = !isMoreMenuOpen"
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            class="h-3.5 w-3.5"
+          >
+            <circle cx="12" cy="5" r="1.5" />
+            <circle cx="12" cy="12" r="1.5" />
+            <circle cx="12" cy="19" r="1.5" />
+          </svg>
+        </button>
+        <Teleport to="body">
+          <div
+            v-if="isMoreMenuOpen"
+            class="more-menu-overlay"
+            @click="isMoreMenuOpen = false"
+          />
+          <div
+            v-if="isMoreMenuOpen && !isHistorySubmenuOpen"
+            class="more-menu"
+          >
+            <button
+              class="more-menu-item"
+              @click="openNewBrowserTab(); isMoreMenuOpen = false"
+            >
+              New Tab
+            </button>
+            <button
+              class="more-menu-item"
+              @click="navigateTo('/Integrations')"
+            >
+              Integrations
+            </button>
+            <button
+              class="more-menu-item"
+              @click="navigateTo('/Extensions')"
+            >
+              Extensions
+            </button>
+            <button
+              class="more-menu-item"
+              @click="navigateTo('/Filesystem')"
+            >
+              Files
+            </button>
+            <div class="more-menu-separator" />
+            <button
+              class="more-menu-item more-menu-item-arrow"
+              @click="isHistorySubmenuOpen = true"
+            >
+              History
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="more-menu-arrow-icon">
+                <path d="M9 18l6-6-6-6" />
+              </svg>
+            </button>
+          </div>
+          <!-- History submenu -->
+          <div
+            v-if="isMoreMenuOpen && isHistorySubmenuOpen"
+            class="more-menu more-menu-history"
+          >
+            <button
+              class="more-menu-item more-menu-item-back"
+              @click="isHistorySubmenuOpen = false"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="more-menu-arrow-icon">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+              History
+            </button>
+            <div class="more-menu-separator" />
+            <div
+              v-if="closedTabs.length === 0"
+              class="more-menu-empty"
+            >
+              No closed tabs
+            </div>
+            <button
+              v-for="(entry, idx) in closedTabs"
+              :key="idx"
+              class="more-menu-item more-menu-history-item"
+              :title="entry.url"
+              @click="onRestoreClosedTab(idx)"
+            >
+              <img
+                v-if="entry.favicon"
+                :src="entry.favicon"
+                class="more-menu-favicon"
+                alt=""
+              >
+              <span class="more-menu-history-label">{{ entry.title || entry.url }}</span>
+              <span class="more-menu-history-time">{{ formatTimeAgo(entry.closedAt) }}</span>
+            </button>
+            <template v-if="closedTabs.length > 0">
+              <div class="more-menu-separator" />
+              <button
+                class="more-menu-item more-menu-clear"
+                @click="clearClosedTabs(); isHistorySubmenuOpen = false; isMoreMenuOpen = false"
+              >
+                Clear History
+              </button>
+            </template>
+          </div>
+        </Teleport>
       </div>
       <!-- Hamburger menu: right side, visible on mobile -->
       <div class="flex lg:hidden">
@@ -426,7 +539,7 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 
 const extensionService = getExtensionService();
 const router = useRouter();
-const { tabs: browserTabs, createTab, closeTab, updateTab, getTab, ensureOneTab } = useBrowserTabs();
+const { tabs: browserTabs, closedTabs, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, clearClosedTabs } = useBrowserTabs();
 
 // Active assets from the agent persona service
 const personaRegistry = getAgentPersonaRegistry();
@@ -447,6 +560,13 @@ const extensionMenuItems = computed(() => extensionService.getHeaderMenuItems())
 
 const route = useRoute();
 const isMobileMenuOpen = ref(false);
+const isMoreMenuOpen = ref(false);
+const isHistorySubmenuOpen = ref(false);
+
+// Reset submenu when main menu closes
+watch(isMoreMenuOpen, (open) => {
+  if (!open) isHistorySubmenuOpen.value = false;
+});
 const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();
 const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark-nobg.png', import.meta.url).toString();
 
@@ -465,6 +585,34 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
       router.replace(`/Browser/${ tab.id }`);
     }
   }
+}
+
+function navigateTo(path: string) {
+  isMoreMenuOpen.value = false;
+  router.push(path);
+}
+
+function onRestoreClosedTab(index: number) {
+  const tab = restoreClosedTab(index);
+
+  isMoreMenuOpen.value = false;
+  if (tab) {
+    router.push(`/Browser/${ tab.id }`);
+  }
+}
+
+function formatTimeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60_000);
+
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${ mins }m ago`;
+  const hrs = Math.floor(mins / 60);
+
+  if (hrs < 24) return `${ hrs }h ago`;
+  const days = Math.floor(hrs / 24);
+
+  return `${ days }d ago`;
 }
 
 const toggleMobileMenu = () => {
@@ -914,10 +1062,10 @@ async function ctxCopyUrl() {
   pointer-events: none;
 }
 
-/* Hide separator next to active tab or when first inactive tab */
+/* Hide separator next to active tab or on the first tab */
 .tab-active + .tab-inactive::before,
 .tab-active-native + .tab-inactive::before,
-.tab-new + .tab-inactive::before {
+.tab-item:first-child.tab-inactive::before {
   display: none;
 }
 
@@ -946,8 +1094,8 @@ async function ctxCopyUrl() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2.5rem;
+  height: 2.5rem;
   color: var(--text-secondary);
   border-radius: 0.5rem;
   cursor: pointer;
@@ -1055,5 +1203,122 @@ async function ctxCopyUrl() {
   height: 1px;
   background: #21262d;
   margin: 4px 0;
+}
+
+/* More menu (three-dot) — unscoped because it's teleported to body */
+.more-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.more-menu {
+  position: fixed;
+  top: 40px;
+  right: 12px;
+  z-index: 10000;
+  min-width: 180px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px rgba(63, 185, 80, 0.15);
+  padding: 6px 0;
+  animation: tabCtxFadeIn 0.15s ease-out;
+  font-family: var(--ifm-font-family-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.more-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 14px;
+  border: none;
+  background: transparent;
+  color: #e6edf3;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.more-menu-item:hover {
+  background: rgba(63, 185, 80, 0.1);
+  color: #3fb950;
+}
+
+.more-menu-item-arrow,
+.more-menu-item-back {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.more-menu-item-back {
+  gap: 6px;
+  justify-content: flex-start;
+  font-weight: 600;
+}
+
+.more-menu-arrow-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.more-menu-separator {
+  height: 1px;
+  background: #21262d;
+  margin: 4px 0;
+}
+
+.more-menu-history {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.more-menu-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.more-menu-favicon {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.more-menu-history-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.more-menu-history-time {
+  font-size: 11px;
+  color: #8b949e;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.more-menu-empty {
+  padding: 7px 14px;
+  color: #8b949e;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.more-menu-clear {
+  color: #f85149 !important;
+}
+
+.more-menu-clear:hover {
+  background: rgba(248, 81, 73, 0.1) !important;
+  color: #f85149 !important;
 }
 </style>
