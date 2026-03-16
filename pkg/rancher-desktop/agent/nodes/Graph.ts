@@ -448,7 +448,9 @@ export class Graph<TState = BaseThreadState> {
 
         if (nextId === currentNodeId) {
           (state as any).metadata.consecutiveSameNode++;
-          if ((state as any).metadata.consecutiveSameNode >= MAX_CONSECTUIVE_LOOP) {
+          const hasActiveWorkflow = !!(state as any).metadata?.activeWorkflow?.status
+            && (state as any).metadata.activeWorkflow.status === 'running';
+          if (!hasActiveWorkflow && (state as any).metadata.consecutiveSameNode >= MAX_CONSECTUIVE_LOOP) {
             if (currentNodeId === 'action') {
               console.warn('Max consecutive loop on action — forcing critic review');
               (state as any).metadata.consecutiveSameNode = 0;
@@ -487,7 +489,9 @@ export class Graph<TState = BaseThreadState> {
       }
     }
 
-    if ((state as any).metadata.iterations >= maxIterations) {
+    const hasActiveWorkflowPostLoop = !!(state as any).metadata?.activeWorkflow?.status
+      && (state as any).metadata.activeWorkflow.status === 'running';
+    if (!hasActiveWorkflowPostLoop && (state as any).metadata.iterations >= maxIterations) {
       console.warn('Max iterations hit');
       (state as any).metadata.maxIterationsReached = true;
       (state as any).metadata.stopReason = 'max_loops';
@@ -547,7 +551,7 @@ export class Graph<TState = BaseThreadState> {
     // ── Reset canvas and replay all already-completed nodes (triggers + checkpoint nodes) ──
     this.emitPlaybookEvent(state, 'workflow_started', { workflowId: playbook.workflowId });
 
-    for (const [nodeId, output] of Object.entries(playbook.nodeOutputs)) {
+    for (const [nodeId, output] of Object.entries(playbook.nodeOutputs ?? {})) {
       this.emitPlaybookEvent(state, 'node_completed', {
         nodeId,
         nodeLabel: output.label,
@@ -619,6 +623,7 @@ export class Graph<TState = BaseThreadState> {
           this.emitPlaybookEvent(state, 'node_started', {
             nodeId:    decisionNodeId,
             nodeLabel: this.getPlaybookNodeLabel(step.updatedPlaybook, decisionNodeId),
+            prompt:    step.prompt,
           });
         }
         this.injectWorkflowMessage(state, step.prompt);
@@ -664,7 +669,7 @@ export class Graph<TState = BaseThreadState> {
         const isToolCall = step.agentId === '__tool_call__';
 
         this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
-        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subNodeLabel });
+        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subNodeLabel, prompt: step.prompt });
 
         if (isToolCall) {
           // ── Tool Call: orchestrator validates params, then execute silently ──
@@ -776,7 +781,7 @@ export class Graph<TState = BaseThreadState> {
         for (let i = 0; i < parallelNodes.length; i++) {
           const pn = parallelNodes[i];
           this.emitEdgeActivations(state, currentPlaybook.definition, pn.nodeId, 'incoming');
-          this.emitPlaybookEvent(state, 'node_started', { nodeId: pn.nodeId, nodeLabel: nodeLabels[i] });
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: pn.nodeId, nodeLabel: nodeLabels[i], prompt: pn.prompt });
         }
 
         // Before prompt: notify orchestrator about the parallel batch
@@ -933,7 +938,7 @@ export class Graph<TState = BaseThreadState> {
 
           // Capture outgoing workflow metadata (like releaseWorkflow, but without clearing activeWorkflow)
           const outgoingPlaybook = meta.activeWorkflow as WorkflowPlaybookState;
-          const nodeSummaries = Object.values(outgoingPlaybook.nodeOutputs).map((output: PlaybookNodeOutput) => ({
+          const nodeSummaries = Object.values(outgoingPlaybook.nodeOutputs ?? {}).map((output: PlaybookNodeOutput) => ({
             nodeId:   output.nodeId,
             label:    output.label,
             subtype:  output.subtype,
@@ -1030,7 +1035,7 @@ export class Graph<TState = BaseThreadState> {
         // Check if this is a sub-workflow completing — pop the stack
         if (meta.workflowStack?.length > 0) {
           const parent = meta.workflowStack.pop();
-          const subOutputs = Object.values(step.updatedPlaybook.nodeOutputs);
+          const subOutputs = Object.values(step.updatedPlaybook.nodeOutputs ?? {});
           const lastOutput = subOutputs[subOutputs.length - 1];
           const subResult = lastOutput?.result ?? null;
 
@@ -1094,9 +1099,25 @@ export class Graph<TState = BaseThreadState> {
     try {
       const ws = getWebSocketClientService();
       const channel = (state as any).metadata?.wsChannel || 'workbench';
+      const meta = (state as any).metadata ?? {};
+      const playbook = meta.activeWorkflow;
+
+      // Compute progress counters from the active playbook
+      let totalNodes = 0;
+      let nodeIndex = 0;
+      if (playbook?.definition?.nodes) {
+        // Exclude trigger nodes from the count — they fire automatically
+        const executableNodes = (playbook.definition.nodes as any[]).filter(
+          (n: any) => n.data?.category !== 'trigger',
+        );
+        totalNodes = executableNodes.length;
+        const completedCount = Object.keys(playbook.nodeOutputs ?? {}).length;
+        nodeIndex = completedCount;
+      }
+
       ws.send(channel, {
         type:      'workflow_execution_event',
-        data:      { type, thread_id: (state as any).metadata?.threadId, timestamp: new Date().toISOString(), ...data },
+        data:      { type, thread_id: meta.threadId, timestamp: new Date().toISOString(), totalNodes, nodeIndex, ...data },
         timestamp: Date.now(),
       });
     } catch { /* best-effort */ }
@@ -1166,7 +1187,7 @@ export class Graph<TState = BaseThreadState> {
   ): Promise<void> {
     try {
       const { WorkflowCheckpointModel } = await import('../database/models/WorkflowCheckpointModel');
-      const sequence = Object.keys(playbook.nodeOutputs).length;
+      const sequence = Object.keys(playbook.nodeOutputs ?? {}).length;
 
       // Strip the full definition to avoid storing huge JSONB — keep only IDs and edges
       const slimPlaybook = {
@@ -1214,7 +1235,7 @@ export class Graph<TState = BaseThreadState> {
     const meta = (state as any).metadata;
 
     // Build a summary of all node outputs for the agent's context
-    const nodeSummaries = Object.values(playbook.nodeOutputs).map((output: PlaybookNodeOutput) => ({
+    const nodeSummaries = Object.values(playbook.nodeOutputs ?? {}).map((output: PlaybookNodeOutput) => ({
       nodeId:    output.nodeId,
       label:     output.label,
       subtype:   output.subtype,

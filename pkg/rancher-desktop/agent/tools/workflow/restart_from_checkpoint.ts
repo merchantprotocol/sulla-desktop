@@ -92,6 +92,7 @@ export class RestartFromCheckpointWorker extends BaseTool {
       // Generate a new execution ID so we don't collide with the old one
       executionId:     `${ savedState.executionId }-restart-${ Date.now() }`,
       status:          'running',
+      nodeOutputs:     savedState.nodeOutputs ?? {},
       completedAt:     undefined,
       error:           undefined,
       pendingDecision: undefined,
