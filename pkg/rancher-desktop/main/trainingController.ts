@@ -70,8 +70,7 @@ const console = Logging.background;
 /** Reference to the currently-running training child process, for cleanup/kill. */
 let activeTrainingProcess: ReturnType<typeof import('child_process').spawn> | null = null;
 
-/** Reference to a caffeinate process keeping the Mac awake during training. */
-let caffeinateProcess: ReturnType<typeof import('child_process').spawn> | null = null;
+import { startCaffeinate, stopCaffeinate, scheduleWake as scheduleWakeShared } from './SleepPreventionService';
 
 /** In-memory flag — faster than checking the lock file on every call. */
 let isTrainingRunning = false;
@@ -101,14 +100,14 @@ export function acquireTrainingLock(logFilename?: string): void {
   fs.mkdirSync(path.dirname(lockFile), { recursive: true });
   fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), logFilename: logFilename || '' }), 'utf-8');
   isTrainingRunning = true;
-  startCaffeinate();
+  startCaffeinate('training');
 }
 
 /** Remove the lock file, clear the in-memory flag, and release sleep prevention. */
 export function releaseTrainingLock(): void {
   isTrainingRunning = false;
   lastProgressUpdate = null;
-  stopCaffeinate();
+  stopCaffeinate('training');
   try { fs.unlinkSync(getTrainingLockFile()) } catch { /* already gone */ }
 }
 
@@ -134,72 +133,9 @@ export function isTrainingLocked(): boolean {
 
 // ─── Sleep prevention (macOS) ─────────────────────────────────────────
 //
-// caffeinate -i -s prevents idle sleep (-i) and system sleep (-s) while
-// the training process is running. The caffeinate process is killed when
-// training finishes or fails.
-//
-// pmset schedule wake is used to wake the Mac before the scheduled
-// nightly training time so training can actually start.
-
-/** Start caffeinate to prevent sleep during training. macOS only. */
-function startCaffeinate(): void {
-  if (process.platform !== 'darwin') return;
-  if (caffeinateProcess) return; // already running
-  try {
-    const { spawn: spawnProc } = require('child_process');
-    const proc = spawnProc('caffeinate', ['-i', '-s'], {
-      stdio:    'ignore',
-      detached: true,
-    });
-
-    proc.unref();
-    caffeinateProcess = proc;
-    console.log(`[Training] caffeinate started (PID ${ proc.pid }) — preventing sleep during training`);
-  } catch (err) {
-    console.error('[Training] Failed to start caffeinate:', err);
-  }
-}
-
-/** Stop caffeinate when training is done. */
-function stopCaffeinate(): void {
-  if (!caffeinateProcess) return;
-  try {
-    caffeinateProcess.kill();
-    console.log('[Training] caffeinate stopped — sleep prevention released');
-  } catch { /* already dead */ }
-  caffeinateProcess = null;
-}
-
-/**
- * Schedule a macOS wake event using `pmset schedule wake`.
- * This ensures the Mac wakes from sleep before the nightly training time.
- * Schedules the wake 2 minutes before the training time to allow the
- * system to fully wake before the setTimeout fires.
- *
- * Requires admin privileges — fails silently if not available.
- */
-function scheduleWake(hour: number, minute: number): void {
-  if (process.platform !== 'darwin') return;
-  try {
-    const now = new Date();
-    const wake = new Date(now);
-    wake.setHours(hour, minute, 0, 0);
-    // Wake 2 minutes early so the system is ready
-    wake.setMinutes(wake.getMinutes() - 2);
-    if (wake <= now) wake.setDate(wake.getDate() + 1);
-
-    // pmset expects: "MM/dd/yyyy HH:mm:ss"
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const dateStr = `${ pad(wake.getMonth() + 1) }/${ pad(wake.getDate()) }/${ wake.getFullYear() } ${ pad(wake.getHours()) }:${ pad(wake.getMinutes()) }:00`;
-
-    const { execSync } = require('child_process');
-    execSync(`pmset schedule wake "${ dateStr }"`, { stdio: 'pipe' });
-    console.log(`[Training] Scheduled macOS wake for ${ dateStr }`);
-  } catch (err) {
-    // pmset requires root — non-fatal if it fails
-    console.log(`[Training] Could not schedule wake (pmset may need sudo): ${ err }`);
-  }
-}
+// Sleep prevention is now handled by the shared SleepPreventionService.
+// See ./SleepPreventionService.ts for the reference-counted caffeinate
+// and pmset wake scheduling implementation.
 
 // ─── Log helpers ──────────────────────────────────────────────────────
 
@@ -799,7 +735,10 @@ export function rescheduleNightlyTraining(enabled: boolean, hour: number, minute
   console.log(`[Training] Nightly training scheduled via node-schedule at ${ String(hour).padStart(2, '0') }:${ String(minute).padStart(2, '0') } daily`);
 
   // Schedule a macOS wake event so the Mac wakes from sleep before training
-  scheduleWake(hour, minute);
+  const wakeDate = new Date();
+  wakeDate.setHours(hour, minute, 0, 0);
+  if (wakeDate <= new Date()) wakeDate.setDate(wakeDate.getDate() + 1);
+  scheduleWakeShared(wakeDate);
 
   nightlyJob = schedule.scheduleJob(rule, async() => {
     console.log('[Training] node-schedule fired nightly training job');

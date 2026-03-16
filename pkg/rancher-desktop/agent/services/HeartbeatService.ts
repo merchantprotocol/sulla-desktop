@@ -1,6 +1,7 @@
 // HeartbeatService.ts
 
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { startCaffeinate, stopCaffeinate, scheduleWake } from '../../main/SleepPreventionService';
 
 // ── Event History Types ──
 
@@ -11,7 +12,10 @@ export type HeartbeatEventType =
   | 'heartbeat_triggered'
   | 'heartbeat_completed'
   | 'heartbeat_error'
-  | 'heartbeat_already_running';
+  | 'heartbeat_already_running'
+  | 'sleep_prevention_started'
+  | 'sleep_prevention_stopped'
+  | 'wake_scheduled';
 
 export interface HeartbeatEvent {
   ts:          number;
@@ -123,6 +127,13 @@ export class HeartbeatService {
         this.recordEvent('scheduler_check', `Heartbeat due (${ delayMin }min interval) — triggering`);
         await this.triggerHeartbeat();
         this.lastTriggerMs = Date.now();
+
+        // Schedule a macOS wake event for the next heartbeat (only if >5 min away)
+        if (delayMin > 5) {
+          const nextHeartbeat = new Date(this.lastTriggerMs + delayMs);
+          scheduleWake(nextHeartbeat);
+          this.recordEvent('wake_scheduled', `Scheduled Mac wake for next heartbeat at ${ nextHeartbeat.toLocaleTimeString() }`);
+        }
       } else {
         const remainingMs = delayMs - (Date.now() - this.lastTriggerMs);
         this.recordEvent('scheduler_check', `Next heartbeat in ${ Math.ceil(remainingMs / 60000) }min`);
@@ -147,6 +158,10 @@ export class HeartbeatService {
     this.totalTriggers++;
     const triggerStart = Date.now();
     this.recordEvent('heartbeat_triggered', 'Heartbeat execution started');
+
+    // Prevent Mac from sleeping while the heartbeat agent works
+    startCaffeinate('heartbeat');
+    this.recordEvent('sleep_prevention_started', 'caffeinate acquired for heartbeat execution');
 
     try {
       const basePrompt = await SullaSettingsModel.get('heartbeatPrompt', '');
@@ -188,6 +203,8 @@ export class HeartbeatService {
       this.recordEvent('heartbeat_error', `Execution failed after ${ Math.round(durationMs / 1000) }s: ${ msg }`, { durationMs, error: msg });
       console.error('[HeartbeatService] Heartbeat execution failed:', err);
     } finally {
+      stopCaffeinate('heartbeat');
+      this.recordEvent('sleep_prevention_stopped', 'caffeinate released after heartbeat execution');
       this.isExecuting = false;
     }
   }
