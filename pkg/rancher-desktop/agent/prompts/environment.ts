@@ -193,7 +193,6 @@ Projects are workspace folders that contain a \`PROJECT.md\` file (the PRD — p
 
 **Discovery tools:**
 - \`meta_search\` (always available in meta) — full-text search across any directory including projects
-- \`load_project\` — load the full PROJECT.md content for a project
 
 **Creating a project:**
 1. Use \`create_workspace("my-project-name")\` to create the folder — it returns the absolute path.
