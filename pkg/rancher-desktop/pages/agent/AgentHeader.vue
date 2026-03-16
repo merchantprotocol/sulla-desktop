@@ -1275,6 +1275,7 @@ async function ctxCopyUrl() {
 
 .more-menu-history {
   max-height: 400px;
+  max-width: min(360px, calc(100vw - 24px));
   overflow-y: auto;
 }
 

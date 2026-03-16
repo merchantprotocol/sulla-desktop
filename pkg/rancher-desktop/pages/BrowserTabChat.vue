@@ -1,5 +1,6 @@
 <template>
-  <div class="flex h-full flex-col bg-page">
+  <div class="flex h-full flex-col bg-page" @contextmenu.prevent="onContextMenu">
+    <ChatContextMenu ref="chatContextMenu" @new-chat="openNewChat" />
     <!-- Chat messages -->
     <div
       v-if="hasMessages"
@@ -150,6 +151,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import AgentComposer from './agent/AgentComposer.vue';
+import ChatContextMenu from './chat/ChatContextMenu.vue';
 import ChatOptionsVariantB from './chat-options/ChatOptionsVariantB.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
@@ -176,6 +178,34 @@ if (!chatController.threadId.value) {
 }
 
 const { isDark } = useTheme();
+
+const chatContextMenu = ref<InstanceType<typeof ChatContextMenu> | null>(null);
+
+function onContextMenu(event: MouseEvent) {
+  // Walk up from the click target to find the nearest message bubble
+  let msgContent = '';
+  let el = event.target as HTMLElement | null;
+
+  while (el && !el.classList.contains('flex-col')) {
+    // User message bubble
+    if (el.classList.contains('whitespace-pre-wrap')) {
+      msgContent = el.textContent?.trim() ?? '';
+      break;
+    }
+    // Assistant prose block
+    if (el.classList.contains('prose')) {
+      msgContent = el.textContent?.trim() ?? '';
+      break;
+    }
+    el = el.parentElement;
+  }
+
+  chatContextMenu.value?.show(event, msgContent);
+}
+
+function openNewChat() {
+  emit('set-mode', 'chat');
+}
 const { query, messages, hasMessages, graphRunning } = chatController;
 const loading = chatController.loading;
 const currentActivity = chatController.currentActivity;

@@ -2137,7 +2137,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * Returns true if all required containers exist and are in "running" state.
    */
   private async areSullaServicesRunning(): Promise<boolean> {
-    const requiredServices = ['sulla_postgres', 'sulla_redis', 'sulla_n8n'];
+    const requiredServices = ['sulla_postgres', 'sulla_redis'];
 
     try {
       for (const service of requiredServices) {
@@ -2270,7 +2270,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * Waits for all Sulla Docker services to be healthy by checking their container status.
    */
   private async waitForSullaDockerServices(): Promise<void> {
-    const services = ['sulla_postgres', 'sulla_redis', 'sulla_ws_server', 'sulla_n8n'];
+    const services = ['sulla_postgres', 'sulla_redis', 'sulla_ws_server'];
 
     for (const service of services) {
       await this.waitForDockerServiceHealthy(service);
