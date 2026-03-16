@@ -169,6 +169,13 @@
           </div>
         </div>
 
+        <!-- Workflow node card -->
+        <WorkflowNodeCard
+          v-else-if="msg.kind === 'workflow_node' && msg.workflowNode"
+          :node="msg.workflowNode"
+          :is-dark="isDark"
+        />
+
         <!-- Thinking -->
         <div
           v-else-if="msg.kind === 'thinking'"
@@ -505,6 +512,7 @@ import { marked } from 'marked';
 import type { ChatMessage } from '@pkg/agent';
 import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
 import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
+import WorkflowNodeCard from './workflow/WorkflowNodeCard.vue';
 
 const props = defineProps<{
   isDark:             boolean;

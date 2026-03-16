@@ -1105,19 +1105,21 @@ export class Graph<TState = BaseThreadState> {
       // Compute progress counters from the active playbook
       let totalNodes = 0;
       let nodeIndex = 0;
+
       if (playbook?.definition?.nodes) {
-        // Exclude trigger nodes from the count — they fire automatically
         const executableNodes = (playbook.definition.nodes as any[]).filter(
           (n: any) => n.data?.category !== 'trigger',
         );
+
         totalNodes = executableNodes.length;
-        const completedCount = Object.keys(playbook.nodeOutputs ?? {}).length;
-        nodeIndex = completedCount;
+        nodeIndex = Object.keys(playbook.nodeOutputs ?? {}).length;
       }
 
       ws.send(channel, {
         type:      'workflow_execution_event',
-        data:      { type, thread_id: meta.threadId, timestamp: new Date().toISOString(), totalNodes, nodeIndex, ...data },
+        data:      {
+          type, thread_id: meta.threadId, timestamp: new Date().toISOString(), totalNodes, nodeIndex, ...data,
+        },
         timestamp: Date.now(),
       });
     } catch { /* best-effort */ }

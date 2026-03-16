@@ -9,7 +9,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
-  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message';
+  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node';
   image?: {
     dataUrl:      string;
     alt?:         string;
@@ -28,6 +28,17 @@ export interface ChatMessage {
   channelMeta?: {
     senderId:      string;
     senderChannel: string;
+  };
+  workflowNode?: {
+    workflowRunId: string;
+    nodeId:        string;
+    nodeLabel:     string;
+    status:        'running' | 'completed' | 'failed' | 'waiting';
+    prompt?:       string;
+    output?:       string;
+    error?:        string;
+    nodeIndex:     number;
+    totalNodes:    number;
   };
 }
 
