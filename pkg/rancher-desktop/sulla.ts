@@ -337,8 +337,8 @@ export async function afterBackgroundLoaded() {
     }
   });
 
-  // This initializes N8nService
-  const n8nService = await createN8nService();
+  // Initialize N8nService (reads API key from settings, no DB model dependency)
+  await createN8nService();
 }
 
 /**

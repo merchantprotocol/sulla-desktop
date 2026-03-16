@@ -29,6 +29,14 @@ export class BrowseToolsWorker extends BaseTool {
         return toolsInCat.some(name => allowSet.has(name));
       });
     }
+    // Check n8n integration status once for both category and tool filtering
+    const n8nEnabled = await this.isN8nIntegrationEnabled();
+
+    // Hide n8n category when n8n integration is not connected
+    if (!n8nEnabled) {
+      availableCategories = availableCategories.filter(cat => cat !== 'n8n');
+    }
+
     const requestedOperationTypes = this.normalizeOperationTypes(operationType, operationTypes);
 
     if (category && !availableCategories.includes(category)) {
@@ -53,8 +61,15 @@ export class BrowseToolsWorker extends BaseTool {
       ])
       : null;
 
+    // Block n8n tools when n8n integration is not connected
+    const n8nToolNames = !n8nEnabled ? new Set(toolRegistry.getToolNamesForCategory('n8n')) : null;
+
     const filteredTools = tools.filter((tool: any) => {
       if (browserTools && browserTools.has(tool.name)) {
+        return false;
+      }
+
+      if (n8nToolNames && n8nToolNames.has(tool.name)) {
         return false;
       }
 
@@ -166,6 +181,15 @@ ${ JSON.stringify(toolDetails, null, 2) }`,
         console.warn('[BrowseTools] Failed to activate n8n asset:', error);
       }
     })();
+  }
+
+  private async isN8nIntegrationEnabled(): Promise<boolean> {
+    try {
+      const { getIntegrationService } = await import('../../services/IntegrationService');
+      return await getIntegrationService().isAnyAccountConnected('n8n');
+    } catch {
+      return false;
+    }
   }
 
   private normalizeOperationTypes(single?: unknown, many?: unknown): ToolOperation[] {

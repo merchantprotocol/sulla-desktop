@@ -7,6 +7,8 @@ import { initiateWindowContext } from '@pkg/sulla';
 import Cookies from 'cookie-universal';
 import { createApp } from 'vue';
 
+import './agent-tailwind.css';
+
 import usePlugins from './plugins';
 import store from './store';
 

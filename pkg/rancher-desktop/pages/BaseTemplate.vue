@@ -28,7 +28,7 @@ entry/index.ts dynamically determines the layout based on the current route's co
               </div>
             </div>
 
-            <div class="max-w-2xl min-w-0 flex-auto px-4 py-16 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16">
+            <div class="max-w-[768px] min-w-0 flex-auto px-4 py-16 lg:pr-0 lg:pl-8 xl:px-16">
               <div
                 id="chat-messages-list"
                 ref="transcriptEl"

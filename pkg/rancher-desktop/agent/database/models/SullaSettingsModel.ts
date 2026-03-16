@@ -323,6 +323,34 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
     return crypto.randomUUID();
   }
 
+  /**
+   * Generate an n8n-compatible API key ID (16 alphanumeric chars)
+   */
+  public static generateN8nApiKeyId(): string {
+    return crypto.randomBytes(12).toString('base64url').replace(/[^a-zA-Z0-9]/g, '').substring(0, 16);
+  }
+
+  /**
+   * Generate an n8n-compatible JWT API key token.
+   * Uses the same signing secret as n8n's N8N_USER_MANAGEMENT_JWT_SECRET.
+   *
+   * @param userId - The n8n user UUID to embed as `sub` claim
+   * @param encryptionKey - The sullaN8nEncryptionKey (JWT signing secret)
+   */
+  public static async generateN8nApiKeyToken(userId: string, encryptionKey: string): Promise<string> {
+    const jwt = await import('jsonwebtoken');
+
+    const payload = {
+      sub: userId,
+      iss: 'n8n',
+      aud: 'public-api',
+      jti: crypto.randomBytes(16).toString('hex'),
+      iat: Math.floor(Date.now() / 1000),
+    };
+
+    return jwt.default.sign(payload, encryptionKey);
+  }
+
   // ──────────────────────────────────────────────
   // Pattern-based querying for active plans
   // ──────────────────────────────────────────────

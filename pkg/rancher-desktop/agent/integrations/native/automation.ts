@@ -1,6 +1,49 @@
 import type { Integration } from '../types';
 
 export const nativeAutomationIntegrations: Record<string, Integration> = {
+  n8n: {
+    id:          'n8n',
+    sort:        0,
+    paid:        false,
+    beta:        false,
+    comingSoon:  false,
+    connected:   false,
+    name:        'n8n',
+    description: 'Self-hosted workflow automation engine with thousands of integrations and templates.',
+    category:    'Automation',
+    icon:        'n8n.svg',
+    version:     '1.0.0',
+    lastUpdated: '2026-03-16',
+    developer:   'n8n GmbH',
+    authType:    'credentials',
+    properties:  [
+      {
+        key:         'api_key',
+        title:       'API Key',
+        hint:        'n8n API key (Settings → API → Create API Key)',
+        type:        'password',
+        required:    true,
+        placeholder: 'n8n-api-...',
+      },
+      {
+        key:         'base_url',
+        title:       'Base URL',
+        hint:        'n8n instance URL (default: http://127.0.0.1:30119)',
+        type:        'url',
+        required:    false,
+        placeholder: 'http://127.0.0.1:30119',
+      },
+    ],
+    installationGuide: {
+      title:       'Connect n8n',
+      description: 'Connect your local n8n automation engine to enable workflow management through the integration API.',
+      steps:       [
+        { title: 'Open n8n Settings', content: 'Navigate to Settings → API in your n8n instance.' },
+        { title: 'Create API Key', content: 'Click "Create API Key" and copy the generated key.' },
+        { title: 'Paste Key Here', content: 'Paste the API key into the field above and save.' },
+      ],
+    },
+  },
   zapier: {
     id:          'zapier',
     sort:        1,

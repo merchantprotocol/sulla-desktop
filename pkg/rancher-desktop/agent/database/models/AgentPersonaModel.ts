@@ -96,9 +96,9 @@ const TOOL_VERB_MAP: Record<string, string> = {
   // Redis
   redis_get: 'Reading cache', redis_set: 'Writing cache', redis_del: 'Clearing cache',
   // N8n / Workflows
-  execute_workflow: 'Running workflow', create_workflow: 'Creating workflow',
-  update_workflow: 'Updating workflow', validate_workflow: 'Validating workflow',
-  patch_workflow: 'Patching workflow', activate_workflow: 'Activating workflow',
+  execute_workflow: 'Running workflow', validate_workflow: 'Validating workflow',
+  patch_workflow: 'Patching workflow', diagnose_webhook: 'Diagnosing webhook',
+  restart_n8n_container: 'Restarting n8n',
   // Playwright / Browser
   click_element: 'Clicking', get_page_snapshot: 'Capturing page', get_page_text: 'Reading page',
   set_field: 'Filling form', scroll_to_element: 'Scrolling',

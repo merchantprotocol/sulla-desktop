@@ -197,6 +197,18 @@ const handleNextWelcome = async() => {
   await SullaSettingsModel.set('sullaN8nEncryptionKey', loadedKey, 'string');
   console.log('[FirstRunWelcome] Loaded sullaN8nEncryptionKey:', loadedKey);
 
+  // Pre-generate n8n API key ID and JWT token for recipe migrations
+  const n8nServiceUserId = '00000000-0000-0000-0000-000000000001';
+  const sullaN8nApiKeyId = await SullaSettingsModel.get('sullaN8nApiKeyId', SullaSettingsModel.generateN8nApiKeyId());
+  await SullaSettingsModel.set('sullaN8nApiKeyId', sullaN8nApiKeyId, 'string');
+  const sullaN8nApiKey = await SullaSettingsModel.get('sullaN8nApiKey');
+  if (!sullaN8nApiKey) {
+    const generatedKey = await SullaSettingsModel.generateN8nApiKeyToken(n8nServiceUserId, loadedKey);
+    await SullaSettingsModel.set('sullaN8nApiKey', generatedKey, 'string');
+    await SullaSettingsModel.set('serviceAccountApiKey', generatedKey, 'string');
+    console.log('[FirstRunWelcome] Generated sullaN8nApiKey');
+  }
+
   // Save to SullaSettingsModel
   await SullaSettingsModel.set('primaryUserName', primaryUserName.value, 'string');
   await SullaSettingsModel.set('sullaEmail', sullaEmail.value, 'string');
