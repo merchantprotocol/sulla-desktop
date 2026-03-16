@@ -976,7 +976,18 @@ async function ctxCopyUrl() {
   const bt = browserTabs.find((t: { id: string }) => t.id === tab.browserId);
 
   if (bt?.url) {
-    await navigator.clipboard.writeText(bt.url);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(bt.url);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = bt.url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
   }
 }
 </script>

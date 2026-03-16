@@ -109,10 +109,26 @@ function hide() {
   visible.value = false;
 }
 
+async function writeToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+  } else {
+    // Fallback for Electron renderers without secure-context clipboard
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+}
+
 async function doCopy() {
   const sel = window.getSelection();
   if (sel && sel.toString().trim()) {
-    await navigator.clipboard.writeText(sel.toString());
+    await writeToClipboard(sel.toString());
   }
   hide();
 }
@@ -124,7 +140,7 @@ function doSelectAll() {
 
 async function doCopyMessage() {
   if (messageContent.value) {
-    await navigator.clipboard.writeText(messageContent.value);
+    await writeToClipboard(messageContent.value);
   }
   hide();
 }
