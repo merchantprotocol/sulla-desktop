@@ -102,7 +102,7 @@ You have access to third-party API integrations defined as YAML configs at \`{{s
 {{integrations_instructions}}
 
 ### Codebase
-Your agent codebase is at https://github.com/sulla-ai/sulla-desktop.
+Your agent codebase is at https://github.com/merchantprotocol/sulla-desktop.
 Architecture and system docs live in the /doc folder.
 
 ### Extensions — Software Marketplace (IMPORTANT)

@@ -1,17 +1,17 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/sulla-ai/sulla-desktop/main/resources/icons/logo-sulla-desktop-nobg.png" alt="Sulla Desktop" width="200" />
+  <img src="https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/resources/icons/logo-sulla-desktop-nobg.png" alt="Sulla Desktop" width="200" />
   <h1>Sulla Desktop</h1>
   <p><strong>Your private AI executive assistant that runs on your machine.</strong></p>
   <p>Fully open-source, desktop-native autonomous agent with persistent memory, calendar engine, Docker workspaces, and n8n automation — all yours to own and extend.</p>
   <p>
-    <a href="https://github.com/sulla-ai/sulla-desktop/releases/latest">
-      <img src="https://img.shields.io/github/v/release/sulla-ai/sulla-desktop?label=Latest&color=green" alt="Latest Release" />
+    <a href="https://github.com/merchantprotocol/sulla-desktop/releases/latest">
+      <img src="https://img.shields.io/github/v/release/merchantprotocol/sulla-desktop?label=Latest&color=green" alt="Latest Release" />
     </a>
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache 2.0 License" />
     </a>
-    <a href="https://github.com/sulla-ai/sulla-desktop/stargazers">
-      <img src="https://img.shields.io/github/stars/sulla-ai/sulla-desktop?style=flat&color=yellow" alt="GitHub Stars" />
+    <a href="https://github.com/merchantprotocol/sulla-desktop/stargazers">
+      <img src="https://img.shields.io/github/stars/merchantprotocol/sulla-desktop?style=flat&color=yellow" alt="GitHub Stars" />
     </a>
   </p>
 </div>
@@ -74,7 +74,7 @@ The script is idempotent — safe to run multiple times. It skips anything alrea
 ### Manual install
 
 ```bash
-git clone https://github.com/sulla-ai/sulla-desktop.git
+git clone https://github.com/merchantprotocol/sulla-desktop.git
 cd sulla-desktop
 yarn install
 NODE_OPTIONS="--max-old-space-size=12288" yarn build

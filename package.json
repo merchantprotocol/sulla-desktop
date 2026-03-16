@@ -13,7 +13,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git@github.com:sulla-ai/sulla-desktop.git"
+    "url": "git@github.com:merchantprotocol/sulla-desktop.git"
   },
   "build": {
     "artifactName": "Sulla-Desktop-${version}-${arch}.${ext}",

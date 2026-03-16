@@ -23,7 +23,7 @@ Extensions are self-contained applications that run as Docker containers inside 
 
 Your extension is **just a Docker Compose stack**. Sulla Desktop:
 
-1. Downloads your recipe files from the [sulla-recipes](https://github.com/sulla-ai/sulla-recipes) repository
+1. Downloads your recipe files from the [sulla-recipes](https://github.com/merchantprotocol/sulla-recipes) repository
 2. Runs any setup commands you define (e.g. `git clone`, config generation)
 3. Starts your containers with `docker compose up -d`
 4. Registers your URLs in the app UI and system tray
@@ -31,7 +31,7 @@ Your extension is **just a Docker Compose stack**. Sulla Desktop:
 
 ## Repository Structure
 
-All extensions live in the [`sulla-ai/sulla-recipes`](https://github.com/sulla-ai/sulla-recipes) repository:
+All extensions live in the [`merchantprotocol/sulla-recipes`](https://github.com/merchantprotocol/sulla-recipes) repository:
 
 ```
 sulla-recipes/
@@ -157,7 +157,7 @@ The fastest way to build an extension:
 4. **Write a `manifest.yaml`** with your catalog metadata
 5. **Add an icon** (PNG recommended for tray compatibility)
 6. **Add your entry to `index.yaml`** in the repo root
-7. **Submit a pull request** to [sulla-recipes](https://github.com/sulla-ai/sulla-recipes)
+7. **Submit a pull request** to [sulla-recipes](https://github.com/merchantprotocol/sulla-recipes)
 
 See [Submitting Your Extension](./submitting.md) for the full walkthrough.
 
