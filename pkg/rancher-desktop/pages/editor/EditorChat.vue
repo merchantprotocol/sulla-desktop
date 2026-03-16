@@ -187,6 +187,18 @@
           </div>
         </div>
 
+        <!-- HTML rich content bubble -->
+        <div
+          v-else-if="msg.kind === 'html'"
+          class="bubble assistant-bubble"
+          :class="{ dark: isDark }"
+        >
+          <HtmlMessageRenderer
+            :content="msg.content"
+            :is-dark="isDark"
+          />
+        </div>
+
         <!-- Assistant / system bubble -->
         <div
           v-else
@@ -513,6 +525,7 @@ import type { ChatMessage } from '@pkg/agent';
 import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
 import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import WorkflowNodeCard from './workflow/WorkflowNodeCard.vue';
+import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 
 const props = defineProps<{
   isDark:             boolean;

@@ -62,10 +62,13 @@ export class ChatInterface {
 
   private persistMessages(): void {
     try {
-      // Strip image dataUrls to avoid blowing localStorage limits
+      // Strip image dataUrls and truncate large HTML to avoid blowing localStorage limits
       const toStore = this.persona.messages.slice(-MAX_PERSISTED_MESSAGES).map((m) => {
         if (m.image) {
           return { ...m, image: { ...m.image, dataUrl: '' } };
+        }
+        if (m.kind === 'html' && m.content.length > 50_000) {
+          return { ...m, content: '[HTML content too large to persist]' };
         }
         return m;
       });

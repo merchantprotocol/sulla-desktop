@@ -1,7 +1,7 @@
 <template>
   <div
     class="overflow-hidden font-sans flex flex-col page-root"
-    :class="[{ dark: isDark }, embedded ? 'h-full' : 'h-screen']"
+    :class="[{ dark: isDark }, 'h-full']"
   >
     <PostHogTracker page-name="AgentCalendar" />
     <div class="flex flex-1 min-h-0 flex-col">

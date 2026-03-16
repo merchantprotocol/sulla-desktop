@@ -35,4 +35,15 @@ export const bridgeToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./get_human_presence'),
   },
+  {
+    name:        'emit_html_message',
+    description: 'Send rich HTML content with embedded CSS and JavaScript to the chat UI. The HTML is rendered inside an isolated Shadow DOM container. Use this when the response benefits from interactive elements, charts, dashboards, styled tables, forms, or any rich formatting that markdown cannot express. Include all CSS in <style> tags and JavaScript in <script> tags within the content.',
+    category:    'bridge',
+    schemaDef:   {
+      content: { type: 'string', description: 'Full HTML content including <style> and <script> tags. Rendered in an isolated Shadow DOM container.' },
+      title:   { type: 'string', optional: true, description: 'Optional brief label describing the HTML content.' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./emit_html_message'),
+  },
 ];

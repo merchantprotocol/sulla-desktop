@@ -1,63 +1,241 @@
 <template>
   <div class="agent-router-root">
-    <!--
-      Non-browser routes use keep-alive normally.
-      Hidden when a browser tab is the active route.
-    -->
-    <router-view
-      v-slot="{ Component }"
-      v-show="!isBrowserRoute"
-    >
-      <keep-alive>
-        <component
-          :is="Component"
-          :key="route.path"
-        />
-      </keep-alive>
-    </router-view>
+    <div class="agent-router-content flex flex-col">
+      <!--
+        Non-browser routes use keep-alive normally.
+        Hidden when a browser tab is the active route.
+      -->
+      <router-view
+        v-slot="{ Component }"
+        v-show="!isBrowserRoute"
+      >
+        <keep-alive>
+          <component
+            :is="Component"
+            :key="route.path"
+          />
+        </keep-alive>
+      </router-view>
 
-    <!--
-      Browser tabs are rendered OUTSIDE of keep-alive so their iframes
-      are never removed from the DOM.  We avoid v-show (display:none)
-      because browsers tear down the iframe render tree when display
-      is none, causing a visible "blink" on re-show.  Instead we use
-      visibility:hidden + pointer-events:none so the iframe stays
-      fully rendered and composited in the background.
-    -->
-    <BrowserTab
-      v-for="tab in browserTabs"
-      :key="tab.id"
-      class="browser-tab-layer"
-      :class="{ 'browser-tab-hidden': route.path !== `/Browser/${tab.id}` }"
-      :tab-id="tab.id"
-      :is-visible="route.path === `/Browser/${tab.id}`"
-    />
+      <!--
+        Browser tabs are rendered OUTSIDE of keep-alive so their iframes
+        are never removed from the DOM.  We avoid v-show (display:none)
+        because browsers tear down the iframe render tree when display
+        is none, causing a visible "blink" on re-show.  Instead we use
+        visibility:hidden + pointer-events:none so the iframe stays
+        fully rendered and composited in the background.
+      -->
+      <BrowserTab
+        v-for="tab in browserTabs"
+        :key="tab.id"
+        class="browser-tab-layer"
+        :class="{ 'browser-tab-hidden': route.path !== `/Browser/${tab.id}` }"
+        :tab-id="tab.id"
+        :is-visible="route.path === `/Browser/${tab.id}`"
+      />
+    </div>
+
+    <!-- Status Bar Footer -->
+    <footer class="agent-footer">
+      <div class="agent-footer-left">
+        <span
+          class="footer-item"
+          :title="`${formatBytes(footerStats.availableBytes)} free on disk`"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><rect
+            x="2"
+            y="2"
+            width="20"
+            height="20"
+            rx="2"
+          /><path d="M16 2v20" /><path d="M2 12h14" /></svg>
+          {{ formatBytes(footerStats.availableBytes) }} free
+        </span>
+        <span
+          class="footer-item"
+          :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></svg>
+          {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
+        </span>
+      </div>
+      <div class="agent-footer-right">
+        <span
+          v-if="backendProgressDesc"
+          class="footer-item footer-progress-text"
+        >
+          {{ backendProgressDesc }}
+        </span>
+        <span
+          v-if="backendProgressActive"
+          class="footer-progress-bar-wrapper"
+        >
+          <span
+            class="footer-progress-bar-fill"
+            :class="{ indeterminate: backendProgressPct < 0 }"
+            :style="backendProgressPct >= 0 ? { width: backendProgressPct + '%' } : {}"
+          />
+        </span>
+        <span
+          class="footer-item footer-state"
+          :class="backendStateClass"
+        >{{ backendStateLabel }}</span>
+      </div>
+    </footer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, reactive, ref, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const route = useRoute();
 const { tabs: browserTabs } = useBrowserTabs();
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
+
+// ── Footer state ──
+const footerStats = reactive({ availableBytes: 0, unprocessedTrainingBytes: 0 });
+let footerStatsTimer: ReturnType<typeof setInterval> | undefined;
+
+const backendState = ref('STOPPED');
+const backendProgressDesc = ref('');
+const backendProgressCurrent = ref(0);
+const backendProgressMax = ref(0);
+
+const STATE_LABELS: Record<string, string> = {
+  STOPPED:  'Stopped',
+  STARTING: 'Starting…',
+  STARTED:  'Running',
+  STOPPING: 'Shutting down…',
+  ERROR:    'Error',
+  DISABLED: 'Connected',
+};
+
+const backendStateLabel = computed(() => STATE_LABELS[backendState.value] || backendState.value);
+const backendStateClass = computed(() => {
+  const s = backendState.value;
+
+  if (s === 'STARTED' || s === 'DISABLED') return 'state-ok';
+  if (s === 'ERROR') return 'state-error';
+  if (s === 'STARTING' || s === 'STOPPING') return 'state-busy';
+
+  return 'state-stopped';
+});
+
+const backendProgressActive = computed(() => {
+  if (backendProgressMax.value <= 0) {
+    return !!backendProgressDesc.value;
+  }
+
+  return backendProgressCurrent.value < backendProgressMax.value;
+});
+
+const backendProgressPct = computed(() => {
+  if (backendProgressMax.value <= 0) return -1;
+
+  return Math.round((backendProgressCurrent.value / backendProgressMax.value) * 100);
+});
+
+function onK8sCheckState(_event: any, state: any) {
+  backendState.value = String(state);
+}
+
+function onK8sProgress(_event: any, progress: any) {
+  if (progress?.description) {
+    backendProgressDesc.value = progress.description;
+  }
+  if (typeof progress?.current === 'number') {
+    backendProgressCurrent.value = progress.current;
+  }
+  if (typeof progress?.max === 'number') {
+    backendProgressMax.value = progress.max;
+  }
+  if (progress?.current >= progress?.max && progress?.max > 0) {
+    backendProgressDesc.value = '';
+    backendProgressCurrent.value = 0;
+    backendProgressMax.value = 0;
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const val = bytes / (1024 ** i);
+
+  return `${ val < 10 ? val.toFixed(1) : Math.round(val) } ${ units[i] }`;
+}
+
+async function refreshFooterStats() {
+  try {
+    const stats = await ipcRenderer.invoke('editor-footer-stats');
+
+    footerStats.availableBytes = stats.availableBytes;
+    footerStats.unprocessedTrainingBytes = stats.unprocessedTrainingBytes;
+  } catch { /* ignore */ }
+}
+
+onMounted(() => {
+  refreshFooterStats();
+  footerStatsTimer = setInterval(refreshFooterStats, 30_000);
+
+  ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
+  ipcRenderer.on('k8s-progress' as any, onK8sProgress);
+  ipcRenderer.invoke('k8s-progress').then((p: any) => {
+    if (p?.description) backendProgressDesc.value = p.description;
+  }).catch(() => {});
+});
+
+onUnmounted(() => {
+  if (footerStatsTimer) {
+    clearInterval(footerStatsTimer);
+  }
+  ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);
+  ipcRenderer.removeListener('k8s-progress' as any, onK8sProgress);
+});
 </script>
 
 <style scoped>
 .agent-router-root {
-  position: relative;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100vh;
   overflow: hidden;
 }
 
+.agent-router-content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /*
- * Each BrowserTab fills the router root absolutely.  The active tab
+ * Each BrowserTab fills the content area absolutely.  The active tab
  * sits on top with normal visibility; hidden tabs remain rendered
  * but are invisible and non-interactive — avoiding the display:none
  * blink that occurs when browsers tear down iframe render trees.
@@ -72,5 +250,97 @@ const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
   visibility: hidden;
   pointer-events: none;
   z-index: 0;
+}
+
+/* Status Bar Footer */
+.agent-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 22px;
+  min-height: 22px;
+  max-height: 22px;
+  padding: 0 10px;
+  font-size: var(--fs-body-sm);
+  background: var(--bg-surface-alt);
+  border-top: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.agent-footer-left,
+.agent-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.footer-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.footer-item svg {
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.footer-progress-text {
+  font-size: var(--fs-caption);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.footer-state {
+  padding: 0 6px;
+  border-radius: 3px;
+  font-weight: var(--weight-semibold);
+  font-size: var(--fs-caption);
+}
+.footer-state.state-ok {
+  color: var(--text-success);
+}
+.footer-state.state-error {
+  color: var(--text-error);
+}
+.footer-state.state-busy {
+  color: var(--text-warning);
+}
+.footer-state.state-stopped {
+  color: var(--text-muted);
+}
+
+.footer-progress-bar-wrapper {
+  display: inline-flex;
+  align-items: center;
+  width: 80px;
+  height: 6px;
+  background: var(--bg-hover);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.footer-progress-bar-fill {
+  height: 100%;
+  background: var(--accent-primary);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.footer-progress-bar-fill.indeterminate {
+  width: 40% !important;
+  animation: footer-progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes footer-progress-slide {
+  0%   { margin-left: 0; }
+  50%  { margin-left: 60%; }
+  100% { margin-left: 0; }
 }
 </style>

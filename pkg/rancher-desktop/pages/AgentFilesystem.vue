@@ -1,6 +1,6 @@
 <template>
   <div
-    class="h-screen overflow-hidden font-sans flex flex-col page-root"
+    class="h-full overflow-hidden font-sans flex flex-col page-root"
     :class="{ dark: isDark }"
   >
     <PostHogTracker page-name="AgentFilesystem" />

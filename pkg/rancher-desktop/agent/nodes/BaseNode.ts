@@ -684,7 +684,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       const lines = candidates.map(c => {
         const desc = c.triggerDescription || c.definition.description || '';
-        return `- **${ c.definition.name }** (\`${ c.definition.id }\`)${ desc ? `: ${ desc }` : '' }`;
+        const slug = (c.definition as any).slug || c.definition.id;
+        return `- **${ c.definition.name }** (\`${ slug }\`)${ desc ? `: ${ desc }` : '' }`;
       });
 
       return lines.join('\n');
@@ -715,7 +716,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             const raw = fs.readFileSync(fp, 'utf-8');
             const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-            if (parsed.id === workflowId) {
+            // Match by id, slug, or filename (without extension)
+            const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
+            const needle = workflowId.toLowerCase();
+
+            if (
+              parsed.id === workflowId ||
+              (parsed.slug && parsed.slug.toLowerCase() === needle) ||
+              fileBaseName.toLowerCase() === needle
+            ) {
               definition = parsed;
               break;
             }
@@ -728,7 +737,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
 
       const desc = definition.description || '';
-      return `- **${ definition.name }** (\`${ definition.id }\`)${ desc ? `: ${ desc }` : '' }\n\n_You are testing this workflow. When the user asks you to run it, use \`execute_workflow\` with workflowId \`${ workflowId }\`._`;
+      const slug = definition.slug || definition.id;
+      return `- **${ definition.name }** (\`${ slug }\`)${ desc ? `: ${ desc }` : '' }\n\n_You are testing this workflow. When the user asks you to run it, use \`execute_workflow\` with workflowId \`${ slug }\`._`;
     } catch (err) {
       console.warn('[BaseNode] Failed to load scoped workflow:', err);
       return `_Could not load workflow \`${ workflowId }\`._`;

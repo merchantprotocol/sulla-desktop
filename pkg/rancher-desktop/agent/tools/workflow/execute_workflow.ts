@@ -61,6 +61,7 @@ export class ExecuteWorkflowWorker extends BaseTool {
     try {
       if (fs.existsSync(workflowsDir)) {
         const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+        const needle = workflowId.toLowerCase();
 
         for (const entry of entries) {
           if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
@@ -69,7 +70,14 @@ export class ExecuteWorkflowWorker extends BaseTool {
             const raw = fs.readFileSync(filePath, 'utf-8');
             const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-            if (parsed.id === workflowId) {
+            // Match by id, slug, or filename (without extension)
+            const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
+
+            if (
+              parsed.id === workflowId ||
+              (parsed.slug && parsed.slug.toLowerCase() === needle) ||
+              fileBaseName.toLowerCase() === needle
+            ) {
               definition = parsed;
               break;
             }
@@ -96,7 +104,7 @@ export class ExecuteWorkflowWorker extends BaseTool {
     if (!forceNew) {
       try {
         const { WorkflowCheckpointModel } = await import('../../database/models/WorkflowCheckpointModel');
-        const recentExecs = await WorkflowCheckpointModel.recentExecutions(workflowId, 1);
+        const recentExecs = await WorkflowCheckpointModel.recentExecutions(definition.id, 1);
 
         if (recentExecs.length > 0) {
           const latestCheckpoint = recentExecs[0];

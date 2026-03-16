@@ -168,6 +168,7 @@ export class WorkflowRegistry {
     }
 
     const entries = fs.readdirSync(this.workflowsDir, { withFileTypes: true });
+    const needle = workflowId.toLowerCase();
 
     for (const entry of entries) {
       if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
@@ -176,7 +177,16 @@ export class WorkflowRegistry {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const parsed: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-        if (parsed.id === workflowId) return parsed;
+        // Match by id, slug, or filename (without extension)
+        const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
+
+        if (
+          parsed.id === workflowId ||
+          ((parsed as any).slug && (parsed as any).slug.toLowerCase() === needle) ||
+          fileBaseName.toLowerCase() === needle
+        ) {
+          return parsed;
+        }
       } catch { /* skip unparseable files */ }
     }
 

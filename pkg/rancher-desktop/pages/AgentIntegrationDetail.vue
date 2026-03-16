@@ -1,10 +1,10 @@
 <template>
   <div
-    class="min-h-screen text-sm font-sans page-root"
+    class="h-full text-sm font-sans page-root overflow-y-auto"
     :class="{ dark: isDark }"
   >
     <PostHogTracker page-name="AgentIntegrationDetail" />
-    <div class="flex min-h-screen flex-col">
+    <div class="flex min-h-full flex-col">
       <AgentHeader
         :is-dark="isDark"
         :toggle-theme="toggleTheme"
