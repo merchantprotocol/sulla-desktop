@@ -1,5 +1,8 @@
 <template>
   <div class="agent-router-root">
+    <!-- Startup overlay — rendered at router level so it appears on all tabs -->
+    <StartupOverlay />
+
     <div class="agent-router-content flex flex-col">
       <!--
         Non-browser routes use keep-alive normally.
@@ -108,6 +111,7 @@ import { computed, reactive, ref, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
+import StartupOverlay from './agent/StartupOverlay.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 

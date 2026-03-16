@@ -171,7 +171,7 @@ The HTML container comes with the Merchant Protocol "Noir Terminal Editorial" de
 
 # SULLA WORKFLOWS (preferred — use these first)
 
-Sulla Workflows are your primary execution mechanism. They are pre-built decision trees and SOPs — multi-step automation sequences that chain together triggers, agents, routing, and tools into reusable pipelines. Always prefer Sulla Workflows over improvising multi-step work or using N8n-Workflows.
+Sulla Workflows are your primary execution mechanism. They are pre-built decision trees and SOPs — multi-step automation sequences that chain together triggers, agents, routing, and tools into reusable pipelines. Always prefer Sulla Workflows over improvising multi-step work.
 
 **Why Sulla Workflows exist:** Complex tasks require structured decision trees that can be 70+ steps deep. Workflows keep your context clear by letting you orchestrate sub-agents through a defined DAG rather than holding all the logic in your head. They are SOPs encoded as executable graphs.
 

@@ -10,12 +10,6 @@
         :toggle-theme="toggleTheme"
       />
 
-      <!-- Loading overlay while system boots -->
-      <StartupOverlay
-        @overlay-visible="showOverlay = $event"
-        @system-ready="systemReady = $event"
-      />
-
       <!-- Main agent interface -->
       <div
         v-if="hasMessages"
@@ -350,7 +344,6 @@
 </template>
 
 <script setup lang="ts">
-import StartupOverlay from './agent/StartupOverlay.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import AgentComposer from './agent/AgentComposer.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
@@ -362,6 +355,7 @@ import { marked } from 'marked';
 import { AgentSettingsController } from './agent/AgentSettingsController';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
+import { useStartupProgress } from './agent/useStartupProgress';
 import { useTheme } from '@pkg/composables/useTheme';
 import { getN8nVueBridgeService } from '@pkg/agent/services/N8nVueBridgeService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -420,10 +414,9 @@ const syncN8nInterfaceTheme = (): void => {
   n8nVueBridgeService.setLightMode();
 };
 
-const showOverlay = ref(false);
+const { showOverlay, systemReady } = useStartupProgress();
 const modelName = ref('');
 const modelMode = ref<'local' | 'remote'>('local');
-const systemReady = ref(false);
 
 const settingsController = new AgentSettingsController(
   {
