@@ -160,19 +160,24 @@ export class WorkflowRegistry {
   }
 
   /**
-   * Load a specific workflow by ID.
+   * Load a specific workflow by ID (scans files since filenames are name-slugs, not IDs).
    */
   loadWorkflow(workflowId: string): WorkflowDefinition {
-    const yamlPath = path.join(this.workflowsDir, `${ workflowId }.yaml`);
-
-    if (fs.existsSync(yamlPath)) {
-      return yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+    if (!fs.existsSync(this.workflowsDir)) {
+      throw new Error(`Workflow not found: ${ workflowId }`);
     }
 
-    const jsonPath = path.join(this.workflowsDir, `${ workflowId }.json`);
+    const entries = fs.readdirSync(this.workflowsDir, { withFileTypes: true });
 
-    if (fs.existsSync(jsonPath)) {
-      return JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    for (const entry of entries) {
+      if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+      try {
+        const filePath = path.join(this.workflowsDir, entry.name);
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const parsed: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+
+        if (parsed.id === workflowId) return parsed;
+      } catch { /* skip unparseable files */ }
     }
 
     throw new Error(`Workflow not found: ${ workflowId }`);

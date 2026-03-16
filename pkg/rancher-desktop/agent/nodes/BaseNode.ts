@@ -704,14 +704,23 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const yaml = (await import('yaml')).default;
       const workflowsDir = resolveSullaWorkflowsDir();
 
-      const yamlPath = path.join(workflowsDir, `${ workflowId }.yaml`);
-      const jsonPath = path.join(workflowsDir, `${ workflowId }.json`);
-
       let definition: any = null;
-      if (fs.existsSync(yamlPath)) {
-        definition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
-      } else if (fs.existsSync(jsonPath)) {
-        definition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+      if (fs.existsSync(workflowsDir)) {
+        const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+
+        for (const entry of entries) {
+          if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+          try {
+            const fp = path.join(workflowsDir, entry.name);
+            const raw = fs.readFileSync(fp, 'utf-8');
+            const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+
+            if (parsed.id === workflowId) {
+              definition = parsed;
+              break;
+            }
+          } catch { /* skip */ }
+        }
       }
 
       if (!definition) {

@@ -884,16 +884,25 @@ export class Graph<TState = BaseThreadState> {
           const { resolveSullaWorkflowsDir } = await import('@pkg/agent/utils/sullaPaths');
           const workflowsDir = resolveSullaWorkflowsDir();
 
-          let subDefinition: any;
-          const yamlPath = path.join(workflowsDir, `${ step.workflowId }.yaml`);
-          const jsonPath = path.join(workflowsDir, `${ step.workflowId }.json`);
+          let subDefinition: any = null;
+          const yaml = await import('yaml');
+          const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
 
-          if (fs.existsSync(yamlPath)) {
-            const yaml = await import('yaml');
-            subDefinition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
-          } else if (fs.existsSync(jsonPath)) {
-            subDefinition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-          } else {
+          for (const entry of entries) {
+            if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+            try {
+              const fp = path.join(workflowsDir, entry.name);
+              const raw = fs.readFileSync(fp, 'utf-8');
+              const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+
+              if (parsed.id === step.workflowId) {
+                subDefinition = parsed;
+                break;
+              }
+            } catch { /* skip */ }
+          }
+
+          if (!subDefinition) {
             throw new Error(`Sub-workflow not found: ${ step.workflowId }`);
           }
 
