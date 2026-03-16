@@ -26,17 +26,19 @@ function getWorkflowsDir(): string {
 }
 
 /**
- * Resolve workflow file path — prefers .yaml, falls back to legacy .json.
+ * Convert a workflow name to a filesystem-safe slug.
+ * e.g. "Blog Production Pipeline" → "blog-production-pipeline"
  */
-function resolveWorkflowPath(dir: string, workflowId: string): string | null {
-  const yamlPath = path.join(dir, `${ workflowId }.yaml`);
+function slugifyWorkflowName(name: string): string {
+  const slug = String(name || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 
-  if (fs.existsSync(yamlPath)) return yamlPath;
-  const jsonPath = path.join(dir, `${ workflowId }.json`);
-
-  if (fs.existsSync(jsonPath)) return jsonPath;
-
-  return null;
+  return slug || 'workflow';
 }
 
 /**
@@ -60,6 +62,27 @@ function isWorkflowFile(entry: fs.Dirent): boolean {
  */
 function workflowIdFromFilename(name: string): string {
   return name.replace(/\.(yaml|json)$/, '');
+}
+
+/**
+ * Find a workflow file by its internal id field (scans all files in directory).
+ * Returns the file path or null.
+ */
+function findWorkflowFileById(dir: string, workflowId: string): string | null {
+  if (!fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (!isWorkflowFile(entry)) continue;
+    try {
+      const filePath = path.join(dir, entry.name);
+      const parsed = parseWorkflowFile(filePath);
+
+      if (parsed.id === workflowId) return filePath;
+    } catch { /* skip unparseable files */ }
+  }
+
+  return null;
 }
 
 export function initSullaWorkflowEvents(): void {
@@ -95,9 +118,10 @@ export function initSullaWorkflowEvents(): void {
     return workflows;
   });
 
-  // Get a single workflow by ID
+  // Get a single workflow by ID (scans by internal id since filenames are name-slugs)
   ipcMainProxy.handle('workflow-get', async(_event: unknown, workflowId: string) => {
-    const filePath = resolveWorkflowPath(getWorkflowsDir(), workflowId);
+    const dir = getWorkflowsDir();
+    const filePath = findWorkflowFileById(dir, workflowId);
 
     if (!filePath) {
       throw new Error(`Workflow not found: ${ workflowId }`);
@@ -106,7 +130,7 @@ export function initSullaWorkflowEvents(): void {
     return parseWorkflowFile(filePath);
   });
 
-  // Save (create or update) a workflow
+  // Save (create or update) a workflow — filename is derived from the workflow name slug
   ipcMainProxy.handle('workflow-save', async(_event: unknown, workflow: any) => {
     const dir = getWorkflowsDir();
 
@@ -116,34 +140,33 @@ export function initSullaWorkflowEvents(): void {
       workflow.createdAt = workflow.updatedAt;
     }
 
-    const filePath = path.join(dir, `${ workflow.id }.yaml`);
+    // Remove old file if it exists under a different name (handles renames)
+    const oldPath = findWorkflowFileById(dir, workflow.id);
+    const newFilePath = path.join(dir, `${ slugifyWorkflowName(workflow.name) }.yaml`);
 
-    fs.writeFileSync(filePath, yaml.stringify(workflow, { lineWidth: 0 }), 'utf-8');
-
-    // Remove legacy .json file if it exists
-    const legacyPath = path.join(dir, `${ workflow.id }.json`);
-
-    if (fs.existsSync(legacyPath)) {
-      fs.unlinkSync(legacyPath);
+    if (oldPath && oldPath !== newFilePath) {
+      fs.unlinkSync(oldPath);
+      console.log(`[Sulla] Workflow renamed: ${ path.basename(oldPath) } -> ${ path.basename(newFilePath) }`);
     }
 
-    console.log(`[Sulla] Workflow saved: ${ workflow.id }`);
+    fs.writeFileSync(newFilePath, yaml.stringify(workflow, { lineWidth: 0 }), 'utf-8');
+
+    console.log(`[Sulla] Workflow saved: ${ path.basename(newFilePath) } (id: ${ workflow.id })`);
 
     return true;
   });
 
-  // Delete a workflow
+  // Delete a workflow (finds file by internal id)
   ipcMainProxy.handle('workflow-delete', async(_event: unknown, workflowId: string) => {
     const dir = getWorkflowsDir();
+    const filePath = findWorkflowFileById(dir, workflowId);
 
-    for (const ext of ['.yaml', '.json']) {
-      const filePath = path.join(dir, `${ workflowId }${ ext }`);
-
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
+    if (filePath) {
+      fs.unlinkSync(filePath);
+      console.log(`[Sulla] Workflow deleted: ${ path.basename(filePath) } (id: ${ workflowId })`);
+    } else {
+      console.log(`[Sulla] Workflow not found for deletion: ${ workflowId }`);
     }
-    console.log(`[Sulla] Workflow deleted: ${ workflowId }`);
 
     return true;
   });

@@ -2218,8 +2218,11 @@ export default defineComponent({
       workflowSaveStatus.value = 'idle';
       try {
         const data = await ipcRenderer.invoke('workflow-get', workflowId);
+
+        console.log(`[Workflow] Loaded "${ workflowId }": ${ data.nodes?.length ?? 0 } nodes, ${ data.edges?.length ?? 0 } edges`);
         activeWorkflowData.value = data;
-      } catch {
+      } catch (err) {
+        console.error(`[Workflow] Failed to load "${ workflowId }" — starting empty canvas:`, err);
         // New workflow not yet saved — start with empty canvas
         activeWorkflowData.value = {
           id:          workflowId,
