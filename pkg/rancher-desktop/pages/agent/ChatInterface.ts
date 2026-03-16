@@ -52,10 +52,10 @@ export class ChatInterface {
     // Restore persisted messages from localStorage
     this.restoreMessages();
 
-    watch(() => this.persona.messages.length, () => {
+    watch(() => this.persona.messages, () => {
       this.messages.value = [...this.persona.messages];
       this.persistMessages();
-    });
+    }, { deep: true });
 
     this.messages.value = [...this.persona.messages];
   }
