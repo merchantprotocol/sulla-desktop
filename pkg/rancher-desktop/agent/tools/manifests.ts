@@ -19,7 +19,6 @@ import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { slackToolManifests } from './slack/manifests';
 import { skillsToolManifests } from './skills/manifests';
-import { projectsToolManifests } from './projects/manifests';
 import { workspaceToolManifests } from './workspace/manifests';
 import { workflowToolManifests } from './workflow/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
@@ -42,7 +41,6 @@ toolRegistry.registerManifests([
   ...rdctlToolManifests,
   ...redisToolManifests,
   ...skillsToolManifests,
-  ...projectsToolManifests,
   ...slackToolManifests,
   ...workflowToolManifests,
   ...workspaceToolManifests,

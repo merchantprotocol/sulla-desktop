@@ -113,7 +113,7 @@ const TOOL_VERB_MAP: Record<string, string> = {
   // Memory
   add_observational_memory: 'Remembering', remove_observational_memory: 'Forgetting',
   // Skills / Projects
-  load_skill: 'Loading skill', create_skill: 'Creating skill', load_project: 'Loading project',
+  load_skill: 'Loading skill', create_skill: 'Creating skill',
   // Lima
   lima_shell: 'Running shell', lima_start: 'Starting VM', lima_stop: 'Stopping VM',
   // Channel
