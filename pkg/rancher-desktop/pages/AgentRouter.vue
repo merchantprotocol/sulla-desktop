@@ -1,5 +1,8 @@
 <template>
   <div class="agent-router-root">
+    <!-- Startup overlay — rendered at router level so it appears on all tabs -->
+    <StartupOverlay />
+
     <!--
       Non-browser routes use keep-alive normally.
       Hidden when a browser tab is the active route.
@@ -40,6 +43,7 @@ import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
+import StartupOverlay from './agent/StartupOverlay.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 
 const route = useRoute();

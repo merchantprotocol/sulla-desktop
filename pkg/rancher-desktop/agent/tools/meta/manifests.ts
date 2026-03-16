@@ -17,7 +17,7 @@ export const metaToolManifests: ToolManifest[] = [
     description: "List available tools by category or search term. Use this when you need a tool but don't know its exact name or category yet.",
     category:    'meta',
     schemaDef:   {
-      category:       { type: 'string', optional: true, description: 'Specific category of tools. Core: meta, fs, workspace, slack, n8n, github, docker, kubectl, browser, extensions, playwright, skills, projects, integrations. Integration catalogs: communication, developer_tools, productivity, project_management, crm_sales, marketing, customer_support, social_media, finance, file_storage, ecommerce, analytics, automation, database, design, hr_recruiting, ai_ml' },
+      category:       { type: 'string', optional: true, description: 'Specific category of tools. Core: meta, fs, workspace, slack, github, docker, kubectl, browser, extensions, playwright, skills, projects, integrations. Integration catalogs: communication, developer_tools, productivity, project_management, crm_sales, marketing, customer_support, social_media, finance, file_storage, ecommerce, analytics, automation, database, design, hr_recruiting, ai_ml' },
       query:          { type: 'string', optional: true, description: 'Keyword to filter tool names/descriptions' },
       operationType:  { type: 'enum', optional: true, enum: ['read', 'create', 'update', 'delete', 'execute'], description: 'Filter tools by a single operation type.' },
       operationTypes: { type: 'array', optional: true, description: 'Filter tools by multiple operation types.', items: { type: 'enum', enum: ['read', 'create', 'update', 'delete', 'execute'] } },
