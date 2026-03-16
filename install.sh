@@ -3,10 +3,10 @@
 # Sulla Desktop — One-Line Installer
 # ============================================================================
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/sulla-ai/sulla-desktop/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/install.sh | bash
 #
 # Install nightly (latest from main, may be unstable):
-#   curl -fsSL https://raw.githubusercontent.com/sulla-ai/sulla-desktop/main/install.sh | bash -s -- --nightly
+#   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/install.sh | bash -s -- --nightly
 #
 # Or if you already cloned the repo:
 #   bash install.sh
@@ -25,8 +25,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-REPO_URL="https://github.com/sulla-ai/sulla-desktop.git"
-REPO_OWNER="sulla-ai"
+REPO_URL="https://github.com/merchantprotocol/sulla-desktop.git"
+REPO_OWNER="merchantprotocol"
 REPO_NAME="sulla-desktop"
 REPO_DIR="sulla-desktop"
 INSTALL_DIR="$HOME/.sulla-desktop"

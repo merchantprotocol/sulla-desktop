@@ -40,7 +40,7 @@ The `manifest.yaml` file defines how your extension appears in the Sulla Desktop
   logo: https://example.com/logo.png
   publisher: Your Org
   short_description: One-line summary shown in the catalog card
-  installable: https://raw.githubusercontent.com/sulla-ai/sulla-recipes/refs/heads/main/recipes/your-extension/installation.yaml
+  installable: https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/recipes/your-extension/installation.yaml
 ```
 
 ## Field Reference
@@ -64,7 +64,7 @@ The `manifest.yaml` file defines how your extension appears in the Sulla Desktop
 This is the critical field that tells Sulla Desktop your extension is recipe-based (not a legacy Docker image extension). It must be the raw GitHub URL to your `installation.yaml`:
 
 ```yaml
-installable: https://raw.githubusercontent.com/sulla-ai/sulla-recipes/refs/heads/main/recipes/your-extension/installation.yaml
+installable: https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/recipes/your-extension/installation.yaml
 ```
 
 Without this field, Sulla will try to install your extension as a legacy Docker image — which is not what you want.

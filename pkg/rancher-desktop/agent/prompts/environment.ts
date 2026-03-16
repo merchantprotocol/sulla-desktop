@@ -99,7 +99,7 @@ Content-Type: application/json
 **You MUST write Python scripts** (using \`exec\`) to call these integration APIs. The model cannot call them directly as tools — they are HTTP endpoints that you access programmatically. This gives you full control to process, filter, and combine results before responding.
 
 ### Codebase
-Your agent codebase is at https://github.com/sulla-ai/sulla-desktop.
+Your agent codebase is at https://github.com/merchantprotocol/sulla-desktop.
 Architecture and system docs live in the /doc folder.
 
 ### Extensions — Software Marketplace (IMPORTANT)

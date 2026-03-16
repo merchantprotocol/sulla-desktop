@@ -22,10 +22,10 @@ export const extensionsToolManifests: ToolManifest[] = [
   },
   {
     name:        'install_extension',
-    description: 'Install an extension from the marketplace. Provide the extension ID in slug:version format (e.g. "docker.io/sulla-ai/stirling-pdf:2026.02"). The extension will be started automatically after installation.',
+    description: 'Install an extension from the marketplace. Provide the extension ID in slug:version format (e.g. "docker.io/merchantprotocol/stirling-pdf:2026.02"). The extension will be started automatically after installation.',
     category:    'extensions',
     schemaDef:   {
-      id: { type: 'string', description: "Extension ID in slug:version format (e.g. 'docker.io/sulla-ai/stirling-pdf:2026.02')" },
+      id: { type: 'string', description: "Extension ID in slug:version format (e.g. 'docker.io/merchantprotocol/stirling-pdf:2026.02')" },
     },
     operationTypes: ['create', 'execute'],
     loader:         () => import('./install_extension'),
@@ -35,7 +35,7 @@ export const extensionsToolManifests: ToolManifest[] = [
     description: 'Uninstall an installed extension. By default preserves the data/ directory so user data survives reinstall. Set deleteData to true to remove everything.',
     category:    'extensions',
     schemaDef:   {
-      id:         { type: 'string', description: "Extension ID (e.g. 'docker.io/sulla-ai/stirling-pdf')" },
+      id:         { type: 'string', description: "Extension ID (e.g. 'docker.io/merchantprotocol/stirling-pdf')" },
       deleteData: { type: 'boolean', optional: true, description: 'If true, also delete the persistent data/ directory. Default: false (data preserved).' },
     },
     operationTypes: ['delete', 'execute'],

@@ -5,7 +5,7 @@ import paths from '@pkg/utils/paths';
 import { ExtensionMetadata } from '@pkg/main/extensions/types';
 import { Integration } from '../integrations/catalog';
 
-const MARKETPLACE_URL = 'https://raw.githubusercontent.com/sulla-ai/sulla-recipes/refs/heads/main/index.yaml';
+const MARKETPLACE_URL = 'https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml';
 const CACHE_TTL_MS = 1 * 60 * 1000;
 
 export interface MarketplaceEntry {

@@ -7,7 +7,7 @@ import { ActionTree, MutationsType } from './ts-helpers';
 
 import type { ExtensionMetadata } from '@pkg/main/extensions/types';
 
-const MARKETPLACE_URL = 'https://raw.githubusercontent.com/sulla-ai/sulla-recipes/refs/heads/main/index.yaml';
+const MARKETPLACE_URL = 'https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml';
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
 let cachedMarketplaceData: MarketplaceData[] | undefined;
