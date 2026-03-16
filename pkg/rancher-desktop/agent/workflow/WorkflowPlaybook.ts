@@ -160,9 +160,38 @@ function getUpstreamOutputs(
 }
 
 /**
+ * Detect whether `sourceId` is reachable from `targetId` via forward edges.
+ * If so, the edge from sourceId→targetId is a back/feedback edge (e.g. a
+ * quality gate's condition-false looping back to the writer).
+ */
+function isBackEdge(
+  definition: WorkflowDefinition,
+  sourceId: string,
+  targetId: string,
+): boolean {
+  const forward = buildForwardEdges(definition);
+  const visited = new Set<string>();
+  const queue = [targetId];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current === sourceId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const edge of forward.get(current) || []) {
+      queue.push(edge.target);
+    }
+  }
+
+  return false;
+}
+
+/**
  * Check if all upstream dependencies of a node are completed.
  * For loop nodes, handle-aware filtering ensures the loop-back edge
  * doesn't block initial entry, and the loop-entry edge doesn't block re-entry.
+ * Back/feedback edges (where the source is downstream of the target) are
+ * ignored on first entry — they only gate re-entry after the source has run.
  */
 function areUpstreamComplete(
   definition: WorkflowDefinition,
@@ -201,7 +230,15 @@ function areUpstreamComplete(
     return incomingEdges.some(edge => completedSet.has(edge.source));
   }
 
-  return incomingEdges.every(edge => completedSet.has(edge.source));
+  // Filter out back/feedback edges — edges where the source is downstream
+  // of the current node (e.g. condition-false edges from quality gates back
+  // to the writer). These only matter on re-entry, not initial entry.
+  const forwardEdges = incomingEdges.filter(edge => {
+    if (completedSet.has(edge.source)) return true; // Already completed — always include
+    return !isBackEdge(definition, edge.source, nodeId);
+  });
+
+  return forwardEdges.length === 0 || forwardEdges.every(edge => completedSet.has(edge.source));
 }
 
 // ── Parallel branch detection ──
