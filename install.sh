@@ -281,7 +281,10 @@ run_with_status() {
 
   local current_phase="$label"
 
-  "$@" 2>&1 | while IFS= read -r -t 300 line; do
+  # Use process substitution so the while loop runs in the current shell,
+  # not a pipe subshell — this keeps SPINNER_PID in scope so spinners
+  # are properly tracked and killed (pipe subshells + disown = orphaned spinners).
+  while IFS= read -r -t 300 line; do
     echo "$line" >> "$INSTALL_LOG"
 
     # Throttle spinner updates to at most once every 3 seconds to keep it calm
@@ -307,10 +310,15 @@ run_with_status() {
       start_spinner "$current_phase"
       last_update="$now"
     fi
-  done
+  done < <(set +e; "$@" 2>&1; echo "___RWS_EXIT_$?___")
+
+  # Extract exit code from the sentinel line
+  local rc=0
+  if [[ "${line:-}" =~ ___RWS_EXIT_([0-9]+)___ ]]; then
+    rc="${BASH_REMATCH[1]}"
+  fi
 
   stop_spinner 2>/dev/null
-  local rc=${PIPESTATUS[0]}
   if [ "$rc" -ne 0 ]; then
     echo "EXIT CODE: $rc" >> "$INSTALL_LOG"
   fi
@@ -1325,6 +1333,9 @@ launch_app() {
 # Final success banner
 # ---------------------------------------------------------------------------
 print_success() {
+  # Ensure no spinner is still running before printing the banner
+  stop_spinner 2>/dev/null
+
   echo ""
   echo ""
   printf "  ${GREEN}${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}\n"
