@@ -468,6 +468,13 @@ preflight_checks() {
   arch="$(uname -m)"
   step_ok "Detected ${OS} (${arch})"
 
+  # Export M1 flag so postinstall scripts compile Go binaries for the correct
+  # architecture.  Without this, rdctl is built as amd64 on Apple Silicon and
+  # fails at runtime with EBADARCH (-86).
+  if [ "$arch" = "arm64" ] || [ "$arch" = "aarch64" ]; then
+    export M1=true
+  fi
+
   # Disk space
   start_spinner "Checking disk space..."
   local free_gb
@@ -1107,10 +1114,28 @@ verify_install_artifacts() {
 }
 
 # Verify that yarn build produced a launchable application.
-# Only checks what yarn build creates — files in dist/.
+# Checks both the webpack output (dist/) and the platform binary (rdctl).
 verify_build_artifacts() {
   [ -f "dist/app/background.js" ] || return 1
   [ -f "dist/app/index.html" ]    || return 1
+
+  # rdctl must exist and be executable on the host platform
+  local rdctl_bin=""
+  case "$OS" in
+    macos)   rdctl_bin="resources/darwin/bin/rdctl" ;;
+    linux)   rdctl_bin="resources/linux/bin/rdctl" ;;
+    windows) rdctl_bin="resources/win32/bin/rdctl.exe" ;;
+  esac
+  if [ -n "$rdctl_bin" ]; then
+    [ -f "$rdctl_bin" ] || return 1
+    # Smoke-test: ask rdctl for its version to catch arch mismatches (EBADARCH)
+    if ! "$rdctl_bin" version >/dev/null 2>&1 && \
+       ! "$rdctl_bin" --version >/dev/null 2>&1 && \
+       ! "$rdctl_bin" paths >/dev/null 2>&1; then
+      echo "VERIFY: rdctl exists but failed to execute ($rdctl_bin)" >> "$INSTALL_LOG"
+      return 1
+    fi
+  fi
   return 0
 }
 
@@ -1169,6 +1194,26 @@ dump_build_verification() {
     printf "  ${CHECK}  dist/app/index.html\n"
   else
     printf "  ${CROSS}  dist/app/index.html ${RED}MISSING${RESET}\n"
+  fi
+
+  # rdctl platform binary
+  local rdctl_bin=""
+  case "$OS" in
+    macos)   rdctl_bin="resources/darwin/bin/rdctl" ;;
+    linux)   rdctl_bin="resources/linux/bin/rdctl" ;;
+    windows) rdctl_bin="resources/win32/bin/rdctl.exe" ;;
+  esac
+  if [ -n "$rdctl_bin" ]; then
+    if [ ! -f "$rdctl_bin" ]; then
+      printf "  ${CROSS}  %s ${RED}MISSING${RESET}\n" "$rdctl_bin"
+    elif "$rdctl_bin" version >/dev/null 2>&1 || \
+         "$rdctl_bin" --version >/dev/null 2>&1 || \
+         "$rdctl_bin" paths >/dev/null 2>&1; then
+      printf "  ${CHECK}  %s\n" "$rdctl_bin"
+    else
+      printf "  ${CROSS}  %s ${RED}EXISTS BUT FAILED TO EXECUTE${RESET}\n" "$rdctl_bin"
+      printf "    ${DIM}arch: $(file "$rdctl_bin" 2>/dev/null || echo 'unknown')${RESET}\n"
+    fi
   fi
 
   # Show what IS in dist/app

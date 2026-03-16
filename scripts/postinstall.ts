@@ -249,7 +249,7 @@ async function buildDownloadContextFor(rawPlatform: DependencyPlatform, depVersi
     dependencyPlatform: rawPlatform,
     platform,
     goPlatform:         platform === 'win32' ? 'windows' : platform,
-    isM1:               !!process.env.M1,
+    isM1:               !!process.env.M1 || process.arch === 'arm64',
     resourcesDir,
     binDir:             path.join(resourcesDir, platform, 'bin'),
     internalDir:        path.join(resourcesDir, platform, 'internal'),
