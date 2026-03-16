@@ -15,7 +15,7 @@ jest.unstable_mockModule('../../../database/registry/AgentPersonaRegistry', () =
 }));
 
 async function loadModule() {
-  return import('../manage_active_asset');
+  return import('../browser_tab');
 }
 
 function configureWorker(worker: any, registration: any) {
@@ -25,7 +25,7 @@ function configureWorker(worker: any, registration: any) {
   return worker;
 }
 
-describe('manage_active_asset tool', () => {
+describe('browser_tab tool', () => {
   afterEach(() => {
     mockPersona.registerIframeAsset.mockReset();
     mockPersona.registerDocumentAsset.mockReset();
@@ -34,8 +34,8 @@ describe('manage_active_asset tool', () => {
   });
 
   it('upserts workflow iframe asset using stable id and mutable url', async() => {
-    const { ManageActiveAssetWorker, manageActiveAssetRegistration } = await loadModule();
-    const worker = configureWorker(new ManageActiveAssetWorker(), manageActiveAssetRegistration);
+    const { BrowserTabWorker, browserTabRegistration } = await loadModule();
+    const worker = configureWorker(new BrowserTabWorker(), browserTabRegistration);
     worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({
@@ -59,8 +59,8 @@ describe('manage_active_asset tool', () => {
   });
 
   it('upserts document active asset content', async() => {
-    const { ManageActiveAssetWorker, manageActiveAssetRegistration } = await loadModule();
-    const worker = configureWorker(new ManageActiveAssetWorker(), manageActiveAssetRegistration);
+    const { BrowserTabWorker, browserTabRegistration } = await loadModule();
+    const worker = configureWorker(new BrowserTabWorker(), browserTabRegistration);
     worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({
@@ -81,8 +81,8 @@ describe('manage_active_asset tool', () => {
   });
 
   it('removes existing active asset by id', async() => {
-    const { ManageActiveAssetWorker, manageActiveAssetRegistration } = await loadModule();
-    const worker = configureWorker(new ManageActiveAssetWorker(), manageActiveAssetRegistration);
+    const { BrowserTabWorker, browserTabRegistration } = await loadModule();
+    const worker = configureWorker(new BrowserTabWorker(), browserTabRegistration);
     worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({ action: 'remove', assetId: 'sulla_n8n' });

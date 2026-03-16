@@ -721,6 +721,22 @@ function serialize(): { nodes: any[]; edges: any[]; viewport: any } {
   };
 }
 
+/**
+ * Update the execution state of a single workflow node on the vue-flow canvas.
+ *
+ * Called by `AgentEditor.vue` in response to `node_started`, `node_completed`,
+ * and `node_failed` events from `EditorChatInterface.onWorkflowEvent()`.
+ *
+ * The execution object controls the node's visual status indicator (color, icon)
+ * and stores runtime data (output, error, threadId, timestamps) that the node
+ * detail panel can display.
+ *
+ * **Event flow:** Graph.emitPlaybookEvent() → WebSocket → EditorChatInterface
+ * → AgentEditor.vue → this method
+ *
+ * @param nodeId    ID of the workflow node to update
+ * @param execution New execution state, or `undefined` to clear it
+ */
 function updateNodeExecution(nodeId: string, execution: WorkflowNodeExecutionState | undefined) {
   const node = nodes.value.find(n => n.id === nodeId);
   if (node?.data) {
@@ -728,6 +744,19 @@ function updateNodeExecution(nodeId: string, execution: WorkflowNodeExecutionSta
   }
 }
 
+/**
+ * Reset all nodes and edges to their pre-execution visual state.
+ *
+ * Called by `AgentEditor.vue` in response to `workflow_started` events, so that
+ * a fresh workflow run begins with a clean canvas. Also called when a new
+ * workflow is activated via `onWorkflowActivated`.
+ *
+ * Clears `execution` data from every node and sets `animated = false` on every
+ * edge, removing any leftover running/completed indicators from a prior run.
+ *
+ * **Event flow:** Graph.emitPlaybookEvent('workflow_started') → WebSocket →
+ * EditorChatInterface → AgentEditor.vue → this method
+ */
 function clearAllExecution() {
   for (const node of nodes.value) {
     if (node.data) {
@@ -740,6 +769,22 @@ function clearAllExecution() {
   }
 }
 
+/**
+ * Toggle the animated state of a single edge on the vue-flow canvas.
+ *
+ * Called by `AgentEditor.vue` in response to `edge_activated` events, which are
+ * canvas-only (the chat path in AgentPersonaModel explicitly skips them).
+ *
+ * Note: Edges are only de-animated when `clearAllExecution()` is called on
+ * the next `workflow_started`. There is no explicit de-animation event.
+ *
+ * **Event flow:** Graph.emitEdgeActivations() → emitPlaybookEvent('edge_activated')
+ * → WebSocket → EditorChatInterface → AgentEditor.vue → this method
+ *
+ * @param sourceId Source node ID of the edge
+ * @param targetId Target node ID of the edge
+ * @param animated Whether to animate (`true`) or de-animate (`false`) the edge
+ */
 function setEdgeAnimated(sourceId: string, targetId: string, animated: boolean) {
   const edge = edges.value.find(e => e.source === sourceId && e.target === targetId);
   if (edge) {
@@ -747,6 +792,22 @@ function setEdgeAnimated(sourceId: string, targetId: string, animated: boolean) 
   }
 }
 
+/**
+ * Append a thinking/progress message to a node's execution state on the canvas.
+ *
+ * Called by `AgentEditor.vue` in response to `node_thinking` events, which are
+ * canvas-only (the chat path in AgentPersonaModel does not handle them).
+ *
+ * Requires that `updateNodeExecution` has already been called for this node
+ * (i.e. `data.execution` must exist), since thinking messages are only
+ * meaningful while a node is actively running.
+ *
+ * **Event flow:** Graph.emitPlaybookEvent('node_thinking') → WebSocket →
+ * EditorChatInterface → AgentEditor.vue → this method
+ *
+ * @param nodeId  ID of the node to append the thinking message to
+ * @param message The thinking message (content, role, kind, timestamp)
+ */
 function pushNodeThinking(nodeId: string, message: NodeThinkingMessage) {
   const node = nodes.value.find(n => n.id === nodeId);
   if (!node?.data) return;

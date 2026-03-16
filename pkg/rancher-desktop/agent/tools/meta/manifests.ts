@@ -40,8 +40,8 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./exec'),
   },
   {
-    name:        'manage_active_asset',
-    description: 'Create, update, or remove active asset tabs (iframe URLs or documents). Each asset gets its own tab in the header. Use a stable assetId to update an existing tab instead of creating a new one.',
+    name:        'browser_tab',
+    description: 'Open, navigate, or close browser tabs. Use to browse the web, search, or view any URL. Each tab runs a full browser you can interact with via Playwright tools. Reuse the same assetId to navigate an existing tab to a new URL.',
     category:    'meta',
     schemaDef:   {
       action:    { type: 'enum', enum: ['upsert', 'remove'], default: 'upsert', description: 'upsert creates/updates an asset; remove deletes by assetId.' },
@@ -56,7 +56,7 @@ export const metaToolManifests: ToolManifest[] = [
       refKey:    { type: 'string', optional: true },
     },
     operationTypes: ['create', 'update', 'delete'],
-    loader:         () => import('./manage_active_asset'),
+    loader:         () => import('./browser_tab'),
   },
   {
     name:        'remove_observational_memory',

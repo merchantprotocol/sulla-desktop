@@ -32,10 +32,9 @@ tools/
 | Category | Description | Key Tools |
 |----------|-------------|-----------|
 | `meta` | Discovery, memory, execution | `browse_tools`, `exec`, `add_observational_memory`, `meta_search` |
-| `fs` | File system operations | `fs_read_file`, `fs_write_file`, `fs_list_dir`, `fs_delete_path` |
 | `slack` | Slack messaging | `slack_send_message`, `slack_search_users`, `slack_connection_health` |
 | `github` | GitHub operations | Repository, PR, issue management |
-| `n8n` | Workflow automation (35+ tools) | `create_workflow`, `get_workflow`, `patch_workflow` |
+| `n8n` | Workflow automation (35+ tools) | `create_workflow`, `patch_workflow` |
 | `docker` | Container management | Container and image operations |
 | `kubectl` | Kubernetes | Cluster management |
 | `integrations` | Integration credentials & accounts | `integration_get_credentials`, `list_integration_accounts`, `set_active_integration_account` |
@@ -48,7 +47,6 @@ tools/
 | `bridge` | Frontend communication | Message bridge with UI |
 | `calendar` | Calendar events | Event management |
 | `extensions` | Extension marketplace | Browse, install, uninstall extensions |
-| `browser` | *(deprecated — no tools)* | — |
 | `workflow` | Workflow execution & recovery | `execute_workflow`, `restart_from_checkpoint` |
 | `rdctl` | Sulla/rdctl commands | Desktop management |
 | `lima` | Lima VM | VM instance management |
@@ -146,7 +144,7 @@ If this is a new category, add it to the `categoriesList` in `tools/registry.ts`
 
 ```typescript
 interface ToolManifest {
-  name: string;                            // Unique tool name (e.g., 'fs_read_file')
+  name: string;
   description: string;                     // Shown to the model during discovery
   category: string;                        // Category for grouping
   schemaDef: Record<string, FieldSchema>;  // Input parameter definitions

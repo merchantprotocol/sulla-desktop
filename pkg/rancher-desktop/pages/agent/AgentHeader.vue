@@ -426,7 +426,7 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 
 const extensionService = getExtensionService();
 const router = useRouter();
-const { tabs: browserTabs, createTab, closeTab, updateTab, ensureOneTab } = useBrowserTabs();
+const { tabs: browserTabs, createTab, closeTab, updateTab, getTab, ensureOneTab } = useBrowserTabs();
 
 // Active assets from the agent persona service
 const personaRegistry = getAgentPersonaRegistry();
@@ -450,12 +450,20 @@ const isMobileMenuOpen = ref(false);
 const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();
 const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark-nobg.png', import.meta.url).toString();
 
-// On initial load, ensure at least one tab exists and redirect /Chat to it
+// On initial load, ensure at least one tab exists and handle route recovery
 {
   const tab = ensureOneTab();
 
   if (route.path === '/Chat' || route.path === '/') {
     router.replace(`/Browser/${ tab.id }`);
+  } else if (route.path.startsWith('/Browser/')) {
+    // If reloading on a /Browser/:id route, verify the tab still exists.
+    // Tabs are persisted to localStorage so this normally matches, but if
+    // the tab was cleaned up or storage was cleared, fall back to a new tab.
+    const routeTabId = route.path.replace('/Browser/', '');
+    if (!getTab(routeTabId)) {
+      router.replace(`/Browser/${ tab.id }`);
+    }
   }
 }
 
