@@ -1,23 +1,23 @@
 <template>
-  <div class="max-w-lg mx-0 p-6 bg-white dark:bg-gray-800/30">
-    <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">
+  <div class="frw-container max-w-lg mx-0 p-6">
+    <h2 class="frw-title text-2xl font-bold mt-5 mb-4">
       Congratulations!
     </h2>
-    <p class="mb-6 text-gray-600 dark:text-gray-400">
+    <p class="frw-subtitle mb-6">
       Now the hard part is just waiting. This process may take a while depending on your Internet connection speed. If this process is interrupted it may make using the software very difficult. lol.
     </p>
 
-    <div class="mt-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
-      <h4 class="text-sm font-semibold mb-2 text-gray-900 dark:text-gray-100">
+    <div class="frw-progress-box mt-6 p-4 rounded-lg">
+      <h4 class="frw-title text-sm font-semibold mb-2">
         Startup Progress
       </h4>
-      <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mb-2">
+      <div class="frw-progress-track w-full rounded-full h-2.5 mb-2">
         <div
-          class="h-2.5 rounded-full"
-          :style="{ width: `${progressPercent}%`, backgroundColor: '#30a5e9' }"
+          class="frw-progress-bar h-2.5 rounded-full"
+          :style="{ width: `${progressPercent}%` }"
         />
       </div>
-      <p class="text-xs text-gray-600 dark:text-gray-400">
+      <p class="frw-muted text-xs">
         {{ progressDescription || startupController.state.progressDescription }}
       </p>
     </div>
@@ -57,4 +57,31 @@ onUnmounted(() => {
 </script>
 
 <style lang="scss" scoped>
+.frw-container {
+  background: var(--bg-surface);
+}
+
+.frw-title {
+  color: var(--text-primary);
+}
+
+.frw-subtitle {
+  color: var(--text-secondary);
+}
+
+.frw-progress-box {
+  background: var(--bg-surface-alt);
+}
+
+.frw-progress-track {
+  background: var(--bg-surface-hover);
+}
+
+.frw-progress-bar {
+  background: var(--accent-primary);
+}
+
+.frw-muted {
+  color: var(--text-muted);
+}
 </style>

@@ -20,10 +20,10 @@
       >
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
           <div class="relative flex w-full max-w-8xl flex-1 justify-center sm:px-2 lg:px-8 xl:px-12">
-            <div class="hidden lg:relative lg:block lg:flex-none lg:w-72 xl:w-80 bg-slate-50 dark:bg-slate-800/30">
+            <div class="hidden lg:relative lg:block lg:flex-none lg:w-72 xl:w-80 sidebar-bg">
               <div class="sticky top-[15px] pt-[15px] h-[calc(100vh-5rem-15px)] w-full overflow-x-hidden overflow-y-auto">
                 <div class="p-4">
-                  <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4">
+                  <h3 class="text-lg font-semibold mb-4 sidebar-title">
                     Installation Steps
                   </h3>
                   <div class="space-y-3">
@@ -31,29 +31,25 @@
                       v-for="(name, index) in stepNames"
                       :key="index"
                       class="p-4 rounded-lg border-2 transition-all"
-                      :class="index === currentStep ? 'bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'"
-                      :style="index === currentStep ? { borderColor: '#30a5e9' } : {}"
+                      :class="index === currentStep ? 'step-active' : 'step-inactive'"
                     >
                       <div class="flex items-center">
                         <div
                           class="w-10 h-10 rounded-full flex items-center justify-center mr-4 font-bold text-lg"
-                          :class="index === currentStep ? 'text-white' : 'bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200'"
-                          :style="index === currentStep ? { backgroundColor: '#30a5e9' } : {}"
+                          :class="index === currentStep ? 'step-number-active' : 'step-number-inactive'"
                         >
                           {{ index + 1 }}
                         </div>
                         <div class="flex-1">
                           <div
                             class="text-sm font-semibold"
-                            :class="index === currentStep ? '' : 'text-gray-700 dark:text-gray-300'"
-                            :style="index === currentStep ? { color: '#30a5e9' } : {}"
+                            :class="index === currentStep ? 'step-name-active' : 'step-name-inactive'"
                           >
                             {{ name }}
                           </div>
                           <div
                             class="text-xs mt-1"
-                            :class="index === currentStep ? '' : 'text-gray-500 dark:text-gray-400'"
-                            :style="index === currentStep ? { color: '#7d8f99' } : {}"
+                            :class="index === currentStep ? 'step-desc-active' : 'step-desc-inactive'"
                           >
                             {{ index === currentStep ? 'In Progress' : index < currentStep ? 'Completed' : 'Pending' }}
                           </div>
@@ -64,18 +60,18 @@
 
                   <div
                     v-if="currentStep > 0 && currentStep < 3 && (startupController.state.progressMax.value > 0 || startupController.state.progressMax.value === -1)"
-                    class="mt-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg"
+                    class="mt-6 p-4 rounded-lg progress-container"
                   >
-                    <h4 class="text-sm font-semibold mb-2 dark:text-gray-100">
+                    <h4 class="text-sm font-semibold mb-2 progress-title">
                       Startup Progress
                     </h4>
-                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mb-2">
+                    <div class="w-full rounded-full h-2.5 mb-2 progress-track">
                       <div
-                        class="h-2.5 rounded-full"
-                        :style="{ width: `${progressPercent}%`, backgroundColor: '#30a5e9' }"
+                        class="h-2.5 rounded-full progress-bar"
+                        :style="{ width: `${progressPercent}%` }"
                       />
                     </div>
-                    <p class="text-xs text-gray-600 dark:text-gray-400">
+                    <p class="text-xs progress-description">
                       {{ startupController.state.progressDescription }}
                     </p>
                   </div>
@@ -196,12 +192,12 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 <style lang="scss" scoped>
 .page-root {
   background: var(--bg-page);
-  color: var(--body-text);
+  color: var(--text-primary);
 }
 
 .page-root.dark {
   background: var(--bg-page);
-  color: var(--body-text);
+  color: var(--text-primary);
 }
 
 .button-area {
@@ -210,7 +206,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 }
 
 .welcome-text {
-  color: var(--body-text);
+  color: var(--text-primary);
   margin-bottom: 1rem;
   line-height: 1.5;
 }
@@ -223,10 +219,10 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
   width: 100%;
   padding: 0.5rem;
   font-size: var(--fs-body);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-default);
   border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--input-text);
+  background: var(--bg-input);
+  color: var(--text-primary);
   margin-top: 0.5rem;
 
   option {
@@ -234,7 +230,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
   }
 
   option:disabled {
-    color: var(--disabled);
+    color: var(--text-dim);
     font-style: italic;
   }
 }
@@ -242,12 +238,79 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 .model-description {
   margin-top: 0.5rem;
   font-size: var(--fs-code);
-  color: var(--muted);
+  color: var(--text-muted);
   font-style: italic;
 }
 
 .model-disabled {
-  color: var(--disabled);
+  color: var(--text-dim);
+}
+
+/* Sidebar */
+.sidebar-bg {
+  background: var(--bg-surface);
+}
+
+.sidebar-title {
+  color: var(--text-primary);
+}
+
+/* Step items */
+.step-active {
+  background: var(--bg-surface-alt);
+  border-color: var(--accent-primary);
+}
+
+.step-inactive {
+  background: var(--bg-surface);
+  border-color: var(--border-default);
+}
+
+.step-number-active {
+  background-color: var(--accent-primary);
+  color: #fff;
+}
+
+.step-number-inactive {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.step-name-active {
+  color: var(--accent-primary);
+}
+
+.step-name-inactive {
+  color: var(--text-secondary);
+}
+
+.step-desc-active {
+  color: var(--text-muted);
+}
+
+.step-desc-inactive {
+  color: var(--text-muted);
+}
+
+/* Progress section */
+.progress-container {
+  background: var(--bg-surface);
+}
+
+.progress-title {
+  color: var(--text-primary);
+}
+
+.progress-track {
+  background: var(--bg-surface-hover);
+}
+
+.progress-bar {
+  background-color: var(--accent-primary);
+}
+
+.progress-description {
+  color: var(--text-muted);
 }
 </style>
 
@@ -257,18 +320,10 @@ html {
 }
 
 :root {
-  --progress-bg: #ddd;
-  --scrollbar-thumb: #999;
-  --darker: #666;
-  --error: #dc3545;
-  --checkbox-tick-disabled: #999;
-}
-
-.dark {
-  --progress-bg: #333;
-  --scrollbar-thumb: #666;
-  --darker: #333;
-  --error: #dc3545;
-  --checkbox-tick-disabled: #666;
+  --progress-bg: var(--bg-surface-hover);
+  --scrollbar-thumb: var(--text-muted);
+  --darker: var(--text-dim);
+  --error: var(--text-error);
+  --checkbox-tick-disabled: var(--text-muted);
 }
 </style>

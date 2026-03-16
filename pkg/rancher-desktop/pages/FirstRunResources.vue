@@ -1,10 +1,10 @@
 <template>
-  <div class="mx-auto p-6 dark:bg-gray-800/30">
+  <div class="mx-auto p-6">
     <form @submit.prevent="handleNext">
-      <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">
+      <h2 class="text-2xl font-bold mt-5 mb-4 fr-heading">
         Specify AI Resources
       </h2>
-      <p class="mb-6 text-gray-600 dark:text-gray-400">
+      <p class="mb-6 fr-body">
         Choose the resources allocated to your AI Agent and the local language model. Your agent and the model and all resources they manage will not be allowed to use more than the allocated resources.
       </p>
 
@@ -12,7 +12,7 @@
       <rd-fieldset
         legend-text="Virtual Machine Resources"
         legend-tooltip="Allocate CPU and memory for the AI services"
-        class="mb-6 mt-6 dark:text-gray-100"
+        class="mb-6 mt-6 fr-fieldset"
       >
         <system-preferences
           :memory-in-g-b="settings!.virtualMachine.memoryInGB"
@@ -33,12 +33,12 @@
       <rd-fieldset
         legend-text="AI Model"
         legend-tooltip="Select the LLM model to use. Models are filtered based on your allocated resources."
-        class="mb-6 mt-6 dark:text-gray-100"
+        class="mb-6 mt-6 fr-fieldset"
       >
         <select
           v-model="sullaModel"
-          class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 mb-2"
-          :class="{ 'border-red-500': !!modelError }"
+          class="w-full p-2 border rounded-md mb-2 fr-input"
+          :class="{ 'fr-border-error': !!modelError }"
         >
           <option
             v-for="model in availableModels"
@@ -50,12 +50,12 @@
             {{ model.displayName }} ({{ model.size }}) {{ !model.available ? '- Requires more resources' : '' }}
           </option>
         </select>
-        <p class="text-sm text-gray-500 dark:text-gray-400 italic">
+        <p class="text-sm italic fr-muted">
           {{ selectedModelDescription }}
         </p>
         <p
           v-if="modelError"
-          class="text-red-500 text-sm mt-1"
+          class="text-sm mt-1 fr-error"
         >
           {{ modelError }}
         </p>
@@ -63,14 +63,14 @@
 
       <div
         v-if="resourceError"
-        class="my-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md dark:bg-red-900 dark:border-red-600 dark:text-red-100"
+        class="my-4 p-3 border rounded-md fr-error-box"
       >
         {{ resourceError }}
       </div>
 
       <button
         type="button"
-        class="w-full text-left p-2 hover:bg-gray-200 dark:hover:bg-gray-700 dark:text-gray-400 transition-colors text-sm font-medium"
+        class="w-full text-left p-2 transition-colors text-sm font-medium fr-btn-toggle"
         @click="isOptionsOpen = !isOptionsOpen"
       >
         Options {{ isOptionsOpen ? '▲' : '▼' }}
@@ -89,7 +89,7 @@
                 class="mr-2"
                 @change="onTelemetryChange"
               >
-              <span class="text-sm dark:text-gray-400">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
+              <span class="text-sm fr-muted">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
             </label>
           </div>
 
@@ -101,7 +101,7 @@
                 class="mr-2"
                 @change="onKubernetesChange"
               >
-              <span class="text-sm dark:text-gray-400">Enable Kubernetes Mode (requires more resources)</span>
+              <span class="text-sm fr-muted">Enable Kubernetes Mode (requires more resources)</span>
             </label>
           </div>
         </div>
@@ -111,15 +111,14 @@
         <button
           v-if="showBack"
           type="button"
-          class="px-6 py-2 text-gray-500 rounded-md transition-colors font-medium hover:opacity-90 bg-gray-100 hover:bg-gray-200 cursor-pointer"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 cursor-pointer fr-btn-secondary"
           @click="$emit('back')"
         >
           Back
         </button>
         <button
           type="submit"
-          class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90"
-          :style="{ backgroundColor: '#30a5e9' }"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 fr-btn-primary"
         >
           Next
         </button>
@@ -438,5 +437,68 @@ input:hover, select:hover {
 .slide-leave-from {
   opacity: 1;
   max-height: 200px;
+}
+
+/* Theme-aware color classes */
+.fr-heading {
+  color: var(--text-primary);
+}
+
+.fr-body {
+  color: var(--text-secondary);
+}
+
+.fr-fieldset {
+  color: var(--text-primary);
+}
+
+.fr-input {
+  background-color: var(--bg-input);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.fr-border-error {
+  border-color: var(--border-error);
+}
+
+.fr-muted {
+  color: var(--text-muted);
+}
+
+.fr-error {
+  color: var(--text-error);
+}
+
+.fr-error-box {
+  background-color: var(--bg-error);
+  border-color: var(--border-error);
+  color: var(--text-error);
+}
+
+.fr-btn-toggle {
+  color: var(--text-muted);
+
+  &:hover {
+    background-color: var(--bg-surface-hover);
+  }
+}
+
+.fr-btn-secondary {
+  color: var(--text-secondary);
+  background-color: var(--bg-surface-hover);
+
+  &:hover {
+    background-color: var(--bg-elevated);
+  }
+}
+
+.fr-btn-primary {
+  color: var(--text-on-accent);
+  background-color: var(--accent-primary);
+
+  &:hover {
+    background-color: var(--accent-primary-hover);
+  }
 }
 </style>

@@ -1,27 +1,27 @@
 <template>
-  <div class="max-w-lg mx-0 p-6 bg-white dark:bg-gray-800/30">
+  <div class="max-w-lg mx-0 p-6 frm-page">
     <form @submit.prevent="handleNext">
-      <h2 class="text-2xl font-bold mt-5 mb-4 text-gray-900 dark:text-gray-100">
+      <h2 class="text-2xl font-bold mt-5 mb-4 frm-heading">
         Remote Model (Optional)
       </h2>
-      <p class="mb-6 text-gray-600 dark:text-gray-400">
+      <p class="mb-6 frm-subtext">
         Optionally enable a remote model. While your system will be fully configured to run a local model, at times that can be very slow, and many people prefer to run a remote model for better performance. You can toggle between local and remote models at any time.
       </p>
 
       <rd-fieldset
         legend-text="Remote Model Configuration"
-        class="mb-6 dark:text-gray-100"
+        class="mb-6 frm-fieldset"
       >
         <!-- Provider selector -->
         <div class="mb-4">
           <label
             for="provider"
-            class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            class="block text-sm font-medium mb-1 frm-label"
           >Provider:</label>
           <select
             id="provider"
             v-model="selectedProviderId"
-            class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+            class="w-full p-2 border rounded-md frm-input"
             @change="onProviderChange"
           >
             <option value="">
@@ -46,12 +46,12 @@
           >
             <label
               :for="property.key"
-              class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+              class="block text-sm font-medium mb-1 frm-label"
             >
               {{ property.title }}
               <span
                 v-if="property.required"
-                class="text-red-500"
+                class="frm-required"
               >*</span>
             </label>
 
@@ -64,8 +64,8 @@
                 :id="property.key"
                 v-model="formData[property.key]"
                 :disabled="selectOptionsLoading[property.key]"
-                class="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
-                :class="{ 'border-red-500': !!errors[property.key] }"
+                class="flex-1 p-2 border rounded-md disabled:opacity-50 frm-input"
+                :class="{ 'frm-input-error': !!errors[property.key] }"
               >
                 <option
                   value=""
@@ -84,7 +84,7 @@
               <button
                 type="button"
                 :disabled="selectOptionsLoading[property.key]"
-                class="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                class="px-3 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed frm-btn-accent"
                 title="Refresh options"
                 @click="fetchSelectOptionsForProperty(property)"
               >
@@ -112,20 +112,20 @@
               :type="property.type"
               :placeholder="property.placeholder"
               :required="property.required"
-              class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-              :class="{ 'border-red-500': !!errors[property.key] }"
+              class="w-full p-2 border rounded-md frm-input"
+              :class="{ 'frm-input-error': !!errors[property.key] }"
               @blur="onFieldBlur(property.key)"
             >
 
             <p
               v-if="property.hint"
-              class="mt-1 text-xs text-gray-500 dark:text-gray-400"
+              class="mt-1 text-xs frm-hint"
             >
               {{ property.hint }}
             </p>
             <p
               v-if="errors[property.key]"
-              class="mt-1 text-xs text-red-600"
+              class="mt-1 text-xs frm-error-text"
             >
               {{ errors[property.key] }}
             </p>
@@ -140,7 +140,7 @@
           <button
             type="button"
             :disabled="testing"
-            class="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 disabled:opacity-50"
+            class="px-4 py-2 rounded-md disabled:opacity-50 frm-btn-secondary"
             @click="testCredentials"
           >
             {{ testing ? 'Testing...' : 'Test Credentials' }}
@@ -148,14 +148,14 @@
           <span
             v-if="testResult"
             class="text-sm"
-            :class="testResult.success ? 'text-green-600' : 'text-red-600'"
+            :class="testResult.success ? 'frm-success-text' : 'frm-error-text'"
           >{{ testResult.message }}</span>
         </div>
 
         <!-- Error display -->
         <div
           v-if="error"
-          class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md"
+          class="mb-4 p-3 border rounded-md frm-error-box"
         >
           {{ error }}
         </div>
@@ -164,15 +164,14 @@
       <div class="flex justify-between mt-5">
         <button
           type="button"
-          class="px-6 py-2 text-gray-500 rounded-md transition-colors font-medium hover:opacity-90 bg-gray-100 hover:bg-gray-200 cursor-pointer"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 cursor-pointer frm-btn-back"
           @click="$emit('back')"
         >
           Back
         </button>
         <button
           type="submit"
-          class="px-6 py-2 text-white rounded-md transition-colors font-medium hover:opacity-90"
-          :style="{ backgroundColor: '#30a5e9' }"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 frm-btn-accent"
         >
           Next
         </button>
@@ -427,6 +426,99 @@ onMounted(async() => {
 </script>
 
 <style lang="scss" scoped>
+/* Page background */
+.frm-page {
+  background-color: var(--bg-surface);
+}
+
+/* Heading */
+.frm-heading {
+  color: var(--text-primary);
+}
+
+/* Subtitle / description text */
+.frm-subtext {
+  color: var(--text-secondary);
+}
+
+/* Fieldset legend text */
+.frm-fieldset {
+  color: var(--text-primary);
+}
+
+/* Labels */
+.frm-label {
+  color: var(--text-secondary);
+}
+
+/* Inputs and selects */
+.frm-input {
+  background-color: var(--bg-input);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.frm-input-error {
+  border-color: var(--border-error);
+}
+
+/* Hint text */
+.frm-hint {
+  color: var(--text-muted);
+}
+
+/* Required asterisk */
+.frm-required {
+  color: var(--text-error);
+}
+
+/* Error text */
+.frm-error-text {
+  color: var(--text-error);
+}
+
+/* Success text */
+.frm-success-text {
+  color: var(--text-success);
+}
+
+/* Error box */
+.frm-error-box {
+  background-color: var(--bg-error);
+  border-color: var(--border-error);
+  color: var(--text-error);
+}
+
+/* Accent button (refresh, next) */
+.frm-btn-accent {
+  background-color: var(--accent-primary);
+  color: var(--text-on-accent);
+
+  &:hover:not(:disabled) {
+    background-color: var(--accent-primary-hover);
+  }
+}
+
+/* Secondary button (test credentials) */
+.frm-btn-secondary {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+}
+
+/* Back button */
+.frm-btn-back {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-secondary);
+
+  &:hover {
+    filter: brightness(1.1);
+  }
+}
+
 /* Hover effects */
 button:hover {
   cursor: pointer;

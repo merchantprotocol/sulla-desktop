@@ -1,5 +1,5 @@
 <template>
-  <header class="sticky top-0 z-50 flex flex-none flex-wrap items-center justify-between bg-white px-4 py-5 shadow-md shadow-slate-900/5 transition duration-500 sm:px-6 lg:px-8 dark:shadow-none dark:bg-slate-900/95 dark:backdrop-blur-sm dark:[@supports(backdrop-filter:blur(0))]:bg-slate-900/75">
+  <header class="sh-header sticky top-0 z-50 flex flex-none flex-wrap items-center justify-between px-4 py-5 shadow-md transition duration-500 sm:px-6 lg:px-8">
     <div class="relative flex grow basis-0 items-center">
       <a
         aria-label="Home page"
@@ -29,7 +29,7 @@
           data-headlessui-state=""
         >Theme</label>
         <button
-          class="flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset"
+          class="sh-theme-toggle flex h-6 w-6 items-center justify-center rounded-lg shadow-md ring-1"
           type="button"
           :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
           @click="toggleTheme"
@@ -62,7 +62,7 @@
       </div>
       <button
         v-if="onStop"
-        class="cursor-pointer active:bg-gray-200 dark:active:bg-gray-600 flex h-6 px-2 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 dark:bg-slate-700 dark:ring-white/5 dark:ring-inset text-black dark:text-gray-300 text-sm"
+        class="sh-quit-btn cursor-pointer flex h-6 px-2 items-center justify-center rounded-lg shadow-md ring-1 text-sm"
         type="button"
         aria-label="Stop Sulla"
         @click="onStop"
@@ -96,3 +96,25 @@ defineProps<{
 const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();
 const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark-nobg.png', import.meta.url).toString();
 </script>
+
+<style lang="scss" scoped>
+.sh-header {
+  background: var(--bg-header);
+  backdrop-filter: blur(8px);
+}
+
+.sh-theme-toggle {
+  background: var(--bg-surface-hover);
+  --tw-ring-color: var(--border-default);
+}
+
+.sh-quit-btn {
+  color: var(--text-secondary);
+  background: var(--bg-surface-hover);
+  --tw-ring-color: var(--border-default);
+
+  &:active {
+    background: var(--bg-surface-alt);
+  }
+}
+</style>
