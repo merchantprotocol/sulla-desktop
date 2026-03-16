@@ -131,7 +131,21 @@ export class EditorChatInterface {
         lines:  m.subAgentActivity?.thinkingLines?.length,
       })));
     }
-    this.messages.value = msgs;
+    // Filter out empty messages that have no specialized renderer (workflow_node,
+    // tool, sub_agent_activity, etc.) — these would render as blank assistant bubbles.
+    const filtered = msgs.filter(m => {
+      // Always keep messages with a specialized kind that has its own renderer
+      if (m.kind === 'workflow_node' || m.kind === 'tool' || m.kind === 'sub_agent_activity' ||
+          m.kind === 'thinking' || m.kind === 'html') {
+        return true;
+      }
+      // Always keep messages with image data
+      if (m.image) return true;
+      // Drop assistant/system messages with empty content
+      if (m.role !== 'user' && (!m.content || !m.content.trim())) return false;
+      return true;
+    });
+    this.messages.value = filtered;
   }
 
   async send(): Promise<void> {

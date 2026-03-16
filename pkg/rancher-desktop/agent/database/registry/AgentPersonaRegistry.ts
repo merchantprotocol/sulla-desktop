@@ -24,6 +24,12 @@ export interface ChatMessage {
     args?:        Record<string, unknown>;
     result?:      unknown;
     error?:       string | null;
+    /** Human-friendly display fields populated by toolCardFormatters */
+    label?:        string;
+    summary?:      string;
+    input?:        string;
+    output?:       string;
+    outputFormat?: 'text' | 'code' | 'url' | 'json';
   };
   channelMeta?: {
     senderId:      string;

@@ -611,7 +611,12 @@ export class Graph<TState = BaseThreadState> {
     }
 
     // ── Reset canvas and replay all already-completed nodes (triggers + checkpoint nodes) ──
-    this.emitPlaybookEvent(state, 'workflow_started', { workflowId: playbook.workflowId });
+    // Only emit workflow_started once per execution to avoid duplicate chat cards.
+    // The flag is stored on the playbook so it resets on new workflow activations.
+    if (!(playbook as any)._workflowStartedEmitted) {
+      this.emitPlaybookEvent(state, 'workflow_started', { workflowId: playbook.workflowId });
+      (playbook as any)._workflowStartedEmitted = true;
+    }
 
     for (const [nodeId, output] of Object.entries(playbook.nodeOutputs ?? {})) {
       this.emitPlaybookEvent(state, 'node_completed', {

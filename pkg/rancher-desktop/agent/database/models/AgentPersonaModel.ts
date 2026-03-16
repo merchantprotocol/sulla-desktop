@@ -3,6 +3,7 @@ import { computed, reactive, ref } from 'vue';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import type { ChatMessage, AgentRegistryEntry } from '../registry/AgentPersonaRegistry';
+import { formatToolCard, formatToolResult } from '@pkg/agent/tools/toolCardFormatters';
 
 export type PersonaTemplateId =
   | 'terminal'
@@ -734,6 +735,8 @@ export class AgentPersonaService {
           const messageId = `${ Date.now() }_tool_${ toolRunId }`;
           // Extract description from args if provided (e.g. exec tool sends description of what command does)
           const description = typeof args?.description === 'string' ? args.description : undefined;
+          // Generate human-friendly display via formatter
+          const display = formatToolCard(toolName, args);
           const message: ChatMessage = {
             id:        messageId,
             channelId: agentId,
@@ -745,8 +748,12 @@ export class AgentPersonaService {
               toolRunId,
               toolName,
               description,
-              status: 'running',
+              status:       'running',
               args,
+              label:        display.label,
+              summary:      display.summary,
+              input:        display.input,
+              outputFormat: display.outputFormat,
             },
           };
           this.messages.push(message);
@@ -771,6 +778,15 @@ export class AgentPersonaService {
               message.toolCard.status = success ? 'success' : 'failed';
               message.toolCard.error = error;
               message.toolCard.result = result;
+              // Populate human-friendly output from formatter
+              const resultDisplay = formatToolResult(
+                message.toolCard.toolName,
+                message.toolCard.args ?? {},
+                result,
+                error,
+              );
+              if (resultDisplay.output) message.toolCard.output = resultDisplay.output;
+              if (resultDisplay.outputFormat) message.toolCard.outputFormat = resultDisplay.outputFormat;
             }
             // Clean up the mapping
             this.toolRunIdToMessageId.delete(toolRunId);

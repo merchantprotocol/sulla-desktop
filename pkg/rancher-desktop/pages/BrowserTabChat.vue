@@ -29,29 +29,29 @@
                 >
                   <button type="button" class="tool-card-cc-header" @click="toggleToolCard(m.id)">
                     <span class="tool-card-cc-dot" :class="m.toolCard.status" />
-                    <span class="tool-card-cc-name">{{ toolCardLabel(m.toolCard) }}</span>
-                    <span v-if="m.toolCard.description" class="tool-card-cc-desc">{{ m.toolCard.description }}</span>
+                    <span class="tool-card-cc-name">{{ m.toolCard.label || m.toolCard.toolName }}</span>
+                    <span class="tool-card-cc-desc">{{ m.toolCard.description || m.toolCard.summary || '' }}</span>
                     <svg width="14" height="14" viewBox="0 0 15 15" fill="none" class="tool-card-cc-chevron" :class="{ open: expandedToolCards.has(m.id) }">
                       <path d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" />
                     </svg>
                   </button>
-                  <div v-if="toolCardCommand(m.toolCard)" class="tool-card-cc-cmd">
+                  <div v-if="m.toolCard.input" class="tool-card-cc-cmd">
                     <span class="tool-card-cc-cmd-label">IN</span>
-                    <code class="tool-card-cc-cmd-text">{{ toolCardCommand(m.toolCard) }}</code>
+                    <code class="tool-card-cc-cmd-text">{{ m.toolCard.input }}</code>
                   </div>
-                  <div v-if="m.toolCard.status !== 'running' && toolCardCommand(m.toolCard)" class="tool-card-cc-cmd">
+                  <div v-if="m.toolCard.status !== 'running' && m.toolCard.input" class="tool-card-cc-cmd">
                     <span class="tool-card-cc-cmd-label">OUT</span>
                     <code class="tool-card-cc-cmd-text tool-card-cc-exit" :class="m.toolCard.status">{{ m.toolCard.status === 'success' ? '0' : '1' }}</code>
                   </div>
                   <div v-show="expandedToolCards.has(m.id)" class="tool-card-cc-body">
-                    <div v-if="toolCardOutput(m.toolCard)" class="tool-card-cc-output">
-                      <pre>{{ toolCardOutput(m.toolCard) }}</pre>
+                    <div v-if="m.toolCard.output" class="tool-card-cc-output">
+                      <pre>{{ m.toolCard.output }}</pre>
                     </div>
-                    <div v-if="!toolCardCommand(m.toolCard) && m.toolCard.args && Object.keys(m.toolCard.args).length > 0" class="tool-card-cc-output">
+                    <div v-if="!m.toolCard.output && !m.toolCard.input && m.toolCard.args && Object.keys(m.toolCard.args).length > 0" class="tool-card-cc-output">
                       <div class="tool-card-cc-section-label">Arguments</div>
                       <pre>{{ JSON.stringify(m.toolCard.args, null, 2) }}</pre>
                     </div>
-                    <div v-if="!toolCardCommand(m.toolCard) && m.toolCard.result !== undefined" class="tool-card-cc-output">
+                    <div v-if="!m.toolCard.output && !m.toolCard.input && m.toolCard.result !== undefined" class="tool-card-cc-output">
                       <div class="tool-card-cc-section-label">Result</div>
                       <pre>{{ typeof m.toolCard.result === 'string' ? m.toolCard.result : JSON.stringify(m.toolCard.result, null, 2) }}</pre>
                     </div>
@@ -267,23 +267,6 @@ function toggleToolCard(id: string) {
   }
 }
 
-const EXEC_TOOL_NAMES = new Set(['exec', 'exec_command', 'shell', 'bash', 'run_command']);
-function toolCardLabel(tc: { toolName: string }) {
-  return EXEC_TOOL_NAMES.has(tc.toolName) ? 'Bash' : tc.toolName;
-}
-function toolCardCommand(tc: { toolName: string; args?: Record<string, unknown> }): string | null {
-  if (!EXEC_TOOL_NAMES.has(tc.toolName)) return null;
-  const cmd = tc.args?.command ?? tc.args?.cmd;
-  return typeof cmd === 'string' ? cmd : null;
-}
-function toolCardOutput(tc: { toolName: string; result?: unknown }): string | null {
-  if (!tc.result) return null;
-  const r = tc.result as any;
-  if (typeof r.responseString === 'string' && r.responseString.trim()) return r.responseString;
-  if (typeof r.result === 'string' && r.result.trim()) return r.result;
-  if (typeof r === 'string' && r.trim()) return r;
-  return null;
-}
 
 // Auto-scroll
 const chatScrollContainer = ref<HTMLElement | null>(null);
