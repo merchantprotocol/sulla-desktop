@@ -853,6 +853,96 @@ export class AgentPersonaService {
       }
       return;
     }
+    case 'workflow_execution_event': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+      if (!data) return;
+      const eventType: string = data.type || '';
+      const nodeId: string = data.nodeId || '';
+      const nodeLabel: string = data.nodeLabel || '';
+      const workflowRunId: string = data.thread_id || `wf_${ Date.now() }`;
+      const totalNodes: number = typeof data.totalNodes === 'number' ? data.totalNodes : 0;
+      const nodeIndex: number = typeof data.nodeIndex === 'number' ? data.nodeIndex : 0;
+
+      if (eventType === 'workflow_started') {
+        // Push a workflow-started card so the user sees the workflow kicked off
+        this.messages.push({
+          id:        `${ Date.now() }_wf_started`,
+          channelId: agentId,
+          threadId:  msgThreadId,
+          role:      'assistant',
+          kind:      'workflow_node',
+          content:   '',
+          workflowNode: {
+            workflowRunId,
+            nodeId:     '',
+            nodeLabel:  'Workflow Started',
+            status:     'running',
+            nodeIndex:  0,
+            totalNodes,
+          },
+        });
+        return;
+      }
+
+      if (eventType === 'node_started') {
+        // Push a new running node card
+        const messageId = `${ Date.now() }_wf_node_${ nodeId }`;
+        this.messages.push({
+          id:        messageId,
+          channelId: agentId,
+          threadId:  msgThreadId,
+          role:      'assistant',
+          kind:      'workflow_node',
+          content:   '',
+          workflowNode: {
+            workflowRunId,
+            nodeId,
+            nodeLabel,
+            status:    'running',
+            prompt:    typeof data.prompt === 'string' ? data.prompt : undefined,
+            nodeIndex,
+            totalNodes,
+          },
+        });
+        return;
+      }
+
+      if (eventType === 'node_completed' || eventType === 'node_failed' || eventType === 'node_waiting') {
+        // Find the existing card for this node and update it in place
+        const existing = [...this.messages].reverse().find(
+          m => m.workflowNode?.nodeId === nodeId && m.workflowNode?.status === 'running',
+        );
+        if (existing?.workflowNode) {
+          existing.workflowNode.status = eventType === 'node_completed' ? 'completed'
+            : eventType === 'node_failed' ? 'failed'
+              : 'waiting';
+          if (data.output !== undefined) {
+            existing.workflowNode.output = typeof data.output === 'string'
+              ? data.output
+              : JSON.stringify(data.output);
+          }
+          if (data.error) {
+            existing.workflowNode.error = String(data.error);
+          }
+          if (totalNodes > 0) existing.workflowNode.totalNodes = totalNodes;
+          if (nodeIndex > 0) existing.workflowNode.nodeIndex = nodeIndex;
+        }
+        return;
+      }
+
+      if (eventType === 'workflow_completed' || eventType === 'workflow_failed') {
+        // Update the workflow-started card
+        const startCard = [...this.messages].reverse().find(
+          m => m.workflowNode?.nodeLabel === 'Workflow Started' && m.workflowNode?.status === 'running',
+        );
+        if (startCard?.workflowNode) {
+          startCard.workflowNode.status = eventType === 'workflow_completed' ? 'completed' : 'failed';
+          if (data.error) startCard.workflowNode.error = String(data.error);
+        }
+      }
+      // edge_activated and other sub-events are visual-only (canvas), skip chat
+      return;
+    }
     case 'ack':
     case 'ping':
     case 'pong':
