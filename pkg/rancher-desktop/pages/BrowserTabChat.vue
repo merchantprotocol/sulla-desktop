@@ -164,7 +164,7 @@ import SubAgentBubble from './editor/workflow/SubAgentBubble.vue';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import { useTheme } from '@pkg/composables/useTheme';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
-import type { BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 
 const props = defineProps<{
   tabId: string;
@@ -174,6 +174,31 @@ const emit = defineEmits<{
   'set-mode': [mode: BrowserTabMode];
 }>();
 
+const { updateTab } = useBrowserTabs();
+
+/**
+ * Generate a short tab title from the user's first message — no LLM required.
+ * Grabs the first meaningful sentence/phrase and truncates to ~40 chars.
+ */
+function generateChatTitle(text: string): string {
+  // Collapse whitespace and trim
+  let t = text.replace(/\s+/g, ' ').trim();
+  if (!t) return 'New Chat';
+
+  // Use only the first line / sentence
+  const firstLine = t.split(/[.\n!?]/)[0].trim();
+  if (firstLine) t = firstLine;
+
+  // Truncate at a word boundary around 40 chars
+  const MAX = 40;
+  if (t.length > MAX) {
+    const cut = t.lastIndexOf(' ', MAX);
+    t = `${ t.slice(0, cut > 10 ? cut : MAX) }\u2026`;
+  }
+
+  return t || 'New Chat';
+}
+
 // Each tab gets its own ChatInterface keyed by tabId for independent
 // localStorage (messages, threadId) while sharing the 'sulla-desktop' WS channel.
 const chatController = new ChatInterface('sulla-desktop', props.tabId);
@@ -182,6 +207,22 @@ const chatController = new ChatInterface('sulla-desktop', props.tabId);
 // If the tab already has a stored threadId it will be restored automatically.
 if (!chatController.threadId.value) {
   chatController.newChat();
+}
+
+// Update the tab title from the first user message (one-shot watcher)
+let titleSet = chatController.messages.value.some(m => m.role === 'user');
+if (!titleSet) {
+  const stopTitleWatch = watch(
+    () => chatController.messages.value,
+    (msgs) => {
+      const firstUser = msgs.find(m => m.role === 'user');
+      if (firstUser && firstUser.content) {
+        updateTab(props.tabId, { title: generateChatTitle(firstUser.content) });
+        stopTitleWatch();
+      }
+    },
+    { deep: true },
+  );
 }
 
 const { isDark } = useTheme();
