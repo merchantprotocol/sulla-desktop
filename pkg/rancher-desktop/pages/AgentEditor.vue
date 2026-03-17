@@ -112,6 +112,7 @@
             @workflow-closed="onWorkflowClosed"
             @workflow-created="onWorkflowCreated"
             @workflow-deleted="onWorkflowDeleted"
+            @workflow-moved="onWorkflowMoved"
           />
 
           <!-- Training file tree -->
@@ -296,8 +297,9 @@
           </button>
           <button
             class="workflow-enable-btn"
-            :class="{ dark: isDark, enabled: activeWorkflowData?.enabled }"
-            :title="activeWorkflowData?.enabled ? 'Disable workflow (live)' : 'Enable workflow (go live)'"
+            :class="{ dark: isDark, production: activeWorkflowData?._status === 'production', archive: activeWorkflowData?._status === 'archive' }"
+            :title="activeWorkflowData?._status === 'production' ? 'Move to draft' : 'Move to production'"
+            :disabled="workflowMoving"
             @click="toggleWorkflowEnabled"
           >
             <svg
@@ -318,7 +320,7 @@
                 y2="12"
               />
             </svg>
-            {{ activeWorkflowData?.enabled ? 'Live' : 'Disabled' }}
+            {{ activeWorkflowData?._status === 'production' ? 'Production' : activeWorkflowData?._status === 'archive' ? 'Archived' : 'Draft' }}
           </button>
           <div
             class="workflow-save-divider"
@@ -1762,6 +1764,7 @@ export default defineComponent({
     const workflowEditorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null);
     const workflowPaneRef = ref<InstanceType<typeof WorkflowPane> | null>(null);
     const activeWorkflowData = ref<any>(null);
+    const workflowMoving = ref(false);
     const workflowSaveStatus = ref<'idle' | 'unsaved' | 'saving' | 'saved'>('idle');
     const workflowSettingsOpen = ref(false);
     let workflowSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2133,12 +2136,43 @@ export default defineComponent({
       }
     }
 
-    function toggleWorkflowEnabled() {
-      if (!activeWorkflowData.value) return;
-      snapshotCanvasIntoWorkflowData();
-      activeWorkflowData.value = { ...activeWorkflowData.value, enabled: !activeWorkflowData.value.enabled };
-      onWorkflowChanged();
-      saveWorkflowNow();
+    async function toggleWorkflowEnabled() {
+      if (!activeWorkflowData.value || workflowMoving.value) return;
+      const currentStatus = activeWorkflowData.value._status || 'draft';
+      const targetStatus = currentStatus === 'production' ? 'draft' : 'production';
+
+      workflowMoving.value = true;
+      try {
+        // Save any pending changes before moving
+        snapshotCanvasIntoWorkflowData();
+        await saveWorkflowNow();
+
+        await ipcRenderer.invoke('workflow-move', activeWorkflowData.value.id, targetStatus);
+        activeWorkflowData.value = { ...activeWorkflowData.value, _status: targetStatus };
+        workflowPaneRef.value?.loadWorkflowList();
+      } catch (err) {
+        console.error('[Workflow] Failed to move workflow:', err);
+      } finally {
+        workflowMoving.value = false;
+      }
+    }
+
+    async function archiveWorkflow() {
+      if (!activeWorkflowData.value || workflowMoving.value) return;
+
+      workflowMoving.value = true;
+      try {
+        snapshotCanvasIntoWorkflowData();
+        await saveWorkflowNow();
+
+        await ipcRenderer.invoke('workflow-move', activeWorkflowData.value.id, 'archive');
+        activeWorkflowData.value = { ...activeWorkflowData.value, _status: 'archive' };
+        workflowPaneRef.value?.loadWorkflowList();
+      } catch (err) {
+        console.error('[Workflow] Failed to archive workflow:', err);
+      } finally {
+        workflowMoving.value = false;
+      }
     }
 
     function onWorkflowSettingsClose() {
@@ -2162,6 +2196,12 @@ export default defineComponent({
         activeWorkflowData.value = null;
         workflowSettingsOpen.value = false;
         rightPaneVisible.value = false;
+      }
+    }
+
+    function onWorkflowMoved(workflowId: string, newStatus: string) {
+      if (activeWorkflowData.value?.id === workflowId) {
+        activeWorkflowData.value = { ...activeWorkflowData.value, _status: newStatus };
       }
     }
 
@@ -2960,12 +3000,15 @@ export default defineComponent({
       workflowSaveStatus,
       workflowSettingsOpen,
       activeWorkflowData,
+      workflowMoving,
       toggleWorkflowSettings,
       toggleWorkflowEnabled,
+      archiveWorkflow,
       onWorkflowSettingsClose,
       onWorkflowNameUpdate,
       onWorkflowDescriptionUpdate,
       onWorkflowDeleted,
+      onWorkflowMoved,
       deleteActiveWorkflow,
       workflowPaneRef,
       runWorkflow,
@@ -3794,14 +3837,23 @@ html, body, #app {
   color: var(--text-secondary);
 }
 
-.workflow-enable-btn.enabled {
+.workflow-enable-btn.production {
   background: var(--status-success);
   color: var(--text-on-accent);
   border-color: var(--status-success);
 }
 
-.workflow-enable-btn.enabled:hover {
+.workflow-enable-btn.production:hover {
   background: var(--status-success);
+}
+
+.workflow-enable-btn.archive {
+  opacity: 0.5;
+}
+
+.workflow-enable-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .workflow-run-btn,

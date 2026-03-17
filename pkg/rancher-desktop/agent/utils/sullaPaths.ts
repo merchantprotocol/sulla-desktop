@@ -69,6 +69,18 @@ export function resolveSullaWorkflowsDir(): string {
   return path.join(resolveSullaHomeDir(), 'workflows');
 }
 
+export function resolveSullaWorkflowsDraftDir(): string {
+  return path.join(resolveSullaWorkflowsDir(), 'draft');
+}
+
+export function resolveSullaWorkflowsProductionDir(): string {
+  return path.join(resolveSullaWorkflowsDir(), 'production');
+}
+
+export function resolveSullaWorkflowsArchiveDir(): string {
+  return path.join(resolveSullaWorkflowsDir(), 'archive');
+}
+
 export function resolveSullaIntegrationsDir(): string {
   const envPath = String(process.env[SULLA_INTEGRATIONS_DIR_ENV] || '').trim();
   if (envPath) {
@@ -113,6 +125,11 @@ export async function bootstrapSullaHome(): Promise<void> {
   fs.mkdirSync(logsDir, { recursive: true });
   fs.mkdirSync(trainingDir, { recursive: true });
   fs.mkdirSync(conversationsDir, { recursive: true });
+
+  // Ensure workflow subfolders exist
+  fs.mkdirSync(resolveSullaWorkflowsDraftDir(), { recursive: true });
+  fs.mkdirSync(resolveSullaWorkflowsProductionDir(), { recursive: true });
+  fs.mkdirSync(resolveSullaWorkflowsArchiveDir(), { recursive: true });
 
   for (const { dir, repo } of BOOTSTRAP_REPOS) {
     const target = dir();

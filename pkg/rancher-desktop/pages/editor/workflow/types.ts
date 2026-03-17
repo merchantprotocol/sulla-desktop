@@ -156,15 +156,17 @@ export interface WorkflowEdgeSerialized {
   animated?:     boolean;
 }
 
-// ── Top-level workflow definition (saved as JSON to ~/sulla/workflows/) ──
+// ── Workflow status (determined by subfolder: draft/, production/, archive/) ──
+
+export type WorkflowStatus = 'draft' | 'production' | 'archive';
+
+// ── Top-level workflow definition (saved as YAML to ~/sulla/workflows/<status>/) ──
 
 export interface WorkflowDefinition {
   id:          string;
   name:        string;
   description: string;
   version:     1;
-  /** When true, the workflow is active and will be triggered by the WorkflowRegistry in production */
-  enabled?:    boolean;
   createdAt:   string;
   updatedAt:   string;
   nodes:       WorkflowNodeSerialized[];
@@ -178,4 +180,5 @@ export interface WorkflowListItem {
   id:        string;
   name:      string;
   updatedAt: string;
+  status:    WorkflowStatus;
 }

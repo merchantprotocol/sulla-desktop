@@ -130,19 +130,28 @@
         class="workflow-picker"
         :class="{ dark: isDark }"
       >
-        <!-- Create new workflow card -->
-        <div
-          class="picker-card picker-card-create"
+        <!-- Search filter -->
+        <input
+          v-model="searchFilter"
+          class="wf-search-input"
+          :class="{ dark: isDark }"
+          type="text"
+          placeholder="Filter workflows..."
+        >
+
+        <!-- Create new workflow -->
+        <button
+          class="wf-create-btn"
           :class="{ dark: isDark }"
           @click="createNewWorkflow"
         >
           <svg
-            width="20"
-            height="20"
+            width="12"
+            height="12"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            stroke-width="1.5"
+            stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
           >
@@ -159,63 +168,100 @@
               y2="12"
             />
           </svg>
-          <span class="picker-card-text">Create New Workflow</span>
-        </div>
+          New Workflow
+        </button>
 
-        <!-- Existing workflows -->
+        <!-- Grouped tree view -->
         <div
-          v-for="wf in availableWorkflows"
-          :key="wf.id"
-          class="picker-card"
-          :class="{ dark: isDark }"
-          @click="openWorkflow(wf.id, wf.name)"
-          @contextmenu.prevent="showContextMenu($event, wf)"
+          v-for="group in groups"
+          :key="group.key"
+          class="wf-group"
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+          <div
+            class="wf-group-header"
+            :class="{ dark: isDark }"
+            @click="toggleGroup(group.key)"
           >
-            <rect
-              x="2"
-              y="3"
-              width="6"
-              height="5"
-              rx="1"
-            />
-            <rect
-              x="16"
-              y="3"
-              width="6"
-              height="5"
-              rx="1"
-            />
-            <rect
-              x="9"
-              y="16"
-              width="6"
-              height="5"
-              rx="1"
-            />
-            <path d="M5 8v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
-            <line
-              x1="12"
-              y1="12"
-              x2="12"
-              y2="16"
-            />
-          </svg>
-          <div class="picker-card-info">
-            <span class="picker-card-name">{{ wf.name }}</span>
+            <svg
+              class="wf-group-chevron"
+              :class="{ expanded: expandedGroups.has(group.key) }"
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
             <span
-              v-if="wf.updatedAt"
-              class="picker-card-date"
-            >{{ formatDate(wf.updatedAt) }}</span>
+              class="wf-group-dot"
+              :class="group.key"
+            />
+            <span class="wf-group-label">{{ group.label }}</span>
+            <span class="wf-group-count">{{ group.workflows.length }}</span>
+          </div>
+          <div
+            v-if="expandedGroups.has(group.key)"
+            class="wf-group-items"
+          >
+            <div
+              v-for="wf in group.workflows"
+              :key="wf.id"
+              class="wf-list-item"
+              :class="{ dark: isDark }"
+              @click="openWorkflow(wf.id, wf.name)"
+              @contextmenu.prevent="showContextMenu($event, wf)"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect
+                  x="2"
+                  y="3"
+                  width="6"
+                  height="5"
+                  rx="1"
+                />
+                <rect
+                  x="16"
+                  y="3"
+                  width="6"
+                  height="5"
+                  rx="1"
+                />
+                <rect
+                  x="9"
+                  y="16"
+                  width="6"
+                  height="5"
+                  rx="1"
+                />
+                <path d="M5 8v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
+                <line
+                  x1="12"
+                  y1="12"
+                  x2="12"
+                  y2="16"
+                />
+              </svg>
+              <span class="wf-list-item-name">{{ wf.name }}</span>
+            </div>
+            <div
+              v-if="group.workflows.length === 0"
+              class="wf-group-empty"
+            >
+              No workflows
+            </div>
           </div>
         </div>
 
@@ -253,6 +299,85 @@
               Rename
             </button>
             <button
+              v-if="contextMenu.workflow?.status !== 'production'"
+              class="wf-context-item"
+              :class="{ dark: isDark }"
+              @click="moveWorkflowFromMenu('production')"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                <line
+                  x1="12"
+                  y1="2"
+                  x2="12"
+                  y2="12"
+                />
+              </svg>
+              Move to Production
+            </button>
+            <button
+              v-if="contextMenu.workflow?.status !== 'draft'"
+              class="wf-context-item"
+              :class="{ dark: isDark }"
+              @click="moveWorkflowFromMenu('draft')"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+              </svg>
+              Move to Draft
+            </button>
+            <button
+              v-if="contextMenu.workflow?.status !== 'archive'"
+              class="wf-context-item"
+              :class="{ dark: isDark }"
+              @click="moveWorkflowFromMenu('archive')"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="21 8 21 21 3 21 3 8" />
+                <rect
+                  x="1"
+                  y="3"
+                  width="22"
+                  height="5"
+                />
+                <line
+                  x1="10"
+                  y1="12"
+                  x2="14"
+                  y2="12"
+                />
+              </svg>
+              Archive
+            </button>
+            <button
               class="wf-context-item danger"
               :class="{ dark: isDark }"
               @click="deleteWorkflowFromMenu"
@@ -274,15 +399,6 @@
             </button>
           </div>
         </Teleport>
-
-        <div
-          v-if="availableWorkflows.length === 0"
-          class="picker-empty"
-        >
-          <p class="picker-empty-text">
-            No workflows saved yet
-          </p>
-        </div>
       </div>
 
       <!-- Node palette (shown when a tab is active and picker is closed) -->
@@ -298,7 +414,7 @@
 import { ref, onMounted, computed } from 'vue';
 import WorkflowNodePalette from './workflow/WorkflowNodePalette.vue';
 import { ipcRenderer } from 'electron';
-import type { WorkflowListItem } from './workflow/types';
+import type { WorkflowListItem, WorkflowStatus } from './workflow/types';
 
 const props = defineProps<{
   isDark: boolean;
@@ -310,6 +426,7 @@ const emit = defineEmits<{
   'workflow-closed':    [workflowId: string];
   'workflow-created':   [workflowId: string, workflowName: string];
   'workflow-deleted':   [workflowId: string];
+  'workflow-moved':     [workflowId: string, newStatus: WorkflowStatus];
 }>();
 
 interface OpenTab {
@@ -321,6 +438,8 @@ const openTabs = ref<OpenTab[]>([]);
 const activeTabId = ref<string | null>(null);
 const showingPicker = ref(false);
 const availableWorkflows = ref<WorkflowListItem[]>([]);
+const searchFilter = ref('');
+const expandedGroups = ref(new Set<string>(['production', 'draft']));
 let nextNewId = 1;
 
 // Drag-and-drop state
@@ -369,6 +488,26 @@ const contextMenu = ref<{ visible: boolean; x: number; y: number; workflow: Work
   visible: false, x: 0, y: 0, workflow: null,
 });
 
+// Computed: filtered and grouped workflows
+const filteredWorkflows = computed(() => {
+  const q = searchFilter.value.trim().toLowerCase();
+  if (!q) return availableWorkflows.value;
+  return availableWorkflows.value.filter(wf => wf.name.toLowerCase().includes(q));
+});
+
+const groups = computed(() => {
+  const statusGroups: { key: WorkflowStatus; label: string }[] = [
+    { key: 'production', label: 'Production' },
+    { key: 'draft', label: 'Draft' },
+    { key: 'archive', label: 'Archive' },
+  ];
+
+  return statusGroups.map(g => ({
+    ...g,
+    workflows: filteredWorkflows.value.filter(wf => wf.status === g.key),
+  }));
+});
+
 onMounted(async() => {
   await loadWorkflowList();
 });
@@ -411,6 +550,14 @@ function togglePicker() {
   }
 }
 
+function toggleGroup(key: string) {
+  if (expandedGroups.value.has(key)) {
+    expandedGroups.value.delete(key);
+  } else {
+    expandedGroups.value.add(key);
+  }
+}
+
 function openWorkflow(id: string, name: string) {
   // Don't open duplicate tabs
   const existing = openTabs.value.find(t => t.id === id);
@@ -432,15 +579,6 @@ async function createNewWorkflow() {
   activateTab(id);
 }
 
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch {
-    return '';
-  }
-}
-
 function showContextMenu(event: MouseEvent, wf: WorkflowListItem) {
   contextMenu.value = { visible: true, x: event.clientX, y: event.clientY, workflow: wf };
 }
@@ -456,7 +594,20 @@ function renameWorkflow() {
 
   // Open the workflow so the user can rename via settings
   openWorkflow(wf.id, wf.name);
-  // Emit activated so AgentEditor loads it, then the user can use the gear to rename
+}
+
+async function moveWorkflowFromMenu(targetStatus: WorkflowStatus) {
+  const wf = contextMenu.value.workflow;
+  hideContextMenu();
+  if (!wf) return;
+
+  try {
+    await ipcRenderer.invoke('workflow-move', wf.id, targetStatus);
+    emit('workflow-moved', wf.id, targetStatus);
+    await loadWorkflowList();
+  } catch (err) {
+    console.error('[WorkflowPane] Failed to move workflow:', err);
+  }
 }
 
 async function deleteWorkflowFromMenu() {
@@ -657,75 +808,151 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 
 /* ── Picker ── */
 .workflow-picker {
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.picker-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--bg-surface);
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-  color: var(--text-secondary);
-}
-
-.picker-card:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-surface-alt);
-}
-
-.picker-card-create {
-  border-style: dashed;
-  color: var(--text-info);
-}
-
-.picker-card-text {
-  font-size: var(--fs-code);
-  font-weight: var(--weight-medium);
-}
-
-.picker-card-info {
+  padding: 6px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 0;
+}
+
+/* ── Search ── */
+.wf-search-input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
+  font-size: var(--fs-body-sm);
+  font-family: inherit;
+  outline: none;
+  margin-bottom: 4px;
+  box-sizing: border-box;
+}
+
+.wf-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.wf-search-input:focus {
+  border-color: var(--border-strong);
+}
+
+/* ── Create button ── */
+.wf-create-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px dashed var(--border-default);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-info);
+  font-size: var(--fs-body-sm);
+  font-family: inherit;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+.wf-create-btn:hover {
+  border-color: var(--text-info);
+  background: var(--bg-hover);
+}
+
+/* ── Group ── */
+.wf-group {
+  margin-bottom: 2px;
+}
+
+.wf-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: var(--fs-body-sm);
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.wf-group-header:hover {
+  background: var(--bg-hover);
+}
+
+.wf-group-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.wf-group-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.wf-group-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.wf-group-dot.production {
+  background: var(--status-success);
+}
+
+.wf-group-dot.draft {
+  background: var(--status-warning);
+}
+
+.wf-group-dot.archive {
+  background: var(--text-muted);
+}
+
+.wf-group-label {
   flex: 1;
 }
 
-.picker-card-name {
-  font-size: var(--fs-code);
-  font-weight: var(--weight-medium);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.picker-card-date {
-  font-size: var(--fs-body-sm);
+.wf-group-count {
+  font-size: var(--fs-caption);
   color: var(--text-muted);
 }
 
-.picker-card.dark .picker-card-date {
+/* ── List items ── */
+.wf-group-items {
+  padding-left: 8px;
+}
+
+.wf-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
   color: var(--text-secondary);
 }
 
-.picker-empty {
-  padding: 24px 16px;
-  text-align: center;
+.wf-list-item:hover {
+  background: var(--bg-hover);
 }
 
-.picker-empty-text {
-  font-size: var(--fs-code);
+.wf-list-item svg {
+  flex-shrink: 0;
   color: var(--text-muted);
-  margin: 0;
+}
+
+.wf-list-item-name {
+  font-size: var(--fs-body-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.wf-group-empty {
+  padding: 4px 8px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-style: italic;
 }
 </style>
 
@@ -743,7 +970,7 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 .wf-context-menu {
   position: fixed;
   z-index: 9999;
-  min-width: 140px;
+  min-width: 160px;
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: 6px;
