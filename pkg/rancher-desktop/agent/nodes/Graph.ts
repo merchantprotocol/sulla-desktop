@@ -1339,33 +1339,10 @@ export class Graph<TState = BaseThreadState> {
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subWfLabel });
 
         try {
-          // Load the sub-workflow definition from disk
-          const fs = await import('fs');
-          const path = await import('path');
-          const { resolveSullaWorkflowsDir } = await import('@pkg/agent/utils/sullaPaths');
-          const workflowsDir = resolveSullaWorkflowsDir();
-
-          let subDefinition: any = null;
-          const yaml = await import('yaml');
-          const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
-
-          for (const entry of entries) {
-            if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
-            try {
-              const fp = path.join(workflowsDir, entry.name);
-              const raw = fs.readFileSync(fp, 'utf-8');
-              const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
-
-              if (parsed.id === step.workflowId) {
-                subDefinition = parsed;
-                break;
-              }
-            } catch { /* skip */ }
-          }
-
-          if (!subDefinition) {
-            throw new Error(`Sub-workflow not found: ${ step.workflowId }`);
-          }
+          // Load the sub-workflow definition via the registry (scans production dir)
+          const { getWorkflowRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
+          const subRegistry = getWorkflowRegistry();
+          const subDefinition = subRegistry.loadWorkflow(step.workflowId);
 
           // Save parent workflow onto a stack
           const parentPlaybook = meta.activeWorkflow;
@@ -1397,24 +1374,10 @@ export class Graph<TState = BaseThreadState> {
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: transferLabel });
 
         try {
-          // Load the target workflow definition from disk
-          const fs = await import('fs');
-          const path = await import('path');
-          const { resolveSullaWorkflowsDir } = await import('@pkg/agent/utils/sullaPaths');
-          const workflowsDir = resolveSullaWorkflowsDir();
-
-          let targetDefinition: any;
-          const yamlPath = path.join(workflowsDir, `${ step.targetWorkflowId }.yaml`);
-          const jsonPath = path.join(workflowsDir, `${ step.targetWorkflowId }.json`);
-
-          if (fs.existsSync(yamlPath)) {
-            const yaml = await import('yaml');
-            targetDefinition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
-          } else if (fs.existsSync(jsonPath)) {
-            targetDefinition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-          } else {
-            throw new Error(`Target workflow not found: ${ step.targetWorkflowId }`);
-          }
+          // Load the target workflow definition via the registry (scans production dir)
+          const { getWorkflowRegistry: getTransferRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
+          const transferRegistry = getTransferRegistry();
+          const targetDefinition = transferRegistry.loadWorkflow(step.targetWorkflowId);
 
           // Mark the transfer node as completed
           this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: transferLabel, output: { transferred: step.targetWorkflowId } });

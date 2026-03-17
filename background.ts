@@ -40,7 +40,7 @@ import { Snapshot, SnapshotDialog } from '@pkg/main/snapshots/types';
 import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
 import { submitErrorReport } from '@pkg/main/errorReporter';
-import { hookSullaEnd, sullaEnd, onMainProxyLoad, markSullaRestarting } from '@pkg/sulla';
+import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { spawnFile } from '@pkg/utils/childProcess';
@@ -741,7 +741,6 @@ let isRestarting = false;
 mainEvents.on('restarting', () => {
   console.log('[Shutdown] background.ts received "restarting" event — setting isRestarting=true');
   isRestarting = true;
-  markSullaRestarting();
 });
 
 Electron.app.on('before-quit', async(event) => {
@@ -773,16 +772,7 @@ Electron.app.on('before-quit', async(event) => {
   // SULLA DESKTOP - END
   /// /////////////////////////////////////////////////////////////////////////////
 
-  if (isRestarting) {
-    // Restart: skip container/VM teardown so the app relaunches fast
-    console.log('[Shutdown] RESTART PATH — skipping k8smanager.stop(), extensions/shutdown, shutdown-integrations');
-    gone = true;
-    Electron.app.quit();
-
-    return;
-  }
-
-  console.log('[Shutdown] FULL QUIT PATH — stopping k8smanager, extensions, integrations');
+  console.log(`[Shutdown] ${ isRestarting ? 'RESTART' : 'FULL QUIT' } PATH — stopping k8smanager, extensions, integrations`);
   try {
     console.log('[Shutdown] calling extensions/shutdown...');
     await mainEvents.tryInvoke('extensions/shutdown');

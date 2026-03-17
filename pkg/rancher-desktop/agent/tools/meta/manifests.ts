@@ -79,12 +79,12 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./remove_observational_memory'),
   },
   {
-    name:        'meta_search',
-    description: 'Full-text search across project files using QMD indexing. Searches file contents and filenames in a directory. Automatically indexes on first search.',
+    name:        'file_search',
+    description: 'Fast semantic search across any directory. Faster and more comprehensive than find or grep — use this as your default search tool. Searches file contents and filenames using QMD vector indexing. Automatically indexes on first search.',
     category:    'meta',
     schemaDef:   {
-      query:   { type: 'string', description: 'Search query — keywords to match against file contents and names.' },
-      dirPath: { type: 'string', description: 'Absolute path to the directory to search in.' },
+      query:   { type: 'string', description: 'Search query — keywords, concepts, or questions to match against file contents and names.' },
+      dirPath: { type: 'string', optional: true, description: 'Absolute path to the directory to search in. Defaults to the user home directory if not provided.' },
       limit:   { type: 'number', optional: true, description: 'Maximum number of results to return (default 20).' },
       reindex: { type: 'boolean', optional: true, description: 'Force re-index the directory before searching.' },
     },

@@ -47,7 +47,7 @@ The user messages are your source of truth for objective, constraints, and conte
 
 **After every tool call, you MUST summarize the key findings in your own words as part of your response.** This is the ONLY way to retain context across cycles. For example:
 - After reading a file: "Found the config at /path/file.ts — the database host is set to localhost:5432 and uses pool size 10."
-- After searching: "meta_search returned 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
+- After searching: "file_search returned 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
 - After executing a command: "git_status shows 3 modified files on branch feature/xyz: src/a.ts, src/b.ts, src/c.ts."
 
 Always narrate what you learned so your future self can read the conversation history and know what happened.

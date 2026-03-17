@@ -3,10 +3,10 @@ import type { ToolManifest } from '../registry';
 export const workflowToolManifests: ToolManifest[] = [
   {
     name:        'execute_workflow',
-    description: 'Execute a specific workflow by its slug/ID. Available workflows are listed in your system prompt.',
+    description: 'Execute a workflow by its slug (the filename without extension, e.g. "ask-date-time"). Available workflows and their slugs are listed in your system prompt.',
     category:    'meta',
     schemaDef:   {
-      workflowId: { type: 'string', description: 'The workflow slug/ID to execute.' },
+      workflowId: { type: 'string', description: 'The workflow slug to execute. This is the filename without extension (e.g. "ask-date-time", "blog-production-pipeline"). See your system prompt for available slugs.' },
       message:    { type: 'string', optional: true, description: 'Message or payload to pass to the workflow. Defaults to the current user message.' },
       resume:     { type: 'boolean', optional: true, description: 'Resume from the last checkpoint instead of starting fresh. Only set to true when the user explicitly asks to resume a previous run. Default: false.' },
     },
@@ -31,7 +31,7 @@ export const workflowToolManifests: ToolManifest[] = [
     schemaDef:   {
       executionId: { type: 'string', optional: true, description: 'The execution ID to restart from. Omit to list recent executions for a workflow.' },
       nodeId:      { type: 'string', optional: true, description: 'The node ID to restart from. The workflow will re-execute this node and everything after it.' },
-      workflowId:  { type: 'string', optional: true, description: 'The workflow ID. Used to list recent executions when executionId is not provided.' },
+      workflowId:  { type: 'string', optional: true, description: 'The workflow slug (filename without extension). Used to list recent executions when executionId is not provided.' },
     },
     operationTypes: ['execute'],
     loader:         () => import('./restart_from_checkpoint'),

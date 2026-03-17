@@ -123,8 +123,11 @@ export class WorkflowRegistry {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const definition: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-        console.log(`[WorkflowRegistry] Scanning "${ entry.name }": name="${ definition.name }"`);
+        // Attach slug derived from filename — this is what the LLM uses to reference workflows
+        const fileSlug = entry.name.replace(/\.(yaml|json)$/, '');
+        (definition as any)._slug = (definition as any).slug || fileSlug;
 
+        console.log(`[WorkflowRegistry] Scanning "${ entry.name }": name="${ definition.name }", slug="${ (definition as any)._slug }"`);
 
         let matched = false;
         for (const node of definition.nodes) {
@@ -173,13 +176,14 @@ export class WorkflowRegistry {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const parsed: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-        // Match by id, slug, or filename (without extension)
+        // Match by slug or filename (without extension) — never expose raw IDs to the LLM
         const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
+        (parsed as any)._slug = (parsed as any).slug || fileBaseName;
 
         if (
-          parsed.id === workflowId ||
           ((parsed as any).slug && (parsed as any).slug.toLowerCase() === needle) ||
-          fileBaseName.toLowerCase() === needle
+          fileBaseName.toLowerCase() === needle ||
+          parsed.id === workflowId
         ) {
           return parsed;
         }

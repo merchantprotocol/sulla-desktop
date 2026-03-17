@@ -1,10 +1,4 @@
-import * as fs from 'fs';
-import * as path from 'path';
-
-import yaml from 'yaml';
-
 import { BaseTool, ToolResponse } from '../base';
-import { resolveSullaWorkflowsDir } from '@pkg/agent/utils/sullaPaths';
 import { createPlaybookState } from '../../workflow/WorkflowPlaybook';
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
 import type { WorkflowPlaybookState } from '../../workflow/types';
@@ -19,7 +13,7 @@ export class ExecuteWorkflowWorker extends BaseTool {
     if (!workflowId) {
       return {
         successBoolean: false,
-        responseString: 'workflowId is required. Check your available workflows in the system prompt.',
+        responseString: 'workflowId is required. Pass the workflow slug (filename without extension) from your system prompt.',
       };
     }
 
@@ -54,61 +48,17 @@ export class ExecuteWorkflowWorker extends BaseTool {
       };
     }
 
-    // Load the workflow definition from disk (scan by id since filenames are name-slugs)
-    const workflowsDir = resolveSullaWorkflowsDir();
+    // Load the workflow definition via the registry (scans production dir)
     let definition: WorkflowDefinition | null = null;
 
-    // Collect all directories to scan: the root workflows dir plus any subdirectories (production, draft, archive, etc.)
-    const dirsToScan: string[] = [];
-
     try {
-      if (fs.existsSync(workflowsDir)) {
-        dirsToScan.push(workflowsDir);
-        for (const sub of fs.readdirSync(workflowsDir, { withFileTypes: true })) {
-          if (sub.isDirectory() && !sub.name.startsWith('.')) {
-            dirsToScan.push(path.join(workflowsDir, sub.name));
-          }
-        }
-
-        const needle = workflowId.toLowerCase();
-
-        for (const dir of dirsToScan) {
-          if (definition) break;
-          const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-          for (const entry of entries) {
-            if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
-            try {
-              const filePath = path.join(dir, entry.name);
-              const raw = fs.readFileSync(filePath, 'utf-8');
-              const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
-
-              // Match by id, slug, or filename (without extension)
-              const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
-
-              if (
-                parsed.id === workflowId ||
-                (parsed.slug && parsed.slug.toLowerCase() === needle) ||
-                fileBaseName.toLowerCase() === needle
-              ) {
-                definition = parsed;
-                break;
-              }
-            } catch { /* skip unparseable files */ }
-          }
-        }
-      }
+      const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
+      const registry = getWorkflowRegistry();
+      definition = registry.loadWorkflow(workflowId);
     } catch (err) {
       return {
         successBoolean: false,
-        responseString: `Error loading workflow "${ workflowId }": ${ (err as Error).message }`,
-      };
-    }
-
-    if (!definition) {
-      return {
-        successBoolean: false,
-        responseString: `Workflow "${ workflowId }" not found. Check your available workflows in the system prompt.`,
+        responseString: `Workflow "${ workflowId }" not found. Use the slug shown in your system prompt (the filename without extension, e.g. "ask-date-time").`,
       };
     }
 
@@ -145,7 +95,7 @@ export class ExecuteWorkflowWorker extends BaseTool {
               responseString: JSON.stringify({
                 executionId:      resumedState.executionId,
                 originalExecId:   savedState.executionId,
-                workflowId:       definition.id,
+                workflowSlug:     workflowId,
                 workflowName:     definition.name,
                 status:           'resumed',
                 completedNodes:   resumedState.completedNodeIds.length,
@@ -176,7 +126,7 @@ export class ExecuteWorkflowWorker extends BaseTool {
         successBoolean: true,
         responseString: JSON.stringify({
           executionId:  playbook.executionId,
-          workflowId:   definition.id,
+          workflowSlug: workflowId,
           workflowName: definition.name,
           status:       'activated',
           message:      `Workflow "${ definition.name }" activated. The workflow orchestration system has taken over. Do not respond further — the playbook will drive all subsequent steps.`,
