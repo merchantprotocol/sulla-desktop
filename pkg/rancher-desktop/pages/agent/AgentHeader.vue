@@ -239,21 +239,15 @@
             </button>
             <button
               class="more-menu-item"
-              @click="navigateTo('/Integrations')"
+              @click="openModeTab('integrations')"
             >
               Integrations
             </button>
             <button
               class="more-menu-item"
-              @click="navigateTo('/Extensions')"
+              @click="openModeTab('extensions')"
             >
               Extensions
-            </button>
-            <button
-              class="more-menu-item"
-              @click="navigateTo('/Filesystem')"
-            >
-              Files
             </button>
             <div class="more-menu-separator" />
             <button
@@ -535,7 +529,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getExtensionService } from '@pkg/agent';
 import { getAgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
-import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 
 const extensionService = getExtensionService();
 const router = useRouter();
@@ -587,9 +581,11 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
   }
 }
 
-function navigateTo(path: string) {
+function openModeTab(mode: BrowserTabMode) {
   isMoreMenuOpen.value = false;
-  router.push(path);
+  const tab = createTab('about:blank', { mode });
+
+  router.push(`/Browser/${ tab.id }`);
 }
 
 function onRestoreClosedTab(index: number) {
