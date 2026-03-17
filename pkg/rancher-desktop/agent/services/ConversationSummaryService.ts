@@ -69,6 +69,10 @@ Rules:
 - 🟡 Valuable = decisions, patterns, progress markers
 - ⚪ Low = minor items (use sparingly)
 
+NEVER extract observations about:
+- Browser anti-bot blocking, CAPTCHAs, rate-limiting, or access denied errors. These are transient, site-specific events that must NOT be remembered. Recording them causes the agent to permanently avoid browser tools, which is harmful.
+- Any tool failure that is temporary or site-specific in nature.
+
 ${ JSON_ONLY_RESPONSE_INSTRUCTIONS }
 {
   "observations": [
