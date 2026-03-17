@@ -340,7 +340,8 @@ export type PlaybookStepResult =
   | { action: 'workflow_failed'; error: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'wait'; nodeId: string; durationMs: number; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'await_user_input'; nodeId: string; promptText: string; updatedPlaybook: WorkflowPlaybookState }
-  | { action: 'transfer_workflow'; nodeId: string; targetWorkflowId: string; payload: unknown; updatedPlaybook: WorkflowPlaybookState };
+  | { action: 'transfer_workflow'; nodeId: string; targetWorkflowId: string; payload: unknown; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'waiting_for_sub_agents'; blockedNodeIds: string[]; missingUpstream: string[]; updatedPlaybook: WorkflowPlaybookState };
 
 // ── Template resolution ──
 
@@ -434,20 +435,36 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
   console.log(`[Playbook:processNextStep] currentNodeIds=[${ currentNodeIds.join(', ') }], readyNodes=[${ readyNodes.join(', ') }], completedCount=${ completedNodeIds.length }`);
 
   if (readyNodes.length === 0) {
-    // Log diagnostic: why are frontier nodes not ready?
     if (currentNodeIds.length > 0) {
+      // Frontier nodes exist but aren't ready — check WHY
       const reverseEdges = buildReverseEdges(definition);
       const completedSet = new Set(completedNodeIds);
+      const allMissing: string[] = [];
       const diagnostics = currentNodeIds.map(id => {
         const incoming = reverseEdges.get(id) || [];
         const missing = incoming.filter(e => !completedSet.has(e.source)).map(e => e.source);
+        allMissing.push(...missing);
 
         return `  ${ id }: ${ incoming.length } incoming, missing=[${ missing.join(', ') }]`;
       });
-      console.error(`[Playbook:processNextStep] Frontier nodes blocked!\n${ diagnostics.join('\n') }`);
+
+      // If there are missing upstream nodes, the workflow is NOT done —
+      // it's waiting for in-flight sub-agents to complete.
+      if (allMissing.length > 0) {
+        console.log(`[Playbook:processNextStep] Frontier nodes waiting for upstream:\n${ diagnostics.join('\n') }`);
+        return {
+          action:          'waiting_for_sub_agents',
+          blockedNodeIds:  [...currentNodeIds],
+          missingUpstream: [...new Set(allMissing)],
+          updatedPlaybook: playbook,
+        };
+      }
+
+      // All upstream complete but still not ready — something is wrong
+      console.error(`[Playbook:processNextStep] Frontier nodes blocked with no missing upstream!\n${ diagnostics.join('\n') }`);
     }
 
-    // No more nodes to process — workflow is done
+    // Genuinely no more nodes to process — workflow is done
     const now = new Date().toISOString();
     return {
       action:          'workflow_completed',

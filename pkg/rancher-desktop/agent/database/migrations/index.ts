@@ -11,6 +11,7 @@ import { up as up_0014, down as down_0014 } from './0014_add_is_default_to_integ
 import { up as up_0015, down as down_0015 } from './0015_add_disabled_to_workflow_history';
 import { up as up_0016, down as down_0016 } from './0016_create_oauth_tokens_table';
 import { up as up_0017, down as down_0017 } from './0017_create_workflow_checkpoints_table';
+import { up as up_0018, down as down_0018 } from './0018_create_workflow_pending_completions_table';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -25,4 +26,5 @@ export const migrationsRegistry = [
   { name: '0015_add_disabled_to_workflow_history', up: up_0015, down: down_0015 },
   { name: '0016_create_oauth_tokens_table', up: up_0016, down: down_0016 },
   { name: '0017_create_workflow_checkpoints_table', up: up_0017, down: down_0017 },
+  { name: '0018_create_workflow_pending_completions_table', up: up_0018, down: down_0018 },
 ] as const;
