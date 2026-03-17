@@ -58,30 +58,44 @@ export class ExecuteWorkflowWorker extends BaseTool {
     const workflowsDir = resolveSullaWorkflowsDir();
     let definition: WorkflowDefinition | null = null;
 
+    // Collect all directories to scan: the root workflows dir plus any subdirectories (production, draft, archive, etc.)
+    const dirsToScan: string[] = [];
+
     try {
       if (fs.existsSync(workflowsDir)) {
-        const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+        dirsToScan.push(workflowsDir);
+        for (const sub of fs.readdirSync(workflowsDir, { withFileTypes: true })) {
+          if (sub.isDirectory() && !sub.name.startsWith('.')) {
+            dirsToScan.push(path.join(workflowsDir, sub.name));
+          }
+        }
+
         const needle = workflowId.toLowerCase();
 
-        for (const entry of entries) {
-          if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
-          try {
-            const filePath = path.join(workflowsDir, entry.name);
-            const raw = fs.readFileSync(filePath, 'utf-8');
-            const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+        for (const dir of dirsToScan) {
+          if (definition) break;
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
 
-            // Match by id, slug, or filename (without extension)
-            const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
+          for (const entry of entries) {
+            if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+            try {
+              const filePath = path.join(dir, entry.name);
+              const raw = fs.readFileSync(filePath, 'utf-8');
+              const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-            if (
-              parsed.id === workflowId ||
-              (parsed.slug && parsed.slug.toLowerCase() === needle) ||
-              fileBaseName.toLowerCase() === needle
-            ) {
-              definition = parsed;
-              break;
-            }
-          } catch { /* skip unparseable files */ }
+              // Match by id, slug, or filename (without extension)
+              const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
+
+              if (
+                parsed.id === workflowId ||
+                (parsed.slug && parsed.slug.toLowerCase() === needle) ||
+                fileBaseName.toLowerCase() === needle
+              ) {
+                definition = parsed;
+                break;
+              }
+            } catch { /* skip unparseable files */ }
+          }
         }
       }
     } catch (err) {

@@ -740,8 +740,6 @@ export class Graph<TState = BaseThreadState> {
     //   Phase 2: If orchestrator can't answer, escalate to the user.
     if (this.pendingEscalations.length > 0) {
       const esc = this.pendingEscalations[0]; // Process one at a time — pause after each
-      const msgs = (state as any).messages;
-
       if (!esc.orchestratorAttempted) {
         // ── Phase 1: Let the orchestrator try to answer ──
         console.log(`[Graph:Playbook] Sub-agent "${ esc.nodeLabel }" blocked — asking orchestrator to answer: ${ esc.question.slice(0, 200) }`);
@@ -749,15 +747,23 @@ export class Graph<TState = BaseThreadState> {
         esc.orchestratorAttempted = true;
 
         const orchestratorPrompt =
-          `[Workflow: Sub-agent "${ esc.nodeLabel }" has a question]\n` +
+          `[Workflow: Sub-agent "${ esc.nodeLabel }" has a question — YOU MUST ANSWER IT]\n` +
           `The sub-agent is blocked and needs an answer before it can continue.\n\n` +
           `Sub-agent's question:\n${ esc.question }\n\n` +
-          `You are the orchestrator. Based on the workflow context and conversation history, ` +
-          `decide if YOU can answer this question or if it must go to the user.\n\n` +
+          `You are the orchestrator. Your job is to KEEP THIS WORKFLOW MOVING. ` +
+          `Every time the user has to get involved, the entire autonomous system breaks down. ` +
+          `You MUST answer this question yourself using your best judgment, workflow context, conversation history, ` +
+          `and any tools at your disposal (search memory, read files, check projects, etc.).\n\n` +
+          `Make a reasonable decision and move on. Do NOT be precious about getting the "perfect" answer — ` +
+          `a good-enough answer that keeps the workflow running is infinitely better than pausing for the user. ` +
+          `Use sensible defaults. Make executive decisions. That's your job as orchestrator.\n\n` +
+          `ONLY escalate to the user if the question is truly impossible to answer without them — ` +
+          `specifically: personal credentials/passwords, irreversible financial decisions, or questions where ` +
+          `guessing wrong would cause real damage. Preference questions, style choices, naming decisions, ` +
+          `technical trade-offs — YOU decide these. Do not escalate them.\n\n` +
           `Respond with exactly ONE of these XML blocks:\n\n` +
-          `If you CAN answer:\n` +
           `<SUB_AGENT_ANSWER>Your answer here</SUB_AGENT_ANSWER>\n\n` +
-          `If you CANNOT answer (needs human judgment, credentials, or info you don't have):\n` +
+          `Only if truly impossible (credentials, irreversible damage):\n` +
           `<SUB_AGENT_ESCALATE>Brief explanation of what the user needs to decide</SUB_AGENT_ESCALATE>\n\n` +
           `Do NOT use send_channel_message — reply directly with one of the two XML blocks above.`;
 
@@ -766,8 +772,9 @@ export class Graph<TState = BaseThreadState> {
         state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
         (state as any).metadata._muteWsChat = false;
 
-        // Parse the orchestrator's response
-        const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+        // Parse the orchestrator's response (re-read messages after execute — msgs ref is stale)
+        const freshMsgs = (state as any).messages;
+        const lastAssistant = [...freshMsgs].reverse().find((m: any) => m.role === 'assistant');
         const response = lastAssistant?.content ? String(lastAssistant.content) : '';
 
         const answerMatch = /<SUB_AGENT_ANSWER>([\s\S]*?)<\/SUB_AGENT_ANSWER>/i.exec(response);
@@ -808,13 +815,14 @@ export class Graph<TState = BaseThreadState> {
 
       // ── Phase 2: Escalate to user (orchestrator couldn't answer) ──
 
-      // Check if the user has responded since we paused
-      const lastUser = [...msgs].reverse().find((m: any) => m.role === 'user' && !m.content?.startsWith?.('[Workflow'));
-      const lastPauseMsg = [...msgs].reverse().find((m: any) =>
+      // Check if the user has responded since we paused (re-read messages — msgs ref may be stale)
+      const currentMsgs = (state as any).messages;
+      const lastUser = [...currentMsgs].reverse().find((m: any) => m.role === 'user' && !m.content?.startsWith?.('[Workflow'));
+      const lastPauseMsg = [...currentMsgs].reverse().find((m: any) =>
         typeof m.content === 'string' && m.content.includes('[Workflow Paused:') && m.content.includes(esc.nodeLabel));
 
-      const lastUserIdx = lastUser ? msgs.indexOf(lastUser) : -1;
-      const lastPauseIdx = lastPauseMsg ? msgs.indexOf(lastPauseMsg) : -1;
+      const lastUserIdx = lastUser ? currentMsgs.indexOf(lastUser) : -1;
+      const lastPauseIdx = lastPauseMsg ? currentMsgs.indexOf(lastPauseMsg) : -1;
 
       if (lastUserIdx > lastPauseIdx && lastPauseIdx >= 0) {
         // User has responded — consume the escalation and re-launch the agent
@@ -846,9 +854,13 @@ export class Graph<TState = BaseThreadState> {
         });
 
         // Tell the orchestrator to surface this to the user
-        const pauseMsg = `[Workflow Paused: Sub-agent "${ esc.nodeLabel }" is blocked and needs user input]\n` +
+        const pauseMsg = `[Workflow Paused: Sub-agent "${ esc.nodeLabel }" requires user input — LAST RESORT]\n` +
           `${ esc.question }\n\n` +
-          `The orchestrator could not answer this question. Tell the user what the agent needs. The workflow is paused until the user responds.`;
+          `The orchestrator exhausted all options and could not answer this autonomously. ` +
+          `This should be rare — it means the question involves credentials, irreversible decisions, or information only the user has. ` +
+          `You MUST relay this question to the user using your AGENT_BLOCKED wrapper format. ` +
+          `Present the sub-agent's question clearly and concisely, then end your response with the <AGENT_BLOCKED> wrapper so the system detects it as a question requiring user input. ` +
+          `The workflow is paused until the user responds.`;
 
         this.injectWorkflowMessage(state, pauseMsg);
         state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
@@ -1245,7 +1257,7 @@ export class Graph<TState = BaseThreadState> {
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subWfLabel });
 
         try {
-          // Load the sub-workflow definition from disk
+          // Load the sub-workflow definition from disk (scan root + subdirectories)
           const fs = await import('fs');
           const path = await import('path');
           const { resolveSullaWorkflowsDir } = await import('@pkg/agent/utils/sullaPaths');
@@ -1253,20 +1265,31 @@ export class Graph<TState = BaseThreadState> {
 
           let subDefinition: any = null;
           const yaml = await import('yaml');
-          const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
 
-          for (const entry of entries) {
-            if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
-            try {
-              const fp = path.join(workflowsDir, entry.name);
-              const raw = fs.readFileSync(fp, 'utf-8');
-              const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+          const dirsToScan = [workflowsDir];
+          for (const sub of fs.readdirSync(workflowsDir, { withFileTypes: true })) {
+            if (sub.isDirectory() && !sub.name.startsWith('.')) {
+              dirsToScan.push(path.join(workflowsDir, sub.name));
+            }
+          }
 
-              if (parsed.id === step.workflowId) {
-                subDefinition = parsed;
-                break;
-              }
-            } catch { /* skip */ }
+          for (const dir of dirsToScan) {
+            if (subDefinition) break;
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+            for (const entry of entries) {
+              if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+              try {
+                const fp = path.join(dir, entry.name);
+                const raw = fs.readFileSync(fp, 'utf-8');
+                const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+
+                if (parsed.id === step.workflowId) {
+                  subDefinition = parsed;
+                  break;
+                }
+              } catch { /* skip */ }
+            }
           }
 
           if (!subDefinition) {
@@ -1303,22 +1326,35 @@ export class Graph<TState = BaseThreadState> {
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: transferLabel });
 
         try {
-          // Load the target workflow definition from disk
+          // Load the target workflow definition from disk (scan root + subdirectories)
           const fs = await import('fs');
           const path = await import('path');
           const { resolveSullaWorkflowsDir } = await import('@pkg/agent/utils/sullaPaths');
           const workflowsDir = resolveSullaWorkflowsDir();
 
-          let targetDefinition: any;
-          const yamlPath = path.join(workflowsDir, `${ step.targetWorkflowId }.yaml`);
-          const jsonPath = path.join(workflowsDir, `${ step.targetWorkflowId }.json`);
+          const dirsToScan = [workflowsDir];
+          for (const sub of fs.readdirSync(workflowsDir, { withFileTypes: true })) {
+            if (sub.isDirectory() && !sub.name.startsWith('.')) {
+              dirsToScan.push(path.join(workflowsDir, sub.name));
+            }
+          }
 
-          if (fs.existsSync(yamlPath)) {
-            const yaml = await import('yaml');
-            targetDefinition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
-          } else if (fs.existsSync(jsonPath)) {
-            targetDefinition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-          } else {
+          let targetDefinition: any;
+          for (const dir of dirsToScan) {
+            const yamlPath = path.join(dir, `${ step.targetWorkflowId }.yaml`);
+            const jsonPath = path.join(dir, `${ step.targetWorkflowId }.json`);
+
+            if (fs.existsSync(yamlPath)) {
+              const yaml = await import('yaml');
+              targetDefinition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+              break;
+            } else if (fs.existsSync(jsonPath)) {
+              targetDefinition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+              break;
+            }
+          }
+
+          if (!targetDefinition) {
             throw new Error(`Target workflow not found: ${ step.targetWorkflowId }`);
           }
 
