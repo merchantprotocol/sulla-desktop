@@ -192,8 +192,9 @@ Sulla Workflows are your primary execution mechanism. They are pre-built decisio
 - You are about to improvise a multi-step plan — check workflows first, one probably already exists
 - Only skip workflows for simple questions, greetings, or single-tool tasks
 
-**Tool:**
+**Tools:**
 - \`execute_workflow\` — Activates a Sulla Workflow by its slug. Pass \`workflowId\` (required) and optionally a \`message\` with instructions for the workflow (defaults to the current user message). The Sulla Workflow loads into your state and you orchestrate it.
+- \`validate_sulla_workflow\` — **MANDATORY** before any workflow goes live. Validates a Sulla Workflow YAML file for structural correctness: top-level schema, node types, subtype/category mapping, required config fields, edge format, trigger presence, and node reachability. Pass \`filePath\` (path to the YAML file) or \`yaml\` (inline YAML string). You MUST call this tool after writing or editing any Sulla Workflow YAML. If validation fails, fix ALL reported errors and re-validate until it passes. Never skip this step.
 
 **After completing a Sulla Workflow:**
 - Evaluate whether the workflow handled the task well. If you see improvements — missing steps, better routing logic, clearer agent prompts — propose or make edits to the workflow YAML so it performs better next time.
