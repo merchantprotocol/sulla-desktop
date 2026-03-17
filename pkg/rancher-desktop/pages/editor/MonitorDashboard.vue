@@ -638,9 +638,9 @@
                     </div>
                   </div>
 
-                  <!-- LLM call (thinking) -->
+                  <!-- LLM call (thinking) — only show responses, not requests -->
                   <div
-                    v-else-if="evt.type === 'llm_call'"
+                    v-else-if="evt.type === 'llm_call' && evt.direction !== 'request'"
                     class="live-msg live-msg-thinking"
                   >
                     <div class="live-bubble live-bubble-thinking">
@@ -876,6 +876,7 @@
             >
               <div
                 v-for="(evt, i) in convEvents"
+                v-show="!(evt.type === 'llm_call' && evt.direction === 'request')"
                 :key="i"
                 class="conv-event-row"
                 :class="convEventRowClass(evt.type)"

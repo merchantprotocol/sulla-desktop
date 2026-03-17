@@ -2098,7 +2098,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     if (alreadyRunning) {
       console.log('[Sulla] Services already running — skipping Docker Compose redeploy');
-      this.progressTracker.numeric('Sulla services already running', 64, 100);
+      this.progressTracker.numeric('Sulla services already running', 100, 100);
       markSullaDockerServicesStarted();
       instantiateSullaStart();
       mainEvents.emit('sulla-first-run-complete');
