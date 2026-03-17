@@ -2,7 +2,7 @@
 
 export type WorkflowNodeCategory = 'trigger' | 'agent' | 'routing' | 'flow-control' | 'io';
 
-export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'sulla-desktop' | 'workbench' | 'chat-completions';
+export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'schedule' | 'sulla-desktop' | 'workbench' | 'chat-completions';
 export type AgentNodeSubtype = 'agent' | 'tool-call';
 export type RoutingNodeSubtype = 'router' | 'condition';
 export type FlowControlNodeSubtype = 'wait' | 'loop' | 'parallel' | 'merge' | 'sub-workflow';
@@ -21,6 +21,13 @@ export interface TriggerNodeConfig {
   triggerType:        TriggerNodeSubtype;
   /** Used by the WorkflowRegistry to determine if this workflow should handle a given message */
   triggerDescription: string;
+}
+
+export interface ScheduleTriggerNodeConfig extends TriggerNodeConfig {
+  /** Cron expression (e.g. "0 9 * * 1-5" for weekdays at 9am) */
+  cronExpression: string;
+  /** IANA timezone (e.g. "America/New_York"). Defaults to system timezone. */
+  timezone:       string;
 }
 
 export interface AgentNodeConfig {

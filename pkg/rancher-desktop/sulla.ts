@@ -4,6 +4,7 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { getIntegrationService } from './agent/services/IntegrationService';
 import { getSchedulerService } from '@pkg/agent/services/SchedulerService';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
+import { getWorkflowSchedulerService } from '@pkg/agent/services/WorkflowSchedulerService';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGraphWebSocketService';
 import { SullaIntegrations } from './agent/integrations';
@@ -172,6 +173,10 @@ export async function instantiateSullaStart(): Promise<void> {
     const heartbeatService = getHeartbeatService();
     await heartbeatService.initialize();
     console.log('[Background] HeartbeatService initialized - periodic tasks will run in background');
+
+    const workflowSchedulerService = getWorkflowSchedulerService();
+    await workflowSchedulerService.initialize();
+    console.log('[Background] WorkflowSchedulerService initialized - cron-triggered workflows active');
 
     // Start the chat completions API server
     console.log('[Background] Starting chat completions API server...');
