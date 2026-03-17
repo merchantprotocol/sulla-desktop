@@ -17,8 +17,11 @@ export class SendChannelMessageWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { channel, message, sender_id, sender_channel } = input;
-    const replyChannel = sender_channel || sender_id || '';
+    const wsChannel: string = (this.state as any)?.metadata?.wsChannel || 'unknown';
+    const channel = input.target_channel || input.channel;
+    const message = input.message;
+    const sender_id = wsChannel;
+    const replyChannel = wsChannel;
 
     try {
       const { getWebSocketClientService } = await import('../../services/WebSocketClientService');

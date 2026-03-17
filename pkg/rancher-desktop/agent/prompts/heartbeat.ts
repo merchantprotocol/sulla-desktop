@@ -13,7 +13,7 @@ You are part of a network of agents that communicate over WebSocket channels. Be
 
 **Your channel:** \`heartbeat\`
 
-**Communication tool:** Use **send_channel_message** to send a message to any channel. Always include your \`sender_id\` ("heartbeat") and \`sender_channel\` ("heartbeat") so the receiver knows where to reply.
+**Communication tool:** Use **send_channel_message** with the \`target_channel\` to send a message to any channel. Your sender identity is auto-populated from your channel state.
 
 **Critical rules:**
 - \`send_channel_message\` is **fire-and-forget**. After sending, continue your work normally.

@@ -166,7 +166,7 @@ export class ActiveAgentsRegistry {
       ``,
       ...lines,
       ``,
-      `To message another agent, use the **send_channel_message** tool with the target channel name, your \`sender_id\`, and your \`sender_channel\`.`,
+      `To message another agent, use the **send_channel_message** tool with the \`target_channel\`. Your sender identity is auto-populated from your channel state.`,
       ``,
       `**Critical rules:**`,
       `- \`send_channel_message\` is **fire-and-forget**. After sending, continue your work normally.`,
