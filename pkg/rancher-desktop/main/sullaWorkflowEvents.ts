@@ -18,6 +18,20 @@ import Logging from '@pkg/utils/logging';
 import type { WorkflowDefinition, WorkflowStatus } from '@pkg/pages/editor/workflow/types';
 
 const console = Logging.background;
+
+/**
+ * Refresh WorkflowSchedulerService schedules.
+ * Uses dynamic import to avoid bundling the service into the main process at startup.
+ */
+function refreshWorkflowSchedules(): void {
+  import('@pkg/agent/services/WorkflowSchedulerService')
+    .then(({ getWorkflowSchedulerService }) => {
+      getWorkflowSchedulerService().refresh();
+    })
+    .catch((err) => {
+      console.warn('[Sulla] Failed to refresh workflow schedules:', err);
+    });
+}
 const ipcMainProxy = getIpcMainProxy(console);
 
 const WORKFLOW_SUBFOLDERS: WorkflowStatus[] = ['draft', 'production', 'archive'];
@@ -191,6 +205,9 @@ export function initSullaWorkflowEvents(): void {
 
     console.log(`[Sulla] Workflow saved: ${ path.basename(newFilePath) } (id: ${ workflow.id })`);
 
+    // Refresh workflow schedules in case a schedule trigger was added/changed
+    refreshWorkflowSchedules();
+
     return true;
   });
 
@@ -204,6 +221,8 @@ export function initSullaWorkflowEvents(): void {
     } else {
       console.log(`[Sulla] Workflow not found for deletion: ${ workflowId }`);
     }
+
+    refreshWorkflowSchedules();
 
     return true;
   });
@@ -227,6 +246,9 @@ export function initSullaWorkflowEvents(): void {
     fs.renameSync(found.filePath, newFilePath);
 
     console.log(`[Sulla] Workflow moved: ${ path.basename(found.filePath) } (${ found.status } -> ${ targetStatus })`);
+
+    // Refresh schedules when workflows move to/from production
+    refreshWorkflowSchedules();
 
     return { success: true, newStatus: targetStatus };
   });

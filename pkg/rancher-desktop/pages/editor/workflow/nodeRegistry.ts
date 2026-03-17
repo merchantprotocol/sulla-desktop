@@ -24,6 +24,8 @@ const ICONS = {
 
   sullaDesktop: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
 
+  schedule: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/><path d="M17.7 17.7l2.8 2.8"/></svg>',
+
   chatCompletions: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
 
   agent: '', // Uses <img> with robot-512-nobg.png
@@ -77,6 +79,15 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     iconSvg:       ICONS.heartbeat,
     defaultLabel:  'Heartbeat Trigger',
     defaultConfig: () => ({ triggerType: 'heartbeat', triggerDescription: '' }),
+  },
+  {
+    subtype:       'schedule',
+    category:      'trigger',
+    label:         'Schedule',
+    description:   'Cron-based recurring schedule',
+    iconSvg:       ICONS.schedule,
+    defaultLabel:  'Schedule Trigger',
+    defaultConfig: () => ({ triggerType: 'schedule', triggerDescription: '', cronExpression: '', timezone: '' }),
   },
   {
     subtype:       'sulla-desktop',

@@ -378,6 +378,7 @@ function resolveTemplate(
 /**
  * Node subtypes that cannot run in parallel — they require orchestrator
  * attention, user interaction, or impose temporal constraints.
+ * Used to prevent these subtypes from being added downstream of a parallel node.
  */
 export const NON_PARALLELIZABLE_SUBTYPES: ReadonlySet<WorkflowNodeSubtype> = new Set([
   'router',
@@ -389,7 +390,7 @@ export const NON_PARALLELIZABLE_SUBTYPES: ReadonlySet<WorkflowNodeSubtype> = new
 /**
  * Node subtypes that are safe to execute concurrently via Promise.allSettled.
  */
-function isParallelizable(subtype: WorkflowNodeSubtype): boolean {
+export function isParallelizable(subtype: WorkflowNodeSubtype): boolean {
   return !NON_PARALLELIZABLE_SUBTYPES.has(subtype);
 }
 
@@ -478,24 +479,37 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
   }
 
   // ── Parallel batch detection ──
-  // When multiple ready nodes are all parallelizable (agent/tool-call/response/sub-workflow),
-  // batch them into a single spawn_parallel_agents action for concurrent execution.
+  // Batching ONLY happens when ready nodes are direct children of an explicit
+  // `parallel` node.  All other sibling branches run sequentially.
   if (readyNodes.length > 1) {
-    const parallelizableNodes: { nodeId: string; node: WorkflowNodeSerialized }[] = [];
+    const reverse = buildReverseEdges(definition);
+
+    // Check if all ready nodes share a common parent that is a `parallel` node
+    const parallelParentChildren: { nodeId: string; node: WorkflowNodeSerialized }[] = [];
 
     for (const id of readyNodes) {
-      const n = getNode(definition, id);
-      if (n && isParallelizable(n.data.subtype) && (n.data.subtype === 'agent' || n.data.subtype === 'tool-call')) {
-        parallelizableNodes.push({ nodeId: id, node: n });
+      const incoming = reverse.get(id) || [];
+      const hasParallelParent = incoming.some((edge) => {
+        const parent = getNode(definition, edge.source);
+
+        return parent?.data.subtype === 'parallel';
+      });
+
+      if (hasParallelParent) {
+        const n = getNode(definition, id);
+
+        if (n && (n.data.subtype === 'agent' || n.data.subtype === 'tool-call')) {
+          parallelParentChildren.push({ nodeId: id, node: n });
+        }
       }
     }
 
-    // Only batch if we have 2+ parallelizable spawn nodes
-    if (parallelizableNodes.length > 1) {
+    // Only batch if we have 2+ nodes from a parallel parent
+    if (parallelParentChildren.length > 1) {
       const triggerPayload = Object.values(nodeOutputs).find(o => o.category === 'trigger')?.result;
       const spawns: ParallelNodeSpawn[] = [];
 
-      for (const { nodeId: pNodeId, node: pNode } of parallelizableNodes) {
+      for (const { nodeId: pNodeId, node: pNode } of parallelParentChildren) {
         const subtype = pNode.data.subtype;
         const config = pNode.data.config || {};
         const upstreamOutputs = getUpstreamOutputs(definition, pNodeId, nodeOutputs);

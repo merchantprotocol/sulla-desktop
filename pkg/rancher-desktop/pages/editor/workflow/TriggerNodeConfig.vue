@@ -3,6 +3,42 @@
     class="trigger-config"
     :class="{ dark: isDark }"
   >
+    <!-- Schedule-specific fields -->
+    <template v-if="config.triggerType === 'schedule'">
+      <div class="node-field">
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Cron Expression</label>
+        <input
+          class="node-field-input"
+          :class="{ dark: isDark }"
+          placeholder="e.g. 0 9 * * 1-5 (weekdays at 9am)"
+          :value="config.cronExpression || ''"
+          @input="updateField('cronExpression', ($event.target as HTMLInputElement).value)"
+        >
+        <p
+          class="help-text field-hint"
+          :class="{ dark: isDark }"
+        >
+          Format: minute hour day-of-month month day-of-week
+        </p>
+      </div>
+      <div class="node-field">
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Timezone</label>
+        <input
+          class="node-field-input"
+          :class="{ dark: isDark }"
+          placeholder="e.g. America/New_York (empty = system default)"
+          :value="config.timezone || ''"
+          @input="updateField('timezone', ($event.target as HTMLInputElement).value)"
+        >
+      </div>
+    </template>
+
     <div class="node-field">
       <label
         class="node-field-label"
@@ -85,6 +121,11 @@ function updateField(field: string, value: any) {
   resize: vertical;
   font-family: inherit;
   min-height: 60px;
+}
+
+.field-hint {
+  margin-top: 4px;
+  margin-bottom: 0;
 }
 
 .help-section { border-bottom: none; }
