@@ -98,6 +98,19 @@ export class EditorChatInterface {
     // payload shape in Graph.emitPlaybookEvent() must be reflected in both.
     const ws = getWebSocketClientService();
     this.wsUnsub = ws.onMessage(WORKBENCH_CHANNEL, (msg) => {
+      const _d = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : { content: msg.data };
+      const _raw = typeof _d?.content === 'string' ? _d.content : JSON.stringify(_d?.content ?? '');
+      console.log(`[EditorChatInterface] ← message on "${ WORKBENCH_CHANNEL }"`, {
+        type:         msg.type,
+        id:           msg.id,
+        channel:      msg.channel,
+        timestamp:    msg.timestamp,
+        threadId:     _d?.threadId,
+        metadata:     _d?.metadata,
+        contentChars: _raw.length,
+        content:      _raw.slice(0, 100),
+      });
+
       if (msg.type === 'workflow_execution_event' && this.workflowEventHandler) {
         const data = msg.data as any;
         this.workflowEventHandler(data);

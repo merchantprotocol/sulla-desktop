@@ -2774,10 +2774,10 @@ export default defineComponent({
         return;
       }
 
-      // Read agent.yaml content so form can pre-fill
+      // Read config.yaml content so form can pre-fill
       let yamlContent = '';
       try {
-        yamlContent = await ipcRenderer.invoke('filesystem-read-file', `${ agent.path }/agent.yaml`);
+        yamlContent = await ipcRenderer.invoke('filesystem-read-file', `${ agent.path }/config.yaml`);
       } catch { /* ignore */ }
 
       const tab: TabState = reactive({
