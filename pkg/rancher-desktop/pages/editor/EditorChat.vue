@@ -206,9 +206,9 @@
           />
         </div>
 
-        <!-- Assistant / system bubble -->
+        <!-- Assistant / system bubble (skip empty content) -->
         <div
-          v-else
+          v-else-if="msg.content && msg.content.trim()"
           class="bubble assistant-bubble"
           :class="{ dark: isDark }"
         >

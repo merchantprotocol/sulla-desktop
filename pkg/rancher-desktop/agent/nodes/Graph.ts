@@ -309,6 +309,7 @@ export class Graph<TState = BaseThreadState> {
     config:    Record<string, unknown>;
     question:  string;
     threadId?: string;
+    orchestratorAttempted?: boolean; // true after the orchestrator has been asked to answer
   }> = [];
   private isProcessingPlaybook = false;
 
@@ -611,7 +612,12 @@ export class Graph<TState = BaseThreadState> {
     }
 
     // ── Reset canvas and replay all already-completed nodes (triggers + checkpoint nodes) ──
-    this.emitPlaybookEvent(state, 'workflow_started', { workflowId: playbook.workflowId });
+    // Only emit workflow_started once per execution to avoid duplicate chat cards.
+    // The flag is stored on the playbook so it resets on new workflow activations.
+    if (!(playbook as any)._workflowStartedEmitted) {
+      this.emitPlaybookEvent(state, 'workflow_started', { workflowId: playbook.workflowId });
+      (playbook as any)._workflowStartedEmitted = true;
+    }
 
     for (const [nodeId, output] of Object.entries(playbook.nodeOutputs ?? {})) {
       this.emitPlaybookEvent(state, 'node_completed', {
@@ -729,13 +735,80 @@ export class Graph<TState = BaseThreadState> {
     }
 
     // ── Drain pending sub-agent escalations (blocked agents asking questions) ──
-    // Surface blocked agent questions to the USER, not the orchestrator.
-    // The workflow pauses until the user responds.
+    // Two-phase approach:
+    //   Phase 1: Ask the orchestrator if it can answer the sub-agent's question.
+    //   Phase 2: If orchestrator can't answer, escalate to the user.
     if (this.pendingEscalations.length > 0) {
       const esc = this.pendingEscalations[0]; // Process one at a time — pause after each
+      const msgs = (state as any).messages;
+
+      if (!esc.orchestratorAttempted) {
+        // ── Phase 1: Let the orchestrator try to answer ──
+        console.log(`[Graph:Playbook] Sub-agent "${ esc.nodeLabel }" blocked — asking orchestrator to answer: ${ esc.question.slice(0, 200) }`);
+
+        esc.orchestratorAttempted = true;
+
+        const orchestratorPrompt =
+          `[Workflow: Sub-agent "${ esc.nodeLabel }" has a question]\n` +
+          `The sub-agent is blocked and needs an answer before it can continue.\n\n` +
+          `Sub-agent's question:\n${ esc.question }\n\n` +
+          `You are the orchestrator. Based on the workflow context and conversation history, ` +
+          `decide if YOU can answer this question or if it must go to the user.\n\n` +
+          `Respond with exactly ONE of these XML blocks:\n\n` +
+          `If you CAN answer:\n` +
+          `<SUB_AGENT_ANSWER>Your answer here</SUB_AGENT_ANSWER>\n\n` +
+          `If you CANNOT answer (needs human judgment, credentials, or info you don't have):\n` +
+          `<SUB_AGENT_ESCALATE>Brief explanation of what the user needs to decide</SUB_AGENT_ESCALATE>\n\n` +
+          `Do NOT use send_channel_message — reply directly with one of the two XML blocks above.`;
+
+        this.injectWorkflowMessage(state, orchestratorPrompt);
+        (state as any).metadata._muteWsChat = true;
+        state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+        (state as any).metadata._muteWsChat = false;
+
+        // Parse the orchestrator's response
+        const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+        const response = lastAssistant?.content ? String(lastAssistant.content) : '';
+
+        const answerMatch = /<SUB_AGENT_ANSWER>([\s\S]*?)<\/SUB_AGENT_ANSWER>/i.exec(response);
+        const escalateMatch = /<SUB_AGENT_ESCALATE>([\s\S]*?)<\/SUB_AGENT_ESCALATE>/i.exec(response);
+
+        if (answerMatch && !escalateMatch) {
+          // Orchestrator answered — re-launch the sub-agent with the answer
+          const orchestratorAnswer = answerMatch[1].trim();
+          this.pendingEscalations.shift();
+          const augmentedPrompt = `${ esc.prompt }\n\n[The orchestrating agent provided the following answer to your question]\n${ orchestratorAnswer }`;
+          const maxRetries = 3;
+
+          console.log(`[Graph:Playbook] Orchestrator answered blocked agent "${ esc.nodeLabel }" — re-launching with answer: ${ orchestratorAnswer.slice(0, 200) }`);
+
+          this.pendingSubAgents.set(esc.nodeId, {
+            nodeId:    esc.nodeId,
+            nodeLabel: esc.nodeLabel,
+            agentId:   esc.agentId,
+            startedAt: Date.now(),
+          });
+
+          this.executeSubAgentWithRetry(state, esc.nodeId, esc.agentId, augmentedPrompt, esc.config, esc.nodeLabel, maxRetries);
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: esc.nodeId, nodeLabel: esc.nodeLabel, prompt: augmentedPrompt });
+
+          // Narrate what happened so the user sees it
+          const narrateMsg = `[Workflow: Answered sub-agent "${ esc.nodeLabel }"]\n` +
+            `The sub-agent asked: ${ esc.question.slice(0, 300) }\n` +
+            `I answered: ${ orchestratorAnswer.slice(0, 300) }\n\n` +
+            `The sub-agent has been re-launched and is continuing its work.`;
+          this.injectWorkflowMessage(state, narrateMsg);
+          state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+          return state;
+        }
+
+        // Orchestrator can't answer (or response didn't match) — fall through to Phase 2
+        console.log(`[Graph:Playbook] Orchestrator escalated blocked agent "${ esc.nodeLabel }" to user`);
+      }
+
+      // ── Phase 2: Escalate to user (orchestrator couldn't answer) ──
 
       // Check if the user has responded since we paused
-      const msgs = (state as any).messages;
       const lastUser = [...msgs].reverse().find((m: any) => m.role === 'user' && !m.content?.startsWith?.('[Workflow'));
       const lastPauseMsg = [...msgs].reverse().find((m: any) =>
         typeof m.content === 'string' && m.content.includes('[Workflow Paused:') && m.content.includes(esc.nodeLabel));
@@ -775,7 +848,7 @@ export class Graph<TState = BaseThreadState> {
         // Tell the orchestrator to surface this to the user
         const pauseMsg = `[Workflow Paused: Sub-agent "${ esc.nodeLabel }" is blocked and needs user input]\n` +
           `${ esc.question }\n\n` +
-          `Tell the user what the agent needs. The workflow is paused until the user responds.`;
+          `The orchestrator could not answer this question. Tell the user what the agent needs. The workflow is paused until the user responds.`;
 
         this.injectWorkflowMessage(state, pauseMsg);
         state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
@@ -1752,9 +1825,9 @@ export class Graph<TState = BaseThreadState> {
         const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
 
         if (result.contractStatus === 'blocked') {
-          // The sub-agent is asking a question — escalate to the orchestrator
-          // instead of blindly retrying with the same prompt.
-          console.log(`[Graph:Playbook] Sub-agent "${ nodeLabel }" blocked — escalating to orchestrator`);
+          // The sub-agent is asking a question — escalate to the orchestrator first,
+          // and only to the user if the orchestrator can't answer.
+          console.log(`[Graph:Playbook] Sub-agent "${ nodeLabel }" blocked — escalating (orchestrator will attempt to answer first)`);
           this.pendingSubAgents.delete(nodeId);
           this.pendingEscalations.push({
             nodeId,
