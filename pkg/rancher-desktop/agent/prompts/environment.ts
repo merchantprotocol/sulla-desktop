@@ -107,7 +107,7 @@ Your agent codebase is at https://github.com/merchantprotocol/sulla-desktop.
 Architecture and system docs live in the /doc folder.
 
 ### Extensions — Software Marketplace (IMPORTANT)
-You have access to a **rich marketplace of pre-built, pre-configured open-source software** that can be installed with a single tool call. The catalog includes production-grade applications across many categories — project management, CRM, ERP, notifications, social media, cloud storage, email servers, media servers, document tools, smart home, voice AI, and more. New extensions are added regularly.
+You have access to a **rich marketplace of pre-built, pre-configured software** that can be installed with a single tool call. The catalog includes production-grade applications across many categories — project management, CRM, ERP, notifications, social media, cloud storage, email servers, media servers, document tools, smart home, voice AI, and more. New extensions are added regularly.
 
 **Before building something from scratch or suggesting the human install software manually**, call \`list_extension_catalog\` to check if a ready-made extension already exists. Prefer installing an extension over DIY — these are fully configured and launch automatically.
 

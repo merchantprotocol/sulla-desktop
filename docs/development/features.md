@@ -162,6 +162,6 @@ Note:
 
 ### Development
 
-:heavy_check_mark: Open source
+:heavy_check_mark: Source-available (free to use)
 
 :heavy_check_mark: Public roadmap

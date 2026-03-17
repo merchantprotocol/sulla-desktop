@@ -1,7 +1,7 @@
 {
   "name": "sulla-desktop",
   "productName": "Sulla Desktop",
-  "license": "Apache-2.0",
+  "license": "Apache-2.0 WITH Commons-Clause",
   "version": "1.0.0",
   "author": {
     "name": "Jonathon Byrdziak",
