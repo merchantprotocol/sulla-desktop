@@ -747,8 +747,16 @@ const routeHandles = computed(() => {
 }
 
 .workflow-custom-node.exec-completed .node-icon-box {
-  border-color: var(--status-success);
-  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+  border-color: var(--border-strong);
+  box-shadow: none;
+}
+
+.workflow-custom-node.exec-completed .node-icon-img {
+  filter: grayscale(1) brightness(0.45);
+}
+
+.workflow-custom-node.exec-completed .node-icon-svg {
+  color: var(--text-muted);
 }
 
 .workflow-custom-node.exec-failed .node-icon-box {

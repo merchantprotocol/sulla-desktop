@@ -103,12 +103,18 @@ export abstract class BaseModel<T extends ModelAttributes = ModelAttributes> {
     switch (castType) {
     case 'json':
     case 'object':
+      // JSONB columns are already parsed by the pg driver — only attempt
+      // JSON.parse on strings that look like serialised JSON (start with
+      // { or [ or ").  Plain text strings (e.g. node output from agents)
+      // should pass through untouched.
       if (typeof value === 'string') {
-        try {
-          return JSON.parse(value);
-        } catch (err) {
-          console.warn(`Failed to parse JSON for field ${ key }:`, value);
-          return value;
+        const trimmed = value.trimStart();
+        if (trimmed[0] === '{' || trimmed[0] === '[' || trimmed[0] === '"') {
+          try {
+            return JSON.parse(value);
+          } catch {
+            return value;
+          }
         }
       }
       return value;

@@ -35,6 +35,9 @@
       />
     </div>
 
+    <!-- Startup progress overlay -->
+    <StartupOverlay />
+
     <!-- Status Bar Footer -->
     <footer class="agent-footer">
       <div class="agent-footer-left">
@@ -108,6 +111,7 @@ import { computed, reactive, ref, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
+import StartupOverlay from './agent/StartupOverlay.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
