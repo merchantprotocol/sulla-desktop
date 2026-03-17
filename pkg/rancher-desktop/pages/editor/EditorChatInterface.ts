@@ -142,7 +142,16 @@ export class EditorChatInterface {
       // Always keep messages with image data
       if (m.image) return true;
       // Drop assistant/system messages with empty content
-      if (m.role !== 'user' && (!m.content || !m.content.trim())) return false;
+      if (m.role !== 'user' && (!m.content || !m.content.trim())) {
+        console.warn(`⚠️ [EditorChatInterface] EMPTY ${ m.role } message filtered at UI layer — should have been caught earlier`, {
+          id: m.id, role: m.role, kind: m.kind, channelId: m.channelId,
+          threadId: m.threadId, contentLength: m.content?.length ?? 0,
+          contentPreview: JSON.stringify(m.content)?.substring(0, 200),
+          fullMessage: JSON.stringify(m).substring(0, 1000),
+        });
+
+        return false;
+      }
       return true;
     });
     this.messages.value = filtered;
