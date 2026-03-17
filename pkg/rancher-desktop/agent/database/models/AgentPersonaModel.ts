@@ -622,9 +622,22 @@ export class AgentPersonaService {
 
       if (typeof msg.data === 'string') {
         // Skip empty or whitespace-only messages
-        if (!msg.data.trim()) return;
+        if (!msg.data.trim()) {
+          console.warn(`⚠️ [AgentPersonaModel] EMPTY STRING assistant message dropped`, {
+            msgType: msg.type, channel: agentId, threadId: msgThreadId,
+            rawData: JSON.stringify(msg.data), fullMsg: JSON.stringify(msg),
+          });
+
+          return;
+        }
         // Skip raw tool_use JSON that leaked from the LLM response
-        if (msg.data.trimStart().startsWith('{"type":"tool_use"')) return;
+        if (msg.data.trimStart().startsWith('{"type":"tool_use"')) {
+          console.warn(`⚠️ [AgentPersonaModel] LEAKED tool_use JSON dropped (string)`, {
+            msgType: msg.type, channel: agentId, preview: msg.data.substring(0, 200),
+          });
+
+          return;
+        }
         const message: ChatMessage = {
           id:        `${ Date.now() }_ws_${ msg.type }`,
           channelId: agentId,
@@ -632,19 +645,53 @@ export class AgentPersonaService {
           role:      msg.type === 'system_message' ? 'system' : 'assistant',
           content:   msg.data,
         };
+
         this.messages.push(message);
+
         return;
       }
 
       const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+
+      // Warn if msg.data is null/undefined or unexpected type
+      if (!data) {
+        console.warn(`⚠️ [AgentPersonaModel] NULL/MISSING data in assistant message dropped`, {
+          msgType: msg.type, channel: agentId, threadId: msgThreadId,
+          rawData: JSON.stringify(msg.data), dataType: typeof msg.data,
+          fullMsg: JSON.stringify(msg),
+        });
+
+        return;
+      }
+
       // Skip tool_use objects that leaked from the LLM response
-      if (data?.type === 'tool_use') return;
+      if (data?.type === 'tool_use') {
+        console.warn(`⚠️ [AgentPersonaModel] LEAKED tool_use object dropped`, {
+          msgType: msg.type, channel: agentId, toolName: data?.name,
+          preview: JSON.stringify(data).substring(0, 200),
+        });
+
+        return;
+      }
       const content = data?.content !== undefined ? String(data.content) : '';
       if (!content.trim()) {
+        console.warn(`⚠️ [AgentPersonaModel] EMPTY CONTENT assistant message dropped`, {
+          msgType: msg.type, channel: agentId, threadId: msgThreadId,
+          dataKeys: Object.keys(data), rawContent: JSON.stringify(data.content),
+          rawData: JSON.stringify(msg.data).substring(0, 500),
+          fullMsg: JSON.stringify(msg).substring(0, 1000),
+        });
+
         return;
       }
       // Skip if content is raw tool_use JSON
-      if (content.trimStart().startsWith('{"type":"tool_use"')) return;
+      if (content.trimStart().startsWith('{"type":"tool_use"')) {
+        console.warn(`⚠️ [AgentPersonaModel] LEAKED tool_use JSON dropped (object content)`, {
+          msgType: msg.type, channel: agentId, preview: content.substring(0, 200),
+        });
+
+        return;
+      }
 
       const roleRaw = data?.role !== undefined ? String(data.role) : (msg.type === 'system_message' ? 'system' : 'assistant');
       const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
@@ -661,7 +708,32 @@ export class AgentPersonaService {
         }
       }
       // After all transformations, skip if content ended up empty
-      if (!finalContent.trim()) return;
+      if (!finalContent.trim()) {
+        console.warn(`⚠️ [AgentPersonaModel] EMPTY after HTML strip — assistant message dropped`, {
+          msgType: msg.type, channel: agentId, kind,
+          originalContent: content.substring(0, 200),
+          fullMsg: JSON.stringify(msg).substring(0, 1000),
+        });
+
+        return;
+      }
+
+      // Warn about suspicious content that IS being displayed — helps trace garbage
+      const trimmed = finalContent.trim();
+      const looksLikeInternalData = /^\s*[\[{]/.test(trimmed) && (
+        trimmed.includes('"type"') || trimmed.includes('"tool_use"') ||
+        trimmed.includes('"function"') || trimmed.includes('"tool_call"')
+      );
+      const isTooShort = trimmed.length > 0 && trimmed.length <= 3 && !/\w/.test(trimmed);
+      if (looksLikeInternalData || isTooShort) {
+        console.warn(`⚠️ [AgentPersonaModel] SUSPICIOUS assistant message ALLOWED through`, {
+          msgType: msg.type, channel: agentId, threadId: msgThreadId,
+          role, kind, contentLength: trimmed.length,
+          contentPreview: trimmed.substring(0, 500),
+          dataKeys: data ? Object.keys(data) : [],
+          fullMsg: JSON.stringify(msg).substring(0, 1000),
+        });
+      }
 
       const message: ChatMessage = {
         id:        `${ Date.now() }_ws_${ msg.type }`,
