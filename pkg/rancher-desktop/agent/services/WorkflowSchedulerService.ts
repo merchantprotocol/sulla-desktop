@@ -34,6 +34,47 @@ const FRONTEND_CHANNEL_ID = 'sulla-desktop';
 const BACKEND_CHANNEL_ID  = 'heartbeat';
 const ACK_TIMEOUT_MS      = 3_000;
 
+// ── Cron builder ──
+
+/**
+ * Convert user-friendly schedule config into a cron expression.
+ *   every-minutes → *\/N * * * *
+ *   hourly        → M * * * *
+ *   daily         → M H * * *
+ *   weekly        → M H * * D
+ *   monthly       → M H D * *
+ */
+function buildCronExpression(config: Record<string, unknown>): string | null {
+  const freq = (config.frequency as string) || 'daily';
+  const minute = Number(config.minute ?? 0);
+  const hour   = Number(config.hour ?? 9);
+
+  switch (freq) {
+  case 'every-minutes': {
+    const interval = Number(config.intervalMinutes ?? 15);
+    if (interval <= 0 || interval > 59) return null;
+
+    return `*/${ interval } * * * *`;
+  }
+  case 'hourly':
+    return `${ minute } * * * *`;
+  case 'daily':
+    return `${ minute } ${ hour } * * *`;
+  case 'weekly': {
+    const dow = Number(config.dayOfWeek ?? 1);
+
+    return `${ minute } ${ hour } * * ${ dow }`;
+  }
+  case 'monthly': {
+    const dom = Number(config.dayOfMonth ?? 1);
+
+    return `${ minute } ${ hour } ${ dom } * *`;
+  }
+  default:
+    return null;
+  }
+}
+
 // ── Singleton ──
 
 let instance: WorkflowSchedulerService | null = null;
@@ -157,10 +198,10 @@ export class WorkflowSchedulerService {
     node: WorkflowNodeSerialized,
   ): boolean {
     const config = node.data.config || {};
-    const cronExpression = (config.cronExpression as string || '').trim();
+    const cronExpression = buildCronExpression(config);
 
     if (!cronExpression) {
-      console.warn(`[WorkflowSchedulerService] Skipping schedule trigger "${ node.data.label }" in "${ definition.name }" — no cron expression`);
+      console.warn(`[WorkflowSchedulerService] Skipping schedule trigger "${ node.data.label }" in "${ definition.name }" — could not build cron from config`);
       return false;
     }
 
@@ -176,7 +217,7 @@ export class WorkflowSchedulerService {
     );
 
     if (!job) {
-      console.warn(`[WorkflowSchedulerService] Invalid cron expression "${ cronExpression }" for "${ definition.name }"`);
+      console.warn(`[WorkflowSchedulerService] Invalid cron "${ cronExpression }" for "${ definition.name }"`);
       return false;
     }
 
@@ -242,7 +283,7 @@ export class WorkflowSchedulerService {
       ``,
       `Name: ${ definition.name }`,
       `Description: ${ definition.description || 'None' }`,
-      `Schedule: ${ config.cronExpression }`,
+      `Schedule: ${ buildCronExpression(config) || 'unknown' }`,
       `Timezone: ${ timezone }`,
       `Triggered at: ${ formattedTime }`,
       description ? `Trigger description: ${ description }` : '',

@@ -23,11 +23,23 @@ export interface TriggerNodeConfig {
   triggerDescription: string;
 }
 
+export type ScheduleFrequency = 'every-minutes' | 'hourly' | 'daily' | 'weekly' | 'monthly';
+
 export interface ScheduleTriggerNodeConfig extends TriggerNodeConfig {
-  /** Cron expression (e.g. "0 9 * * 1-5" for weekdays at 9am) */
-  cronExpression: string;
-  /** IANA timezone (e.g. "America/New_York"). Defaults to system timezone. */
-  timezone:       string;
+  /** How often the workflow runs */
+  frequency:     ScheduleFrequency;
+  /** For 'every-minutes': interval in minutes (e.g. 5, 15, 30) */
+  intervalMinutes: number;
+  /** Hour of day (0-23) — used by daily/weekly/monthly */
+  hour:          number;
+  /** Minute of hour (0-59) — used by daily/weekly/monthly/hourly */
+  minute:        number;
+  /** Day of week (0=Sun .. 6=Sat) — used by weekly */
+  dayOfWeek:     number;
+  /** Day of month (1-31) — used by monthly */
+  dayOfMonth:    number;
+  /** IANA timezone (e.g. "America/New_York"). Empty = system default. */
+  timezone:      string;
 }
 
 export interface AgentNodeConfig {
