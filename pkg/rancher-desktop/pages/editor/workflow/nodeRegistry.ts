@@ -87,7 +87,7 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     description:   'Cron-based recurring schedule',
     iconSvg:       ICONS.schedule,
     defaultLabel:  'Schedule Trigger',
-    defaultConfig: () => ({ triggerType: 'schedule', triggerDescription: '', cronExpression: '', timezone: '' }),
+    defaultConfig: () => ({ triggerType: 'schedule', triggerDescription: '', frequency: 'daily', intervalMinutes: 15, hour: 9, minute: 0, dayOfWeek: 1, dayOfMonth: 1, timezone: '' }),
   },
   {
     subtype:       'sulla-desktop',
