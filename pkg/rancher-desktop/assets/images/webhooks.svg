@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#C73A63"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Wh</text>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M8.684 9.62a5 5 0 117.646-1.243l-1.732-1a3 3 0 10-4.108 1.092l.876.506L6.732 17A2 2 0 115 16l3.684-6.38z"/><path d="M13.732 4.877a2 2 0 10-1.732 3l4.634 8.026.866-.5a3 3 0 11-1.098 4.098l-1.732 1a5 5 0 102.746-7.244l-3.684-6.38a2 2 0 000-2z"/><path d="M9.9 19A5 5 0 115 13v2a3 3 0 103 3.01V17h9.268a2 2 0 110 2H9.9z"/></svg>

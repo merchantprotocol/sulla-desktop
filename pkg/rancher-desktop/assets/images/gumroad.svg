@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#FF90E8"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#000">Gm</text>
-</svg>
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" fill-rule="evenodd" clip-rule="evenodd" stroke-linejoin="round" stroke-miterlimit="2"><g fill-rule="nonzero"><path d="M256 505.999c138.069 0 249.999-111.93 249.999-250s-111.93-250-250-250S6 117.93 6 256s111.93 250 250 250z" fill="#ff90e8"/><path d="M234.3 381.989c-73.23 0-116.31-58.735-116.31-131.8 0-75.925 47.39-137.53 137.85-137.53 93.334 0 124.924 63.035 126.359 98.85h-67.485c-1.435-20.055-18.67-50.14-60.31-50.14-44.515 0-73.235 38.68-73.235 85.955s28.72 85.96 73.235 85.96c40.205 0 57.44-31.52 64.615-63.04h-64.615V244.46h135.59v131.805h-59.485v-83.095c-4.31 30.085-22.975 88.82-96.21 88.82z"/></g></svg>

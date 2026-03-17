@@ -1,4 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
   <rect width="32" height="32" rx="6" fill="#FF7000"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Mi</text>
+  <path d="M8 12L8 20L12 20L12 12L8 12Z" fill="#fff"/>
+  <path d="M14 8L14 24L18 24L18 8L14 8Z" fill="#fff"/>
+  <path d="M20 10L20 22L24 22L24 10L20 10Z" fill="#fff"/>
 </svg>

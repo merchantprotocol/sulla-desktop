@@ -1,4 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
   <rect width="32" height="32" rx="6" fill="#39594D"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Co</text>
+  <circle cx="10" cy="16" r="4" fill="#fff"/>
+  <circle cx="16" cy="16" r="4" fill="#fff"/>
+  <circle cx="22" cy="16" r="4" fill="#fff"/>
+  <path d="M10 12L22 20M22 12L10 20" stroke="#39594D" stroke-width="2"/>
 </svg>

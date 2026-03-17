@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#9FE870"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#000">Wi</text>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" role="img" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" style="width: 200px; height: 200px; transform-origin: 50% 50%; transform: scaleX(1) scaleY(1) rotate(0deg);"><title>Wise</title><path d="m3.6426 0 3.7383 6.3594-6.6602 6.3613H12.043l1.1816-2.7734H7.4883l3.5879-3.588-2.084-3.5878h9.7324L9.7441 24h3.373L23.2794 0Z" fill="#9FE870" style="fill:#9FE870;stroke:none" stroke="none" class=""/></svg>
