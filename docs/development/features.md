@@ -13,8 +13,8 @@ Note:
 - Items under the [later] milestone and any spillover items from the [next] milestone are targeted for the release after.
 - Items under the [next] and [later] milestones might change based on user feedback, technical challenges, etc.
 
-[next]: https://github.com/sulla-ai/sulla-desktop/projects?query=next
-[later]: https://github.com/sulla-ai/sulla-desktop/projects?query=later
+[next]: https://github.com/merchantprotocol/sulla-desktop/projects?query=next
+[later]: https://github.com/merchantprotocol/sulla-desktop/projects?query=later
 
 ### OS & Platform Support
 
@@ -162,6 +162,6 @@ Note:
 
 ### Development
 
-:heavy_check_mark: Open source
+:heavy_check_mark: Source-available (free to use)
 
 :heavy_check_mark: Public roadmap

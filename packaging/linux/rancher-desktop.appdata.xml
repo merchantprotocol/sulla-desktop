@@ -2,12 +2,12 @@
 <component type="desktop">
   <id>sulla-desktop</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>Apache-2.0</project_license>
+  <project_license>Apache-2.0 WITH Commons-Clause</project_license>
   <name>Sulla Desktop</name>
   <summary>Sulla AI Agent Autonomy on the desktop</summary>
   <description>
     <p>
-      Sulla Desktop is an open-source project to bring AI Agent Autonomy to the desktop
+      Sulla Desktop is a source-available project to bring AI Agent Autonomy to the desktop
     </p>
   </description>
   <provides>
@@ -17,5 +17,5 @@
     <release version="" date=""/>
   </releases>
   <url type="homepage">https://sulladesktop.com/</url>
-  <url type="bugtracker">https://github.com/sulla-ai/sulla-desktop/issues</url>
+  <url type="bugtracker">https://github.com/merchantprotocol/sulla-desktop/issues</url>
 </component>

@@ -19,8 +19,8 @@
 Name:       rancher-desktop
 Version:    0
 Release:    0
-Summary:    Kubernetes and container management on the desktop
-License:    Apache-2.0
+Summary:    AI Agent Autonomy on the desktop
+License:    Apache-2.0 WITH Commons-Clause
 BuildRoot:  %{_tmppath}/%{name}-%{version}-build
 Group:      Development/Tools/Other
 Source0:    %{name}.zip
@@ -156,7 +156,7 @@ Requires: mozilla-nss
 %endif
 
 %description
-Rancher Desktop is an open-source project to bring Kubernetes and container management to the desktop
+Sulla Desktop is a source-available project to bring AI Agent Autonomy to the desktop
 
 %prep
 %setup -c %{name} -n %{name}
