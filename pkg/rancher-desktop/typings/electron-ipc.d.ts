@@ -182,10 +182,11 @@ export interface IpcMainInvokeEvents {
   'tools-list-by-category':        () => { category: string; description: string; tools: { name: string; description: string; operationTypes: string[] }[] }[];
 
   // Workflow CRUD
-  'workflow-list':   () => { id: string; name: string; updatedAt: string }[];
+  'workflow-list':   () => { id: string; name: string; updatedAt: string; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus }[];
   'workflow-get':    (workflowId: string) => any;
   'workflow-save':   (workflow: any) => boolean;
   'workflow-delete': (workflowId: string) => boolean;
+  'workflow-move':   (workflowId: string, targetStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus) => { success: boolean; newStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus };
 
   // Workflow execution
   'workflow-execute':          (workflowId: string, triggerPayload: unknown) => { executionId: string };

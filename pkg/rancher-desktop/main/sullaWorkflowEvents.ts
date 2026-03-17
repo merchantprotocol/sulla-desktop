@@ -1,6 +1,7 @@
 /**
  * Workflow IPC event handlers for the visual workflow editor.
- * Manages CRUD operations for workflow definitions stored as YAML files.
+ * Manages CRUD operations for workflow definitions stored as YAML files
+ * in three subfolders: draft/, production/, archive/.
  *
  * Workflow execution is handled by the agent's graph loop via WorkflowPlaybook —
  * not by these IPC handlers. The frontend triggers workflows by sending messages
@@ -14,15 +15,27 @@ import yaml from 'yaml';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
-import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
+import type { WorkflowDefinition, WorkflowStatus } from '@pkg/pages/editor/workflow/types';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
+
+const WORKFLOW_SUBFOLDERS: WorkflowStatus[] = ['draft', 'production', 'archive'];
 
 function getWorkflowsDir(): string {
   const { resolveSullaWorkflowsDir } = require('@pkg/agent/utils/sullaPaths');
 
   return resolveSullaWorkflowsDir();
+}
+
+function getSubfolderDirs(): Record<WorkflowStatus, string> {
+  const root = getWorkflowsDir();
+
+  return {
+    draft:      path.join(root, 'draft'),
+    production: path.join(root, 'production'),
+    archive:    path.join(root, 'archive'),
+  };
 }
 
 /**
@@ -65,7 +78,7 @@ function workflowIdFromFilename(name: string): string {
 }
 
 /**
- * Find a workflow file by its internal id field (scans all files in directory).
+ * Find a workflow file by its internal id field in a single directory.
  * Returns the file path or null.
  */
 function findWorkflowFileById(dir: string, workflowId: string): string | null {
@@ -85,68 +98,93 @@ function findWorkflowFileById(dir: string, workflowId: string): string | null {
   return null;
 }
 
+/**
+ * Find a workflow file across all three subfolders.
+ * Returns { filePath, status } or null.
+ */
+function findWorkflowFileInSubfolders(workflowId: string): { filePath: string; status: WorkflowStatus } | null {
+  const dirs = getSubfolderDirs();
+
+  for (const status of WORKFLOW_SUBFOLDERS) {
+    const filePath = findWorkflowFileById(dirs[status], workflowId);
+    if (filePath) return { filePath, status };
+  }
+
+  return null;
+}
+
 export function initSullaWorkflowEvents(): void {
-  // List all workflows (returns array of { id, name, updatedAt })
+  // Ensure subfolders exist
+  const dirs = getSubfolderDirs();
+  for (const dir of Object.values(dirs)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  // List all workflows from all subfolders (returns array of { id, name, updatedAt, status })
   ipcMainProxy.handle('workflow-list', async() => {
-    const dir = getWorkflowsDir();
+    const dirs = getSubfolderDirs();
+    const workflows: { id: string; name: string; updatedAt: string; status: WorkflowStatus }[] = [];
 
-    if (!fs.existsSync(dir)) {
-      return [];
-    }
+    for (const status of WORKFLOW_SUBFOLDERS) {
+      const dir = dirs[status];
+      if (!fs.existsSync(dir)) continue;
 
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    const workflows: { id: string; name: string; updatedAt: string }[] = [];
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
 
-    for (const entry of entries) {
-      if (!isWorkflowFile(entry)) {
-        continue;
-      }
-      try {
-        const filePath = path.join(dir, entry.name);
-        const parsed = parseWorkflowFile(filePath);
+      for (const entry of entries) {
+        if (!isWorkflowFile(entry)) continue;
+        try {
+          const filePath = path.join(dir, entry.name);
+          const parsed = parseWorkflowFile(filePath);
 
-        workflows.push({
-          id:        parsed.id || workflowIdFromFilename(entry.name),
-          name:      parsed.name || workflowIdFromFilename(entry.name),
-          updatedAt: parsed.updatedAt || '',
-        });
-      } catch (err) {
-        console.error(`[Sulla] Failed to parse workflow file ${ entry.name }:`, err);
+          workflows.push({
+            id:        parsed.id || workflowIdFromFilename(entry.name),
+            name:      parsed.name || workflowIdFromFilename(entry.name),
+            updatedAt: parsed.updatedAt || '',
+            status,
+          });
+        } catch (err) {
+          console.error(`[Sulla] Failed to parse workflow file ${ entry.name }:`, err);
+        }
       }
     }
 
     return workflows;
   });
 
-  // Get a single workflow by ID (scans by internal id since filenames are name-slugs)
+  // Get a single workflow by ID (searches all subfolders)
   ipcMainProxy.handle('workflow-get', async(_event: unknown, workflowId: string) => {
-    const dir = getWorkflowsDir();
-    const filePath = findWorkflowFileById(dir, workflowId);
+    const found = findWorkflowFileInSubfolders(workflowId);
 
-    if (!filePath) {
+    if (!found) {
       throw new Error(`Workflow not found: ${ workflowId }`);
     }
 
-    return parseWorkflowFile(filePath);
+    const definition = parseWorkflowFile(found.filePath);
+    definition._status = found.status;
+
+    return definition;
   });
 
-  // Save (create or update) a workflow — filename is derived from the workflow name slug
+  // Save (create or update) a workflow — saves in-place if exists, otherwise to draft/
   ipcMainProxy.handle('workflow-save', async(_event: unknown, workflow: any) => {
-    const dir = getWorkflowsDir();
-
-    fs.mkdirSync(dir, { recursive: true });
     workflow.updatedAt = new Date().toISOString();
     if (!workflow.createdAt) {
       workflow.createdAt = workflow.updatedAt;
     }
 
-    // Remove old file if it exists under a different name (handles renames)
-    const oldPath = findWorkflowFileById(dir, workflow.id);
-    const newFilePath = path.join(dir, `${ slugifyWorkflowName(workflow.name) }.yaml`);
+    // Find existing file to determine which subfolder it's in
+    const existing = findWorkflowFileInSubfolders(workflow.id);
+    const targetDir = existing ? path.dirname(existing.filePath) : getSubfolderDirs().draft;
 
-    if (oldPath && oldPath !== newFilePath) {
-      fs.unlinkSync(oldPath);
-      console.log(`[Sulla] Workflow renamed: ${ path.basename(oldPath) } -> ${ path.basename(newFilePath) }`);
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    // Remove old file if it exists under a different name (handles renames)
+    const newFilePath = path.join(targetDir, `${ slugifyWorkflowName(workflow.name) }.yaml`);
+
+    if (existing && existing.filePath !== newFilePath) {
+      fs.unlinkSync(existing.filePath);
+      console.log(`[Sulla] Workflow renamed: ${ path.basename(existing.filePath) } -> ${ path.basename(newFilePath) }`);
     }
 
     fs.writeFileSync(newFilePath, yaml.stringify(workflow, { lineWidth: 0 }), 'utf-8');
@@ -156,19 +194,41 @@ export function initSullaWorkflowEvents(): void {
     return true;
   });
 
-  // Delete a workflow (finds file by internal id)
+  // Delete a workflow (searches all subfolders)
   ipcMainProxy.handle('workflow-delete', async(_event: unknown, workflowId: string) => {
-    const dir = getWorkflowsDir();
-    const filePath = findWorkflowFileById(dir, workflowId);
+    const found = findWorkflowFileInSubfolders(workflowId);
 
-    if (filePath) {
-      fs.unlinkSync(filePath);
-      console.log(`[Sulla] Workflow deleted: ${ path.basename(filePath) } (id: ${ workflowId })`);
+    if (found) {
+      fs.unlinkSync(found.filePath);
+      console.log(`[Sulla] Workflow deleted: ${ path.basename(found.filePath) } (id: ${ workflowId })`);
     } else {
       console.log(`[Sulla] Workflow not found for deletion: ${ workflowId }`);
     }
 
     return true;
+  });
+
+  // Move a workflow between subfolders (draft ↔ production ↔ archive)
+  ipcMainProxy.handle('workflow-move', async(_event: unknown, workflowId: string, targetStatus: WorkflowStatus) => {
+    const found = findWorkflowFileInSubfolders(workflowId);
+
+    if (!found) {
+      throw new Error(`Workflow not found: ${ workflowId }`);
+    }
+
+    if (found.status === targetStatus) {
+      return { success: true, newStatus: targetStatus };
+    }
+
+    const targetDir = getSubfolderDirs()[targetStatus];
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const newFilePath = path.join(targetDir, path.basename(found.filePath));
+    fs.renameSync(found.filePath, newFilePath);
+
+    console.log(`[Sulla] Workflow moved: ${ path.basename(found.filePath) } (${ found.status } -> ${ targetStatus })`);
+
+    return { success: true, newStatus: targetStatus };
   });
 
   // ── Registry dispatch handler ──

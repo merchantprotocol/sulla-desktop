@@ -123,12 +123,8 @@ export class WorkflowRegistry {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const definition: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-        console.log(`[WorkflowRegistry] Scanning "${ entry.name }": name="${ definition.name }", enabled=${ definition.enabled }`);
+        console.log(`[WorkflowRegistry] Scanning "${ entry.name }": name="${ definition.name }"`);
 
-        if (!definition.enabled) {
-          console.log(`[WorkflowRegistry]   → Skipped (disabled)`);
-          continue;
-        }
 
         let matched = false;
         for (const node of definition.nodes) {
@@ -235,8 +231,8 @@ let instance: WorkflowRegistry | null = null;
 
 export function getWorkflowRegistry(): WorkflowRegistry {
   if (!instance) {
-    const { resolveSullaWorkflowsDir } = require('@pkg/agent/utils/sullaPaths');
-    instance = new WorkflowRegistry(resolveSullaWorkflowsDir());
+    const { resolveSullaWorkflowsProductionDir } = require('@pkg/agent/utils/sullaPaths');
+    instance = new WorkflowRegistry(resolveSullaWorkflowsProductionDir());
   }
   return instance;
 }

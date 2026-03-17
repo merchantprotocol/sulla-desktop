@@ -14,6 +14,17 @@ export const workflowToolManifests: ToolManifest[] = [
     loader:         () => import('./execute_workflow'),
   },
   {
+    name:        'validate_sulla_workflow',
+    description: 'Validate a Sulla workflow YAML file for structural correctness before it goes live. Checks top-level schema, node types, subtype/category mapping, required config fields, edge format, trigger presence, and reachability. Use this EVERY time you create or edit a Sulla workflow YAML.',
+    category:    'meta',
+    schemaDef:   {
+      filePath: { type: 'string', optional: true, description: 'Absolute path (or ~/sulla/workflows/...) to the workflow YAML file to validate.' },
+      yaml:     { type: 'string', optional: true, description: 'Inline YAML string to validate (alternative to filePath).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./validate_sulla_workflow'),
+  },
+  {
     name:        'restart_from_checkpoint',
     description: 'Restart a workflow execution from a specific node checkpoint. Use workflowId alone to list recent executions, executionId alone to list checkpoints, or executionId + nodeId to restart from that node.',
     category:    'meta',
