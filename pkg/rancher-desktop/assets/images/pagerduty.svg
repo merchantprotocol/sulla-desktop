@@ -1,4 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#06AC38"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">PD</text>
+<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1071 1554" width="1071" height="1554">
+	<title>pagerduty-svg</title>
+	<style>
+		.s0 { fill: #000000 } 
+	</style>
+	<g id="Layer">
+		<path id="Layer" class="s0" d="m0 1139.5h227.5v413.6h-227.5z"/>
+		<path id="Layer" fill-rule="evenodd" class="s0" d="m1070.5 464.8c0 162.5-66 303.4-194 388.1-117.2 77.8-250.1 88.6-428.4 88.6h-448.1v-941.5h450.1c199.9 0 284.6 10.8 406.7 75.8 132 71.9 213.7 212.8 213.7 389zm-234.4 2c0-187.1-117.2-269.8-351.6-266.9l-257 2v542.6h272.8c191.1 0 335.8-76.8 335.8-277.7z"/>
+	</g>
 </svg>
