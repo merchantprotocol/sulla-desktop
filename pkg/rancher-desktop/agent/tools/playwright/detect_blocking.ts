@@ -40,7 +40,7 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
       /consent\.google/i,
       /accounts\.google\.com.*continue.*search/i,
     ],
-    message: 'Google has detected automated traffic and is serving a CAPTCHA challenge. You MUST stop scraping Google immediately. Wait at least 60 seconds before trying again, or switch to an alternative source (Bing, DuckDuckGo, or a dedicated SEO API).',
+    message: 'Google has detected automated traffic and is serving a CAPTCHA on THIS request. Stop scraping Google Search for now — try an alternative search engine (Bing, DuckDuckGo) or wait 60+ seconds before retrying Google. IMPORTANT: This block is specific to Google Search right now. Other websites and URLs are NOT affected — continue using browser tools normally for any non-Google URL.',
   },
   {
     type:    'rate_limit',
@@ -52,7 +52,7 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
     urlPatterns: [
       /google\.com/i,
     ],
-    message: 'Google is rate-limiting requests (HTTP 429). Back off for at least 2 minutes before retrying. Consider using alternative search engines or spacing out requests.',
+    message: 'Google is rate-limiting THIS request (HTTP 429). Back off from Google for at least 2 minutes, then retry. Try alternative search engines in the meantime. IMPORTANT: This is a Google-specific rate limit — other websites are NOT affected. Continue using browser tools normally for non-Google URLs.',
   },
 
   // ── Cloudflare ──
@@ -69,7 +69,7 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
     urlPatterns: [
       /challenges\.cloudflare\.com/i,
     ],
-    message: 'Cloudflare bot protection is blocking this page. The site requires browser verification that cannot be completed automatically. Try a different source or wait and retry.',
+    message: 'Cloudflare bot protection is blocking THIS specific page. Try a different source for this particular content, or wait and retry. IMPORTANT: This block only affects this specific website — other websites are NOT affected. Continue using browser tools normally for other URLs.',
   },
 
   // ── Generic bot/access blocks ──
@@ -83,7 +83,7 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
       /automated access.*not permitted/i,
       /bot.*detected/i,
     ],
-    message: 'This website has blocked automated access. Switch to a different source for this information.',
+    message: 'This specific website has blocked automated access. Try a different source for this particular content. IMPORTANT: This block only affects this one website — other websites are NOT affected. Continue using browser tools normally for other URLs.',
   },
 
   // ── Generic rate limiting ──
@@ -97,7 +97,7 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
       /try again later/i,
       /request limit/i,
     ],
-    message: 'This website is rate-limiting your requests. Wait at least 60 seconds before retrying.',
+    message: 'This specific website is rate-limiting your requests. Wait at least 60 seconds before retrying this site. IMPORTANT: This rate limit only affects this one website — other websites are NOT affected. Continue using browser tools normally for other URLs.',
   },
 
   // ── hCaptcha / reCAPTCHA ──
@@ -112,7 +112,7 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
       /prove you.*re not a robot/i,
       /i.*m not a robot/i,
     ],
-    message: 'A CAPTCHA challenge is blocking this page. The agent cannot solve CAPTCHAs. Switch to an alternative source or API.',
+    message: 'A CAPTCHA challenge is blocking this specific page. You cannot solve CAPTCHAs, so try an alternative source for this content. IMPORTANT: This block only affects this one website — other websites are NOT affected. Continue using browser tools normally for other URLs.',
   },
 ];
 
@@ -165,8 +165,11 @@ export function wrapWithBlockingWarning(
 
   const warning = [
     `⚠️ **BLOCKING DETECTED: ${ detection.type?.toUpperCase().replace('_', ' ') }** (source: ${ detection.source })`,
+    `[EPHEMERAL — do NOT save this to observational memory or any persistent store. This is a transient, site-specific event.]`,
     ``,
     detection.message,
+    ``,
+    `⚠️ REMINDER: Blocking is ALWAYS site-specific and temporary. NEVER stop using browser tools entirely because one site blocked you. Always attempt browser navigation first — only skip a specific site that is actively blocking you right now. Each new request starts fresh.`,
     ``,
     `--- Original page content below (may be a challenge/error page) ---`,
     ``,
