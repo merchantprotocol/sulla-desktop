@@ -1,4 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#1A82E2"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">SG</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Sendgrid" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #51a9e3;
+      }
+    </style>
+  </defs>
+  <g id="Icon_Updated_Keylines" data-name="Icon, Updated Keylines">
+    <path class="cls-1" d="m21,1h-8c-1.1,0-2,.9-2,2v6c0,1.1.9,2,2,2h6c1.1,0,2,.9,2,2v6c0,1.1.9,2,2,2h6c1.1,0,2-.9,2-2V2c0-.55-.45-1-1-1h-9Z"/>
+    <path class="cls-1" d="m11,31h8c1.1,0,2-.9,2-2v-6c0-1.1-.9-2-2-2h-6c-1.1,0-2-.9-2-2v-6c0-1.1-.9-2-2-2H3c-1.1,0-2,.9-2,2v17c0,.55.45,1,1,1h9Z"/>
+  </g>
 </svg>
