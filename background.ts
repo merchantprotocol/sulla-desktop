@@ -41,6 +41,7 @@ import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { hookSullaEnd, sullaEnd, onMainProxyLoad, markSullaRestarting } from '@pkg/sulla';
+import { initSullaEvents } from '@pkg/main/sullaEvents';
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { spawnFile } from '@pkg/utils/childProcess';
 import getCommandLineArgs from '@pkg/utils/commandLine';
@@ -378,6 +379,10 @@ Electron.app.whenReady().then(async() => {
     httpCommandServer = new HttpCommandServer(new BackgroundCommandWorker());
     await httpCommandServer.init();
     await httpCredentialHelperServer.init();
+
+    // Register Sulla IPC handlers before the UI opens so renderers
+    // never invoke a handler that hasn't been registered yet.
+    initSullaEvents();
 
     await initUI();
     await checkForBackendLock();

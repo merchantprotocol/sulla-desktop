@@ -12,7 +12,6 @@ import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 
 import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
-import { initSullaEvents } from '@pkg/main/sullaEvents';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import { getLlamaCppService } from '@pkg/agent/services/LlamaCppService';
 import * as path from 'path';
@@ -148,9 +147,8 @@ export async function instantiateSullaStart(): Promise<void> {
   // This function serves as the explicit initialization hook
   console.log('[Integrations] Sulla integrations initialized');
 
-  // Initialize Sulla-specific IPC handlers early so they are available
-  // before any async work (windows may open before DB/services are ready).
-  initSullaEvents();
+  // NOTE: initSullaEvents() is now called in background.ts before initUI()
+  // so handlers are registered before any window can invoke them.
 
   // Bootstrap ~/sulla directory structure and clone default repos if needed.
   await bootstrapSullaHome();
