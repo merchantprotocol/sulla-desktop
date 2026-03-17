@@ -71,12 +71,12 @@
         <label
           class="node-field-label"
           :class="{ dark: isDark }"
-        >User Message</label>
+        >Orchestrator Instructions</label>
         <button
           class="var-insert-btn"
           :class="{ dark: isDark }"
           title="Insert variable"
-          @click="openVarMenu('userMessage', $event)"
+          @click="openVarMenu('orchestratorInstructions', $event)"
         >
           <svg
             width="14"
@@ -94,53 +94,14 @@
         </button>
       </div>
       <textarea
-        ref="userMessageRef"
+        ref="orchestratorInstructionsRef"
         class="node-field-input node-field-textarea"
         :class="{ dark: isDark }"
         rows="4"
-        placeholder="Message sent to this agent. Use {{variableName}} to inject upstream outputs..."
-        :value="config.userMessage || ''"
-        @input="onUserMessageChange"
-        @contextmenu.prevent="onTextareaContextMenu('userMessage', $event)"
-      />
-    </div>
-
-    <div class="node-field">
-      <div class="field-header">
-        <label
-          class="node-field-label"
-          :class="{ dark: isDark }"
-        >Before Prompt</label>
-        <button
-          class="var-insert-btn"
-          :class="{ dark: isDark }"
-          title="Insert variable"
-          @click="openVarMenu('beforePrompt', $event)"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <polyline points="16 18 22 12 16 6" />
-            <polyline points="8 6 2 12 8 18" />
-          </svg>
-        </button>
-      </div>
-      <textarea
-        ref="beforePromptRef"
-        class="node-field-input node-field-textarea"
-        :class="{ dark: isDark }"
-        rows="3"
-        placeholder="Instructions for the orchestrator before this agent runs..."
-        :value="config.beforePrompt || ''"
-        @input="onBeforePromptChange"
-        @contextmenu.prevent="onTextareaContextMenu('beforePrompt', $event)"
+        placeholder="Guide the orchestrator on how to deploy this sub-agent. The orchestrator will formulate the actual task message..."
+        :value="config.orchestratorInstructions || ''"
+        @input="onOrchestratorInstructionsChange"
+        @contextmenu.prevent="onTextareaContextMenu('orchestratorInstructions', $event)"
       />
     </div>
 
@@ -188,22 +149,23 @@
         class="help-text"
         :class="{ dark: isDark }"
       >
-        Select a Sulla agent to run at this step. Use <strong>User Message</strong> to specify
-        exactly what gets sent to the agent as its input.
+        Select a Sulla agent to run at this step. The <strong>orchestrator</strong> formulates the
+        actual task message based on your instructions and upstream context.
       </p>
       <p
         class="help-text"
         :class="{ dark: isDark }"
       >
-        <strong>Before Prompt</strong> is shown to the orchestrator before the agent fires.
-        <strong>Success Criteria</strong> is used by the orchestrator to validate the result after the agent completes.
+        <strong>Additional Prompt</strong> is injected directly into the sub-agent's prompt.
+        <strong>Orchestrator Instructions</strong> guide the orchestrator on what to tell the sub-agent.
       </p>
       <p
         class="help-text"
         :class="{ dark: isDark }"
       >
-        <strong>Completion Contract</strong> defines the format the sub-agent must use when handing back results.
-        Leave empty to use the default HAND_BACK format. The orchestrator parses this to decide: approve, retry, or ask user.
+        <strong>Completion Contract</strong> describes the response format the sub-agent must follow,
+        wrapped in <code>&lt;completion-contract&gt;</code> tags.
+        <strong>Success Criteria</strong> is used by the orchestrator to evaluate the response after the agent completes.
       </p>
       <p
         class="help-text"
@@ -333,14 +295,13 @@ interface AgentInfo {
 }
 
 const agents = ref<AgentInfo[]>([]);
-const userMessageRef = ref<HTMLTextAreaElement | null>(null);
+const orchestratorInstructionsRef = ref<HTMLTextAreaElement | null>(null);
 const additionalPromptRef = ref<HTMLTextAreaElement | null>(null);
-const beforePromptRef = ref<HTMLTextAreaElement | null>(null);
 const varMenuRef = ref<HTMLElement | null>(null);
 
 const MENU_WIDTH = 260;
 
-type VarMenuTarget = 'userMessage' | 'additionalPrompt' | 'beforePrompt';
+type VarMenuTarget = 'orchestratorInstructions' | 'additionalPrompt';
 
 const varMenu = reactive({
   visible: false,
@@ -392,11 +353,11 @@ function onAgentChange(event: Event) {
   });
 }
 
-function onUserMessageChange(event: Event) {
+function onOrchestratorInstructionsChange(event: Event) {
   const el = event.target as HTMLTextAreaElement;
   emit('update-config', props.nodeId, {
     ...props.config,
-    userMessage: el.value,
+    orchestratorInstructions: el.value,
   });
 }
 
@@ -405,14 +366,6 @@ function onPromptChange(event: Event) {
   emit('update-config', props.nodeId, {
     ...props.config,
     additionalPrompt: el.value,
-  });
-}
-
-function onBeforePromptChange(event: Event) {
-  const el = event.target as HTMLTextAreaElement;
-  emit('update-config', props.nodeId, {
-    ...props.config,
-    beforePrompt: el.value,
   });
 }
 
@@ -465,7 +418,7 @@ function varToken(name: string): string {
 
 function insertVariable(varName: string) {
   const token = `{{${ varName }}}`;
-  const textareaRef = varMenu.target === 'userMessage' ? userMessageRef : varMenu.target === 'beforePrompt' ? beforePromptRef : additionalPromptRef;
+  const textareaRef = varMenu.target === 'orchestratorInstructions' ? orchestratorInstructionsRef : additionalPromptRef;
   const textarea = textareaRef.value;
 
   if (textarea) {

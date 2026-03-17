@@ -592,28 +592,6 @@ export class AgentPersonaService {
    * @param msg     The raw WebSocket message
    */
   private handleWebSocketMessage(agentId: string, msg: WebSocketMessage): void {
-    const dataPreview = msg.data
-      ? (typeof msg.data === 'string'
-        ? msg.data.substring(0, 50)
-        : JSON.stringify(msg.data).substring(0, 50))
-      : 'undefined';
-
-    {
-      const _d = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : { content: msg.data };
-      const _raw = typeof _d?.content === 'string' ? _d.content : JSON.stringify(_d?.content ?? '');
-      console.log(`[AgentPersonaModel] ← message on "${ agentId }"`, {
-        type:         msg.type,
-        id:           msg.id,
-        channel:      msg.channel,
-        timestamp:    msg.timestamp,
-        threadId:     _d?.threadId || _d?.thread_id,
-        metadata:     _d?.metadata,
-        role:         _d?.role,
-        kind:         _d?.kind,
-        contentChars: _raw.length,
-        content:      _raw.slice(0, 100),
-      });
-    }
 
     // ── Thread-ID filtering ──────────────────────────────────────────
     // If the incoming message carries a thread_id and this persona already
@@ -663,6 +641,7 @@ export class AgentPersonaService {
           content:   msg.data,
         };
 
+        console.log(`[AgentPersonaModel] messages.push (string ${ msg.type })`, { role: message.role, contentChars: message.content.length, content: message.content.slice(0, 120) });
         this.messages.push(message);
 
         return;
@@ -769,6 +748,7 @@ export class AgentPersonaService {
         };
       }
 
+      console.log(`[AgentPersonaModel] messages.push (structured ${ msg.type })`, { role: message.role, kind: message.kind, contentChars: message.content.length, content: message.content.slice(0, 120) });
       this.messages.push(message);
       // Turn off loading when assistant responds
       if (role === 'assistant') {
@@ -1023,6 +1003,7 @@ export class AgentPersonaService {
 
       if (eventType === 'workflow_started') {
         // Push a workflow-started card so the user sees the workflow kicked off
+        console.log(`[AgentPersonaModel] messages.push (workflow_started)`, { workflowRunId, totalNodes });
         this.messages.push({
           id:        `${ Date.now() }_wf_started`,
           channelId: agentId,
@@ -1045,6 +1026,7 @@ export class AgentPersonaService {
       if (eventType === 'node_started') {
         // Push a new running node card
         const messageId = `${ Date.now() }_wf_node_${ nodeId }`;
+        console.log(`[AgentPersonaModel] messages.push (node_started)`, { nodeId, nodeLabel, nodeIndex, totalNodes });
         this.messages.push({
           id:        messageId,
           channelId: agentId,
@@ -1118,7 +1100,7 @@ export class AgentPersonaService {
           existing.subAgentActivity.latestThinking = thinkingContent;
         } else {
           // Create a new sub_agent_activity card
-          console.log(`[AgentPersona:chat-path] node_thinking CREATE — nodeId="${ nodeId }", label="${ nodeLabel || nodeId }", preview="${ thinkingContent.slice(0, 60) }"`);
+          console.log(`[AgentPersonaModel] messages.push (node_thinking)`, { nodeId, nodeLabel: nodeLabel || nodeId, preview: thinkingContent.slice(0, 60) });
           this.messages.push({
             id:        `${ Date.now() }_sub_agent_${ nodeId }`,
             channelId: agentId,

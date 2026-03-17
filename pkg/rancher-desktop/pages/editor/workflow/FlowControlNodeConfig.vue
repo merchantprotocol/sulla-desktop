@@ -54,6 +54,41 @@
         <label
           class="node-field-label"
           :class="{ dark: isDark }"
+        >Loop Mode</label>
+        <div class="behavior-toggle">
+          <button
+            class="behavior-btn"
+            :class="{ active: config.loopMode !== 'for-each', dark: isDark }"
+            @click="updateField('loopMode', 'iterations')"
+          >
+            Iterations
+          </button>
+          <button
+            class="behavior-btn"
+            :class="{ active: config.loopMode === 'for-each', dark: isDark }"
+            @click="updateField('loopMode', 'for-each')"
+          >
+            For Each
+          </button>
+        </div>
+        <p
+          class="config-hint"
+          :class="{ dark: isDark }"
+          style="margin-top: 6px;"
+        >
+          {{ config.loopMode === 'for-each'
+            ? 'Iterates over each item from an upstream Merge node\'s collected results.'
+            : 'Repeats the loop body up to a fixed number of iterations or until a stop condition is met.'
+          }}
+        </p>
+      </div>
+      <div
+        v-if="config.loopMode !== 'for-each'"
+        class="node-field"
+      >
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
         >Max Iterations</label>
         <input
           class="node-field-input"
@@ -63,6 +98,20 @@
           :value="config.maxIterations || 10"
           @input="updateField('maxIterations', Number(($event.target as HTMLInputElement).value))"
         >
+      </div>
+      <div
+        v-if="config.loopMode === 'for-each'"
+        class="node-field"
+      >
+        <p
+          class="config-hint"
+          :class="{ dark: isDark }"
+        >
+          Available template variables in the loop body:<br>
+          <code v-text="'{{loop.currentItem.result}}'" /> — the current item's output<br>
+          <code v-text="'{{loop.currentItem.label}}'" /> — the source node's label<br>
+          <code v-text="'{{loop.index}}'" /> — zero-based iteration index
+        </p>
       </div>
       <div class="node-field">
         <label
@@ -141,9 +190,17 @@
           class="help-text"
           :class="{ dark: isDark }"
         >
-          Connect the <strong>loop body</strong> between the bottom (start) and right (back) handles.
-          The loop repeats until the condition is met or max iterations reached.
-          Exit continues from the left handle. Each iteration accumulates conversation context.
+          <template v-if="config.loopMode === 'for-each'">
+            Iterates over each item from the upstream Merge node's collected results.
+            Connect the <strong>loop body</strong> between the bottom (start) and right (back) handles.
+            Use <code v-text="'{{loop.currentItem.result}}'" /> in body nodes to access the current item.
+            Exit continues from the left handle.
+          </template>
+          <template v-else>
+            Connect the <strong>loop body</strong> between the bottom (start) and right (back) handles.
+            The loop repeats until the condition is met or max iterations reached.
+            Exit continues from the left handle. Each iteration accumulates conversation context.
+          </template>
         </p>
       </div>
     </template>
@@ -205,6 +262,63 @@
             {{ wf.name }}
           </option>
         </select>
+      </div>
+      <div class="node-field">
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Orchestrating Agent</label>
+        <select
+          class="node-field-input"
+          :class="{ dark: isDark }"
+          :value="config.agentId || ''"
+          @change="updateField('agentId', ($event.target as HTMLSelectElement).value || null)"
+        >
+          <option value="">
+            -- Same as parent (default) --
+          </option>
+          <option
+            v-for="ag in agents"
+            :key="ag.slug"
+            :value="ag.slug"
+          >
+            {{ ag.name }}
+          </option>
+        </select>
+        <p
+          class="config-hint"
+          :class="{ dark: isDark }"
+          style="margin-top: 6px;"
+        >
+          {{ config.agentId
+            ? 'A dedicated agent will orchestrate this sub-workflow with its own persona and tools.'
+            : 'The parent workflow\'s orchestrating agent will run this sub-workflow directly.'
+          }}
+        </p>
+      </div>
+      <div
+        v-if="config.agentId"
+        class="node-field"
+      >
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Orchestrator Prompt</label>
+        <textarea
+          class="node-field-input node-field-textarea"
+          :class="{ dark: isDark }"
+          rows="3"
+          placeholder="Instructions for the orchestrating agent, e.g. 'Focus on SEO optimization when making decisions in this workflow...'"
+          :value="config.orchestratorPrompt || ''"
+          @input="updateField('orchestratorPrompt', ($event.target as HTMLTextAreaElement).value)"
+        />
+        <p
+          class="config-hint"
+          :class="{ dark: isDark }"
+          style="margin-top: 6px;"
+        >
+          Additional context or instructions passed to the orchestrating agent before it begins processing the sub-workflow.
+        </p>
       </div>
       <div class="node-field">
         <label
@@ -285,12 +399,14 @@
 import { ref, onMounted } from 'vue';
 import { ipcRenderer } from 'electron';
 import type { FlowControlNodeSubtype } from './types';
+import type { UpstreamNodeInfo } from './AgentNodeConfig.vue';
 
 const props = defineProps<{
-  isDark:  boolean;
-  nodeId:  string;
-  subtype: FlowControlNodeSubtype;
-  config:  Record<string, any>;
+  isDark:         boolean;
+  nodeId:         string;
+  subtype:        FlowControlNodeSubtype;
+  config:         Record<string, any>;
+  upstreamNodes?: UpstreamNodeInfo[];
 }>();
 
 const emit = defineEmits<{
@@ -298,6 +414,7 @@ const emit = defineEmits<{
 }>();
 
 const workflows = ref<{ id: string; name: string }[]>([]);
+const agents = ref<{ slug: string; name: string }[]>([]);
 
 onMounted(async() => {
   if (props.subtype === 'sub-workflow') {
@@ -305,6 +422,11 @@ onMounted(async() => {
       workflows.value = await ipcRenderer.invoke('workflow-list');
     } catch {
       workflows.value = [];
+    }
+    try {
+      agents.value = await ipcRenderer.invoke('agents-list');
+    } catch {
+      agents.value = [];
     }
   }
 });

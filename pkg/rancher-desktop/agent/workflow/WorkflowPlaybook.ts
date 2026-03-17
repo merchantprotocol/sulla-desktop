@@ -332,10 +332,11 @@ export interface ParallelNodeSpawn {
 
 export type PlaybookStepResult =
   | { action: 'prompt_agent'; prompt: string; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'prompt_orchestrator'; nodeId: string; prompt: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'node_completed'; nodeId: string; result: unknown; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'spawn_sub_agent'; nodeId: string; agentId: string; prompt: string; config: Record<string, unknown>; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'spawn_parallel_agents'; nodes: ParallelNodeSpawn[]; updatedPlaybook: WorkflowPlaybookState }
-  | { action: 'spawn_sub_workflow'; nodeId: string; workflowId: string; payload: unknown; awaitResponse: boolean; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'spawn_sub_workflow'; nodeId: string; workflowId: string; agentId: string | null; orchestratorPrompt: string; payload: unknown; awaitResponse: boolean; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'workflow_completed'; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'workflow_failed'; error: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'wait'; nodeId: string; durationMs: number; updatedPlaybook: WorkflowPlaybookState }
@@ -345,11 +346,17 @@ export type PlaybookStepResult =
 
 // ── Template resolution ──
 
+interface LoopTemplateContext {
+  index:       number;
+  currentItem: { nodeId: string; label: string; result: unknown } | null;
+}
+
 function resolveTemplate(
   template: string,
   triggerPayload: unknown,
   nodeOutputs: Record<string, PlaybookNodeOutput>,
   upstreamOutputs: PlaybookNodeOutput[],
+  loopContext?: LoopTemplateContext,
 ): string {
   return template.replace(/\{\{(\s*[\w\-. ]+\s*)\}\}/g, (_match, expr: string) => {
     const parts = expr.trim().split('.');
@@ -358,6 +365,25 @@ function resolveTemplate(
 
     if (name === 'trigger') {
       return typeof triggerPayload === 'string' ? triggerPayload : JSON.stringify(triggerPayload ?? '');
+    }
+
+    // Handle loop.* variables (for-each mode)
+    if (name === 'loop' && loopContext) {
+      if (field === 'index') {
+        return String(loopContext.index);
+      }
+      if (field === 'currentItem') {
+        const subField = parts[2];
+        if (!loopContext.currentItem) return _match;
+        if (!subField || subField === 'result') {
+          const r = loopContext.currentItem.result;
+          return typeof r === 'string' ? r : JSON.stringify(r ?? '');
+        }
+        if (subField === 'label') return loopContext.currentItem.label;
+        if (subField === 'nodeId') return loopContext.currentItem.nodeId;
+        return _match;
+      }
+      return _match;
     }
 
     // Find by label or nodeId
@@ -371,6 +397,26 @@ function resolveTemplate(
     }
     return _match;
   });
+}
+
+/**
+ * Build a LoopTemplateContext for a node if it is inside an active for-each loop.
+ */
+function getLoopContextForNode(
+  playbook: WorkflowPlaybookState,
+  nodeId: string,
+): LoopTemplateContext | undefined {
+  if (!playbook.loopState) return undefined;
+
+  for (const iterState of Object.values(playbook.loopState)) {
+    if (iterState.bodyNodeIds.includes(nodeId) && iterState.currentItem) {
+      return {
+        index:       iterState.currentIteration,
+        currentItem: iterState.currentItem,
+      };
+    }
+  }
+  return undefined;
 }
 
 // ── Parallelization ──
@@ -580,6 +626,10 @@ function processNode(
   case 'tool-call':
     return handleToolCallNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
+    // ── Orchestrator prompt — send a message to the orchestrating agent ──
+  case 'orchestrator-prompt':
+    return handleOrchestratorPromptNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
+
     // ── Router — ask the orchestrating agent to decide ──
   case 'router':
     return handleRouterNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
@@ -639,32 +689,32 @@ function handleAgentNode(
   triggerPayload: unknown,
 ): PlaybookStepResult {
   const agentId = (config.agentId as string) || 'sulla-desktop';
-  const additionalPrompt = (config.additionalPrompt as string) || '';
-  const userMessageTemplate = (config.userMessage as string) || '';
+  const orchestratorInstructionsTemplate = (config.orchestratorInstructions as string) || '';
 
-  let prompt: string;
-  if (userMessageTemplate.trim()) {
-    prompt = resolveTemplate(userMessageTemplate, triggerPayload, playbook.nodeOutputs, upstreamOutputs);
-    if (additionalPrompt) {
-      prompt = `${ additionalPrompt }\n\n${ prompt }`;
-    }
-  } else {
-    const upstreamContext = upstreamOutputs
-      .map(o => `[${ o.label }]: ${ typeof o.result === 'string' ? o.result : JSON.stringify(o.result) }`)
-      .join('\n\n');
+  // Build upstream context summary for the orchestrator
+  const upstreamContext = upstreamOutputs
+    .map(o => `[${ o.label }]: ${ typeof o.result === 'string' ? o.result : JSON.stringify(o.result) }`)
+    .join('\n\n');
 
-    prompt = [
-      additionalPrompt,
-      upstreamContext ? `\nUpstream context:\n${ upstreamContext }` : '',
-      typeof triggerPayload === 'string' && upstreamOutputs.length === 0 ? triggerPayload : '',
-    ].filter(Boolean).join('\n');
+  // Resolve templates in orchestrator instructions
+  const orchestratorInstructions = orchestratorInstructionsTemplate.trim()
+    ? resolveTemplate(orchestratorInstructionsTemplate, triggerPayload, playbook.nodeOutputs, upstreamOutputs, getLoopContextForNode(playbook, nodeId))
+    : '';
+
+  // Build the orchestrator planning prompt — the orchestrator will formulate the sub-agent's actual message
+  const parts: string[] = [];
+
+  if (orchestratorInstructions) {
+    parts.push(orchestratorInstructions);
+  }
+  if (upstreamContext) {
+    parts.push(`\nUpstream context:\n${ upstreamContext }`);
+  }
+  if (!orchestratorInstructions && !upstreamContext && typeof triggerPayload === 'string') {
+    parts.push(triggerPayload);
   }
 
-  // Custom completion contract override (if any) — otherwise AgentNode system prompt handles it
-  const completionContract = (config.completionContract as string) || '';
-  if (completionContract.trim()) {
-    prompt += `\n\n${ completionContract }`;
-  }
+  const prompt = parts.filter(Boolean).join('\n');
 
   return {
     action:          'spawn_sub_agent',
@@ -690,7 +740,7 @@ function handleToolCallNode(
   const resolvedDefaults: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(defaults)) {
-    resolvedDefaults[key] = resolveTemplate(value, triggerPayload, playbook.nodeOutputs, upstreamOutputs);
+    resolvedDefaults[key] = resolveTemplate(value, triggerPayload, playbook.nodeOutputs, upstreamOutputs, getLoopContextForNode(playbook, nodeId));
   }
 
   return {
@@ -702,6 +752,35 @@ function handleToolCallNode(
       ...config,
       defaults: resolvedDefaults,
     },
+    updatedPlaybook: playbook,
+  };
+}
+
+function handleOrchestratorPromptNode(
+  playbook: WorkflowPlaybookState,
+  nodeId: string,
+  config: Record<string, unknown>,
+  upstreamOutputs: PlaybookNodeOutput[],
+  triggerPayload: unknown,
+): PlaybookStepResult {
+  const promptTemplate = (config.prompt as string) || '';
+
+  // Resolve templates in the prompt
+  let prompt: string;
+  if (promptTemplate.trim()) {
+    prompt = resolveTemplate(promptTemplate, triggerPayload, playbook.nodeOutputs, upstreamOutputs, getLoopContextForNode(playbook, nodeId));
+  } else {
+    // If no prompt specified, pass through upstream context
+    const upstreamContext = upstreamOutputs
+      .map(o => `[${ o.label }]: ${ typeof o.result === 'string' ? o.result : JSON.stringify(o.result) }`)
+      .join('\n\n');
+    prompt = upstreamContext || (typeof triggerPayload === 'string' ? triggerPayload : '');
+  }
+
+  return {
+    action:          'prompt_orchestrator',
+    nodeId,
+    prompt,
     updatedPlaybook: playbook,
   };
 }
@@ -833,6 +912,8 @@ function handleSubWorkflowNode(
 ): PlaybookStepResult {
   const workflowId = (config.workflowId as string) || '';
   const awaitResponse = config.awaitResponse !== false;
+  const agentId = (config.agentId as string) || null;
+  const orchestratorPrompt = (config.orchestratorPrompt as string) || '';
 
   if (!workflowId) {
     const node = getNode(playbook.definition, nodeId)!;
@@ -848,6 +929,8 @@ function handleSubWorkflowNode(
     action:          'spawn_sub_workflow',
     nodeId,
     workflowId,
+    agentId,
+    orchestratorPrompt,
     payload,
     awaitResponse,
     updatedPlaybook: playbook,
@@ -862,6 +945,7 @@ function handleLoopNode(
   triggerPayload: unknown,
 ): PlaybookStepResult {
   const { definition } = playbook;
+  const loopMode = (config.loopMode as string) || 'iterations';
   const maxIterations = Number(config.maxIterations) || 10;
   const condition = (config.condition as string) || '';
   const conditionMode = (config.conditionMode as string) || 'template';
@@ -895,6 +979,27 @@ function handleLoopNode(
       bodyNodeIds,
       bodyStartNodeIds,
     };
+
+    // For-each mode: extract items from upstream merge output
+    if (loopMode === 'for-each') {
+      const mergeOutput = upstreamOutputs.find(o =>
+        o.result && typeof o.result === 'object' && Array.isArray((o.result as any).merged),
+      );
+      const items: { nodeId: string; label: string; result: unknown }[] = mergeOutput
+        ? (mergeOutput.result as any).merged
+        : [];
+
+      if (items.length === 0) {
+        return completeNodeAndAdvance(playbook, nodeId, node, {
+          iteration: 0,
+          reason:    'for_each_empty_collection',
+        }, 'loop-exit');
+      }
+
+      iterState.items = items;
+      iterState.currentItem = items[0];
+    }
+
     loopState[nodeId] = iterState;
 
     // Start iteration 0: add body-start nodes to frontier
@@ -927,8 +1032,16 @@ function handleLoopNode(
 
   iterState.currentIteration += 1;
 
-  // Check max iterations
-  if (iterState.currentIteration >= maxIterations) {
+  // For-each mode: check if all items have been iterated
+  if (loopMode === 'for-each' && iterState.items) {
+    if (iterState.currentIteration >= iterState.items.length) {
+      return completeLoop(playbook, nodeId, node, iterState, loopState, 'for_each_complete');
+    }
+    iterState.currentItem = iterState.items[iterState.currentIteration];
+  }
+
+  // Check max iterations (iterations mode only)
+  if (loopMode !== 'for-each' && iterState.currentIteration >= maxIterations) {
     return completeLoop(playbook, nodeId, node, iterState, loopState, 'max_iterations');
   }
 
@@ -965,7 +1078,8 @@ Should the loop STOP? Respond with exactly "true" to stop or "false" to continue
       };
     } else {
       // Template evaluation — resolve variables and check for truthy match
-      const resolved = resolveTemplate(condition, triggerPayload, playbook.nodeOutputs, upstreamOutputs);
+      const loopCtx: LoopTemplateContext = { index: iterState.currentIteration, currentItem: iterState.currentItem || null };
+      const resolved = resolveTemplate(condition, triggerPayload, playbook.nodeOutputs, upstreamOutputs, loopCtx);
 
       // Simple truthy check: if the resolved template equals "true" or the condition contained
       // a "contains" check that matched, stop the loop

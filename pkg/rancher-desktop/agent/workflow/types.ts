@@ -63,6 +63,10 @@ export interface LoopIterationState {
   bodyNodeIds:      string[];
   /** Node IDs at the start of the loop body */
   bodyStartNodeIds: string[];
+  /** For 'for-each' mode: the full list of items being iterated over */
+  items?:       { nodeId: string; label: string; result: unknown }[];
+  /** For 'for-each' mode: the current item for this iteration */
+  currentItem?: { nodeId: string; label: string; result: unknown };
 }
 
 export interface PlaybookNodeOutput {

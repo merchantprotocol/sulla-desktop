@@ -3,7 +3,7 @@
 export type WorkflowNodeCategory = 'trigger' | 'agent' | 'routing' | 'flow-control' | 'io';
 
 export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'schedule' | 'sulla-desktop' | 'workbench' | 'chat-completions';
-export type AgentNodeSubtype = 'agent' | 'tool-call';
+export type AgentNodeSubtype = 'agent' | 'tool-call' | 'orchestrator-prompt';
 export type RoutingNodeSubtype = 'router' | 'condition';
 export type FlowControlNodeSubtype = 'wait' | 'loop' | 'parallel' | 'merge' | 'sub-workflow';
 export type IONodeSubtype = 'user-input' | 'response' | 'transfer';
@@ -45,15 +45,21 @@ export interface ScheduleTriggerNodeConfig extends TriggerNodeConfig {
 export interface AgentNodeConfig {
   agentId:            string | null;
   agentName:          string;
+  /** Injected directly into the sub-agent's prompt as system-level context/instructions. */
   additionalPrompt:   string;
-  /** Template string for the user message sent to this agent. Supports {{variable}} syntax. */
-  userMessage:        string;
-  /** Prompt shown to the orchestrator before the agent executes. Describes what this step should accomplish. */
-  beforePrompt:       string;
-  /** Criteria the orchestrator uses to validate the agent's output after execution. */
+  /** Instructions for the orchestrator on how to deploy this sub-agent. The orchestrator
+   *  reads these and formulates the actual user message sent to the sub-agent. Supports {{variable}} syntax. */
+  orchestratorInstructions: string;
+  /** Criteria the orchestrator uses to evaluate the sub-agent's response after execution. */
   successCriteria:    string;
-  /** Custom completion contract appended to the agent prompt. Overrides the default HAND_BACK format when provided. */
+  /** Describes the expected completion structure. The workflow wraps this in XML contract
+   *  tags and the orchestrator tells the sub-agent to respond within them. */
   completionContract: string;
+}
+
+export interface OrchestratorPromptNodeConfig {
+  /** Message sent to the orchestrating agent. Supports {{variable}} syntax for upstream outputs. */
+  prompt: string;
 }
 
 export interface ToolCallNodeConfig {
@@ -85,6 +91,8 @@ export interface WaitNodeConfig {
 }
 
 export interface LoopNodeConfig {
+  /** 'iterations' = classic while-loop (default), 'for-each' = iterate over upstream merge collection */
+  loopMode:      'iterations' | 'for-each';
   maxIterations: number;
   condition:     string;
   /** How to evaluate the stop condition: 'template' for {{variable}} matching, 'llm' for orchestrator evaluation */
@@ -102,6 +110,10 @@ export interface MergeNodeConfig {
 export interface SubWorkflowNodeConfig {
   workflowId:    string | null;
   awaitResponse: boolean;
+  /** Optional agent to orchestrate this sub-workflow instead of the parent orchestrator */
+  agentId:       string | null;
+  /** Instructions passed to the orchestrating agent when agentId is set */
+  orchestratorPrompt: string;
 }
 
 export interface UserInputNodeConfig {

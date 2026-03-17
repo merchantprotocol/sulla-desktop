@@ -49,6 +49,8 @@ const ICONS = {
   response: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
 
   transfer: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><line x1="21" y1="3" x2="14" y2="10"/><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/></svg>',
+
+  orchestratorPrompt: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>',
 };
 
 export const NODE_REGISTRY: NodeTypeDefinition[] = [
@@ -126,7 +128,7 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     iconSvg:       ICONS.agent,
     useImageIcon:  true,
     defaultLabel:  'Agent',
-    defaultConfig: () => ({ agentId: null, agentName: '', additionalPrompt: '', userMessage: '', beforePrompt: '', successCriteria: '', completionContract: '' }),
+    defaultConfig: () => ({ agentId: null, agentName: '', additionalPrompt: '', orchestratorInstructions: '', successCriteria: '', completionContract: '' }),
   },
   {
     subtype:       'tool-call',
@@ -136,6 +138,15 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     iconSvg:       '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
     defaultLabel:  'Tool Call',
     defaultConfig: () => ({ integrationSlug: '', endpointName: '', accountId: 'default', defaults: {}, preCallDescription: '' }),
+  },
+  {
+    subtype:       'orchestrator-prompt',
+    category:      'agent',
+    label:         'Prompt',
+    description:   'Send a message to the orchestrating agent',
+    iconSvg:       ICONS.orchestratorPrompt,
+    defaultLabel:  'Prompt',
+    defaultConfig: () => ({ prompt: '' }),
   },
 
   // ── Routing ──
@@ -177,7 +188,7 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     description:      'Repeat until condition or max iterations',
     iconSvg:          ICONS.loop,
     defaultLabel:     'Loop',
-    defaultConfig:    () => ({ maxIterations: 10, condition: '', conditionMode: 'template' }),
+    defaultConfig:    () => ({ loopMode: 'iterations', maxIterations: 10, condition: '', conditionMode: 'template' }),
     hasCustomHandles: true,
   },
   {
@@ -205,7 +216,7 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     description:   'Execute another workflow as a step',
     iconSvg:       ICONS.subWorkflow,
     defaultLabel:  'Sub-workflow',
-    defaultConfig: () => ({ workflowId: null, awaitResponse: true }),
+    defaultConfig: () => ({ workflowId: null, awaitResponse: true, agentId: null, orchestratorPrompt: '' }),
   },
 
   // ── I/O ──

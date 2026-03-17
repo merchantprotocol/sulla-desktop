@@ -14,6 +14,7 @@ const SUBTYPE_CATEGORY_MAP: Record<string, string> = {
   'chat-completions':  'trigger',
   'agent':             'agent',
   'tool-call':         'agent',
+  'orchestrator-prompt': 'agent',
   'router':            'routing',
   'condition':         'routing',
   'wait':              'flow-control',
@@ -35,8 +36,9 @@ const REQUIRED_CONFIG_FIELDS: Record<string, string[]> = {
   'sulla-desktop':     ['triggerType', 'triggerDescription'],
   'workbench':         ['triggerType', 'triggerDescription'],
   'chat-completions':  ['triggerType', 'triggerDescription'],
-  'agent':             ['agentId', 'agentName', 'additionalPrompt', 'userMessage', 'beforePrompt', 'successCriteria', 'completionContract'],
+  'agent':             ['agentId', 'agentName', 'additionalPrompt', 'orchestratorInstructions', 'successCriteria', 'completionContract'],
   'tool-call':         ['integrationSlug', 'endpointName', 'accountId', 'defaults', 'preCallDescription'],
+  'orchestrator-prompt': ['prompt'],
   'router':            ['classificationPrompt', 'routes'],
   'condition':         ['rules', 'combinator'],
   'wait':              ['delayAmount', 'delayUnit'],
@@ -47,6 +49,13 @@ const REQUIRED_CONFIG_FIELDS: Record<string, string[]> = {
   'user-input':        ['promptText'],
   'response':          ['responseTemplate'],
   'transfer':          ['targetWorkflowId'],
+};
+
+// ── Optional config fields per subtype (allowed but not required) ──
+
+const OPTIONAL_CONFIG_FIELDS: Record<string, string[]> = {
+  'sub-workflow': ['agentId', 'orchestratorPrompt'],
+  'loop':         ['loopMode'],
 };
 
 const VALID_TOP_LEVEL_KEYS = new Set([
@@ -184,9 +193,11 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
     }
 
     // Extra config fields
+    const optionalFields = OPTIONAL_CONFIG_FIELDS[subtype] || [];
+    const allowedFields = [...requiredFields, ...optionalFields];
     for (const key of configKeys) {
-      if (!requiredFields.includes(key)) {
-        issues.push({ severity: 'error', path: `${np}/data/config/${key}`, message: `Unknown config field "${key}" for subtype "${subtype}". Allowed: ${requiredFields.join(', ') || '(none)'}` });
+      if (!allowedFields.includes(key)) {
+        issues.push({ severity: 'error', path: `${np}/data/config/${key}`, message: `Unknown config field "${key}" for subtype "${subtype}". Allowed: ${allowedFields.join(', ') || '(none)'}` });
       }
     }
 
