@@ -213,6 +213,10 @@ export interface BaseThreadState {
 
     /** Active workflow playbook — when set, the agent orchestrates this workflow */
     activeWorkflow?: WorkflowPlaybookState;
+
+    /** Stack of parent workflow playbooks when executing sub-workflows.
+     *  Persisted so sub-workflow completion can pop back to the parent after restarts. */
+    workflowStack?: Array<{ playbook: WorkflowPlaybookState; nodeId: string }>;
   };
 }
 
@@ -596,6 +600,22 @@ export class Graph<TState = BaseThreadState> {
       return await this._processWorkflowPlaybookInner(state);
     } finally {
       this.isProcessingPlaybook = false;
+
+      // If a sub-agent completed while we were processing, re-trigger immediately
+      if (this._continuationQueued) {
+        this._continuationQueued = false;
+        const hasUndrained = this.pendingCompletions.length > 0 || this.pendingFailures.length > 0 || this.pendingEscalations.length > 0;
+        if (hasUndrained) {
+          console.log('[Graph:Playbook] Draining queued continuation after processWorkflowPlaybook unlock');
+          setImmediate(async() => {
+            try {
+              await this.processWorkflowPlaybook(state);
+            } catch (err) {
+              console.error('[Graph:Playbook] Queued continuation failed:', err);
+            }
+          });
+        }
+      }
     }
   }
 
@@ -609,6 +629,53 @@ export class Graph<TState = BaseThreadState> {
       console.log(`[Graph:Playbook] Skipping — playbook status is '${ playbook?.status }', not 'running'`);
 
       return state;
+    }
+
+    // ── Drain persisted completions/failures/escalations from DB ──
+    // These survive Graph restarts and ensure sub-agent results are never lost.
+    try {
+      const { WorkflowPendingCompletionModel } = await import('../database/models/WorkflowPendingCompletionModel');
+      const persistedRecords = await WorkflowPendingCompletionModel.findPending(playbook.executionId);
+
+      for (const record of persistedRecords) {
+        const attrs = record.attributes;
+        const alreadyInMemory = (kind: string) => {
+          if (kind === 'completion') return this.pendingCompletions.some(c => c.nodeId === attrs.node_id);
+          if (kind === 'failure') return this.pendingFailures.some(f => f.nodeId === attrs.node_id);
+          if (kind === 'escalation') return this.pendingEscalations.some(e => e.nodeId === attrs.node_id);
+          return false;
+        };
+
+        // Also skip if node already completed in the playbook
+        const alreadyCompleted = playbook.completedNodeIds.includes(attrs.node_id!);
+
+        if (!alreadyInMemory(attrs.kind!) && !alreadyCompleted) {
+          if (attrs.kind === 'completion') {
+            this.pendingCompletions.push({ nodeId: attrs.node_id!, nodeLabel: attrs.node_label!, output: attrs.output, threadId: attrs.thread_id ?? undefined });
+            console.log(`[Graph:Playbook] Restored persisted completion for "${ attrs.node_label }" from DB`);
+          } else if (attrs.kind === 'failure') {
+            this.pendingFailures.push({ nodeId: attrs.node_id!, nodeLabel: attrs.node_label!, error: attrs.error || 'Unknown error' });
+            console.log(`[Graph:Playbook] Restored persisted failure for "${ attrs.node_label }" from DB`);
+          } else if (attrs.kind === 'escalation' && attrs.escalation) {
+            const esc = attrs.escalation as Record<string, any>;
+            this.pendingEscalations.push({
+              nodeId:    attrs.node_id!,
+              nodeLabel: attrs.node_label!,
+              agentId:   esc.agentId || '',
+              prompt:    esc.prompt || '',
+              config:    esc.config || {},
+              question:  esc.question || '',
+              threadId:  attrs.thread_id ?? undefined,
+            });
+            console.log(`[Graph:Playbook] Restored persisted escalation for "${ attrs.node_label }" from DB`);
+          }
+        }
+
+        // Mark as drained regardless (whether we used it or it was duplicate)
+        await WorkflowPendingCompletionModel.markDrained(attrs.id!);
+      }
+    } catch (err) {
+      console.warn('[Graph:Playbook] Failed to drain persisted completions from DB:', err);
     }
 
     // ── Reset canvas and replay all already-completed nodes (triggers + checkpoint nodes) ──
@@ -698,6 +765,21 @@ export class Graph<TState = BaseThreadState> {
         // Pause the workflow — the agent flagged that user input is needed
         console.log(`[Graph:Playbook] Node "${ completionLabel }" needs user input — pausing workflow`);
         this.emitPlaybookEvent(state, 'workflow_paused', { nodeId: completion.nodeId, nodeLabel: completionLabel, reason: 'needs_user_input', summary: handBack.summary });
+
+        // Persist any remaining in-memory completions to DB before pausing,
+        // so they are not lost if the Graph is re-created before we resume.
+        if (this.pendingCompletions.length > 0) {
+          const execId = meta.activeWorkflow?.executionId;
+          if (execId) {
+            try {
+              const { WorkflowPendingCompletionModel } = await import('../database/models/WorkflowPendingCompletionModel');
+              for (const remaining of this.pendingCompletions) {
+                await WorkflowPendingCompletionModel.saveCompletion({ executionId: execId, nodeId: remaining.nodeId, nodeLabel: remaining.nodeLabel, output: remaining.output, threadId: remaining.threadId });
+              }
+              console.log(`[Graph:Playbook] Persisted ${ this.pendingCompletions.length } undrained completions before needsUserInput pause`);
+            } catch (e) { console.warn('[Graph:Playbook] Failed to persist undrained completions:', e); }
+          }
+        }
 
         // Let the orchestrator tell the user what's needed
         const pauseMsg = `[Workflow Paused: "${ completionLabel }" needs user input]\n` +
@@ -1182,9 +1264,21 @@ export class Graph<TState = BaseThreadState> {
             }
 
             if (result.contractStatus === 'blocked') {
-              const blockText = typeof result.output === 'string' ? result.output.slice(0, 200) : 'Unknown blocker';
-              this.emitPlaybookEvent(state, 'node_failed', { nodeId: nId, nodeLabel: label, error: blockText });
-              failures.push({ nodeId: nId, label, error: blockText });
+              // Blocked = sub-agent has a question. Escalate via the same path as single agents
+              // instead of treating it as a failure.
+              const blockText = typeof result.output === 'string' ? result.output : 'Unknown blocker';
+              const pnMatch = parallelNodes.find(p => p.nodeId === nId);
+              console.log(`[Graph:Playbook] Parallel node "${ label }" blocked — pushing to escalations`);
+              this.pendingEscalations.push({
+                nodeId:    nId,
+                nodeLabel: label,
+                agentId:   pnMatch?.agentId || '',
+                prompt:    pnMatch?.prompt || '',
+                config:    pnMatch?.config || {},
+                question:  blockText.slice(0, 500),
+                threadId:  result.threadId,
+              });
+              // Don't count as failure — will be resolved by escalation handler
               continue;
             }
 
@@ -1245,33 +1339,10 @@ export class Graph<TState = BaseThreadState> {
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subWfLabel });
 
         try {
-          // Load the sub-workflow definition from disk
-          const fs = await import('fs');
-          const path = await import('path');
-          const { resolveSullaWorkflowsDir } = await import('@pkg/agent/utils/sullaPaths');
-          const workflowsDir = resolveSullaWorkflowsDir();
-
-          let subDefinition: any = null;
-          const yaml = await import('yaml');
-          const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
-
-          for (const entry of entries) {
-            if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
-            try {
-              const fp = path.join(workflowsDir, entry.name);
-              const raw = fs.readFileSync(fp, 'utf-8');
-              const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
-
-              if (parsed.id === step.workflowId) {
-                subDefinition = parsed;
-                break;
-              }
-            } catch { /* skip */ }
-          }
-
-          if (!subDefinition) {
-            throw new Error(`Sub-workflow not found: ${ step.workflowId }`);
-          }
+          // Load the sub-workflow definition via the registry (scans production dir)
+          const { getWorkflowRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
+          const subRegistry = getWorkflowRegistry();
+          const subDefinition = subRegistry.loadWorkflow(step.workflowId);
 
           // Save parent workflow onto a stack
           const parentPlaybook = meta.activeWorkflow;
@@ -1303,24 +1374,10 @@ export class Graph<TState = BaseThreadState> {
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: transferLabel });
 
         try {
-          // Load the target workflow definition from disk
-          const fs = await import('fs');
-          const path = await import('path');
-          const { resolveSullaWorkflowsDir } = await import('@pkg/agent/utils/sullaPaths');
-          const workflowsDir = resolveSullaWorkflowsDir();
-
-          let targetDefinition: any;
-          const yamlPath = path.join(workflowsDir, `${ step.targetWorkflowId }.yaml`);
-          const jsonPath = path.join(workflowsDir, `${ step.targetWorkflowId }.json`);
-
-          if (fs.existsSync(yamlPath)) {
-            const yaml = await import('yaml');
-            targetDefinition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
-          } else if (fs.existsSync(jsonPath)) {
-            targetDefinition = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-          } else {
-            throw new Error(`Target workflow not found: ${ step.targetWorkflowId }`);
-          }
+          // Load the target workflow definition via the registry (scans production dir)
+          const { getWorkflowRegistry: getTransferRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
+          const transferRegistry = getTransferRegistry();
+          const targetDefinition = transferRegistry.loadWorkflow(step.targetWorkflowId);
 
           // Mark the transfer node as completed
           this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: transferLabel, output: { transferred: step.targetWorkflowId } });
@@ -1389,7 +1446,19 @@ export class Graph<TState = BaseThreadState> {
         const waitLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
         this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: waitLabel });
-        await new Promise<void>(resolve => setTimeout(resolve, step.durationMs));
+
+        // Abort-aware wait — respects cancellation instead of sleeping through it
+        const abortService = meta.options?.abort;
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, step.durationMs);
+          if (abortService?.signal) {
+            const onAbort = () => { clearTimeout(timer); reject(new Error('AbortError')); };
+            if (abortService.signal.aborted) { clearTimeout(timer); reject(new Error('AbortError')); return; }
+            abortService.signal.addEventListener('abort', onAbort, { once: true });
+          }
+        });
+        throwIfAborted(abortService);
+
         const waitNode = meta.activeWorkflow.definition.nodes.find((n: any) => n.id === step.nodeId);
         if (waitNode) {
           const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, `Waited ${ step.durationMs }ms`);
@@ -1481,6 +1550,14 @@ export class Graph<TState = BaseThreadState> {
         console.error(`[Graph:Playbook] Workflow failed: ${ step.error }`);
         this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
         state = await this.releaseWorkflow(state, step.updatedPlaybook, 'failed', step.error);
+        return state;
+      }
+      case 'waiting_for_sub_agents': {
+        // Frontier nodes are blocked waiting for in-flight sub-agents.
+        // This is NOT a completion — just return and let the sub-agent
+        // completions trigger the next processWorkflowPlaybook cycle.
+        const waitingLabels = step.blockedNodeIds.map(id => this.getPlaybookNodeLabel(currentPlaybook, id));
+        console.log(`[Graph:Playbook] Waiting for sub-agents: ${ waitingLabels.join(', ') } (missing upstream: ${ step.missingUpstream.join(', ') })`);
         return state;
       }
       default:
@@ -1839,6 +1916,15 @@ export class Graph<TState = BaseThreadState> {
             threadId: result.threadId,
           });
 
+          // Persist escalation to DB so it survives Graph restart
+          const escExecId = (state as any).metadata?.activeWorkflow?.executionId;
+          if (escExecId) {
+            import('../database/models/WorkflowPendingCompletionModel').then(({ WorkflowPendingCompletionModel }) => {
+              WorkflowPendingCompletionModel.saveEscalation({ executionId: escExecId, nodeId, nodeLabel, agentId, prompt, config, question: resultText, threadId: result.threadId })
+                .catch(e => console.warn('[Graph:Playbook] Failed to persist escalation to DB:', e));
+            }).catch(() => { /* best-effort */ });
+          }
+
           // Emit event so the UI bubble updates to show "waiting for answer"
           try {
             const ws = getWebSocketClientService();
@@ -1869,6 +1955,15 @@ export class Graph<TState = BaseThreadState> {
         // Success or final attempt — push to completions queue
         if (result.contractStatus === 'done' || attemptNum >= maxRetries) {
           this.pendingCompletions.push({ nodeId, nodeLabel, output: result.output, threadId: result.threadId });
+
+          // Persist to DB so completion survives Graph restart
+          const execId = (state as any).metadata?.activeWorkflow?.executionId;
+          if (execId) {
+            import('../database/models/WorkflowPendingCompletionModel').then(({ WorkflowPendingCompletionModel }) => {
+              WorkflowPendingCompletionModel.saveCompletion({ executionId: execId, nodeId, nodeLabel, output: result.output, threadId: result.threadId })
+                .catch(e => console.warn('[Graph:Playbook] Failed to persist completion to DB:', e));
+            }).catch(() => { /* best-effort */ });
+          }
 
           // Emit sub_agent_completed event to the parent channel for UI update
           try {
@@ -1903,6 +1998,15 @@ export class Graph<TState = BaseThreadState> {
         // All retries exhausted — push failure
         this.pendingFailures.push({ nodeId, nodeLabel, error: errorMsg });
 
+        // Persist failure to DB so it survives Graph restart
+        const failExecId = (state as any).metadata?.activeWorkflow?.executionId;
+        if (failExecId) {
+          import('../database/models/WorkflowPendingCompletionModel').then(({ WorkflowPendingCompletionModel }) => {
+            WorkflowPendingCompletionModel.saveFailure({ executionId: failExecId, nodeId, nodeLabel, error: errorMsg })
+              .catch(e => console.warn('[Graph:Playbook] Failed to persist failure to DB:', e));
+          }).catch(() => { /* best-effort */ });
+        }
+
         // Emit sub_agent_failed event
         try {
           const ws = getWebSocketClientService();
@@ -1934,15 +2038,54 @@ export class Graph<TState = BaseThreadState> {
   /**
    * Trigger a deferred processWorkflowPlaybook call after a sub-agent completes.
    * Guards against concurrent execution with isProcessingPlaybook flag.
+   *
+   * If the playbook is already processing, queues a re-trigger flag so the
+   * finally block will re-process (fixes P1 #4).
+   *
+   * If the graph is idle (waitingForUser), sends a synthetic WS message to
+   * wake the orchestrator so it picks up the completion (fixes P0 #2).
    */
+  private _continuationQueued = false;
+
   private triggerPlaybookContinuation(state: TState): void {
     if (this.isProcessingPlaybook) {
-      console.log('[Graph:Playbook] Playbook already processing, completion will be drained on next cycle');
+      // Queue a re-trigger — processWorkflowPlaybook's finally block will check this
+      this._continuationQueued = true;
+      console.log('[Graph:Playbook] Playbook already processing, queued continuation for after unlock');
       return;
     }
 
+    // If the graph is idle/waitingForUser, the stale state reference won't help.
+    // Send a synthetic WS message to wake the orchestrator through the normal path.
+    const meta = (state as any).metadata;
+    if (meta?.waitingForUser || meta?.cycleComplete) {
+      const channel = meta?.wsChannel;
+      const threadId = meta?.threadId;
+      if (channel && threadId) {
+        console.log(`[Graph:Playbook] Graph is idle — sending WS wake-up on channel "${ channel }"`);
+        try {
+          const ws = getWebSocketClientService();
+          ws.send(channel, {
+            type: 'user_message',
+            data: {
+              content:  '[Workflow continuation: sub-agent completed]',
+              threadId,
+              metadata: { origin: 'workflow_continuation' },
+            },
+            timestamp: Date.now(),
+          });
+        } catch (err) {
+          console.warn('[Graph:Playbook] Failed to send WS wake-up:', err);
+        }
+        return;
+      }
+    }
+
     setImmediate(async() => {
-      if (this.isProcessingPlaybook) return;
+      if (this.isProcessingPlaybook) {
+        this._continuationQueued = true;
+        return;
+      }
       try {
         console.log('[Graph:Playbook] Triggering playbook continuation after sub-agent completion');
         await this.processWorkflowPlaybook(state);

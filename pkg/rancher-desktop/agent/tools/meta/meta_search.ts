@@ -1,8 +1,10 @@
+import * as os from 'os';
+
 import { BaseTool, ToolResponse } from '../base';
 import { indexDirectory, search, type QmdSearchResult } from '@pkg/main/qmdService';
 
 /**
- * Meta Search Tool — full-text search across project files using QMD.
+ * Search Tool — fast semantic search across any directory using QMD vector indexing.
  * Indexes and searches a directory, returning matching files with previews.
  */
 export class MetaSearchWorker extends BaseTool {
@@ -10,19 +12,13 @@ export class MetaSearchWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { query, dirPath, limit, reindex } = input;
+    const { query, limit, reindex } = input;
+    const dirPath = input.dirPath || os.homedir();
 
     if (!query) {
       return {
         successBoolean: false,
         responseString: 'Missing required field: query',
-      };
-    }
-
-    if (!dirPath) {
-      return {
-        successBoolean: false,
-        responseString: 'Missing required field: dirPath',
       };
     }
 

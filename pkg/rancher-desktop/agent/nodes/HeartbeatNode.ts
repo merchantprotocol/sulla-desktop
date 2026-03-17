@@ -186,7 +186,7 @@ export class HeartbeatNode extends BaseNode {
       return `## Active Projects\n${ lines.join('\n') }`;
     } catch (err) {
       console.warn('[HeartbeatNode] Failed to load projects:', err);
-      return 'Unable to load projects — use meta_search to discover them or browse the projects directory.';
+      return 'Unable to load projects — use file_search to discover them or browse the projects directory.';
     }
   }
 
@@ -205,7 +205,7 @@ export class HeartbeatNode extends BaseNode {
       return `## Available Skills\n${ lines.join('\n') }`;
     } catch (err) {
       console.warn('[HeartbeatNode] Failed to load skills:', err);
-      return 'Unable to load skills — use meta_search tool to discover them.';
+      return 'Unable to load skills — use file_search tool to discover them.';
     }
   }
 

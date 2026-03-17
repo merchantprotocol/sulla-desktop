@@ -74,7 +74,7 @@ const TOOL_VERB_MAP: Record<string, string> = {
   // Execution
   exec: 'Running', exec_command: 'Running', shell: 'Running', bash: 'Running', run_command: 'Running',
   // Search
-  meta_search: 'Searching', browse_tools: 'Searching tools',
+  file_search: 'Searching', browse_tools: 'Searching tools',
   // Git / GitHub
   git_status: 'Checking status', git_log: 'Reviewing history', git_diff: 'Comparing changes',
   git_add: 'Staging', git_commit: 'Committing', git_push: 'Pushing', git_pull: 'Pulling',
@@ -799,7 +799,7 @@ export class AgentPersonaService {
 
         // Skip tool cards for chat message tools - they emit directly as chat messages
         if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image' || toolName === 'emit_html_message'
-          || toolName === 'load_skill' || toolName === 'meta_search' || toolName === 'browse_tools') {
+          || toolName === 'load_skill' || toolName === 'file_search' || toolName === 'browse_tools') {
           return;
         }
 

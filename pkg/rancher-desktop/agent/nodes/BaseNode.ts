@@ -684,7 +684,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       const lines = candidates.map(c => {
         const desc = c.triggerDescription || c.definition.description || '';
-        const slug = (c.definition as any).slug || c.definition.id;
+        const slug = (c.definition as any)._slug || (c.definition as any).slug || c.definition.name.toLowerCase().replace(/\s+/g, '-');
         return `- **${ c.definition.name }** (\`${ slug }\`)${ desc ? `: ${ desc }` : '' }`;
       });
 
@@ -701,43 +701,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
      */
   private async buildScopedWorkflowIndex(workflowId: string): Promise<string> {
     try {
-      const { resolveSullaWorkflowsDir } = await import('../utils/sullaPaths');
-      const yaml = (await import('yaml')).default;
-      const workflowsDir = resolveSullaWorkflowsDir();
-
-      let definition: any = null;
-      if (fs.existsSync(workflowsDir)) {
-        const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
-
-        for (const entry of entries) {
-          if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
-          try {
-            const fp = path.join(workflowsDir, entry.name);
-            const raw = fs.readFileSync(fp, 'utf-8');
-            const parsed = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
-
-            // Match by id, slug, or filename (without extension)
-            const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
-            const needle = workflowId.toLowerCase();
-
-            if (
-              parsed.id === workflowId ||
-              (parsed.slug && parsed.slug.toLowerCase() === needle) ||
-              fileBaseName.toLowerCase() === needle
-            ) {
-              definition = parsed;
-              break;
-            }
-          } catch { /* skip */ }
-        }
-      }
-
-      if (!definition) {
-        return `_Workflow \`${ workflowId }\` not found._`;
-      }
+      const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
+      const registry = getWorkflowRegistry();
+      const definition: any = registry.loadWorkflow(workflowId);
 
       const desc = definition.description || '';
-      const slug = definition.slug || definition.id;
+      const slug = definition._slug || definition.slug || definition.name.toLowerCase().replace(/\s+/g, '-');
       return `- **${ definition.name }** (\`${ slug }\`)${ desc ? `: ${ desc }` : '' }\n\n_You are testing this workflow. When the user asks you to run it, use \`execute_workflow\` with workflowId \`${ slug }\`._`;
     } catch (err) {
       console.warn('[BaseNode] Failed to load scoped workflow:', err);
