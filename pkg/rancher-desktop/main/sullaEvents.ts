@@ -857,7 +857,7 @@ export function initSullaEvents(): void {
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
       const agentDir = path.join(agentsDir, entry.name);
-      const yamlPath = path.join(agentDir, 'agent.yaml');
+      const yamlPath = path.join(agentDir, 'config.yaml');
 
       if (!fs.existsSync(yamlPath)) continue;
       try {
@@ -873,7 +873,7 @@ export function initSullaEvents(): void {
           path:        agentDir,
         });
       } catch (err) {
-        console.warn(`[Sulla] Failed to parse agent.yaml in ${ entry.name }:`, err);
+        console.warn(`[Sulla] Failed to parse config.yaml in ${ entry.name }:`, err);
       }
     }
 

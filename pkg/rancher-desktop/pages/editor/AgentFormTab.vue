@@ -599,7 +599,7 @@ async function save() {
       await ipcRenderer.invoke('filesystem-create-dir', agentsDir, form.id);
     }
 
-    // Build and write agent.yaml
+    // Build and write config.yaml
     const agentYaml = yaml.stringify({
       name:        form.name.trim(),
       description: form.description.trim(),
@@ -608,7 +608,7 @@ async function save() {
       tools:       form.tools,
     });
 
-    await ipcRenderer.invoke('filesystem-write-file', `${ agentDir }/agent.yaml`, agentYaml);
+    await ipcRenderer.invoke('filesystem-write-file', `${ agentDir }/config.yaml`, agentYaml);
 
     if (!isEditMode.value) {
       // Create soul.md from prompt template (only on new agent).

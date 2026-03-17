@@ -85,13 +85,14 @@ export class ChatCompletionsServer {
     const content = typeof payload?.content === 'string' ? payload.content.trim() : '';
     const metadata = payload?.metadata;
 
-    console.log('[ChatCompletionsAPI] Tasker listener received message', {
-      type:              msg.type,
-      id:                msg.id,
-      channel:           msg.channel,
-      contentPreview:    content.slice(0, 80),
-      metadataOrigin:    metadata?.origin,
-      metadataEventType: metadata?.eventType,
+    console.log('[ChatCompletionsAPI] ← tasker message', {
+      type:         msg.type,
+      id:           msg.id,
+      channel:      msg.channel,
+      timestamp:    msg.timestamp,
+      metadata,
+      contentChars: content.length,
+      content:      content.slice(0, 100),
     });
 
     if (msg.type === 'user_message' && metadata?.origin === 'slack' && metadata?.eventType === 'app_mention') {
@@ -186,9 +187,24 @@ export class ChatCompletionsServer {
    */
   public async handleChatCompletions(req: Request, res: Response) {
     try {
-      console.log('[ChatCompletionsAPI] Incoming request body:', JSON.stringify(req.body, null, 2));
-
       const { messages, model = 'sulla', temperature = 0.7, max_tokens, stream = false, thread_id } = req.body;
+
+      // Log each incoming message with truncated content
+      if (Array.isArray(messages)) {
+        for (const m of messages) {
+          const raw = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
+          console.log('[ChatCompletionsAPI] ← chat message', {
+            role:         m.role,
+            name:         m.name,
+            model,
+            thread_id,
+            temperature,
+            stream,
+            contentChars: raw.length,
+            content:      raw.slice(0, 100),
+          });
+        }
+      }
 
       // Validate request
       if (!messages || !Array.isArray(messages)) {

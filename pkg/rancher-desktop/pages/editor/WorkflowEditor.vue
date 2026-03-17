@@ -880,6 +880,20 @@ defineExpose({ updateNodeLabel, updateNodeConfig, serialize, updateNodeExecution
   background: var(--bg-surface-hover);
 }
 
+.workflow-editor.dark :deep(.vue-flow__edge-textbg) {
+  fill: var(--bg-surface-alt);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  rx: 4;
+  ry: 4;
+}
+
+.workflow-editor.dark :deep(.vue-flow__edge-text) {
+  fill: var(--text-muted);
+  font-size: var(--fs-code);
+  font-family: inherit;
+}
+
 .workflow-editor.dark :deep(.vue-flow__background) {
   mask-image: radial-gradient(ellipse at center, black 15%, transparent 65%);
   -webkit-mask-image: radial-gradient(ellipse at center, black 15%, transparent 65%);

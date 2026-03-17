@@ -598,6 +598,23 @@ export class AgentPersonaService {
         : JSON.stringify(msg.data).substring(0, 50))
       : 'undefined';
 
+    {
+      const _d = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : { content: msg.data };
+      const _raw = typeof _d?.content === 'string' ? _d.content : JSON.stringify(_d?.content ?? '');
+      console.log(`[AgentPersonaModel] ← message on "${ agentId }"`, {
+        type:         msg.type,
+        id:           msg.id,
+        channel:      msg.channel,
+        timestamp:    msg.timestamp,
+        threadId:     _d?.threadId || _d?.thread_id,
+        metadata:     _d?.metadata,
+        role:         _d?.role,
+        kind:         _d?.kind,
+        contentChars: _raw.length,
+        content:      _raw.slice(0, 100),
+      });
+    }
+
     // ── Thread-ID filtering ──────────────────────────────────────────
     // If the incoming message carries a thread_id and this persona already
     // has an active threadId, drop messages that belong to a different thread.

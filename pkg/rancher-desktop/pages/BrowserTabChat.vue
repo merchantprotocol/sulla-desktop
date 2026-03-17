@@ -276,7 +276,19 @@ const modelSelector = new AgentModelSelectorController({
 const displayMessages = computed(() => {
   return messages.value.filter((m: ChatMessage) => {
     const kind = String((m as any)?.metadata?.kind || '').trim();
-    return kind !== 'action_live_n8n_event';
+
+    if (kind === 'action_live_n8n_event') {
+      return false;
+    }
+
+    // Silence assistant messages with no displayable content
+    if (m.role === 'assistant' && !m.content?.trim() && !m.image && !m.toolCard && !m.subAgentActivity && !m.workflowNode && !m.channelMeta) {
+      console.log('[BrowserTabChat] Silenced empty assistant message:', JSON.stringify(m));
+
+      return false;
+    }
+
+    return true;
   });
 });
 
