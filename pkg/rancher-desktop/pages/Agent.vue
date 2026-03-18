@@ -1,3 +1,40 @@
+<!--
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  DEPRECATED — DO NOT ADD NEW FEATURES TO THIS FILE                 │
+  │                                                                    │
+  │  Agent.vue is the legacy single-route chat page bound to /Chat.    │
+  │  It has been replaced by the multi-tab browser model.              │
+  │  This file is kept only for backward compatibility and will be     │
+  │  removed in a future release.                                      │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  ## What replaced it
+
+  The chat experience now lives inside browser tabs. Each tab gets its
+  own independent ChatInterface (scoped localStorage, separate threadId)
+  so users can run multiple conversations side by side.
+
+  ### New architecture flow
+
+  1. User clicks "+" in AgentHeader.vue →
+     useBrowserTabs.createTab('about:blank', { mode: 'chat' })
+  2. Router navigates to /Browser/{tabId}
+  3. AgentRouter.vue renders BrowserTab.vue for that tab ID
+  4. BrowserTab.vue detects mode='chat' → renders BrowserTabChat.vue
+  5. BrowserTabChat.vue shows ChatOptionsVariantB.vue (empty state)
+     or the message transcript + docked composer (active chat)
+
+  ### Key files (use these instead)
+
+  AgentRouter.vue          – top-level layout, footer, tab layer mgmt
+  BrowserTab.vue           – tab container (chat / browser / calendar / etc.)
+  BrowserTabChat.vue       – per-tab chat UI, message rendering, composer
+  ChatOptionsVariantB.vue  – empty-state landing (headline + action cards)
+  AgentHeader.vue          – tab bar, new-tab button, drag-and-drop tabs
+  useBrowserTabs.ts        – reactive tab store with localStorage persistence
+  ChatInterface.ts         – per-tab chat state (messages, thread, send/stop)
+-->
+
 <template>
   <div
     class="h-full overflow-hidden font-sans page-root"

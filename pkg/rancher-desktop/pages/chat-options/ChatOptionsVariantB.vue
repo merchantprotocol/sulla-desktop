@@ -32,6 +32,25 @@
       />
     </div>
 
+    <!-- Onboarding card — shown only on user's very first chat -->
+    <div
+      v-if="isFirstChat"
+      class="vb-onboarding"
+    >
+      <button
+        type="button"
+        class="vb-onboarding-btn"
+        @click="$emit('start-onboarding')"
+      >
+        <div class="vb-onboarding-accent" />
+        <div class="vb-onboarding-body">
+          <span class="vb-onboarding-title">Get Started — Let Sulla Get to Know You</span>
+          <span class="vb-onboarding-desc">Set your goals, preferences, and how you'd like to work together.</span>
+        </div>
+        <span class="vb-card-arrow">&rarr;</span>
+      </button>
+    </div>
+
     <!-- Editorial action cards -->
     <div class="vb-grid">
       <button
@@ -59,6 +78,7 @@ const props = defineProps<{
   loading: boolean;
   graphRunning: boolean;
   modelSelector: any;
+  isFirstChat?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -67,6 +87,7 @@ const emit = defineEmits<{
   stop: [];
   'primary-action': [];
   pick: [mode: string];
+  'start-onboarding': [];
 }>();
 
 const localQuery = computed({
@@ -137,6 +158,67 @@ const cards = [
 .vb-composer-wrap {
   width: 100%;
   margin-bottom: 2.5rem;
+}
+
+/* ── Onboarding card ── */
+.vb-onboarding {
+  width: 100%;
+  margin-bottom: 1.25rem;
+  animation: onboardFadeIn 0.4s ease-out;
+}
+
+@keyframes onboardFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.vb-onboarding-btn {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.vb-onboarding-btn:hover {
+  border-color: var(--text-link);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(80, 150, 179, 0.2);
+}
+
+.vb-onboarding-accent {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--text-link);
+}
+
+.vb-onboarding-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.75rem 1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.vb-onboarding-title {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.vb-onboarding-desc {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-dim);
 }
 
 /* ── Card grid ── */

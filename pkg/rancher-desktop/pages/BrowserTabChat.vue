@@ -142,10 +142,12 @@
           :loading="loading"
           :graph-running="graphRunning"
           :model-selector="modelSelector"
+          :is-first-chat="isFirstChat"
           @send="send"
           @stop="stop"
           @primary-action="handlePrimaryAction"
           @pick="(mode: string) => emit('set-mode', mode as BrowserTabMode)"
+          @start-onboarding="startOnboarding"
         />
       </div>
     </div>
@@ -165,6 +167,7 @@ import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import { useTheme } from '@pkg/composables/useTheme';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
   tabId: string;
@@ -273,6 +276,23 @@ const modelSelector = new AgentModelSelectorController({
   isRunning,
 });
 
+// First-chat detection — show onboarding card when user has never chatted
+const isFirstChat = ref(false);
+async function checkFirstChat(): Promise<void> {
+  try {
+    isFirstChat.value = await ipcRenderer.invoke('check-first-chat');
+  } catch {
+    isFirstChat.value = false;
+  }
+}
+
+function startOnboarding(): void {
+  isFirstChat.value = false;
+  ipcRenderer.invoke('mark-first-chat-complete');
+  query.value = 'I\'m new here — help me set my goals and get to know how I work best.';
+  nextTick(() => send());
+}
+
 const displayMessages = computed(() => {
   return messages.value.filter((m: ChatMessage) => {
     const kind = String((m as any)?.metadata?.kind || '').trim();
@@ -303,7 +323,13 @@ const renderMarkdown = (markdown: string): string => {
   });
 };
 
-const send = () => chatController.send();
+const send = () => {
+  if (isFirstChat.value) {
+    isFirstChat.value = false;
+    ipcRenderer.invoke('mark-first-chat-complete');
+  }
+  chatController.send();
+};
 const stop = () => chatController.stop();
 const continueRun = () => chatController.continueRun();
 const handlePrimaryAction = () => {
@@ -348,6 +374,7 @@ watch(chatScrollContainer, (el) => { if (el) attachScrollListeners(el); });
 onMounted(async () => {
   if (chatScrollContainer.value) attachScrollListeners(chatScrollContainer.value);
   await modelSelector.start();
+  checkFirstChat();
 });
 
 watch(() => messages.value.length, async () => {
