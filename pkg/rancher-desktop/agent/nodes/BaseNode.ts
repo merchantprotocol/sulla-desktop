@@ -607,9 +607,28 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     /// //////////////////////////////////////////////////////////////
     // adds observational memories to the message thread
+    // Respects injectObservations: false in agent config.yaml —
+    // planning pipeline agents (observer, thinker, forecaster,
+    // goal-setter, prompt-engineer) must stay objective.
     /// //////////////////////////////////////////////////////////////
     if (options.includeAwareness) {
-      if (state.metadata.awarenessIncluded !== true) {
+      // Check if this agent's config.yaml opts out of observation injection
+      let shouldInjectObservations = true;
+      if (agentId) {
+        try {
+          const agentDir = path.join(resolveSullaAgentsDir(), agentId);
+          const configPath = path.join(agentDir, 'config.yaml');
+          if (fs.existsSync(configPath)) {
+            const yaml = await import('yaml');
+            const agentCfg = yaml.parse(fs.readFileSync(configPath, 'utf-8'));
+            if (agentCfg?.injectObservations === false) {
+              shouldInjectObservations = false;
+            }
+          }
+        } catch { /* ignore config read errors — default to injecting */ }
+      }
+
+      if (shouldInjectObservations && state.metadata.awarenessIncluded !== true) {
         const observationalMemory = await SullaSettingsModel.get('observationalMemory', {});
         let memoryObj: any;
         let memoryText = '';
@@ -640,7 +659,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         state.metadata.awarenessIncluded = true;
       }
 
-      parts.push(OBSERVATIONAL_MEMORY_SOP);
+      if (shouldInjectObservations) {
+        parts.push(OBSERVATIONAL_MEMORY_SOP);
+      }
     }
 
     // Always preserve the caller's base prompt and enrich around it.
