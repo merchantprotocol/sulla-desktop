@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#5271FF"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Gl</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="196px" height="196px" style="shape-rendering:geometricPrecision; text-rendering:geometricPrecision; image-rendering:optimizeQuality; fill-rule:evenodd; clip-rule:evenodd" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g><path style="opacity:1" fill="#0c893e" d="M 83.5,-0.5 C 92.8333,-0.5 102.167,-0.5 111.5,-0.5C 157.833,9.16667 185.833,37.1667 195.5,83.5C 195.5,92.8333 195.5,102.167 195.5,111.5C 185.833,157.833 157.833,185.833 111.5,195.5C 102.167,195.5 92.8333,195.5 83.5,195.5C 37.1667,185.833 9.16667,157.833 -0.5,111.5C -0.5,102.167 -0.5,92.8333 -0.5,83.5C 9.16667,37.1667 37.1667,9.16667 83.5,-0.5 Z M 88.5,29.5 C 94.5,29.5 100.5,29.5 106.5,29.5C 106.5,49.1667 106.5,68.8333 106.5,88.5C 126.167,88.5 145.833,88.5 165.5,88.5C 165.5,94.5 165.5,100.5 165.5,106.5C 145.833,106.5 126.167,106.5 106.5,106.5C 106.5,126.167 106.5,145.833 106.5,165.5C 100.5,165.5 94.5,165.5 88.5,165.5C 88.5,145.833 88.5,126.167 88.5,106.5C 68.8333,106.5 49.1667,106.5 29.5,106.5C 29.5,100.5 29.5,94.5 29.5,88.5C 49.1667,88.5 68.8333,88.5 88.5,88.5C 88.5,68.8333 88.5,49.1667 88.5,29.5 Z"/></g>
 </svg>

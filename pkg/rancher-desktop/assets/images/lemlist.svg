@@ -1,4 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#7B4AE2"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Ll</text>
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 20010904//EN"
+ "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg version="1.0" xmlns="http://www.w3.org/2000/svg"
+ width="400.000000pt" height="400.000000pt" viewBox="0 0 400.000000 400.000000"
+ preserveAspectRatio="xMidYMid meet">
+
+<g transform="translate(0.000000,400.000000) scale(0.100000,-0.100000)"
+fill="#316AFC" stroke="none">
+<path d="M0 2000 l0 -2000 2000 0 2000 0 0 2000 0 2000 -2000 0 -2000 0 0
+-2000z m1417 866 l28 -24 5 -594 c6 -655 2 -625 71 -703 19 -21 56 -49 84 -61
+l50 -24 572 0 c347 0 582 -4 597 -10 47 -18 66 -64 66 -165 0 -101 -19 -147
+-66 -165 -15 -6 -280 -10 -683 -10 -715 0 -724 1 -821 57 -69 41 -138 116
+-173 191 l-32 67 -3 703 -3 703 30 30 c29 29 31 29 140 29 102 0 112 -2 138
+-24z m1439 -10 c34 -34 34 -34 34 -131 0 -100 -8 -128 -44 -157 -19 -16 -61
+-18 -504 -18 -313 0 -490 4 -503 10 -35 19 -49 63 -49 160 0 95 8 123 44 152
+19 16 61 18 504 18 l484 0 34 -34z m-188 -691 c44 -10 62 -60 62 -169 l0 -98
+-34 -34 -34 -34 -402 0 -402 0 -34 34 -34 34 0 99 c0 114 18 157 70 170 33 9
+770 7 808 -2z"/>
+</g>
 </svg>

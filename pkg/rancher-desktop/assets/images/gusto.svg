@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#F45D48"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Gu</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="1200px" height="1200px" style="shape-rendering:geometricPrecision; text-rendering:geometricPrecision; image-rendering:optimizeQuality; fill-rule:evenodd; clip-rule:evenodd" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g><path style="opacity:1" fill="#faf9f9" d="M -0.5,-0.5 C 399.5,-0.5 799.5,-0.5 1199.5,-0.5C 1199.5,399.5 1199.5,799.5 1199.5,1199.5C 799.5,1199.5 399.5,1199.5 -0.5,1199.5C -0.5,799.5 -0.5,399.5 -0.5,-0.5 Z"/></g>
+<g><path style="opacity:1" fill="#f35744" d="M 580.5,243.5 C 621.559,240.6 660.226,248.767 696.5,268C 708.667,275.509 719.834,284.342 730,294.5C 730.5,280.837 730.667,267.171 730.5,253.5C 769.167,253.5 807.833,253.5 846.5,253.5C 846.667,409.167 846.5,564.834 846,720.5C 837.483,816.771 790.316,886.605 704.5,930C 640.281,957.711 575.281,959.711 509.5,936C 496.899,930.701 484.899,924.367 473.5,917C 492.707,883.418 512.04,849.918 531.5,816.5C 564.28,836.417 599.28,841.25 636.5,831C 680.429,816.738 709.262,787.571 723,743.5C 727.97,722.436 729.636,701.103 728,679.5C 699.57,710.968 664.07,729.134 621.5,734C 536.005,739.958 465.172,710.791 409,646.5C 351.568,571.827 338.235,489.827 369,400.5C 409.416,307.703 479.916,255.369 580.5,243.5 Z"/></g>
+<g><path style="opacity:1" fill="#faf9f9" d="M 583.5,360.5 C 648.249,357.608 693.749,385.608 720,444.5C 737.029,499.052 725.195,546.219 684.5,586C 636.66,624.012 585.66,628.678 531.5,600C 487.225,570.928 466.725,529.761 470,476.5C 477.129,424.374 504.962,388.207 553.5,368C 563.399,364.525 573.399,362.025 583.5,360.5 Z"/></g>
 </svg>

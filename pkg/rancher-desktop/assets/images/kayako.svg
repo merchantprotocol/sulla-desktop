@@ -1,4 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#F8981D"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#000">Ka</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:sketch="http://www.bohemiancoding.com/sketch/ns" version="1.1" viewBox="0 0 23 24">
+  <!-- Generator: Adobe Illustrator 29.1.0, SVG Export Plug-In . SVG Version: 2.1.0 Build 142)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: #fff;
+        fill-rule: evenodd;
+      }
+
+      .st1, .st2 {
+        fill: #7f4ec4;
+      }
+
+      .st2 {
+        isolation: isolate;
+        opacity: .4;
+      }
+    </style>
+  </defs>
+  <g id="Layer_11">
+    <g>
+      <path class="st0" d="M0,6.6c0,0,0-.2.2-.2h2.9c0,0,.2,0,.2.2v9.4h1c.2,0,.3,0,.4-.2l3.3-4.5h3.8s.1,0,.2.1v.2l-4.3,5.9,4.6,6.2v.2s0,.1-.2.1h-3.1c-.5,0-.8-.2-1.1-.5l-3.3-4.5c0-.1-.2-.2-.4-.2h-.9v5.1c0,.1,0,.2-.2.2H.2c-.1,0-.2,0-.2-.2V6.6Z"/>
+      <g id="Layer_1-2">
+        <path class="st2" d="M17.3,10.1l1.8-.6.6-1.8c0,0,.2-.2.3-.2s.3,0,.3.2l.6,1.8,1.8.6c.1,0,.2.2.2.3s0,.3-.2.3l-1.8.6-.6,1.8c0,.1-.2.2-.3.2s-.3,0-.3-.2l-.6-1.8-1.8-.6c-.1,0-.2-.2-.2-.3s0-.3.2-.3Z"/>
+        <path class="st1" d="M14.1,1.3c0-.2-.2-.2-.4-.2s-.3,0-.4.2l-1.3,2.9-2.9,1.3c-.2,0-.2.2-.2.4s0,.3.2.4l2.9,1.3,1.3,2.9c0,.2.2.2.4.2s.3,0,.4-.2l1.3-2.9,2.9-1.3c.2,0,.2-.2.2-.4s0-.3-.2-.4l-2.9-1.3s-1.3-2.9-1.3-2.9Z"/>
+      </g>
+    </g>
+  </g>
 </svg>

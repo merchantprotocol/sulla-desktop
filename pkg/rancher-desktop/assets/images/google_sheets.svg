@@ -1,4 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#0F9D58"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">GS</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <path fill="#23A566" d="M10 4h20l10 10v28a4 4 0 01-4 4H10a4 4 0 01-4-4V8a4 4 0 014-4z"/>
+  <path fill="#1C8B53" d="M30 4l10 10H34a4 4 0 01-4-4V4z"/>
+  <rect x="12" y="20" width="24" height="18" rx="1" fill="#fff" opacity=".9"/>
+  <line x1="12" y1="26" x2="36" y2="26" stroke="#23A566" stroke-width="1"/>
+  <line x1="12" y1="32" x2="36" y2="32" stroke="#23A566" stroke-width="1"/>
+  <line x1="22" y1="20" x2="22" y2="38" stroke="#23A566" stroke-width="1"/>
 </svg>

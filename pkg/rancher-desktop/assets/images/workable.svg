@@ -1,4 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#19B4B8"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Wk</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="256px" height="256px" style="shape-rendering:geometricPrecision; text-rendering:geometricPrecision; image-rendering:optimizeQuality; fill-rule:evenodd; clip-rule:evenodd" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g><path style="opacity:1" fill="#007064" d="M 126.5,61.5 C 147.625,57.9778 162.792,65.6444 172,84.5C 175.123,96.0031 174.456,107.336 170,118.5C 156.867,150.628 135.034,174.795 104.5,191C 78.6864,201.171 56.5197,196.004 38,175.5C 13.3927,142.785 1.55933,105.785 2.5,64.5C 13.0821,64.1801 23.5821,64.5134 34,65.5C 34.9958,89.1435 39.3292,112.144 47,134.5C 51.7338,146.479 59.2338,156.313 69.5,164C 80.8524,170.396 92.5191,171.063 104.5,166C 129.018,152.647 144.351,132.314 150.5,105C 148.768,88.5533 140.601,84.0533 126,91.5C 122.613,96.3254 121.28,101.659 122,107.5C 124.246,117.584 128.413,126.751 134.5,135C 131.836,141.493 127.836,146.993 122.5,151.5C 108.091,136.179 99.7579,118.012 97.5,97C 98.8074,78.1663 108.474,66.333 126.5,61.5 Z"/></g>
+<g><path style="opacity:1" fill="#007064" d="M 231.5,99.5 C 238.149,100.208 245.149,100.708 252.5,101C 251.448,132.436 238.448,157.77 213.5,177C 191.662,189.846 169.996,189.513 148.5,176C 153.989,171.511 159.156,166.677 164,161.5C 185.776,171.559 203.109,166.559 216,146.5C 224.066,131.801 229.233,116.135 231.5,99.5 Z"/></g>
 </svg>

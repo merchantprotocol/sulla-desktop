@@ -1,4 +1,39 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#46E3B7"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#000">Rn</text>
+<svg version="1.1" id="Layer_1" xmlns:x="ns_extend;" xmlns:i="ns_ai;" xmlns:graph="ns_graphs;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 48.9 48.8" style="enable-background:new 0 0 48.9 48.8;" xml:space="preserve">
+ <style type="text/css">
+  .st0{fill:#5AEDC5;}
+ </style>
+ <metadata>
+  <sfw xmlns="ns_sfw;">
+   <slices>
+   </slices>
+   <sliceSourceBounds bottomLeftOrigin="true" height="48.8" width="48.9" x="-113.1" y="-224.8">
+   </sliceSourceBounds>
+  </sfw>
+ </metadata>
+ <g>
+  <g>
+   <path class="st0" d="M7,15.9C7,11,11,7,15.9,7h12V0h-12C7.1,0,0,7.1,0,15.9v22.3h7V15.9z">
+   </path>
+   <polygon class="st0" points="7,41.8 0,41.8 0,48.8 7,48.8 		">
+   </polygon>
+   <polygon class="st0" points="17.7,41.8 10.7,41.8 10.7,48.8 17.7,48.8 		">
+   </polygon>
+   <polygon class="st0" points="28.1,41.8 21.1,41.8 21.1,48.8 28.1,48.8 		">
+   </polygon>
+   <polygon class="st0" points="38.5,41.8 31.5,41.8 31.5,48.8 38.5,48.8 		">
+   </polygon>
+   <polygon class="st0" points="48.9,41.8 41.9,41.8 41.9,48.8 48.9,48.8 		">
+   </polygon>
+   <polygon class="st0" points="48.9,31.4 41.9,31.4 41.9,38.4 48.9,38.4 		">
+   </polygon>
+   <polygon class="st0" points="48.9,20.8 41.9,20.8 41.9,27.8 48.9,27.8 		">
+   </polygon>
+   <polygon class="st0" points="48.9,10.4 41.9,10.4 41.9,17.4 48.9,17.4 		">
+   </polygon>
+   <polygon class="st0" points="48.9,0 41.9,0 41.9,7 48.9,7 		">
+   </polygon>
+   <polygon class="st0" points="38.4,0 31.4,0 31.4,7 38.4,7 		">
+   </polygon>
+  </g>
+ </g>
 </svg>

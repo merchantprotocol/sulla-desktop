@@ -1,4 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#0058CC"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">MM</text>
+<svg version="1.1" id="Layer_1" xmlns:x="ns_extend;" xmlns:i="ns_ai;" xmlns:graph="ns_graphs;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 164.3 164.3" style="enable-background:new 0 0 164.3 164.3;" xml:space="preserve">
+ <style type="text/css">
+  .st0{fill-rule:evenodd;clip-rule:evenodd;fill:#1D325C;}
+ </style>
+ <metadata>
+  <sfw xmlns="ns_sfw;">
+   <slices>
+   </slices>
+   <sliceSourceBounds bottomLeftOrigin="true" height="164.3" width="164.3" x="65.7" y="53.8">
+   </sliceSourceBounds>
+  </sfw>
+ </metadata>
+ <g id="XMLID_6_">
+  <g id="XMLID_2_">
+   <g id="XMLID_3_">
+    <path id="XMLID_4_" class="st0" d="M130.4,15.7l0.9,17.4C145.4,48.7,151,70.8,144,91.6c-10.5,31-45.1,47.3-77.4,36.4
+				S16.8,83.1,27.3,52.1c7.1-20.9,25-35.1,45.8-38.8L84.3,0c-35.1-0.9-68.1,20.8-80,55.8c-14.5,43,8.5,89.6,51.5,104.1
+				s89.6-8.5,104.1-51.5C171.7,73.6,158.7,36.2,130.4,15.7z">
+    </path>
+   </g>
+   <path id="XMLID_5_" class="st0" d="M110.3,67.1l-0.6-24.4l-0.5-14l-0.3-12.2c0,0,0.1-5.9-0.1-7.2c0-0.3-0.1-0.5-0.2-0.7V8.4
+			c-0.2-0.4-0.6-0.7-1-0.9c-0.5-0.2-1-0.1-1.4,0.1c0,0-0.1,0-0.1,0.1c-0.2,0.1-0.4,0.2-0.6,0.4c-1,1-4.5,5.7-4.5,5.7l-7.6,9.5
+			l-8.9,10.9l-15.3,19c0,0-7,8.7-5.5,19.5s9.6,16,15.8,18.1S95.3,93.6,103,86C110.5,78.3,110.3,67.1,110.3,67.1L110.3,67.1z">
+   </path>
+  </g>
+ </g>
 </svg>

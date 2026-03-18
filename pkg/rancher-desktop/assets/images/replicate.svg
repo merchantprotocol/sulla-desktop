@@ -1,4 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#000000"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Rp</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="logosandtypes_com" data-name="logosandtypes com" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 150">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #f39639;
+        isolation: isolate;
+      }
+
+      .cls-2 {
+        fill: none;
+      }
+    </style>
+  </defs>
+  <path class="cls-2" d="M0,0H150V150H0V0Z"/>
+  <path class="cls-1" d="M54.4,13.77c-.06,20.34-15.46,37.06-35.24,39.22h-4.14V13.77H54.4Z"/>
+  <path class="cls-1" d="M96.38,13.77V52.99h-4.03c-20.01-2.15-35.26-19.28-35.24-39.22h39.28Z"/>
+  <path class="cls-1" d="M138.93,52.99h-39.32V13.77h1.65c20.73,1.61,36.92,18.69,37.67,39.22Z"/>
+  <path class="cls-1" d="M96.38,56.67v38.65H57.13c.76-20.91,17.86-38.15,39.24-38.65Z"/>
+  <path class="cls-1" d="M138.93,56.22c-.3,7.62-2.67,14.7-6.58,20.7h0c-6.54,10.05-17.38,17.06-29.91,18.41h-2.83V56.22h39.32Z"/>
+  <path class="cls-1" d="M55.07,95.33H15.02V56.66c21.61,.11,39.2,17.23,40.05,38.67Z"/>
+  <path class="cls-1" d="M55.07,98.56c-.85,21.43-18.43,38.56-40.05,38.67v-38.67H55.07Z"/>
+  <path class="cls-1" d="M96.38,98.56v38.65c-21.33-.52-38.43-17.61-39.24-38.65h39.24Z"/>
+  <path class="cls-1" d="M138.96,137.68v.03h-39.35v-38.45c21.68-.57,39.44,17.13,39.35,38.42Z"/>
 </svg>

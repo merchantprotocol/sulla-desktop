@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#59C36A"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">SS</text>
+<svg width="80" height="100" viewBox="0 0 80 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M34.132 0.197021C15.2813 0.197021 0 15.4895 0 34.3566V97.2088C0 99.2206 2.43318 100.228 3.8573 98.8027L22.3993 80.2549H45.8647C64.718 80.2549 79.9994 64.9624 79.9994 46.0979V0.197021H34.132Z" fill="#2BB656"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M22.3987 80.2557H5.33008L15.9941 86.6624L22.3987 80.2557Z" fill="#006B40"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M79.9992 0.197021H34.1318V46.0979L79.9992 0.197021Z" fill="#0CA750"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M34.132 0.197021C15.2813 0.197021 0 15.4921 0 34.3566V80.2549L34.132 46.0979V0.197021Z" fill="#006B40"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M79.9992 0.197021L34.1318 46.0979H79.9992V0.197021Z" fill="#75DD66"/>
 </svg>
