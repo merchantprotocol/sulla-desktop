@@ -44,8 +44,8 @@
       >
         <div class="vb-onboarding-accent" />
         <div class="vb-onboarding-body">
-          <span class="vb-onboarding-title">Get Started — Let Sulla Get to Know You</span>
-          <span class="vb-onboarding-desc">Set your goals, preferences, and how you'd like to work together.</span>
+          <span class="vb-onboarding-title">Start Onboarding for Maximum Effectiveness</span>
+          <span class="vb-onboarding-desc">Tell Sulla about your goals and working style so it can deliver the best results from day one.</span>
         </div>
         <span class="vb-card-arrow">&rarr;</span>
       </button>
