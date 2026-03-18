@@ -113,6 +113,7 @@
             @workflow-created="onWorkflowCreated"
             @workflow-deleted="onWorkflowDeleted"
             @workflow-moved="onWorkflowMoved"
+            @workflow-files-changed="onWorkflowFilesChanged"
           />
 
           <!-- Training file tree -->
@@ -1250,6 +1251,43 @@
     @close-others="closeOtherTabs"
     @close-all="closeAllTabs"
   />
+
+  <!-- Workflow file conflict dialog -->
+  <Teleport to="body">
+    <div
+      v-if="workflowConflict.visible"
+      class="wf-conflict-overlay"
+      @click="workflowConflict.visible = false"
+    >
+      <div
+        class="wf-conflict-dialog"
+        :class="{ dark: isDark }"
+        @click.stop
+      >
+        <p class="wf-conflict-title">
+          Workflow Changed on Disk
+        </p>
+        <p class="wf-conflict-text">
+          The file for <strong>{{ workflowConflict.name }}</strong> has been modified outside the editor.
+          Do you want to reload the file from disk or keep your current changes?
+        </p>
+        <div class="wf-conflict-actions">
+          <button
+            class="wf-conflict-btn reload"
+            @click="reloadWorkflowFromDisk"
+          >
+            Reload from disk
+          </button>
+          <button
+            class="wf-conflict-btn keep"
+            @click="keepEditorVersion"
+          >
+            Keep my changes
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script lang="ts">
@@ -1767,6 +1805,7 @@ export default defineComponent({
     const workflowMoving = ref(false);
     const workflowSaveStatus = ref<'idle' | 'unsaved' | 'saving' | 'saved'>('idle');
     const workflowSettingsOpen = ref(false);
+    const workflowConflict = reactive({ visible: false, workflowId: '', name: '' });
     let workflowSaveTimer: ReturnType<typeof setTimeout> | null = null;
     let workflowSavedResetTimer: ReturnType<typeof setTimeout> | null = null;
     const searchQuery = ref('');
@@ -2343,6 +2382,49 @@ export default defineComponent({
     function saveWorkflowNow() {
       if (!activeWorkflowData.value) return;
       if (workflowSaveTimer) clearTimeout(workflowSaveTimer);
+      doWorkflowSave();
+    }
+
+    async function onWorkflowFilesChanged() {
+      // When files change on disk, check if the active workflow is affected
+      if (!activeWorkflowData.value) return;
+      const wfId = activeWorkflowData.value.id;
+      const editorUpdatedAt = activeWorkflowData.value.updatedAt || '';
+
+      try {
+        const { changed } = await ipcRenderer.invoke('workflow-check-updated', wfId, editorUpdatedAt);
+
+        if (changed) {
+          if (workflowSaveStatus.value === 'unsaved') {
+            // User has local changes — show conflict dialog
+            workflowConflict.visible = true;
+            workflowConflict.workflowId = wfId;
+            workflowConflict.name = activeWorkflowData.value.name || wfId;
+          } else {
+            // No local changes — silently reload
+            await reloadWorkflowFromDisk();
+          }
+        }
+      } catch { /* ignore — workflow may not exist on disk yet */ }
+    }
+
+    async function reloadWorkflowFromDisk() {
+      workflowConflict.visible = false;
+      const wfId = workflowConflict.workflowId || activeWorkflowData.value?.id;
+      if (!wfId) return;
+
+      try {
+        const data = await ipcRenderer.invoke('workflow-get', wfId);
+        activeWorkflowData.value = data;
+        workflowSaveStatus.value = 'idle';
+      } catch (err) {
+        console.error('[Workflow] Failed to reload from disk:', err);
+      }
+    }
+
+    function keepEditorVersion() {
+      workflowConflict.visible = false;
+      // User chose to keep their version — save it to overwrite disk
       doWorkflowSave();
     }
 
@@ -3009,6 +3091,10 @@ export default defineComponent({
       onWorkflowDescriptionUpdate,
       onWorkflowDeleted,
       onWorkflowMoved,
+      onWorkflowFilesChanged,
+      workflowConflict,
+      reloadWorkflowFromDisk,
+      keepEditorVersion,
       deleteActiveWorkflow,
       workflowPaneRef,
       runWorkflow,
@@ -3107,6 +3193,71 @@ html, body, #app {
   margin: 0 !important;
   padding: 0 !important;
   overflow: hidden !important;
+}
+
+/* ── Workflow conflict dialog ── */
+.wf-conflict-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wf-conflict-dialog {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 20px 24px;
+  max-width: 400px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+
+.wf-conflict-title {
+  font-size: var(--fs-body);
+  font-weight: var(--weight-semibold);
+  color: var(--text-warning);
+  margin: 0 0 8px;
+}
+
+.wf-conflict-text {
+  font-size: var(--fs-body-sm);
+  color: var(--text-secondary);
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+
+.wf-conflict-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.wf-conflict-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.wf-conflict-btn:hover {
+  background: var(--bg-surface-hover);
+}
+
+.wf-conflict-btn.reload {
+  background: var(--accent-primary);
+  color: white;
+  border-color: var(--accent-primary);
+}
+
+.wf-conflict-btn.reload:hover {
+  opacity: 0.9;
 }
 </style>
 
