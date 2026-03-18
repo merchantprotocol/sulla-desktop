@@ -73,6 +73,15 @@
         @update-config="(nodeId, config) => $emit('update-node-config', nodeId, config)"
       />
 
+      <OrchestratorPromptNodeConfig
+        v-else-if="node.data?.subtype === 'orchestrator-prompt'"
+        :is-dark="isDark"
+        :node-id="node.id"
+        :config="node.data.config"
+        :upstream-nodes="upstreamNodes || []"
+        @update-config="(nodeId, config) => $emit('update-node-config', nodeId, config)"
+      />
+
       <AgentNodeConfig
         v-else-if="node.data?.category === 'agent'"
         :is-dark="isDark"
@@ -104,6 +113,7 @@
         :node-id="node.id"
         :subtype="node.data.subtype"
         :config="node.data.config"
+        :upstream-nodes="upstreamNodes || []"
         @update-config="(nodeId, config) => $emit('update-node-config', nodeId, config)"
       />
 
@@ -126,6 +136,7 @@ import type { WorkflowNodeData } from './workflow/types';
 import type { UpstreamNodeInfo } from './workflow/AgentNodeConfig.vue';
 import TriggerNodeConfig from './workflow/TriggerNodeConfig.vue';
 import AgentNodeConfig from './workflow/AgentNodeConfig.vue';
+import OrchestratorPromptNodeConfig from './workflow/OrchestratorPromptNodeConfig.vue';
 import ToolCallNodeConfig from './workflow/ToolCallNodeConfig.vue';
 import RouterNodeConfig from './workflow/RouterNodeConfig.vue';
 import ConditionNodeConfig from './workflow/ConditionNodeConfig.vue';
@@ -154,7 +165,11 @@ const panelTitle = computed(() => {
   if (props.node.data?.category) {
     const cat = props.node.data.category;
     if (cat === 'trigger') return 'Trigger';
-    if (cat === 'agent') return props.node.data?.subtype === 'tool-call' ? 'Tool Call' : 'Agent';
+    if (cat === 'agent') {
+      if (props.node.data?.subtype === 'tool-call') return 'Tool Call';
+      if (props.node.data?.subtype === 'orchestrator-prompt') return 'Prompt';
+      return 'Agent';
+    }
     if (cat === 'routing') return 'Routing';
     if (cat === 'flow-control') return 'Flow Control';
     if (cat === 'io') return 'I/O';
