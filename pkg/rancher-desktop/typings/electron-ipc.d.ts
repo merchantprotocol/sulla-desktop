@@ -180,6 +180,7 @@ export interface IpcMainInvokeEvents {
   'agents-delete':                 (agentId: string) => boolean;
   'agents-get-template-variables': () => { key: string; label: string; preview: string }[];
   'tools-list-by-category':        () => { category: string; description: string; tools: { name: string; description: string; operationTypes: string[] }[] }[];
+  'tools-get-schema':              (toolName: string) => Record<string, any> | null;
 
   // Workflow CRUD
   'workflow-list':   () => { id: string; name: string; updatedAt: string; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus }[];

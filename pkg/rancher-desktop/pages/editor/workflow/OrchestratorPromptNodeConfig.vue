@@ -35,7 +35,7 @@
         class="node-field-input node-field-textarea"
         :class="{ dark: isDark }"
         rows="6"
-        placeholder="Message to send to the orchestrating agent. Use {{variableName}} to inject upstream outputs..."
+        placeholder="Leave empty to auto-pass all upstream context, or write a custom prompt..."
         :value="config.prompt || ''"
         @input="onPromptChange"
         @contextmenu.prevent="openVarMenuAt($event)"
@@ -47,12 +47,31 @@
       :class="{ dark: isDark }"
     >
       <p
+        class="help-title"
+        :class="{ dark: isDark }"
+      >
+        How this works
+      </p>
+      <p
         class="help-text"
         :class="{ dark: isDark }"
       >
-        This message is sent directly to the <strong>orchestrating agent</strong> as a user message.
-        The orchestrator will process it using its full context, persona, and tools, then respond.
-        The orchestrator's response becomes this node's output for downstream nodes.
+        This message is sent to the <strong>orchestrating agent</strong>.
+        The orchestrator's response becomes this node's output.
+      </p>
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
+        <strong>Leave the prompt empty</strong> to automatically pass all upstream node outputs
+        and trigger data to the orchestrator &mdash; no variables needed.
+      </p>
+      <p
+        class="help-text"
+        :class="{ dark: isDark }"
+      >
+        If you write a custom prompt, use the <code>&lt;/&gt;</code> button or
+        <strong>right-click</strong> to insert specific upstream values where you need them.
       </p>
     </div>
 
@@ -301,6 +320,16 @@ function insertVariable(varName: string) {
 }
 
 .help-section { border-bottom: none; }
+
+.help-title {
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wider);
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+.help-title.dark { color: var(--text-muted); }
 
 .help-text {
   font-size: var(--fs-body-sm);

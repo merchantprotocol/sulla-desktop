@@ -14,6 +14,7 @@ const SUBTYPE_CATEGORY_MAP: Record<string, string> = {
   'chat-completions':  'trigger',
   'agent':             'agent',
   'tool-call':         'agent',
+  'integration-call':  'agent',
   'orchestrator-prompt': 'agent',
   'router':            'routing',
   'condition':         'routing',
@@ -37,7 +38,8 @@ const REQUIRED_CONFIG_FIELDS: Record<string, string[]> = {
   'workbench':         ['triggerType', 'triggerDescription'],
   'chat-completions':  ['triggerType', 'triggerDescription'],
   'agent':             ['agentId', 'agentName', 'additionalPrompt', 'orchestratorInstructions', 'successCriteria', 'completionContract'],
-  'tool-call':         ['integrationSlug', 'endpointName', 'accountId', 'defaults', 'preCallDescription'],
+  'tool-call':         ['toolName', 'defaults'],
+  'integration-call':  ['integrationSlug', 'endpointName', 'accountId', 'defaults', 'preCallDescription'],
   'orchestrator-prompt': ['prompt'],
   'router':            ['classificationPrompt', 'routes'],
   'condition':         ['rules', 'combinator'],
@@ -55,7 +57,7 @@ const REQUIRED_CONFIG_FIELDS: Record<string, string[]> = {
 
 const OPTIONAL_CONFIG_FIELDS: Record<string, string[]> = {
   'sub-workflow': ['agentId', 'orchestratorPrompt'],
-  'loop':         ['loopMode'],
+  'loop':         ['loopMode', 'orchestratorPrompt'],
 };
 
 const VALID_TOP_LEVEL_KEYS = new Set([

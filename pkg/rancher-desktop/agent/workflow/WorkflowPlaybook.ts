@@ -341,6 +341,7 @@ export type PlaybookStepResult =
   | { action: 'workflow_failed'; error: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'wait'; nodeId: string; durationMs: number; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'await_user_input'; nodeId: string; promptText: string; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'execute_tool_call'; nodeId: string; toolName: string; params: Record<string, string>; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'transfer_workflow'; nodeId: string; targetWorkflowId: string; payload: unknown; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'waiting_for_sub_agents'; blockedNodeIds: string[]; missingUpstream: string[]; updatedPlaybook: WorkflowPlaybookState };
 
@@ -450,7 +451,7 @@ export function isParallelizable(subtype: WorkflowNodeSubtype): boolean {
  * - prompt_agent: inject a prompt into agent messages (for router/condition decisions)
  * - node_completed: a node finished mechanically, advance the DAG
  * - spawn_sub_agent: launch an independent agent graph
- * - spawn_parallel_agents: launch multiple independent agent/tool-call graphs concurrently
+ * - spawn_parallel_agents: launch multiple independent agent/integration-call graphs concurrently
  * - workflow_completed: all nodes done
  * - workflow_failed: error
  * - wait: pause for a duration
@@ -544,7 +545,7 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
       if (hasParallelParent) {
         const n = getNode(definition, id);
 
-        if (n && (n.data.subtype === 'agent' || n.data.subtype === 'tool-call')) {
+        if (n && (n.data.subtype === 'agent' || n.data.subtype === 'integration-call' || n.data.subtype === 'tool-call')) {
           parallelParentChildren.push({ nodeId: id, node: n });
         }
       }
@@ -622,8 +623,12 @@ function processNode(
   case 'agent':
     return handleAgentNode(playbook, nodeId, node, config, upstreamOutputs, triggerPayload);
 
-    // ── Tool call — execute integration API ──
+    // ── Tool call — execute a native tool directly ──
   case 'tool-call':
+    return handleNativeToolCallNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
+
+    // ── Integration call — execute integration API ──
+  case 'integration-call':
     return handleToolCallNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
     // ── Orchestrator prompt — send a message to the orchestrating agent ──
@@ -746,12 +751,36 @@ function handleToolCallNode(
   return {
     action:  'spawn_sub_agent',
     nodeId,
-    agentId: '__tool_call__',
+    agentId: '__integration_call__',
     prompt:  '',
     config:  {
       ...config,
       defaults: resolvedDefaults,
     },
+    updatedPlaybook: playbook,
+  };
+}
+
+function handleNativeToolCallNode(
+  playbook: WorkflowPlaybookState,
+  nodeId: string,
+  config: Record<string, unknown>,
+  upstreamOutputs: PlaybookNodeOutput[],
+  triggerPayload: unknown,
+): PlaybookStepResult {
+  const toolName = (config.toolName as string) || '';
+  const defaults = (config.defaults as Record<string, string>) || {};
+  const resolvedParams: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(defaults)) {
+    resolvedParams[key] = resolveTemplate(value, triggerPayload, playbook.nodeOutputs, upstreamOutputs, getLoopContextForNode(playbook, nodeId));
+  }
+
+  return {
+    action:  'execute_tool_call',
+    nodeId,
+    toolName,
+    params:  resolvedParams,
     updatedPlaybook: playbook,
   };
 }
@@ -811,11 +840,11 @@ function handleRouterNode(
 
 ${ classificationPrompt ? `Context: ${ classificationPrompt }\n` : '' }
 ${ inputContext ? `Upstream data:\n${ inputContext }\n` : '' }
-Choose exactly ONE of these routes by responding with ONLY the route label:
+Choose exactly ONE of these routes:
 
 ${ routeDescriptions }
 
-Respond with the exact label text of your chosen route, nothing else.`;
+Respond with the route label (e.g. "${ routes[0]?.label || 'Route Name' }").`;
 
   return {
     action:          'prompt_agent',
@@ -1000,6 +1029,26 @@ function handleLoopNode(
       iterState.currentItem = items[0];
     }
 
+    // Ask-orchestrator mode: prompt the orchestrator for iteration count before starting
+    if (loopMode === 'ask-orchestrator') {
+      const orchestratorPrompt = (config.orchestratorPrompt as string) || 'How many iterations should this loop run? Respond with just a number.';
+      loopState[nodeId] = iterState;
+
+      return {
+        action:          'prompt_agent',
+        prompt:          orchestratorPrompt,
+        updatedPlaybook: {
+          ...playbook,
+          loopState,
+          pendingDecision: {
+            nodeId,
+            subtype: 'loop-ask-orchestrator' as any,
+            prompt:  orchestratorPrompt,
+          },
+        },
+      };
+    }
+
     loopState[nodeId] = iterState;
 
     // Start iteration 0: add body-start nodes to frontier
@@ -1040,9 +1089,12 @@ function handleLoopNode(
     iterState.currentItem = iterState.items[iterState.currentIteration];
   }
 
-  // Check max iterations (iterations mode only)
-  if (loopMode !== 'for-each' && iterState.currentIteration >= maxIterations) {
-    return completeLoop(playbook, nodeId, node, iterState, loopState, 'max_iterations');
+  // Check max iterations (iterations and ask-orchestrator modes)
+  if (loopMode !== 'for-each') {
+    const effectiveMax = iterState.resolvedMaxIterations ?? maxIterations;
+    if (iterState.currentIteration >= effectiveMax) {
+      return completeLoop(playbook, nodeId, node, iterState, loopState, loopMode === 'ask-orchestrator' ? 'orchestrator_count_reached' : 'max_iterations');
+    }
   }
 
   // Check stop condition
@@ -1369,6 +1421,105 @@ function completeNodeAndAdvance(
   return { action: 'node_completed', nodeId, result, updatedPlaybook };
 }
 
+// ── Route matching utilities ──
+
+/**
+ * Tokenize a string into lowercase word tokens.
+ * Splits on whitespace and common punctuation, filters empties.
+ */
+function tokenize(text: string): Set<string> {
+  return new Set(
+    text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(Boolean),
+  );
+}
+
+/**
+ * Jaccard similarity between two strings (token-level).
+ * Returns a value between 0 (no overlap) and 1 (identical token sets).
+ */
+function jaccardSimilarity(a: string, b: string): number {
+  const setA = tokenize(a);
+  const setB = tokenize(b);
+
+  if (setA.size === 0 && setB.size === 0) {
+    return 1;
+  }
+  if (setA.size === 0 || setB.size === 0) {
+    return 0;
+  }
+
+  let intersection = 0;
+
+  const setAArr = Array.from(setA);
+
+  for (let i = 0; i < setAArr.length; i++) {
+    if (setB.has(setAArr[i])) {
+      intersection++;
+    }
+  }
+
+  const setBArr = Array.from(setB);
+  const unionSet = new Set(setAArr.concat(setBArr));
+  const union = unionSet.size;
+
+  return intersection / union;
+}
+
+/** Minimum Jaccard score to consider a route match */
+const JACCARD_THRESHOLD = 0.4;
+/** Minimum gap between best and second-best scores to avoid ambiguity */
+const JACCARD_MARGIN = 0.15;
+
+type RouteMatchResult =
+  | { matched: true; route: { label: string; description: string; handleId: string } }
+  | { matched: false; reason: 'below_threshold' | 'ambiguous'; scores: { label: string; score: number }[] };
+
+/**
+ * Matching cascade for router responses:
+ * 1. Exact match (case-insensitive)
+ * 2. Jaccard similarity with threshold + margin
+ */
+function matchRoute(
+  response: string,
+  routes: { label: string; description: string; handleId: string }[],
+): RouteMatchResult {
+  const trimmed = response.trim();
+
+  // Step 1: Exact match (case-insensitive)
+  const exact = routes.find(r => r.label.toLowerCase() === trimmed.toLowerCase());
+
+  if (exact) {
+    return { matched: true, route: exact };
+  }
+
+  // Step 2: Jaccard similarity
+  const scored = routes.map(r => ({
+    route: r,
+    score: jaccardSimilarity(trimmed, r.label),
+  })).sort((a, b) => b.score - a.score);
+
+  const best = scored[0];
+  const secondBest = scored[1];
+
+  if (best.score < JACCARD_THRESHOLD) {
+    return {
+      matched: false,
+      reason:  'below_threshold',
+      scores:  scored.map(s => ({ label: s.route.label, score: s.score })),
+    };
+  }
+
+  if (secondBest && (best.score - secondBest.score) < JACCARD_MARGIN) {
+    return {
+      matched: false,
+      reason:  'ambiguous',
+      scores:  scored.map(s => ({ label: s.route.label, score: s.score })),
+    };
+  }
+
+  return { matched: true, route: best.route };
+}
+
 // ── Decision resolution ──
 
 /**
@@ -1394,18 +1545,54 @@ export function resolveDecision(
   case 'router': {
     const routes = decision.routes || [];
     const response = agentResponse.trim();
-    const matchedRoute = routes.find(
-      r => r.label.toLowerCase() === response.toLowerCase(),
-    );
-    const handleId = matchedRoute?.handleId || routes[0]?.handleId || 'route-0';
+    const result = matchRoute(response, routes);
 
-    return completeNodeAndAdvance(
-      { ...playbook, pendingDecision: undefined },
-      decision.nodeId,
-      node,
-      response,
-      handleId,
-    );
+    if (result.matched) {
+      return completeNodeAndAdvance(
+        { ...playbook, pendingDecision: undefined },
+        decision.nodeId,
+        node,
+        response,
+        result.route.handleId,
+      );
+    }
+
+    // No match — retry once, then fail
+    const retryCount = decision.retryCount || 0;
+    const failedResult = result as { matched: false; reason: string; scores: { label: string; score: number }[] };
+
+    if (retryCount >= 1) {
+      const scoreDetail = failedResult.scores
+        .map(s => `"${ s.label }": ${ s.score.toFixed(2) }`)
+        .join(', ');
+
+      return {
+        action:          'workflow_failed',
+        error:           `Router node "${ decision.nodeId }" failed after retry. `
+                       + `Agent response "${ response }" did not match any route. `
+                       + `Reason: ${ failedResult.reason }. Scores: [${ scoreDetail }]`,
+        updatedPlaybook: { ...playbook, pendingDecision: undefined },
+      };
+    }
+
+    // Build retry prompt with explicit route labels
+    const routeLabels = routes.map(r => `"${ r.label }"`).join(', ');
+    const retryPrompt = `Your previous response "${ response }" did not clearly match any route. `
+                       + `You must respond with EXACTLY one of these route labels: ${ routeLabels }. `
+                       + `Respond with only the label text, nothing else.`;
+
+    return {
+      action:          'prompt_agent',
+      prompt:          retryPrompt,
+      updatedPlaybook: {
+        ...playbook,
+        pendingDecision: {
+          ...decision,
+          prompt:     retryPrompt,
+          retryCount: retryCount + 1,
+        },
+      },
+    };
   }
 
   case 'condition': {
@@ -1443,6 +1630,33 @@ export function resolveDecision(
 
     // Continue iterating
     return startLoopIteration(clearedPlaybook, loopNodeId, iterState, loopState);
+  }
+
+  case 'loop-ask-orchestrator' as any: {
+    // Orchestrator responded with the number of iterations to run
+    const responseText = agentResponse.trim();
+    const parsed = parseInt(responseText.replace(/[^0-9]/g, ''), 10);
+    const iterationCount = parsed > 0 ? parsed : 0;
+    const loopNodeId = decision.nodeId;
+
+    const loopState = { ...(playbook.loopState || {}) };
+    const iterState = loopState[loopNodeId];
+
+    if (!iterState) {
+      return { action: 'workflow_failed', error: `No loop state for node "${ loopNodeId }"`, updatedPlaybook: playbook };
+    }
+
+    const clearedPlaybook = { ...playbook, pendingDecision: undefined };
+
+    if (iterationCount === 0) {
+      // Orchestrator said 0 — skip the loop entirely
+      return completeLoop(clearedPlaybook, loopNodeId, node, iterState, loopState, 'orchestrator_zero_iterations');
+    }
+
+    // Store the resolved count and start iterating
+    iterState.resolvedMaxIterations = iterationCount;
+    loopState[loopNodeId] = iterState;
+    return startLoopIteration({ ...clearedPlaybook, loopState }, loopNodeId, iterState, loopState);
   }
 
   case 'user-input':

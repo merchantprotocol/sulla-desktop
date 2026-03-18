@@ -3,7 +3,7 @@
 export type WorkflowNodeCategory = 'trigger' | 'agent' | 'routing' | 'flow-control' | 'io';
 
 export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'schedule' | 'sulla-desktop' | 'workbench' | 'chat-completions';
-export type AgentNodeSubtype = 'agent' | 'tool-call' | 'orchestrator-prompt';
+export type AgentNodeSubtype = 'agent' | 'integration-call' | 'tool-call' | 'orchestrator-prompt';
 export type RoutingNodeSubtype = 'router' | 'condition';
 export type FlowControlNodeSubtype = 'wait' | 'loop' | 'parallel' | 'merge' | 'sub-workflow';
 export type IONodeSubtype = 'user-input' | 'response' | 'transfer';
@@ -63,6 +63,13 @@ export interface OrchestratorPromptNodeConfig {
 }
 
 export interface ToolCallNodeConfig {
+  /** Native tool name (e.g. "docker_build", "redis_get") */
+  toolName:    string;
+  /** Default parameter values — keys are param names, values support {{variable}} syntax */
+  defaults:    Record<string, string>;
+}
+
+export interface IntegrationCallNodeConfig {
   /** Integration slug (e.g. "anthropic", "apollo") */
   integrationSlug:    string;
   /** Endpoint name from the YAML (e.g. "messages-create") */
@@ -91,12 +98,14 @@ export interface WaitNodeConfig {
 }
 
 export interface LoopNodeConfig {
-  /** 'iterations' = classic while-loop (default), 'for-each' = iterate over upstream merge collection */
-  loopMode:      'iterations' | 'for-each';
+  /** 'iterations' = fixed count, 'for-each' = iterate over upstream merge, 'ask-orchestrator' = orchestrator decides count */
+  loopMode:      'iterations' | 'for-each' | 'ask-orchestrator';
   maxIterations: number;
   condition:     string;
   /** How to evaluate the stop condition: 'template' for {{variable}} matching, 'llm' for orchestrator evaluation */
   conditionMode: 'template' | 'llm';
+  /** For 'ask-orchestrator' mode: prompt sent to the orchestrator to determine iteration count */
+  orchestratorPrompt: string;
 }
 
 export interface ParallelNodeConfig {
