@@ -589,6 +589,38 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       AwarenessMessage = AwarenessMessage.replace(/\n{3,}/g, '\n\n');
     }
 
+    /// //////////////////////////////////////////////////////////////
+    // Check if this agent's config.yaml opts out of observation injection.
+    // Planning pipeline agents (observer, thinker, forecaster,
+    // goal-setter, prompt-engineer) must not collect or receive
+    // observations — they analyze historical data objectively.
+    /// //////////////////////////////////////////////////////////////
+    let shouldInjectObservations = true;
+    if (agentId) {
+      try {
+        const agentDir = path.join(resolveSullaAgentsDir(), agentId);
+        const configPath = path.join(agentDir, 'config.yaml');
+        if (fs.existsSync(configPath)) {
+          const yaml = await import('yaml');
+          const agentCfg = yaml.parse(fs.readFileSync(configPath, 'utf-8'));
+          if (agentCfg?.injectObservations === false) {
+            shouldInjectObservations = false;
+          }
+        }
+      } catch { /* ignore config read errors — default to injecting */ }
+    }
+
+    // Strip observation collection instructions from environment prompt
+    // when the agent opts out — they should not be writing observations
+    // while analyzing historical data.
+    if (!shouldInjectObservations) {
+      AwarenessMessage = AwarenessMessage.replace(
+        /\*\*You MUST actively collect observations during every conversation\.\*\*[\s\S]*?The planning pipeline depends on what you capture today\.\n*/g,
+        '',
+      );
+      AwarenessMessage = AwarenessMessage.replace(/\n{3,}/g, '\n\n');
+    }
+
     if (options.includeEnvironment !== false) {
       parts.push(AwarenessMessage);
 
@@ -607,26 +639,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     /// //////////////////////////////////////////////////////////////
     // adds observational memories to the message thread
-    // Respects injectObservations: false in agent config.yaml —
-    // planning pipeline agents (observer, thinker, forecaster,
-    // goal-setter, prompt-engineer) must stay objective.
     /// //////////////////////////////////////////////////////////////
     if (options.includeAwareness) {
-      // Check if this agent's config.yaml opts out of observation injection
-      let shouldInjectObservations = true;
-      if (agentId) {
-        try {
-          const agentDir = path.join(resolveSullaAgentsDir(), agentId);
-          const configPath = path.join(agentDir, 'config.yaml');
-          if (fs.existsSync(configPath)) {
-            const yaml = await import('yaml');
-            const agentCfg = yaml.parse(fs.readFileSync(configPath, 'utf-8'));
-            if (agentCfg?.injectObservations === false) {
-              shouldInjectObservations = false;
-            }
-          }
-        } catch { /* ignore config read errors — default to injecting */ }
-      }
 
       if (shouldInjectObservations && state.metadata.awarenessIncluded !== true) {
         const observationalMemory = await SullaSettingsModel.get('observationalMemory', {});
