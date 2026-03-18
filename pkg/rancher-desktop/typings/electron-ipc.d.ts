@@ -188,6 +188,9 @@ export interface IpcMainInvokeEvents {
   'workflow-save':   (workflow: any) => boolean;
   'workflow-delete': (workflowId: string) => boolean;
   'workflow-move':   (workflowId: string, targetStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus) => { success: boolean; newStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus };
+  'workflow-watch-start':    () => boolean;
+  'workflow-watch-stop':     () => boolean;
+  'workflow-check-updated':  (workflowId: string, editorUpdatedAt: string) => { changed: boolean; diskUpdatedAt: string };
 
   // Workflow execution
   'workflow-execute':          (workflowId: string, triggerPayload: unknown) => { executionId: string };
@@ -344,6 +347,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'workflow-files-changed': () => void;
   'ollama-model-status': (event: Electron.IpcRendererEvent, payload: { status: string; model?: string }) => void;
   'backend-locked':      (action?: string) => void;
   'backend-unlocked':    () => void;

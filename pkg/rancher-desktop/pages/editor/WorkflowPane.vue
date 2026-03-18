@@ -91,6 +91,27 @@
         </svg>
       </button>
       <button
+        class="workflow-tab-refresh"
+        :class="{ dark: isDark, spinning: refreshing }"
+        title="Refresh workflow list from disk"
+        @click="refreshFromDisk"
+      >
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="23 4 23 10 17 10" />
+          <polyline points="1 20 1 14 7 14" />
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        </svg>
+      </button>
+      <button
         class="workflow-pane-close"
         :class="{ dark: isDark }"
         title="Close Panel"
@@ -411,7 +432,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import WorkflowNodePalette from './workflow/WorkflowNodePalette.vue';
 import { ipcRenderer } from 'electron';
 import type { WorkflowListItem, WorkflowStatus } from './workflow/types';
@@ -421,12 +442,14 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  close:                [];
-  'workflow-activated': [workflowId: string];
-  'workflow-closed':    [workflowId: string];
-  'workflow-created':   [workflowId: string, workflowName: string];
-  'workflow-deleted':   [workflowId: string];
-  'workflow-moved':     [workflowId: string, newStatus: WorkflowStatus];
+  close:                     [];
+  'workflow-activated':      [workflowId: string];
+  'workflow-closed':         [workflowId: string];
+  'workflow-created':        [workflowId: string, workflowName: string];
+  'workflow-deleted':        [workflowId: string];
+  'workflow-moved':          [workflowId: string, newStatus: WorkflowStatus];
+  'workflow-list-refreshed': [];
+  'workflow-files-changed':  [];
 }>();
 
 interface OpenTab {
@@ -440,6 +463,7 @@ const showingPicker = ref(false);
 const availableWorkflows = ref<WorkflowListItem[]>([]);
 const searchFilter = ref('');
 const expandedGroups = ref(new Set<string>(['production', 'draft']));
+const refreshing = ref(false);
 let nextNewId = 1;
 
 // Drag-and-drop state
@@ -508,8 +532,28 @@ const groups = computed(() => {
   }));
 });
 
+async function refreshFromDisk() {
+  refreshing.value = true;
+  await loadWorkflowList();
+  emit('workflow-list-refreshed');
+  setTimeout(() => {
+    refreshing.value = false;
+  }, 600);
+}
+
+function onFilesChanged() {
+  loadWorkflowList();
+  emit('workflow-files-changed');
+}
+
 onMounted(async() => {
   await loadWorkflowList();
+  ipcRenderer.invoke('workflow-watch-start').catch(() => {});
+  ipcRenderer.on('workflow-files-changed', onFilesChanged);
+});
+
+onBeforeUnmount(() => {
+  ipcRenderer.removeListener('workflow-files-changed', onFilesChanged);
 });
 
 async function loadWorkflowList() {
@@ -760,6 +804,7 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .workflow-tab-add,
+.workflow-tab-refresh,
 .workflow-pane-close {
   display: flex;
   align-items: center;
@@ -775,6 +820,7 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
 }
 
 .workflow-tab-add:hover,
+.workflow-tab-refresh:hover,
 .workflow-pane-close:hover {
   background: var(--bg-hover);
   color: var(--text-secondary);
@@ -784,12 +830,23 @@ defineExpose({ updateTabName, loadWorkflowList, closeTab });
   color: var(--text-info);
 }
 
+.workflow-tab-refresh.spinning svg {
+  animation: spin 0.6s ease-in-out;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .workflow-tab-add.dark,
+.workflow-tab-refresh.dark,
 .workflow-pane-close.dark {
   color: var(--text-secondary);
 }
 
 .workflow-tab-add.dark:hover,
+.workflow-tab-refresh.dark:hover,
 .workflow-pane-close.dark:hover {
   background: var(--bg-hover);
 }

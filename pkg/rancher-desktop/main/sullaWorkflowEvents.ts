@@ -287,5 +287,70 @@ export function initSullaWorkflowEvents(): void {
     };
   });
 
+  // ── File change watching ──
+  // Watches workflow directories for changes and notifies the renderer.
+  let watcher: fs.FSWatcher | null = null;
+
+  ipcMainProxy.handle('workflow-watch-start', async() => {
+    if (watcher) return true;
+
+    const root = getWorkflowsDir();
+    const { BrowserWindow } = await import('electron');
+
+    function notifyRenderer() {
+      const wins = BrowserWindow.getAllWindows();
+      for (const win of wins) {
+        win.webContents.send('workflow-files-changed');
+      }
+    }
+
+    // Debounce to avoid rapid-fire events
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    function debouncedNotify() {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(notifyRenderer, 500);
+    }
+
+    // Watch all three subfolders
+    for (const status of WORKFLOW_SUBFOLDERS) {
+      const dir = path.join(root, status);
+      fs.mkdirSync(dir, { recursive: true });
+      try {
+        fs.watch(dir, { persistent: false }, debouncedNotify);
+      } catch (err) {
+        console.warn(`[Sulla] Failed to watch ${ dir }:`, err);
+      }
+    }
+
+    watcher = {} as fs.FSWatcher; // sentinel
+    console.log('[Sulla] Workflow file watcher started');
+
+    return true;
+  });
+
+  ipcMainProxy.handle('workflow-watch-stop', async() => {
+    watcher = null;
+
+    return true;
+  });
+
+  // Check if a workflow file on disk differs from what the editor has.
+  // Returns { changed: boolean, diskUpdatedAt: string } so the renderer can decide.
+  ipcMainProxy.handle('workflow-check-updated', async(_event: unknown, workflowId: string, editorUpdatedAt: string) => {
+    const found = findWorkflowFileInSubfolders(workflowId);
+
+    if (!found) return { changed: false, diskUpdatedAt: '' };
+
+    try {
+      const parsed = parseWorkflowFile(found.filePath);
+      const diskUpdatedAt = parsed.updatedAt || '';
+      const changed = diskUpdatedAt !== editorUpdatedAt;
+
+      return { changed, diskUpdatedAt };
+    } catch {
+      return { changed: false, diskUpdatedAt: '' };
+    }
+  });
+
   console.log('[Sulla] Workflow IPC event handlers initialized');
 }
