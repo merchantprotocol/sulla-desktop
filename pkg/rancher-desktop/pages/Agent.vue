@@ -342,6 +342,25 @@
               @stop="stop"
               @primary-action="handlePrimaryAction"
             />
+
+            <!-- Onboarding card — shown only on user's very first chat -->
+            <div
+              v-if="isFirstChat"
+              class="onboarding-card mx-auto mt-4 w-full max-w-3xl"
+            >
+              <button
+                type="button"
+                class="onboarding-card-btn"
+                @click="startOnboarding"
+              >
+                <div class="onboarding-card-accent" />
+                <div class="onboarding-card-body">
+                  <span class="onboarding-card-title">Get Started — Let Sulla Get to Know You</span>
+                  <span class="onboarding-card-desc">Set your goals, preferences, and how you'd like to work together.</span>
+                </div>
+                <span class="onboarding-card-arrow">&rarr;</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -424,6 +443,23 @@ const syncN8nInterfaceTheme = (): void => {
 const { showOverlay, systemReady } = useStartupProgress();
 const modelName = ref('');
 const modelMode = ref<'local' | 'remote'>('local');
+
+// First-chat detection — show onboarding card when user has never chatted
+const isFirstChat = ref(false);
+async function checkFirstChat(): Promise<void> {
+  try {
+    isFirstChat.value = await ipcRenderer.invoke('check-first-chat');
+  } catch {
+    isFirstChat.value = false;
+  }
+}
+
+function startOnboarding(): void {
+  isFirstChat.value = false;
+  ipcRenderer.invoke('mark-first-chat-complete');
+  query.value = 'I\'m new here — help me set my goals and get to know how I work best.';
+  nextTick(() => send());
+}
 
 const settingsController = new AgentSettingsController(
   {
@@ -630,6 +666,7 @@ function handleNewChatEvent(e: Event) {
 
 onMounted(async() => {
   window.addEventListener('sulla:new-chat', handleNewChatEvent);
+  checkFirstChat();
 
   const n8nVueBridgeService = getN8nVueBridgeService();
   n8nVueBridgeService.markInitialized('Agent.vue:onMounted');
@@ -665,6 +702,10 @@ onUnmounted(() => {
 });
 
 const send = () => {
+  if (isFirstChat.value) {
+    isFirstChat.value = false;
+    ipcRenderer.invoke('mark-first-chat-complete');
+  }
   chatController.send();
 };
 
@@ -943,6 +984,80 @@ watch(isDark, () => {
 @keyframes activityPulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
+}
+
+/* ── Onboarding card ── */
+.onboarding-card {
+  animation: onboardFadeIn 0.4s ease-out;
+}
+
+@keyframes onboardFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.onboarding-card-btn {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.onboarding-card-btn:hover {
+  border-color: var(--text-link);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(80, 150, 179, 0.2);
+}
+
+.onboarding-card-accent {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--text-link);
+}
+
+.onboarding-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.75rem 1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.onboarding-card-title {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.onboarding-card-desc {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.onboarding-card-arrow {
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  font-size: 1.1rem;
+  color: var(--text-dim);
+  transition: color 0.2s, transform 0.2s;
+  flex-shrink: 0;
+}
+
+.onboarding-card-btn:hover .onboarding-card-arrow {
+  color: var(--text-link);
+  transform: translateX(3px);
 }
 
 </style>

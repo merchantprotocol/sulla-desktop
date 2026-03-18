@@ -283,6 +283,19 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return app.getPath('userData');
   });
 
+  // First-chat detection — returns true if the user has never chatted before
+  const firstChatLockPath = path.join(app.getPath('userData'), 'first-chat.lock');
+  ipcMainProxy.handle('check-first-chat', async() => {
+    return !fs.existsSync(firstChatLockPath);
+  });
+  ipcMainProxy.handle('mark-first-chat-complete', async() => {
+    try {
+      fs.writeFileSync(firstChatLockPath, new Date().toISOString(), 'utf-8');
+    } catch (err) {
+      console.error('[Sulla] Failed to write first-chat lock:', err);
+    }
+  });
+
   // Execute JavaScript in a child frame (used by BrowserTab iframe bridge injection)
   ipcMainProxy.handle('browser-tab:exec-in-frame', async(event: Electron.IpcMainInvokeEvent, code: string) => {
     const sender = event.sender;
