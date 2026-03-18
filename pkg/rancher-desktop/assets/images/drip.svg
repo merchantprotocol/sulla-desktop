@@ -1,4 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#7C54A5"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Dr</text>
+<svg version="1.1" id="Layer_1" xmlns:x="ns_extend;" xmlns:i="ns_ai;" xmlns:graph="ns_graphs;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 36 47.8" style="enable-background:new 0 0 36 47.8;" xml:space="preserve">
+ <style type="text/css">
+  .st0{fill:#F224F2;}
+ </style>
+ <metadata>
+  <sfw xmlns="ns_sfw;">
+   <slices>
+   </slices>
+   <sliceSourceBounds bottomLeftOrigin="true" height="47.8" width="36" x="116.3" y="-218">
+   </sliceSourceBounds>
+  </sfw>
+ </metadata>
+ <g>
+  <g id="logomark">
+   <path id="logo-mouth" class="st0" d="M36,29h-5.4c0,0.2,0,0.4,0,0.6c0,8-6.6,12.8-12.6,12.8S5.4,37.6,5.4,29.6c0-0.2,0-0.4,0-0.6
+			H0c0,0.2,0,0.4,0,0.6c0,11,9,18.2,18,18.2s18-7.2,18-18.2C36,29.4,36,29.2,36,29z">
+   </path>
+   <path id="logo-hat" class="st0" d="M18,6.8l3.8,5.2h6.8C25.4,7.8,22,3.6,18,0c-4,3.6-7.4,7.8-10.6,12h6.8L18,6.8z">
+   </path>
+   <g id="logo-eyes">
+    <ellipse id="logo-eye-left" class="st0" cx="7.2" cy="20.6" rx="3.6" ry="3.6">
+    </ellipse>
+    <ellipse id="logo-eye-center" class="st0" cx="18" cy="20.6" rx="3.6" ry="3.6">
+    </ellipse>
+    <ellipse id="logo-eye-right" class="st0" cx="28.8" cy="20.6" rx="3.6" ry="3.6">
+    </ellipse>
+   </g>
+  </g>
+ </g>
 </svg>

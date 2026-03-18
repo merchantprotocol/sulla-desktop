@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#FFC233"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#000">LS</text>
+<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" id="Lemonsqueezy--Streamline-Simple-Icons" height="24" width="24">
+  <desc>
+    Lemonsqueezy Streamline Icon: https://streamlinehq.com
+  </desc>
+  <title>Lemon Squeezy</title>
+  <path d="m7.4916 10.835 2.3748 -6.5114a3.1497 3.1497 0 0 0 -0.065 -2.3418C9.0315 0.183 6.9427 -0.398 5.2928 0.265 3.643 0.929 2.71 2.4348 3.512 4.3046l2.8197 6.5615c0.219 0.509 0.97 0.489 1.16 -0.03m1.6798 1.0969 6.5334 -2.7758c2.1699 -0.9219 2.7218 -3.6907 1.022 -5.2905l-0.068 -0.063c-1.6669 -1.5469 -4.4217 -1.002 -5.3706 1.0359L8.3566 11.135c-0.234 0.503 0.295 1.0199 0.8159 0.7979m0.373 0.87 6.6454 -2.5119c2.2078 -0.8349 4.6206 0.745 4.5886 3.0398l-0.002 0.09c-0.048 2.2358 -2.3938 3.7376 -4.5536 2.9467l-6.6724 -2.4418a0.595 0.595 0 0 1 -0.006 -1.1229m-0.386 1.9269 6.4375 2.9767a3.2997 3.2997 0 0 1 1.6658 1.6989c0.769 1.7998 -0.283 3.6396 -1.9328 4.3016 -1.6499 0.662 -3.4097 0.235 -4.2097 -1.6359l-2.8027 -6.5694c-0.217 -0.509 0.328 -1.009 0.8419 -0.772" fill="#f8bd30" stroke-width="1"></path>
 </svg>

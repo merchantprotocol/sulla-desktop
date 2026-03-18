@@ -1,4 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#FF3C00"/>
-  <text x="16" y="16" dominant-baseline="central" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="14" font-weight="600" fill="#fff">Hj</text>
+<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 32.4 36.3" style="enable-background:new 0 0 32.4 36.3;" xml:space="preserve">
+ <style type="text/css">
+  .st0{fill:#FF3C00;}
+ </style>
+ <g>
+  <g>
+   <path class="st0" d="M13.4,14.9c4.2-2.3,10-5.5,10-14.9h-7c0,5.2-2.5,6.6-6.4,8.8C5.8,11.1,0,14.3,0,23.6h7
+			C7,18.4,9.5,17,13.4,14.9z">
+   </path>
+   <path class="st0" d="M25.4,12.7c0,5.2-2.5,6.6-6.4,8.8c-4.2,2.3-10,5.5-10,14.9h7c0-5.2,2.5-6.6,6.4-8.8c4.2-2.3,10-5.5,10-14.9
+			H25.4z">
+   </path>
+  </g>
+ </g>
 </svg>
