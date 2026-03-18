@@ -408,6 +408,14 @@ export class ToolRegistry {
     }));
   }
 
+  getSchemaDef(toolName: string): Record<string, any> | undefined {
+    return this.schemaDefs.get(toolName);
+  }
+
+  getToolDescription(toolName: string): string {
+    return this.descriptions.get(toolName) || '';
+  }
+
   clearCache() {
     this.instances.clear();
     this.llmSchemaCache.clear();

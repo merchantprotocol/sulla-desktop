@@ -73,6 +73,15 @@
         @update-config="(nodeId, config) => $emit('update-node-config', nodeId, config)"
       />
 
+      <IntegrationCallNodeConfig
+        v-else-if="node.data?.subtype === 'integration-call'"
+        :is-dark="isDark"
+        :node-id="node.id"
+        :config="node.data.config"
+        :upstream-nodes="upstreamNodes || []"
+        @update-config="(nodeId, config) => $emit('update-node-config', nodeId, config)"
+      />
+
       <OrchestratorPromptNodeConfig
         v-else-if="node.data?.subtype === 'orchestrator-prompt'"
         :is-dark="isDark"
@@ -138,6 +147,7 @@ import TriggerNodeConfig from './workflow/TriggerNodeConfig.vue';
 import AgentNodeConfig from './workflow/AgentNodeConfig.vue';
 import OrchestratorPromptNodeConfig from './workflow/OrchestratorPromptNodeConfig.vue';
 import ToolCallNodeConfig from './workflow/ToolCallNodeConfig.vue';
+import IntegrationCallNodeConfig from './workflow/IntegrationCallNodeConfig.vue';
 import RouterNodeConfig from './workflow/RouterNodeConfig.vue';
 import ConditionNodeConfig from './workflow/ConditionNodeConfig.vue';
 import FlowControlNodeConfig from './workflow/FlowControlNodeConfig.vue';
@@ -167,6 +177,7 @@ const panelTitle = computed(() => {
     if (cat === 'trigger') return 'Trigger';
     if (cat === 'agent') {
       if (props.node.data?.subtype === 'tool-call') return 'Tool Call';
+      if (props.node.data?.subtype === 'integration-call') return 'Integration Call';
       if (props.node.data?.subtype === 'orchestrator-prompt') return 'Prompt';
       return 'Agent';
     }

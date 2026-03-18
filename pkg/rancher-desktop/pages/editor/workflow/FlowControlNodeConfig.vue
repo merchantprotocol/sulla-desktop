@@ -58,7 +58,7 @@
         <div class="behavior-toggle">
           <button
             class="behavior-btn"
-            :class="{ active: config.loopMode !== 'for-each', dark: isDark }"
+            :class="{ active: config.loopMode !== 'for-each' && config.loopMode !== 'ask-orchestrator', dark: isDark }"
             @click="updateField('loopMode', 'iterations')"
           >
             Iterations
@@ -70,6 +70,13 @@
           >
             For Each
           </button>
+          <button
+            class="behavior-btn"
+            :class="{ active: config.loopMode === 'ask-orchestrator', dark: isDark }"
+            @click="updateField('loopMode', 'ask-orchestrator')"
+          >
+            Ask Agent
+          </button>
         </div>
         <p
           class="config-hint"
@@ -78,12 +85,14 @@
         >
           {{ config.loopMode === 'for-each'
             ? 'Iterates over each item from an upstream Merge node\'s collected results.'
-            : 'Repeats the loop body up to a fixed number of iterations or until a stop condition is met.'
+            : config.loopMode === 'ask-orchestrator'
+              ? 'Asks the orchestrating agent how many iterations to run, then loops that many times.'
+              : 'Repeats the loop body up to a fixed number of iterations or until a stop condition is met.'
           }}
         </p>
       </div>
       <div
-        v-if="config.loopMode !== 'for-each'"
+        v-if="config.loopMode === 'iterations'"
         class="node-field"
       >
         <label
@@ -98,6 +107,30 @@
           :value="config.maxIterations || 10"
           @input="updateField('maxIterations', Number(($event.target as HTMLInputElement).value))"
         >
+      </div>
+      <div
+        v-if="config.loopMode === 'ask-orchestrator'"
+        class="node-field"
+      >
+        <label
+          class="node-field-label"
+          :class="{ dark: isDark }"
+        >Orchestrator Prompt</label>
+        <textarea
+          class="node-field-input node-field-textarea"
+          :class="{ dark: isDark }"
+          rows="3"
+          placeholder="e.g. How many additional lenses do you want to process? Respond with just a number."
+          :value="config.orchestratorPrompt || ''"
+          @input="updateField('orchestratorPrompt', ($event.target as HTMLTextAreaElement).value)"
+        />
+        <p
+          class="config-hint"
+          :class="{ dark: isDark }"
+          style="margin-top: 6px;"
+        >
+          The orchestrator's response should be a number. The loop will run that many iterations.
+        </p>
       </div>
       <div
         v-if="config.loopMode === 'for-each'"
@@ -194,6 +227,11 @@
             Iterates over each item from the upstream Merge node's collected results.
             Connect the <strong>loop body</strong> between the bottom (start) and right (back) handles.
             Use <code v-text="'{{loop.currentItem.result}}'" /> in body nodes to access the current item.
+            Exit continues from the left handle.
+          </template>
+          <template v-else-if="config.loopMode === 'ask-orchestrator'">
+            Before starting, the orchestrator is prompted to decide how many iterations to run.
+            Connect the <strong>loop body</strong> between the bottom (start) and right (back) handles.
             Exit continues from the left handle.
           </template>
           <template v-else>

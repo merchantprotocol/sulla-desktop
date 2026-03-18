@@ -82,6 +82,44 @@ function parseHandBack(output: string): ParsedHandBack {
   };
 }
 
+// ── <PROMPT> tag parser for agent delegation ──
+
+interface ParsedPrompt {
+  agentId: string | null;
+  label:   string | null;
+  content: string;
+}
+
+/**
+ * Parse `<PROMPT>` tags from the orchestrator's Phase 1 response.
+ * Each tag spawns a separate sub-agent in parallel.
+ * Attributes: agentId (optional), label (optional).
+ */
+function parsePromptTags(text: string): ParsedPrompt[] {
+  // Match attributes in any order: agentId="...", label="..."
+  const tagRegex = /<PROMPT([^>]*)>([\s\S]*?)<\/PROMPT>/gi;
+  const prompts: ParsedPrompt[] = [];
+  let match;
+
+  while ((match = tagRegex.exec(text)) !== null) {
+    const attrs = match[1] || '';
+    const content = (match[2] || '').trim();
+
+    const agentIdMatch = /agentId="([^"]*)"/.exec(attrs);
+    const labelMatch = /label="([^"]*)"/.exec(attrs);
+
+    if (content) {
+      prompts.push({
+        agentId: agentIdMatch?.[1] || null,
+        label:   labelMatch?.[1] || null,
+        content,
+      });
+    }
+  }
+
+  return prompts;
+}
+
 // ============================================================================
 // THREAD STATE INTERFACES
 // ============================================================================
@@ -1085,12 +1123,12 @@ export class Graph<TState = BaseThreadState> {
 
       case 'spawn_sub_agent': {
         const subNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-        const isToolCall = step.agentId === '__tool_call__';
+        const isIntegrationCall = step.agentId === '__integration_call__';
 
         this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subNodeLabel, prompt: step.prompt });
 
-        if (isToolCall) {
+        if (isIntegrationCall) {
           // ── Tool Call: orchestrator validates params, then execute silently ──
           const preCallDesc = (step.config.preCallDescription as string) || '';
           const toolInfo = `Integration: ${ step.config.integrationSlug || 'unknown' }\nEndpoint: ${ step.config.endpointName || 'unknown' }`;
@@ -1115,7 +1153,7 @@ export class Graph<TState = BaseThreadState> {
 
             this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: resultText });
             this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'tool-call', resultText);
+            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'integration-call', resultText);
 
             if (completed.action === 'workflow_completed') {
               this.emitPlaybookEvent(state, 'workflow_completed', {});
@@ -1158,44 +1196,162 @@ export class Graph<TState = BaseThreadState> {
 
           formationMsg += `The sub-agent's final response MUST be wrapped in <completion-contract> XML tags.\n` +
             `Include these requirements in your message to the sub-agent.\n\n` +
-            `You may also specify SPAWN_COUNT: <number> (1-10) to launch multiple parallel instances.\n` +
-            `Default is 1 if you don't specify.\n\n` +
-            `Respond with the complete message to send to the sub-agent.`;
+            `## Delegation\n` +
+            `You may delegate work to multiple agents by wrapping each task in a <PROMPT> tag.\n` +
+            `Each <PROMPT> spawns one agent in parallel. Attributes:\n` +
+            `  agentId="name" (optional — defaults to "${ agentName }")\n` +
+            `  label="description" (optional — names the result for downstream reference)\n\n` +
+            `Example:\n` +
+            `<PROMPT agentId="observer" label="Financial">Watch for financial signals...</PROMPT>\n` +
+            `<PROMPT agentId="observer" label="Emotional">Watch for emotional patterns...</PROMPT>\n\n` +
+            `If you don't use <PROMPT> tags, your entire response is sent as a single task to the configured agent.\n\n` +
+            `Respond with the message(s) to send to the sub-agent(s).`;
 
           this.injectWorkflowMessage(state, formationMsg);
           (state as any).metadata._muteWsChat = true;
           state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
           (state as any).metadata._muteWsChat = false;
 
-          // Extract orchestrator's formulated message and spawn count
+          // Extract orchestrator's formulated message
           const lastMsg = (state as any).messages?.[(state as any).messages.length - 1];
           const orchestratorResponse = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
 
-          let spawnCount = 1;
-          const countMatch = orchestratorResponse.match(/SPAWN_COUNT:\s*(\d+)/i);
-          if (countMatch) {
-            spawnCount = Math.max(1, Math.min(10, parseInt(countMatch[1], 10)));
-          }
+          // Parse <PROMPT> tags for delegation
+          const parsedPrompts = parsePromptTags(orchestratorResponse);
+          // Strip <PROMPT> tags and legacy SPAWN_COUNT from the cleaned message
+          const cleanedMessage = orchestratorResponse
+            .replace(/<PROMPT[^>]*>[\s\S]*?<\/PROMPT>/gi, '')
+            .replace(/SPAWN_COUNT:\s*\d+\s*/gi, '')
+            .trim();
 
-          // Build the actual sub-agent prompt: additionalPrompt + orchestrator's message + contract wrapper
-          const subAgentPromptParts: string[] = [];
-          if (additionalPrompt.trim()) {
-            subAgentPromptParts.push(additionalPrompt);
-          }
-          // Strip SPAWN_COUNT directive from the message sent to the sub-agent
-          const cleanedMessage = orchestratorResponse.replace(/SPAWN_COUNT:\s*\d+\s*/gi, '').trim();
-          subAgentPromptParts.push(cleanedMessage);
-          subAgentPromptParts.push(
-            `\nIMPORTANT: When you have completed your task, you MUST wrap your final deliverable in <completion-contract> XML tags:\n` +
-            `<completion-contract>\nYour final response here\n</completion-contract>`,
-          );
-
-          const subAgentPrompt = subAgentPromptParts.join('\n\n');
-
-          console.log(`[Graph:Playbook] Orchestrator formulated message for "${ subNodeLabel }" (agent: ${ agentName }, spawn: ${ spawnCount })`);
+          const contractWrapper = `\nIMPORTANT: When you have completed your task, you MUST wrap your final deliverable in <completion-contract> XML tags:\n` +
+            `<completion-contract>\nYour final response here\n</completion-contract>`;
 
           // ── Phase 2: Launch sub-agent(s) ──
-          if (spawnCount === 1) {
+          if (parsedPrompts.length > 0) {
+            // ── Batch delegation: one agent per <PROMPT> tag, all in parallel ──
+            const cappedPrompts = parsedPrompts.slice(0, 10);
+            console.log(`[Graph:Playbook] Orchestrator delegated ${ cappedPrompts.length } prompts for "${ subNodeLabel }"`);
+            this.emitPlaybookEvent(state, 'node_parallel_spawn', { nodeId: step.nodeId, nodeLabel: subNodeLabel, count: cappedPrompts.length });
+
+            const delegationSummary = cappedPrompts.map((pp, i) =>
+              `  ${ i + 1 }. [${ pp.label || `prompt-${ i }` }] (agent: ${ pp.agentId || agentName })`,
+            ).join('\n');
+            this.injectWorkflowMessage(state, `[Workflow: Agent Delegation — ${ subNodeLabel }]\nSpawning ${ cappedPrompts.length } agents in parallel:\n${ delegationSummary }\n\nAll agents are launching now.`);
+            state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+            const parallelPromises = cappedPrompts.map((pp, i) => {
+              const promptParts: string[] = [];
+              if (additionalPrompt.trim()) promptParts.push(additionalPrompt);
+              promptParts.push(pp.content);
+              promptParts.push(contractWrapper);
+              const fullPrompt = promptParts.join('\n\n');
+              const effectiveAgentId = pp.agentId || step.agentId;
+              const instanceId = `${ step.nodeId }-prompt-${ i }`;
+
+              return this.executeSubAgent(state, instanceId, effectiveAgentId, fullPrompt, step.config)
+                .then(result => ({ index: i, label: pp.label || `prompt-${ i }`, result, error: null as string | null }))
+                .catch((err: any) => ({ index: i, label: pp.label || `prompt-${ i }`, result: null as { output: unknown; threadId?: string; contractStatus: 'done' | 'blocked' | 'no_contract' } | null, error: err.message || String(err) }));
+            });
+
+            const results = await Promise.allSettled(parallelPromises);
+
+            const successes: { index: number; label: string; resultText: string; threadId?: string }[] = [];
+            const failures: { index: number; label: string; error: string }[] = [];
+
+            for (const outcome of results) {
+              if (outcome.status === 'fulfilled') {
+                const { index, label, result, error } = outcome.value;
+                if (error || !result) {
+                  failures.push({ index, label, error: error || 'Unknown error' });
+                } else if (result.contractStatus === 'no_contract') {
+                  failures.push({ index, label, error: 'Sub-graph died without completion contract' });
+                } else if (result.contractStatus === 'blocked') {
+                  const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+                  failures.push({ index, label, error: `Blocked: ${ resultText.slice(0, 200) }` });
+                } else {
+                  const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+                  successes.push({ index, label, resultText, threadId: result.threadId });
+                }
+              } else {
+                failures.push({ index: -1, label: 'unknown', error: outcome.reason?.message || String(outcome.reason) });
+              }
+            }
+
+            console.log(`[Graph:Playbook] Delegation "${ subNodeLabel }": ${ successes.length }/${ cappedPrompts.length } succeeded, ${ failures.length } failed`);
+
+            if (successes.length === 0) {
+              const errSummary = failures.map(f => `${ f.label }: ${ f.error }`).join('; ');
+              this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, error: errSummary });
+
+              const escalationMsg = `[Workflow Node Failed: ${ subNodeLabel }]\n` +
+                `All ${ cappedPrompts.length } delegated agents failed.\n` +
+                `Errors: ${ errSummary }\n\n` +
+                `The workflow "${ currentPlaybook.definition?.name }" is paused. Ask the user what to do.`;
+
+              this.injectWorkflowMessage(state, escalationMsg);
+              state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+              return state;
+            }
+
+            // Build batch output in merge-compatible format for downstream for-each loops
+            const batchOutput = {
+              strategy: 'delegation',
+              merged:   successes.map(s => ({
+                nodeId: `${ step.nodeId }-prompt-${ s.index }`,
+                label:  s.label,
+                result: s.resultText,
+              })),
+            };
+
+            const failureNote = failures.length > 0
+              ? `\n\n(${ failures.length }/${ cappedPrompts.length } agents failed: ${ failures.map(f => `${ f.label }: ${ f.error.slice(0, 100) }`).join('; ') })`
+              : '';
+
+            // ── Phase 3: Orchestrator evaluates with success criteria (batch) ──
+            const batchSummaryText = successes.map(s => {
+              const handBack = parseHandBack(s.resultText);
+              return `[${ s.label }] ${ handBack.summary || s.resultText.slice(0, 500) }`;
+            }).join('\n\n');
+
+            let finalOutput: unknown = batchOutput;
+            if (successCriteria.trim()) {
+              const evalMsg = `[Sub-agents Complete: ${ subNodeLabel } — ${ successes.length }/${ cappedPrompts.length } agents]\n\n` +
+                `${ batchSummaryText }${ failureNote }\n\n` +
+                `Evaluate the results against the following success criteria:\n${ successCriteria }\n\n` +
+                `If the results meet all criteria, respond with APPROVED and a brief summary.\n` +
+                `If they fail any criteria, respond with NEEDS_REVISION and explain what fell short.`;
+
+              this.injectWorkflowMessage(state, evalMsg);
+              state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+            } else {
+              const resultMsg = `[Workflow Node Complete: ${ subNodeLabel } — ${ successes.length }/${ cappedPrompts.length } agents]\n${ batchSummaryText }${ failureNote }`;
+              this.injectWorkflowMessage(state, resultMsg, true);
+            }
+
+            const firstThread = successes[0]?.threadId;
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, finalOutput, firstThread);
+            meta.activeWorkflow = completed.updatedPlaybook;
+
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: JSON.stringify(finalOutput), instanceCount: cappedPrompts.length, succeeded: successes.length, failed: failures.length });
+            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'agent', JSON.stringify(finalOutput));
+
+            if (completed.action === 'workflow_completed') {
+              this.emitPlaybookEvent(state, 'workflow_completed', {});
+              state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+              return state;
+            }
+          } else {
+            // ── Single agent: no <PROMPT> tags — existing non-blocking path ──
+            const subAgentPromptParts: string[] = [];
+            if (additionalPrompt.trim()) {
+              subAgentPromptParts.push(additionalPrompt);
+            }
+            subAgentPromptParts.push(cleanedMessage);
+            subAgentPromptParts.push(contractWrapper);
+
+            const subAgentPrompt = subAgentPromptParts.join('\n\n');
             const maxRetries = 3;
             const nodeId = step.nodeId;
             const agentId = step.agentId;
@@ -1227,100 +1383,6 @@ export class Graph<TState = BaseThreadState> {
             state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
             return state;
-          } else {
-            // ── Multi-agent: spawn N instances in parallel ──
-            console.log(`[Graph:Playbook] Launching ${ spawnCount } parallel instances of "${ subNodeLabel }"`);
-            this.emitPlaybookEvent(state, 'node_parallel_spawn', { nodeId: step.nodeId, nodeLabel: subNodeLabel, count: spawnCount });
-
-            const parallelPromises = Array.from({ length: spawnCount }, (_, i) =>
-              this.executeSubAgent(state, `${ step.nodeId }-instance-${ i + 1 }`, step.agentId, subAgentPrompt, step.config)
-                .then(result => ({ index: i + 1, result, error: null as string | null }))
-                .catch((err: any) => ({ index: i + 1, result: null as { output: unknown; threadId?: string; contractStatus: 'done' | 'blocked' | 'no_contract' } | null, error: err.message || String(err) })),
-            );
-
-            const results = await Promise.allSettled(parallelPromises);
-
-            const successes: { index: number; resultText: string; threadId?: string }[] = [];
-            const failures: { index: number; error: string }[] = [];
-
-            for (const outcome of results) {
-              if (outcome.status === 'fulfilled') {
-                const { index, result, error } = outcome.value;
-                if (error || !result) {
-                  failures.push({ index, error: error || 'Unknown error' });
-                } else if (result.contractStatus === 'no_contract') {
-                  failures.push({ index, error: 'Sub-graph died without completion contract' });
-                } else if (result.contractStatus === 'blocked') {
-                  const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-                  failures.push({ index, error: `Blocked: ${ resultText.slice(0, 200) }` });
-                } else {
-                  const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-                  successes.push({ index, resultText, threadId: result.threadId });
-                }
-              } else {
-                failures.push({ index: 0, error: outcome.reason?.message || String(outcome.reason) });
-              }
-            }
-
-            console.log(`[Graph:Playbook] Multi-agent "${ subNodeLabel }": ${ successes.length }/${ spawnCount } succeeded, ${ failures.length } failed`);
-
-            if (successes.length === 0) {
-              const errSummary = failures.map(f => `Instance ${ f.index }: ${ f.error }`).join('; ');
-              this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, error: errSummary });
-
-              const escalationMsg = `[Workflow Node Failed: ${ subNodeLabel }]\n` +
-                `All ${ spawnCount } agent instances failed.\n` +
-                `Errors: ${ errSummary }\n\n` +
-                `The workflow "${ currentPlaybook.definition?.name }" is paused. Ask the user what to do.`;
-
-              this.injectWorkflowMessage(state, escalationMsg);
-              state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-              return state;
-            }
-
-            // Aggregate results
-            const aggregatedOutput = successes.map(s => {
-              const handBack = parseHandBack(s.resultText);
-              return `[Instance ${ s.index }] ${ handBack.summary || s.resultText.slice(0, 500) }`;
-            }).join('\n\n');
-
-            const failureNote = failures.length > 0
-              ? `\n\n(${ failures.length }/${ spawnCount } instances failed: ${ failures.map(f => `#${ f.index }: ${ f.error.slice(0, 100) }`).join('; ') })`
-              : '';
-
-            // ── Phase 3: Orchestrator evaluates with success criteria (multi-agent) ──
-            let finalOutput = aggregatedOutput;
-            if (successCriteria.trim()) {
-              const evalMsg = `[Sub-agent Complete: ${ subNodeLabel } — ${ successes.length }/${ spawnCount } instances]\n\n` +
-                `${ aggregatedOutput }${ failureNote }\n\n` +
-                `Evaluate the sub-agent's response against the following success criteria:\n${ successCriteria }\n\n` +
-                `If the response meets all criteria, respond with APPROVED and a brief summary of what was delivered.\n` +
-                `If it fails any criteria, respond with NEEDS_REVISION and explain what fell short.`;
-
-              this.injectWorkflowMessage(state, evalMsg);
-              state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-
-              const evalResponse = (state as any).messages?.[(state as any).messages.length - 1];
-              const evalText = typeof evalResponse?.content === 'string' ? evalResponse.content : '';
-              finalOutput = `${ aggregatedOutput }\n\n[Orchestrator Evaluation]\n${ evalText }`;
-            } else {
-              const resultMsg = `[Workflow Node Complete: ${ subNodeLabel } — ${ successes.length }/${ spawnCount } instances]\n${ aggregatedOutput }${ failureNote }`;
-              this.injectWorkflowMessage(state, resultMsg, true);
-            }
-
-            const firstThread = successes[0]?.threadId;
-            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, finalOutput, firstThread);
-            meta.activeWorkflow = completed.updatedPlaybook;
-
-            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: finalOutput, instanceCount: spawnCount, succeeded: successes.length, failed: failures.length });
-            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'agent', finalOutput);
-
-            if (completed.action === 'workflow_completed') {
-              this.emitPlaybookEvent(state, 'workflow_completed', {});
-              state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
-              return state;
-            }
           }
         }
         break;
@@ -1340,8 +1402,8 @@ export class Graph<TState = BaseThreadState> {
 
         // Before prompt: notify orchestrator about the parallel batch
         const batchSummary = parallelNodes.map((pn, i) => {
-          const isToolCall = pn.agentId === '__tool_call__';
-          return `  ${ i + 1 }. [${ nodeLabels[i] }] (${ isToolCall ? 'tool-call' : `agent: ${ pn.config.agentName || pn.agentId || 'default' }` })`;
+          const isIntegrationCall = pn.agentId === '__integration_call__';
+          return `  ${ i + 1 }. [${ nodeLabels[i] }] (${ isIntegrationCall ? 'integration-call' : `agent: ${ pn.config.agentName || pn.agentId || 'default' }` })`;
         }).join('\n');
         this.injectWorkflowMessage(state, `[Workflow: Parallel Execution]\nThe following ${ parallelNodes.length } nodes will execute concurrently:\n${ batchSummary }\n\nAll branches are launching now.`);
         state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
@@ -1435,6 +1497,65 @@ export class Graph<TState = BaseThreadState> {
           this.emitPlaybookEvent(state, 'workflow_completed', {});
           state = await this.releaseWorkflow(state, meta.activeWorkflow, 'completed');
           return state;
+        }
+
+        break;
+      }
+
+      case 'execute_tool_call': {
+        // ── Native tool call: execute directly and inject result into orchestrator thread ──
+        const toolNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: toolNodeLabel });
+
+        try {
+          // Dynamically import the tool registry and execute
+          const { toolRegistry } = await import('../tools/registry');
+          const tool = await toolRegistry.getTool(step.toolName);
+          const toolResult = await tool.call(step.params);
+
+          const resultText = toolResult.success
+            ? (toolResult.result || 'Tool completed successfully')
+            : `Tool error: ${ toolResult.error || 'Unknown error' }`;
+
+          // Complete the node in the playbook
+          const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, resultText, undefined);
+          meta.activeWorkflow = completed.updatedPlaybook;
+
+          this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: toolNodeLabel, output: resultText });
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+          await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, toolNodeLabel, 'tool-call', resultText);
+
+          // Inject tool call + result into orchestrator's conversation as a pair
+          const toolCallMsg = `[Workflow Tool Call: ${ toolNodeLabel }]\n` +
+            `Tool: ${ step.toolName }\n` +
+            `Parameters: ${ JSON.stringify(step.params) }\n\n` +
+            `Result:\n${ resultText }`;
+          this.injectWorkflowMessage(state, toolCallMsg, true);
+
+          if (completed.action === 'workflow_completed') {
+            this.emitPlaybookEvent(state, 'workflow_completed', {});
+            state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+            return state;
+          }
+        } catch (err: any) {
+          console.error(`[Graph:Playbook] Native tool call failed:`, err);
+          const errMsg = err.message || String(err);
+
+          // Still complete the node with the error — don't fail the whole workflow
+          const errorResult = `Tool call failed: ${ errMsg }`;
+          const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, errorResult, undefined);
+          meta.activeWorkflow = completed.updatedPlaybook;
+
+          this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: toolNodeLabel, output: errorResult });
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+
+          const errorMsg = `[Workflow Tool Call Failed: ${ toolNodeLabel }]\n` +
+            `Tool: ${ step.toolName }\n` +
+            `Error: ${ errMsg }\n\n` +
+            `The workflow will continue — review the error and decide how to proceed.`;
+          this.injectWorkflowMessage(state, errorMsg);
+          state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
         }
 
         break;
@@ -1973,8 +2094,8 @@ export class Graph<TState = BaseThreadState> {
     prompt: string,
     config: Record<string, unknown>,
   ): Promise<{ output: unknown; threadId?: string; contractStatus: 'done' | 'blocked' | 'no_contract' }> {
-    // Handle tool-call nodes
-    if (agentId === '__tool_call__') {
+    // Handle integration-call nodes
+    if (agentId === '__integration_call__') {
       const result = await this.executeToolCall(config);
       return { ...result, contractStatus: 'done' };
     }
@@ -2261,7 +2382,7 @@ export class Graph<TState = BaseThreadState> {
   }
 
   /**
-   * Execute a tool call (integration API) for a workflow tool-call node.
+   * Execute an integration call (integration API) for a workflow integration-call node.
    */
   private async executeToolCall(config: Record<string, unknown>): Promise<{ output: unknown }> {
     const integrationSlug = (config.integrationSlug as string) || '';

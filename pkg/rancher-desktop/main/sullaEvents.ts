@@ -965,6 +965,14 @@ export function initSullaEvents(): void {
     return result;
   });
 
+  ipcMainProxy.handle('tools-get-schema', async(_event: any, toolName: string) => {
+    require('@pkg/agent/tools/manifests');
+    const { toolRegistry } = require('@pkg/agent/tools/registry');
+    const schemaDef = toolRegistry.getSchemaDef(toolName);
+
+    return schemaDef || null;
+  });
+
   initSullaWorkflowEvents();
   initSullaDebugEvents();
 

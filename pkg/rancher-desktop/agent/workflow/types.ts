@@ -39,6 +39,8 @@ export interface WorkflowPlaybookState {
     routes?: { label: string; description: string; handleId: string }[];
     /** For conditions: the rules being evaluated */
     rules?:  { field: string; operator: string; value: string }[];
+    /** How many times we've retried this decision (for router retry-on-mismatch) */
+    retryCount?: number;
   };
   /** Active loop iteration state, keyed by loop nodeId */
   loopState?:   Record<string, LoopIterationState>;
@@ -67,6 +69,8 @@ export interface LoopIterationState {
   items?:       { nodeId: string; label: string; result: unknown }[];
   /** For 'for-each' mode: the current item for this iteration */
   currentItem?: { nodeId: string; label: string; result: unknown };
+  /** For 'ask-orchestrator' mode: the iteration count decided by the orchestrator */
+  resolvedMaxIterations?: number;
 }
 
 export interface PlaybookNodeOutput {

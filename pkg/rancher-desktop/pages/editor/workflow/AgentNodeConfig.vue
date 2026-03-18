@@ -8,23 +8,67 @@
         class="node-field-label"
         :class="{ dark: isDark }"
       >Agent</label>
-      <select
-        class="node-field-input"
-        :class="{ dark: isDark }"
-        :value="config.agentId || ''"
-        @change="onAgentChange"
+      <div
+        ref="comboWrapperRef"
+        class="combo-wrapper"
       >
-        <option value="">
-          -- Select Agent --
-        </option>
-        <option
-          v-for="a in agents"
-          :key="a.id"
-          :value="a.id"
+        <input
+          ref="comboInputRef"
+          class="node-field-input combo-input"
+          :class="{ dark: isDark }"
+          :value="comboQuery"
+          placeholder="Search or select an agent..."
+          autocomplete="off"
+          @focus="onComboFocus"
+          @input="onComboInput"
+          @keydown="onComboKeydown"
         >
-          {{ a.name }}
-        </option>
-      </select>
+        <button
+          class="combo-toggle"
+          :class="{ dark: isDark }"
+          tabindex="-1"
+          @mousedown.prevent="toggleComboDropdown"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        <div
+          v-if="comboOpen"
+          class="combo-dropdown"
+          :class="{ dark: isDark }"
+        >
+          <div
+            v-if="filteredAgents.length === 0"
+            class="combo-empty"
+          >
+            No agents found
+          </div>
+          <button
+            v-for="(a, idx) in filteredAgents"
+            :key="a.id"
+            class="combo-option"
+            :class="{ active: idx === comboHighlight, selected: a.id === config.agentId, dark: isDark }"
+            @mousedown.prevent="selectAgent(a)"
+            @mouseenter="comboHighlight = idx"
+          >
+            <span class="combo-option-name">{{ a.name }}</span>
+            <span
+              v-if="a.description"
+              class="combo-option-desc"
+            >{{ a.description }}</span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <div class="node-field">
@@ -265,7 +309,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, nextTick } from 'vue';
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { ipcRenderer } from 'electron';
 import type { AgentNodeConfig } from './types';
 
@@ -298,6 +342,11 @@ const agents = ref<AgentInfo[]>([]);
 const orchestratorInstructionsRef = ref<HTMLTextAreaElement | null>(null);
 const additionalPromptRef = ref<HTMLTextAreaElement | null>(null);
 const varMenuRef = ref<HTMLElement | null>(null);
+const comboInputRef = ref<HTMLInputElement | null>(null);
+const comboWrapperRef = ref<HTMLElement | null>(null);
+const comboOpen = ref(false);
+const comboSearch = ref('');
+const comboHighlight = ref(0);
 
 const MENU_WIDTH = 260;
 
@@ -334,24 +383,90 @@ const varMenuStyle = computed(() => {
   return { top: y + 'px', left: x + 'px' };
 });
 
+// ── Combobox logic ──
+
+const comboQuery = computed(() => {
+  if (comboOpen.value) return comboSearch.value;
+  const selected = agents.value.find(a => a.id === props.config.agentId);
+  return selected?.name ?? '';
+});
+
+const filteredAgents = computed(() => {
+  const q = comboSearch.value.toLowerCase().trim();
+  if (!q) return agents.value;
+  return agents.value.filter(a =>
+    a.name.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q),
+  );
+});
+
+function onComboFocus() {
+  comboSearch.value = '';
+  comboOpen.value = true;
+  comboHighlight.value = 0;
+}
+
+function onComboInput(e: Event) {
+  comboSearch.value = (e.target as HTMLInputElement).value;
+  comboOpen.value = true;
+  comboHighlight.value = 0;
+}
+
+function onComboKeydown(e: KeyboardEvent) {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (comboHighlight.value < filteredAgents.value.length - 1) comboHighlight.value++;
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (comboHighlight.value > 0) comboHighlight.value--;
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const agent = filteredAgents.value[comboHighlight.value];
+    if (agent) selectAgent(agent);
+  } else if (e.key === 'Escape') {
+    comboOpen.value = false;
+    comboInputRef.value?.blur();
+  }
+}
+
+function toggleComboDropdown() {
+  if (comboOpen.value) {
+    comboOpen.value = false;
+  } else {
+    comboSearch.value = '';
+    comboOpen.value = true;
+    comboHighlight.value = 0;
+    comboInputRef.value?.focus();
+  }
+}
+
+function selectAgent(agent: AgentInfo) {
+  comboOpen.value = false;
+  comboSearch.value = '';
+  emit('update-config', props.nodeId, {
+    ...props.config,
+    agentId:   agent.id,
+    agentName: agent.name,
+  });
+}
+
+function onClickOutsideCombo(e: MouseEvent) {
+  if (comboWrapperRef.value && !comboWrapperRef.value.contains(e.target as Node)) {
+    comboOpen.value = false;
+  }
+}
+
 onMounted(async() => {
   try {
     agents.value = await ipcRenderer.invoke('agents-list');
   } catch {
     agents.value = [];
   }
+  document.addEventListener('mousedown', onClickOutsideCombo);
 });
 
-function onAgentChange(event: Event) {
-  const el = event.target as HTMLSelectElement;
-  const agent = agents.value.find(a => a.id === el.value);
-
-  emit('update-config', props.nodeId, {
-    ...props.config,
-    agentId:   el.value || null,
-    agentName: agent?.name ?? '',
-  });
-}
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onClickOutsideCombo);
+});
 
 function onOrchestratorInstructionsChange(event: Event) {
   const el = event.target as HTMLTextAreaElement;
@@ -523,6 +638,93 @@ function insertVariable(varName: string) {
   resize: vertical;
   font-family: inherit;
   min-height: 60px;
+}
+
+/* ── Combobox ── */
+.combo-wrapper {
+  position: relative;
+}
+
+.combo-input {
+  padding-right: 28px;
+}
+
+.combo-toggle {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  bottom: 1px;
+  width: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 0 4px 4px 0;
+}
+
+.combo-toggle:hover {
+  color: var(--text-secondary);
+  background: var(--bg-surface-hover);
+}
+
+.combo-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  z-index: 100;
+}
+
+.combo-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-code);
+  cursor: pointer;
+  text-align: left;
+}
+
+.combo-option.active,
+.combo-option:hover {
+  background: var(--bg-surface-hover);
+}
+
+.combo-option.selected {
+  color: var(--text-info);
+}
+
+.combo-option-name {
+  font-weight: var(--weight-medium);
+}
+
+.combo-option-desc {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.combo-empty {
+  padding: 10px;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .help-section { border-bottom: none; }
