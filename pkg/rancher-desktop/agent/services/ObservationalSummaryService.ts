@@ -1,13 +1,15 @@
 // ObservationalSummaryService.ts
 // Background service that manages the growing observational memory list
-// by prioritizing and trimming observations when they exceed line limits.
+// by spawning the observation-curator agent to prioritize and trim observations
+// through the lens of the human's active goals.
 //
 // Key Features:
 // - Non-blocking: triggered from InputHandler but runs in background
 // - Observation-focused: only manages the observational memory, not messages
-// - Priority-based: uses LLM to rank observations by priority when trimming
+// - Goal-aware: spawns the observation-curator agent which loads goal journals
 // - Concurrency safe: coordinates with ConversationSummaryService
 // - Line-based limits: counts observation lines vs fixed count limits
+// - Fallback: degrades to raw LLM call if agent spawn fails
 
 import type { BaseThreadState } from '../nodes/Graph';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
@@ -30,16 +32,51 @@ const MAX_RETRY_ATTEMPTS = 2;
 /** Delay between retry attempts (ms) */
 const RETRY_DELAY_MS = 1000;
 
+/** The agent ID used for goal-aware observation curation */
+const CURATOR_AGENT_ID = 'observation-curator';
+
 // ============================================================================
-// OBSERVATION PRIORITIZATION PROMPT
+// CURATOR AGENT PROMPT TEMPLATE
 // ============================================================================
 
-const JSON_ONLY_RESPONSE_INSTRUCTIONS = `
-IMPORTANT: Your response must be valid JSON only. No explanations, no markdown, no additional text.
-Return only the JSON object specified in the format above.`;
+const CURATOR_TASK_PROMPT = `You are running as a background observation curator. Your task is to prioritize and trim a list of observations that has grown too large.
 
-const OBSERVATION_PRIORITIZATION_PROMPT = `
-You are an observational memory curator. Your job is to prioritize and trim a list of observations 
+**IMPORTANT:** Before prioritizing, read the current daily goals from:
+- ~/sulla/identity/human-journal.md — human goals (daily, weekly, 13-week)
+- ~/sulla/identity/business-journal.md — business goals
+- ~/sulla/identity/agent-journal.md — agent goals
+
+Use these goals as your filtering lens. Observations that relate to active goals are more valuable.
+
+Here are the current observations to curate:
+
+{OBSERVATIONS}
+
+**Rules:**
+1. Never drop observations about explicit human preferences, hard-no's, or identity signals
+2. Never drop observations less than 2 hours old
+3. Bias toward keeping over dropping — when in doubt, keep
+4. 🔴 Critical observations (identity, core preferences, promises, deal-breakers, goal-critical) have highest priority
+5. 🟡 Valuable observations (decisions, patterns, progress toward goals) have medium priority
+6. ⚪ Low priority observations (minor details unrelated to goals) have lowest priority
+7. Merge duplicates — if multiple observations cover the same fact, keep only the most complete version
+8. Consolidate related facts into single richer observations
+9. Remove outdated observations superseded by newer ones
+
+**You MUST respond with ONLY valid JSON — no explanations, no markdown, no additional text:**
+{
+  "selectedObservations": [
+    { "priority": "🔴", "content": "Observation content to keep" }
+  ],
+  "reasoning": "Brief explanation of prioritization decisions including which goals influenced your choices"
+}`;
+
+// ============================================================================
+// FALLBACK PROMPT (used when agent spawn fails)
+// ============================================================================
+
+const FALLBACK_PRIORITIZATION_PROMPT = `
+You are an observational memory curator. Your job is to prioritize and trim a list of observations
 that has grown too large, keeping only the most valuable ones.
 
 Rules for prioritization:
@@ -47,14 +84,15 @@ Rules for prioritization:
 - 🟡 Valuable observations (decisions, patterns, progress) have medium priority
 - ⚪ Low priority observations (minor details) have lowest priority
 - Within same priority level, prefer more recent and specific observations
-- **Merge duplicates**: If multiple observations cover the same fact or event, keep ONLY the most complete and recent version. Discard all others.
-- **Consolidate related facts**: Combine observations about the same topic into a single, richer observation rather than keeping multiple partial ones.
+- **Merge duplicates**: If multiple observations cover the same fact or event, keep ONLY the most complete and recent version.
+- **Consolidate related facts**: Combine observations about the same topic into a single, richer observation.
 - Remove outdated observations that have been superseded by newer ones
 - Keep observations that provide unique context or insights
 
 Your task: Select the most important observations to keep, removing the least valuable ones.
 
-${ JSON_ONLY_RESPONSE_INSTRUCTIONS }
+IMPORTANT: Your response must be valid JSON only. No explanations, no markdown, no additional text.
+Return only the JSON object specified in the format above.
 {
   "selectedObservations": [
     {
@@ -199,7 +237,7 @@ export class ObservationalSummaryService {
   }
 
   /**
-   * Core trimming logic that prioritizes observations using LLM
+   * Core trimming logic — spawns the observation-curator agent for goal-aware curation
    */
   private async performTrimming(state: BaseThreadState): Promise<void> {
     const metadata = state.metadata as any;
@@ -218,8 +256,9 @@ export class ObservationalSummaryService {
 
     console.log(`[ObservationalSummary] Trimming ${ currentObservations.length } observations (${ currentLines } lines -> target: ${ TARGET_OBSERVATION_LINES })`);
 
-    // Use LLM to prioritize observations
-    const prioritizedObservations = await this.prioritizeObservations(state, currentObservations);
+    // Prioritize observations — try curator agent first, fall back to raw LLM
+    const prioritizedObservations = await this.prioritizeWithCuratorAgent(currentObservations)
+      || await this.prioritizeWithFallbackLLM(currentObservations);
 
     if (prioritizedObservations.length === 0) {
       console.warn('[ObservationalSummary] No observations selected by prioritization, skipping trim');
@@ -244,22 +283,98 @@ export class ObservationalSummaryService {
   }
 
   /**
-   * Use LLM to prioritize observations based on importance
+   * Spawn the observation-curator agent to prioritize observations with goal awareness.
+   * The curator agent loads goal journals and filters through the goal lens.
+   * Returns null if the agent spawn fails (caller should fall back to LLM).
    */
-  private async prioritizeObservations(state: BaseThreadState, observations: ObservationEntry[]): Promise<ObservationEntry[]> {
-    // Get LLM service using same logic as conversation system
+  private async prioritizeWithCuratorAgent(observations: ObservationEntry[]): Promise<ObservationEntry[] | null> {
+    try {
+      const { GraphRegistry } = await import('./GraphRegistry');
+
+      const observationText = observations
+        .map(obs => `${ obs.priority } ${ obs.content }`)
+        .join('\n');
+
+      const prompt = CURATOR_TASK_PROMPT.replace('{OBSERVATIONS}', observationText);
+
+      const threadId = `obs-curator-${ Date.now() }-${ Math.random().toString(36).slice(2, 8) }`;
+
+      console.log(`[ObservationalSummary] Spawning observation-curator agent (threadId=${ threadId })`);
+
+      const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(CURATOR_AGENT_ID, threadId) as {
+        graph: any;
+        state: any;
+      };
+
+      // Inject the curation task as a user message
+      subState.messages.push({ role: 'user', content: prompt });
+
+      // Mark as sub-agent so blocked status doesn't trigger waitingForUser
+      subState.metadata.isSubAgent = true;
+
+      // Execute the curator agent graph
+      const finalState = await graph.execute(subState);
+
+      // Extract the result from the agent's final output
+      const agentOutput = finalState.metadata?.finalSummary ||
+        finalState.messages?.[finalState.messages.length - 1]?.content ||
+        '';
+
+      const outputStr = typeof agentOutput === 'string' ? agentOutput : JSON.stringify(agentOutput);
+
+      // Parse JSON from the agent's response (it may be wrapped in markdown or contract tags)
+      const jsonMatch = outputStr.match(/\{[\s\S]*"selectedObservations"[\s\S]*\}/);
+      if (!jsonMatch) {
+        console.warn('[ObservationalSummary] Curator agent response did not contain expected JSON structure');
+        // Clean up the registry entry
+        GraphRegistry.delete(threadId);
+        return null;
+      }
+
+      const data = parseJson(jsonMatch[0]) as PrioritizationResult | null;
+      const selectedObservations = Array.isArray(data?.selectedObservations) ? data.selectedObservations : [];
+
+      const validObservations = selectedObservations
+        .filter((obs: ObservationEntry) => obs.priority && obs.content && typeof obs.content === 'string');
+
+      if (data?.reasoning) {
+        console.log(`[ObservationalSummary] Curator reasoning: ${ data.reasoning }`);
+      }
+
+      // Clean up the registry entry
+      GraphRegistry.delete(threadId);
+
+      if (validObservations.length > 0) {
+        console.log(`[ObservationalSummary] Curator agent returned ${ validObservations.length } prioritized observations`);
+        return validObservations;
+      }
+
+      console.warn('[ObservationalSummary] Curator agent returned no valid observations');
+      return null;
+    } catch (err) {
+      console.warn('[ObservationalSummary] Curator agent spawn failed, will fall back to LLM:',
+        err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }
+
+  /**
+   * Fallback: use a raw LLM call for observation prioritization
+   * when the curator agent is unavailable or fails.
+   */
+  private async prioritizeWithFallbackLLM(observations: ObservationEntry[]): Promise<ObservationEntry[]> {
+    console.log('[ObservationalSummary] Using fallback LLM prioritization (no goal awareness)');
+
     const llmService = await getPrimaryService();
 
-    // Build observation list for LLM
     const observationText = observations
       .map(obs => `${ obs.priority } ${ obs.content }`)
       .join('\n');
 
-    // Prepare messages for LLM
     const llmMessages: ChatMessage[] = [
       {
         role:    'system',
-        content: OBSERVATION_PRIORITIZATION_PROMPT,
+        content: FALLBACK_PRIORITIZATION_PROMPT,
       },
       {
         role:    'user',
@@ -268,26 +383,25 @@ export class ObservationalSummaryService {
     ];
 
     const response = await llmService.chat(llmMessages, {
-      temperature: 0.1, // Low temperature for consistent prioritization
+      temperature: 0.1,
       maxTokens:   2000,
       format:      'json',
-      tools:       [], // No tools needed for observation prioritization
+      tools:       [],
     });
 
     if (!response) {
-      console.error('[ObservationalSummary] No response from LLM during prioritization - returning original observations');
+      console.error('[ObservationalSummary] No response from fallback LLM — returning original observations');
       return observations;
     }
 
     const data = parseJson(response.content) as PrioritizationResult | null;
     const selectedObservations = Array.isArray(data?.selectedObservations) ? data.selectedObservations : [];
 
-    // Validate and return prioritized observations
     const validObservations = selectedObservations
       .filter((obs: ObservationEntry) => obs.priority && obs.content && typeof obs.content === 'string');
 
     if (data?.reasoning) {
-      console.log(`[ObservationalSummary] LLM reasoning: ${ data.reasoning }`);
+      console.log(`[ObservationalSummary] Fallback LLM reasoning: ${ data.reasoning }`);
     }
 
     return validObservations.length > 0 ? validObservations : observations;
