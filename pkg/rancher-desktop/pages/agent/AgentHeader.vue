@@ -1008,7 +1008,7 @@ async function ctxCopyUrl() {
 
 /* Native tabs (Chat, Calendar, Integrations, Extensions): pill style */
 .tab-active-native {
-  background-color: #2a2e34;
+  background-color: var(--bg-surface-alt);
   color: var(--text-primary);
   z-index: 2;
   border-radius: 8px;
@@ -1016,7 +1016,7 @@ async function ctxCopyUrl() {
 
 /* Dynamic tabs (extensions, browser): Chrome-style with bottom scoops */
 .tab-active {
-  background-color: #2a2e34;
+  background-color: var(--bg-surface-alt);
   color: var(--text-primary);
   z-index: 2;
 }
@@ -1033,12 +1033,12 @@ async function ctxCopyUrl() {
 
 .tab-active::before {
   left: -8px;
-  background: radial-gradient(circle at 0 0, transparent 4.5px, #2a2e34 8px);
+  background: radial-gradient(circle at 0 0, transparent 4.5px, var(--bg-surface-alt) 8px);
 }
 
 .tab-active::after {
   right: -8px;
-  background: radial-gradient(circle at 100% 0, transparent 4.5px, #2a2e34 8px);
+  background: radial-gradient(circle at 100% 0, transparent 4.5px, var(--bg-surface-alt) 8px);
 }
 
 .tab-dragging {
@@ -1065,7 +1065,7 @@ async function ctxCopyUrl() {
   top: 25%;
   height: 50%;
   width: 1px;
-  background: #3e3d3d;
+  background: var(--border-default);
   pointer-events: none;
 }
 
