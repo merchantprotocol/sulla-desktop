@@ -17,13 +17,24 @@ export class ExecuteWorkflowWorker extends BaseTool {
       };
     }
 
-    // If scoped to a specific workflow (e.g. from workflow editor), enforce it
+    // If scoped to a specific workflow (e.g. from workflow editor), enforce it.
+    // The scope may be an internal ID (e.g. "workflow-1773725042351") while the
+    // user passes a slug (e.g. "daily-planning"), so resolve both ways.
     const scopedWorkflowId = (this.state)?.metadata?.scopedWorkflowId;
     if (scopedWorkflowId && workflowId !== scopedWorkflowId) {
-      return {
-        successBoolean: false,
-        responseString: `You can only execute workflow "${ scopedWorkflowId }" in this context. Check your available workflows in the system prompt.`,
-      };
+      // Try resolving the user's input to see if it maps to the scoped workflow
+      let matches = false;
+      try {
+        const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
+        const resolved = getWorkflowRegistry().loadWorkflow(workflowId);
+        matches = resolved.id === scopedWorkflowId;
+      } catch { /* not found — doesn't match */ }
+      if (!matches) {
+        return {
+          successBoolean: false,
+          responseString: `You can only execute workflow "${ scopedWorkflowId }" in this context. Check your available workflows in the system prompt.`,
+        };
+      }
     }
 
     // Resolve the trigger message from input or last user message

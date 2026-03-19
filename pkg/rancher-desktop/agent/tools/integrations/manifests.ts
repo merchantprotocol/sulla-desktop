@@ -24,14 +24,6 @@ export const integrationsToolManifests: ToolManifest[] = [
     loader:         () => import('./integration_is_enabled'),
   },
   {
-    name:           'integration_list',
-    description:    'List all integrations and their connection status, including whether each integration is enabled.',
-    category:       'integrations',
-    schemaDef:      {},
-    operationTypes: ['read'],
-    loader:         () => import('./integration_list'),
-  },
-  {
     name:        'list_integration_accounts',
     description: 'List all accounts configured for an integration. Shows account labels, connection status, and which account is currently active. Use this when an integration has multiple accounts (e.g. multiple Gmail accounts).',
     category:    'integrations',

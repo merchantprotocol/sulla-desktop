@@ -1007,7 +1007,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Check for abort before making LLM calls
     throwIfAborted(state, 'Chat operation aborted');
 
-    // Build dynamic LLM tools: meta category + found tools (set by browse_tools if found)
+    // Build dynamic LLM tools: meta category tools
     // Skip tool loading if tools are explicitly disabled
     let llmTools: any[] = [];
     if (!options.disableTools) {
@@ -1030,7 +1030,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const agentToolAllowlist = (state.metadata as any).agent?.tools;
       if (Array.isArray(agentToolAllowlist) && agentToolAllowlist.length > 0) {
         const allowSet = new Set(agentToolAllowlist);
-        // Always allow meta tools (browse_tools, etc.)
+        // Always allow meta tools
         const metaNames = toolRegistry.getToolNamesForCategory('meta');
         metaNames.forEach(n => allowSet.add(n));
         llmTools = llmTools.filter((t: any) => {
