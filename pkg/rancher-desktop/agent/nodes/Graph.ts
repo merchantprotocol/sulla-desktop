@@ -179,7 +179,7 @@ export interface BaseThreadState {
 
   prompt?: string;
 
-  // Tools found by browse_tools calls (accumulates across multiple calls)
+  // Tools found dynamically (accumulates across multiple calls)
   foundTools?: any[];
 
   metadata: {

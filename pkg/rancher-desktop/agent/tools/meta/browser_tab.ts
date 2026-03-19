@@ -6,18 +6,10 @@ export class BrowserTabWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    if (!this.state) {
-      return {
-        successBoolean: false,
-        responseString: 'Missing graph state; cannot manage active assets.',
-      };
-    }
-
     const action = String(input.action || 'upsert').trim().toLowerCase();
     const assetType = String(input.assetType || '').trim().toLowerCase();
     const skillSlug = typeof input.skillSlug === 'string' ? input.skillSlug.trim() : '';
-    const metadata = (this.state).metadata || {};
-    const wsChannel = String(metadata.wsChannel || 'sulla-desktop');
+    const wsChannel = 'sulla-desktop';
 
     const wsService = getWebSocketClientService();
 
@@ -88,7 +80,7 @@ export class BrowserTabWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Upserted iframe active asset id=${ assetId } url=${ url }. The page is loading in a browser tab. Use browse_tools(category='playwright') to discover interaction tools, then use get_page_snapshot(assetId='${ assetId }') to see the page content.`,
+        responseString: `Upserted iframe active asset id=${ assetId } url=${ url }. The page is loading in a browser tab. Use get_page_snapshot(assetId='${ assetId }') to see the page content.`,
       };
     }
 

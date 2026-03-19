@@ -3,8 +3,8 @@ import type { ToolManifest } from '../registry';
 export const agentToolManifests: ToolManifest[] = [
   {
     name:        'spawn_agent',
-    description: 'Spawn one or more sub-agents to work on tasks independently. Each sub-agent runs with its own conversation thread and agent persona, then returns results. Supports parallel execution and async (fire-and-forget) mode. Use list_agents first to discover available agent configurations.',
-    category:    'agents',
+    description: 'Spawn one or more sub-agents to work on tasks independently. Each sub-agent runs with its own conversation thread and agent persona, then returns results. Supports parallel execution and async (fire-and-forget) mode.',
+    category:    'meta',
     schemaDef:   {
       tasks: {
         type:        'array',
@@ -41,13 +41,5 @@ export const agentToolManifests: ToolManifest[] = [
     },
     operationTypes: ['read'],
     loader:         () => import('./check_agent_jobs'),
-  },
-  {
-    name:        'list_agents',
-    description: 'List all available agent configurations from ~/sulla/agents/ with their names, descriptions, and capabilities. Use this to discover which agentId values are available before spawning sub-agents.',
-    category:    'agents',
-    schemaDef:   {},
-    operationTypes: ['read'],
-    loader:         () => import('./list_agents'),
   },
 ];

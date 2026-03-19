@@ -159,14 +159,22 @@ export class ChatCompletionsServer {
       await this.handleModerations(req, res);
     });
 
-    // ── Integration API endpoints ────────────────────────────────────
+    // ── Tools API endpoints ──────────────────────────────────────────
 
-    // List all integrations and their endpoints
-    this.app.get('/v1/integrations', async(req: Request, res: Response) => {
+    // List all tools (integrations + MCP)
+    this.app.get('/v1/tools/list', async(req: Request, res: Response) => {
       await this.handleListIntegrations(req, res);
     });
 
-    // Call an integration endpoint with specific account credentials
+    // Call a tool endpoint with specific account credentials
+    this.app.post('/v1/tools/:accountId/:slug/:endpoint/call', async(req: Request, res: Response) => {
+      await this.handleIntegrationCall(req, res);
+    });
+
+    // Backward compatibility aliases
+    this.app.get('/v1/integrations', async(req: Request, res: Response) => {
+      await this.handleListIntegrations(req, res);
+    });
     this.app.post('/v1/integrations/:accountId/:slug/:endpoint/call', async(req: Request, res: Response) => {
       await this.handleIntegrationCall(req, res);
     });
@@ -568,9 +576,11 @@ export class ChatCompletionsServer {
 
   // ── Integration API handlers ──────────────────────────────────────
 
-  private async handleListIntegrations(_req: Request, res: Response) {
+  private async handleListIntegrations(req: Request, res: Response) {
     // v3 — enabled integrations with full endpoint schemas; MCP listed per-account
+    // Supports ?search=<string> to filter by slug, name, or endpoint name/description
     try {
+      const searchQuery = (req.query.search as string || '').trim().toLowerCase();
       const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
       const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
       const { integrations: catalogIntegrations } = await import('@pkg/agent/integrations/catalog');
@@ -580,30 +590,67 @@ export class ChatCompletionsServer {
       // IntegrationService is the source of truth for what's enabled
       const enabled = await svc.getEnabledIntegrations();
 
-      const integrations: any[] = [];
+      // v4 — one entry per account, each with its own accountId + endpoints
+      const tools: any[] = [];
+
+      // ── Build native tool endpoints by category (for merging with integrations or standalone) ──
+      const { toolRegistry } = await import('@pkg/agent/tools/registry');
+      const { ToolRegistry } = await import('@pkg/agent/tools/registry');
+      const INTERNAL_CATEGORIES = ['bridge', 'calendar', 'docker', 'extensions', 'github', 'integrations', 'kubectl', 'lima', 'n8n', 'pg', 'playwright', 'rdctl', 'redis', 'slack'];
+
+      // Individual stateless tools from mixed categories (where the rest of the category uses state)
+      const INTERNAL_INDIVIDUAL_TOOLS = [
+        { toolName: 'validate_sulla_workflow', slug: 'workflow' },
+        { toolName: 'add_observational_memory', slug: 'memory' },
+        { toolName: 'remove_observational_memory', slug: 'memory' },
+        { toolName: 'check_agent_jobs', slug: 'agents' },
+        { toolName: 'browser_tab', slug: 'playwright' },
+      ];
+
+      const nativeEndpointsByCategory = new Map<string, any[]>();
+      for (const category of INTERNAL_CATEGORIES) {
+        const toolNames = toolRegistry.getToolNamesForCategory(category);
+        const endpoints: any[] = [];
+        for (const toolName of toolNames) {
+          const schemaDef = toolRegistry.getSchemaDef(toolName);
+          const description = toolRegistry.getToolDescription(toolName);
+          if (!schemaDef && !description) continue;
+          // Strip category prefix from endpoint name: "calendar_list" → "list"
+          const endpointName = toolName.startsWith(`${ category }_`)
+            ? toolName.slice(category.length + 1)
+            : toolName;
+          endpoints.push({
+            name:        endpointName,
+            method:      'POST',
+            description,
+            inputSchema: schemaDef ? ToolRegistry.schemaDefToJsonSchema(schemaDef) : { type: 'object', properties: {} },
+          });
+        }
+        if (endpoints.length > 0) {
+          nativeEndpointsByCategory.set(category, endpoints);
+        }
+      }
+
+      // Track which categories got merged into an integration entry
+      const mergedCategories = new Set<string>();
 
       for (const { integrationId, accounts } of enabled) {
-        // ── MCP: each account is a separate server, list each as its own entry ──
+        // ── MCP: each account is a separate MCP server ──
         if (integrationId === 'mcp') {
           try {
             const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
             const bridge = MCPBridge.getInstance();
 
             for (const account of accounts) {
-              const tools = bridge.getToolsForAccount(account.account_id);
-              const serverUrl = bridge.getServerUrl(account.account_id);
+              const mcpTools = bridge.getToolsForAccount(account.account_id);
 
-              integrations.push({
+              tools.push({
+                accountId: account.account_id,
+                label:     account.label || account.account_id,
                 slug:      'mcp',
                 name:      account.label || account.account_id,
-                accounts:  [{
-                  accountId: account.account_id,
-                  label:     account.label || account.account_id,
-                  active:    account.active,
-                  connected: account.connected,
-                }],
-                serverUrl: serverUrl || null,
-                endpoints: tools.map(tool => ({
+                connected: account.connected,
+                endpoints: mcpTools.map(tool => ({
                   name:        tool.name,
                   method:      'POST',
                   description: tool.description,
@@ -617,22 +664,17 @@ export class ChatCompletionsServer {
           continue;
         }
 
-        // ── YAML-based or native catalog ──
-        const accountsPayload = accounts.map(a => ({
-          accountId: a.account_id,
-          label:     a.label,
-          active:    a.active,
-          connected: a.connected,
-        }));
-
-        // Try YAML config loader first for endpoint schemas
+        // ── YAML-based or native catalog — one entry per account ──
         const client = loader.getClient(integrationId);
+        const catalogEntry = catalogIntegrations[integrationId];
+
+        // Build endpoints once (shared across all accounts for this integration)
+        let endpoints: any[] = [];
         if (client) {
-          const endpoints = client.endpointNames.map((name) => {
-            const ep = client.getEndpoint(name);
+          endpoints = client.endpointNames.map((epName) => {
+            const ep = client.getEndpoint(epName);
             if (!ep) return null;
 
-            // Build MCP-style inputSchema from YAML query_params + path_params
             const properties: Record<string, any> = {};
             const required: string[] = [];
 
@@ -670,37 +712,90 @@ export class ChatCompletionsServer {
 
             return endpoint;
           }).filter(Boolean);
-
-          integrations.push({
-            slug: integrationId,
-            name: client.name,
-            accounts: accountsPayload,
-            endpoints,
-          });
-          continue;
         }
 
-        // Fall back to native catalog entry
-        const catalogEntry = catalogIntegrations[integrationId];
-        integrations.push({
-          slug:      integrationId,
-          name:      catalogEntry?.name || integrationId,
-          category:  catalogEntry?.category,
-          accounts:  accountsPayload,
-          endpoints: [],
+        // Merge native tool endpoints if this integration slug matches a native category
+        const nativeEps = nativeEndpointsByCategory.get(integrationId);
+        const mergedEndpoints = nativeEps ? [...endpoints, ...nativeEps] : endpoints;
+        if (nativeEps) mergedCategories.add(integrationId);
+
+        for (const account of accounts) {
+          tools.push({
+            accountId: account.account_id,
+            label:     account.label || account.account_id,
+            slug:      integrationId,
+            name:      client?.name || catalogEntry?.name || integrationId,
+            connected: account.connected,
+            ...(catalogEntry?.category ? { category: catalogEntry.category } : {}),
+            endpoints: mergedEndpoints,
+          });
+        }
+      }
+
+      // Add standalone internal categories that didn't match any integration
+      for (const [category, endpoints] of nativeEndpointsByCategory) {
+        if (mergedCategories.has(category)) continue;
+        tools.push({
+          accountId: 'internal',
+          label:     'Internal Tools',
+          slug:      category,
+          name:      category,
+          connected: true,
+          endpoints,
+        });
+      }
+
+      // Add individual stateless tools from mixed categories, grouped by slug
+      const individualBySlug = new Map<string, any[]>();
+      for (const { toolName, slug } of INTERNAL_INDIVIDUAL_TOOLS) {
+        const schemaDef = toolRegistry.getSchemaDef(toolName);
+        const description = toolRegistry.getToolDescription(toolName);
+        if (!schemaDef && !description) continue;
+        const eps = individualBySlug.get(slug) || [];
+        eps.push({
+          name:        toolName,
+          method:      'POST',
+          description,
+          inputSchema: schemaDef ? ToolRegistry.schemaDefToJsonSchema(schemaDef) : { type: 'object', properties: {} },
+        });
+        individualBySlug.set(slug, eps);
+      }
+      for (const [slug, endpoints] of individualBySlug) {
+        tools.push({
+          accountId: 'internal',
+          label:     'Internal Tools',
+          slug,
+          name:      slug,
+          connected: true,
+          endpoints,
+        });
+      }
+
+      // Apply search filter if provided
+      let filtered = tools;
+      if (searchQuery) {
+        filtered = tools.filter((entry: any) => {
+          if (entry.slug?.toLowerCase().includes(searchQuery)) return true;
+          if (entry.name?.toLowerCase().includes(searchQuery)) return true;
+          if (entry.label?.toLowerCase().includes(searchQuery)) return true;
+          if (entry.accountId?.toLowerCase().includes(searchQuery)) return true;
+          return entry.endpoints?.some((ep: any) =>
+            ep.name?.toLowerCase().includes(searchQuery)
+            || ep.description?.toLowerCase().includes(searchQuery),
+          );
         });
       }
 
       res.json({
         success: true,
-        version: 3,
+        version: 4,
         usage: {
           call_method: 'POST',
-          call_url:    'http://host.docker.internal:3000/v1/integrations/{accountId}/{slug}/{endpoint}/call',
+          call_url:    'http://host.docker.internal:3000/v1/tools/{accountId}/{slug}/{endpoint}/call',
           call_body:   '{"params": {"param_name": "value"}}',
-          notes:       'Use the first accountId from the accounts array for any integration, including MCP. The call URL pattern is the same for all integration types. Parameters are described in each endpoint\'s inputSchema (JSON Schema format).',
+          notes:       'Each entry has a unique accountId + slug. Use them directly in the call URL. Parameters are described in each endpoint\'s inputSchema (JSON Schema format).',
         },
-        integrations,
+        tools: filtered,
       });
     } catch (error: any) {
       console.error('[ChatCompletionsAPI] Error listing integrations:', error);
@@ -714,6 +809,24 @@ export class ChatCompletionsServer {
     const endpoint = String(req.params.endpoint);
 
     try {
+      // Route internal tool calls — reconstruct full tool name from slug + endpoint
+      if (accountId === 'internal') {
+        const { toolRegistry } = await import('@pkg/agent/tools/registry');
+        // Try prefixed name first (e.g. github + create_issue → github_create_issue),
+        // then fall back to endpoint as-is (e.g. github + git_status → git_status)
+        const prefixed = `${ slug }_${ endpoint }`;
+        let tool = await toolRegistry.getTool(prefixed).catch(() => null);
+        if (!tool) {
+          tool = await toolRegistry.getTool(endpoint).catch(() => null);
+        }
+        if (!tool) {
+          return res.status(404).json({ success: false, error: `Internal tool "${ prefixed }" or "${ endpoint }" not found` });
+        }
+        const { params = {} } = req.body || {};
+        const result = await tool.call(params);
+        return res.json({ success: true, result });
+      }
+
       // Route MCP calls to the MCPBridge instead of ConfigApiClient
       if (slug === 'mcp') {
         const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');

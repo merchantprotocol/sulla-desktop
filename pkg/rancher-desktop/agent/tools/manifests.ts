@@ -17,12 +17,11 @@ import { playwrightToolManifests } from './playwright/manifests';
 import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { slackToolManifests } from './slack/manifests';
-import { skillsToolManifests } from './skills/manifests';
-import { workspaceToolManifests } from './workspace/manifests';
 import { workflowToolManifests } from './workflow/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
 import { agentToolManifests } from './agents/manifests';
 import { bridgeToolManifests } from './bridge/manifests';
+import { skillsToolManifests } from './skills/manifests';
 
 toolRegistry.registerManifests([
   ...agentToolManifests,
@@ -43,5 +42,4 @@ toolRegistry.registerManifests([
   ...skillsToolManifests,
   ...slackToolManifests,
   ...workflowToolManifests,
-  ...workspaceToolManifests,
 ]);
