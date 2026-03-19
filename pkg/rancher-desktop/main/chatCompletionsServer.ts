@@ -603,6 +603,33 @@ export class ChatCompletionsServer {
         };
       }).filter(Boolean);
 
+      // Merge MCP server tools into the integrations listing
+      try {
+        const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
+        const bridge = MCPBridge.getInstance();
+        if (bridge.hasConnections) {
+          const mcpEndpoints = bridge.getAllEndpoints();
+          if (mcpEndpoints.length > 0) {
+            integrations.push({
+              slug:      'mcp',
+              name:      'mcp-v1',
+              endpoints: mcpEndpoints.map(ep => ({
+                name:        ep.name,
+                method:      ep.method as 'POST',
+                path:        ep.path,
+                description: ep.description,
+                auth:        ep.auth as 'required',
+                queryParams: ep.queryParams,
+                pathParams:  [] as { name: string; type: string; required?: boolean; description?: string }[],
+                accountId:   ep.accountId,
+              })),
+            });
+          }
+        }
+      } catch (mcpErr: any) {
+        console.warn('[ChatCompletionsAPI] MCP bridge not available:', mcpErr.message);
+      }
+
       res.json({ success: true, integrations });
     } catch (error: any) {
       console.error('[ChatCompletionsAPI] Error listing integrations:', error);
@@ -616,6 +643,16 @@ export class ChatCompletionsServer {
     const endpoint = String(req.params.endpoint);
 
     try {
+      // Route MCP calls to the MCPBridge instead of ConfigApiClient
+      if (slug === 'mcp') {
+        const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
+        const bridge = MCPBridge.getInstance();
+        const { params = {} } = req.body || {};
+
+        const result = await bridge.callTool(accountId, endpoint, params);
+        return res.json({ success: true, result });
+      }
+
       const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
       const loader = getIntegrationConfigLoader();
       const client = loader.getClient(slug);

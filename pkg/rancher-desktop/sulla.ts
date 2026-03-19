@@ -211,6 +211,16 @@ export async function instantiateSullaStart(): Promise<void> {
       console.error('[Background] Failed to resume OAuth refresh timers:', error);
     }
 
+    // Initialize connected MCP server accounts so their tools appear in /v1/integrations
+    try {
+      const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
+      const bridge = MCPBridge.getInstance();
+      await bridge.initializeAll();
+      console.log('[Background] MCPBridge ready');
+    } catch (error) {
+      console.error('[Background] Failed to initialize MCP bridge:', error);
+    }
+
     // Ensure llama.cpp binaries are installed, download user's model, and start server
     try {
       const llamaCppService = getLlamaCppService();

@@ -1,6 +1,41 @@
 import type { Integration } from '../types';
 
 export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
+  mcp: {
+    id:          'mcp',
+    sort:        1,
+    paid:        false,
+    beta:        true,
+    comingSoon:  false,
+    name:        'MCP Server',
+    description: 'Connect to a Model Context Protocol (MCP) server to access its tools, resources, and prompts.',
+    category:    'AI Infrastructure',
+    icon:        'mcp.svg',
+    connected:   false,
+    version:     '1.0.0',
+    lastUpdated: '2026-03-18 00:00:00',
+    developer:   'Open Standard',
+    formGuide:   'Enter the URL of your MCP server endpoint and an optional auth token.',
+    properties:  [
+      {
+        key:         'server_url',
+        title:       'Server URL',
+        hint:        'The MCP server endpoint URL (e.g. http://localhost:3001/mcp or https://mcp.example.com/sse).',
+        type:        'url',
+        required:    true,
+        placeholder: 'http://localhost:3001/mcp',
+      },
+      {
+        key:         'auth_token',
+        title:       'Auth Token',
+        hint:        'Optional bearer token for authenticating with the MCP server.',
+        type:        'password',
+        required:    false,
+        placeholder: 'Bearer token or API key',
+      },
+    ],
+  },
+
   grok: {
     id:          'grok',
     sort:        2,

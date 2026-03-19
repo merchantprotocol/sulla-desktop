@@ -2,7 +2,13 @@
 
 ## Overview
 
-Sulla exposes YAML-configured integration API endpoints over HTTP, allowing models to programmatically call third-party APIs (YouTube, GitHub, Slack, Postmark, etc.) with full credential management. The model can write Python or any language to make HTTP requests against these endpoints and process the results itself.
+Sulla exposes integration API endpoints over HTTP, allowing models to programmatically call third-party APIs (YouTube, GitHub, Slack, Postmark, etc.) and MCP (Model Context Protocol) servers with full credential management. The model writes Python scripts (via the `exec` tool) to make HTTP requests against these endpoints and process the results itself.
+
+There are two types of integrations:
+- **YAML-configured REST integrations** — Static endpoint definitions in `~/sulla/integrations/{slug}/` (140+ services)
+- **MCP server integrations** — Dynamic tool discovery from connected MCP servers (see [MCP Integration](./mcp.md))
+
+Both types are exposed through the same unified HTTP API. The `discover-and-call-integrations` skill teaches agents the complete workflow.
 
 These endpoints run on the same Express server as the OpenAI-compatible API (port 3000).
 
@@ -16,7 +22,7 @@ These endpoints run on the same Express server as the OpenAI-compatible API (por
 
 ### GET /v1/integrations
 
-Lists all available YAML-configured integrations and their endpoints, including parameter schemas.
+Lists all available integrations and their endpoints, including parameter schemas. This includes both YAML-configured REST integrations and dynamically discovered MCP server tools.
 
 **Response Format:**
 ```json
@@ -198,6 +204,33 @@ r = requests.post(
 )
 print(r.json())
 ```
+
+## MCP Server Integrations
+
+MCP (Model Context Protocol) servers are a special integration type. Unlike REST integrations which have static YAML endpoint definitions, MCP tools are **discovered dynamically** from connected servers at runtime.
+
+MCP tools appear in the `GET /v1/integrations` response under slug `mcp` and are called using the same `POST /v1/integrations/:accountId/mcp/:toolName/call` pattern.
+
+For full details, see the dedicated [MCP Integration](./mcp.md) documentation.
+
+**Quick example:**
+```bash
+# Call an MCP tool
+curl -X POST http://localhost:3000/v1/integrations/default/mcp/get_weather/call \
+  -H "Content-Type: application/json" \
+  -d '{"params": {"location": "San Francisco"}}'
+```
+
+## Agent Skill
+
+The `discover-and-call-integrations` skill teaches agents the full workflow for using the integration API:
+1. Discover available integrations and endpoints
+2. Search by keyword
+3. Read YAML configs for detailed parameter info
+4. Call endpoints with proper parameters
+5. Handle MCP tool discovery and execution
+
+Agents load this skill automatically when they need to interact with any integration.
 
 ## Error Handling
 
