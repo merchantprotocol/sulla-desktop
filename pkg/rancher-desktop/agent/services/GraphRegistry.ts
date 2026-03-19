@@ -288,14 +288,15 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
       returnTo:             null,
 
       // Heartbeat-specific fields
-      activeProjects:            '',
-      availableSkills:           '',
       heartbeatCycleCount:       0,
       heartbeatMaxCycles:        10,
       heartbeatStatus:           'idle',
       heartbeatLastCycleSummary: '',
       currentFocus:              '',
-      focusReason:               '',
+
+      // Workflow execution tracking
+      pendingWorkflows:   [],
+      completedWorkflows: [],
 
       // Environmental context (loaded each cycle by HeartbeatNode)
       agentsContext: '',

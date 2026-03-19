@@ -8,7 +8,7 @@ import { CalendarEvent } from '../database/models/CalendarEvent'; // new model
 import { eventPrompt } from '../prompts/event';
 
 const FRONTEND_CHANNEL_ID = 'sulla-desktop';
-const BACKEND_CHANNEL_ID = 'heartbeat';
+const CALENDAR_EVENT_CHANNEL_ID = 'calendar_event';
 const ACK_TIMEOUT_MS = 3_000;
 
 interface ScheduledJob {
@@ -104,7 +104,7 @@ export class SchedulerService {
         return;
       }
 
-      console.warn(`[SchedulerService] Frontend did not ACK event ${ event.id } - using backend`);
+      console.warn(`[SchedulerService] Frontend did not ACK event ${ event.id } — sending to calendar_event channel`);
       void this.sendToBackend(event, prompt);
     } catch (err) {
       console.error(`[SchedulerService] Failed to trigger event ${ event.id }:`, err);
@@ -172,10 +172,10 @@ export class SchedulerService {
   private async sendToBackend(event: any, prompt: string): Promise<void> {
     const message = this.buildEventPayload(event, prompt);
 
-    this.wsService.connect(BACKEND_CHANNEL_ID);
-    const sent = await this.wsService.send(BACKEND_CHANNEL_ID, message);
+    this.wsService.connect(CALENDAR_EVENT_CHANNEL_ID);
+    const sent = await this.wsService.send(CALENDAR_EVENT_CHANNEL_ID, message);
     if (!sent) {
-      console.error(`[SchedulerService] Failed to send event ${ event.id } to backend`);
+      console.error(`[SchedulerService] Failed to send event ${ event.id } to calendar_event channel`);
     }
   }
 
