@@ -87,13 +87,13 @@ export function initSullaDebugEvents(): void {
       const { getHeartbeatService } = await import('@pkg/agent/services/HeartbeatService');
       const status = getHeartbeatService().getStatus();
       const enabled = await SullaSettingsModel.get('heartbeatEnabled', false);
-      const delayMinutes = Math.max(1, await SullaSettingsModel.get('heartbeatDelayMinutes', 30));
+      const delayMinutes = Math.max(1, await SullaSettingsModel.get('heartbeatDelayMinutes', 15));
       const delayMs = delayMinutes * 60_000;
       const nextTriggerMs = status.lastTriggerMs > 0 ? status.lastTriggerMs + delayMs : Date.now();
 
       return { enabled, delayMinutes, nextTriggerMs };
     } catch {
-      return { enabled: false, delayMinutes: 30, nextTriggerMs: 0 };
+      return { enabled: false, delayMinutes: 15, nextTriggerMs: 0 };
     }
   });
 

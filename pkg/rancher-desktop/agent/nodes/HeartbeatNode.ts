@@ -1,13 +1,17 @@
 // HeartbeatNode.ts
-// Autonomous heartbeat node — gathers project & skills context,
-// builds a rich autonomous prompt, and delegates to a fresh AgentGraph
-// sub-execution each cycle. The heartbeat graph loops this node until
-// the agent reports DONE/BLOCKED or hits max iterations.
+// Scans production workflows for heartbeat trigger nodes and executes them.
+// Each heartbeat cycle picks the next pending workflow, spawns a sub-agent
+// that calls execute_workflow, and captures the outcome. The heartbeat graph
+// loops until all workflows are done or max cycles are hit.
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+import yaml from 'yaml';
 
 import { BaseNode } from './BaseNode';
 import type { BaseThreadState, NodeResult, AgentGraphState } from './Graph';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
-import { heartbeatPrompt } from '../prompts/heartbeat';
 
 // ============================================================================
 // HEARTBEAT THREAD STATE
@@ -16,21 +20,18 @@ import { heartbeatPrompt } from '../prompts/heartbeat';
 export interface HeartbeatThreadState extends BaseThreadState {
   messages: ChatMessage[];
   metadata: BaseThreadState['metadata'] & {
-    // Project context loaded at heartbeat start
-    activeProjects:  string;
-    availableSkills: string;
-
     // Heartbeat tracking
     heartbeatCycleCount:       number;
     heartbeatMaxCycles:        number;
     heartbeatStatus:           'running' | 'done' | 'blocked' | 'idle';
     heartbeatLastCycleSummary: string;
 
-    // What the agent decided to work on
-    currentFocus: string;
-    focusReason:  string;
+    // Workflow execution tracking
+    pendingWorkflows:   Array<{ id: string; name: string; description: string }>;
+    completedWorkflows: string[];
+    currentFocus:       string;
 
-    // Environmental context (loaded each cycle from Redis)
+    // Environmental context
     agentsContext: string;
   };
 }
@@ -47,19 +48,10 @@ const HEARTBEAT_WS_CHANNEL = 'heartbeat';
 // ============================================================================
 
 /**
- * Heartbeat Node — Autonomous agent execution triggered by the heartbeat scheduler.
- *
- * Each cycle:
- *   1. Loads active projects and available skills from registries
- *   2. Builds a rich autonomous prompt combining the heartbeat directive,
- *      project context, skills inventory, and any prior cycle summaries
- *   3. Spawns a fresh AgentGraph (InputHandler → Agent loop) with this prompt
- *      injected as a user message
- *   4. Captures the agent's outcome (DONE/BLOCKED/CONTINUE) and stores it
- *   5. Returns to the heartbeat graph's conditional edge for loop/exit decision
- *
- * The AgentGraph has full tool access — it can use project tools, skill tools,
- * exec, docker, playwright, memory, calendar, etc.
+ * Heartbeat Node — Scans production workflows for heartbeat triggers and
+ * executes them sequentially. Each cycle picks the next pending workflow,
+ * spawns a fresh AgentGraph that calls execute_workflow, and captures the
+ * outcome. Exits when all workflows are done or max cycles reached.
  */
 export class HeartbeatNode extends BaseNode {
   constructor() {
@@ -71,37 +63,66 @@ export class HeartbeatNode extends BaseNode {
     const cycleNum = (state.metadata.heartbeatCycleCount || 0) + 1;
     state.metadata.heartbeatCycleCount = cycleNum;
 
-    console.log(`[HeartbeatNode] ═══ Cycle ${ cycleNum }/${ state.metadata.heartbeatMaxCycles || MAX_HEARTBEAT_CYCLES } ═══`);
+    const maxCycles = state.metadata.heartbeatMaxCycles || MAX_HEARTBEAT_CYCLES;
+    console.log(`[HeartbeatNode] ═══ Cycle ${ cycleNum }/${ maxCycles } ═══`);
+
+    // Check abort signal before starting cycle
+    const abortSignal = (state.metadata as any).abortSignal as AbortSignal | undefined;
+    if (abortSignal?.aborted) {
+      console.log('[HeartbeatNode] Abort signal received — exiting');
+      state.metadata.heartbeatStatus = 'done';
+      return { state, decision: { type: 'end' } };
+    }
 
     // ----------------------------------------------------------------
-    // 1. GATHER CONTEXT — projects & skills (lazy, once per heartbeat run)
+    // 1. SCAN FOR HEARTBEAT WORKFLOWS (first cycle only)
     // ----------------------------------------------------------------
-    if (!state.metadata.activeProjects) {
-      state.metadata.activeProjects = await this.loadActiveProjects();
-    }
-    if (!state.metadata.availableSkills) {
-      state.metadata.availableSkills = await this.loadAvailableSkills();
+    if (cycleNum === 1) {
+      state.metadata.pendingWorkflows = this.scanHeartbeatWorkflows();
+      state.metadata.completedWorkflows = [];
+
+      if (state.metadata.pendingWorkflows.length === 0) {
+        console.log('[HeartbeatNode] No workflows with heartbeat triggers found — done');
+        state.metadata.heartbeatStatus = 'done';
+        state.metadata.heartbeatLastCycleSummary = 'No heartbeat-triggered workflows found.';
+        return { state, decision: { type: 'end' } };
+      }
+
+      console.log(`[HeartbeatNode] Found ${ state.metadata.pendingWorkflows.length } heartbeat workflow(s): ${ state.metadata.pendingWorkflows.map(w => w.name).join(', ') }`);
     }
 
     // ----------------------------------------------------------------
-    // 1b. ENVIRONMENTAL CONTEXT — active agents, channels, human presence
+    // 2. PICK NEXT PENDING WORKFLOW
+    // ----------------------------------------------------------------
+    const nextWorkflow = state.metadata.pendingWorkflows.shift();
+    if (!nextWorkflow) {
+      console.log('[HeartbeatNode] All heartbeat workflows completed — done');
+      state.metadata.heartbeatStatus = 'done';
+      state.metadata.heartbeatLastCycleSummary = `Completed ${ state.metadata.completedWorkflows.length } workflow(s): ${ state.metadata.completedWorkflows.join(', ') }`;
+      return { state, decision: { type: 'end' } };
+    }
+
+    state.metadata.currentFocus = nextWorkflow.name;
+    console.log(`[HeartbeatNode] Executing workflow: "${ nextWorkflow.name }" (${ nextWorkflow.id })`);
+
+    // ----------------------------------------------------------------
+    // 3. LOAD AGENTS CONTEXT (fresh each cycle)
     // ----------------------------------------------------------------
     state.metadata.agentsContext = await this.loadActiveAgentsContext();
 
     // ----------------------------------------------------------------
-    // 2. BUILD AUTONOMOUS PROMPT
+    // 4. BUILD WORKFLOW EXECUTION PROMPT
     // ----------------------------------------------------------------
-    const autonomousPrompt = this.buildAutonomousPrompt(state);
+    const prompt = this.buildWorkflowPrompt(nextWorkflow, state);
 
     // ----------------------------------------------------------------
-    // 3. SPAWN AGENT GRAPH — fresh thread, full tool access
+    // 5. SPAWN AGENT GRAPH to execute the workflow
     // ----------------------------------------------------------------
-    // Lazy import to avoid circular dependency (Graph.ts imports HeartbeatNode)
     const { createAgentGraph } = await import('./Graph');
     const agentGraph = createAgentGraph();
-    const agentState = this.buildAgentState(state, autonomousPrompt);
+    const agentState = this.buildAgentState(state, prompt);
 
-    console.log(`[HeartbeatNode] Spawning AgentGraph (threadId=${ agentState.metadata.threadId })`);
+    console.log(`[HeartbeatNode] Spawning AgentGraph for workflow "${ nextWorkflow.name }" (threadId=${ agentState.metadata.threadId })`);
 
     try {
       await agentGraph.execute(agentState, 'input_handler');
@@ -111,106 +132,147 @@ export class HeartbeatNode extends BaseNode {
         state.metadata.heartbeatStatus = 'done';
         return { state, decision: { type: 'end' } };
       }
-      console.error('[HeartbeatNode] AgentGraph execution error:', err);
+      console.error(`[HeartbeatNode] Workflow "${ nextWorkflow.name }" execution error:`, err);
     } finally {
       await agentGraph.destroy();
     }
 
     // ----------------------------------------------------------------
-    // 4. CAPTURE OUTCOME from agent sub-graph
+    // 6. CAPTURE OUTCOME
     // ----------------------------------------------------------------
     const agentMeta = (agentState.metadata as any).agent || {};
-    const agentStatus = String(agentMeta.status || 'in_progress').toLowerCase();
+    const agentStatus = String(agentMeta.status || 'done').toLowerCase();
+    const workflowMeta = (agentState.metadata as any).activeWorkflow;
+    const workflowStatus = workflowMeta?.status || 'unknown';
 
-    // Extract useful summary from the agent's conversation
     const lastAssistant = [...agentState.messages]
       .reverse()
       .find(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim());
     const cycleSummary = agentMeta.status_report ||
-      agentMeta.response ||
       (lastAssistant?.content!)?.slice(0, 500) ||
-      '';
+      `Workflow "${ nextWorkflow.name }" finished with status: ${ workflowStatus }`;
 
     state.metadata.heartbeatLastCycleSummary = cycleSummary;
-    state.metadata.currentFocus = agentMeta.currentFocus || state.metadata.currentFocus || '';
+    state.metadata.completedWorkflows.push(nextWorkflow.name);
 
-    // Map agent status to heartbeat status
-    if (agentStatus === 'done') {
-      state.metadata.heartbeatStatus = 'done';
-    } else if (agentStatus === 'blocked') {
-      // Sub-agent is blocked — inject the blocker context into the heartbeat
-      // conversation so the orchestrator can decide what to do next cycle
-      const blockerReason = agentMeta.blocker_reason || 'Unknown blocker';
-      const unblockReqs = agentMeta.unblock_requirements || '';
-      console.log(`[HeartbeatNode] Sub-agent blocked — reason: ${ blockerReason }, requirements: ${ unblockReqs }`);
+    console.log(`[HeartbeatNode] Workflow "${ nextWorkflow.name }" complete — agent: ${ agentStatus }, workflow: ${ workflowStatus }`);
 
-      state.messages.push({
-        role:    'system',
-        content: [
-          `[Sub-agent blocked]`,
-          `Blocker: ${ blockerReason }`,
-          unblockReqs ? `Requirements to unblock: ${ unblockReqs }` : '',
-          `Decide whether to resolve this yourself, escalate to the user via send_channel_message, or move on to other work.`,
-        ].filter(Boolean).join('\n'),
-      } as ChatMessage);
-
-      // Don't end the heartbeat — let it continue to the next cycle
-      // so the orchestrator can act on the blocker
+    // If more workflows remain, keep running
+    if (state.metadata.pendingWorkflows.length > 0) {
       state.metadata.heartbeatStatus = 'running';
     } else {
-      state.metadata.heartbeatStatus = 'running';
+      state.metadata.heartbeatStatus = 'done';
     }
 
     const elapsed = Date.now() - cycleStart;
-    console.log(`[HeartbeatNode] Cycle ${ cycleNum } complete — status: ${ agentStatus }, elapsed: ${ elapsed }ms`);
+    console.log(`[HeartbeatNode] Cycle ${ cycleNum } complete — elapsed: ${ elapsed }ms, remaining workflows: ${ state.metadata.pendingWorkflows.length }`);
 
     return { state, decision: { type: 'next' } };
   }
 
   // ======================================================================
+  // WORKFLOW SCANNER
+  // ======================================================================
+
+  private scanHeartbeatWorkflows(): Array<{ id: string; name: string; description: string }> {
+    try {
+      const { resolveSullaWorkflowsProductionDir } = require('@pkg/agent/utils/sullaPaths');
+      const workflowsDir: string = resolveSullaWorkflowsProductionDir();
+
+      if (!fs.existsSync(workflowsDir)) {
+        console.log(`[HeartbeatNode] No workflows dir: ${ workflowsDir }`);
+        return [];
+      }
+
+      const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+      const results: Array<{ id: string; name: string; description: string }> = [];
+
+      for (const entry of entries) {
+        if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+
+        try {
+          const filePath = path.join(workflowsDir, entry.name);
+          const raw = fs.readFileSync(filePath, 'utf-8');
+          const definition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+
+          if (!definition.enabled) continue;
+
+          const hasHeartbeatTrigger = (definition.nodes || []).some(
+            (node: any) => node.data?.category === 'trigger' && node.data?.subtype === 'heartbeat',
+          );
+
+          if (hasHeartbeatTrigger) {
+            results.push({
+              id:          definition.id || entry.name.replace(/\.(yaml|json)$/, ''),
+              name:        definition.name || entry.name,
+              description: definition.description || '',
+            });
+          }
+        } catch (err) {
+          console.warn(`[HeartbeatNode] Failed to parse workflow ${ entry.name }:`, err);
+        }
+      }
+
+      return results;
+    } catch (err) {
+      console.error('[HeartbeatNode] Failed to scan workflows:', err);
+      return [];
+    }
+  }
+
+  // ======================================================================
+  // PROMPT BUILDER
+  // ======================================================================
+
+  private buildWorkflowPrompt(
+    workflow: { id: string; name: string; description: string },
+    state: HeartbeatThreadState,
+  ): string {
+    const now = new Date();
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timeStr = now.toLocaleString('en-US', {
+      timeZone: tz,
+      weekday:  'long',
+      year:     'numeric',
+      month:    'long',
+      day:      'numeric',
+      hour:     '2-digit',
+      minute:   '2-digit',
+      hour12:   true,
+    });
+
+    const parts: string[] = [];
+
+    parts.push(`# Heartbeat — Execute Workflow`);
+    parts.push(``);
+    parts.push(`A heartbeat trigger has fired. Execute the following workflow now.`);
+    parts.push(``);
+    parts.push(`## Workflow Details`);
+    parts.push(`- **Name:** ${ workflow.name }`);
+    parts.push(`- **ID:** ${ workflow.id }`);
+    if (workflow.description) {
+      parts.push(`- **Description:** ${ workflow.description }`);
+    }
+    parts.push(`- **Triggered at:** ${ timeStr } (${ tz })`);
+    parts.push(``);
+    parts.push(`## Instructions`);
+    parts.push(``);
+    parts.push(`Use the \`execute_workflow\` tool to run this workflow:`);
+    parts.push(`- workflowId: "${ workflow.id }"`);
+    parts.push(``);
+    parts.push(`After calling execute_workflow, the workflow playbook will take over and orchestrate all the workflow nodes. Follow the playbook's instructions for each node.`);
+
+    // Inter-agent context
+    if (state.metadata.agentsContext) {
+      parts.push(``);
+      parts.push(state.metadata.agentsContext);
+    }
+
+    return parts.join('\n');
+  }
+
+  // ======================================================================
   // CONTEXT LOADERS
-  // ======================================================================
-
-  private async loadActiveProjects(): Promise<string> {
-    try {
-      const { projectRegistry } = await import('../database/registry/ProjectRegistry');
-      const summaries = await projectRegistry.listProjects();
-
-      if (!summaries || summaries.length === 0) {
-        return 'No active projects found. Create a project by using create_workspace then writing a PROJECT.md in the folder.';
-      }
-
-      const lines = summaries.map(p =>
-        `- **${ p.name }** (slug: \`${ p.slug }\`, status: ${ p.status }): ${ p.description }`,
-      );
-      return `## Active Projects\n${ lines.join('\n') }`;
-    } catch (err) {
-      console.warn('[HeartbeatNode] Failed to load projects:', err);
-      return 'Unable to load projects — use file_search to discover them or browse the projects directory.';
-    }
-  }
-
-  private async loadAvailableSkills(): Promise<string> {
-    try {
-      const { skillsRegistry } = await import('../database/registry/SkillsRegistry');
-      const summaries = await skillsRegistry.getSkillSummaries();
-
-      if (!summaries || summaries.length === 0) {
-        return 'No skills found yet. Create skills by writing SKILL.md files in the skills directory.';
-      }
-
-      const lines = summaries.map(s =>
-        `- **${ s.name }** (slug: \`${ s.slug }\`): ${ s.description }`,
-      );
-      return `## Available Skills\n${ lines.join('\n') }`;
-    } catch (err) {
-      console.warn('[HeartbeatNode] Failed to load skills:', err);
-      return 'Unable to load skills — use file_search tool to discover them.';
-    }
-  }
-
-  // ======================================================================
-  // HUMAN-HEARTBEAT BRIDGE LOADERS
   // ======================================================================
 
   private async loadActiveAgentsContext(): Promise<string> {
@@ -225,83 +287,12 @@ export class HeartbeatNode extends BaseNode {
   }
 
   // ======================================================================
-  // PROMPT BUILDER
-  // ======================================================================
-
-  private buildAutonomousPrompt(state: HeartbeatThreadState): string {
-    const now = new Date();
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const timeStr = now.toLocaleString('en-US', {
-      timeZone: tz,
-      weekday:  'long',
-      year:     'numeric',
-      month:    'long',
-      day:      'numeric',
-      hour:     '2-digit',
-      minute:   '2-digit',
-      hour12:   true,
-    });
-
-    const cycleNum = state.metadata.heartbeatCycleCount || 1;
-    const maxCycles = state.metadata.heartbeatMaxCycles || MAX_HEARTBEAT_CYCLES;
-    const priorSummary = state.metadata.heartbeatLastCycleSummary || '';
-    const currentFocus = state.metadata.currentFocus || '';
-
-    const parts: string[] = [];
-
-    // Core heartbeat directive
-    parts.push(heartbeatPrompt);
-
-    // Time context
-    parts.push(`\n---\n## Current Context\n`);
-    parts.push(`**Time:** ${ timeStr } (${ tz })`);
-    parts.push(`**Heartbeat Cycle:** ${ cycleNum } of ${ maxCycles }`);
-
-    // Projects
-    parts.push(`\n${ state.metadata.activeProjects }`);
-
-    // Skills
-    parts.push(`\n${ state.metadata.availableSkills }`);
-
-    // Active agents, channels, and human presence (injected every cycle)
-    if (state.metadata.agentsContext) {
-      parts.push(`\n${ state.metadata.agentsContext }`);
-    }
-
-    // Continuity from prior cycle
-    if (priorSummary && cycleNum > 1) {
-      parts.push(`\n## Prior Cycle Summary\n${ priorSummary }`);
-    }
-    if (currentFocus) {
-      parts.push(`\n## Current Focus\n${ currentFocus }`);
-    }
-
-    // Autonomous directives
-    parts.push(`\n---\n## Autonomous Execution Rules
-
-You are running autonomously — no human is watching. Act decisively.
-
-1. **Respond to incoming messages FIRST.** If there are user messages in this thread (after the autonomous prompt), read them and reply using **send_channel_message** to the sender's channel. This is non-negotiable — never ignore someone talking to you.
-2. **Pick the highest-impact work.** If no incoming messages, review active projects and pick the one where you can make the most progress right now. If no projects exist, create one based on your mission.
-3. **Use your tools.** You have full access to: file system, Docker, git, memory, calendar, playwright, skills, projects, and the **bridge** tools. Use them.
-4. **Communicate via channels.** To reach the human or another agent, use **send_channel_message** with the \`target_channel\` from the Active Agents list above. Your sender identity is auto-populated.
-5. **Learn and create skills.** If you find yourself doing something that could be reusable, create a skill for it using create_skill. If a skill exists for what you need, load and follow it.
-6. **Track your work.** Update project PRDs with progress. Add observational memories for important findings. Update project status when milestones are hit.
-7. **Be concrete.** Don't just plan — execute. Write code, create files, run commands, build automations, deploy things.
-8. **Know when to stop.** If you've accomplished meaningful work or hit a blocker that requires human input, use the DONE or BLOCKED wrapper.
-
-If this is your first heartbeat and no projects exist, your first task should be to review any existing skills and memory, then create a project for whatever will deliver the most value.`);
-
-    return parts.join('\n');
-  }
-
-  // ======================================================================
   // AGENT STATE BUILDER
   // ======================================================================
 
   private buildAgentState(parentState: HeartbeatThreadState, prompt: string): AgentGraphState {
     const now = Date.now();
-    const threadId = `heartbeat_agent_${ now }_${ parentState.metadata.heartbeatCycleCount }`;
+    const threadId = `heartbeat_wf_${ now }_${ parentState.metadata.heartbeatCycleCount }`;
 
     return {
       messages: [
@@ -310,11 +301,9 @@ If this is your first heartbeat and no projects exist, your first task should be
           content:  prompt,
           metadata: {
             source: 'heartbeat',
-            type:   'autonomous_prompt',
+            type:   'workflow_trigger',
           },
         } as ChatMessage,
-        // Include parent state messages so the agent sees incoming channel messages
-        ...parentState.messages,
       ],
       metadata: {
         action:    'use_tools',

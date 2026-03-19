@@ -933,6 +933,11 @@ export class AgentPersonaService {
       if (restoredMessages.length > 0 && this.messages.length === 0) {
         console.log(`[AgentPersonaModel] Restoring ${ restoredMessages.length } messages from thread ${ data.threadId }`);
         for (const msg of restoredMessages) {
+          // Skip internal conversation summaries — these are context-window
+          // compression artifacts, not real assistant messages.
+          if ((msg.metadata as any)?._conversationSummary) {
+            continue;
+          }
           const role = msg.role === 'user' ? 'user' : 'assistant';
           const content = typeof msg.content === 'string' ? msg.content : '';
           if (!content.trim()) continue;

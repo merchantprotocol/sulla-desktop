@@ -13,6 +13,7 @@ export type HeartbeatEventType =
   | 'heartbeat_completed'
   | 'heartbeat_error'
   | 'heartbeat_already_running'
+  | 'heartbeat_aborted'
   | 'sleep_prevention_started'
   | 'sleep_prevention_stopped'
   | 'wake_scheduled';
@@ -54,12 +55,18 @@ export class HeartbeatService {
   private isExecuting = false;
   private lastTriggerMs = 0; // simple in-memory last-run tracker
 
-  // ── Event history ring buffer ──
-  private eventHistory: HeartbeatEvent[] = [];
+  // ── Circular event history buffer ──
+  private eventBuffer: (HeartbeatEvent | null)[] = new Array(MAX_EVENT_HISTORY).fill(null);
+  private eventHead = 0;   // next write position
+  private eventCount = 0;  // total events written (for ordering)
+
   private totalTriggers = 0;
   private totalErrors = 0;
   private totalSkips = 0;
   private startedAtMs = 0;
+
+  // ── Abort controller for in-flight heartbeat ──
+  private activeAbort: AbortController | null = null;
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -86,15 +93,26 @@ export class HeartbeatService {
   }
 
   getHistory(limit = 50): HeartbeatEvent[] {
-    return this.eventHistory.slice(-limit);
+    const filled = Math.min(this.eventCount, MAX_EVENT_HISTORY);
+    const result: HeartbeatEvent[] = [];
+
+    // Read from oldest to newest
+    const start = filled < MAX_EVENT_HISTORY ? 0 : this.eventHead;
+    for (let i = 0; i < filled; i++) {
+      const idx = (start + i) % MAX_EVENT_HISTORY;
+      const evt = this.eventBuffer[idx];
+      if (evt) result.push(evt);
+    }
+
+    // Return only the most recent `limit` entries
+    return result.slice(-limit);
   }
 
   private recordEvent(type: HeartbeatEventType, message: string, extra?: Partial<HeartbeatEvent>): void {
     const event: HeartbeatEvent = { ts: Date.now(), type, message, ...extra };
-    this.eventHistory.push(event);
-    if (this.eventHistory.length > MAX_EVENT_HISTORY) {
-      this.eventHistory = this.eventHistory.slice(-MAX_EVENT_HISTORY);
-    }
+    this.eventBuffer[this.eventHead] = event;
+    this.eventHead = (this.eventHead + 1) % MAX_EVENT_HISTORY;
+    this.eventCount++;
   }
 
   private startScheduler(): void {
@@ -116,10 +134,17 @@ export class HeartbeatService {
       if (!enabled) {
         this.totalSkips++;
         this.recordEvent('heartbeat_skipped', 'Heartbeat disabled in settings');
+
+        // Abort any in-flight heartbeat when disabled
+        if (this.isExecuting && this.activeAbort) {
+          console.log('[HeartbeatService] Heartbeat disabled while executing — aborting');
+          this.activeAbort.abort();
+          this.recordEvent('heartbeat_aborted', 'In-flight heartbeat aborted due to disable toggle');
+        }
         return;
       }
 
-      const delayMin = Math.max(1, await SullaSettingsModel.get('heartbeatDelayMinutes', 30));
+      const delayMin = Math.max(1, await SullaSettingsModel.get('heartbeatDelayMinutes', 15));
       const delayMs = delayMin * 60_000;
 
       if (Date.now() - this.lastTriggerMs >= delayMs) {
@@ -159,6 +184,10 @@ export class HeartbeatService {
     const triggerStart = Date.now();
     this.recordEvent('heartbeat_triggered', 'Heartbeat execution started');
 
+    // Create abort controller for this execution
+    this.activeAbort = new AbortController();
+    const { signal } = this.activeAbort;
+
     // Prevent Mac from sleeping while the heartbeat agent works
     startCaffeinate('heartbeat');
     this.recordEvent('sleep_prevention_started', 'caffeinate acquired for heartbeat execution');
@@ -179,6 +208,7 @@ export class HeartbeatService {
       state.metadata.waitingForUser = false;
       (state.metadata as any).heartbeatCycleCount = 0;
       (state.metadata as any).heartbeatStatus = 'idle';
+      (state.metadata as any).abortSignal = signal;
 
       // Inject the prompt as a fresh user message
       state.messages = [{
@@ -186,6 +216,12 @@ export class HeartbeatService {
         content:  fullPrompt,
         metadata: { source: 'heartbeat' },
       }];
+
+      // Check abort before executing
+      if (signal.aborted) {
+        this.recordEvent('heartbeat_aborted', 'Heartbeat aborted before graph execution');
+        return;
+      }
 
       await graph.execute(state, 'input_handler');
       const durationMs = Date.now() - triggerStart;
@@ -197,14 +233,21 @@ export class HeartbeatService {
       });
       console.log('[HeartbeatService] Heartbeat graph execution completed');
     } catch (err) {
-      this.totalErrors++;
-      const durationMs = Date.now() - triggerStart;
-      const msg = err instanceof Error ? err.message : String(err);
-      this.recordEvent('heartbeat_error', `Execution failed after ${ Math.round(durationMs / 1000) }s: ${ msg }`, { durationMs, error: msg });
-      console.error('[HeartbeatService] Heartbeat execution failed:', err);
+      if (signal.aborted) {
+        const durationMs = Date.now() - triggerStart;
+        this.recordEvent('heartbeat_aborted', `Heartbeat aborted after ${ Math.round(durationMs / 1000) }s`, { durationMs });
+        console.log('[HeartbeatService] Heartbeat execution aborted');
+      } else {
+        this.totalErrors++;
+        const durationMs = Date.now() - triggerStart;
+        const msg = err instanceof Error ? err.message : String(err);
+        this.recordEvent('heartbeat_error', `Execution failed after ${ Math.round(durationMs / 1000) }s: ${ msg }`, { durationMs, error: msg });
+        console.error('[HeartbeatService] Heartbeat execution failed:', err);
+      }
     } finally {
       stopCaffeinate('heartbeat');
       this.recordEvent('sleep_prevention_stopped', 'caffeinate released after heartbeat execution');
+      this.activeAbort = null;
       this.isExecuting = false;
     }
   }
@@ -232,6 +275,11 @@ export class HeartbeatService {
   }
 
   destroy(): void {
+    // Abort any in-flight execution
+    if (this.activeAbort) {
+      this.activeAbort.abort();
+      this.activeAbort = null;
+    }
     if (this.schedulerId) {
       clearInterval(this.schedulerId);
       this.schedulerId = null;

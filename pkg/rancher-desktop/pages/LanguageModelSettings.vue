@@ -137,7 +137,7 @@ export default defineComponent({
       checkingModelStatuses: false,
       // Heartbeat settings
       heartbeatEnabled:      true,
-      heartbeatDelayMinutes: 30,
+      heartbeatDelayMinutes: 15,
       heartbeatPrompt:       '',
       heartbeatProvider:     'default' as string, // 'default' = use primary provider, or a specific provider id
 
@@ -273,7 +273,7 @@ export default defineComponent({
     this.soulPrompt = await SullaSettingsModel.get('soulPrompt', soulPrompt);
     this.heartbeatPrompt = await SullaSettingsModel.get('heartbeatPrompt', heartbeatPrompt);
     this.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
-    this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 30);
+    this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
     this.activeMode = (await SullaSettingsModel.get('modelMode', 'local')) as 'local' | 'remote';
@@ -1012,7 +1012,7 @@ export default defineComponent({
           localTimeoutSeconds:   Number(this.localTimeoutSeconds) || 120,
           localRetryCount:       Number(this.localRetryCount) || 2,
           heartbeatEnabled:      Boolean(this.heartbeatEnabled),
-          heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 30,
+          heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
           heartbeatPrompt:       String(this.heartbeatPrompt || ''),
           heartbeatProvider:     String(this.heartbeatProvider || 'default'),
           ...extra,

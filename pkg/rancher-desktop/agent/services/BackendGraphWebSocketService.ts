@@ -132,17 +132,19 @@ export class BackendGraphWebSocketService {
   ): Promise<void> {
     const _msgData = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : { content: msg.data };
     const _rawContent = typeof _msgData?.content === 'string' ? _msgData.content : JSON.stringify(_msgData?.content ?? '');
-    console.log(`[BackendGraphWS] ← message on "${ channelId }"`, {
-      type:         msg.type,
-      id:           msg.id,
-      channel:      msg.channel,
-      timestamp:    msg.timestamp,
-      triggerType:  _triggerType,
-      threadId:     _msgData?.threadId,
-      metadata:     _msgData?.metadata,
-      contentChars: _rawContent.length,
-      content:      _rawContent.slice(0, 100),
-    });
+    if (_triggerType !== 'heartbeat') {
+      console.log(`[BackendGraphWS] ← message on "${ channelId }"`, {
+        type:         msg.type,
+        id:           msg.id,
+        channel:      msg.channel,
+        timestamp:    msg.timestamp,
+        triggerType:  _triggerType,
+        threadId:     _msgData?.threadId,
+        metadata:     _msgData?.metadata,
+        contentChars: _rawContent.length,
+        content:      _rawContent.slice(0, 100),
+      });
+    }
 
     if (msg.type === 'stop_run') {
       this.activeAborts.get(channelId)?.abort();

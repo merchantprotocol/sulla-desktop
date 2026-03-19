@@ -31,7 +31,6 @@ interface ScheduledWorkflowJob {
 // ── Constants ──
 
 const FRONTEND_CHANNEL_ID = 'sulla-desktop';
-const BACKEND_CHANNEL_ID  = 'heartbeat';
 const ACK_TIMEOUT_MS      = 3_000;
 
 // ── Cron builder ──
@@ -249,8 +248,7 @@ export class WorkflowSchedulerService {
         return;
       }
 
-      console.warn(`[WorkflowSchedulerService] Frontend did not ACK — using backend channel`);
-      void this.sendToBackend(definition, prompt);
+      console.warn(`[WorkflowSchedulerService] Frontend did not ACK workflow "${ definition.name }" — skipping (frontend must be running to execute scheduled workflows)`);
     } catch (err) {
       console.error(`[WorkflowSchedulerService] Failed to trigger workflow "${ definition.name }":`, err);
     }
@@ -349,16 +347,6 @@ export class WorkflowSchedulerService {
 
       this.pendingAcks.set(definition.id, { resolve, timer });
     });
-  }
-
-  private async sendToBackend(definition: WorkflowDefinition, prompt: string): Promise<void> {
-    const message = this.buildEventPayload(definition, prompt);
-
-    this.wsService.connect(BACKEND_CHANNEL_ID);
-    const sent = await this.wsService.send(BACKEND_CHANNEL_ID, message);
-    if (!sent) {
-      console.error(`[WorkflowSchedulerService] Failed to send to backend for "${ definition.name }"`);
-    }
   }
 
   private cancelAll(): void {

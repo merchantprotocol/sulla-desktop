@@ -50,7 +50,8 @@ export class IntegrationConfigLoader {
     }
 
     const entries = fs.readdirSync(this.integrationsDir, { withFileTypes: true });
-    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
+    // Skip mcp/ — MCP integrations are handled by MCPBridge, not ConfigApiClient
+    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'mcp');
 
     for (const dir of dirs) {
       try {

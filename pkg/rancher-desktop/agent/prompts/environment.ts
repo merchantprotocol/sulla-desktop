@@ -1,27 +1,20 @@
 // Detailed integration API instructions — exported so BaseNode can conditionally inject them
-export const INTEGRATIONS_INSTRUCTIONS_BLOCK = `**How to call an integration API endpoint:**
-\`\`\`
-POST http://localhost:3000/v1/integrations/{accountId}/{slug}/{endpoint}/call
-Content-Type: application/json
+export const INTEGRATIONS_INSTRUCTIONS_BLOCK = `**Integrations are accessed via HTTP — load the \`discover-and-call-integrations\` skill for full instructions.**
 
-{ "params": { ... }, "body": { ... }, "raw": false }
-\`\`\`
+This skill teaches you how to discover, search, inspect, and call all connected integrations (140+ REST APIs and MCP servers) using Python via the \`exec\` tool.
 
-- \`accountId\`: credential set to use — get this from \`list_integration_accounts\` tool (common values: \`default\`, \`oauth\`, or a custom label like \`work\`)
-- \`slug\`: integration folder name (e.g., \`youtube\`, \`postmark\`, \`attio\`)
-- \`endpoint\`: endpoint name from the YAML config (e.g., \`search\`, \`email-send\`, \`records-list\`)
-- \`params\`: query and path parameters as a JSON object
-- \`body\`: request body for POST/PUT/PATCH endpoints
-- \`raw\`: set to \`true\` to get the raw API response
-
-**To understand an endpoint's parameters**, read the YAML config file listed next to each integration above. Each \`.v*.yaml\` file describes one endpoint with its parameters, types, required fields, and examples.
+**Quick reference:**
+- **Discover**: \`GET http://localhost:3000/v1/integrations\` — lists all integrations and their endpoints (including MCP tools)
+- **Call**: \`POST http://localhost:3000/v1/integrations/{accountId}/{slug}/{endpoint}/call\` with \`{ "params": {...} }\`
+- **MCP tools**: appear under slug \`mcp\` — each connected MCP server's tools are listed as endpoints
+- **YAML configs**: \`~/sulla/integrations/{slug}/\` — read these for full parameter details, examples, and response docs
 
 **To manage credentials/accounts**, use these native tools:
 - \`list_integration_accounts\` — see available accounts and their IDs
 - \`set_active_integration_account\` — switch the default account
 - \`integration_get_credentials\` — inspect stored credentials
 
-**You MUST write Python scripts** (using \`exec\`) to call these integration APIs. The model cannot call them directly as tools — they are HTTP endpoints that you access programmatically. This gives you full control to process, filter, and combine results before responding.`;
+**You MUST write Python scripts** (using \`exec\`) to call these integration APIs. The model cannot call them directly as tools — they are HTTP endpoints that you access programmatically. Load the skill for complete examples and patterns.`;
 
 // Environment prompt content for agent awareness
 export const environmentPrompt = `---

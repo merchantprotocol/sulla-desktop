@@ -114,6 +114,7 @@ import BrowserTab from './BrowserTab.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 
 const route = useRoute();
 const { tabs: browserTabs } = useBrowserTabs();
@@ -202,7 +203,15 @@ async function refreshFooterStats() {
   } catch { /* ignore */ }
 }
 
+const presenceTracker = getHumanPresenceTracker();
+
 onMounted(() => {
+  // Start human presence tracker — top-level shell ensures presence is tracked
+  // whenever the app is open, regardless of which tab/pane is active
+  presenceTracker.setCurrentView('Sulla Desktop');
+  presenceTracker.setActiveChannel('sulla-desktop');
+  presenceTracker.start();
+
   refreshFooterStats();
   footerStatsTimer = setInterval(refreshFooterStats, 30_000);
 
@@ -214,6 +223,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  presenceTracker.stop();
   if (footerStatsTimer) {
     clearInterval(footerStatsTimer);
   }
