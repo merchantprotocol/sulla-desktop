@@ -569,68 +569,139 @@ export class ChatCompletionsServer {
   // ── Integration API handlers ──────────────────────────────────────
 
   private async handleListIntegrations(_req: Request, res: Response) {
+    // v3 — enabled integrations with full endpoint schemas; MCP listed per-account
     try {
       const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const { integrations: catalogIntegrations } = await import('@pkg/agent/integrations/catalog');
       const loader = getIntegrationConfigLoader();
-      const slugs = loader.getAvailableIntegrations();
+      const svc = getIntegrationService();
 
-      const integrations = slugs.map((slug) => {
-        const client = loader.getClient(slug);
-        if (!client) return null;
+      // IntegrationService is the source of truth for what's enabled
+      const enabled = await svc.getEnabledIntegrations();
 
-        const endpoints = client.endpointNames.map((name) => {
-          const ep = client.getEndpoint(name);
-          if (!ep) return null;
-          return {
-            name:        ep.endpoint.name,
-            method:      ep.endpoint.method,
-            path:        ep.endpoint.path,
-            description: ep.endpoint.description,
-            auth:        ep.endpoint.auth,
-            queryParams: ep.query_params
-              ? Object.entries(ep.query_params).map(([k, v]) => ({ name: k, ...v }))
-              : [],
-            pathParams: ep.path_params
-              ? Object.entries(ep.path_params).map(([k, v]) => ({ name: k, ...v }))
-              : [],
-          };
-        }).filter(Boolean);
+      const integrations: any[] = [];
 
-        return {
-          slug,
-          name: client.name,
-          endpoints,
-        };
-      }).filter(Boolean);
+      for (const { integrationId, accounts } of enabled) {
+        // ── MCP: each account is a separate server, list each as its own entry ──
+        if (integrationId === 'mcp') {
+          try {
+            const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
+            const bridge = MCPBridge.getInstance();
 
-      // Merge MCP server tools into the integrations listing
-      try {
-        const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
-        const bridge = MCPBridge.getInstance();
-        if (bridge.hasConnections) {
-          const mcpEndpoints = bridge.getAllEndpoints();
-          if (mcpEndpoints.length > 0) {
-            integrations.push({
-              slug:      'mcp',
-              name:      'mcp-v1',
-              endpoints: mcpEndpoints.map(ep => ({
-                name:        ep.name,
-                method:      ep.method as 'POST',
-                path:        ep.path,
-                description: ep.description,
-                auth:        ep.auth as 'required',
-                queryParams: ep.queryParams,
-                pathParams:  [] as { name: string; type: string; required?: boolean; description?: string }[],
-                accountId:   ep.accountId,
-              })),
-            });
+            for (const account of accounts) {
+              const tools = bridge.getToolsForAccount(account.account_id);
+              const serverUrl = bridge.getServerUrl(account.account_id);
+
+              integrations.push({
+                slug:      'mcp',
+                name:      account.label || account.account_id,
+                accounts:  [{
+                  accountId: account.account_id,
+                  label:     account.label || account.account_id,
+                  active:    account.active,
+                  connected: account.connected,
+                }],
+                serverUrl: serverUrl || null,
+                endpoints: tools.map(tool => ({
+                  name:        tool.name,
+                  method:      'POST',
+                  description: tool.description,
+                  inputSchema: tool.inputSchema,
+                })),
+              });
+            }
+          } catch (mcpErr: any) {
+            console.warn('[ChatCompletionsAPI] MCP bridge not available:', mcpErr.message);
           }
+          continue;
         }
-      } catch (mcpErr: any) {
-        console.warn('[ChatCompletionsAPI] MCP bridge not available:', mcpErr.message);
+
+        // ── YAML-based or native catalog ──
+        const accountsPayload = accounts.map(a => ({
+          accountId: a.account_id,
+          label:     a.label,
+          active:    a.active,
+          connected: a.connected,
+        }));
+
+        // Try YAML config loader first for endpoint schemas
+        const client = loader.getClient(integrationId);
+        if (client) {
+          const endpoints = client.endpointNames.map((name) => {
+            const ep = client.getEndpoint(name);
+            if (!ep) return null;
+
+            // Build MCP-style inputSchema from YAML query_params + path_params
+            const properties: Record<string, any> = {};
+            const required: string[] = [];
+
+            for (const [k, v] of Object.entries(ep.path_params || {})) {
+              const param = v as any;
+              const prop: any = { type: param.type || 'string', description: param.description || '' };
+              if (param.enum) prop.enum = param.enum;
+              if (param.default !== undefined) prop.default = param.default;
+              if (param.format) prop.format = param.format;
+              properties[k] = prop;
+              if (param.required) required.push(k);
+            }
+
+            for (const [k, v] of Object.entries(ep.query_params || {})) {
+              const param = v as any;
+              const prop: any = { type: param.type || 'string', description: param.description || '' };
+              if (param.enum) prop.enum = param.enum;
+              if (param.default !== undefined) prop.default = param.default;
+              if (param.format) prop.format = param.format;
+              if (param.max !== undefined) prop.maximum = param.max;
+              if (param.min !== undefined) prop.minimum = param.min;
+              properties[k] = prop;
+              if (param.required) required.push(k);
+            }
+
+            const endpoint: any = {
+              name:        ep.endpoint.name,
+              method:      ep.endpoint.method,
+              description: ep.endpoint.description,
+              inputSchema: { type: 'object', properties, ...(required.length ? { required } : {}) },
+            };
+
+            if (ep.response) endpoint.response = ep.response;
+            if (ep.examples) endpoint.examples = ep.examples;
+
+            return endpoint;
+          }).filter(Boolean);
+
+          integrations.push({
+            slug: integrationId,
+            name: client.name,
+            accounts: accountsPayload,
+            endpoints,
+          });
+          continue;
+        }
+
+        // Fall back to native catalog entry
+        const catalogEntry = catalogIntegrations[integrationId];
+        integrations.push({
+          slug:      integrationId,
+          name:      catalogEntry?.name || integrationId,
+          category:  catalogEntry?.category,
+          accounts:  accountsPayload,
+          endpoints: [],
+        });
       }
 
-      res.json({ success: true, integrations });
+      res.json({
+        success: true,
+        version: 3,
+        usage: {
+          call_method: 'POST',
+          call_url:    'http://host.docker.internal:3000/v1/integrations/{accountId}/{slug}/{endpoint}/call',
+          call_body:   '{"params": {"param_name": "value"}}',
+          notes:       'Use the first accountId from the accounts array for any integration, including MCP. The call URL pattern is the same for all integration types. Parameters are described in each endpoint\'s inputSchema (JSON Schema format).',
+        },
+        integrations,
+      });
     } catch (error: any) {
       console.error('[ChatCompletionsAPI] Error listing integrations:', error);
       res.status(500).json({ success: false, error: error.message || 'Failed to list integrations' });

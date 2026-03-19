@@ -121,6 +121,13 @@ export class MCPBridge {
   }
 
   /**
+   * Get the server URL for a specific account.
+   */
+  getServerUrl(accountId: string): string | undefined {
+    return this.clients.get(accountId)?.url;
+  }
+
+  /**
    * Get all MCP tools across all accounts, formatted as integration endpoints
    * for the /v1/integrations listing API.
    */
