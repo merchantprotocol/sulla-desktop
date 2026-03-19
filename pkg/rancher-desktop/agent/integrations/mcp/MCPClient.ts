@@ -49,6 +49,10 @@ export class MCPClient {
     return this._tools;
   }
 
+  get url(): string {
+    return this.serverUrl;
+  }
+
   /**
    * Connect to the MCP server and discover available tools.
    */
@@ -175,15 +179,47 @@ export class MCPClient {
     return this.createStreamableHTTPTransport();
   }
 
+  private static LOCAL_HOSTS = ['localhost', '127.0.0.1', '::1', 'host.docker.internal'];
+
+  /**
+   * Check if the server URL points to a local address where we should
+   * skip TLS certificate verification (self-signed certs are expected).
+   */
+  private isLocalUrl(): boolean {
+    try {
+      const hostname = new URL(this.serverUrl).hostname;
+      return MCPClient.LOCAL_HOSTS.includes(hostname)
+        || hostname.endsWith('.local')
+        || hostname.endsWith('.internal');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Create a fetch function that skips TLS certificate verification.
+   * Only used for local/internal MCP servers where self-signed certs are expected.
+   */
+  private createTlsPermissiveFetch(): (url: string | URL, init?: RequestInit) => Promise<Response> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { Agent } = require('undici');
+    const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+    return (url: string | URL, init?: RequestInit): Promise<Response> => {
+      return fetch(url, { ...init, dispatcher } as any);
+    };
+  }
+
   private createStreamableHTTPTransport(): StreamableHTTPClientTransport {
     const requestInit: RequestInit = {};
     if (this.authToken) {
       requestInit.headers = { Authorization: `Bearer ${ this.authToken }` };
     }
+    const skipTls = this.serverUrl.startsWith('https:') && this.isLocalUrl();
     return new StreamableHTTPClientTransport(
       new URL(this.serverUrl),
       {
         requestInit,
+        ...(skipTls ? { fetch: this.createTlsPermissiveFetch() } : {}),
         reconnectionOptions: {
           maxReconnectionDelay:      30000,
           initialReconnectionDelay:  1000,
@@ -199,9 +235,13 @@ export class MCPClient {
     if (this.authToken) {
       requestInit.headers = { Authorization: `Bearer ${ this.authToken }` };
     }
+    const skipTls = this.serverUrl.startsWith('https:') && this.isLocalUrl();
     return new SSEClientTransport(
       new URL(this.serverUrl),
-      { requestInit },
+      {
+        requestInit,
+        ...(skipTls ? { fetch: this.createTlsPermissiveFetch() } : {}),
+      },
     );
   }
 }

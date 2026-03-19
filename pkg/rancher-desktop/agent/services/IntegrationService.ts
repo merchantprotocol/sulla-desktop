@@ -270,6 +270,21 @@ export class IntegrationService {
     return IntegrationValueModel.existsWithPropertyValue(integrationId, 'connection_status', 'true');
   }
 
+  /** Get all enabled integrations — any integration_id that has at least one account with stored values */
+  async getEnabledIntegrations(): Promise<{ integrationId: string; accounts: IntegrationAccount[] }[]> {
+    const allIds = await IntegrationValueModel.getDistinctIntegrations();
+    const results: { integrationId: string; accounts: IntegrationAccount[] }[] = [];
+
+    for (const integrationId of allIds) {
+      const accounts = await this.getAccounts(integrationId);
+      if (accounts.length > 0) {
+        results.push({ integrationId, accounts });
+      }
+    }
+
+    return results;
+  }
+
   // ─── Form values (account-aware) ─────────────────────────────────
 
   /** Get form values for the active account (or a specific account) */

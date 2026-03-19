@@ -71,6 +71,15 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     return this.where({ integration_id: integrationId });
   }
 
+  /** Get all distinct integration_ids that have stored values */
+  static async getDistinctIntegrations(): Promise<string[]> {
+    const rows = await this.query(
+      `SELECT DISTINCT "integration_id" FROM "integration_values" ORDER BY "integration_id"`,
+      [],
+    );
+    return rows.map(r => r.integration_id as string);
+  }
+
   /** Get distinct account_ids for an integration */
   static async getDistinctAccounts(integrationId: string): Promise<string[]> {
     const rows = await this.query(
