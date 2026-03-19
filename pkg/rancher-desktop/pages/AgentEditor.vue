@@ -1295,6 +1295,7 @@ import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeU
 import { ipcRenderer } from 'electron';
 
 import { useTheme } from '@pkg/composables/useTheme';
+import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import EditorHeader from './editor/EditorHeader.vue';
 import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
@@ -1593,7 +1594,11 @@ export default defineComponent({
     const chatGraphRunning = editorChat.graphRunning;
     const chatWaitingForUser = editorChat.waitingForUser;
     const chatCurrentActivity = editorChat.currentActivity;
-    const chatSend = () => editorChat.send();
+    const chatSend = () => {
+      presenceTracker.recordActivity();
+      presenceTracker.setCurrentActivity('chatting with agent');
+      editorChat.send();
+    };
     const chatStop = () => editorChat.stop();
     const chatUpdateQuery = (val: string) => { editorChat.query.value = val };
 
@@ -1901,7 +1906,15 @@ export default defineComponent({
       activeTerminalTab.value = tabId;
     }
 
+    const presenceTracker = getHumanPresenceTracker();
+
     onMounted(async() => {
+      // Start human presence tracker — writes presence to Redis so agents know the human is online
+      presenceTracker.setCurrentView('Agent Editor');
+      presenceTracker.setCurrentActivity('using workbench');
+      presenceTracker.setActiveChannel('sulla-desktop');
+      presenceTracker.start();
+
       // Start footer stats polling (every 30s)
       refreshFooterStats();
       footerStatsTimer = setInterval(refreshFooterStats, 30_000);
@@ -3020,6 +3033,7 @@ export default defineComponent({
     }
 
     onBeforeUnmount(() => {
+      presenceTracker.stop();
       window.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('mousedown', onEditorMenuOutsideClick);
       document.removeEventListener('click', onInjectMenuOutsideClick);
