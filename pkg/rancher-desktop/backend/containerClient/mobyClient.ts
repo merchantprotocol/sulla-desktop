@@ -68,13 +68,13 @@ export class MobyClient implements ContainerEngineClient {
     let successCount = 0;
     let failureCount = 0;
     let lastOutput = { stdout: '', stderr: '' };
+    const startTime = Date.now();
 
-    // Wait for ten consecutive successes, clearing out successCount whenever we
-    // hit an error.  In the ideal case this is a five-second delay in startup
-    // time.  We use `docker system info` because that needs to talk to the
+    // Wait for three consecutive successes to confirm Docker is stable.
+    // We use `docker system info` because that needs to talk to the
     // socket to fetch data about the engine (and it returns an error if it
     // fails to do so).
-    while (successCount < 10) {
+    while (successCount < 3) {
       try {
         await this.runClient(['system', 'info'], 'pipe');
         successCount++;
@@ -100,6 +100,7 @@ export class MobyClient implements ContainerEngineClient {
       }
       await util.promisify(setTimeout)(500);
     }
+    console.log(`[startup-perf] mobyClient.waitForReady: ${ Date.now() - startTime }ms (failures=${ failureCount })`);
   }
 
   readFile(imageID: string, filePath: string): Promise<string>;

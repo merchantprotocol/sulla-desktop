@@ -57,8 +57,8 @@
             <h3>Active Configuration</h3>
             <div class="summary-grid">
               <div class="summary-item">
-                <span class="summary-label">Transcription Model</span>
-                <span class="summary-value">{{ transcriptionModel || 'scribe_v1 (default)' }}</span>
+                <span class="summary-label">Transcription Mode</span>
+                <span class="summary-value">{{ transcriptionMode === 'browser' ? 'Browser (real-time)' : 'ElevenLabs' }}</span>
               </div>
               <div class="summary-item">
                 <span class="summary-label">TTS Voice</span>
@@ -79,6 +79,24 @@
           </p>
 
           <div class="setting-section">
+            <h3>Mode</h3>
+            <select
+              v-model="transcriptionMode"
+              class="setting-select"
+              @change="saveSettings"
+            >
+              <option value="browser">Browser (real-time)</option>
+              <option value="elevenlabs">ElevenLabs (high accuracy)</option>
+            </select>
+            <p class="description">
+              <strong>Browser</strong> uses Chrome's built-in speech recognition for instant, live transcription
+              that shows your words as you speak. Free, no API key needed.<br>
+              <strong>ElevenLabs</strong> uses the Scribe model for higher accuracy transcription,
+              but text only appears after you finish speaking.
+            </p>
+          </div>
+
+          <div class="setting-section">
             <h3>Provider</h3>
             <select
               v-model="transcriptionProvider"
@@ -94,6 +112,7 @@
             <select
               v-model="transcriptionModel"
               class="setting-select"
+              :disabled="transcriptionMode === 'browser'"
               @change="saveSettings"
             >
               <option value="scribe_v1">Scribe v1 (default)</option>
@@ -101,6 +120,9 @@
             </select>
             <p class="description">
               Scribe v1 is ElevenLabs' production speech-to-text model with broad language support.
+              <template v-if="transcriptionMode === 'browser'">
+                (Not used in Browser mode.)
+              </template>
             </p>
           </div>
         </div>
@@ -184,6 +206,7 @@ const currentNav = ref('overview');
 
 // Settings state
 const apiKeyConnected = ref(false);
+const transcriptionMode = ref('browser');
 const transcriptionProvider = ref('elevenlabs');
 const transcriptionModel = ref('scribe_v1');
 const ttsProvider = ref('elevenlabs');
@@ -196,6 +219,7 @@ const loadingVoices = ref(false);
 
 async function loadSettings(): Promise<void> {
   try {
+    transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
     transcriptionProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionProvider', 'elevenlabs');
     transcriptionModel.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionModel', 'scribe_v1');
     ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'elevenlabs');
@@ -208,6 +232,7 @@ async function loadSettings(): Promise<void> {
 
 async function saveSettings(): Promise<void> {
   try {
+    await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionMode', transcriptionMode.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionProvider', transcriptionProvider.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionModel', transcriptionModel.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTtsProvider', ttsProvider.value);
@@ -272,15 +297,10 @@ async function fetchVoices(): Promise<void> {
 }
 
 function getStaticVoices(): { value: string; label: string; description?: string }[] {
+  // Only include voices with verified ElevenLabs IDs.
+  // Full list loads dynamically from the API when an API key is configured.
   return [
-    { value: 'Rachel',  label: 'Rachel',  description: 'premade' },
-    { value: 'Drew',    label: 'Drew',    description: 'premade' },
-    { value: 'Clyde',   label: 'Clyde',   description: 'premade' },
-    { value: 'Paul',    label: 'Paul',    description: 'premade' },
-    { value: 'Domi',    label: 'Domi',    description: 'premade' },
-    { value: 'Dave',    label: 'Dave',    description: 'premade' },
-    { value: 'Fin',     label: 'Fin',     description: 'premade' },
-    { value: 'Sarah',   label: 'Sarah',   description: 'premade' },
+    { value: 'cgSgspJ2msm6clMCkdW9', label: 'Jessica', description: 'premade, default' },
   ];
 }
 

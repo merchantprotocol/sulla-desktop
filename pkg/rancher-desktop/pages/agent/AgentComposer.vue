@@ -291,20 +291,23 @@ aria-hidden="true"
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { AgentModelSelectorController } from './AgentModelSelectorController';
 
 const props = withDefaults(defineProps<{
-  modelValue:    string;
-  loading:       boolean;
-  showOverlay:   boolean;
-  hasMessages:   boolean;
-  graphRunning:  boolean;
-  modelSelector: AgentModelSelectorController;
-  formClass?:    string;
-  panelClass?:   string;
+  modelValue:      string;
+  loading:         boolean;
+  showOverlay:     boolean;
+  hasMessages:     boolean;
+  graphRunning:    boolean;
+  modelSelector:   AgentModelSelectorController;
+  formClass?:      string;
+  panelClass?:     string;
+  autoStartVoice?: boolean;
 }>(), {
-  formClass:  'group/composer mx-auto mb-3 w-full',
-  panelClass: '',
+  formClass:       'group/composer mx-auto mb-3 w-full',
+  panelClass:      '',
+  autoStartVoice:  false,
 });
 
 const emit = defineEmits<{
@@ -312,39 +315,57 @@ const emit = defineEmits<{
   send:                [];
   stop:                [];
   primaryAction:       [];
-  'voice-recorded':    [audio: Blob, mimeType: string];
+  'voice-interim':     [text: string];
+  'voice-transcribed': [text: string];
 }>();
 
 const composerTextareaEl = ref<HTMLTextAreaElement | null>(null);
 const isComposerMultiline = ref(false);
 const isRecording = ref(false);
 
+// ─── Voice Mode ──────────────────────────────────────────────
+// Two transcription modes:
+//   'browser'    — Web Speech API: free, real-time interim results shown as you speak
+//   'elevenlabs' — ElevenLabs batch: higher accuracy, transcribes after silence
+//
+// Both modes keep the mic open (continuous). VAD detects silence → submit text → new segment.
+
+let mediaStream: MediaStream | null = null;
 let mediaRecorder: MediaRecorder | null = null;
 let audioChunks: Blob[] = [];
-let mediaStream: MediaStream | null = null;
+let activeMimeType = 'audio/webm';
+let transcriptionMode = 'browser'; // loaded from settings on first use
 
-// Voice Activity Detection (VAD) state
+// SpeechRecognition (browser mode)
+let recognition: any = null;
+let recognitionText = '';            // accumulated final results for current segment
+let recognitionInterim = '';         // current interim (partial) result
+let voiceStopping = false;           // guard: prevents onend/onerror from restarting after stop
+
+// VAD state (used for ElevenLabs mode; browser mode uses SpeechRecognition's own end detection)
 let audioContext: AudioContext | null = null;
 let analyser: AnalyserNode | null = null;
 let vadInterval: ReturnType<typeof setInterval> | null = null;
-const VAD_SILENCE_THRESHOLD = 12;   // RMS level below which we consider silence
-const VAD_SILENCE_DURATION = 1500;  // ms of silence before auto-stop
-const VAD_INITIAL_GRACE = 800;      // ms grace period at start (ignore initial silence)
+const VAD_SILENCE_THRESHOLD = 12;
+const VAD_SILENCE_DURATION = 800;
+const VAD_INITIAL_GRACE = 400;
 let silenceStart: number | null = null;
-let recordingStart = 0;
+let segmentStart = 0;
+let hasSpeechInSegment = false;
 
 async function toggleRecording(): Promise<void> {
   if (isRecording.value) {
-    stopRecording();
+    await endVoiceMode();
   } else {
-    await startRecording();
+    await startVoiceMode();
   }
 }
 
-async function startRecording(): Promise<void> {
+async function startVoiceMode(): Promise<void> {
   try {
-    // Electron's custom protocol may not expose navigator.mediaDevices.
-    // Fall back to the legacy API or the Chromium global if needed.
+    // Load transcription mode from settings
+    transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
+
     const getMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices)
       || ((constraints: MediaStreamConstraints) => new Promise<MediaStream>((resolve, reject) => {
         const legacy = (navigator as any).getUserMedia
@@ -359,59 +380,201 @@ async function startRecording(): Promise<void> {
       }));
 
     mediaStream = await getMedia({ audio: true });
-    audioChunks = [];
-
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    activeMimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : 'audio/webm';
 
-    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
-
-    mediaRecorder.ondataavailable = (event: BlobEvent) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data);
-      }
-    };
-
-    mediaRecorder.onstop = () => {
-      const audioBlob = new Blob(audioChunks, { type: mimeType });
-      stopVAD();
-      cleanupStream();
-
-      if (audioBlob.size > 0) {
-        emit('voice-recorded', audioBlob, mimeType);
-      }
-    };
-
-    mediaRecorder.start();
     isRecording.value = true;
-    recordingStart = Date.now();
+    voiceStopping = false;
 
-    // Start voice activity detection
-    startVAD(mediaStream);
+    if (transcriptionMode === 'browser') {
+      startBrowserRecognition();
+    } else {
+      emit('voice-interim', 'Listening...');
+      startElevenLabsSegment();
+      startVAD();
+    }
   } catch (err) {
     console.error('[AgentComposer] Microphone access denied or unavailable:', err);
     cleanupStream();
   }
 }
 
-function startVAD(stream: MediaStream): void {
+// ── Browser mode (SpeechRecognition) ───────────────────────────
+
+function startBrowserRecognition(): void {
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    console.warn('[AgentComposer] SpeechRecognition not available, falling back to ElevenLabs');
+    transcriptionMode = 'elevenlabs';
+    startElevenLabsSegment();
+    startVAD();
+
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+  recognitionText = '';
+  recognitionInterim = '';
+
+  recognition.onresult = (event: any) => {
+    let interim = '';
+    let finalText = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalText += transcript;
+      } else {
+        interim += transcript;
+      }
+    }
+
+    if (finalText) {
+      recognitionText += finalText;
+    }
+    recognitionInterim = interim;
+
+    // Emit interim updates so the chat shows live transcription
+    const displayText = (recognitionText + ' ' + recognitionInterim).trim();
+    if (displayText) {
+      emit('voice-interim', displayText);
+    }
+  };
+
+  recognition.onend = () => {
+    // If user hit stop, do NOT restart — exit immediately
+    if (voiceStopping || !isRecording.value) return;
+
+    const text = recognitionText.trim();
+    if (text) {
+      emit('voice-transcribed', text);
+    }
+    recognitionText = '';
+    recognitionInterim = '';
+
+    // Restart recognition for the next utterance
+    try {
+      recognition?.start();
+    } catch { /* already started */ }
+  };
+
+  recognition.onerror = (event: any) => {
+    console.warn('[AgentComposer] SpeechRecognition error:', event.error);
+
+    // If user hit stop, ignore all errors
+    if (voiceStopping || !isRecording.value) return;
+
+    if (event.error === 'no-speech') {
+      // No speech detected — restart
+      try {
+        recognition?.start();
+      } catch { /* already started */ }
+    } else if (event.error === 'network' || event.error === 'service-not-allowed' || event.error === 'not-allowed') {
+      // Browser speech services unavailable — fall back to ElevenLabs mode
+      console.warn('[AgentComposer] Browser speech unavailable, switching to ElevenLabs mode');
+      try { recognition?.stop(); } catch { /* ignore */ }
+      recognition = null;
+      recognitionText = '';
+      recognitionInterim = '';
+      transcriptionMode = 'elevenlabs';
+
+      if (mediaStream) {
+        emit('voice-interim', 'Listening...');
+        startElevenLabsSegment();
+        startVAD();
+      }
+    } else if (event.error === 'aborted') {
+      // Intentional abort — do nothing
+    } else {
+      // Other errors — try to restart
+      try {
+        recognition?.start();
+      } catch { /* already started */ }
+    }
+  };
+
+  recognition.start();
+}
+
+// ── ElevenLabs mode (batch with VAD) ───────────────────────────
+
+function startElevenLabsSegment(): void {
+  if (!mediaStream) return;
+
+  audioChunks = [];
+  hasSpeechInSegment = false;
+  segmentStart = Date.now();
+  silenceStart = null;
+
+  mediaRecorder = new MediaRecorder(mediaStream, { mimeType: activeMimeType });
+
+  mediaRecorder.ondataavailable = (event: BlobEvent) => {
+    if (event.data.size > 0) {
+      audioChunks.push(event.data);
+    }
+  };
+
+  mediaRecorder.onstop = () => {
+    const audioBlob = new Blob(audioChunks, { type: activeMimeType });
+    audioChunks = [];
+
+    if (audioBlob.size > 0 && hasSpeechInSegment) {
+      // Transcribe via ElevenLabs batch API and emit
+      transcribeAndEmit(audioBlob, activeMimeType);
+    }
+  };
+
+  mediaRecorder.start();
+}
+
+async function transcribeAndEmit(audioBlob: Blob, mimeType: string): Promise<void> {
+  emit('voice-interim', 'Transcribing...');
+
+  try {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const result = await ipcRenderer.invoke('audio-transcribe', { audio: arrayBuffer, mimeType });
+
+    if (result?.text?.trim()) {
+      emit('voice-transcribed', result.text.trim());
+    }
+  } catch (err) {
+    console.error('[AgentComposer] ElevenLabs transcription failed:', err);
+  }
+
+  // Start a new segment if still in voice mode
+  if (isRecording.value && mediaStream) {
+    emit('voice-interim', 'Listening...');
+    startElevenLabsSegment();
+  }
+}
+
+function flushElevenLabsSegment(): void {
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+  console.log('[AgentComposer] VAD: pause detected, flushing ElevenLabs segment');
+  mediaRecorder.stop(); // triggers onstop → transcribeAndEmit
+}
+
+function startVAD(): void {
+  if (!mediaStream) return;
+
   try {
     audioContext = new AudioContext();
-    const source = audioContext.createMediaStreamSource(stream);
+    const source = audioContext.createMediaStreamSource(mediaStream);
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 512;
     source.connect(analyser);
 
     const dataArray = new Uint8Array(analyser.fftSize);
-    silenceStart = null;
 
     vadInterval = setInterval(() => {
       if (!analyser || !isRecording.value) return;
 
       analyser.getByteTimeDomainData(dataArray);
 
-      // Calculate RMS (root mean square) of audio signal
       let sum = 0;
       for (let i = 0; i < dataArray.length; i++) {
         const sample = (dataArray[i] - 128) / 128;
@@ -420,25 +583,54 @@ function startVAD(stream: MediaStream): void {
       const rms = Math.sqrt(sum / dataArray.length) * 100;
 
       const now = Date.now();
-      const elapsed = now - recordingStart;
+      const elapsed = now - segmentStart;
 
-      if (rms < VAD_SILENCE_THRESHOLD) {
-        // Below threshold — start or continue silence timer
+      if (rms >= VAD_SILENCE_THRESHOLD) {
+        silenceStart = null;
+        hasSpeechInSegment = true;
+      } else if (hasSpeechInSegment) {
         if (silenceStart === null) {
           silenceStart = now;
         } else if (elapsed > VAD_INITIAL_GRACE && (now - silenceStart) >= VAD_SILENCE_DURATION) {
-          // Silence held long enough after grace period — auto-stop
-          console.log('[AgentComposer] VAD: silence detected, auto-stopping recording');
-          stopRecording();
+          flushElevenLabsSegment();
         }
-      } else {
-        // Speech detected — reset silence timer
-        silenceStart = null;
       }
-    }, 100); // Check every 100ms
+    }, 100);
   } catch (err) {
-    console.warn('[AgentComposer] VAD setup failed, falling back to manual stop:', err);
+    console.warn('[AgentComposer] VAD setup failed:', err);
   }
+}
+
+// ── Shared teardown ────────────────────────────────────────────
+
+async function endVoiceMode(): Promise<void> {
+  // Set the stopping flag FIRST so onend/onerror handlers won't restart
+  voiceStopping = true;
+  isRecording.value = false;
+
+  // Browser mode: stop recognition, submit any remaining text
+  if (recognition) {
+    const text = recognitionText.trim();
+    try { recognition.abort(); } catch { /* ignore */ }
+    try { recognition.stop(); } catch { /* ignore */ }
+    recognition = null;
+    if (text) {
+      emit('voice-transcribed', text);
+    }
+    // Clear interim display
+    emit('voice-interim', '');
+    recognitionText = '';
+    recognitionInterim = '';
+  }
+
+  // ElevenLabs mode: flush last segment
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop(); // triggers onstop → transcribeAndEmit if hasSpeechInSegment
+  }
+
+  stopVAD();
+  cleanupStream();
+  voiceStopping = false;
 }
 
 function stopVAD(): void {
@@ -455,10 +647,7 @@ function stopVAD(): void {
 }
 
 function stopRecording(): void {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-  }
-  isRecording.value = false;
+  endVoiceMode();
 }
 
 function cleanupStream(): void {
@@ -566,6 +755,11 @@ watch(() => props.modelValue, async() => {
 onMounted(async() => {
   await nextTick();
   updateComposerLayout();
+
+  // Auto-start voice mode if requested (e.g. when transitioning from intro to chat thread)
+  if (props.autoStartVoice && !isRecording.value) {
+    startVoiceMode();
+  }
 });
 
 onUnmounted(() => {

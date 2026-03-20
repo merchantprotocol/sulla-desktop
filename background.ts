@@ -426,10 +426,16 @@ Electron.app.whenReady().then(async() => {
 
     diagnostics.runChecks().catch(console.error);
 
+    console.log(`[startup-perf] calling startBackend at ${ Date.now() }`);
+    let backendT = Date.now();
+
     await startBackend();
+    console.log(`[startup-perf] first startBackend: ${ Date.now() - backendT }ms`);
 
     if (!backendStarted) {
+      backendT = Date.now();
       await startBackend();
+      console.log(`[startup-perf] second startBackend: ${ Date.now() - backendT }ms`);
       backendStarted = true;
     }
 
