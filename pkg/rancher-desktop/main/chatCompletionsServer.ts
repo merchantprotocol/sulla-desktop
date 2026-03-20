@@ -649,6 +649,7 @@ export class ChatCompletionsServer {
                 label:     account.label || account.account_id,
                 slug:      'mcp',
                 name:      account.label || account.account_id,
+                source:    'mcp',
                 connected: account.connected,
                 endpoints: mcpTools.map(tool => ({
                   name:        tool.name,
@@ -725,6 +726,7 @@ export class ChatCompletionsServer {
             label:     account.label || account.account_id,
             slug:      integrationId,
             name:      client?.name || catalogEntry?.name || integrationId,
+            source:    'integration',
             connected: account.connected,
             ...(catalogEntry?.category ? { category: catalogEntry.category } : {}),
             endpoints: mergedEndpoints,
@@ -740,6 +742,7 @@ export class ChatCompletionsServer {
           label:     'Internal Tools',
           slug:      category,
           name:      category,
+          source:    'internal',
           connected: true,
           endpoints,
         });
@@ -766,15 +769,34 @@ export class ChatCompletionsServer {
           label:     'Internal Tools',
           slug,
           name:      slug,
+          source:    'internal',
           connected: true,
           endpoints,
         });
       }
 
-      // Apply search filter if provided
+      // Apply filters
+      const sourceFilter = (req.query.source as string || '').trim().toLowerCase();
+      const categoryFilter = (req.query.category as string || '').trim().toLowerCase();
+
       let filtered = tools;
+
+      // Filter by source (internal, integration, mcp)
+      if (sourceFilter) {
+        const sources = new Set(sourceFilter.split(',').map(s => s.trim()));
+        filtered = filtered.filter((entry: any) => sources.has(entry.source));
+      }
+
+      // Filter by category
+      if (categoryFilter) {
+        filtered = filtered.filter((entry: any) =>
+          entry.category?.toLowerCase() === categoryFilter
+          || entry.slug?.toLowerCase() === categoryFilter);
+      }
+
+      // Filter by search query (fuzzy match on slug, name, label, accountId, endpoint name/description)
       if (searchQuery) {
-        filtered = tools.filter((entry: any) => {
+        filtered = filtered.filter((entry: any) => {
           if (entry.slug?.toLowerCase().includes(searchQuery)) return true;
           if (entry.name?.toLowerCase().includes(searchQuery)) return true;
           if (entry.label?.toLowerCase().includes(searchQuery)) return true;

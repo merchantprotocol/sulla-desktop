@@ -702,12 +702,19 @@ function serialize(): { nodes: any[]; edges: any[]; viewport: any } {
   const vp = getViewport();
 
   return {
-    nodes: nodes.value.map(n => ({
-      id:       n.id,
-      type:     n.type,
-      position: { x: n.position.x, y: n.position.y },
-      data:     JSON.parse(JSON.stringify(n.data)),
-    })),
+    nodes: nodes.value.map(n => {
+      // Deep-copy node data but strip runtime execution state —
+      // execution state belongs in PostgreSQL (workflow_checkpoints),
+      // not in the YAML definition file.
+      const { execution, ...configData } = n.data as Record<string, unknown>;
+
+      return {
+        id:       n.id,
+        type:     n.type,
+        position: { x: n.position.x, y: n.position.y },
+        data:     JSON.parse(JSON.stringify(configData)),
+      };
+    }),
     edges: edges.value.map(e => ({
       id:           e.id,
       source:       e.source,
