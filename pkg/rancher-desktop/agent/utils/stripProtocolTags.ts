@@ -14,6 +14,9 @@ const AGENT_DONE_RE     = /<AGENT_DONE>([\s\S]*?)<\/AGENT_DONE>/gi;
 const AGENT_BLOCKED_RE  = /<AGENT_BLOCKED>([\s\S]*?)<\/AGENT_BLOCKED>/gi;
 const AGENT_CONTINUE_RE = /<AGENT_CONTINUE>([\s\S]*?)<\/AGENT_CONTINUE>/gi;
 
+// Voice TTS tags (extracted earlier by BaseNode; strip if they leak through)
+const SPEAK_RE = /<speak>([\s\S]*?)<\/speak>/gi;
+
 // Inner tags (can appear standalone if the LLM partially formats)
 const KEY_RESULT_RE           = /<\/?KEY_RESULT>/gi;
 const BLOCKER_REASON_RE       = /<\/?BLOCKER_REASON>/gi;
@@ -31,6 +34,7 @@ export function stripProtocolTags(text: string | null | undefined): string {
     .replace(AGENT_DONE_RE, '')
     .replace(AGENT_BLOCKED_RE, '')
     .replace(AGENT_CONTINUE_RE, '')
+    .replace(SPEAK_RE, '')
     .replace(KEY_RESULT_RE, '')
     .replace(BLOCKER_REASON_RE, '')
     .replace(UNBLOCK_REQUIREMENTS_RE, '')

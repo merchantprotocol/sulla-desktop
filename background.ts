@@ -212,7 +212,7 @@ mainEvents.handle('settings-fetch', () => {
   return Promise.resolve(cfg);
 });
 
-Electron.protocol.registerSchemesAsPrivileged([{ scheme: 'app' }, {
+Electron.protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }, {
   scheme:     'x-rd-extension',
   privileges: {
     standard:            true,
@@ -289,6 +289,15 @@ Electron.app.whenReady().then(() => {
 
   const fixer = new SullaWebRequestFixer(writeSullaWebRequestEvent);
   fixer.attachToSession(session);
+
+  // Grant microphone permission for audio capture
+  session.setPermissionRequestHandler((_webContents, permission, callback) => {
+    if (permission === 'media') {
+      callback(true);
+    } else {
+      callback(true);
+    }
+  });
 });
 
 /// /////////////////////////////////////////////////////////////////////////////

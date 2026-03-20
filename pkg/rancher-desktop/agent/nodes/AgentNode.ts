@@ -133,7 +133,19 @@ export class AgentNode extends BaseNode {
     // ----------------------------------------------------------------
     const wsChannel = String(state.metadata.wsChannel || 'sulla-desktop');
     const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
-    const systemPrompt = `${ AGENT_PROMPT_BASE }\n\n${ channelAwareness }\n\n${ AGENT_PROMPT_DIRECTIVE }\n\n${ AGENT_PROMPT_COMPLETION_WRAPPERS }`;
+
+    // When the user spoke via microphone, instruct the LLM to emit <speak> tags
+    const isVoiceInput = (state.metadata as any).inputSource === 'microphone';
+    const voiceDirective = isVoiceInput
+      ? `\n\nVOICE MODE ACTIVE — The user is speaking to you via microphone.\n` +
+        `Wrap the spoken portions of your response in <speak>...</speak> XML tags.\n` +
+        `Keep spoken text natural, conversational, and concise — as if talking to a friend.\n` +
+        `Your full text response still displays in chat as normal.\n` +
+        `The <speak> content will additionally be read aloud via text-to-speech.\n` +
+        `Do NOT put markdown, code blocks, or URLs inside <speak> tags — only natural speech.`
+      : '';
+
+    const systemPrompt = `${ AGENT_PROMPT_BASE }\n\n${ channelAwareness }\n\n${ AGENT_PROMPT_DIRECTIVE }\n\n${ AGENT_PROMPT_COMPLETION_WRAPPERS }${ voiceDirective }`;
 
     const enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
       includeSoul:        true,

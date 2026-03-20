@@ -171,7 +171,7 @@ export class ChatInterface {
     this.persona.removeAsset(assetId);
   }
 
-  async send(): Promise<void> {
+  async send(metadata?: Record<string, unknown>): Promise<void> {
     if (!this.query.value.trim()) return;
 
     const text = this.query.value;
@@ -182,6 +182,6 @@ export class ChatInterface {
       localStorage.setItem(this.hasSentMessageKey, 'true');
     }
 
-    await this.persona.addUserMessage('', text);
+    await this.persona.addUserMessage('', text, metadata);
   }
 }

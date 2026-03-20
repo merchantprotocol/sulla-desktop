@@ -1038,6 +1038,44 @@ export function initSullaEvents(): void {
     return JSON.parse(JSON.stringify(result)); // ensure serializable
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // Audio / Transcription handlers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string }) => {
+    const { getTranscriptionService } = await import('@pkg/agent/services/TranscriptionService');
+    const service = getTranscriptionService();
+    const text = await service.transcribe(Buffer.from(payload.audio), payload.mimeType);
+
+    return { text };
+  });
+
+  ipcMainProxy.handle('audio-speak', async(_event: unknown, payload: { text: string; voiceId?: string }) => {
+    const { getTextToSpeechService } = await import('@pkg/agent/services/TextToSpeechService');
+    const service = getTextToSpeechService();
+    const result = await service.speak(payload.text, payload.voiceId);
+
+    // Return ArrayBuffer so it can be played in the renderer
+    const ab = result.audio.buffer.slice(result.audio.byteOffset, result.audio.byteOffset + result.audio.byteLength);
+
+    return {
+      audio:    ab as ArrayBuffer,
+      mimeType: result.mimeType,
+    };
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Integration value helpers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('integration-get-value', async(_event: unknown, integrationId: string, property: string) => {
+    const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+    const service = getIntegrationService();
+    const value = await service.getIntegrationValue(integrationId, property);
+
+    return value ? { value: value.value } : null;
+  });
+
   console.log('[Sulla] IPC event handlers initialized');
 }
 

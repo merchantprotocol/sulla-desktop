@@ -29,6 +29,7 @@
         @send="$emit('send')"
         @stop="$emit('stop')"
         @primary-action="$emit('primary-action')"
+        @voice-recorded="(audio: Blob, mimeType: string) => $emit('voice-recorded', audio, mimeType)"
       />
     </div>
 
@@ -86,6 +87,7 @@ const emit = defineEmits<{
   send: [];
   stop: [];
   'primary-action': [];
+  'voice-recorded': [audio: Blob, mimeType: string];
   pick: [mode: string];
   'start-onboarding': [];
 }>();
