@@ -52,13 +52,44 @@
             </p>
           </div>
 
+          <!-- Audio Input Device -->
+          <div class="setting-section">
+            <h3>Microphone</h3>
+            <div class="voice-select-row">
+              <select
+                v-model="audioInputDeviceId"
+                class="setting-select"
+                :disabled="loadingDevices"
+                @change="saveSettings"
+              >
+                <option value="">
+                  System Default
+                </option>
+                <option
+                  v-for="device in audioInputDevices"
+                  :key="device.value"
+                  :value="device.value"
+                >
+                  {{ device.label }}
+                </option>
+              </select>
+              <button
+                class="refresh-btn"
+                :disabled="loadingDevices"
+                @click="fetchAudioDevices"
+              >
+                {{ loadingDevices ? 'Loading...' : 'Refresh' }}
+              </button>
+            </div>
+          </div>
+
           <!-- Current Settings Summary -->
           <div class="setting-section">
             <h3>Active Configuration</h3>
             <div class="summary-grid">
               <div class="summary-item">
-                <span class="summary-label">Transcription Model</span>
-                <span class="summary-value">{{ transcriptionModel || 'scribe_v1 (default)' }}</span>
+                <span class="summary-label">Transcription Mode</span>
+                <span class="summary-value">{{ transcriptionMode === 'browser' ? 'Browser (real-time)' : 'ElevenLabs' }}</span>
               </div>
               <div class="summary-item">
                 <span class="summary-label">TTS Voice</span>
@@ -79,6 +110,24 @@
           </p>
 
           <div class="setting-section">
+            <h3>Mode</h3>
+            <select
+              v-model="transcriptionMode"
+              class="setting-select"
+              @change="saveSettings"
+            >
+              <option value="browser">Browser (real-time)</option>
+              <option value="elevenlabs">ElevenLabs (high accuracy)</option>
+            </select>
+            <p class="description">
+              <strong>Browser</strong> uses Chrome's built-in speech recognition for instant, live transcription
+              that shows your words as you speak. Free, no API key needed.<br>
+              <strong>ElevenLabs</strong> uses the Scribe model for higher accuracy transcription,
+              but text only appears after you finish speaking.
+            </p>
+          </div>
+
+          <div class="setting-section">
             <h3>Provider</h3>
             <select
               v-model="transcriptionProvider"
@@ -94,6 +143,7 @@
             <select
               v-model="transcriptionModel"
               class="setting-select"
+              :disabled="transcriptionMode === 'browser'"
               @change="saveSettings"
             >
               <option value="scribe_v1">Scribe v1 (default)</option>
@@ -101,6 +151,9 @@
             </select>
             <p class="description">
               Scribe v1 is ElevenLabs' production speech-to-text model with broad language support.
+              <template v-if="transcriptionMode === 'browser'">
+                (Not used in Browser mode.)
+              </template>
             </p>
           </div>
         </div>
@@ -160,6 +213,87 @@
               Configure your ElevenLabs API key in Integrations to load available voices.
             </p>
           </div>
+
+          <!-- Voice Preview -->
+          <div class="setting-section">
+            <h3>Preview</h3>
+            <button
+              class="refresh-btn"
+              :disabled="previewPlaying || !ttsVoice"
+              @click="previewVoice"
+            >
+              {{ previewPlaying ? 'Playing...' : 'Test Voice' }}
+            </button>
+            <p class="description">
+              Plays a short sample with the selected voice.
+            </p>
+          </div>
+        </div>
+
+        <!-- Sensitivity Tab -->
+        <div
+          v-if="currentNav === 'sensitivity'"
+          class="tab-content"
+        >
+          <h2>Voice Sensitivity</h2>
+          <p class="description">
+            Tune how quickly voice input detects silence and submits your speech.
+          </p>
+
+          <div class="setting-section">
+            <h3>Silence Duration: {{ vadSilenceDuration }}ms</h3>
+            <input
+              v-model.number="vadSilenceDuration"
+              type="range"
+              min="300"
+              max="3000"
+              step="100"
+              class="setting-range"
+              @change="saveSettings"
+            >
+            <p class="description">
+              How long you must pause before speech is submitted. Lower = faster response, higher = more time to pause between thoughts.
+            </p>
+          </div>
+
+          <div class="setting-section">
+            <h3>Silence Threshold: {{ vadSilenceThreshold }}</h3>
+            <input
+              v-model.number="vadSilenceThreshold"
+              type="range"
+              min="3"
+              max="30"
+              step="1"
+              class="setting-range"
+              @change="saveSettings"
+            >
+            <p class="description">
+              Audio level below which counts as silence. Lower = more sensitive (picks up quiet speech), higher = needs louder voice.
+            </p>
+          </div>
+
+          <div class="setting-section">
+            <h3>STT Language</h3>
+            <select
+              v-model="sttLanguage"
+              class="setting-select"
+              @change="saveSettings"
+            >
+              <option value="en-US">English (US)</option>
+              <option value="en-GB">English (UK)</option>
+              <option value="es-ES">Spanish</option>
+              <option value="fr-FR">French</option>
+              <option value="de-DE">German</option>
+              <option value="it-IT">Italian</option>
+              <option value="pt-BR">Portuguese (Brazil)</option>
+              <option value="ja-JP">Japanese</option>
+              <option value="ko-KR">Korean</option>
+              <option value="zh-CN">Chinese (Simplified)</option>
+            </select>
+            <p class="description">
+              Language for browser transcription mode. ElevenLabs auto-detects language.
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -178,17 +312,34 @@ const navItems = [
   { id: 'overview', name: 'Overview' },
   { id: 'transcription', name: 'Transcription' },
   { id: 'voice', name: 'Voice' },
+  { id: 'sensitivity', name: 'Sensitivity' },
 ];
 
 const currentNav = ref('overview');
 
 // Settings state
 const apiKeyConnected = ref(false);
+const transcriptionMode = ref('browser');
 const transcriptionProvider = ref('elevenlabs');
 const transcriptionModel = ref('scribe_v1');
 const ttsProvider = ref('elevenlabs');
 const ttsVoice = ref('');
 const ttsVoiceName = ref('');
+
+// VAD sensitivity
+const vadSilenceThreshold = ref(12);
+const vadSilenceDuration = ref(800);
+
+// Voice preview
+const previewPlaying = ref(false);
+
+// Audio devices
+const audioInputDeviceId = ref('');
+const audioInputDevices = ref<{ value: string; label: string }[]>([]);
+const loadingDevices = ref(false);
+
+// STT language
+const sttLanguage = ref('en-US');
 
 // Voices
 const voices = ref<{ value: string; label: string; description?: string }[]>([]);
@@ -196,11 +347,16 @@ const loadingVoices = ref(false);
 
 async function loadSettings(): Promise<void> {
   try {
+    transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
     transcriptionProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionProvider', 'elevenlabs');
     transcriptionModel.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionModel', 'scribe_v1');
     ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'elevenlabs');
     ttsVoice.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoice', '');
     ttsVoiceName.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoiceName', '');
+    vadSilenceThreshold.value = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceThreshold', 12);
+    vadSilenceDuration.value = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
+    sttLanguage.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
+    audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
   } catch (err) {
     console.error('[AudioSettings] Failed to load settings:', err);
   }
@@ -208,10 +364,15 @@ async function loadSettings(): Promise<void> {
 
 async function saveSettings(): Promise<void> {
   try {
+    await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionMode', transcriptionMode.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionProvider', transcriptionProvider.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionModel', transcriptionModel.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTtsProvider', ttsProvider.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTtsVoice', ttsVoice.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioVadSilenceThreshold', vadSilenceThreshold.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioVadSilenceDuration', vadSilenceDuration.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioSttLanguage', sttLanguage.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioInputDeviceId', audioInputDeviceId.value);
 
     // Store the display name of the selected voice
     const selected = voices.value.find(v => v.value === ttsVoice.value);
@@ -271,16 +432,54 @@ async function fetchVoices(): Promise<void> {
   }
 }
 
+async function fetchAudioDevices(): Promise<void> {
+  if (loadingDevices.value) return;
+  loadingDevices.value = true;
+  try {
+    // Must request mic permission first to get device labels
+    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    audioInputDevices.value = devices
+      .filter(d => d.kind === 'audioinput')
+      .map((d, i) => ({
+        value: d.deviceId,
+        label: d.label || `Microphone ${ i + 1 }`,
+      }));
+  } catch (err) {
+    console.warn('[AudioSettings] Failed to enumerate audio devices:', err);
+    audioInputDevices.value = [];
+  } finally {
+    loadingDevices.value = false;
+  }
+}
+
+async function previewVoice(): Promise<void> {
+  if (previewPlaying.value) return;
+  previewPlaying.value = true;
+  try {
+    const result = await ipcRenderer.invoke('audio-speak', { text: 'Hello, this is how I sound.' });
+    if (result?.audio) {
+      const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      await new Promise<void>((resolve) => {
+        audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.play().catch(() => resolve());
+      });
+    }
+  } catch (err) {
+    console.warn('[AudioSettings] Voice preview failed:', err);
+  } finally {
+    previewPlaying.value = false;
+  }
+}
+
 function getStaticVoices(): { value: string; label: string; description?: string }[] {
+  // Only include voices with verified ElevenLabs IDs.
+  // Full list loads dynamically from the API when an API key is configured.
   return [
-    { value: 'Rachel',  label: 'Rachel',  description: 'premade' },
-    { value: 'Drew',    label: 'Drew',    description: 'premade' },
-    { value: 'Clyde',   label: 'Clyde',   description: 'premade' },
-    { value: 'Paul',    label: 'Paul',    description: 'premade' },
-    { value: 'Domi',    label: 'Domi',    description: 'premade' },
-    { value: 'Dave',    label: 'Dave',    description: 'premade' },
-    { value: 'Fin',     label: 'Fin',     description: 'premade' },
-    { value: 'Sarah',   label: 'Sarah',   description: 'premade' },
+    { value: 'cgSgspJ2msm6clMCkdW9', label: 'Jessica', description: 'premade, default' },
   ];
 }
 
@@ -288,6 +487,7 @@ onMounted(async() => {
   await loadSettings();
   await checkApiKey();
   await fetchVoices();
+  await fetchAudioDevices();
 });
 </script>
 
@@ -410,6 +610,13 @@ onMounted(async() => {
     opacity: 0.6;
     cursor: not-allowed;
   }
+}
+
+.setting-range {
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 0.5rem;
+  accent-color: var(--accent-primary, var(--primary, #3b82f6));
 }
 
 .voice-select-row {

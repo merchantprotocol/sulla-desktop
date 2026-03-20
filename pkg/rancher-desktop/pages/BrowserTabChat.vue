@@ -15,7 +15,14 @@
               :key="m.id"
               class="mb-8"
             >
-              <div v-if="m.role === 'user'" class="flex justify-end">
+              <div v-if="m.kind === 'voice_interim'" class="flex justify-end">
+                <div class="max-w-[min(760px,92%)] rounded-3xl p-6 bg-surface-alt ring-1 ring-edge-subtle opacity-70">
+                  <div class="whitespace-pre-wrap text-content italic">
+                    <span class="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse mr-2 align-middle" />{{ m.content }}
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="m.role === 'user'" class="flex justify-end">
                 <div class="max-w-[min(760px,92%)] rounded-3xl p-6 bg-surface-alt ring-1 ring-edge-subtle">
                   <div class="whitespace-pre-wrap text-content">{{ m.content }}</div>
                 </div>
@@ -124,10 +131,13 @@
                 :has-messages="hasMessages"
                 :graph-running="graphRunning"
                 :model-selector="modelSelector"
+                :auto-start-voice="voiceModeActive"
                 @send="send"
                 @stop="stop"
                 @primary-action="handlePrimaryAction"
-                @voice-recorded="handleVoiceRecorded"
+                @voice-interim="handleVoiceInterim"
+                @voice-transcribed="handleVoiceTranscribed"
+                @voice-error="showVoiceToast"
               />
             </div>
           </div>
@@ -147,12 +157,29 @@
           @send="send"
           @stop="stop"
           @primary-action="handlePrimaryAction"
-          @voice-recorded="handleVoiceRecorded"
+          @voice-interim="handleVoiceInterim"
+          @voice-transcribed="handleVoiceTranscribed"
+          @voice-error="showVoiceToast"
           @pick="(mode: string) => emit('set-mode', mode as BrowserTabMode)"
           @start-onboarding="startOnboarding"
         />
       </div>
     </div>
+    <!-- Voice error toast -->
+    <Transition name="toast-fade">
+      <div
+        v-if="voiceToast"
+        class="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        {{ voiceToast }}
+        <button type="button" class="ml-2 opacity-70 hover:opacity-100" @click="voiceToast = ''">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+        </button>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -337,41 +364,144 @@ const send = (metadata?: Record<string, unknown>) => {
   }
   chatController.send(metadata);
 };
-const stop = () => chatController.stop();
+const stop = () => {
+  stopTTS();
+  chatController.stop();
+};
 const continueRun = () => chatController.continueRun();
 const handlePrimaryAction = () => {
   if (query.value.trim()) send();
 };
 
-const transcribing = ref(false);
+// ─── Voice error toast ───────────────────────────────────────
+const voiceToast = ref('');
+let voiceToastTimer: ReturnType<typeof setTimeout> | null = null;
 
-const handleVoiceRecorded = async(audio: Blob, mimeType: string) => {
-  if (transcribing.value) return;
-  transcribing.value = true;
+function showVoiceToast(message: string): void {
+  voiceToast.value = message;
+  if (voiceToastTimer) clearTimeout(voiceToastTimer);
+  voiceToastTimer = setTimeout(() => { voiceToast.value = ''; }, 5000);
+}
 
-  try {
-    const arrayBuffer = await audio.arrayBuffer();
-    const result = await ipcRenderer.invoke('audio-transcribe', { audio: arrayBuffer, mimeType });
+// ─── Live Voice Transcription ────────────────────────────────
+// voice-interim: shows a live "listening" bubble in chat with the partial transcription
+// voice-transcribed: submits the final text as a user message
 
-    if (result?.text?.trim()) {
-      query.value = result.text.trim();
-      await nextTick();
-      send({ inputSource: 'microphone' });
+// Track whether voice mode is active so we can carry it across the intro→chat transition
+const voiceModeActive = ref(false);
+
+const VOICE_INTERIM_MSG_ID = 'voice_interim_live';
+
+const handleVoiceInterim = (text: string) => {
+  // Track voice mode state for intro→chat transition
+  voiceModeActive.value = !!text;
+
+  // Barge-in: stop any TTS audio the moment the user starts speaking
+  if (text && ttsPlaying) {
+    stopTTS();
+  }
+
+  if (!text) {
+    // Empty interim = clear the listening bubble
+    const idx = messages.value.findIndex((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
+    if (idx !== -1) {
+      messages.value.splice(idx, 1);
     }
-  } catch (err: any) {
-    console.error('[BrowserTabChat] Transcription failed:', err);
-    // Surface error as a user-visible message in the chat
-    query.value = `[Transcription error: ${ err?.message || 'Unknown error' }]`;
-  } finally {
-    transcribing.value = false;
+
+    return;
+  }
+
+  // Create or update a temporary user message showing live transcription
+  const existing = messages.value.find((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
+  if (existing) {
+    existing.content = text;
+  } else {
+    messages.value.push({
+      id:        VOICE_INTERIM_MSG_ID,
+      channelId: '',
+      threadId:  '',
+      role:      'user',
+      kind:      'voice_interim',
+      content:   text,
+    } as ChatMessage);
   }
 };
+
+const VOICE_SEND_COOLDOWN = 3000;
+let lastVoiceSendTime = 0;
+const voiceTextQueue: string[] = [];
+let voiceSending = false;
+
+const handleVoiceTranscribed = (text: string) => {
+  if (!text.trim()) return;
+
+  // Remove the interim listening bubble
+  const idx = messages.value.findIndex((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
+  if (idx !== -1) {
+    messages.value.splice(idx, 1);
+  }
+
+  voiceTextQueue.push(text.trim());
+  processVoiceTextQueue();
+};
+
+async function processVoiceTextQueue(): Promise<void> {
+  if (voiceSending || voiceTextQueue.length === 0) return;
+  voiceSending = true;
+
+  // Debounce: wait for cooldown since last send
+  const elapsed = Date.now() - lastVoiceSendTime;
+  if (lastVoiceSendTime > 0 && elapsed < VOICE_SEND_COOLDOWN) {
+    await new Promise(r => setTimeout(r, VOICE_SEND_COOLDOWN - elapsed));
+  }
+
+  // Drain queue — combine any stacked-up texts into one message
+  const texts = voiceTextQueue.splice(0);
+  const combined = texts.join(' ').trim();
+
+  if (combined) {
+    // If the agent is currently responding, abort it first.
+    // The new message will have full conversation context since prior
+    // messages are already in state.
+    if (graphRunning.value) {
+      stopTTS();
+      chatController.stop();
+      // Brief pause to let the graph finish aborting
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    query.value = combined;
+    await nextTick();
+    send({ inputSource: 'microphone' });
+    lastVoiceSendTime = Date.now();
+  }
+
+  voiceSending = false;
+  if (voiceTextQueue.length > 0) {
+    processVoiceTextQueue();
+  }
+}
 
 // ─── TTS Playback ────────────────────────────────────────────
 // Watch for speak messages arriving in the message stream and play them via ElevenLabs TTS.
 const ttsQueue: string[] = [];
 let ttsPlaying = false;
+let currentTTSAudio: HTMLAudioElement | null = null;
 const processedSpeakIds = new Set<string>();
+
+function stopTTS(): void {
+  ttsQueue.length = 0;
+  if (currentTTSAudio) {
+    currentTTSAudio.pause();
+    currentTTSAudio.src = '';
+    currentTTSAudio = null;
+  }
+  // Also cancel browser speechSynthesis fallback if active
+  if (window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+  ttsPlaying = false;
+}
 
 async function playNextTTS(): Promise<void> {
   if (ttsPlaying || ttsQueue.length === 0) return;
@@ -384,18 +514,35 @@ async function playNextTTS(): Promise<void> {
       const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
+      currentTTSAudio = audio;
       await new Promise<void>((resolve) => {
-        audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
-        audio.play().catch(() => resolve());
+        audio.onended = () => { URL.revokeObjectURL(url); currentTTSAudio = null; resolve(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); currentTTSAudio = null; resolve(); };
+        audio.play().catch(() => { currentTTSAudio = null; resolve(); });
       });
     }
   } catch (err) {
-    console.error('[BrowserTabChat] TTS playback failed:', err);
+    console.warn('[BrowserTabChat] ElevenLabs TTS failed, falling back to browser speechSynthesis:', err);
+    await browserTTSFallback(text);
   } finally {
     ttsPlaying = false;
     playNextTTS(); // Process next in queue
   }
+}
+
+function browserTTSFallback(text: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (!window.speechSynthesis) {
+      console.warn('[BrowserTabChat] speechSynthesis not available');
+      resolve();
+
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = () => resolve();
+    utterance.onerror = () => resolve();
+    window.speechSynthesis.speak(utterance);
+  });
 }
 
 watch(messages, (msgs) => {
@@ -463,6 +610,17 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ── Toast fade transition ── */
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.3s, transform 0.3s;
+}
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+}
+
 /* ── Thinking indicator ── */
 .activity-dot {
   width: 6px;

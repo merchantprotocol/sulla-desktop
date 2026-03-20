@@ -231,17 +231,48 @@ aria-hidden="true"
               </svg>
             </button>
 
+            <!-- Voice mode: indicator + stop button pinned together -->
+            <div
+              v-if="isRecording && !queryValue.trim() && !graphRunning"
+              class="mb-0.5 ml-auto flex items-center gap-2"
+            >
+              <div class="flex items-center gap-1.5 rounded-full bg-red-600/10 px-2.5 py-1 text-xs font-medium text-red-500">
+                <span class="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                <!-- Audio level meter -->
+                <div class="flex items-end gap-px h-3">
+                  <div
+                    v-for="i in 5"
+                    :key="i"
+                    class="w-0.5 rounded-full transition-all duration-75"
+                    :class="audioLevel >= i * 20 ? 'bg-red-500' : 'bg-red-500/20'"
+                    :style="{ height: `${ 4 + i * 2 }px` }"
+                  />
+                </div>
+                <span>{{ recordingDuration }}</span>
+              </div>
+              <button
+                type="button"
+                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 text-white animate-pulse hover:cursor-pointer transition-colors"
+                aria-label="Stop recording (Ctrl+Shift+V)"
+                title="Stop recording (Ctrl+Shift+V)"
+                @click="toggleRecording"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+                </svg>
+              </button>
+            </div>
+
             <button
-              v-if="!queryValue.trim() && !graphRunning"
+              v-if="!isRecording && !queryValue.trim() && !graphRunning"
               type="button"
-              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer transition-colors"
-              :class="isRecording ? 'bg-red-600 text-white animate-pulse' : 'bg-content text-page'"
-              :aria-label="isRecording ? 'Stop recording' : 'Voice'"
+              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-content text-page disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer transition-colors"
+              aria-label="Voice (Ctrl+Shift+V)"
+              title="Start voice mode (Ctrl+Shift+V)"
               :disabled="showOverlay"
               @click="toggleRecording"
             >
               <svg
-                v-if="!isRecording"
                 xmlns="http://www.w3.org/2000/svg"
                 width="18"
                 height="18"
@@ -263,24 +294,6 @@ aria-hidden="true"
                   rx="3"
                 />
               </svg>
-              <svg
-                v-else
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
-              >
-                <rect
-                  x="7"
-                  y="7"
-                  width="10"
-                  height="10"
-                  rx="2"
-                  fill="currentColor"
-                />
-              </svg>
             </button>
           </div>
         </div>
@@ -291,20 +304,23 @@ aria-hidden="true"
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { AgentModelSelectorController } from './AgentModelSelectorController';
 
 const props = withDefaults(defineProps<{
-  modelValue:    string;
-  loading:       boolean;
-  showOverlay:   boolean;
-  hasMessages:   boolean;
-  graphRunning:  boolean;
-  modelSelector: AgentModelSelectorController;
-  formClass?:    string;
-  panelClass?:   string;
+  modelValue:      string;
+  loading:         boolean;
+  showOverlay:     boolean;
+  hasMessages:     boolean;
+  graphRunning:    boolean;
+  modelSelector:   AgentModelSelectorController;
+  formClass?:      string;
+  panelClass?:     string;
+  autoStartVoice?: boolean;
 }>(), {
-  formClass:  'group/composer mx-auto mb-3 w-full',
-  panelClass: '',
+  formClass:       'group/composer mx-auto mb-3 w-full',
+  panelClass:      '',
+  autoStartVoice:  false,
 });
 
 const emit = defineEmits<{
@@ -312,39 +328,131 @@ const emit = defineEmits<{
   send:                [];
   stop:                [];
   primaryAction:       [];
-  'voice-recorded':    [audio: Blob, mimeType: string];
+  'voice-interim':     [text: string];
+  'voice-transcribed': [text: string];
+  'voice-error':       [message: string];
 }>();
 
 const composerTextareaEl = ref<HTMLTextAreaElement | null>(null);
 const isComposerMultiline = ref(false);
 const isRecording = ref(false);
+const audioLevel = ref(0); // 0-100, used for level meter visualization
+const recordingDuration = ref('0:00');
+let recordingStartTime = 0;
+let recordingTimer: ReturnType<typeof setInterval> | null = null;
 
+function startRecordingTimer(): void {
+  recordingStartTime = Date.now();
+  recordingDuration.value = '0:00';
+  recordingTimer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    recordingDuration.value = `${ mins }:${ secs.toString().padStart(2, '0') }`;
+  }, 1000);
+}
+
+function stopRecordingTimer(): void {
+  if (recordingTimer) {
+    clearInterval(recordingTimer);
+    recordingTimer = null;
+  }
+  recordingDuration.value = '0:00';
+}
+
+// ─── Voice Mode ──────────────────────────────────────────────
+// Two transcription modes:
+//   'browser'    — Web Speech API: free, real-time interim results shown as you speak
+//   'elevenlabs' — ElevenLabs batch: higher accuracy, transcribes after silence
+//
+// Both modes keep the mic open (continuous). VAD detects silence → submit text → new segment.
+
+let mediaStream: MediaStream | null = null;
 let mediaRecorder: MediaRecorder | null = null;
 let audioChunks: Blob[] = [];
-let mediaStream: MediaStream | null = null;
+let activeMimeType = 'audio/webm';
+let transcriptionMode = 'browser'; // loaded from settings on first use
+let sttLanguage = 'en-US';         // loaded from settings on first use
 
-// Voice Activity Detection (VAD) state
+// SpeechRecognition (browser mode)
+let recognition: any = null;
+let recognitionText = '';            // accumulated final results for current segment
+let recognitionInterim = '';         // current interim (partial) result
+let voiceStopping = false;           // guard: prevents onend/onerror from restarting after stop
+
+// VAD state (used for ElevenLabs mode; browser mode uses SpeechRecognition's own end detection)
 let audioContext: AudioContext | null = null;
 let analyser: AnalyserNode | null = null;
 let vadInterval: ReturnType<typeof setInterval> | null = null;
-const VAD_SILENCE_THRESHOLD = 12;   // RMS level below which we consider silence
-const VAD_SILENCE_DURATION = 1500;  // ms of silence before auto-stop
-const VAD_INITIAL_GRACE = 800;      // ms grace period at start (ignore initial silence)
+let VAD_SILENCE_THRESHOLD = 12;
+let VAD_SILENCE_DURATION = 800;
+const VAD_INITIAL_GRACE = 400;
+let audioInputDeviceId = '';         // loaded from settings; '' = system default
+
+// Audio level monitor (independent of VAD, runs in both browser and ElevenLabs modes)
+let levelContext: AudioContext | null = null;
+let levelAnalyser: AnalyserNode | null = null;
+let levelInterval: ReturnType<typeof setInterval> | null = null;
+
+function startAudioLevelMonitor(): void {
+  if (!mediaStream) return;
+  try {
+    levelContext = new AudioContext();
+    const src = levelContext.createMediaStreamSource(mediaStream);
+    levelAnalyser = levelContext.createAnalyser();
+    levelAnalyser.fftSize = 256;
+    src.connect(levelAnalyser);
+    const buf = new Uint8Array(levelAnalyser.fftSize);
+    levelInterval = setInterval(() => {
+      if (!levelAnalyser || !isRecording.value) return;
+      levelAnalyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const s = (buf[i] - 128) / 128;
+        sum += s * s;
+      }
+      audioLevel.value = Math.min(100, Math.round(Math.sqrt(sum / buf.length) * 300));
+    }, 50);
+  } catch { /* ignore */ }
+}
+
+function stopAudioLevelMonitor(): void {
+  if (levelInterval) {
+    clearInterval(levelInterval);
+    levelInterval = null;
+  }
+  if (levelContext) {
+    levelContext.close().catch(() => {});
+    levelContext = null;
+  }
+  levelAnalyser = null;
+  audioLevel.value = 0;
+}
 let silenceStart: number | null = null;
-let recordingStart = 0;
+let segmentStart = 0;
+let hasSpeechInSegment = false;
 
 async function toggleRecording(): Promise<void> {
   if (isRecording.value) {
-    stopRecording();
+    await endVoiceMode();
   } else {
-    await startRecording();
+    await startVoiceMode();
   }
 }
 
-async function startRecording(): Promise<void> {
+async function startVoiceMode(): Promise<void> {
   try {
-    // Electron's custom protocol may not expose navigator.mediaDevices.
-    // Fall back to the legacy API or the Chromium global if needed.
+    // Load transcription mode and VAD settings
+    transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
+    VAD_SILENCE_THRESHOLD = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceThreshold', 12);
+    VAD_SILENCE_DURATION = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
+    sttLanguage = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
+    audioInputDeviceId = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
+
+    const audioConstraints: boolean | MediaTrackConstraints = audioInputDeviceId
+      ? { deviceId: { exact: audioInputDeviceId } }
+      : true;
+
     const getMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices)
       || ((constraints: MediaStreamConstraints) => new Promise<MediaStream>((resolve, reject) => {
         const legacy = (navigator as any).getUserMedia
@@ -358,60 +466,206 @@ async function startRecording(): Promise<void> {
         legacy.call(navigator, constraints, resolve, reject);
       }));
 
-    mediaStream = await getMedia({ audio: true });
-    audioChunks = [];
-
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    mediaStream = await getMedia({ audio: audioConstraints });
+    activeMimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : 'audio/webm';
 
-    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
-
-    mediaRecorder.ondataavailable = (event: BlobEvent) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data);
-      }
-    };
-
-    mediaRecorder.onstop = () => {
-      const audioBlob = new Blob(audioChunks, { type: mimeType });
-      stopVAD();
-      cleanupStream();
-
-      if (audioBlob.size > 0) {
-        emit('voice-recorded', audioBlob, mimeType);
-      }
-    };
-
-    mediaRecorder.start();
     isRecording.value = true;
-    recordingStart = Date.now();
+    startRecordingTimer();
+    startAudioLevelMonitor();
+    voiceStopping = false;
 
-    // Start voice activity detection
-    startVAD(mediaStream);
+    if (transcriptionMode === 'browser') {
+      startBrowserRecognition();
+    } else {
+      emit('voice-interim', 'Listening...');
+      startElevenLabsSegment();
+      startVAD();
+    }
   } catch (err) {
     console.error('[AgentComposer] Microphone access denied or unavailable:', err);
+    emit('voice-error', 'Microphone access denied or unavailable');
     cleanupStream();
   }
 }
 
-function startVAD(stream: MediaStream): void {
+// ── Browser mode (SpeechRecognition) ───────────────────────────
+
+function startBrowserRecognition(): void {
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    console.warn('[AgentComposer] SpeechRecognition not available, falling back to ElevenLabs');
+    transcriptionMode = 'elevenlabs';
+    startElevenLabsSegment();
+    startVAD();
+
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = sttLanguage;
+  recognitionText = '';
+  recognitionInterim = '';
+
+  recognition.onresult = (event: any) => {
+    let interim = '';
+    let finalText = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalText += transcript;
+      } else {
+        interim += transcript;
+      }
+    }
+
+    if (finalText) {
+      recognitionText += finalText;
+    }
+    recognitionInterim = interim;
+
+    // Emit interim updates so the chat shows live transcription
+    const displayText = (recognitionText + ' ' + recognitionInterim).trim();
+    if (displayText) {
+      emit('voice-interim', displayText);
+    }
+  };
+
+  recognition.onend = () => {
+    // If user hit stop, do NOT restart — exit immediately
+    if (voiceStopping || !isRecording.value) return;
+
+    const text = recognitionText.trim();
+    if (text) {
+      emit('voice-transcribed', text);
+    }
+    recognitionText = '';
+    recognitionInterim = '';
+
+    // Restart recognition for the next utterance
+    try {
+      recognition?.start();
+    } catch { /* already started */ }
+  };
+
+  recognition.onerror = (event: any) => {
+    console.warn('[AgentComposer] SpeechRecognition error:', event.error);
+
+    // If user hit stop, ignore all errors
+    if (voiceStopping || !isRecording.value) return;
+
+    if (event.error === 'no-speech') {
+      // No speech detected — restart
+      try {
+        recognition?.start();
+      } catch { /* already started */ }
+    } else if (event.error === 'network' || event.error === 'service-not-allowed' || event.error === 'not-allowed') {
+      // Browser speech services unavailable — fall back to ElevenLabs mode
+      console.warn('[AgentComposer] Browser speech unavailable, switching to ElevenLabs mode');
+      try { recognition?.stop(); } catch { /* ignore */ }
+      recognition = null;
+      recognitionText = '';
+      recognitionInterim = '';
+      transcriptionMode = 'elevenlabs';
+
+      if (mediaStream) {
+        emit('voice-interim', 'Listening...');
+        startElevenLabsSegment();
+        startVAD();
+      }
+    } else if (event.error === 'aborted') {
+      // Intentional abort — do nothing
+    } else {
+      // Other errors — try to restart
+      try {
+        recognition?.start();
+      } catch { /* already started */ }
+    }
+  };
+
+  recognition.start();
+}
+
+// ── ElevenLabs mode (batch with VAD) ───────────────────────────
+
+function startElevenLabsSegment(): void {
+  if (!mediaStream) return;
+
+  audioChunks = [];
+  hasSpeechInSegment = false;
+  segmentStart = Date.now();
+  silenceStart = null;
+
+  mediaRecorder = new MediaRecorder(mediaStream, { mimeType: activeMimeType });
+
+  mediaRecorder.ondataavailable = (event: BlobEvent) => {
+    if (event.data.size > 0) {
+      audioChunks.push(event.data);
+    }
+  };
+
+  mediaRecorder.onstop = () => {
+    const audioBlob = new Blob(audioChunks, { type: activeMimeType });
+    audioChunks = [];
+
+    if (audioBlob.size > 0 && hasSpeechInSegment) {
+      // Transcribe via ElevenLabs batch API and emit
+      transcribeAndEmit(audioBlob, activeMimeType);
+    }
+  };
+
+  mediaRecorder.start();
+}
+
+async function transcribeAndEmit(audioBlob: Blob, mimeType: string): Promise<void> {
+  emit('voice-interim', 'Transcribing...');
+
+  try {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const result = await ipcRenderer.invoke('audio-transcribe', { audio: arrayBuffer, mimeType });
+
+    if (result?.text?.trim()) {
+      emit('voice-transcribed', result.text.trim());
+    }
+  } catch (err) {
+    console.error('[AgentComposer] ElevenLabs transcription failed:', err);
+    emit('voice-error', 'Transcription failed — check your ElevenLabs API key');
+  }
+
+  // Start a new segment if still in voice mode
+  if (isRecording.value && mediaStream) {
+    emit('voice-interim', 'Listening...');
+    startElevenLabsSegment();
+  }
+}
+
+function flushElevenLabsSegment(): void {
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+  console.log('[AgentComposer] VAD: pause detected, flushing ElevenLabs segment');
+  mediaRecorder.stop(); // triggers onstop → transcribeAndEmit
+}
+
+function startVAD(): void {
+  if (!mediaStream) return;
+
   try {
     audioContext = new AudioContext();
-    const source = audioContext.createMediaStreamSource(stream);
+    const source = audioContext.createMediaStreamSource(mediaStream);
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 512;
     source.connect(analyser);
 
     const dataArray = new Uint8Array(analyser.fftSize);
-    silenceStart = null;
 
     vadInterval = setInterval(() => {
       if (!analyser || !isRecording.value) return;
 
       analyser.getByteTimeDomainData(dataArray);
 
-      // Calculate RMS (root mean square) of audio signal
       let sum = 0;
       for (let i = 0; i < dataArray.length; i++) {
         const sample = (dataArray[i] - 128) / 128;
@@ -419,26 +673,60 @@ function startVAD(stream: MediaStream): void {
       }
       const rms = Math.sqrt(sum / dataArray.length) * 100;
 
-      const now = Date.now();
-      const elapsed = now - recordingStart;
+      // Update audio level for visualization (clamp 0-100)
+      audioLevel.value = Math.min(100, Math.round(rms * 3));
 
-      if (rms < VAD_SILENCE_THRESHOLD) {
-        // Below threshold — start or continue silence timer
+      const now = Date.now();
+      const elapsed = now - segmentStart;
+
+      if (rms >= VAD_SILENCE_THRESHOLD) {
+        silenceStart = null;
+        hasSpeechInSegment = true;
+      } else if (hasSpeechInSegment) {
         if (silenceStart === null) {
           silenceStart = now;
         } else if (elapsed > VAD_INITIAL_GRACE && (now - silenceStart) >= VAD_SILENCE_DURATION) {
-          // Silence held long enough after grace period — auto-stop
-          console.log('[AgentComposer] VAD: silence detected, auto-stopping recording');
-          stopRecording();
+          flushElevenLabsSegment();
         }
-      } else {
-        // Speech detected — reset silence timer
-        silenceStart = null;
       }
-    }, 100); // Check every 100ms
+    }, 100);
   } catch (err) {
-    console.warn('[AgentComposer] VAD setup failed, falling back to manual stop:', err);
+    console.warn('[AgentComposer] VAD setup failed:', err);
   }
+}
+
+// ── Shared teardown ────────────────────────────────────────────
+
+async function endVoiceMode(): Promise<void> {
+  // Set the stopping flag FIRST so onend/onerror handlers won't restart
+  voiceStopping = true;
+  isRecording.value = false;
+  stopRecordingTimer();
+  stopAudioLevelMonitor();
+
+  // Browser mode: stop recognition, submit any remaining text
+  if (recognition) {
+    const text = recognitionText.trim();
+    try { recognition.abort(); } catch { /* ignore */ }
+    try { recognition.stop(); } catch { /* ignore */ }
+    recognition = null;
+    if (text) {
+      emit('voice-transcribed', text);
+    }
+    // Clear interim display
+    emit('voice-interim', '');
+    recognitionText = '';
+    recognitionInterim = '';
+  }
+
+  // ElevenLabs mode: flush last segment
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop(); // triggers onstop → transcribeAndEmit if hasSpeechInSegment
+  }
+
+  stopVAD();
+  cleanupStream();
+  voiceStopping = false;
 }
 
 function stopVAD(): void {
@@ -455,10 +743,7 @@ function stopVAD(): void {
 }
 
 function stopRecording(): void {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-  }
-  isRecording.value = false;
+  endVoiceMode();
 }
 
 function cleanupStream(): void {
@@ -563,17 +848,34 @@ watch(() => props.modelValue, async() => {
   updateComposerLayout();
 });
 
+// Keyboard shortcut for voice mode toggle (Ctrl+Shift+V / Cmd+Shift+V)
+function handleVoiceShortcut(e: KeyboardEvent): void {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
+    e.preventDefault();
+    toggleRecording();
+  }
+}
+
 onMounted(async() => {
   await nextTick();
   updateComposerLayout();
+  window.addEventListener('keydown', handleVoiceShortcut);
+
+  // Auto-start voice mode if requested (e.g. when transitioning from intro to chat thread)
+  if (props.autoStartVoice && !isRecording.value) {
+    startVoiceMode();
+  }
 });
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleVoiceShortcut);
   if (composerMirrorEl) {
     composerMirrorEl.remove();
     composerMirrorEl = null;
   }
   composerMeasureCanvas = null;
+  stopRecordingTimer();
+  stopAudioLevelMonitor();
   stopRecording();
   stopVAD();
   cleanupStream();

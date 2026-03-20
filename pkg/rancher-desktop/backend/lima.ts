@@ -696,19 +696,28 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
 
     // Install docker compose v2 plugin if using MOBY
+    config.provision = config.provision || [];
+    const dockerComposeScript = '#!/bin/sh\nset -o errexit\napk info -e docker-cli-compose >/dev/null 2>&1 || { apk update && apk add --no-cache docker-cli-compose; }';
+    const pythonNodeScript = '#!/bin/sh\nset -o errexit\napk info -e python3 nodejs npm >/dev/null 2>&1 || apk add --no-cache python3 py3-pip nodejs npm git jq yq tree rsync curl nano vim';
+
+    // Remove any previously appended copies (including old unguarded format) to prevent duplication
+    config.provision = config.provision.filter((p: { script?: string }) => {
+      const s = p.script ?? '';
+
+      return !s.includes('docker-cli-compose') && !s.includes('py3-pip nodejs npm');
+    });
+
     if (this.cfg?.containerEngine?.name === ContainerEngine.MOBY) {
-      config.provision = config.provision || [];
       config.provision.push({
         mode:   'system',
-        script: '#!/bin/sh\nset -o errexit\napk update && apk add --no-cache docker-cli-compose',
+        script: dockerComposeScript,
       });
     }
 
     // Install Python and Node.js runtimes (idempotent via apk add)
-    config.provision = config.provision || [];
     config.provision.push({
       mode:   'system',
-      script: '#!/bin/sh\nset -o errexit\napk add --no-cache python3 py3-pip nodejs npm git jq yq tree rsync curl nano vim',
+      script: pythonNodeScript,
     });
 
     this.updateConfigPortForwards(config);
@@ -812,6 +821,50 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   /**
    * Run `limactl` with the given arguments.
    */
+  /**
+   * Check if an error is a transient SSH connection failure that can be retried.
+   */
+  protected static isTransientSSHError(ex: any): boolean {
+    const stderr = ex?.stderr ?? '';
+    const code = ex?.code ?? ex?.exitCode;
+
+    if (code !== 255) {
+      return false;
+    }
+
+    const transientPatterns = [
+      'Connection reset by peer',
+      'Connection refused',
+      'Connection timed out',
+      'kex_exchange_identification',
+      'ssh_exchange_identification',
+      'Connection closed by remote host',
+      'Broken pipe',
+    ];
+
+    return transientPatterns.some(p => stderr.includes(p));
+  }
+
+  /**
+   * Retry an async operation on transient SSH errors with exponential backoff.
+   */
+  protected static async withSSHRetry<T>(label: string, maxRetries: number, fn: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fn();
+      } catch (ex: any) {
+        if (attempt < maxRetries && LimaBackend.isTransientSSHError(ex)) {
+          const delayMs = Math.min(1000 * Math.pow(2, attempt), 8000);
+
+          console.warn(`[ssh-retry] ${ label } attempt ${ attempt + 1 }/${ maxRetries } failed (transient SSH error), retrying in ${ delayMs }ms`);
+          await new Promise(r => setTimeout(r, delayMs));
+          continue;
+        }
+        throw ex;
+      }
+    }
+  }
+
   async lima(this: Readonly<this>, env: NodeJS.ProcessEnv, ...args: string[]): Promise<void>;
   async lima(this: Readonly<this>, ...args: string[]): Promise<void>;
   async lima(this: Readonly<this>, envOrArg: NodeJS.ProcessEnv | string, ...args: string[]): Promise<void> {
@@ -823,16 +876,21 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       Object.assign(env, envOrArg);
     }
     args = this.debug ? ['--debug'].concat(args) : args;
-    try {
-      const { stdout, stderr } = await childProcess.spawnFile(LimaBackend.limactl, args,
-        { env, stdio: ['ignore', 'pipe', 'pipe'] });
-      const formatBreak = stderr || stdout ? '\n' : '';
 
-      console.log(`> limactl ${ args.join(' ') }${ formatBreak }${ stderr }${ stdout }`);
-    } catch (ex) {
-      console.error(`> limactl ${ args.join(' ') }\n$`, ex);
-      throw ex;
-    }
+    const label = `limactl ${ args.join(' ') }`;
+
+    await LimaBackend.withSSHRetry(label, 3, async() => {
+      try {
+        const { stdout, stderr } = await childProcess.spawnFile(LimaBackend.limactl, args,
+          { env, stdio: ['ignore', 'pipe', 'pipe'] });
+        const formatBreak = stderr || stdout ? '\n' : '';
+
+        console.log(`> ${ label }${ formatBreak }${ stderr }${ stdout }`);
+      } catch (ex) {
+        console.error(`> ${ label }\n$`, ex);
+        throw ex;
+      }
+    });
   }
 
   /**
@@ -853,7 +911,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
     options['env'] = LimaBackend.limaEnv;
 
-    return await this.spawnWithCapture(LimaBackend.limactl, options, ...args);
+    const label = `limactl ${ args.join(' ') }`;
+
+    return await LimaBackend.withSSHRetry(label, 3, () => {
+      return this.spawnWithCapture(LimaBackend.limactl, options, ...args);
+    });
   }
 
   async spawnWithCapture(this: Readonly<this>, cmd: string, argOrOptions: string | SpawnOptions = {}, ...args: string[]): Promise<{ stdout: string, stderr: string }> {
@@ -1636,7 +1698,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       await this.execCommand({ root: true }, 'mv', tempPath, filePath);
     } finally {
       await fs.promises.rm(workdir, { recursive: true });
-      await this.execCommand({ root: true }, 'rm', '-f', tempPath);
+      try {
+        await this.execCommand({ root: true }, 'rm', '-f', tempPath);
+      } catch (ex) {
+        console.debug(`[writeFile] cleanup of ${ tempPath } failed (non-fatal):`, ex);
+      }
     }
   }
 
@@ -1651,7 +1717,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       await this.execCommand({ root: true }, 'mv', tempPath, vmPath);
     } finally {
       await fs.promises.rm(workdir, { recursive: true });
-      await this.execCommand({ root: true }, 'rm', '-f', tempPath);
+      try {
+        await this.execCommand({ root: true }, 'rm', '-f', tempPath);
+      } catch (ex) {
+        console.debug(`[copyFileIn] cleanup of ${ tempPath } failed (non-fatal):`, ex);
+      }
     }
   }
 
@@ -1797,25 +1867,37 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * @precondition The VM configuration is correct.
    */
   protected async startVM() {
+    const vmStartTotal = Date.now();
+
     let allowRoot = this.#adminAccess;
 
     // We need both the lima config + the lima network config to correctly check if we need sudo
     // access; but if it's denied, we need to regenerate both again to account for the change.
+    let t = Date.now();
+
     allowRoot &&= await this.progressTracker.action('Asking for permission to run tasks as administrator', 100, this.installToolsWithSudo());
+    console.log(`[startup-perf] installToolsWithSudo: ${ Date.now() - t }ms`);
 
     if (!allowRoot) {
       // sudo access was denied; re-generate the config.
+      t = Date.now();
       await this.progressTracker.action('Regenerating configuration to account for lack of permissions', 100, Promise.all([
         this.updateConfig(false),
         this.installCustomLimaNetworkConfig(false),
       ]));
+      console.log(`[startup-perf] regenerateConfig (no sudo): ${ Date.now() - t }ms`);
     }
 
+    t = Date.now();
     const status = await this.status;
+
+    console.log(`[startup-perf] checkVMStatus: ${ Date.now() - t }ms (status=${ status?.status ?? 'none' })`);
     if (!status) {
       // Explicit create step
       await this.progressTracker.action('Creating new Lima instance', 20, async() => {
+        t = Date.now();
         await this.lima('create', '--name=0', '--tty=false', this.CONFIG_PATH);
+        console.log(`[startup-perf] limactl create: ${ Date.now() - t }ms`);
       });
     }
 
@@ -1824,7 +1906,18 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         const env: NodeJS.ProcessEnv = {};
 
         env.LIMA_SSH_PORT_FORWARDER = this.cfg?.experimental.virtualMachine.sshPortForwarder ? 'true' : 'false';
+        t = Date.now();
         await this.lima('start', '--tty=false', '0');
+        console.log(`[startup-perf] limactl start: ${ Date.now() - t }ms`);
+
+        // Dump in-VM boot timing log to app console
+        try {
+          const bootPerf = await this.execCommand({ capture: true, root: true }, 'cat', '/var/log/boot-perf.log');
+
+          console.log(`[startup-perf] === VM boot-perf.log ===\n${ bootPerf }`);
+        } catch {
+          console.log('[startup-perf] boot-perf.log not found in VM');
+        }
       } finally {
         // Symlink the logs (especially if start failed) so the users can find them
         const machineDir = path.join(paths.lima, MACHINE_NAME);
@@ -1843,6 +1936,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         }
       }
     });
+    console.log(`[startup-perf] startVM total: ${ Date.now() - vmStartTotal }ms`);
   }
 
   async start(config_: BackendSettings): Promise<void> {
@@ -1860,14 +1954,18 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     await this.progressTracker.action('Starting Backend', 10, async() => {
       // Emit event when main process starts up (for detecting restarts)
       ipcMain.emit('sulla-main-started');
+      const backendStartTotal = Date.now();
 
       try {
         this.progressTracker.numeric('Starting Backend', 0, 100);
         this.ensureArchitectureMatch();
+        let t = Date.now();
+
         await Promise.all([
           this.progressTracker.action('Ensuring virtualization is supported', 50, this.ensureVirtualizationSupported()),
           this.progressTracker.action('Updating cluster configuration', 50, this.updateConfig(this.#adminAccess)),
         ]);
+        console.log(`[startup-perf] ensureVirtualization + updateConfig: ${ Date.now() - t }ms`);
 
         this.progressTracker.numeric('System configuration ready', 20, 100);
 
@@ -1876,7 +1974,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           return;
         }
 
+        t = Date.now();
         const vmStatus = await this.status;
+
+        console.log(`[startup-perf] checkVMStatus (in start): ${ Date.now() - t }ms`);
         let isVMAlreadyRunning = vmStatus?.status === 'Running';
 
         // Virtualization Framework only supports RAW disks
@@ -1893,7 +1994,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           }
         }
         // Start the VM; if it's already running, this does nothing.
+        t = Date.now();
         await this.startVM();
+        console.log(`[startup-perf] startVM (from start()): ${ Date.now() - t }ms`);
 
         this.progressTracker.numeric('Virtual machine started', 40, 100);
 
@@ -1901,7 +2004,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         mainEvents.emit('diagnostics-event', { id: 'kube-versions-available', available: true });
 
         if (config.kubernetes.enabled) {
+          t = Date.now();
           [kubernetesVersion, isDowngrade] = await this.kubeBackend.download(config);
+          console.log(`[startup-perf] kubeBackend.download: ${ Date.now() - t }ms`);
 
           this.progressTracker.numeric('Kubernetes downloaded', 50, 100);
 
@@ -1945,21 +2050,37 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           await this.kubeBackend.deleteIncompatibleData(kubernetesVersion);
         }
 
+        t = Date.now();
+        const configTimes: Record<string, number> = {};
+
         await Promise.all([
-          this.progressTracker.action('Installing CA certificates', 50, this.installCACerts()),
-          this.progressTracker.action('Configuring image proxy', 50, this.configureOpenResty(config)),
-          this.progressTracker.action('Configuring container engine', 50, this.configureContainerEngine()),
-          this.progressTracker.action('Configuring logrotate', 50, this.configureLogrotate()),
+          this.progressTracker.action('Installing CA certificates', 50, (async() => {
+            const s = Date.now(); await this.installCACerts(); configTimes['CA'] = Date.now() - s;
+          })()),
+          this.progressTracker.action('Configuring image proxy', 50, (async() => {
+            const s = Date.now(); await this.configureOpenResty(config); configTimes['OpenResty'] = Date.now() - s;
+          })()),
+          this.progressTracker.action('Configuring container engine', 50, (async() => {
+            const s = Date.now(); await this.configureContainerEngine(); configTimes['ContainerEngine'] = Date.now() - s;
+          })()),
+          this.progressTracker.action('Configuring logrotate', 50, (async() => {
+            const s = Date.now(); await this.configureLogrotate(); configTimes['Logrotate'] = Date.now() - s;
+          })()),
         ]);
+        console.log(`[startup-perf] CA + OpenResty + ContainerEngine + Logrotate: ${ Date.now() - t }ms (${ JSON.stringify(configTimes) })`);
 
         this.progressTracker.numeric('Services configured', 60, 100);
 
         if (config.containerEngine.allowedImages.enabled) {
+          t = Date.now();
           await this.startService('rd-openresty');
+          console.log(`[startup-perf] startService(rd-openresty): ${ Date.now() - t }ms`);
         }
+        t = Date.now();
         switch (config.containerEngine.name) {
         case ContainerEngine.CONTAINERD:
           await this.startService('containerd');
+          console.log(`[startup-perf] startService(containerd): ${ Date.now() - t }ms`);
           try {
             await this.execCommand({
               root:          true,
@@ -1975,11 +2096,13 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           // eslint-disable-next-line no-template-curly-in-string
           await this.writeConf('docker', { DOCKER_OPTS: '--host=unix:///var/run/docker.sock --host=unix:///var/run/docker.sock.raw ${DOCKER_OPTS:-}' });
           await this.startService('docker');
+          console.log(`[startup-perf] startService(docker): ${ Date.now() - t }ms`);
           break;
         case ContainerEngine.NONE:
           throw new Error('No container engine is set');
         }
 
+        t = Date.now();
         const tasks = [
           this.progressTracker.action('Installing Buildkit', 50, this.writeBuildkitScripts()),
           this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
@@ -1990,6 +2113,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         }
 
         await Promise.all(tasks);
+        console.log(`[startup-perf] Buildkit + Trivy + CredHelper (+ kubeInstall): ${ Date.now() - t }ms`);
 
         this.progressTracker.numeric('Components installed', 70, 100);
 
@@ -2012,6 +2136,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           break;
         }
 
+        t = Date.now();
         const actions = [
           this.progressTracker.action('Waiting for container engine client to be ready', 50,
             this.#containerEngineClient.waitForReady()),
@@ -2022,6 +2147,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         }
 
         await Promise.all(actions);
+        console.log(`[startup-perf] containerEngine.waitForReady (+ kubeBackend.start): ${ Date.now() - t }ms`);
 
         if (config.kubernetes.enabled) {
           this.progressTracker.numeric('Kubernetes starting', 75, 100);
@@ -2039,7 +2165,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
                 if (health.trim() === 'ok') {
                   // Quick extra check
                   await this.execCommand({ root: true }, 'k3s', 'kubectl', 'get', 'ns', 'default');
-                  console.log('Kubernetes API ready');
+                  console.log(`[startup-perf] Kubernetes API ready: ${ Date.now() - start }ms`);
+
                   return;
                 }
               } catch {
@@ -2053,6 +2180,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         }
 
         await this.setState(config.kubernetes.enabled ? State.STARTED : State.DISABLED);
+        console.log(`[startup-perf] backend start() total: ${ Date.now() - backendStartTotal }ms`);
       } catch (err) {
         console.error('Error starting lima:', err);
         await this.setState(State.ERROR);
@@ -2077,13 +2205,19 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
       // if we get here the user has entered their credentials and k8s has booted. we can install sulla.
       if (firstRunCredentialsNeeded === false && this.kubeBackend.sullaStepCustomEnvironment) {
+        const t = Date.now();
+
         await this.kubeBackend.sullaStepCustomEnvironment();
+        console.log(`[startup-perf] sullaStepCustomEnvironment (k8s): ${ Date.now() - t }ms`);
       }
     } else {
       this.progressTracker.numeric('Docker mode enabled, deploying Sulla via Docker Compose', 99, 100);
 
       if (firstRunCredentialsNeeded === false && this.sullaStepDockerEnvironment) {
+        const t = Date.now();
+
         await this.sullaStepDockerEnvironment();
+        console.log(`[startup-perf] sullaStepDockerEnvironment: ${ Date.now() - t }ms`);
       }
     }
   }
@@ -2093,8 +2227,13 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * Handles preparation of compose file, deployment, health checks, and model pulling.
    */
   async sullaStepDockerEnvironment(): Promise<void> {
+    const dockerEnvTotal = Date.now();
+
     // Check if Sulla services are already running — skip redeploy on restart
+    let t = Date.now();
     const alreadyRunning = await this.areSullaServicesRunning();
+
+    console.log(`[startup-perf] areSullaServicesRunning: ${ Date.now() - t }ms (result=${ alreadyRunning })`);
 
     if (alreadyRunning) {
       console.log('[Sulla] Services already running — skipping Docker Compose redeploy');
@@ -2109,27 +2248,36 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     await this.progressTracker.action('Preparing Sulla Docker Compose file', 30, async() => {
       this.progressTracker.numeric('Preparing Sulla Docker Compose file', 5, 100);
+      t = Date.now();
       await this.prepareSullaComposeFile();
+      console.log(`[startup-perf] prepareSullaComposeFile: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
       this.progressTracker.numeric('Deploying Sulla services with Docker Compose', 20, 100);
+      t = Date.now();
       await this.applySullaCompose();
+      console.log(`[startup-perf] applySullaCompose: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Sulla services deployed', 35, 100);
     });
 
     await this.progressTracker.action('Waiting for Sulla services to be ready', 180, async() => {
       this.progressTracker.numeric('Waiting for Sulla services to be ready', 40, 100);
+      t = Date.now();
       await this.waitForSullaDockerServices();
+      console.log(`[startup-perf] waitForSullaDockerServices: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Sulla services ready', 64, 100);
     });
 
+    t = Date.now();
     markSullaDockerServicesStarted();
     instantiateSullaStart();
+    console.log(`[startup-perf] instantiateSullaStart: ${ Date.now() - t }ms`);
     mainEvents.emit('sulla-first-run-complete');
 
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
+    console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
   }
 
   /**

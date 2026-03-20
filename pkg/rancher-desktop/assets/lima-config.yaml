@@ -14,6 +14,23 @@ containerd:
   user: false
 # Provisioning scripts run on every boot, not just initial VM provisioning.
 provision:
+- # Boot timing + sshd early start — MUST be first script.
+  # Lima hostagent polls SSH every 10s; starting sshd ASAP lets us catch the 2nd poll (~10s)
+  # instead of waiting for the 3rd (~20s), saving ~10s of boot time.
+  mode: system
+  script: |
+    #!/bin/sh
+    LOG=/var/log/boot-perf.log
+    echo "===== Boot started at $(date -u '+%Y-%m-%dT%H:%M:%S') =====" > "$LOG"
+    echo "[boot-perf] kernel uptime: $(cut -d' ' -f1 /proc/uptime)s" >> "$LOG"
+    # --- Ensure sshd starts in OpenRC boot runlevel (before provisioning on future boots) ---
+    sed -i -E 's/^#?MaxSessions +[0-9]+/MaxSessions 25/g' /etc/ssh/sshd_config
+    rc-update add sshd boot 2>/dev/null || true
+    if ! ss -tlnp | grep -q ':22 '; then
+      rc-service sshd start 2>/dev/null || true
+    fi
+    echo "[boot-perf] sshd-early-start: $(cut -d' ' -f1 /proc/uptime)s (listening=$(ss -tlnp | grep -q ':22 ' && echo YES || echo NO))" >> "$LOG"
+    echo "[boot-perf] entropy available: $(cat /proc/sys/kernel/random/entropy_avail)" >> "$LOG"
 - # When the ISO image is updated, only preserve selected data from /etc but otherwise use the new files.
   # Update files in /usr/local on the data volume from the new versions on the ISO.
   mode: system
@@ -66,119 +83,93 @@ provision:
     fi
     umount /bootfs
     rmdir /bootfs
-- # make sure we booted with the right cgroup mode; k3s versions before 1.20.4 only support cgroup v1
+- # Consolidated fast boot setup — combines cgroup, SSH config, mounts, hostname,
+  # docker certs, cron, user group, bpf mounts, and cleanup into one script to
+  # eliminate per-script shell spawn overhead. Each section is timed.
   mode: system
   script: |
     #!/bin/sh
-    set -o errexit -o nounset -o xtrace
+    set -o errexit -o nounset
+    LOG=/var/log/boot-perf.log
+    T() { cut -d' ' -f1 /proc/uptime; }
+
+    # --- cgroup mode ---
+    t0=$(T)
     RC_CGROUP_MODE=unified
     if ! grep -q -E "^#?rc_cgroup_mode=\"$RC_CGROUP_MODE\"" /etc/rc.conf; then
       sed -i -E "s/^#?rc_cgroup_mode=\".*\"/rc_cgroup_mode=\"$RC_CGROUP_MODE\"/" /etc/rc.conf
-      # avoid reboot loop if sed failed for any reason
       if grep -q -E "^rc_cgroup_mode=\"$RC_CGROUP_MODE\"" /etc/rc.conf; then
         reboot
       fi
     fi
-- # return unused space from the data volume back to the host
-  mode: system
-  script: |
-    #!/bin/sh
-    set -o errexit -o nounset -o xtrace
-    fstrim /mnt/data
-- # allow more than 10 sessions over the master control path
-  mode: system
-  script: |
-    #!/bin/sh
-    set -o errexit -o nounset -o xtrace
-    sed -i -E 's/^#?MaxSessions +[0-9]+/MaxSessions 25/g' /etc/ssh/sshd_config
-    rc-service --ifstarted sshd reload
-- # Persist /root directory on data volume
-  mode: system
-  script: |
-    #!/bin/sh
-    set -o errexit -o nounset -o xtrace
+    echo "[boot-perf] cgroup-check: ${t0}s -> $(T)s" >> "$LOG"
+
+    # --- fstrim (backgrounded) ---
+    fstrim /mnt/data &
+
+    # --- Persist /root ---
+    t0=$(T)
     if ! [ -d /mnt/data/root ]; then
       mkdir -p /root
       mv /root /mnt/data/root
     fi
     mkdir -p /root
     mount --bind /mnt/data/root /root
-- # Create /etc/docker/certs.d symlink
-  mode: system
-  script: |
-    #!/bin/sh
-    set -o errexit -o nounset -o xtrace
+    echo "[boot-perf] persist-root: ${t0}s -> $(T)s" >> "$LOG"
+
+    # --- Docker certs.d symlink ---
     mkdir -p /etc/docker
-
-    # Delete certs.d if it is a symlink (from previous boot).
     [ -L /etc/docker/certs.d ] && rm /etc/docker/certs.d
-
-    # Create symlink if certs.d doesn't exist (user may have created a regular directory).
     if [ ! -e /etc/docker/certs.d ]; then
-      # We don't know if the host is Linux or macOS, so we take a guess based on which mountpoint exists.
       if [ -d "/Users/{{.User}}" ]; then
         ln -s "/Users/{{.User}}/.docker/certs.d" /etc/docker
       elif [ -d "/home/{{.User}}" ]; then
         ln -s "/home/{{.User}}/.docker/certs.d" /etc/docker
       fi
     fi
-- # Make sure hostname doesn't change during upgrade from earlier versions
-  mode: system
-  script: |
-    #!/bin/sh
+
+    # --- Hostname ---
     hostname lima-rancher-desktop
-- # Clean up filesystems
-  mode: system
-  script: |
-    #!/bin/sh
-    set -o errexit -o nounset -o xtrace
-    # During boot is the only safe time to delete old k3s versions.
+
+    # --- Filesystem cleanup (tmp backgrounded) ---
     rm -rf /var/lib/rancher/k3s/data
-    # Delete all tmp files older than 3 days.
-    find /tmp -depth -mtime +3 -delete
-- # Make mount-points shared.
-  mode: system
-  script: |
-    #!/bin/sh
-    set -o errexit -o nounset -o xtrace
+    find /tmp -depth -mtime +3 -delete &
+
+    # --- Shared mounts ---
+    t0=$(T)
     for dir in / /etc /tmp /var/lib; do
       mount --make-shared "${dir}"
     done
-- # This sets up cron (used for logrotate)
-  mode: system
-  script: |
-    #!/bin/sh
-    # Move logrotate to hourly, because busybox crond only handles time jumps up
-    # to one hour; this ensures that if the machine is suspended over long
-    # periods, things will still happen often enough.  This is idempotent.
-    mv -n /etc/periodic/daily/logrotate /etc/periodic/hourly/
-    rc-update add crond default
+    echo "[boot-perf] shared-mounts: ${t0}s -> $(T)s" >> "$LOG"
+
+    # --- Cron/logrotate ---
+    mv -n /etc/periodic/daily/logrotate /etc/periodic/hourly/ 2>/dev/null || true
+    rc-update add crond default 2>/dev/null || true
     rc-service crond start
-- # Ensure the user is in the docker group to access the docker socket
-  mode: system
-  script: |
-    set -o errexit -o nounset -o xtrace
+
+    # --- Docker group ---
     usermod --append --groups docker "{{.User}}"
-- # Install mkcert and prepare default/fallback cert for localhost
-  mode: system
-  script: |
+
+    # --- mkcert (cached) ---
+    t0=$(T)
     export CAROOT=/run/mkcert
     mkdir -p $CAROOT
-    cd $CAROOT
-    mkcert -install
-    mkcert localhost
+    if [ -f /mnt/data/mkcert/localhost.pem ] && [ -f /mnt/data/mkcert/localhost-key.pem ] && [ -f /mnt/data/mkcert/rootCA.pem ]; then
+      cp /mnt/data/mkcert/*.pem $CAROOT/
+    else
+      cd $CAROOT
+      mkcert -install
+      mkcert localhost
+      mkdir -p /mnt/data/mkcert
+      cp $CAROOT/*.pem /mnt/data/mkcert/
+    fi
     chown -R nobody:nobody $CAROOT
-- # Configure HTTPS_PROXY to OpenResty
-  mode: system
-  script: |
-    set -o errexit -o nounset -o xtrace
+    echo "[boot-perf] mkcert: ${t0}s -> $(T)s" >> "$LOG"
 
-    # openresty is backgrounding itself (and writes its own pid file)
+    # --- OpenResty config ---
+    t0=$(T)
     sed -i 's/^command_background/#command_background/' /etc/init.d/rd-openresty
-
-    # configure proxy only when allowed-images exists
     allowed_images_conf=/usr/local/openresty/nginx/conf/allowed-images.conf
-    # Remove the reference to an obsolete image conf filename
     obsolete_image_allow_list_conf=/usr/local/openresty/nginx/conf/image-allow-list.conf
     setproxy="[ -f $allowed_images_conf ] && supervise_daemon_args=\"-e HTTPS_PROXY=http://127.0.0.1:3128 \${supervise_daemon_args:-}\" || true"
     for svc in containerd docker; do
@@ -186,24 +177,31 @@ provision:
       sed -i "\#-f $obsolete_image_allow_list_conf#d" /etc/init.d/$svc
       echo "$setproxy" >> /etc/init.d/$svc
     done
-
-    # Make sure openresty log directory exists
     install -d -m755 /var/log/openresty
-- # mount bpffs to allow containers to leverage bpf, and make both bpffs and
-  # cgroupfs shared mounts so the pods can mount them correctly
-  mode: system
-  script: |
-    #!/bin/sh
-    set -o errexit
+    echo "[boot-perf] openresty-config: ${t0}s -> $(T)s" >> "$LOG"
 
+    # --- BPF + cgroup mounts ---
     mount bpffs -t bpf /sys/fs/bpf
     mount --make-shared /sys/fs/bpf
     mount --make-shared /sys/fs/cgroup
+
+    echo "[boot-perf] consolidated-script done at uptime $(T)s" >> "$LOG"
 - # we run trivy as root now; remove any cached databases installed into the user directory by previous version
   # trivy.db is 600M and trivy-java.db is 1.1G
   mode: user
   script: |
     rm -rf "${HOME}/.cache/trivy"
+- # Final boot timing — captures end-of-provisioning state
+  mode: system
+  script: |
+    #!/bin/sh
+    LOG=/var/log/boot-perf.log
+    echo "[boot-perf] ===== All provisioning scripts complete at $(date -u '+%H:%M:%S') =====" >> "$LOG"
+    echo "[boot-perf] kernel uptime at completion: $(cut -d' ' -f1 /proc/uptime)s" >> "$LOG"
+    echo "[boot-perf] entropy at completion: $(cat /proc/sys/kernel/random/entropy_avail)" >> "$LOG"
+    echo "[boot-perf] sshd listening: $(ss -tlnp | grep ':22 ' || echo 'NOT LISTENING')" >> "$LOG"
+    echo "[boot-perf] --- Process list ---" >> "$LOG"
+    ps aux >> "$LOG" 2>&1 || true
 portForwards:
 - guestPortRange: [1, 65535]
   guestIPMustBeZero: true
