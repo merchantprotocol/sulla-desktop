@@ -479,6 +479,9 @@ async function startVoiceMode(): Promise<void> {
     if (transcriptionMode === 'browser') {
       startBrowserRecognition();
     } else {
+      // Both 'elevenlabs' and 'gateway' modes use the same batch flow:
+      // record audio → detect silence via VAD → send buffer for transcription.
+      // The TranscriptionService routes to the gateway when configured.
       emit('voice-interim', 'Listening...');
       startElevenLabsSegment();
       startVAD();
@@ -611,9 +614,16 @@ function startElevenLabsSegment(): void {
   mediaRecorder.onstop = () => {
     const audioBlob = new Blob(audioChunks, { type: activeMimeType });
     audioChunks = [];
+    const hadSpeech = hasSpeechInSegment;
 
-    if (audioBlob.size > 0 && hasSpeechInSegment) {
-      // Transcribe via ElevenLabs batch API and emit
+    // Start a new recording segment IMMEDIATELY so no audio is lost
+    // while the transcription API call is in progress. This closes the
+    // recording gap that previously caused lost speech fragments.
+    if (isRecording.value && mediaStream) {
+      startElevenLabsSegment();
+    }
+
+    if (audioBlob.size > 0 && hadSpeech) {
       transcribeAndEmit(audioBlob, activeMimeType);
     }
   };
@@ -622,7 +632,8 @@ function startElevenLabsSegment(): void {
 }
 
 async function transcribeAndEmit(audioBlob: Blob, mimeType: string): Promise<void> {
-  emit('voice-interim', 'Transcribing...');
+  // Note: the next recording segment is already started in onstop (before this
+  // async call) so no audio is lost during transcription.
 
   try {
     const arrayBuffer = await audioBlob.arrayBuffer();
@@ -634,12 +645,6 @@ async function transcribeAndEmit(audioBlob: Blob, mimeType: string): Promise<voi
   } catch (err) {
     console.error('[AgentComposer] ElevenLabs transcription failed:', err);
     emit('voice-error', 'Transcription failed — check your ElevenLabs API key');
-  }
-
-  // Start a new segment if still in voice mode
-  if (isRecording.value && mediaStream) {
-    emit('voice-interim', 'Listening...');
-    startElevenLabsSegment();
   }
 }
 
@@ -723,6 +728,9 @@ async function endVoiceMode(): Promise<void> {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop(); // triggers onstop → transcribeAndEmit if hasSpeechInSegment
   }
+
+  // Signal that voice mode ended — triggers flush of accumulated transcriptions
+  emit('voice-interim', '');
 
   stopVAD();
   cleanupStream();

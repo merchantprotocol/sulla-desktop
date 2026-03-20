@@ -89,7 +89,7 @@
             <div class="summary-grid">
               <div class="summary-item">
                 <span class="summary-label">Transcription Mode</span>
-                <span class="summary-value">{{ transcriptionMode === 'browser' ? 'Browser (real-time)' : 'ElevenLabs' }}</span>
+                <span class="summary-value">{{ transcriptionModeLabel }}</span>
               </div>
               <div class="summary-item">
                 <span class="summary-label">TTS Voice</span>
@@ -118,12 +118,22 @@
             >
               <option value="browser">Browser (real-time)</option>
               <option value="elevenlabs">ElevenLabs (high accuracy)</option>
+              <option value="gateway">Enterprise Gateway</option>
             </select>
             <p class="description">
               <strong>Browser</strong> uses Chrome's built-in speech recognition for instant, live transcription
               that shows your words as you speak. Free, no API key needed.<br>
               <strong>ElevenLabs</strong> uses the Scribe model for higher accuracy transcription,
-              but text only appears after you finish speaking.
+              but text only appears after you finish speaking.<br>
+              <strong>Enterprise Gateway</strong> routes audio through your Enterprise Gateway server,
+              which handles transcription server-side. Configure the gateway URL and API key in
+              Integrations &rarr; Enterprise Sulla.
+            </p>
+            <p
+              v-if="transcriptionMode === 'gateway' && !gatewayConnected"
+              class="description warning"
+            >
+              Enterprise Gateway is not configured. Add your gateway URL and API key in Integrations &rarr; Enterprise Sulla.
             </p>
           </div>
 
@@ -301,7 +311,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { useTheme } from '../composables/useTheme';
 
@@ -319,6 +329,7 @@ const currentNav = ref('overview');
 
 // Settings state
 const apiKeyConnected = ref(false);
+const gatewayConnected = ref(false);
 const transcriptionMode = ref('browser');
 const transcriptionProvider = ref('elevenlabs');
 const transcriptionModel = ref('scribe_v1');
@@ -344,6 +355,14 @@ const sttLanguage = ref('en-US');
 // Voices
 const voices = ref<{ value: string; label: string; description?: string }[]>([]);
 const loadingVoices = ref(false);
+
+const transcriptionModeLabel = computed(() => {
+  switch (transcriptionMode.value) {
+    case 'browser': return 'Browser (real-time)';
+    case 'gateway': return 'Enterprise Gateway';
+    default: return 'ElevenLabs';
+  }
+});
 
 async function loadSettings(): Promise<void> {
   try {
@@ -389,6 +408,18 @@ async function checkApiKey(): Promise<void> {
     apiKeyConnected.value = !!(result?.value);
   } catch {
     apiKeyConnected.value = false;
+  }
+}
+
+async function checkGateway(): Promise<void> {
+  try {
+    const [urlResult, keyResult] = await Promise.all([
+      ipcRenderer.invoke('integration-get-value', 'enterprise_sulla', 'gateway_url'),
+      ipcRenderer.invoke('integration-get-value', 'enterprise_sulla', 'api_key'),
+    ]);
+    gatewayConnected.value = !!(urlResult?.value && keyResult?.value);
+  } catch {
+    gatewayConnected.value = false;
   }
 }
 
@@ -486,6 +517,7 @@ function getStaticVoices(): { value: string; label: string; description?: string
 onMounted(async() => {
   await loadSettings();
   await checkApiKey();
+  await checkGateway();
   await fetchVoices();
   await fetchAudioDevices();
 });

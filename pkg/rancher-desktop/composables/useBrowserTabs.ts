@@ -1,6 +1,6 @@
 import { reactive, readonly, watch } from 'vue';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document' | 'secretary';
 
 export interface BrowserTab {
   id:       string;

@@ -249,6 +249,12 @@
             >
               Extensions
             </button>
+            <button
+              class="more-menu-item"
+              @click="openModeTab('secretary')"
+            >
+              Secretary Mode
+            </button>
             <div class="more-menu-separator" />
             <button
               class="more-menu-item more-menu-item-arrow"
@@ -525,7 +531,7 @@ const knownAssetIds = ref(new Set<string>());
 </script>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getExtensionService } from '@pkg/agent';
 import { getAgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
@@ -587,6 +593,21 @@ function openModeTab(mode: BrowserTabMode) {
 
   router.push(`/Browser/${ tab.id }`);
 }
+
+// Global hotkey: Cmd+Shift+S → open Secretary Mode tab
+function handleSecretaryShortcut(e: KeyboardEvent): void {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'S') {
+    e.preventDefault();
+    openModeTab('secretary');
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleSecretaryShortcut);
+});
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleSecretaryShortcut);
+});
 
 function onRestoreClosedTab(index: number) {
   const tab = restoreClosedTab(index);

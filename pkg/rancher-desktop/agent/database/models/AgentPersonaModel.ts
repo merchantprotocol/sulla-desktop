@@ -731,6 +731,48 @@ export class AgentPersonaService {
         });
       }
 
+      // ── Streaming: update existing streaming message in-place ──
+      if (kind === 'streaming' && role === 'assistant') {
+        let existingIdx = -1;
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+          if (this.messages[i].kind === 'streaming' && this.messages[i].role === 'assistant') {
+            existingIdx = i;
+            break;
+          }
+        }
+        if (existingIdx !== -1) {
+          // Update content of existing streaming message (Vue reactivity picks this up)
+          this.messages[existingIdx] = {
+            ...this.messages[existingIdx],
+            content: finalContent,
+          };
+        } else {
+          this.messages.push({
+            id:        `${ Date.now() }_ws_streaming`,
+            channelId: agentId,
+            threadId:  msgThreadId,
+            role,
+            kind,
+            content:   finalContent,
+          });
+        }
+        return;
+      }
+
+      // ── Non-streaming assistant message: remove any prior streaming bubble ──
+      if (role === 'assistant') {
+        let streamIdx = -1;
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+          if (this.messages[i].kind === 'streaming' && this.messages[i].role === 'assistant') {
+            streamIdx = i;
+            break;
+          }
+        }
+        if (streamIdx !== -1) {
+          this.messages.splice(streamIdx, 1);
+        }
+      }
+
       const message: ChatMessage = {
         id:        `${ Date.now() }_ws_${ msg.type }`,
         channelId: agentId,

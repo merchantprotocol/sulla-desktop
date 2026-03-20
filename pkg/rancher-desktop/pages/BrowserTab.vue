@@ -132,6 +132,13 @@
         <BrowserTabChat :tab-id="props.tabId" @set-mode="onSetMode" />
       </div>
     </template>
+
+    <!-- Secretary mode: continuous transcription with wake word -->
+    <template v-else-if="tabMode === 'secretary'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <SecretaryMode :tab-id="props.tabId" @set-mode="onSetMode" />
+      </div>
+    </template>
   </div>
 </template>
 
@@ -144,6 +151,7 @@ import AgentCalendar from './AgentCalendar.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
+import SecretaryMode from './SecretaryMode.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
@@ -164,6 +172,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   integrations: 'Integrations',
   extensions:   'Extensions',
   document:     'Document',
+  secretary:    'Secretary',
 };
 
 const props = defineProps<{
