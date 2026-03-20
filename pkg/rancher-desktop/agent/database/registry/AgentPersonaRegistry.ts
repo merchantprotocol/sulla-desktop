@@ -9,7 +9,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
-  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'html' | 'sub_agent_activity';
+  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak';
   image?: {
     dataUrl:      string;
     alt?:         string;

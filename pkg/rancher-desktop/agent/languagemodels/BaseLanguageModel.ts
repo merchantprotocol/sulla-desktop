@@ -19,6 +19,14 @@ export interface ChatMessage {
 }
 
 /**
+ * Callbacks for streaming LLM responses (used in voice mode).
+ */
+export interface StreamCallbacks {
+  /** Called for each text token/delta as it arrives from the LLM. */
+  onToken: (token: string) => void;
+}
+
+/**
  * Normalized response that all LLM services return
  */
 export interface NormalizedResponse {
@@ -288,6 +296,123 @@ export abstract class BaseLanguageModel {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // Streaming API (voice mode)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Stream LLM tokens via callbacks. Used in voice mode to dispatch
+   * sentence-level TTS while the model is still generating.
+   *
+   * Providers that support streaming override `sendStreamRequest()` and
+   * `parseStreamResponse()`. Providers that don't (Google, Ollama) fall
+   * back to the non-streaming `chat()` path automatically — the full
+   * response is emitted as a single `onToken()` call.
+   *
+   * Returns the same `NormalizedResponse` as `chat()` so the caller
+   * can continue with tool execution, state appending, etc.
+   */
+  async chatStream(
+    messages: ChatMessage[],
+    callbacks: StreamCallbacks,
+    options: {
+      model?:          string;
+      maxTokens?:      number;
+      format?:         'json' | undefined;
+      temperature?:    number;
+      signal?:         AbortSignal;
+      timeoutSeconds?: number;
+      tools?:          any;
+      conversationId?: string;
+      nodeName?:       string;
+    } = {},
+  ): Promise<NormalizedResponse | null> {
+    const startTime = performance.now();
+    const effectiveModel = options.model ?? this.model;
+    const convId = options.conversationId;
+
+    // Log outgoing request (same as chat())
+    if (convId) {
+      try {
+        const { getConversationLogger } = require('../services/ConversationLogger');
+        getConversationLogger().logLLMCall(convId, 'request', {
+          model:       effectiveModel,
+          provider:    this.getProviderName(),
+          nodeName:    options.nodeName,
+          maxTokens:   options.maxTokens,
+          temperature: options.temperature,
+          format:      options.format,
+          tools:       options.tools,
+          messages,
+          streaming:   true,
+        });
+      } catch { /* best-effort */ }
+    }
+
+    try {
+      // Try provider-specific streaming
+      const streamResponse = await this.sendStreamRequest(messages, {
+        ...options,
+        model: effectiveModel,
+      });
+
+      if (streamResponse?.body) {
+        // Provider supports streaming — parse the SSE stream
+        const normalized = await this.parseStreamResponse(
+          streamResponse,
+          callbacks,
+          options.signal,
+        );
+
+        normalized.metadata.time_spent = Math.round(performance.now() - startTime);
+        normalized.metadata.model = effectiveModel;
+
+        // Log response
+        if (convId) {
+          try {
+            const { getConversationLogger } = require('../services/ConversationLogger');
+            getConversationLogger().logLLMCall(convId, 'response', {
+              model:            effectiveModel,
+              content:          normalized.content,
+              finishReason:     normalized.metadata.finish_reason,
+              tokensUsed:       normalized.metadata.tokens_used,
+              promptTokens:     normalized.metadata.prompt_tokens,
+              completionTokens: normalized.metadata.completion_tokens,
+              timeSpent:        normalized.metadata.time_spent,
+              reasoning:        normalized.metadata.reasoning,
+              toolCalls:        normalized.metadata.tool_calls,
+              streaming:        true,
+            });
+          } catch { /* best-effort */ }
+        }
+
+        return normalized;
+      }
+
+      // Provider does not support streaming — fall back to chat()
+      const response = await this.chat(messages, options);
+
+      if (response?.content) {
+        callbacks.onToken(response.content);
+      }
+
+      return response;
+    } catch (error) {
+      if (convId) {
+        try {
+          const { getConversationLogger } = require('../services/ConversationLogger');
+          getConversationLogger().logLLMCall(convId, 'response', {
+            model:     effectiveModel,
+            error:     error instanceof Error ? error.message : String(error),
+            streaming: true,
+          });
+        } catch { /* best-effort */ }
+      }
+      console.error(`[${ this.getProviderName() }] Stream chat failed:`, error);
+      throw error;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Must be implemented by subclasses
   // ─────────────────────────────────────────────────────────────
 
@@ -304,6 +429,30 @@ export abstract class BaseLanguageModel {
    * Health check — should be overridden when needed
    */
   protected abstract healthCheck(): Promise<boolean>;
+
+  /**
+   * Initiate a streaming request. Returns the fetch Response (whose body
+   * is an SSE stream), or null if this provider does not support streaming.
+   * Override in subclasses to enable streaming.
+   */
+  protected async sendStreamRequest(
+    _messages: ChatMessage[],
+    _options: any,
+  ): Promise<Response | null> {
+    return null; // default: no streaming support
+  }
+
+  /**
+   * Parse a streaming Response into token callbacks + final NormalizedResponse.
+   * Must be overridden by providers that return a non-null `sendStreamRequest()`.
+   */
+  protected async parseStreamResponse(
+    _response: Response,
+    _callbacks: StreamCallbacks,
+    _signal?: AbortSignal,
+  ): Promise<NormalizedResponse> {
+    throw new Error(`${ this.getProviderName() } returned a stream response but does not implement parseStreamResponse()`);
+  }
 
   // ─────────────────────────────────────────────────────────────
   // Shared utilities

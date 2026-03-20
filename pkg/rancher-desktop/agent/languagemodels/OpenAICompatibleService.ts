@@ -1,4 +1,5 @@
-import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type LLMServiceConfig, FinishReason } from './BaseLanguageModel';
+import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, type LLMServiceConfig, FinishReason } from './BaseLanguageModel';
+import { readSSEEvents } from './SSEStreamReader';
 import { getOllamaService } from './OllamaService';
 
 /**
@@ -118,6 +119,216 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     }
 
     throw lastError ?? new Error('All retries failed and Ollama unavailable');
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Streaming support
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Initiate a streaming request to the OpenAI-compatible endpoint.
+   * Returns the raw Response whose body is an SSE stream.
+   */
+  protected override async sendStreamRequest(
+    messages: ChatMessage[],
+    options: any,
+  ): Promise<Response | null> {
+    const url = `${ this.baseUrl }${ this.chatEndpoint }`;
+    const body = this.buildRequestBody(messages, options);
+
+    body.stream = true;
+
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= this.retryCount; attempt++) {
+      try {
+        if (options?.signal?.aborted) {
+          throw new DOMException('Operation aborted', 'AbortError');
+        }
+
+        if (attempt > 0) {
+          console.log(`[${ this.constructor.name }] Stream retry ${ attempt }/${ this.retryCount }`);
+          await new Promise(r => setTimeout(r, Math.pow(2, attempt - 1) * 1000));
+          if (options?.signal?.aborted) {
+            throw new DOMException('Aborted during retry backoff', 'AbortError');
+          }
+        }
+
+        const timeoutMs = options?.timeoutSeconds
+          ? options.timeoutSeconds * 1000
+          : this.defaultTimeoutMs;
+        const signal = this.combinedSignal(options?.signal, timeoutMs);
+        const payload = this.buildFetchOptions(body, signal);
+        const res = await fetch(url, payload);
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+
+          if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+            continue;
+          }
+          throw new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
+        }
+
+        return res;
+      } catch (err) {
+        lastError = err;
+
+        if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
+          break;
+        }
+      }
+    }
+
+    // On stream failure, return null to fall back to non-streaming chat()
+    console.warn(`[${ this.constructor.name }] Streaming failed, falling back to non-streaming:`, lastError);
+
+    return null;
+  }
+
+  /**
+   * Parse an OpenAI-compatible SSE stream into token callbacks + NormalizedResponse.
+   *
+   * SSE format: data: {"choices":[{"delta":{"content":"..."},"finish_reason":null}]}
+   * Terminator: data: [DONE]
+   */
+  protected override async parseStreamResponse(
+    response: Response,
+    callbacks: StreamCallbacks,
+    signal?: AbortSignal,
+  ): Promise<NormalizedResponse> {
+    if (!response.body) {
+      throw new Error('Response has no body for streaming');
+    }
+
+    let content = '';
+    let finishReason: string | undefined;
+    let reasoning = '';
+    const toolCallDeltas: Map<number, { id?: string; name: string; arguments: string }> = new Map();
+    let promptTokens = 0;
+    let completionTokens = 0;
+
+    for await (const event of readSSEEvents(response.body, signal)) {
+      if (event.data === '[DONE]') {
+        break;
+      }
+
+      let parsed: any;
+
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        continue;
+      }
+
+      const choice = parsed.choices?.[0];
+
+      if (!choice) {
+        // Usage-only chunk (some providers send usage in a separate final chunk)
+        if (parsed.usage) {
+          promptTokens = parsed.usage.prompt_tokens ?? promptTokens;
+          completionTokens = parsed.usage.completion_tokens ?? completionTokens;
+        }
+        continue;
+      }
+
+      const delta = choice.delta;
+
+      if (delta?.content) {
+        content += delta.content;
+        callbacks.onToken(delta.content);
+      }
+
+      if (delta?.reasoning_content || delta?.reasoning) {
+        reasoning += delta.reasoning_content || delta.reasoning || '';
+      }
+
+      // Accumulate streamed tool calls by index
+      if (delta?.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+
+          if (!toolCallDeltas.has(idx)) {
+            toolCallDeltas.set(idx, {
+              id:        tc.id || '',
+              name:      tc.function?.name || '',
+              arguments: '',
+            });
+          }
+
+          const existing = toolCallDeltas.get(idx)!;
+
+          if (tc.id) {
+            existing.id = tc.id;
+          }
+          if (tc.function?.name) {
+            existing.name = tc.function.name;
+          }
+          if (tc.function?.arguments) {
+            existing.arguments += tc.function.arguments;
+          }
+        }
+      }
+
+      if (choice.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
+
+      // Capture usage from the chunk if present
+      if (parsed.usage) {
+        promptTokens = parsed.usage.prompt_tokens ?? promptTokens;
+        completionTokens = parsed.usage.completion_tokens ?? completionTokens;
+      }
+    }
+
+    // Assemble tool calls from accumulated deltas
+    const toolCalls: { id?: string; name: string; args: any }[] = [];
+
+    for (const [, tc] of toolCallDeltas) {
+      let args: any = {};
+
+      try {
+        args = JSON.parse(tc.arguments || '{}');
+      } catch {
+        args = tc.arguments || {};
+      }
+      toolCalls.push({ id: tc.id, name: tc.name, args });
+    }
+
+    // Build rawProviderContent (Anthropic-style content blocks for state persistence)
+    let rawProviderContent: any;
+
+    if (toolCalls.length > 0) {
+      const blocks: any[] = [];
+
+      if (content.trim()) {
+        blocks.push({ type: 'text', text: content.trim() });
+      }
+      for (const tc of toolCalls) {
+        blocks.push({
+          type:  'tool_use',
+          id:    tc.id,
+          name:  tc.name,
+          input: tc.args ?? {},
+        });
+      }
+      rawProviderContent = blocks;
+    }
+
+    return {
+      content: content.trim(),
+      metadata: {
+        tokens_used:        promptTokens + completionTokens,
+        time_spent:         0, // filled by chatStream()
+        prompt_tokens:      promptTokens,
+        completion_tokens:  completionTokens,
+        model:              this.model,
+        tool_calls:         toolCalls.length > 0 ? toolCalls : undefined,
+        finish_reason:      this.normalizeFinishReason(finishReason),
+        reasoning:          reasoning.trim() || undefined,
+        rawProviderContent,
+      },
+    };
   }
 
   protected async getFallbackLocalService() {

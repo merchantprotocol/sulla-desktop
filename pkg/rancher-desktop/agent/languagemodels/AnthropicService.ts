@@ -1,4 +1,5 @@
-import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type LLMServiceConfig } from './BaseLanguageModel';
+import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, type LLMServiceConfig } from './BaseLanguageModel';
+import { readSSEEvents } from './SSEStreamReader';
 import { getOllamaService } from './OllamaService';
 import { getIntegrationService } from '../services/IntegrationService';
 
@@ -114,7 +115,7 @@ export class AnthropicService extends BaseLanguageModel {
    * Handles system message extraction, tool_use/tool_result adjacency,
    * consecutive same-role merging, and final user message requirement.
    */
-  private buildRequestBody(messages: ChatMessage[], options: any): any {
+  protected buildRequestBody(messages: ChatMessage[], options: any): any {
     const sanitizedMessages = messages
       .filter(m => m.role !== 'tool')
       .map(m => {
@@ -248,6 +249,203 @@ export class AnthropicService extends BaseLanguageModel {
       headers,
       body:   JSON.stringify(body),
       signal,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Streaming support
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Initiate a streaming request to Anthropic /messages with stream: true.
+   */
+  protected override async sendStreamRequest(
+    messages: ChatMessage[],
+    options: any,
+  ): Promise<Response | null> {
+    const url = `${ this.baseUrl }/messages`;
+    const body = this.buildRequestBody(messages, options);
+
+    body.stream = true;
+
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= this.retryCount; attempt++) {
+      try {
+        if (options?.signal?.aborted) {
+          throw new DOMException('Operation aborted', 'AbortError');
+        }
+
+        if (attempt > 0) {
+          console.log(`[AnthropicService] Stream retry ${ attempt }/${ this.retryCount }`);
+          await new Promise(r => setTimeout(r, Math.pow(2, attempt - 1) * 1000));
+          if (options?.signal?.aborted) {
+            throw new DOMException('Aborted during retry backoff', 'AbortError');
+          }
+        }
+
+        const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
+        const fetchOpts = this.buildFetchOptions(body, signal);
+        const res = await fetch(url, fetchOpts);
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+
+          if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+            continue;
+          }
+          throw new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
+        }
+
+        return res;
+      } catch (err) {
+        lastError = err;
+
+        if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
+          break;
+        }
+      }
+    }
+
+    console.warn('[AnthropicService] Streaming failed, falling back to non-streaming:', lastError);
+
+    return null;
+  }
+
+  /**
+   * Parse Anthropic SSE stream into token callbacks + NormalizedResponse.
+   *
+   * Anthropic SSE events:
+   *   message_start       → usage.input_tokens
+   *   content_block_start → content_block type (text, tool_use, thinking)
+   *   content_block_delta → text_delta, input_json_delta, thinking_delta
+   *   content_block_stop  → block completed
+   *   message_delta       → stop_reason, usage.output_tokens
+   *   message_stop        → stream complete
+   */
+  protected override async parseStreamResponse(
+    response: Response,
+    callbacks: StreamCallbacks,
+    signal?: AbortSignal,
+  ): Promise<NormalizedResponse> {
+    if (!response.body) {
+      throw new Error('Response has no body for streaming');
+    }
+
+    let content = '';
+    let reasoning = '';
+    let finishReason: string | undefined;
+    let promptTokens = 0;
+    let completionTokens = 0;
+
+    // Track active content blocks by index
+    const activeBlocks: Map<number, { type: string; id?: string; name?: string; inputJson?: string }> = new Map();
+    const toolCalls: { id?: string; name: string; args: any }[] = [];
+
+    for await (const event of readSSEEvents(response.body, signal)) {
+      let parsed: any;
+
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        continue;
+      }
+
+      switch (parsed.type) {
+        case 'message_start':
+          promptTokens = parsed.message?.usage?.input_tokens ?? 0;
+          break;
+
+        case 'content_block_start': {
+          const block = parsed.content_block;
+          const idx = parsed.index ?? 0;
+
+          activeBlocks.set(idx, {
+            type:      block?.type ?? 'text',
+            id:        block?.id,
+            name:      block?.name,
+            inputJson: '',
+          });
+          break;
+        }
+
+        case 'content_block_delta': {
+          const idx = parsed.index ?? 0;
+          const delta = parsed.delta;
+          const block = activeBlocks.get(idx);
+
+          if (delta?.type === 'text_delta' && delta.text) {
+            content += delta.text;
+            callbacks.onToken(delta.text);
+          } else if (delta?.type === 'input_json_delta' && delta.partial_json && block) {
+            // Accumulate tool use input JSON silently (don't emit as tokens)
+            block.inputJson = (block.inputJson || '') + delta.partial_json;
+          } else if (delta?.type === 'thinking_delta' && delta.thinking) {
+            reasoning += delta.thinking;
+          }
+          break;
+        }
+
+        case 'content_block_stop': {
+          const idx = parsed.index ?? 0;
+          const block = activeBlocks.get(idx);
+
+          if (block?.type === 'tool_use' && block.name) {
+            let args: any = {};
+
+            try {
+              args = JSON.parse(block.inputJson || '{}');
+            } catch {
+              args = block.inputJson || {};
+            }
+            toolCalls.push({ id: block.id, name: block.name, args });
+          }
+          activeBlocks.delete(idx);
+          break;
+        }
+
+        case 'message_delta':
+          finishReason = parsed.delta?.stop_reason;
+          completionTokens = parsed.usage?.output_tokens ?? completionTokens;
+          break;
+
+        case 'message_stop':
+          // Stream complete
+          break;
+      }
+    }
+
+    // Build rawProviderContent in Anthropic content block format
+    const rawBlocks: any[] = [];
+
+    if (reasoning.trim()) {
+      rawBlocks.push({ type: 'thinking', text: reasoning.trim() });
+    }
+    if (content.trim()) {
+      rawBlocks.push({ type: 'text', text: content.trim() });
+    }
+    for (const tc of toolCalls) {
+      rawBlocks.push({
+        type:  'tool_use',
+        id:    tc.id,
+        name:  tc.name,
+        input: tc.args ?? {},
+      });
+    }
+
+    return {
+      content: content.trim(),
+      metadata: {
+        tokens_used:        promptTokens + completionTokens,
+        time_spent:         0, // filled by chatStream()
+        prompt_tokens:      promptTokens,
+        completion_tokens:  completionTokens,
+        model:              this.model,
+        tool_calls:         toolCalls.length > 0 ? toolCalls : undefined,
+        finish_reason:      this.normalizeFinishReason(finishReason),
+        reasoning:          reasoning.trim() || undefined,
+        rawProviderContent: rawBlocks.length > 0 ? rawBlocks : undefined,
+      },
     };
   }
 

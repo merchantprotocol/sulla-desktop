@@ -79,6 +79,16 @@
                 </div>
               </div>
 
+              <div v-else-if="m.kind === 'streaming'" class="max-w-[min(760px,92%)]">
+                <div class="flex gap-3">
+                  <div class="sulla-avatar" aria-hidden="true">S</div>
+                  <div>
+                    <div class="sulla-name">Sulla</div>
+                    <div class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert" v-html="renderMarkdown(m.content)" /><span class="streaming-cursor" />
+                  </div>
+                </div>
+              </div>
+
               <div v-else-if="m.kind === 'html'" class="max-w-[min(760px,92%)]">
                 <div class="flex gap-3">
                   <div class="sulla-avatar" aria-hidden="true">S</div>
@@ -402,10 +412,17 @@ const handleVoiceInterim = (text: string) => {
   }
 
   if (!text) {
-    // Empty interim = clear the listening bubble
-    const idx = messages.value.findIndex((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
-    if (idx !== -1) {
-      messages.value.splice(idx, 1);
+    // Empty interim = recording ended. Flush any accumulated voice text
+    // immediately so the user's complete message gets sent without
+    // waiting for the debounce timer to expire.
+    flushVoiceQueue();
+
+    // Clear the listening bubble (only if no queued text is showing)
+    if (voiceTextQueue.length === 0) {
+      const idx = messages.value.findIndex((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
+      if (idx !== -1) {
+        messages.value.splice(idx, 1);
+      }
     }
 
     return;
@@ -427,35 +444,90 @@ const handleVoiceInterim = (text: string) => {
   }
 };
 
-const VOICE_SEND_COOLDOWN = 3000;
-let lastVoiceSendTime = 0;
+// Voice transcription accumulation — wait for the user to finish speaking
+// before sending. Each VAD segment produces a transcription fragment; we
+// accumulate fragments and only send after a debounce period (no new
+// fragments for TRANSCRIPTION_DEBOUNCE_MS). This prevents fragmented sends
+// where the AI responds to half a sentence.
+const TRANSCRIPTION_DEBOUNCE_MS = 1500; // Wait 1.5s after last fragment
 const voiceTextQueue: string[] = [];
 let voiceSending = false;
+let transcriptionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let voiceRecordingEnded = false; // Set when user stops recording — flush on next transcription
 
 const handleVoiceTranscribed = (text: string) => {
   if (!text.trim()) return;
 
-  // Remove the interim listening bubble
-  const idx = messages.value.findIndex((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
-  if (idx !== -1) {
-    messages.value.splice(idx, 1);
+  voiceTextQueue.push(text.trim());
+
+  // Show the accumulated text so far as an interim user message
+  const accumulated = voiceTextQueue.join(' ').trim();
+  const existing = messages.value.find((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
+  if (existing) {
+    existing.content = accumulated;
+  } else {
+    messages.value.push({
+      id:        VOICE_INTERIM_MSG_ID,
+      channelId: '',
+      threadId:  '',
+      role:      'user',
+      kind:      'voice_interim',
+      content:   accumulated,
+    } as ChatMessage);
   }
 
-  voiceTextQueue.push(text.trim());
-  processVoiceTextQueue();
+  // If recording already ended, this is the last transcription — send immediately
+  if (voiceRecordingEnded) {
+    voiceRecordingEnded = false;
+    if (transcriptionDebounceTimer) {
+      clearTimeout(transcriptionDebounceTimer);
+      transcriptionDebounceTimer = null;
+    }
+    processVoiceTextQueue();
+
+    return;
+  }
+
+  // Reset debounce timer — wait for more speech before sending
+  if (transcriptionDebounceTimer) {
+    clearTimeout(transcriptionDebounceTimer);
+  }
+  transcriptionDebounceTimer = setTimeout(() => {
+    transcriptionDebounceTimer = null;
+    processVoiceTextQueue();
+  }, TRANSCRIPTION_DEBOUNCE_MS);
 };
+
+/**
+ * Force-flush any pending voice text immediately (called when recording stops).
+ * If the queue is empty (last transcription hasn't arrived yet), sets a flag
+ * so the next arriving transcription is sent without debounce.
+ */
+function flushVoiceQueue(): void {
+  if (transcriptionDebounceTimer) {
+    clearTimeout(transcriptionDebounceTimer);
+    transcriptionDebounceTimer = null;
+  }
+  if (voiceTextQueue.length > 0) {
+    voiceRecordingEnded = false;
+    processVoiceTextQueue();
+  } else {
+    // Last transcription hasn't arrived yet — mark so it sends immediately when it does
+    voiceRecordingEnded = true;
+  }
+}
 
 async function processVoiceTextQueue(): Promise<void> {
   if (voiceSending || voiceTextQueue.length === 0) return;
   voiceSending = true;
 
-  // Debounce: wait for cooldown since last send
-  const elapsed = Date.now() - lastVoiceSendTime;
-  if (lastVoiceSendTime > 0 && elapsed < VOICE_SEND_COOLDOWN) {
-    await new Promise(r => setTimeout(r, VOICE_SEND_COOLDOWN - elapsed));
+  // Remove the interim bubble showing accumulated text
+  const interimIdx = messages.value.findIndex((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
+  if (interimIdx !== -1) {
+    messages.value.splice(interimIdx, 1);
   }
 
-  // Drain queue — combine any stacked-up texts into one message
+  // Drain queue — combine all accumulated fragments into one message
   const texts = voiceTextQueue.splice(0);
   const combined = texts.join(' ').trim();
 
@@ -473,7 +545,6 @@ async function processVoiceTextQueue(): Promise<void> {
     query.value = combined;
     await nextTick();
     send({ inputSource: 'microphone' });
-    lastVoiceSendTime = Date.now();
   }
 
   voiceSending = false;
@@ -484,10 +555,15 @@ async function processVoiceTextQueue(): Promise<void> {
 
 // ─── TTS Playback ────────────────────────────────────────────
 // Watch for speak messages arriving in the message stream and play them via ElevenLabs TTS.
+// Supports look-ahead prefetching: while one sentence plays, the next is already being fetched.
 const ttsQueue: string[] = [];
 let ttsPlaying = false;
 let currentTTSAudio: HTMLAudioElement | null = null;
 const processedSpeakIds = new Set<string>();
+
+// Prefetch state — fetch the next TTS audio while current one is playing
+let prefetchedAudio: { text: string; result: any } | null = null;
+let prefetchAbort: AbortController | null = null;
 
 function stopTTS(): void {
   ttsQueue.length = 0;
@@ -496,11 +572,39 @@ function stopTTS(): void {
     currentTTSAudio.src = '';
     currentTTSAudio = null;
   }
+  // Cancel any in-flight prefetch
+  if (prefetchAbort) {
+    prefetchAbort.abort();
+    prefetchAbort = null;
+  }
+  prefetchedAudio = null;
   // Also cancel browser speechSynthesis fallback if active
   if (window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
   ttsPlaying = false;
+}
+
+/**
+ * Pre-fetch TTS audio for the next item in the queue while current audio plays.
+ */
+async function prefetchNextTTS(): Promise<void> {
+  if (ttsQueue.length === 0 || prefetchedAudio) return;
+  const nextText = ttsQueue[0]; // peek, don't shift
+
+  try {
+    prefetchAbort = new AbortController();
+    const result = await ipcRenderer.invoke('audio-speak', { text: nextText });
+
+    // Only cache if the text still matches the front of the queue (not cleared by barge-in)
+    if (ttsQueue[0] === nextText) {
+      prefetchedAudio = { text: nextText, result };
+    }
+  } catch {
+    // Prefetch failure is non-fatal — playNextTTS will fetch normally
+  } finally {
+    prefetchAbort = null;
+  }
 }
 
 async function playNextTTS(): Promise<void> {
@@ -509,12 +613,27 @@ async function playNextTTS(): Promise<void> {
 
   const text = ttsQueue.shift()!;
   try {
-    const result = await ipcRenderer.invoke('audio-speak', { text });
+    // Use prefetched result if available and matching
+    let result: any;
+
+    if (prefetchedAudio?.text === text) {
+      result = prefetchedAudio.result;
+      prefetchedAudio = null;
+    } else {
+      prefetchedAudio = null; // Discard stale prefetch
+      result = await ipcRenderer.invoke('audio-speak', { text });
+    }
+
     if (result?.audio) {
       const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
+
       currentTTSAudio = audio;
+
+      // Start prefetching the next sentence while this one plays
+      prefetchNextTTS();
+
       await new Promise<void>((resolve) => {
         audio.onended = () => { URL.revokeObjectURL(url); currentTTSAudio = null; resolve(); };
         audio.onerror = () => { URL.revokeObjectURL(url); currentTTSAudio = null; resolve(); };
@@ -603,6 +722,24 @@ watch(() => messages.value.length, async () => {
   container.scrollTop = container.scrollHeight;
 }, { flush: 'post' });
 
+// Auto-scroll during streaming: the message array length doesn't change when
+// a streaming message is updated in-place, so watch the last message's content.
+watch(
+  () => {
+    const msgs = messages.value;
+    const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    return last?.kind === 'streaming' ? last.content : null;
+  },
+  async (val) => {
+    if (val == null) return;
+    await nextTick();
+    const container = chatScrollContainer.value;
+    if (!container || !autoScrollEnabled.value) return;
+    container.scrollTop = container.scrollHeight;
+  },
+  { flush: 'post' },
+);
+
 onUnmounted(() => {
   chatController.dispose();
   modelSelector.dispose();
@@ -643,6 +780,22 @@ onUnmounted(() => {
 @keyframes activityPulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
+}
+
+/* ── Streaming cursor ── */
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--accent-primary, #3b82f6);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blinkCursor 0.8s step-end infinite;
+}
+
+@keyframes blinkCursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 /* ── Thinking bubble ── */

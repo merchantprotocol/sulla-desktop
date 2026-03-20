@@ -129,7 +129,7 @@ export class ChatInterface {
   private hasSentMessage: ReturnType<typeof ref<boolean>>;
 
   readonly hasMessages = computed(() => {
-    return this.hasSentMessage.value || this.messages.value.length > 0;
+    return this.hasSentMessage.value || this.messages.value.some(m => m.kind !== 'voice_interim');
   });
 
   newChat(): void {

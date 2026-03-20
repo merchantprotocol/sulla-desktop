@@ -15,12 +15,12 @@
 
 ## Phase 3: Streaming TTS Pipeline (Biggest UX Win)
 
-- [ ] Implement ElevenLabs streaming TTS endpoint (chunked audio playback)
-- [ ] Intercept LLM token stream in BaseNode, buffer to sentence boundaries
-- [ ] Extract `<speak>` content progressively as tokens arrive
-- [ ] Fire TTS per sentence chunk while LLM is still generating
-- [ ] Start audio playback within ~300ms of first sentence completion
-- [ ] Handle barge-in interruption mid-stream (cancel remaining TTS chunks + LLM generation)
+- [x] Implement ElevenLabs streaming TTS endpoint (chunked audio playback)
+- [x] Intercept LLM token stream in BaseNode, buffer to sentence boundaries
+- [x] Extract `<speak>` content progressively as tokens arrive
+- [x] Fire TTS per sentence chunk while LLM is still generating
+- [x] Start audio playback within ~300ms of first sentence completion
+- [x] Handle barge-in interruption mid-stream (cancel remaining TTS chunks + LLM generation)
 
 ## Phase 4: Advanced
 
