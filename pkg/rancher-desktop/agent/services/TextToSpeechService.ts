@@ -15,6 +15,9 @@ export function getTextToSpeechService(): TextToSpeechService {
   return instance;
 }
 
+// Rachel — ElevenLabs default female voice
+const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
+
 export class TextToSpeechService {
   private readonly baseUrl = 'https://api.elevenlabs.io/v1';
 
@@ -31,11 +34,7 @@ export class TextToSpeechService {
       throw new Error('ElevenLabs API key is not configured. Add it in Integrations → ElevenLabs.');
     }
 
-    const resolvedVoiceId = voiceId || await this.getConfiguredVoice();
-
-    if (!resolvedVoiceId) {
-      throw new Error('No ElevenLabs voice selected. Configure one in Audio Settings → Voice.');
-    }
+    const resolvedVoiceId = voiceId || await this.getConfiguredVoice() || DEFAULT_VOICE_ID;
 
     const response = await fetch(`${ this.baseUrl }/text-to-speech/${ resolvedVoiceId }`, {
       method:  'POST',
