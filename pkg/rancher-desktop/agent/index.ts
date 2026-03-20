@@ -1,9 +1,8 @@
 // Agent System - Main exports
-// Flow: SensoryInput → ContextDetector → ConversationThread (Graph) → ResponseHandler
+// Flow: SensoryInput → ContextDetector → ConversationThread (Graph) → AgentNode
 
 export * from './types';
 export { Sensory, getSensory } from './SensoryInput';
-export { ResponseHandler, getResponseHandler } from './ResponseHandler';
 export { Graph } from './nodes/Graph';
 
 // Graph Nodes

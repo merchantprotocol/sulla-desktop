@@ -182,11 +182,12 @@ export class BackendGraphWebSocketService {
     // Extract optional overrides from message metadata
     const scopedWorkflowId = metadata?.workflowId as string | undefined;
     const overrideAgentId = metadata?.agentId as string | undefined;
+    const inputSource = metadata?.inputSource as string | undefined;
 
-    await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId);
+    await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource);
   }
 
-  private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string): Promise<void> {
+  private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string): Promise<void> {
     const agentId = overrideAgentId || await getAgentIdForTrigger(triggerType);
 
     // Use the frontend's threadId if provided (maintains conversation).
@@ -224,13 +225,17 @@ export class BackendGraphWebSocketService {
         (state.metadata as any).scopedWorkflowId = scopedWorkflowId;
       }
 
+      // Track input modality so downstream nodes can adapt (e.g. voice → TTS).
+      // Reset each dispatch so keyboard messages don't inherit a prior voice flag.
+      (state.metadata as any).inputSource = inputSource || 'keyboard';
+
       // Append user message
       state.messages.push({
         id:        nextMessageId(),
         role:      'user',
         content:   message,
         timestamp: Date.now(),
-        metadata:  { source: 'backend' },
+        metadata:  { source: 'backend', inputSource: inputSource || 'keyboard' },
       } as any);
 
       // Resume from current node if the agent was waiting for user input

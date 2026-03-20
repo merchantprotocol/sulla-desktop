@@ -1121,6 +1121,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Extract and dispatch thinking content before appending the response
       this.extractAndDispatchThinking(state, reply);
 
+      // Extract <speak> tags and dispatch as TTS events to the frontend
+      this.extractAndDispatchSpeakTags(state, reply);
+
       // Append to state — stores native tool_use content arrays when present
       this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
 
@@ -1404,6 +1407,32 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Dispatch as a 'thinking' kind message to the frontend
     this.wsChatMessage(state, thinkingText, 'assistant', 'thinking');
+  }
+
+  /**
+   * Extract <speak> tags from the LLM response and dispatch them as 'speak'
+   * kind messages to the frontend for text-to-speech playback.
+   * The tags are stripped from reply.content so they don't render in chat.
+   */
+  protected extractAndDispatchSpeakTags(state: BaseThreadState, reply: NormalizedResponse): void {
+    const speakTagRegex = /<speak>([\s\S]*?)<\/speak>/gi;
+    const tagMatches = reply.content.match(speakTagRegex);
+
+    if (!tagMatches) {
+      return;
+    }
+
+    const spoken = tagMatches
+      .map(m => m.replace(/<\/?speak>/gi, '').trim())
+      .filter(Boolean)
+      .join('\n');
+
+    // Strip speak tags from the content so they don't display in chat
+    reply.content = reply.content.replace(speakTagRegex, '').trim();
+
+    if (spoken) {
+      this.wsChatMessage(state, spoken, 'assistant', 'speak');
+    }
   }
 
   /**

@@ -323,6 +323,16 @@ let mediaRecorder: MediaRecorder | null = null;
 let audioChunks: Blob[] = [];
 let mediaStream: MediaStream | null = null;
 
+// Voice Activity Detection (VAD) state
+let audioContext: AudioContext | null = null;
+let analyser: AnalyserNode | null = null;
+let vadInterval: ReturnType<typeof setInterval> | null = null;
+const VAD_SILENCE_THRESHOLD = 12;   // RMS level below which we consider silence
+const VAD_SILENCE_DURATION = 1500;  // ms of silence before auto-stop
+const VAD_INITIAL_GRACE = 800;      // ms grace period at start (ignore initial silence)
+let silenceStart: number | null = null;
+let recordingStart = 0;
+
 async function toggleRecording(): Promise<void> {
   if (isRecording.value) {
     stopRecording();
@@ -365,6 +375,7 @@ async function startRecording(): Promise<void> {
 
     mediaRecorder.onstop = () => {
       const audioBlob = new Blob(audioChunks, { type: mimeType });
+      stopVAD();
       cleanupStream();
 
       if (audioBlob.size > 0) {
@@ -374,10 +385,73 @@ async function startRecording(): Promise<void> {
 
     mediaRecorder.start();
     isRecording.value = true;
+    recordingStart = Date.now();
+
+    // Start voice activity detection
+    startVAD(mediaStream);
   } catch (err) {
     console.error('[AgentComposer] Microphone access denied or unavailable:', err);
     cleanupStream();
   }
+}
+
+function startVAD(stream: MediaStream): void {
+  try {
+    audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(stream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+
+    const dataArray = new Uint8Array(analyser.fftSize);
+    silenceStart = null;
+
+    vadInterval = setInterval(() => {
+      if (!analyser || !isRecording.value) return;
+
+      analyser.getByteTimeDomainData(dataArray);
+
+      // Calculate RMS (root mean square) of audio signal
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        const sample = (dataArray[i] - 128) / 128;
+        sum += sample * sample;
+      }
+      const rms = Math.sqrt(sum / dataArray.length) * 100;
+
+      const now = Date.now();
+      const elapsed = now - recordingStart;
+
+      if (rms < VAD_SILENCE_THRESHOLD) {
+        // Below threshold — start or continue silence timer
+        if (silenceStart === null) {
+          silenceStart = now;
+        } else if (elapsed > VAD_INITIAL_GRACE && (now - silenceStart) >= VAD_SILENCE_DURATION) {
+          // Silence held long enough after grace period — auto-stop
+          console.log('[AgentComposer] VAD: silence detected, auto-stopping recording');
+          stopRecording();
+        }
+      } else {
+        // Speech detected — reset silence timer
+        silenceStart = null;
+      }
+    }, 100); // Check every 100ms
+  } catch (err) {
+    console.warn('[AgentComposer] VAD setup failed, falling back to manual stop:', err);
+  }
+}
+
+function stopVAD(): void {
+  if (vadInterval) {
+    clearInterval(vadInterval);
+    vadInterval = null;
+  }
+  if (audioContext) {
+    audioContext.close().catch(() => {});
+    audioContext = null;
+  }
+  analyser = null;
+  silenceStart = null;
 }
 
 function stopRecording(): void {
@@ -501,6 +575,7 @@ onUnmounted(() => {
   }
   composerMeasureCanvas = null;
   stopRecording();
+  stopVAD();
   cleanupStream();
 });
 </script>

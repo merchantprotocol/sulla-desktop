@@ -1050,6 +1050,20 @@ export function initSullaEvents(): void {
     return { text };
   });
 
+  ipcMainProxy.handle('audio-speak', async(_event: unknown, payload: { text: string; voiceId?: string }) => {
+    const { getTextToSpeechService } = await import('@pkg/agent/services/TextToSpeechService');
+    const service = getTextToSpeechService();
+    const result = await service.speak(payload.text, payload.voiceId);
+
+    // Return ArrayBuffer so it can be played in the renderer
+    const ab = result.audio.buffer.slice(result.audio.byteOffset, result.audio.byteOffset + result.audio.byteLength);
+
+    return {
+      audio:    ab as ArrayBuffer,
+      mimeType: result.mimeType,
+    };
+  });
+
   // ─────────────────────────────────────────────────────────────
   // Integration value helpers
   // ─────────────────────────────────────────────────────────────

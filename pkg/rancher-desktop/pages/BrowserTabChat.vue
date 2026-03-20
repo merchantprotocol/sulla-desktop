@@ -303,6 +303,11 @@ const displayMessages = computed(() => {
       return false;
     }
 
+    // Speak messages are handled by TTS playback, not displayed in chat
+    if (m.kind === 'speak') {
+      return false;
+    }
+
     // Silence assistant messages with no displayable content
     if (m.role === 'assistant' && !m.content?.trim() && !m.image && !m.toolCard && !m.subAgentActivity && !m.workflowNode && !m.channelMeta) {
       console.log('[BrowserTabChat] Silenced empty assistant message:', JSON.stringify(m));
@@ -325,12 +330,12 @@ const renderMarkdown = (markdown: string): string => {
   });
 };
 
-const send = () => {
+const send = (metadata?: Record<string, unknown>) => {
   if (isFirstChat.value) {
     isFirstChat.value = false;
     ipcRenderer.invoke('mark-first-chat-complete');
   }
-  chatController.send();
+  chatController.send(metadata);
 };
 const stop = () => chatController.stop();
 const continueRun = () => chatController.continueRun();
@@ -351,7 +356,7 @@ const handleVoiceRecorded = async(audio: Blob, mimeType: string) => {
     if (result?.text?.trim()) {
       query.value = result.text.trim();
       await nextTick();
-      send();
+      send({ inputSource: 'microphone' });
     }
   } catch (err: any) {
     console.error('[BrowserTabChat] Transcription failed:', err);
@@ -361,6 +366,47 @@ const handleVoiceRecorded = async(audio: Blob, mimeType: string) => {
     transcribing.value = false;
   }
 };
+
+// ─── TTS Playback ────────────────────────────────────────────
+// Watch for speak messages arriving in the message stream and play them via ElevenLabs TTS.
+const ttsQueue: string[] = [];
+let ttsPlaying = false;
+const processedSpeakIds = new Set<string>();
+
+async function playNextTTS(): Promise<void> {
+  if (ttsPlaying || ttsQueue.length === 0) return;
+  ttsPlaying = true;
+
+  const text = ttsQueue.shift()!;
+  try {
+    const result = await ipcRenderer.invoke('audio-speak', { text });
+    if (result?.audio) {
+      const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      await new Promise<void>((resolve) => {
+        audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.play().catch(() => resolve());
+      });
+    }
+  } catch (err) {
+    console.error('[BrowserTabChat] TTS playback failed:', err);
+  } finally {
+    ttsPlaying = false;
+    playNextTTS(); // Process next in queue
+  }
+}
+
+watch(messages, (msgs) => {
+  for (const m of msgs) {
+    if (m.kind === 'speak' && m.content?.trim() && !processedSpeakIds.has(m.id)) {
+      processedSpeakIds.add(m.id);
+      ttsQueue.push(m.content.trim());
+      playNextTTS();
+    }
+  }
+}, { deep: true });
 
 // Tool card helpers
 const expandedToolCards = ref<Set<string>>(new Set());
