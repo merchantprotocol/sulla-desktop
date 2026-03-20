@@ -32,7 +32,8 @@ export class TranscriptionService {
     }
 
     const ext = this.mimeToExtension(mimeType);
-    const blob = new Blob([audio], { type: mimeType });
+    const arrayBuffer = audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer;
+    const blob = new Blob([arrayBuffer], { type: mimeType });
 
     const formData = new FormData();
     formData.append('file', blob, `recording.${ ext }`);

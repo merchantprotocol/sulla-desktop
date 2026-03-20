@@ -8,7 +8,7 @@ import { Settings } from '@pkg/config/settings';
 import mainEvents from '@pkg/main/mainEvents';
 import paths from '@pkg/utils/paths';
 import Logging from '@pkg/utils/logging';
-import { openDockerDashboard, openLanguageModelSettings, openMain, openEditor } from '@pkg/window';
+import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openMain, openEditor } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -95,6 +95,11 @@ function getNeuralNetworkMenu(): MenuItem {
         label:       'Language Model Settings…',
         accelerator: 'CmdOrCtrl+L',
         click:       openLanguageModelSettings,
+      },
+      {
+        label:       'Audio Settings…',
+        accelerator: 'CmdOrCtrl+Shift+A',
+        click:       openAudioSettings,
       },
       {
         label: 'Preferences…',

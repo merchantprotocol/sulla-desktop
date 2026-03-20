@@ -234,12 +234,14 @@ aria-hidden="true"
             <button
               v-if="!queryValue.trim() && !graphRunning"
               type="button"
-              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-content text-page disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer"
-              aria-label="Voice"
+              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer transition-colors"
+              :class="isRecording ? 'bg-red-600 text-white animate-pulse' : 'bg-content text-page'"
+              :aria-label="isRecording ? 'Stop recording' : 'Voice'"
               :disabled="showOverlay"
-              @click="emit('primaryAction')"
+              @click="toggleRecording"
             >
               <svg
+                v-if="!isRecording"
                 xmlns="http://www.w3.org/2000/svg"
                 width="18"
                 height="18"
@@ -259,6 +261,24 @@ aria-hidden="true"
                   width="6"
                   height="13"
                   rx="3"
+                />
+              </svg>
+              <svg
+                v-else
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <rect
+                  x="7"
+                  y="7"
+                  width="10"
+                  height="10"
+                  rx="2"
+                  fill="currentColor"
                 />
               </svg>
             </button>
@@ -292,10 +312,89 @@ const emit = defineEmits<{
   send:                [];
   stop:                [];
   primaryAction:       [];
+  'voice-recorded':    [audio: Blob, mimeType: string];
 }>();
 
 const composerTextareaEl = ref<HTMLTextAreaElement | null>(null);
 const isComposerMultiline = ref(false);
+const isRecording = ref(false);
+
+let mediaRecorder: MediaRecorder | null = null;
+let audioChunks: Blob[] = [];
+let mediaStream: MediaStream | null = null;
+
+async function toggleRecording(): Promise<void> {
+  if (isRecording.value) {
+    stopRecording();
+  } else {
+    await startRecording();
+  }
+}
+
+async function startRecording(): Promise<void> {
+  try {
+    // Electron's custom protocol may not expose navigator.mediaDevices.
+    // Fall back to the legacy API or the Chromium global if needed.
+    const getMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices)
+      || ((constraints: MediaStreamConstraints) => new Promise<MediaStream>((resolve, reject) => {
+        const legacy = (navigator as any).getUserMedia
+          || (navigator as any).webkitGetUserMedia
+          || (navigator as any).mozGetUserMedia;
+        if (!legacy) {
+          reject(new Error('getUserMedia is not supported in this environment'));
+
+          return;
+        }
+        legacy.call(navigator, constraints, resolve, reject);
+      }));
+
+    mediaStream = await getMedia({ audio: true });
+    audioChunks = [];
+
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm';
+
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+
+    mediaRecorder.ondataavailable = (event: BlobEvent) => {
+      if (event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+
+    mediaRecorder.onstop = () => {
+      const audioBlob = new Blob(audioChunks, { type: mimeType });
+      cleanupStream();
+
+      if (audioBlob.size > 0) {
+        emit('voice-recorded', audioBlob, mimeType);
+      }
+    };
+
+    mediaRecorder.start();
+    isRecording.value = true;
+  } catch (err) {
+    console.error('[AgentComposer] Microphone access denied or unavailable:', err);
+    cleanupStream();
+  }
+}
+
+function stopRecording(): void {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  isRecording.value = false;
+}
+
+function cleanupStream(): void {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+  mediaRecorder = null;
+  audioChunks = [];
+}
 
 let composerMirrorEl: HTMLDivElement | null = null;
 let composerMeasureCanvas: HTMLCanvasElement | null = null;
@@ -401,5 +500,7 @@ onUnmounted(() => {
     composerMirrorEl = null;
   }
   composerMeasureCanvas = null;
+  stopRecording();
+  cleanupStream();
 });
 </script>

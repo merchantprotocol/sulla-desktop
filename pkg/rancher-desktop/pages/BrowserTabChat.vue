@@ -127,6 +127,7 @@
                 @send="send"
                 @stop="stop"
                 @primary-action="handlePrimaryAction"
+                @voice-recorded="handleVoiceRecorded"
               />
             </div>
           </div>
@@ -146,6 +147,7 @@
           @send="send"
           @stop="stop"
           @primary-action="handlePrimaryAction"
+          @voice-recorded="handleVoiceRecorded"
           @pick="(mode: string) => emit('set-mode', mode as BrowserTabMode)"
           @start-onboarding="startOnboarding"
         />
@@ -334,6 +336,30 @@ const stop = () => chatController.stop();
 const continueRun = () => chatController.continueRun();
 const handlePrimaryAction = () => {
   if (query.value.trim()) send();
+};
+
+const transcribing = ref(false);
+
+const handleVoiceRecorded = async(audio: Blob, mimeType: string) => {
+  if (transcribing.value) return;
+  transcribing.value = true;
+
+  try {
+    const arrayBuffer = await audio.arrayBuffer();
+    const result = await ipcRenderer.invoke('audio-transcribe', { audio: arrayBuffer, mimeType });
+
+    if (result?.text?.trim()) {
+      query.value = result.text.trim();
+      await nextTick();
+      send();
+    }
+  } catch (err: any) {
+    console.error('[BrowserTabChat] Transcription failed:', err);
+    // Surface error as a user-visible message in the chat
+    query.value = `[Transcription error: ${ err?.message || 'Unknown error' }]`;
+  } finally {
+    transcribing.value = false;
+  }
 };
 
 // Tool card helpers
