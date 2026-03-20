@@ -31,6 +31,7 @@
         @primary-action="$emit('primary-action')"
         @voice-interim="(text: string) => $emit('voice-interim', text)"
         @voice-transcribed="(text: string) => $emit('voice-transcribed', text)"
+        @voice-error="(msg: string) => $emit('voice-error', msg)"
       />
     </div>
 
@@ -90,6 +91,7 @@ const emit = defineEmits<{
   'primary-action': [];
   'voice-interim': [text: string];
   'voice-transcribed': [text: string];
+  'voice-error': [message: string];
   pick: [mode: string];
   'start-onboarding': [];
 }>();

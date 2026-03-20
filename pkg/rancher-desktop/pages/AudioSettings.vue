@@ -52,6 +52,37 @@
             </p>
           </div>
 
+          <!-- Audio Input Device -->
+          <div class="setting-section">
+            <h3>Microphone</h3>
+            <div class="voice-select-row">
+              <select
+                v-model="audioInputDeviceId"
+                class="setting-select"
+                :disabled="loadingDevices"
+                @change="saveSettings"
+              >
+                <option value="">
+                  System Default
+                </option>
+                <option
+                  v-for="device in audioInputDevices"
+                  :key="device.value"
+                  :value="device.value"
+                >
+                  {{ device.label }}
+                </option>
+              </select>
+              <button
+                class="refresh-btn"
+                :disabled="loadingDevices"
+                @click="fetchAudioDevices"
+              >
+                {{ loadingDevices ? 'Loading...' : 'Refresh' }}
+              </button>
+            </div>
+          </div>
+
           <!-- Current Settings Summary -->
           <div class="setting-section">
             <h3>Active Configuration</h3>
@@ -182,6 +213,87 @@
               Configure your ElevenLabs API key in Integrations to load available voices.
             </p>
           </div>
+
+          <!-- Voice Preview -->
+          <div class="setting-section">
+            <h3>Preview</h3>
+            <button
+              class="refresh-btn"
+              :disabled="previewPlaying || !ttsVoice"
+              @click="previewVoice"
+            >
+              {{ previewPlaying ? 'Playing...' : 'Test Voice' }}
+            </button>
+            <p class="description">
+              Plays a short sample with the selected voice.
+            </p>
+          </div>
+        </div>
+
+        <!-- Sensitivity Tab -->
+        <div
+          v-if="currentNav === 'sensitivity'"
+          class="tab-content"
+        >
+          <h2>Voice Sensitivity</h2>
+          <p class="description">
+            Tune how quickly voice input detects silence and submits your speech.
+          </p>
+
+          <div class="setting-section">
+            <h3>Silence Duration: {{ vadSilenceDuration }}ms</h3>
+            <input
+              v-model.number="vadSilenceDuration"
+              type="range"
+              min="300"
+              max="3000"
+              step="100"
+              class="setting-range"
+              @change="saveSettings"
+            >
+            <p class="description">
+              How long you must pause before speech is submitted. Lower = faster response, higher = more time to pause between thoughts.
+            </p>
+          </div>
+
+          <div class="setting-section">
+            <h3>Silence Threshold: {{ vadSilenceThreshold }}</h3>
+            <input
+              v-model.number="vadSilenceThreshold"
+              type="range"
+              min="3"
+              max="30"
+              step="1"
+              class="setting-range"
+              @change="saveSettings"
+            >
+            <p class="description">
+              Audio level below which counts as silence. Lower = more sensitive (picks up quiet speech), higher = needs louder voice.
+            </p>
+          </div>
+
+          <div class="setting-section">
+            <h3>STT Language</h3>
+            <select
+              v-model="sttLanguage"
+              class="setting-select"
+              @change="saveSettings"
+            >
+              <option value="en-US">English (US)</option>
+              <option value="en-GB">English (UK)</option>
+              <option value="es-ES">Spanish</option>
+              <option value="fr-FR">French</option>
+              <option value="de-DE">German</option>
+              <option value="it-IT">Italian</option>
+              <option value="pt-BR">Portuguese (Brazil)</option>
+              <option value="ja-JP">Japanese</option>
+              <option value="ko-KR">Korean</option>
+              <option value="zh-CN">Chinese (Simplified)</option>
+            </select>
+            <p class="description">
+              Language for browser transcription mode. ElevenLabs auto-detects language.
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -200,6 +312,7 @@ const navItems = [
   { id: 'overview', name: 'Overview' },
   { id: 'transcription', name: 'Transcription' },
   { id: 'voice', name: 'Voice' },
+  { id: 'sensitivity', name: 'Sensitivity' },
 ];
 
 const currentNav = ref('overview');
@@ -213,6 +326,21 @@ const ttsProvider = ref('elevenlabs');
 const ttsVoice = ref('');
 const ttsVoiceName = ref('');
 
+// VAD sensitivity
+const vadSilenceThreshold = ref(12);
+const vadSilenceDuration = ref(800);
+
+// Voice preview
+const previewPlaying = ref(false);
+
+// Audio devices
+const audioInputDeviceId = ref('');
+const audioInputDevices = ref<{ value: string; label: string }[]>([]);
+const loadingDevices = ref(false);
+
+// STT language
+const sttLanguage = ref('en-US');
+
 // Voices
 const voices = ref<{ value: string; label: string; description?: string }[]>([]);
 const loadingVoices = ref(false);
@@ -225,6 +353,10 @@ async function loadSettings(): Promise<void> {
     ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'elevenlabs');
     ttsVoice.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoice', '');
     ttsVoiceName.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoiceName', '');
+    vadSilenceThreshold.value = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceThreshold', 12);
+    vadSilenceDuration.value = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
+    sttLanguage.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
+    audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
   } catch (err) {
     console.error('[AudioSettings] Failed to load settings:', err);
   }
@@ -237,6 +369,10 @@ async function saveSettings(): Promise<void> {
     await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionModel', transcriptionModel.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTtsProvider', ttsProvider.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTtsVoice', ttsVoice.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioVadSilenceThreshold', vadSilenceThreshold.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioVadSilenceDuration', vadSilenceDuration.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioSttLanguage', sttLanguage.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioInputDeviceId', audioInputDeviceId.value);
 
     // Store the display name of the selected voice
     const selected = voices.value.find(v => v.value === ttsVoice.value);
@@ -296,6 +432,49 @@ async function fetchVoices(): Promise<void> {
   }
 }
 
+async function fetchAudioDevices(): Promise<void> {
+  if (loadingDevices.value) return;
+  loadingDevices.value = true;
+  try {
+    // Must request mic permission first to get device labels
+    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    audioInputDevices.value = devices
+      .filter(d => d.kind === 'audioinput')
+      .map((d, i) => ({
+        value: d.deviceId,
+        label: d.label || `Microphone ${ i + 1 }`,
+      }));
+  } catch (err) {
+    console.warn('[AudioSettings] Failed to enumerate audio devices:', err);
+    audioInputDevices.value = [];
+  } finally {
+    loadingDevices.value = false;
+  }
+}
+
+async function previewVoice(): Promise<void> {
+  if (previewPlaying.value) return;
+  previewPlaying.value = true;
+  try {
+    const result = await ipcRenderer.invoke('audio-speak', { text: 'Hello, this is how I sound.' });
+    if (result?.audio) {
+      const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      await new Promise<void>((resolve) => {
+        audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.play().catch(() => resolve());
+      });
+    }
+  } catch (err) {
+    console.warn('[AudioSettings] Voice preview failed:', err);
+  } finally {
+    previewPlaying.value = false;
+  }
+}
+
 function getStaticVoices(): { value: string; label: string; description?: string }[] {
   // Only include voices with verified ElevenLabs IDs.
   // Full list loads dynamically from the API when an API key is configured.
@@ -308,6 +487,7 @@ onMounted(async() => {
   await loadSettings();
   await checkApiKey();
   await fetchVoices();
+  await fetchAudioDevices();
 });
 </script>
 
@@ -430,6 +610,13 @@ onMounted(async() => {
     opacity: 0.6;
     cursor: not-allowed;
   }
+}
+
+.setting-range {
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 0.5rem;
+  accent-color: var(--accent-primary, var(--primary, #3b82f6));
 }
 
 .voice-select-row {

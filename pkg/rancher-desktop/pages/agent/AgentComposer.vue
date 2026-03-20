@@ -231,17 +231,48 @@ aria-hidden="true"
               </svg>
             </button>
 
+            <!-- Voice mode: indicator + stop button pinned together -->
+            <div
+              v-if="isRecording && !queryValue.trim() && !graphRunning"
+              class="mb-0.5 ml-auto flex items-center gap-2"
+            >
+              <div class="flex items-center gap-1.5 rounded-full bg-red-600/10 px-2.5 py-1 text-xs font-medium text-red-500">
+                <span class="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                <!-- Audio level meter -->
+                <div class="flex items-end gap-px h-3">
+                  <div
+                    v-for="i in 5"
+                    :key="i"
+                    class="w-0.5 rounded-full transition-all duration-75"
+                    :class="audioLevel >= i * 20 ? 'bg-red-500' : 'bg-red-500/20'"
+                    :style="{ height: `${ 4 + i * 2 }px` }"
+                  />
+                </div>
+                <span>{{ recordingDuration }}</span>
+              </div>
+              <button
+                type="button"
+                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 text-white animate-pulse hover:cursor-pointer transition-colors"
+                aria-label="Stop recording (Ctrl+Shift+V)"
+                title="Stop recording (Ctrl+Shift+V)"
+                @click="toggleRecording"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+                </svg>
+              </button>
+            </div>
+
             <button
-              v-if="!queryValue.trim() && !graphRunning"
+              v-if="!isRecording && !queryValue.trim() && !graphRunning"
               type="button"
-              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer transition-colors"
-              :class="isRecording ? 'bg-red-600 text-white animate-pulse' : 'bg-content text-page'"
-              :aria-label="isRecording ? 'Stop recording' : 'Voice'"
+              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-content text-page disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer transition-colors"
+              aria-label="Voice (Ctrl+Shift+V)"
+              title="Start voice mode (Ctrl+Shift+V)"
               :disabled="showOverlay"
               @click="toggleRecording"
             >
               <svg
-                v-if="!isRecording"
                 xmlns="http://www.w3.org/2000/svg"
                 width="18"
                 height="18"
@@ -261,24 +292,6 @@ aria-hidden="true"
                   width="6"
                   height="13"
                   rx="3"
-                />
-              </svg>
-              <svg
-                v-else
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
-              >
-                <rect
-                  x="7"
-                  y="7"
-                  width="10"
-                  height="10"
-                  rx="2"
-                  fill="currentColor"
                 />
               </svg>
             </button>
@@ -317,11 +330,35 @@ const emit = defineEmits<{
   primaryAction:       [];
   'voice-interim':     [text: string];
   'voice-transcribed': [text: string];
+  'voice-error':       [message: string];
 }>();
 
 const composerTextareaEl = ref<HTMLTextAreaElement | null>(null);
 const isComposerMultiline = ref(false);
 const isRecording = ref(false);
+const audioLevel = ref(0); // 0-100, used for level meter visualization
+const recordingDuration = ref('0:00');
+let recordingStartTime = 0;
+let recordingTimer: ReturnType<typeof setInterval> | null = null;
+
+function startRecordingTimer(): void {
+  recordingStartTime = Date.now();
+  recordingDuration.value = '0:00';
+  recordingTimer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    recordingDuration.value = `${ mins }:${ secs.toString().padStart(2, '0') }`;
+  }, 1000);
+}
+
+function stopRecordingTimer(): void {
+  if (recordingTimer) {
+    clearInterval(recordingTimer);
+    recordingTimer = null;
+  }
+  recordingDuration.value = '0:00';
+}
 
 // ─── Voice Mode ──────────────────────────────────────────────
 // Two transcription modes:
@@ -335,6 +372,7 @@ let mediaRecorder: MediaRecorder | null = null;
 let audioChunks: Blob[] = [];
 let activeMimeType = 'audio/webm';
 let transcriptionMode = 'browser'; // loaded from settings on first use
+let sttLanguage = 'en-US';         // loaded from settings on first use
 
 // SpeechRecognition (browser mode)
 let recognition: any = null;
@@ -346,9 +384,50 @@ let voiceStopping = false;           // guard: prevents onend/onerror from resta
 let audioContext: AudioContext | null = null;
 let analyser: AnalyserNode | null = null;
 let vadInterval: ReturnType<typeof setInterval> | null = null;
-const VAD_SILENCE_THRESHOLD = 12;
-const VAD_SILENCE_DURATION = 800;
+let VAD_SILENCE_THRESHOLD = 12;
+let VAD_SILENCE_DURATION = 800;
 const VAD_INITIAL_GRACE = 400;
+let audioInputDeviceId = '';         // loaded from settings; '' = system default
+
+// Audio level monitor (independent of VAD, runs in both browser and ElevenLabs modes)
+let levelContext: AudioContext | null = null;
+let levelAnalyser: AnalyserNode | null = null;
+let levelInterval: ReturnType<typeof setInterval> | null = null;
+
+function startAudioLevelMonitor(): void {
+  if (!mediaStream) return;
+  try {
+    levelContext = new AudioContext();
+    const src = levelContext.createMediaStreamSource(mediaStream);
+    levelAnalyser = levelContext.createAnalyser();
+    levelAnalyser.fftSize = 256;
+    src.connect(levelAnalyser);
+    const buf = new Uint8Array(levelAnalyser.fftSize);
+    levelInterval = setInterval(() => {
+      if (!levelAnalyser || !isRecording.value) return;
+      levelAnalyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const s = (buf[i] - 128) / 128;
+        sum += s * s;
+      }
+      audioLevel.value = Math.min(100, Math.round(Math.sqrt(sum / buf.length) * 300));
+    }, 50);
+  } catch { /* ignore */ }
+}
+
+function stopAudioLevelMonitor(): void {
+  if (levelInterval) {
+    clearInterval(levelInterval);
+    levelInterval = null;
+  }
+  if (levelContext) {
+    levelContext.close().catch(() => {});
+    levelContext = null;
+  }
+  levelAnalyser = null;
+  audioLevel.value = 0;
+}
 let silenceStart: number | null = null;
 let segmentStart = 0;
 let hasSpeechInSegment = false;
@@ -363,8 +442,16 @@ async function toggleRecording(): Promise<void> {
 
 async function startVoiceMode(): Promise<void> {
   try {
-    // Load transcription mode from settings
+    // Load transcription mode and VAD settings
     transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
+    VAD_SILENCE_THRESHOLD = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceThreshold', 12);
+    VAD_SILENCE_DURATION = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
+    sttLanguage = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
+    audioInputDeviceId = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
+
+    const audioConstraints: boolean | MediaTrackConstraints = audioInputDeviceId
+      ? { deviceId: { exact: audioInputDeviceId } }
+      : true;
 
     const getMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices)
       || ((constraints: MediaStreamConstraints) => new Promise<MediaStream>((resolve, reject) => {
@@ -379,12 +466,14 @@ async function startVoiceMode(): Promise<void> {
         legacy.call(navigator, constraints, resolve, reject);
       }));
 
-    mediaStream = await getMedia({ audio: true });
+    mediaStream = await getMedia({ audio: audioConstraints });
     activeMimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : 'audio/webm';
 
     isRecording.value = true;
+    startRecordingTimer();
+    startAudioLevelMonitor();
     voiceStopping = false;
 
     if (transcriptionMode === 'browser') {
@@ -396,6 +485,7 @@ async function startVoiceMode(): Promise<void> {
     }
   } catch (err) {
     console.error('[AgentComposer] Microphone access denied or unavailable:', err);
+    emit('voice-error', 'Microphone access denied or unavailable');
     cleanupStream();
   }
 }
@@ -416,7 +506,7 @@ function startBrowserRecognition(): void {
   recognition = new SpeechRecognition();
   recognition.continuous = true;
   recognition.interimResults = true;
-  recognition.lang = 'en-US';
+  recognition.lang = sttLanguage;
   recognitionText = '';
   recognitionInterim = '';
 
@@ -543,6 +633,7 @@ async function transcribeAndEmit(audioBlob: Blob, mimeType: string): Promise<voi
     }
   } catch (err) {
     console.error('[AgentComposer] ElevenLabs transcription failed:', err);
+    emit('voice-error', 'Transcription failed — check your ElevenLabs API key');
   }
 
   // Start a new segment if still in voice mode
@@ -582,6 +673,9 @@ function startVAD(): void {
       }
       const rms = Math.sqrt(sum / dataArray.length) * 100;
 
+      // Update audio level for visualization (clamp 0-100)
+      audioLevel.value = Math.min(100, Math.round(rms * 3));
+
       const now = Date.now();
       const elapsed = now - segmentStart;
 
@@ -607,6 +701,8 @@ async function endVoiceMode(): Promise<void> {
   // Set the stopping flag FIRST so onend/onerror handlers won't restart
   voiceStopping = true;
   isRecording.value = false;
+  stopRecordingTimer();
+  stopAudioLevelMonitor();
 
   // Browser mode: stop recognition, submit any remaining text
   if (recognition) {
@@ -752,9 +848,18 @@ watch(() => props.modelValue, async() => {
   updateComposerLayout();
 });
 
+// Keyboard shortcut for voice mode toggle (Ctrl+Shift+V / Cmd+Shift+V)
+function handleVoiceShortcut(e: KeyboardEvent): void {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
+    e.preventDefault();
+    toggleRecording();
+  }
+}
+
 onMounted(async() => {
   await nextTick();
   updateComposerLayout();
+  window.addEventListener('keydown', handleVoiceShortcut);
 
   // Auto-start voice mode if requested (e.g. when transitioning from intro to chat thread)
   if (props.autoStartVoice && !isRecording.value) {
@@ -763,11 +868,14 @@ onMounted(async() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleVoiceShortcut);
   if (composerMirrorEl) {
     composerMirrorEl.remove();
     composerMirrorEl = null;
   }
   composerMeasureCanvas = null;
+  stopRecordingTimer();
+  stopAudioLevelMonitor();
   stopRecording();
   stopVAD();
   cleanupStream();

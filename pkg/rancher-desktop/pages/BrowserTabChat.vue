@@ -137,6 +137,7 @@
                 @primary-action="handlePrimaryAction"
                 @voice-interim="handleVoiceInterim"
                 @voice-transcribed="handleVoiceTranscribed"
+                @voice-error="showVoiceToast"
               />
             </div>
           </div>
@@ -158,11 +159,27 @@
           @primary-action="handlePrimaryAction"
           @voice-interim="handleVoiceInterim"
           @voice-transcribed="handleVoiceTranscribed"
+          @voice-error="showVoiceToast"
           @pick="(mode: string) => emit('set-mode', mode as BrowserTabMode)"
           @start-onboarding="startOnboarding"
         />
       </div>
     </div>
+    <!-- Voice error toast -->
+    <Transition name="toast-fade">
+      <div
+        v-if="voiceToast"
+        class="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        {{ voiceToast }}
+        <button type="button" class="ml-2 opacity-70 hover:opacity-100" @click="voiceToast = ''">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+        </button>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -355,6 +372,16 @@ const continueRun = () => chatController.continueRun();
 const handlePrimaryAction = () => {
   if (query.value.trim()) send();
 };
+
+// ─── Voice error toast ───────────────────────────────────────
+const voiceToast = ref('');
+let voiceToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showVoiceToast(message: string): void {
+  voiceToast.value = message;
+  if (voiceToastTimer) clearTimeout(voiceToastTimer);
+  voiceToastTimer = setTimeout(() => { voiceToast.value = ''; }, 5000);
+}
 
 // ─── Live Voice Transcription ────────────────────────────────
 // voice-interim: shows a live "listening" bubble in chat with the partial transcription
@@ -583,6 +610,17 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ── Toast fade transition ── */
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.3s, transform 0.3s;
+}
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+}
+
 /* ── Thinking indicator ── */
 .activity-dot {
   width: 6px;
