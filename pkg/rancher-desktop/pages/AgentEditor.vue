@@ -1291,7 +1291,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, watch, type Component } from 'vue';
+import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, watch, nextTick, type Component } from 'vue';
 import { ipcRenderer } from 'electron';
 
 import { useTheme } from '@pkg/composables/useTheme';
@@ -2304,6 +2304,13 @@ export default defineComponent({
 
       // Clear previous execution state from nodes
       workflowEditorRef.value?.clearAllExecution();
+
+      // Auto-send the first message to immediately kick off the workflow
+      const workflowName = activeWorkflowData.value.name || 'this workflow';
+
+      editorChat.query.value = `Let's run ${ workflowName }`;
+      await nextTick();
+      editorChat.send();
     }
 
     async function onWorkflowActivated(workflowId: string) {

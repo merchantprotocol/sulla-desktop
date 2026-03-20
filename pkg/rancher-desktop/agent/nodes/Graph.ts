@@ -12,6 +12,9 @@ import { InputHandlerNode } from './InputHandlerNode';
 import { AgentNode } from './AgentNode';
 import { HeartbeatNode, type HeartbeatThreadState } from './HeartbeatNode';
 import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
+import * as fsSync from 'fs';
+import * as pathUtil from 'path';
+import * as osUtil from 'os';
 
 import {
   processNextStep,
@@ -20,6 +23,24 @@ import {
   createPlaybookState,
   type PlaybookStepResult,
 } from '../workflow/WorkflowPlaybook';
+
+// ============================================================================
+// PLAYBOOK DEBUG LOGGER
+// ============================================================================
+// Writes structured debug entries to ~/sulla/logs/playbook-debug.log
+// so we can trace exactly what the playbook walker does at each step.
+
+const PLAYBOOK_LOG_PATH = pathUtil.join(osUtil.homedir(), 'sulla', 'logs', 'playbook-debug.log');
+
+function playbookLog(tag: string, data: Record<string, unknown> = {}): void {
+  try {
+    const ts = new Date().toISOString();
+    const line = JSON.stringify({ ts, tag, ...data });
+    fsSync.appendFileSync(PLAYBOOK_LOG_PATH, line + '\n');
+  } catch {
+    // swallow — logging must never break execution
+  }
+}
 
 // ============================================================================
 // CONFIGURATION CONSTANTS
@@ -469,6 +490,21 @@ export class Graph<TState = BaseThreadState> {
     // can route orchestrator responses as workflow events instead of chat messages.
     const prevReentryFlag = (state as any).metadata._isPlaybookReentry;
     (state as any).metadata._isPlaybookReentry = isReentry;
+
+    // On playbook reentry, reset cycle flags so the agent loop can run
+    // multiple turns (e.g. file_search → exec → final answer) instead of
+    // exiting immediately because cycleComplete was set from a prior cycle.
+    if (isReentry) {
+      const prevCycle = (state as any).metadata.cycleComplete;
+      const prevWaiting = (state as any).metadata.waitingForUser;
+      (state as any).metadata.cycleComplete = false;
+      (state as any).metadata.waitingForUser = false;
+      playbookLog('execute_reentry_reset', {
+        prevCycleComplete: prevCycle, prevWaitingForUser: prevWaiting,
+        currentNodeId: (state as any).metadata.currentNodeId,
+        iterations: (state as any).metadata.iterations,
+      });
+    }
     const convId = (state as any).metadata.conversationId;
     if (convId && !isReentry) {
       const convLogger = getConversationLogger();
@@ -507,10 +543,12 @@ export class Graph<TState = BaseThreadState> {
         throwIfAborted(state, 'Graph execution aborted');
 
         if ((state as any).metadata.cycleComplete) {
+          playbookLog('execute_loop_break', { reason: 'cycleComplete', iteration: (state as any).metadata.iterations, isReentry, currentNodeId: (state as any).metadata.currentNodeId });
           break;
         }
 
         if ((state as any).metadata.waitingForUser && (state as any).metadata.currentNodeId === 'input_handler') {
+          playbookLog('execute_loop_break', { reason: 'waitingForUser', iteration: (state as any).metadata.iterations, isReentry, currentNodeId: (state as any).metadata.currentNodeId });
           break;
         }
 
@@ -1029,15 +1067,30 @@ export class Graph<TState = BaseThreadState> {
 
     // Process steps until we need the agent or workflow completes
     console.log(`[Graph:Playbook] Entering walker loop`);
+    playbookLog('walker_loop_enter', {
+      playbookStatus: meta.activeWorkflow?.status,
+      workflowSlug: meta.activeWorkflow?.definition?.id,
+      cycleComplete: (state as any).metadata.cycleComplete,
+      waitingForUser: (state as any).metadata.waitingForUser,
+    });
     const continueProcessing = true;
     try {
     while (continueProcessing) {
       const currentPlaybook: WorkflowPlaybookState = meta.activeWorkflow;
-      if (currentPlaybook?.status !== 'running') break;
+      if (currentPlaybook?.status !== 'running') {
+        playbookLog('walker_loop_break', { reason: 'playbook_not_running', status: currentPlaybook?.status });
+        break;
+      }
 
       const step: PlaybookStepResult = processNextStep(currentPlaybook);
       meta.activeWorkflow = step.updatedPlaybook;
 
+      playbookLog('walker_step', {
+        action: step.action,
+        nodeId: (step as any).nodeId || 'n/a',
+        playbookStatus: step.updatedPlaybook?.status,
+        prompt: (step as any).prompt ? String((step as any).prompt).slice(0, 200) : undefined,
+      });
       console.log(`[Graph:Playbook] Step action=${ step.action }, nodeId=${ (step as any).nodeId || 'n/a' }, playbookStatus=${ step.updatedPlaybook?.status }`);
 
       switch (step.action) {
@@ -1046,6 +1099,16 @@ export class Graph<TState = BaseThreadState> {
         const opNodeId = step.nodeId;
         const opLabel = this.getPlaybookNodeLabel(currentPlaybook, opNodeId);
 
+        playbookLog('orchestrator_prompt_start', {
+          nodeId: opNodeId, label: opLabel,
+          promptLength: step.prompt?.length,
+          promptPreview: String(step.prompt).slice(0, 200),
+          cycleComplete: (state as any).metadata.cycleComplete,
+          waitingForUser: (state as any).metadata.waitingForUser,
+          iterations: (state as any).metadata.iterations,
+          messageCount: (state as any).messages?.length,
+        });
+
         this.emitEdgeActivations(state, currentPlaybook.definition, opNodeId, 'incoming');
         this.emitPlaybookEvent(state, 'node_started', { nodeId: opNodeId, nodeLabel: opLabel, prompt: step.prompt });
 
@@ -1053,9 +1116,70 @@ export class Graph<TState = BaseThreadState> {
         state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
         // Capture orchestrator's response as the node output
-        const opMsgs = (state as any).messages;
-        const opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
-        const opResult = opLastAssistant?.content ?? '';
+        let opMsgs = (state as any).messages;
+        let opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
+        let opResult: string | any = opLastAssistant?.content ?? '';
+
+        // Log raw response shape for debugging
+        playbookLog('orchestrator_prompt_raw_response', {
+          nodeId: opNodeId, label: opLabel,
+          resultType: typeof opResult,
+          isArray: Array.isArray(opResult),
+          contentBlocks: Array.isArray(opResult) ? opResult.map((b: any) => ({ type: b.type, textLen: b.type === 'text' ? b.text?.length : undefined })) : undefined,
+          stringLen: typeof opResult === 'string' ? opResult.length : undefined,
+          cycleComplete: (state as any).metadata.cycleComplete,
+          iterations: (state as any).metadata.iterations,
+          messageCount: (state as any).messages?.length,
+        });
+
+        // Validate: if the response is only tool_use blocks or empty, the
+        // orchestrator exited without producing the text the node requires.
+        // Wake it back up with an emphatic prompt demanding the output.
+        const isToolUseOnly = Array.isArray(opResult)
+          && opResult.length > 0
+          && opResult.every((block: any) => block.type === 'tool_use');
+        const opText = Array.isArray(opResult)
+          ? opResult.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
+          : String(opResult).trim();
+
+        if (isToolUseOnly || opText.length < 10) {
+          playbookLog('orchestrator_prompt_retry', {
+            nodeId: opNodeId, label: opLabel,
+            reason: isToolUseOnly ? 'tool_use_only' : 'text_too_short',
+            textLength: opText.length,
+            textPreview: opText.slice(0, 100),
+          });
+          console.warn(`[Graph:Playbook] Orchestrator prompt "${ opLabel }" exited without valid text output — re-prompting`);
+          this.injectWorkflowMessage(state,
+            `[Workflow: Missing Required Output — "${ opLabel }"]\n\n` +
+            `You ended your turn without providing the text output that this workflow node requires. ` +
+            `The downstream nodes cannot proceed without it.\n\n` +
+            `Original instructions:\n${ step.prompt }\n\n` +
+            `You MUST produce a substantive text response now. This is the output that will be ` +
+            `passed to the next step in the workflow. Do not end your turn until you have provided it.`);
+          state = await this.execute(state, this.entryPoint || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+          // Re-capture after retry
+          opMsgs = (state as any).messages;
+          opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
+          opResult = opLastAssistant?.content ?? '';
+
+          playbookLog('orchestrator_prompt_retry_result', {
+            nodeId: opNodeId, label: opLabel,
+            resultType: typeof opResult,
+            isArray: Array.isArray(opResult),
+            textLen: Array.isArray(opResult)
+              ? opResult.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('').length
+              : String(opResult).length,
+          });
+        }
+
+        playbookLog('orchestrator_prompt_complete', {
+          nodeId: opNodeId, label: opLabel,
+          outputType: typeof opResult,
+          outputLength: typeof opResult === 'string' ? opResult.length : JSON.stringify(opResult).length,
+          outputPreview: (typeof opResult === 'string' ? opResult : JSON.stringify(opResult)).slice(0, 300),
+        });
 
         const opCompleted = completeSubAgent(meta.activeWorkflow, opNodeId, opResult);
         meta.activeWorkflow = opCompleted.updatedPlaybook;
@@ -1073,6 +1197,11 @@ export class Graph<TState = BaseThreadState> {
       }
 
       case 'prompt_agent': {
+        playbookLog('prompt_agent_start', {
+          nodeId: step.updatedPlaybook.pendingDecision?.nodeId,
+          promptLength: step.prompt?.length,
+          promptPreview: String(step.prompt).slice(0, 200),
+        });
         // Inject the prompt as a user message and re-enter agent loop
         const decisionNodeId = step.updatedPlaybook.pendingDecision?.nodeId;
         if (decisionNodeId) {
@@ -1124,6 +1253,12 @@ export class Graph<TState = BaseThreadState> {
       case 'spawn_sub_agent': {
         const subNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
         const isIntegrationCall = step.agentId === '__integration_call__';
+        playbookLog('spawn_sub_agent', {
+          nodeId: step.nodeId, label: subNodeLabel,
+          agentId: step.agentId, isIntegrationCall,
+          promptLength: step.prompt?.length,
+          promptPreview: String(step.prompt).slice(0, 200),
+        });
 
         this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subNodeLabel, prompt: step.prompt });
@@ -1563,6 +1698,11 @@ export class Graph<TState = BaseThreadState> {
 
       case 'spawn_sub_workflow': {
         const subWfLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+        playbookLog('spawn_sub_workflow', {
+          nodeId: step.nodeId, label: subWfLabel,
+          workflowId: step.workflowId, agentId: step.agentId,
+          payloadPreview: step.payload ? String(step.payload).slice(0, 200) : undefined,
+        });
         this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
         this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subWfLabel });
 
@@ -1777,6 +1917,11 @@ export class Graph<TState = BaseThreadState> {
       }
 
       case 'workflow_completed': {
+        playbookLog('workflow_completed', {
+          workflowId: step.updatedPlaybook?.definition?.id,
+          completedNodes: step.updatedPlaybook?.completedNodeIds,
+          nodeOutputKeys: Object.keys(step.updatedPlaybook?.nodeOutputs ?? {}),
+        });
         // Guard: if only triggers completed, something is wrong with upstream resolution
         const onlyTriggersCompleted = Object.values(step.updatedPlaybook.nodeOutputs ?? {})
           .every((o: PlaybookNodeOutput) => o.category === 'trigger');
@@ -1818,6 +1963,10 @@ export class Graph<TState = BaseThreadState> {
       }
 
       case 'workflow_failed': {
+        playbookLog('workflow_failed', {
+          workflowId: step.updatedPlaybook?.definition?.id,
+          error: step.error,
+        });
         // If a sub-workflow fails, propagate failure to the parent
         if (meta.workflowStack?.length > 0) {
           const parent = meta.workflowStack.pop();
@@ -2650,7 +2799,12 @@ export function createAgentGraph(): Graph<AgentGraphState> {
   graph.addConditionalEdge('agent', state => {
     // If a workflow has been activated, stop the agent loop immediately.
     // The workflow playbook will take over orchestration.
-    if ((state.metadata as any).activeWorkflow?.status === 'running') {
+    // BUT: during a playbook reentry (_isPlaybookReentry), the workflow is
+    // already running and we're executing on behalf of the walker. In that
+    // case, DON'T bail — let the agent finish its multi-turn tool chain
+    // (e.g. file_search → exec → text answer) before returning control.
+    const isPlaybookReentry = !!(state.metadata as any)._isPlaybookReentry;
+    if ((state.metadata as any).activeWorkflow?.status === 'running' && !isPlaybookReentry) {
       console.log('[AgentGraph] Workflow activated — pausing agent for workflow orchestration');
       return 'end';
     }

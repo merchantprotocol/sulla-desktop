@@ -187,6 +187,17 @@ export function initSullaWorkflowEvents(): void {
       workflow.createdAt = workflow.updatedAt;
     }
 
+    // Strip runtime execution state from nodes before persisting —
+    // execution state belongs in PostgreSQL (workflow_checkpoints table),
+    // not in the YAML definition file. Writing it here corrupts config edits.
+    if (Array.isArray(workflow.nodes)) {
+      for (const node of workflow.nodes) {
+        if (node.data?.execution) {
+          delete node.data.execution;
+        }
+      }
+    }
+
     // Find existing file to determine which subfolder it's in
     const existing = findWorkflowFileInSubfolders(workflow.id);
     const targetDir = existing ? path.dirname(existing.filePath) : getSubfolderDirs().draft;

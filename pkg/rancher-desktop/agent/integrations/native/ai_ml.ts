@@ -60,6 +60,27 @@ export const nativeAiMlIntegrations: Record<string, Integration> = {
     version:     '1.0.0',
     lastUpdated: '2026-02-28',
     developer:   'ElevenLabs',
+    formGuide:   'Paste your ElevenLabs API key to enable speech-to-text transcription and text-to-speech voices.',
+    properties:  [
+      {
+        key:         'api_key',
+        title:       'ElevenLabs API Key',
+        hint:        'Generate this in your ElevenLabs dashboard under Profile → API Keys.',
+        type:        'password',
+        required:    true,
+        placeholder: 'sk_...',
+      },
+      {
+        key:             'voice',
+        title:           'Voice',
+        hint:            'Select a voice for text-to-speech output.',
+        type:            'select',
+        required:        false,
+        placeholder:     'Select a voice...',
+        selectBoxId:     'elevenlabs_voices',
+        selectDependsOn: ['api_key'],
+      },
+    ],
   },
   pinecone: {
     id:          'pinecone',

@@ -157,9 +157,15 @@ export async function runCommand(
     const limactlPath = resolveLimactlPath(options);
     const limaInstance = options.limaInstance || '0';
 
-    const script = args.length === 0
+    const rawScript = args.length === 0
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');
+
+    // The Lima VM's ~ resolves to /home/<user>.linux/ but the macOS home
+    // directory is mounted at its real path via virtiofs. Override HOME so
+    // that ~ and $HOME in agent commands resolve to the macOS home dir.
+    const macHome = os.homedir();
+    const script = `export HOME=${ quoteShellArg(macHome) }; ${ rawScript }`;
 
     const limactlArgs = ['shell', limaInstance, '--', 'sh', '-lc', script];
     let result = await executeSpawn('env', [`LIMA_HOME=${ limaHome }`, limactlPath, ...limactlArgs], options);
