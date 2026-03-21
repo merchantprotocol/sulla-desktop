@@ -7,14 +7,15 @@
  * Responsibilities:
  *  - Fragment accumulation & turn detection (silence, speaker change, time-based)
  *  - Interim bubble management (creates/updates/removes voice_interim messages)
- *  - Speak message detection → enqueues TTS
+ *  - Speak event handling → enqueues TTS
  *  - Barge-in coordination (user speaks during TTS → stop TTS)
+ *  - Turn correlation (filters stale speak events after barge-in)
  *  - Secretary analysis parsing
  *
- * TTS Detection: The `detectSpeakMessages()` watcher is the ONLY frontend path
- * that enqueues TTS. It watches the messages array for `kind === 'speak'` messages
- * created by AgentPersonaModel when it receives `speak_dispatch` WebSocket events
- * from BaseNode.wsSpeakDispatch().
+ * TTS Detection: `handleSpeakEvent()` receives speak events directly from
+ * AgentPersonaModel via ChatInterface.onSpeakDispatch(). This bypasses the
+ * messages array deep watcher for lower latency. Turn correlation uses the
+ * pipelineSequence to filter stale events from aborted graph runs.
  */
 
 import { watch, nextTick, type Ref, type WatchStopHandle } from 'vue';
@@ -28,19 +29,12 @@ import { logPipelineState, logBargeIn, logSilence, logFlush, logSpeakerChange, l
 export type VoiceMode = 'voice' | 'secretary' | 'intake';
 export type PipelineState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
-export interface SecretaryAnalysis {
-  actions: string[];
-  facts: string[];
-  conclusions: string[];
-}
-
 export interface VoicePipelineConfig {
   recorder: VoiceRecorderService;
   ttsPlayer: TTSPlayerService;
   chatController: ChatInterface;
   messages: Ref<ChatMessage[]>;
   mode: Ref<VoiceMode>;
-  onSecretaryResult?: (result: SecretaryAnalysis) => void;
   flushIntervalMs?: Partial<Record<VoiceMode, number>>;
 }
 
@@ -62,7 +56,6 @@ export class VoicePipeline {
   private readonly chatController: ChatInterface;
   private readonly messages: Ref<ChatMessage[]>;
   private readonly mode: Ref<VoiceMode>;
-  private readonly onSecretaryResult?: (result: SecretaryAnalysis) => void;
   private readonly flushIntervalMs: Partial<Record<VoiceMode, number>>;
 
   // ── State ──
@@ -80,7 +73,6 @@ export class VoicePipeline {
   // ── Subscriptions ──
   private readonly unsubs: Array<() => void> = [];
   private readonly watchers: WatchStopHandle[] = [];
-  private readonly processedSpeakIds = new Set<string>();
 
   constructor(config: VoicePipelineConfig) {
     this.recorder = config.recorder;
@@ -88,7 +80,6 @@ export class VoicePipeline {
     this.chatController = config.chatController;
     this.messages = config.messages;
     this.mode = config.mode;
-    this.onSecretaryResult = config.onSecretaryResult;
     this.flushIntervalMs = config.flushIntervalMs ?? {};
   }
 
@@ -96,8 +87,8 @@ export class VoicePipeline {
 
   /**
    * Subscribes to recorder events (speech/silence/fragment), TTS events (queueEmpty),
-   * and Vue watchers (graphRunning, messages, mode). The messages watcher calls
-   * detectSpeakMessages() which is the sole TTS entry point on the frontend.
+   * direct speak delivery via ChatInterface.onSpeakDispatch(), and Vue watchers
+   * (graphRunning, mode).
    */
   start(): void {
     // Subscribe to recorder events
@@ -112,6 +103,13 @@ export class VoicePipeline {
       this.ttsPlayer.on('queueEmpty', () => this.handleTTSComplete()),
     );
 
+    // Direct speak event delivery — bypasses messages array deep watcher
+    this.unsubs.push(
+      this.chatController.onSpeakDispatch((text, _threadId, pipelineSequence) => {
+        this.handleSpeakEvent(text, pipelineSequence);
+      }),
+    );
+
     // Watch graphRunning
     const { graphRunning } = this.chatController;
     this.watchers.push(
@@ -120,11 +118,6 @@ export class VoicePipeline {
           this.handleGraphComplete();
         }
       }),
-    );
-
-    // Watch messages for speak messages → enqueue TTS
-    this.watchers.push(
-      watch(this.messages, (msgs) => this.detectSpeakMessages(msgs), { deep: true }),
     );
 
     // Watch mode changes → restart flush timer
@@ -136,30 +129,6 @@ export class VoicePipeline {
       }),
     );
 
-    // Secretary analysis watcher
-    if (this.onSecretaryResult) {
-      const cb = this.onSecretaryResult;
-      this.watchers.push(
-        watch(this.messages, (msgs) => {
-          if (this.mode.value !== 'secretary') return;
-          for (const m of msgs) {
-            if (m.role !== 'assistant' || !m.content) continue;
-            const content = typeof m.content === 'string' ? m.content : '';
-            const match = /<secretary_analysis>([\s\S]*?)<\/secretary_analysis>/i.exec(content);
-            if (!match) continue;
-            const analysisKey = `__secretary_parsed_${m.id}`;
-            if ((m as any)[analysisKey]) continue;
-            (m as any)[analysisKey] = true;
-            const block = match[1];
-            cb({
-              actions:     extractListItems(block, 'actions'),
-              facts:       extractListItems(block, 'facts'),
-              conclusions: extractListItems(block, 'conclusions'),
-            });
-          }
-        }, { deep: true }),
-      );
-    }
   }
 
   stop(): void {
@@ -175,7 +144,6 @@ export class VoicePipeline {
     this.buffer.length = 0;
     this.accumulatedText = '';
     this.state = 'IDLE';
-    this.processedSpeakIds.clear();
   }
 
   /**
@@ -341,30 +309,44 @@ export class VoicePipeline {
     }
   }
 
-  // ─── Speak Message Detection ──────────────────────────────────
+  // ─── Direct Speak Event Handling ─────────────────────────────
 
   /**
-   * The SOLE frontend entry point for TTS playback. Watches the messages array
-   * for messages with `kind === 'speak'`. These are created by AgentPersonaModel
-   * when it receives `speak_dispatch` WebSocket events from BaseNode.wsSpeakDispatch().
-   * Enqueues the speak content to TTSPlayerService and transitions THINKING -> SPEAKING.
-   * Uses processedSpeakIds set to avoid re-processing the same message.
+   * The SOLE frontend entry point for TTS playback. Receives speak events
+   * directly from AgentPersonaModel via ChatInterface.onSpeakDispatch(),
+   * bypassing the messages array deep watcher for lower latency.
+   *
+   * Turn correlation: if pipelineSequence is present and doesn't match the
+   * active graph run sequence, the event is stale (from before a barge-in)
+   * and is discarded.
    */
-  private detectSpeakMessages(msgs: ChatMessage[]): void {
-    for (const m of msgs) {
-      if (m.kind === 'speak' && m.content?.trim() && !this.processedSpeakIds.has(m.id)) {
-        this.processedSpeakIds.add(m.id);
-        timingFirstSpeak();
-        logSpeakDetected(m.id, m.kind || 'undefined', m.content.trim());
+  private handleSpeakEvent(text: string, pipelineSequence: number | null): void {
+    if (this.disposed) return;
+    if (!text.trim()) return;
 
-        // Enqueue for TTS playback
-        this.ttsPlayer.enqueue(m.content.trim(), m.id);
+    // Turn correlation — discard stale speak events from aborted graph runs
+    if (
+      pipelineSequence !== null &&
+      this.activeGraphRunSequence !== null &&
+      pipelineSequence < this.activeGraphRunSequence
+    ) {
+      console.log(
+        `[VoicePipeline] Discarding stale speak event (seq=${pipelineSequence}, active=${this.activeGraphRunSequence})`,
+      );
 
-        // Transition to SPEAKING if we were THINKING
-        if (this.state === 'THINKING') {
-          this.transitionTo('SPEAKING');
-        }
-      }
+      return;
+    }
+
+    const speakId = `speak_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    timingFirstSpeak();
+    logSpeakDetected(speakId, 'speak', text.trim());
+
+    // Enqueue for TTS playback
+    this.ttsPlayer.enqueue(text.trim(), speakId);
+
+    // Transition to SPEAKING if we were THINKING
+    if (this.state === 'THINKING') {
+      this.transitionTo('SPEAKING');
     }
   }
 
@@ -424,14 +406,3 @@ export class VoicePipeline {
   }
 }
 
-// ─── Helpers ────────────────────────────────────────────────────
-
-function extractListItems(block: string, tag: string): string[] {
-  const match = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i').exec(block);
-  if (!match) return [];
-
-  return match[1]
-    .split('\n')
-    .map(line => line.replace(/^[-*•]\s*/, '').trim())
-    .filter(Boolean);
-}

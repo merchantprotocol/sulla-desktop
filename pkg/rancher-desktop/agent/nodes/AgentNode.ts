@@ -4,7 +4,7 @@ import type { BaseThreadState, NodeResult } from './Graph';
 import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
-import { VOICE_MODE_PROMPT, SECRETARY_MODE_PROMPT, INTAKE_MODE_PROMPT } from '../prompts/voiceModes';
+// Voice mode prompts are now handled by ChatController extractors (SpeakExtractor, SecretaryExtractor, etc.)
 
 // ============================================================================
 // AGENT PROMPT
@@ -135,26 +135,22 @@ export class AgentNode extends BaseNode {
     const wsChannel = String(state.metadata.wsChannel || 'sulla-desktop');
     const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
 
-    // When the user spoke via microphone, append the appropriate voice mode prompt
-    const isVoiceInput = (state.metadata as any).inputSource === 'microphone';
-    const voiceMode = (state.metadata as any).voiceMode as string | undefined;
-    let voiceDirective = '';
-    if (isVoiceInput) {
-      switch (voiceMode) {
-        case 'secretary':
-          voiceDirective = SECRETARY_MODE_PROMPT;
-          break;
-        case 'intake':
-          voiceDirective = INTAKE_MODE_PROMPT;
-          break;
-        case 'voice':
-        default:
-          voiceDirective = VOICE_MODE_PROMPT;
-          break;
-      }
+    // Set ChatController mode BEFORE enrichPrompt so the right extractors are active.
+    // The extractors inject mode-specific directives (VOICE_MODE_PROMPT, etc.).
+    const controller = this.getChatController();
+    const inputSource = (state.metadata as any).inputSource ?? '';
+    const voiceMode = (state.metadata as any).voiceMode ?? '';
+    let chatMode: 'text' | 'voice' | 'secretary' | 'intake' = 'text';
+    if (inputSource === 'microphone') {
+      chatMode = (voiceMode === 'secretary' || voiceMode === 'intake') ? voiceMode : 'voice';
+    } else if (inputSource.startsWith('secretary-') || voiceMode === 'secretary') {
+      chatMode = 'secretary';
     }
+    controller.setMode(chatMode);
 
-    const systemPrompt = `${ AGENT_PROMPT_BASE }\n\n${ channelAwareness }\n\n${ AGENT_PROMPT_DIRECTIVE }\n\n${ AGENT_PROMPT_COMPLETION_WRAPPERS }${ voiceDirective }`;
+    const baseSystemPrompt = `${ AGENT_PROMPT_BASE }\n\n${ channelAwareness }\n\n${ AGENT_PROMPT_DIRECTIVE }\n\n${ AGENT_PROMPT_COMPLETION_WRAPPERS }`;
+    const ctx = controller.buildContext(state);
+    const systemPrompt = controller.enrichPrompt(baseSystemPrompt, ctx);
 
     const enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
       includeSoul:        true,
@@ -307,6 +303,27 @@ export class AgentNode extends BaseNode {
       // Flush any buffered DOM events as a single tool pair before the LLM call
       this.flushDomEventBuffer(state);
 
+      // Find the last assistant message BEFORE the LLM call (for dedup).
+      // Content may be a string OR a native content array (when tool_use blocks are present).
+      let lastAssistantText: string | null = null;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const msg = state.messages[i];
+        if (msg.role === 'assistant') {
+          if (typeof msg.content === 'string') {
+            lastAssistantText = stripProtocolTags(msg.content).trim();
+          } else if (Array.isArray(msg.content)) {
+            // Extract text from native content blocks: [{ type: 'text', text: '...' }, { type: 'tool_use', ... }]
+            const textParts = (msg.content as any[])
+              .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
+              .map((b: any) => b.text);
+            if (textParts.length > 0) {
+              lastAssistantText = stripProtocolTags(textParts.join('\n')).trim();
+            }
+          }
+          break;
+        }
+      }
+
       const reply = await this.normalizedChat(state, systemPrompt, {
         temperature:   0.2,
         nodeRunPolicy: policy,
@@ -314,11 +331,19 @@ export class AgentNode extends BaseNode {
 
       if (!reply) return null;
 
-      // Emit text to the UI BEFORE tool execution so text appears before tool cards
+      // Emit text to the UI BEFORE tool execution so text appears before tool cards.
+      // Dedup: skip if this response is identical or 85%+ similar to the immediately
+      // previous assistant message. Prevents duplicate display when AGENT_CONTINUE
+      // causes a second LLM turn that regenerates near-identical text.
       const agentOutcome = this.extractAgentOutcome(reply.content);
       const userVisibleText = this.toUserVisibleAgentMessage(reply.content, agentOutcome);
       if (userVisibleText?.trim()) {
-        await this.wsChatMessage(state, userVisibleText, 'assistant');
+        const isDuplicate = lastAssistantText !== null &&
+          (lastAssistantText === userVisibleText.trim() ||
+           BaseNode.jaccardSimilarity(lastAssistantText, userVisibleText.trim()) > 0.85);
+        if (!isDuplicate) {
+          await this.wsChatMessage(state, userVisibleText, 'assistant');
+        }
       }
 
       // Now execute tool calls — tool cards appear after text in the UI

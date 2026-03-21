@@ -209,6 +209,10 @@ export class FrontendGraphWebSocketService {
       if (metadata?.voiceMode) {
         (state.metadata as any).voiceMode = metadata.voiceMode;
       }
+      // Carry pipeline sequence for turn correlation (voice → TTS)
+      if (typeof metadata?.pipelineSequence === 'number') {
+        (state.metadata as any).pipelineSequence = metadata.pipelineSequence;
+      }
 
       // Append new user message
       const newMsg = {

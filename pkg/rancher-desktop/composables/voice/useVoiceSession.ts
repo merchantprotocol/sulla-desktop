@@ -11,7 +11,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { ChatInterface, ChatMessage } from '../../pages/agent/ChatInterface';
 import { VoiceRecorderService } from './VoiceRecorderService';
 import { TTSPlayerService } from './TTSPlayerService';
-import { VoicePipeline, type VoiceMode, type PipelineState, type SecretaryAnalysis } from './VoicePipeline';
+import { VoicePipeline, type VoiceMode, type PipelineState } from './VoicePipeline';
 import { setVoiceLogContext } from './VoiceLogger';
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -19,7 +19,6 @@ import { setVoiceLogContext } from './VoiceLogger';
 export interface UseVoiceSessionOptions {
   chatController: ChatInterface;
   messages: Ref<ChatMessage[]>;
-  onSecretaryResult?: (result: SecretaryAnalysis) => void;
   onError?: (message: string) => void;
 }
 
@@ -43,7 +42,7 @@ export interface UseVoiceSessionReturn {
 // ─── Composable ─────────────────────────────────────────────────
 
 export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessionReturn {
-  const { chatController, messages, onSecretaryResult, onError } = options;
+  const { chatController, messages, onError } = options;
 
   // ── Reactive state ──
   const isRecording = ref(false);
@@ -68,7 +67,6 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     chatController,
     messages,
     mode: voiceMode,
-    onSecretaryResult,
   });
 
   // ── Bridge service events → Vue refs ──

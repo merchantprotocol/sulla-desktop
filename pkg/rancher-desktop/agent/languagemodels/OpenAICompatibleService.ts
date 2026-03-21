@@ -457,7 +457,33 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       }
     }
 
-    return result;
+    // Safety net: ensure strict tool_calls / tool-response adjacency.
+    // If an assistant message has tool_calls but the next message(s) are not
+    // role:"tool" responses for every call, strip the tool_calls to prevent
+    // the API from rejecting the request (e.g. after a timeout mid-stream).
+    const sanitized: any[] = [];
+    for (let i = 0; i < result.length; i++) {
+      const msg = result[i];
+      if (msg.role === 'assistant' && msg.tool_calls?.length) {
+        // Collect all immediately-following tool responses
+        const followingToolIds = new Set<string>();
+        for (let j = i + 1; j < result.length && result[j].role === 'tool'; j++) {
+          if (result[j].tool_call_id) followingToolIds.add(result[j].tool_call_id);
+        }
+        const allAnswered = msg.tool_calls.every((tc: any) => followingToolIds.has(tc.id));
+        if (!allAnswered) {
+          // Strip tool_calls, keep only text content
+          const { tool_calls: _dropped, ...rest } = msg;
+          if (rest.content?.trim()) {
+            sanitized.push(rest);
+          }
+          continue;
+        }
+      }
+      sanitized.push(msg);
+    }
+
+    return sanitized;
   }
 
   /**

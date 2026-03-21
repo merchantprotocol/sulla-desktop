@@ -142,6 +142,12 @@ export class AgentPersonaService {
   private readonly toolRunIdToMessageId = new Map<string, string>();
   readonly activeAssets: PersonaSidebarAsset[] = reactive([]);
 
+  /**
+   * Direct speak event listeners — allows VoicePipeline to receive speak events
+   * without watching the messages array (lower latency, no deep watcher overhead).
+   */
+  private readonly speakListeners: Array<(text: string, threadId: string, pipelineSequence: number | null) => void> = [];
+
   graphRunning = ref(false);
   waitingForUser = ref(false);
   stopReason = ref<string | null>(null);
@@ -470,6 +476,19 @@ export class AgentPersonaService {
     try {
       localStorage.removeItem(this.threadStorageKey());
     } catch { /* unavailable */ }
+  }
+
+  /**
+   * Register a listener for direct speak event delivery.
+   * Returns an unsubscribe function.
+   */
+  addSpeakListener(cb: (text: string, threadId: string, pipelineSequence: number | null) => void): () => void {
+    this.speakListeners.push(cb);
+
+    return () => {
+      const idx = this.speakListeners.indexOf(cb);
+      if (idx !== -1) this.speakListeners.splice(idx, 1);
+    };
   }
 
   clearMessages(): void {
@@ -823,7 +842,9 @@ export class AgentPersonaService {
       const text = typeof data?.text === 'string' ? data.text.trim() : '';
       if (!text) return;
 
-      console.log(`[AgentPersonaModel] speak_dispatch → "${text.slice(0, 80)}"`);
+      const pipelineSequence = typeof data?.pipelineSequence === 'number' ? data.pipelineSequence : null;
+
+      console.log(`[AgentPersonaModel] speak_dispatch → "${text.slice(0, 80)}" seq=${pipelineSequence}`);
       this.messages.push({
         id:        `${ Date.now() }_speak`,
         channelId: agentId,
@@ -832,6 +853,11 @@ export class AgentPersonaService {
         kind:      'speak',
         content:   text,
       });
+
+      // Direct delivery to speak listeners (bypasses messages watcher)
+      for (const listener of this.speakListeners) {
+        listener(text, msgThreadId, pipelineSequence);
+      }
       return;
     }
     case 'register_or_activate_asset': {
