@@ -326,56 +326,77 @@ run_with_status() {
 
   local current_phase="$label"
 
-  # Use process substitution so the while loop runs in the current shell,
-  # not a pipe subshell — this keeps SPINNER_PID in scope so spinners
-  # are properly tracked and killed (pipe subshells + disown = orphaned spinners).
-  #
-  # IMPORTANT: We detect the ___RWS_EXIT_<code>___ sentinel inside the loop
-  # and break immediately.  Without this, child processes that inherit the
-  # pipe fd (common with webpack/yarn) keep it open after the main command
-  # exits, causing `read` to block until its timeout (5 min) even though
-  # the build is already done.
-  local rc=0
+  # Run the command in background, writing output to a temp file.
+  # We poll the file for new lines to update the spinner and use `wait`
+  # on the PID to detect completion.  This avoids the pipe-fd inheritance
+  # problem entirely: yarn/webpack child processes that outlive the main
+  # command can hold a pipe fd open forever, but they can't prevent
+  # `wait` from returning once the direct child exits.
+  local rws_tmpfile
+  rws_tmpfile="$(mktemp "${TMPDIR:-/tmp}/rws_output.XXXXXX")"
 
-  while IFS= read -r -t 300 line; do
-    # Sentinel detection — command has exited, grab the exit code and stop
-    if [[ "$line" =~ ___RWS_EXIT_([0-9]+)___ ]]; then
-      rc="${BASH_REMATCH[1]}"
-      break
+  "$@" > "$rws_tmpfile" 2>&1 &
+  local cmd_pid=$!
+
+  local last_update=0
+  local bytes_read=0
+
+  # Poll: check if the process is still running, tail new output
+  while kill -0 "$cmd_pid" 2>/dev/null; do
+    # Flush new output to the install log
+    local new_output
+    new_output="$(tail -c +$((bytes_read + 1)) "$rws_tmpfile" 2>/dev/null)"
+    if [ -n "$new_output" ]; then
+      echo "$new_output" >> "$INSTALL_LOG"
+      bytes_read="$(wc -c < "$rws_tmpfile")"
+
+      # Update spinner phase from the latest line
+      local last_line
+      last_line="$(echo "$new_output" | tail -1)"
+
+      local now="$SECONDS"
+      if [ "$((now - last_update))" -ge 3 ]; then
+        local new_phase=""
+        case "$last_line" in
+          *"Resolving"*)  new_phase="${label}: resolving dependencies..." ;;
+          *"Fetching"*)   new_phase="${label}: fetching packages..." ;;
+          *"Linking"*)    new_phase="${label}: linking packages..." ;;
+          *"Building"*)   new_phase="${label}: building..." ;;
+          *"Downloading"*)
+                          new_phase="${label}: downloading dependencies..." ;;
+          *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
+                          new_phase="${label}: compiling native modules..." ;;
+          *"HTTP 429"*|*"HTTP 403"*|*"rate limit"*)
+                          new_phase="${label}: rate-limited by GitHub, retrying..." ;;
+          *"Network error fetching"*)
+                          new_phase="${label}: network error, retrying..." ;;
+          *"webpack"*|*"ts-loader"*|*"babel"*)
+                          new_phase="${label}: bundling application..." ;;
+          *"Done in "*)
+                          new_phase="${label}: finishing up..." ;;
+        esac
+
+        if [ -n "$new_phase" ] && [ "$new_phase" != "$current_phase" ]; then
+          current_phase="$new_phase"
+          stop_spinner 2>/dev/null
+          start_spinner "$current_phase"
+          last_update="$now"
+        fi
+      fi
     fi
 
-    echo "$line" >> "$INSTALL_LOG"
+    sleep 2
+  done
 
-    # Throttle spinner updates to at most once every 3 seconds to keep it calm
-    local now="$SECONDS"
-    [ "$((now - last_update))" -lt 3 ] && continue
+  # Process exited — collect exit code and flush remaining output
+  wait "$cmd_pid" 2>/dev/null
+  local rc=$?
 
-    local new_phase=""
-    case "$line" in
-      *"Resolving"*)  new_phase="${label}: resolving dependencies..." ;;
-      *"Fetching"*)   new_phase="${label}: fetching packages..." ;;
-      *"Linking"*)    new_phase="${label}: linking packages..." ;;
-      *"Building"*)   new_phase="${label}: building..." ;;
-      *"Downloading"*)
-                      new_phase="${label}: downloading dependencies..." ;;
-      *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
-                      new_phase="${label}: compiling native modules..." ;;
-      *"HTTP 429"*|*"HTTP 403"*|*"rate limit"*)
-                      new_phase="${label}: rate-limited by GitHub, retrying..." ;;
-      *"Network error fetching"*)
-                      new_phase="${label}: network error, retrying..." ;;
-      *"webpack"*|*"ts-loader"*|*"babel"*)
-                      new_phase="${label}: bundling application..." ;;
-    esac
+  local remaining
+  remaining="$(tail -c +$((bytes_read + 1)) "$rws_tmpfile" 2>/dev/null)"
+  [ -n "$remaining" ] && echo "$remaining" >> "$INSTALL_LOG"
 
-    # Only restart the spinner when the phase actually changes
-    if [ -n "$new_phase" ] && [ "$new_phase" != "$current_phase" ]; then
-      current_phase="$new_phase"
-      stop_spinner 2>/dev/null
-      start_spinner "$current_phase"
-      last_update="$now"
-    fi
-  done < <(set +e; "$@" 2>&1; echo "___RWS_EXIT_$?___")
+  rm -f "$rws_tmpfile"
 
   stop_spinner 2>/dev/null
   if [ "$rc" -ne 0 ]; then
