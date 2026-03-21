@@ -288,11 +288,16 @@ export class VoicePipeline {
 
     if (this.state === 'THINKING') {
       if (this.mode.value === 'voice') {
-        nextTick(() => {
-          if (this.state === 'THINKING') {
+        // Delay transition: speak_dispatch events arrive via WebSocket after
+        // graphRunning flips false. Give them time to land before going IDLE.
+        // If a speak event arrives during this window, handleSpeakEvent()
+        // transitions to SPEAKING, and this callback becomes a no-op.
+        setTimeout(() => {
+          if (this.disposed) return;
+          if (this.state === 'THINKING' && this.ttsPlayer.queueLength === 0) {
             this.transitionTo(this.buffer.length > 0 ? 'LISTENING' : 'IDLE');
           }
-        });
+        }, 300);
       } else {
         this.transitionTo(this.buffer.length > 0 ? 'LISTENING' : 'IDLE');
       }

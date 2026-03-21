@@ -81,93 +81,11 @@
         </div>
 
         <!-- Tool card (expandable, Claude Code style) -->
-        <div
+        <ChatToolCard
           v-else-if="msg.kind === 'tool' && msg.toolCard"
-          class="tool-card-cc"
-          :class="{ dark: isDark, expanded: expandedToolCards.has(msg.id) }"
-        >
-          <button
-            class="tool-card-cc-header"
-            @click="toggleToolCard(msg.id)"
-          >
-            <span
-              class="tool-card-cc-dot"
-              :class="msg.toolCard.status"
-            />
-            <span class="tool-card-cc-name">{{ toolCardLabel(msg.toolCard) }}</span>
-            <span
-              v-if="msg.toolCard.description"
-              class="tool-card-cc-desc"
-            >{{ msg.toolCard.description }}</span>
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 15 15"
-              fill="none"
-              class="tool-card-cc-chevron"
-              :class="{ open: expandedToolCards.has(msg.id) }"
-            >
-              <path
-                d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z"
-                fill="currentColor"
-                fill-rule="evenodd"
-                clip-rule="evenodd"
-              />
-            </svg>
-          </button>
-          <div
-            v-if="toolCardCommand(msg.toolCard)"
-            class="tool-card-cc-cmd"
-          >
-            <span class="tool-card-cc-cmd-label">IN</span>
-            <code class="tool-card-cc-cmd-text">{{ toolCardCommand(msg.toolCard) }}</code>
-          </div>
-          <div
-            v-if="msg.toolCard.status !== 'running' && toolCardCommand(msg.toolCard)"
-            class="tool-card-cc-cmd"
-          >
-            <span class="tool-card-cc-cmd-label">OUT</span>
-            <code
-              class="tool-card-cc-cmd-text tool-card-cc-exit"
-              :class="msg.toolCard.status"
-            >{{ msg.toolCard.status === 'success' ? '0' : '1' }}</code>
-          </div>
-          <div
-            v-show="expandedToolCards.has(msg.id)"
-            class="tool-card-cc-body"
-          >
-            <div
-              v-if="toolCardOutput(msg.toolCard)"
-              class="tool-card-cc-output"
-            >
-              <pre>{{ toolCardOutput(msg.toolCard) }}</pre>
-            </div>
-            <div
-              v-if="!toolCardCommand(msg.toolCard) && msg.toolCard.args && Object.keys(msg.toolCard.args).length > 0"
-              class="tool-card-cc-output"
-            >
-              <div class="tool-card-cc-section-label">
-                Arguments
-              </div>
-              <pre>{{ JSON.stringify(msg.toolCard.args, null, 2) }}</pre>
-            </div>
-            <div
-              v-if="!toolCardCommand(msg.toolCard) && msg.toolCard.result !== undefined"
-              class="tool-card-cc-output"
-            >
-              <div class="tool-card-cc-section-label">
-                Result
-              </div>
-              <pre>{{ typeof msg.toolCard.result === 'string' ? msg.toolCard.result : JSON.stringify(msg.toolCard.result, null, 2) }}</pre>
-            </div>
-            <div
-              v-if="msg.toolCard.error"
-              class="tool-card-cc-error"
-            >
-              {{ msg.toolCard.error }}
-            </div>
-          </div>
-        </div>
+          :tool-card="msg.toolCard"
+          :is-dark="isDark"
+        />
 
         <!-- Workflow node card -->
         <WorkflowNodeCard
@@ -525,7 +443,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, nextTick, computed } from 'vue';
+import { ref, watch, nextTick, computed } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import type { ChatMessage } from '@pkg/agent';
@@ -534,6 +452,7 @@ import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPer
 import WorkflowNodeCard from './workflow/WorkflowNodeCard.vue';
 import SubAgentBubble from './workflow/SubAgentBubble.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import ChatToolCard from '@pkg/components/ChatToolCard.vue';
 
 const props = defineProps<{
   isDark:             boolean;
@@ -550,36 +469,6 @@ const props = defineProps<{
 }>();
 
 const showAgentMenu = ref(false);
-const expandedToolCards = reactive(new Set<string>());
-
-function toggleToolCard(messageId: string) {
-  if (expandedToolCards.has(messageId)) {
-    expandedToolCards.delete(messageId);
-  } else {
-    expandedToolCards.add(messageId);
-  }
-}
-
-const EXEC_TOOL_NAMES = new Set(['exec', 'exec_command', 'shell', 'bash', 'run_command']);
-
-function toolCardLabel(toolCard: { toolName: string }): string {
-  return EXEC_TOOL_NAMES.has(toolCard.toolName) ? 'Bash' : toolCard.toolName;
-}
-
-function toolCardCommand(toolCard: { toolName: string; args?: Record<string, unknown> }): string | null {
-  if (!EXEC_TOOL_NAMES.has(toolCard.toolName)) return null;
-  const cmd = toolCard.args?.command ?? toolCard.args?.cmd;
-  return typeof cmd === 'string' ? cmd : null;
-}
-
-function toolCardOutput(toolCard: { toolName: string; result?: unknown }): string | null {
-  if (!toolCard.result) return null;
-  const r = toolCard.result as any;
-  if (typeof r.responseString === 'string' && r.responseString.trim()) return r.responseString;
-  if (typeof r.result === 'string' && r.result.trim()) return r.result;
-  if (typeof r === 'string' && r.trim()) return r;
-  return null;
-}
 
 const activeAgentName = computed(() => props.agentRegistry?.activeAgent.value?.agentName || 'Agent');
 const visibleAgents = computed(() => props.agentRegistry?.visibleAgents.value || []);
@@ -766,132 +655,7 @@ watch(() => props.messages.length, () => scrollToBottom());
   color: var(--text-secondary);
 }
 
-/* ── Claude Code-style tool card ── */
-.tool-card-cc {
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--bg-surface);
-  overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: var(--fs-code);
-}
-
-.tool-card-cc-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 6px 10px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font: inherit;
-  color: var(--text-primary);
-  text-align: left;
-}
-
-.tool-card-cc-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.tool-card-cc-dot.running { background: var(--status-warning); animation: ccDotPulse 1.5s ease-in-out infinite; }
-.tool-card-cc-dot.success { background: var(--status-success); }
-.tool-card-cc-dot.failed  { background: var(--status-error); }
-
-@keyframes ccDotPulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
-}
-
-.tool-card-cc-name {
-  font-weight: var(--weight-bold);
-  font-size: var(--fs-code);
-  color: var(--text-primary);
-}
-
-.tool-card-cc-desc {
-  font-weight: var(--weight-normal);
-  font-size: var(--fs-code);
-  color: var(--text-secondary);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-card-cc-chevron {
-  color: var(--text-muted);
-  transition: transform 0.15s ease;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-.tool-card-cc-chevron.open {
-  transform: rotate(180deg);
-}
-
-.tool-card-cc-cmd {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 2px 10px 2px 16px;
-  font-size: var(--fs-body-sm);
-}
-
-.tool-card-cc-cmd-label {
-  font-size: var(--fs-caption);
-  font-weight: var(--weight-bold);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  flex-shrink: 0;
-  min-width: 20px;
-}
-
-.tool-card-cc-cmd-text {
-  color: var(--text-secondary);
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-
-.tool-card-cc-exit.success { color: var(--text-success); }
-.tool-card-cc-exit.failed  { color: var(--text-error); }
-
-.tool-card-cc-body {
-  border-top: 1px solid var(--border-default);
-  margin: 4px 0 0;
-}
-
-.tool-card-cc-output {
-  padding: 6px 10px;
-}
-.tool-card-cc-output pre {
-  margin: 0;
-  padding: 0;
-  background: none;
-  color: var(--text-secondary);
-  font-size: var(--fs-body-sm);
-  font-family: var(--font-mono);
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.tool-card-cc-section-label {
-  font-size: var(--fs-caption);
-  font-weight: var(--weight-bold);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  margin-bottom: 3px;
-}
-
-.tool-card-cc-error {
-  padding: 6px 10px;
-  font-size: var(--fs-body-sm);
-  color: var(--text-error);
-}
+/* Tool card styles are in ChatToolCard.vue */
 
 .thinking-bubble {
   background: transparent;
