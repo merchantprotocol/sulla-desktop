@@ -329,7 +329,21 @@ run_with_status() {
   # Use process substitution so the while loop runs in the current shell,
   # not a pipe subshell — this keeps SPINNER_PID in scope so spinners
   # are properly tracked and killed (pipe subshells + disown = orphaned spinners).
+  #
+  # IMPORTANT: We detect the ___RWS_EXIT_<code>___ sentinel inside the loop
+  # and break immediately.  Without this, child processes that inherit the
+  # pipe fd (common with webpack/yarn) keep it open after the main command
+  # exits, causing `read` to block until its timeout (5 min) even though
+  # the build is already done.
+  local rc=0
+
   while IFS= read -r -t 300 line; do
+    # Sentinel detection — command has exited, grab the exit code and stop
+    if [[ "$line" =~ ___RWS_EXIT_([0-9]+)___ ]]; then
+      rc="${BASH_REMATCH[1]}"
+      break
+    fi
+
     echo "$line" >> "$INSTALL_LOG"
 
     # Throttle spinner updates to at most once every 3 seconds to keep it calm
@@ -346,7 +360,7 @@ run_with_status() {
                       new_phase="${label}: downloading dependencies..." ;;
       *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
                       new_phase="${label}: compiling native modules..." ;;
-      *"HTTP 429"*|*"HTTP 403"*|*"rate"*|*"retry"*)
+      *"HTTP 429"*|*"HTTP 403"*|*"rate limit"*)
                       new_phase="${label}: rate-limited by GitHub, retrying..." ;;
       *"Network error fetching"*)
                       new_phase="${label}: network error, retrying..." ;;
@@ -362,12 +376,6 @@ run_with_status() {
       last_update="$now"
     fi
   done < <(set +e; "$@" 2>&1; echo "___RWS_EXIT_$?___")
-
-  # Extract exit code from the sentinel line
-  local rc=0
-  if [[ "${line:-}" =~ ___RWS_EXIT_([0-9]+)___ ]]; then
-    rc="${BASH_REMATCH[1]}"
-  fi
 
   stop_spinner 2>/dev/null
   if [ "$rc" -ne 0 ]; then
