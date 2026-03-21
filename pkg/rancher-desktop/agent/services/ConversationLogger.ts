@@ -71,6 +71,12 @@ function formatMeta(meta: ConversationMeta | (Partial<ConversationMeta> & { id: 
 function formatEvent(event: ConversationEvent): string {
   const { ts, type, ...rest } = event;
 
+  // Voice events use compact single-line format for grep-friendly logs.
+  // Tags follow the pattern VOICE:<COMPONENT>:<EVENT>.
+  if (typeof type === 'string' && type.startsWith('VOICE:')) {
+    return formatVoiceEvent(ts, type, rest);
+  }
+
   switch (type) {
   case 'llm_call':
     return formatLLMCall(ts, rest);
@@ -86,6 +92,33 @@ function formatEvent(event: ConversationEvent): string {
   default:
     return formatGenericEvent(ts, type, rest);
   }
+}
+
+/**
+ * Format a voice event as a compact, single-line, grep-friendly log entry.
+ *
+ * Output format:
+ *   [2026-03-20T12:00:00.000Z] [VOICE:TTS:ENQUEUE] text="Hello" queueLen=0
+ *
+ * Searchable with:
+ *   grep "VOICE:TTS" logfile          — all TTS events
+ *   grep "VOICE:PIPE:FLUSH" logfile   — all pipeline flushes
+ *   grep "VOICE:.*:ERROR" logfile     — all voice errors
+ *   grep "seq=5" logfile              — all events for turn 5
+ */
+function formatVoiceEvent(ts: string, type: string, data: Record<string, unknown>): string {
+  const pairs = Object.entries(data)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => {
+      if (typeof v === 'string') {
+        // Truncate long strings, escape newlines for single-line output
+        const clean = v.length > 200 ? v.slice(0, 200) + '…' : v;
+        return `${ k }="${ clean.replace(/\n/g, '\\n') }"`;
+      }
+      return `${ k }=${ v }`;
+    })
+    .join(' ');
+  return `[${ ts }] [${ type }] ${ pairs }\n`;
 }
 
 function formatLLMCall(ts: string, data: Record<string, unknown>): string {

@@ -108,7 +108,13 @@ export class FrontendGraphWebSocketService {
     });
 
     if (msg.type === 'stop_run') {
-      this.activeAbort?.abort();
+      console.log(`[FrontendGraph:stop_run] received — activeAbort=${!!this.activeAbort}, channel=${this.channelId}`);
+      if (this.activeAbort) {
+        this.activeAbort.abort();
+        console.log('[FrontendGraph:stop_run] abort() called successfully');
+      } else {
+        console.warn('[FrontendGraph:stop_run] No activeAbort controller — graph may have already finished');
+      }
       return;
     }
 
@@ -135,10 +141,10 @@ export class FrontendGraphWebSocketService {
       });
     }
 
-    await this.processUserInput(content, threadIdFromMsg);
+    await this.processUserInput(content, threadIdFromMsg, metadata);
   }
 
-  private async processUserInput(userText: string, threadIdFromMsg?: string): Promise<void> {
+  private async processUserInput(userText: string, threadIdFromMsg?: string, metadata?: Record<string, unknown>): Promise<void> {
     const channelId = this.channelId;
 
     // ThreadId is owned by the frontend chat interface.
@@ -196,6 +202,17 @@ export class FrontendGraphWebSocketService {
       }
 
       state.metadata.wsChannel = channelId;
+
+      // Pass through voice mode metadata so speak tag extraction works
+      const inputSource = metadata?.inputSource as string | undefined;
+      (state.metadata as any).inputSource = inputSource || 'keyboard';
+      if (metadata?.voiceMode) {
+        (state.metadata as any).voiceMode = metadata.voiceMode;
+      }
+      // Carry pipeline sequence for turn correlation (voice → TTS)
+      if (typeof metadata?.pipelineSequence === 'number') {
+        (state.metadata as any).pipelineSequence = metadata.pipelineSequence;
+      }
 
       // Append new user message
       const newMsg = {

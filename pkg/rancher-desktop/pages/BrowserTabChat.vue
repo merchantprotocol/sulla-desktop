@@ -113,9 +113,24 @@
                 </div>
               </div>
             </div>
-            <div v-if="loading || graphRunning" class="mb-3 flex items-center gap-2 px-4">
-              <span class="activity-dot" />
-              <span class="text-sm font-bold text-secondary">{{ currentActivity || 'Thinking' }}..<span class="blink-dot">.</span></span>
+            <!-- Thinking indicator (graph running, not TTS) -->
+            <div v-if="loading || (graphRunning && !isTTSPlaying)" class="mb-3 flex items-center gap-2 px-4">
+              <div class="typing-dots">
+                <span class="typing-dot" />
+                <span class="typing-dot" />
+                <span class="typing-dot" />
+              </div>
+            </div>
+            <!-- Sulla speaking indicator -->
+            <div v-if="isTTSPlaying" class="mb-3 flex items-center gap-2 px-4">
+              <div class="sulla-speaking-indicator flex items-center gap-1.5 text-xs font-medium" style="color: var(--text-muted);">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" />
+                  <path class="sulla-wave sulla-wave-1" d="M15.54 8.46a5 5 0 0 1 0 7.07" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+                  <path class="sulla-wave sulla-wave-2" d="M18.07 5.93a9 9 0 0 1 0 12.73" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+                </svg>
+                <span>Sulla is speaking...</span>
+              </div>
             </div>
             <div v-if="showContinueButton" class="flex justify-end mb-3">
               <button type="button" class="rounded-lg bg-content px-4 py-2 text-sm font-medium text-page shadow-sm hover:bg-surface-hover transition-colors" @click="continueRun">Continue</button>
@@ -140,14 +155,16 @@
                 :show-overlay="false"
                 :has-messages="hasMessages"
                 :graph-running="graphRunning"
+                :tts-playing="isTTSPlaying"
+                :is-recording="isRecording"
+                :audio-level="audioLevel"
+                :recording-duration="recordingDuration"
                 :model-selector="modelSelector"
-                :auto-start-voice="voiceModeActive"
                 @send="send"
                 @stop="stop"
                 @primary-action="handlePrimaryAction"
-                @voice-interim="handleVoiceInterim"
-                @voice-transcribed="handleVoiceTranscribed"
-                @voice-error="showVoiceToast"
+                @toggle-recording="voice.toggleRecording()"
+                @stop-tts="voice.stopTTS()"
               />
             </div>
           </div>
@@ -162,14 +179,17 @@
           v-model:query="query"
           :loading="loading"
           :graph-running="graphRunning"
+          :tts-playing="isTTSPlaying"
+          :is-recording="isRecording"
+          :audio-level="audioLevel"
+          :recording-duration="recordingDuration"
           :model-selector="modelSelector"
           :is-first-chat="isFirstChat"
           @send="send"
           @stop="stop"
           @primary-action="handlePrimaryAction"
-          @voice-interim="handleVoiceInterim"
-          @voice-transcribed="handleVoiceTranscribed"
-          @voice-error="showVoiceToast"
+          @toggle-recording="voice.toggleRecording()"
+          @stop-tts="voice.stopTTS()"
           @pick="(mode: string) => emit('set-mode', mode as BrowserTabMode)"
           @start-onboarding="startOnboarding"
         />
@@ -204,6 +224,7 @@ import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import SubAgentBubble from './editor/workflow/SubAgentBubble.vue';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import { useTheme } from '@pkg/composables/useTheme';
+import { useVoiceSession } from '@pkg/composables/voice';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -375,8 +396,10 @@ const send = (metadata?: Record<string, unknown>) => {
   chatController.send(metadata);
 };
 const stop = () => {
-  stopTTS();
+  console.log(`[BrowserTabChat:stop] clicked — graphRunning=${graphRunning.value}, ttsPlaying=${isTTSPlaying.value}, recording=${isRecording.value}`);
+  voice.stopTTS();
   chatController.stop();
+  console.log(`[BrowserTabChat:stop] after chatController.stop() — graphRunning=${graphRunning.value}`);
 };
 const continueRun = () => chatController.continueRun();
 const handlePrimaryAction = () => {
@@ -393,286 +416,11 @@ function showVoiceToast(message: string): void {
   voiceToastTimer = setTimeout(() => { voiceToast.value = ''; }, 5000);
 }
 
-// ─── Live Voice Transcription ────────────────────────────────
-// voice-interim: shows a live "listening" bubble in chat with the partial transcription
-// voice-transcribed: submits the final text as a user message
-
-// Track whether voice mode is active so we can carry it across the intro→chat transition
-const voiceModeActive = ref(false);
-
-const VOICE_INTERIM_MSG_ID = 'voice_interim_live';
-
-const handleVoiceInterim = (text: string) => {
-  // Track voice mode state for intro→chat transition
-  voiceModeActive.value = !!text;
-
-  // Barge-in: stop any TTS audio the moment the user starts speaking
-  if (text && ttsPlaying) {
-    stopTTS();
-  }
-
-  if (!text) {
-    // Empty interim = recording ended. Flush any accumulated voice text
-    // immediately so the user's complete message gets sent without
-    // waiting for the debounce timer to expire.
-    flushVoiceQueue();
-
-    // Clear the listening bubble (only if no queued text is showing)
-    if (voiceTextQueue.length === 0) {
-      const idx = messages.value.findIndex((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
-      if (idx !== -1) {
-        messages.value.splice(idx, 1);
-      }
-    }
-
-    return;
-  }
-
-  // Create or update a temporary user message showing live transcription
-  const existing = messages.value.find((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
-  if (existing) {
-    existing.content = text;
-  } else {
-    messages.value.push({
-      id:        VOICE_INTERIM_MSG_ID,
-      channelId: '',
-      threadId:  '',
-      role:      'user',
-      kind:      'voice_interim',
-      content:   text,
-    } as ChatMessage);
-  }
-};
-
-// Voice transcription accumulation — wait for the user to finish speaking
-// before sending. Each VAD segment produces a transcription fragment; we
-// accumulate fragments and only send after a debounce period (no new
-// fragments for TRANSCRIPTION_DEBOUNCE_MS). This prevents fragmented sends
-// where the AI responds to half a sentence.
-const TRANSCRIPTION_DEBOUNCE_MS = 1500; // Wait 1.5s after last fragment
-const voiceTextQueue: string[] = [];
-let voiceSending = false;
-let transcriptionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-let voiceRecordingEnded = false; // Set when user stops recording — flush on next transcription
-
-const handleVoiceTranscribed = (text: string) => {
-  if (!text.trim()) return;
-
-  voiceTextQueue.push(text.trim());
-
-  // Show the accumulated text so far as an interim user message
-  const accumulated = voiceTextQueue.join(' ').trim();
-  const existing = messages.value.find((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
-  if (existing) {
-    existing.content = accumulated;
-  } else {
-    messages.value.push({
-      id:        VOICE_INTERIM_MSG_ID,
-      channelId: '',
-      threadId:  '',
-      role:      'user',
-      kind:      'voice_interim',
-      content:   accumulated,
-    } as ChatMessage);
-  }
-
-  // If recording already ended, this is the last transcription — send immediately
-  if (voiceRecordingEnded) {
-    voiceRecordingEnded = false;
-    if (transcriptionDebounceTimer) {
-      clearTimeout(transcriptionDebounceTimer);
-      transcriptionDebounceTimer = null;
-    }
-    processVoiceTextQueue();
-
-    return;
-  }
-
-  // Reset debounce timer — wait for more speech before sending
-  if (transcriptionDebounceTimer) {
-    clearTimeout(transcriptionDebounceTimer);
-  }
-  transcriptionDebounceTimer = setTimeout(() => {
-    transcriptionDebounceTimer = null;
-    processVoiceTextQueue();
-  }, TRANSCRIPTION_DEBOUNCE_MS);
-};
-
-/**
- * Force-flush any pending voice text immediately (called when recording stops).
- * If the queue is empty (last transcription hasn't arrived yet), sets a flag
- * so the next arriving transcription is sent without debounce.
- */
-function flushVoiceQueue(): void {
-  if (transcriptionDebounceTimer) {
-    clearTimeout(transcriptionDebounceTimer);
-    transcriptionDebounceTimer = null;
-  }
-  if (voiceTextQueue.length > 0) {
-    voiceRecordingEnded = false;
-    processVoiceTextQueue();
-  } else {
-    // Last transcription hasn't arrived yet — mark so it sends immediately when it does
-    voiceRecordingEnded = true;
-  }
-}
-
-async function processVoiceTextQueue(): Promise<void> {
-  if (voiceSending || voiceTextQueue.length === 0) return;
-  voiceSending = true;
-
-  // Remove the interim bubble showing accumulated text
-  const interimIdx = messages.value.findIndex((m: ChatMessage) => m.id === VOICE_INTERIM_MSG_ID);
-  if (interimIdx !== -1) {
-    messages.value.splice(interimIdx, 1);
-  }
-
-  // Drain queue — combine all accumulated fragments into one message
-  const texts = voiceTextQueue.splice(0);
-  const combined = texts.join(' ').trim();
-
-  if (combined) {
-    // If the agent is currently responding, abort it first.
-    // The new message will have full conversation context since prior
-    // messages are already in state.
-    if (graphRunning.value) {
-      stopTTS();
-      chatController.stop();
-      // Brief pause to let the graph finish aborting
-      await new Promise(r => setTimeout(r, 200));
-    }
-
-    query.value = combined;
-    await nextTick();
-    send({ inputSource: 'microphone' });
-  }
-
-  voiceSending = false;
-  if (voiceTextQueue.length > 0) {
-    processVoiceTextQueue();
-  }
-}
-
-// ─── TTS Playback ────────────────────────────────────────────
-// Watch for speak messages arriving in the message stream and play them via ElevenLabs TTS.
-// Supports look-ahead prefetching: while one sentence plays, the next is already being fetched.
-const ttsQueue: string[] = [];
-let ttsPlaying = false;
-let currentTTSAudio: HTMLAudioElement | null = null;
-const processedSpeakIds = new Set<string>();
-
-// Prefetch state — fetch the next TTS audio while current one is playing
-let prefetchedAudio: { text: string; result: any } | null = null;
-let prefetchAbort: AbortController | null = null;
-
-function stopTTS(): void {
-  ttsQueue.length = 0;
-  if (currentTTSAudio) {
-    currentTTSAudio.pause();
-    currentTTSAudio.src = '';
-    currentTTSAudio = null;
-  }
-  // Cancel any in-flight prefetch
-  if (prefetchAbort) {
-    prefetchAbort.abort();
-    prefetchAbort = null;
-  }
-  prefetchedAudio = null;
-  // Also cancel browser speechSynthesis fallback if active
-  if (window.speechSynthesis) {
-    window.speechSynthesis.cancel();
-  }
-  ttsPlaying = false;
-}
-
-/**
- * Pre-fetch TTS audio for the next item in the queue while current audio plays.
- */
-async function prefetchNextTTS(): Promise<void> {
-  if (ttsQueue.length === 0 || prefetchedAudio) return;
-  const nextText = ttsQueue[0]; // peek, don't shift
-
-  try {
-    prefetchAbort = new AbortController();
-    const result = await ipcRenderer.invoke('audio-speak', { text: nextText });
-
-    // Only cache if the text still matches the front of the queue (not cleared by barge-in)
-    if (ttsQueue[0] === nextText) {
-      prefetchedAudio = { text: nextText, result };
-    }
-  } catch {
-    // Prefetch failure is non-fatal — playNextTTS will fetch normally
-  } finally {
-    prefetchAbort = null;
-  }
-}
-
-async function playNextTTS(): Promise<void> {
-  if (ttsPlaying || ttsQueue.length === 0) return;
-  ttsPlaying = true;
-
-  const text = ttsQueue.shift()!;
-  try {
-    // Use prefetched result if available and matching
-    let result: any;
-
-    if (prefetchedAudio?.text === text) {
-      result = prefetchedAudio.result;
-      prefetchedAudio = null;
-    } else {
-      prefetchedAudio = null; // Discard stale prefetch
-      result = await ipcRenderer.invoke('audio-speak', { text });
-    }
-
-    if (result?.audio) {
-      const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-
-      currentTTSAudio = audio;
-
-      // Start prefetching the next sentence while this one plays
-      prefetchNextTTS();
-
-      await new Promise<void>((resolve) => {
-        audio.onended = () => { URL.revokeObjectURL(url); currentTTSAudio = null; resolve(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); currentTTSAudio = null; resolve(); };
-        audio.play().catch(() => { currentTTSAudio = null; resolve(); });
-      });
-    }
-  } catch (err) {
-    console.warn('[BrowserTabChat] ElevenLabs TTS failed, falling back to browser speechSynthesis:', err);
-    await browserTTSFallback(text);
-  } finally {
-    ttsPlaying = false;
-    playNextTTS(); // Process next in queue
-  }
-}
-
-function browserTTSFallback(text: string): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (!window.speechSynthesis) {
-      console.warn('[BrowserTabChat] speechSynthesis not available');
-      resolve();
-
-      return;
-    }
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onend = () => resolve();
-    utterance.onerror = () => resolve();
-    window.speechSynthesis.speak(utterance);
-  });
-}
-
-watch(messages, (msgs) => {
-  for (const m of msgs) {
-    if (m.kind === 'speak' && m.content?.trim() && !processedSpeakIds.has(m.id)) {
-      processedSpeakIds.add(m.id);
-      ttsQueue.push(m.content.trim());
-      playNextTTS();
-    }
-  }
-}, { deep: true });
+// ─── Voice Session ───────────────────────────────────────────
+// OOP voice system: VoiceRecorderService + TTSPlayerService + VoicePipeline
+// coordinated by useVoiceSession composable. Auto-cleans up on unmount.
+const voice = useVoiceSession({ chatController, messages, onError: showVoiceToast });
+const { isRecording, audioLevel, recordingDuration, isTTSPlaying } = voice;
 
 // Tool card helpers
 const expandedToolCards = ref<Set<string>>(new Set());
@@ -741,6 +489,10 @@ watch(
 );
 
 onUnmounted(() => {
+  // voice cleanup is handled automatically by useVoiceSession's onUnmounted
+  if (graphRunning.value) {
+    chatController.stop();
+  }
   chatController.dispose();
   modelSelector.dispose();
 });
@@ -758,28 +510,34 @@ onUnmounted(() => {
   transform: translateX(-50%) translateY(8px);
 }
 
-/* ── Thinking indicator ── */
-.activity-dot {
-  width: 6px;
-  height: 6px;
+/* ── Typing indicator dots ── */
+.typing-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--accent-primary);
-  animation: activityPulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
+  opacity: 0.3;
+  animation: typingBounce 1.4s ease-in-out infinite;
 }
 
-.blink-dot {
-  animation: blinkDot 1s step-end infinite;
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
 }
 
-@keyframes blinkDot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
 }
 
-@keyframes activityPulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
+@keyframes typingBounce {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-4px); }
 }
 
 /* ── Streaming cursor ── */

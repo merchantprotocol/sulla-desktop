@@ -169,6 +169,25 @@
               </div>
             </template>
           </div>
+
+          <!-- Chat input pinned to bottom of notes pane -->
+          <div class="dt-chat-input">
+            <input
+              ref="chatInputEl"
+              v-model="chatInput"
+              type="text"
+              class="dt-chat-field"
+              placeholder="Message Sulla privately..."
+              @keydown.enter="sendChatMessage"
+            >
+            <button
+              class="dt-chat-send"
+              :disabled="!chatInput.trim()"
+              @click="sendChatMessage"
+            >
+              Send
+            </button>
+          </div>
         </div>
       </div>
     </template>
@@ -217,6 +236,8 @@ const audioLevel = ref(0);
 const sessionDuration = ref('0:00');
 const isAnalyzing = ref(false);
 const isMuted = ref(false);
+const chatInput = ref('');
+const chatInputEl = ref<HTMLInputElement | null>(null);
 const transcriptScrollEl = ref<HTMLElement | null>(null);
 const analysisScrollEl = ref<HTMLElement | null>(null);
 
@@ -398,7 +419,7 @@ async function analyzeNewTranscript(): Promise<void> {
 
   analysisMessageCount++;
   controller.query.value = prompt;
-  await controller.send({ inputSource: 'secretary-analysis' });
+  await controller.send({ inputSource: 'secretary-analysis', voiceMode: 'secretary' });
 
   const msgCountBefore = controller.messages.value.length;
   const stopWatch = setInterval(() => {
@@ -504,6 +525,57 @@ User: ${ command }`;
         clearInterval(stopWatch);
         addEntry(lastMsg.content, 'agent-response');
         playTTS(lastMsg.content);
+      }
+    }
+  }, 500);
+
+  setTimeout(() => clearInterval(stopWatch), 60_000);
+}
+
+async function sendChatMessage(): Promise<void> {
+  const text = chatInput.value.trim();
+  if (!text) return;
+  chatInput.value = '';
+
+  // Show the user's message in the notes pane as commentary
+  agentMessages.value.push({
+    id:   generateEntryId(),
+    time: formatTimeNow(),
+    text: `You: ${ text }`,
+  });
+  scrollAnalysis();
+
+  const controller = ensureChatController();
+
+  const prompt = `You are in secretary mode during a live meeting. The user sent you a private text message (not spoken aloud).
+
+RULES:
+- Reply in ONE short sentence max (under 15 words).
+- If you don't understand, ask them to clarify briefly.
+- No narration, no elaboration.
+
+User: ${ text }`;
+  controller.query.value = prompt;
+  await controller.send({ inputSource: 'secretary-chat' });
+
+  const msgCountBefore = controller.messages.value.length;
+  const stopWatch = setInterval(() => {
+    if (!chatController) {
+      clearInterval(stopWatch);
+      return;
+    }
+    const msgs = chatController.messages.value;
+    if (msgs.length > msgCountBefore) {
+      const lastMsg = msgs[msgs.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content && !chatController.graphRunning.value) {
+        clearInterval(stopWatch);
+        agentMessages.value.push({
+          id:   generateEntryId(),
+          time: formatTimeNow(),
+          text: lastMsg.content,
+        });
+        scrollAnalysis();
+        // Private chat — no TTS
       }
     }
   }, 500);
@@ -686,7 +758,7 @@ function flushAndRestartSegment(): void {
 async function transcribeSegment(audioBlob: Blob, mimeType: string): Promise<void> {
   try {
     const arrayBuffer = await audioBlob.arrayBuffer();
-    const result = await ipcRenderer.invoke('audio-transcribe', { audio: arrayBuffer, mimeType });
+    const result = await ipcRenderer.invoke('audio-transcribe', { audio: arrayBuffer, mimeType, diarize: true });
     if (result?.text?.trim()) {
       const text = result.text.trim();
       addEntry(text);
@@ -1179,5 +1251,61 @@ onUnmounted(() => {
   background: var(--surface-2, #1c2128);
   border: 1px solid var(--border, #30363d);
   color: var(--text-muted, #8b949e);
+}
+
+/* ── Chat input (pinned to bottom of notes pane) ──────── */
+
+.dt-chat-input {
+  display: flex;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border-muted, #21262d);
+  background: var(--surface-1, #161b22);
+  flex-shrink: 0;
+}
+
+.dt-chat-field {
+  flex: 1;
+  min-width: 0;
+  padding: 0.375rem 0.5rem;
+  font-family: 'SF Mono', 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text, #e6edf3);
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 150ms;
+}
+
+.dt-chat-field::placeholder {
+  color: var(--text-dim, #6e7681);
+}
+
+.dt-chat-field:focus {
+  border-color: var(--accent-primary, #5096b3);
+}
+
+.dt-chat-send {
+  font-family: 'SF Mono', 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0.25rem 0.625rem;
+  border-radius: 4px;
+  border: 1px solid rgba(80, 150, 179, 0.3);
+  color: var(--accent-primary, #5096b3);
+  background: rgba(80, 150, 179, 0.1);
+  cursor: pointer;
+  transition: background-color 150ms, opacity 150ms;
+}
+
+.dt-chat-send:hover:not(:disabled) {
+  background: rgba(80, 150, 179, 0.2);
+}
+
+.dt-chat-send:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 </style>

@@ -15,6 +15,8 @@ import { ObservationalSummaryService } from '../services/ObservationalSummarySer
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir } from '../utils/sullaPaths';
 import { environmentPrompt, INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { ChatController, type ChatMode } from '../controllers/ChatController';
+import type { StreamContext } from '../controllers/Extractor';
 import fs from 'node:fs';
 
 // ============================================================================
@@ -405,10 +407,30 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   name:                          string;
   protected llm:                 BaseLanguageModel | null = null;
   private currentNodeRunContext: NodeRunContext | null = null;
+  private _chatController:       ChatController | null = null;
 
   constructor(id: string, name: string) {
     this.id = id;
     this.name = name;
+  }
+
+  /**
+   * Lazy-init ChatController. Created once per BaseNode instance and reused
+   * across LLM calls. The controller's mode is set per-call in normalizedChat().
+   */
+  protected getChatController(): ChatController {
+    if (!this._chatController) {
+      this._chatController = new ChatController({
+        dispatch:        (state, type, data) => this.dispatchToWebSocket(
+          state.metadata.wsChannel || 'workbench',
+          { type, data },
+        ),
+        sendChatMessage: (state, content, role, kind) => this.wsChatMessage(state, content, role, kind),
+        voiceLog:        (state, component, event, data) => this.voiceLog(state, component, event, data ?? {}),
+      });
+    }
+
+    return this._chatController;
   }
 
   abstract execute(state: T): Promise<NodeResult<T>>;
@@ -989,14 +1011,42 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         if (messages[i].role === 'system') systemIndices.add(i);
         if (messages[i].role === 'user') latestUserIdx = i;
       }
+      // Build a set of indices that form tool_use/tool_result pairs so we
+      // never drop one half of a pair (which would corrupt the message array
+      // and cause "tool_call_id not found" API errors).
+      const toolPairIndices = new Set<number>();
+      for (let idx = 0; idx < messages.length; idx++) {
+        const msg = messages[idx];
+        const hasToolUse = msg.role === 'assistant' && Array.isArray(msg.content) &&
+          msg.content.some((b: any) => b?.type === 'tool_use');
+        if (hasToolUse) {
+          const next = messages[idx + 1];
+          const nextHasToolResult = next?.role === 'user' && Array.isArray(next.content) &&
+            next.content.some((b: any) => b?.type === 'tool_result');
+          if (nextHasToolResult) {
+            toolPairIndices.add(idx);
+            toolPairIndices.add(idx + 1);
+          }
+        }
+      }
+
       // Drop from oldest non-protected until under budget
       let i = 0;
       while (totalTokens > inputBudgetTokens && i < messages.length) {
-        if (!systemIndices.has(i) && i !== latestUserIdx) {
+        if (!systemIndices.has(i) && i !== latestUserIdx && !toolPairIndices.has(i)) {
           const content = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content);
           totalTokens -= estimateTokens(content);
           messages.splice(i, 1);
+          // Rebuild protected indices after splice
           if (latestUserIdx > i) latestUserIdx--;
+          // Shift toolPairIndices down
+          const shifted = new Set<number>();
+          for (const idx of toolPairIndices) {
+            if (idx > i) shifted.add(idx - 1);
+            else if (idx < i) shifted.add(idx);
+          }
+          toolPairIndices.clear();
+          for (const idx of shifted) toolPairIndices.add(idx);
         } else {
           i++;
         }
@@ -1087,7 +1137,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       state.metadata.hadToolCalls = false;
       state.metadata.hadUserMessages = false;
 
-      const isVoiceMode = (state.metadata as any).inputSource === 'microphone';
+      // Configure the ChatController mode based on request metadata.
+      // The controller's extractors will handle prompt enrichment and response parsing.
+      const inputSource = (state.metadata as any).inputSource ?? '';
+      const voiceMode = (state.metadata as any).voiceMode ?? '';
+      const controller = this.getChatController();
+      let chatMode: ChatMode = 'text';
+      if (inputSource === 'microphone') {
+        chatMode = (voiceMode === 'secretary' || voiceMode === 'intake') ? voiceMode as ChatMode : 'voice';
+      } else if (inputSource.startsWith('secretary-') || voiceMode === 'secretary') {
+        chatMode = 'secretary';
+      }
+      controller.setMode(chatMode);
 
       // Always use streaming when available — voice mode adds progressive TTS dispatch
       let reply: NormalizedResponse | null = await this.callLLMStreaming(state, messages, {
@@ -1123,12 +1184,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         throw new Error(`LLM returned empty response after retry (model=${ this.llm!.getModel() }, provider=${ this.llm!.getProviderName() })`);
       }
 
-      if (!isVoiceMode) {
-        // Non-voice: extract and dispatch thinking/speak post-completion
-        this.extractAndDispatchThinking(state, reply);
-        this.extractAndDispatchSpeakTags(state, reply);
+      // In text mode, the LLM may spontaneously include <speak> tags — extract and dispatch them.
+      // All other processing (thinking, speak during streaming, secretary) is handled by
+      // the ChatController's extractors in callLLMStreaming → processComplete().
+      if (chatMode === 'text') {
+        controller.processNonVoiceSpeak(reply, controller.buildContext(state));
       }
-      // Voice mode: thinking/speak already dispatched during streaming
 
       // Append to state — stores native tool_use content arrays when present
       this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
@@ -1380,22 +1441,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   // Streaming LLM call with progressive <speak> dispatch (voice mode)
   // ─────────────────────────────────────────────────────────────
 
-  // Common abbreviations that should NOT trigger sentence boundaries
-  private static readonly ABBREVIATIONS = new Set([
-    'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'st', 'vs', 'etc',
-    'inc', 'ltd', 'corp', 'dept', 'univ', 'approx', 'est', 'govt',
-    'e.g', 'i.e', 'a.m', 'p.m',
-  ]);
 
   /**
-   * Stream LLM tokens and progressively dispatch <speak> content as
-   * individual sentences for TTS playback. This enables voice responses
-   * to start playing while the LLM is still generating.
-   *
-   * Also handles thinking extraction post-stream.
-   *
-   * Works for both voice and text chat — voice mode gets progressive
-   * sentence-level TTS dispatch, text chat just benefits from streaming speed.
+   * Stream LLM tokens through the ChatController's extractor pipeline.
+   * Extractors handle speak extraction (voice mode), thinking extraction,
+   * and streaming dispatch (text mode). See ChatController + Extractors.
    */
   private async callLLMStreaming(
     state: BaseThreadState,
@@ -1403,26 +1453,28 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     options: any,
     nodeRunContext: any,
   ): Promise<NormalizedResponse | null> {
-    const isVoiceMode = (state.metadata as any).inputSource === 'microphone';
+    const controller = this.getChatController();
+    const ctx = controller.buildContext(state);
 
-    // Progressive extraction state (only active in voice mode)
+    this.voiceLog(state, 'LLM', 'STREAM_START', { mode: controller.getMode(), model: this.llm?.getModel() });
+
+    // Reset extractor state for this new LLM call
+    controller.reset();
+
+    // Text streaming state — throttle at ~50ms to avoid flooding the WebSocket
     let contentBuffer = '';
-    let insideSpeakTag = false;
-    let speakBuffer = '';
-    let sentenceBuffer = '';
-    const spokenSentences: string[] = [];
-
-    // Text streaming state (non-voice mode) — throttle at ~50ms to avoid
-    // flooding the WebSocket while still feeling real-time.
     let lastStreamFlush = 0;
     const STREAM_THROTTLE_MS = 50;
+    const isVoiceMode = controller.getMode() === 'voice';
 
     const onToken = (token: string): void => {
-      // Always accumulate for content tracking
       contentBuffer += token;
 
+      // Run token through all active extractors (speak extraction, etc.)
+      const cleaned = controller.processChunk(token, ctx);
+
       // Non-voice mode: stream accumulated text to the UI progressively
-      if (!isVoiceMode) {
+      if (!isVoiceMode && cleaned) {
         const now = Date.now();
         if (now - lastStreamFlush >= STREAM_THROTTLE_MS) {
           lastStreamFlush = now;
@@ -1431,56 +1483,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             this.wsChatMessage(state, stripped, 'assistant', 'streaming');
           }
         }
-        return;
       }
-
-      // Detect <speak> tag opening
-      if (!insideSpeakTag) {
-        const openIdx = contentBuffer.indexOf('<speak>');
-
-        if (openIdx !== -1) {
-          insideSpeakTag = true;
-          const afterTag = contentBuffer.slice(openIdx + 7);
-
-          speakBuffer = afterTag;
-          sentenceBuffer = afterTag;
-        }
-
-        return;
-      }
-
-      // We're inside a <speak> tag — accumulate and check for boundaries
-      speakBuffer += token;
-      sentenceBuffer += token;
-
-      // Check for closing </speak> tag
-      const closeIdx = speakBuffer.indexOf('</speak>');
-
-      if (closeIdx !== -1) {
-        const remaining = sentenceBuffer.replace('</speak>', '').trim();
-
-        if (remaining.length > 0) {
-          this.wsChatMessage(state, remaining, 'assistant', 'speak');
-          spokenSentences.push(remaining);
-        }
-        insideSpeakTag = false;
-        speakBuffer = '';
-        sentenceBuffer = '';
-
-        const fullCloseIdx = contentBuffer.lastIndexOf('</speak>');
-
-        if (fullCloseIdx !== -1) {
-          contentBuffer = contentBuffer.slice(0, fullCloseIdx) +
-            contentBuffer.slice(fullCloseIdx).replace('</speak>', '');
-        }
-
-        return;
-      }
-
-      // Sentence boundary detection
-      this.tryDispatchSentence(state, sentenceBuffer, spokenSentences, (remainder) => {
-        sentenceBuffer = remainder;
-      });
     };
 
     const reply = await this.llm!.chatStream(messages, { onToken }, options);
@@ -1489,134 +1492,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return null;
     }
 
-    // Voice mode: flush any remaining sentence content
-    if (isVoiceMode && insideSpeakTag && sentenceBuffer.trim()) {
-      const remaining = sentenceBuffer.replace('</speak>', '').trim();
-
-      if (remaining.length > 0) {
-        this.wsChatMessage(state, remaining, 'assistant', 'speak');
-        spokenSentences.push(remaining);
-      }
-    }
-
-    // Strip <speak> tags from the final content so they don't display in chat
-    if (isVoiceMode) {
-      const speakTagRegex = /<speak>([\s\S]*?)<\/speak>/gi;
-
-      reply.content = reply.content.replace(speakTagRegex, '').trim();
-    }
-
-    // Extract thinking content
-    this.extractAndDispatchThinking(state, reply);
+    // Run post-completion processing through all active extractors
+    // (thinking extraction, speak tag cleanup, secretary analysis, etc.)
+    controller.processComplete(reply, ctx);
 
     return reply;
-  }
-
-  /**
-   * Check if the sentence buffer contains a complete sentence and dispatch it.
-   * Calls `onFlush` with the remaining (un-dispatched) text.
-   */
-  private tryDispatchSentence(
-    state: BaseThreadState,
-    buffer: string,
-    spokenSentences: string[],
-    onFlush: (remainder: string) => void,
-  ): void {
-    // Look for sentence-ending punctuation followed by whitespace
-    const sentenceEndPattern = /([.!?])(\s+)/g;
-    let lastSplit = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = sentenceEndPattern.exec(buffer)) !== null) {
-      const splitPos = match.index + match[1].length;
-      const candidate = buffer.slice(lastSplit, splitPos).trim();
-
-      if (candidate.length < 20) {
-        // Too short — keep buffering
-        continue;
-      }
-
-      // Check for abbreviations (e.g. "Dr." should not split)
-      const lastWord = candidate.split(/\s+/).pop()?.replace(/[.!?]$/, '').toLowerCase() || '';
-
-      if (BaseNode.ABBREVIATIONS.has(lastWord)) {
-        continue;
-      }
-
-      // Dispatch this sentence
-      this.wsChatMessage(state, candidate, 'assistant', 'speak');
-      spokenSentences.push(candidate);
-      lastSplit = splitPos + match[2].length;
-    }
-
-    if (lastSplit > 0) {
-      onFlush(buffer.slice(lastSplit));
-    }
-  }
-
-  /**
-     * Extract thinking/reasoning content from an LLM reply and dispatch it
-     * to the AgentPersona chat as a 'thinking' kind message.
-     * Sources:
-     *   1. reply.metadata.reasoning (Anthropic thinking/reasoning blocks)
-     *   2. <thinking>...</thinking> tags in reply.content (other providers)
-     * Mutates reply.content in-place to strip thinking tags.
-     */
-  protected extractAndDispatchThinking(state: BaseThreadState, reply: NormalizedResponse): void {
-    let thinkingText = '';
-
-    // Source 1: Anthropic reasoning metadata
-    if (reply.metadata.reasoning) {
-      thinkingText = reply.metadata.reasoning.trim();
-    }
-
-    // Source 2: <thinking> tags in content
-    const thinkingTagRegex = /<thinking>([\s\S]*?)<\/thinking>/gi;
-    const tagMatches = reply.content.match(thinkingTagRegex);
-    if (tagMatches) {
-      const extracted = tagMatches
-        .map(m => m.replace(/<\/?thinking>/gi, '').trim())
-        .filter(Boolean)
-        .join('\n');
-      if (extracted) {
-        thinkingText = thinkingText ? `${ thinkingText }\n${ extracted }` : extracted;
-      }
-      // Strip thinking tags from the content
-      reply.content = reply.content.replace(thinkingTagRegex, '').trim();
-    }
-
-    if (!thinkingText) {
-      return;
-    }
-
-    // Dispatch as a 'thinking' kind message to the frontend
-    this.wsChatMessage(state, thinkingText, 'assistant', 'thinking');
-  }
-
-  /**
-   * Extract <speak> tags from the LLM response and dispatch them as 'speak'
-   * kind messages to the frontend for text-to-speech playback.
-   * The tags are stripped from reply.content so they don't render in chat.
-   */
-  protected extractAndDispatchSpeakTags(state: BaseThreadState, reply: NormalizedResponse): void {
-    const speakTagRegex = /<speak>([\s\S]*?)<\/speak>/gi;
-    const tagMatches = reply.content.match(speakTagRegex);
-
-    if (!tagMatches) {
-      return;
-    }
-
-    const spoken = tagMatches
-      .map(m => m.replace(/<\/?speak>/gi, '').trim())
-      .filter(Boolean)
-      .join('\n');
-
-    // Strip speak tags from the content so they don't display in chat
-    reply.content = reply.content.replace(speakTagRegex, '').trim();
-
-    if (spoken) {
-      this.wsChatMessage(state, spoken, 'assistant', 'speak');
-    }
   }
 
   /**
@@ -1710,12 +1590,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   }
 
   /**
-     * Emit a chat message to the UI dashboard via WebSocket
-     * Connection ID is read from state.metadata.wsChannel (defaults to 'sulla-desktop')
-     * @param state BaseThreadState containing the connection ID in metadata
+     * Sends a chat message to the frontend via WebSocket as an
+     * 'assistant_message' event. Used for progress updates, streaming tokens,
+     * thinking content, and error messages.
+     *
+     * NEVER used for speak/TTS content — if `kind='speak'` leaks here, it is
+     * redirected to `wsSpeakDispatch()` as a safety net (with a warning log).
+     *
+     * @param state   BaseThreadState containing the connection ID in metadata
      * @param content Message content to display
-     * @param role 'assistant' | 'system' - defaults to 'assistant'
-     * @param kind Optional UI kind tag - defaults to 'progress'
+     * @param role    'assistant' | 'system' - defaults to 'assistant'
+     * @param kind    Optional UI kind tag - defaults to 'progress'
      * @returns true if message was sent via WebSocket
      */
   protected async wsChatMessage(
@@ -1759,6 +1644,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this.connectWebSocket(connectionId);
     }
 
+    // Speak messages must use wsSpeakDispatch — not wsChatMessage.
+    // If speak kind leaks here, redirect to the dedicated speak dispatch.
+    if (kind === 'speak') {
+      console.warn(`[BaseNode:wsChatMessage] speak kind redirected to wsSpeakDispatch`);
+      this.voiceLog(state, 'WS', 'SPEAK_REDIRECT', { text: content.slice(0, 200) });
+      return this.wsSpeakDispatch(state, content);
+    }
+
     // Send via WebSocket
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'assistant_message',
@@ -1772,7 +1665,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     });
 
     if (!sent) {
-      console.warn(`[Agent:${ this.name }] Failed to send chat message via WebSocket`);
+      console.warn(`[Agent:${ this.name }] Failed to send chat message via WebSocket (kind=${kind})`);
     } else {
       state.metadata.hadUserMessages = true;
     }
@@ -1801,6 +1694,68 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       } catch (e) { console.warn(`[BaseNode:wsChatMessage] node_thinking emit failed:`, e); }
     } else if ((state.metadata as any).isSubAgent) {
       console.warn(`[BaseNode:wsChatMessage] Sub-agent "${ this.name }" missing workflow metadata — workflowNodeId=${ workflowNodeId }, workflowParentChannel=${ workflowParentChannel }`);
+    }
+
+    return sent;
+  }
+
+  /**
+   * Dispatches speak text for TTS playback via a dedicated 'speak_dispatch'
+   * WebSocket event. This creates a message with kind='speak' in
+   * AgentPersonaModel, which VoicePipeline detects and enqueues for
+   * TTSPlayerService.
+   *
+   * IMPORTANT: This is the ONLY server-side path that should create TTS
+   * content. All speak content must flow through here — never through
+   * `wsChatMessage()`.
+   */
+
+  /**
+   * Log a voice pipeline event to ConversationLogger with a grep-friendly tag.
+   * Uses the same VOICE:<COMPONENT>:<EVENT> format as the frontend VoiceLogger.
+   * Search: grep "VOICE:LLM" or "VOICE:WS" in log files.
+   */
+  private voiceLog(state: BaseThreadState, component: string, event: string, data: Record<string, unknown> = {}): void {
+    const convId = (state.metadata as any).conversationId;
+    if (!convId) return;
+    try {
+      const { getConversationLogger } = require('../services/ConversationLogger');
+      getConversationLogger().log(convId, {
+        ts: new Date().toISOString(),
+        type: `VOICE:${component}:${event}`,
+        ...data,
+      });
+    } catch { /* best-effort */ }
+  }
+
+  protected async wsSpeakDispatch(state: BaseThreadState, text: string): Promise<boolean> {
+    const clean = text?.trim();
+    if (!clean) return false;
+
+    const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
+    const threadId = state.metadata.threadId;
+
+    if (!this.isWebSocketConnected(connectionId)) {
+      this.connectWebSocket(connectionId);
+    }
+
+    // Trace: log a stack snippet so we can identify which code path dispatched this
+    const callerStack = new Error().stack?.split('\n').slice(1, 4).map(l => l.trim()).join(' < ') || '';
+    console.log(`[BaseNode:wsSpeakDispatch] → text="${clean.slice(0, 80)}" | caller: ${callerStack}`);
+
+    this.voiceLog(state, 'WS', 'SPEAK_DISPATCH', { text: clean.slice(0, 200), caller: callerStack });
+
+    const sent = await this.dispatchToWebSocket(connectionId, {
+      type: 'speak_dispatch',
+      data: {
+        text:      clean,
+        thread_id: threadId,
+        timestamp: Date.now(),
+      },
+    });
+
+    if (!sent) {
+      console.warn(`[BaseNode:wsSpeakDispatch] Failed to send speak dispatch`);
     }
 
     return sent;

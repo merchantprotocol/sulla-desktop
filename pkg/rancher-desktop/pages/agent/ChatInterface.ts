@@ -155,8 +155,10 @@ export class ChatInterface {
   }
 
   stop(): void {
+    console.log(`[ChatInterface:stop] channelId=${this.channelId}, graphRunning was ${this.persona.graphRunning.value}`);
     this.persona.emitStopSignal(this.channelId);
     this.persona.graphRunning.value = false;
+    console.log(`[ChatInterface:stop] graphRunning now ${this.persona.graphRunning.value}`);
   }
 
   continueRun(): void {
@@ -183,5 +185,14 @@ export class ChatInterface {
     }
 
     await this.persona.addUserMessage('', text, metadata);
+  }
+
+  /**
+   * Register a listener for direct speak event delivery.
+   * Bypasses the messages array watcher for lower-latency TTS triggering.
+   * Returns an unsubscribe function.
+   */
+  onSpeakDispatch(cb: (text: string, threadId: string, pipelineSequence: number | null) => void): () => void {
+    return this.persona.addSpeakListener(cb);
   }
 }
