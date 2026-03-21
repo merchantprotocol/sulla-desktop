@@ -10,6 +10,27 @@
 
 import { getIntegrationService } from './IntegrationService';
 
+/** Options for transcription requests. */
+export interface TranscriptionOptions {
+  /** Enable speaker diarization (ElevenLabs returns per-word speaker IDs). */
+  diarize?: boolean;
+}
+
+/** A single word with optional speaker attribution (from diarization). */
+export interface TranscriptionWord {
+  text: string;
+  speaker_id?: string;
+  start?: number;
+  end?: number;
+}
+
+/** Result from a transcription request. */
+export interface TranscriptionResult {
+  text: string;
+  /** Per-word breakdown with speaker IDs. Only present when diarize=true. */
+  words?: TranscriptionWord[];
+}
+
 let instance: TranscriptionService | null = null;
 
 export function getTranscriptionService(): TranscriptionService {
@@ -36,14 +57,14 @@ export class TranscriptionService {
    * Routes through Enterprise Gateway when configured, otherwise
    * falls back to direct ElevenLabs API.
    */
-  async transcribe(audio: Buffer, mimeType: string): Promise<string> {
+  async transcribe(audio: Buffer, mimeType: string, options?: TranscriptionOptions): Promise<TranscriptionResult> {
     const gateway = await this.getGatewayConfig();
 
     if (gateway) {
-      return this.transcribeViaGateway(audio, mimeType, gateway);
+      return this.transcribeViaGateway(audio, mimeType, gateway, options);
     }
 
-    return this.transcribeViaElevenLabs(audio, mimeType);
+    return this.transcribeViaElevenLabs(audio, mimeType, options);
   }
 
   // ─── Enterprise Gateway path ────────────────────────────────
@@ -56,9 +77,16 @@ export class TranscriptionService {
     audio: Buffer,
     mimeType: string,
     gateway: { url: string; apiKey: string },
-  ): Promise<string> {
+    options?: TranscriptionOptions,
+  ): Promise<TranscriptionResult> {
     let lastError: Error | null = null;
     const endpoint = `${ gateway.url.replace(/\/+$/, '') }/api/desktop/transcribe`;
+
+    // Build query params for diarization
+    const url = new URL(endpoint);
+    if (options?.diarize) {
+      url.searchParams.set('diarize', 'true');
+    }
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       if (attempt > 0) {
@@ -70,7 +98,7 @@ export class TranscriptionService {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-        const response = await fetch(endpoint, {
+        const response = await fetch(url.toString(), {
           method:  'POST',
           signal:  controller.signal,
           headers: {
@@ -93,13 +121,16 @@ export class TranscriptionService {
           throw lastError;
         }
 
-        const result = await response.json() as { text?: string };
+        const result = await response.json() as { text?: string; words?: TranscriptionWord[] };
 
         if (!result.text || !result.text.trim()) {
           throw new Error('Gateway returned empty transcription.');
         }
 
-        return result.text.trim();
+        return {
+          text:  result.text.trim(),
+          words: result.words,
+        };
       } catch (err: any) {
         lastError = err;
         if (err.name === 'AbortError') {
@@ -118,7 +149,7 @@ export class TranscriptionService {
 
   // ─── Direct ElevenLabs path (fallback) ──────────────────────
 
-  private async transcribeViaElevenLabs(audio: Buffer, mimeType: string): Promise<string> {
+  private async transcribeViaElevenLabs(audio: Buffer, mimeType: string, options?: TranscriptionOptions): Promise<TranscriptionResult> {
     const apiKey = await this.getElevenLabsApiKey();
 
     if (!apiKey) {
@@ -140,7 +171,10 @@ export class TranscriptionService {
       try {
         const formData = new FormData();
         formData.append('file', blob, `recording.${ ext }`);
-        formData.append('model_id', 'scribe_v1_experimental');
+        formData.append('model_id', 'scribe_v2');
+        if (options?.diarize) {
+          formData.append('diarize', 'true');
+        }
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -164,13 +198,16 @@ export class TranscriptionService {
           throw lastError;
         }
 
-        const result = await response.json() as { text?: string };
+        const result = await response.json() as { text?: string; words?: TranscriptionWord[] };
 
         if (!result.text || !result.text.trim()) {
           throw new Error('ElevenLabs returned empty transcription.');
         }
 
-        return result.text.trim();
+        return {
+          text:  result.text.trim(),
+          words: result.words,
+        };
       } catch (err: any) {
         lastError = err;
         if (err.name === 'AbortError') {

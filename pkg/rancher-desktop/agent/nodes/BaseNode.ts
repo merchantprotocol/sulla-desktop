@@ -1087,7 +1087,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       state.metadata.hadToolCalls = false;
       state.metadata.hadUserMessages = false;
 
-      const isVoiceMode = (state.metadata as any).inputSource === 'microphone';
+      const inputSource = (state.metadata as any).inputSource ?? '';
+      const voiceMode = (state.metadata as any).voiceMode ?? '';
+      const isVoiceMode = inputSource === 'microphone';
+      const isSecretaryMode = inputSource.startsWith('secretary-') || voiceMode === 'secretary';
+      const isIntakeMode = voiceMode === 'intake';
 
       // Always use streaming when available — voice mode adds progressive TTS dispatch
       let reply: NormalizedResponse | null = await this.callLLMStreaming(state, messages, {
@@ -1123,10 +1127,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         throw new Error(`LLM returned empty response after retry (model=${ this.llm!.getModel() }, provider=${ this.llm!.getProviderName() })`);
       }
 
-      if (!isVoiceMode) {
-        // Non-voice: extract and dispatch thinking/speak post-completion
+      if (!isVoiceMode && !isSecretaryMode && !isIntakeMode) {
+        // Non-voice, non-secretary, non-intake: extract and dispatch thinking/speak post-completion
         this.extractAndDispatchThinking(state, reply);
         this.extractAndDispatchSpeakTags(state, reply);
+      } else if (isSecretaryMode || isIntakeMode) {
+        // Secretary/intake mode: extract thinking but skip speak — these modes are silent
+        this.extractAndDispatchThinking(state, reply);
+        // Strip any <speak> tags from content (safety net — prompts say not to generate them)
+        reply.content = reply.content.replace(/<speak>[\s\S]*?<\/speak>/gi, '').trim();
       }
       // Voice mode: thinking/speak already dispatched during streaming
 
@@ -1388,14 +1397,21 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   ]);
 
   /**
-   * Stream LLM tokens and progressively dispatch <speak> content as
-   * individual sentences for TTS playback. This enables voice responses
-   * to start playing while the LLM is still generating.
+   * Stream LLM tokens and progressively dispatch <speak> content for TTS.
    *
-   * Also handles thinking extraction post-stream.
+   * In **voice mode** (`inputSource='microphone'`), this method extracts
+   * `<speak>` tags progressively during token streaming and dispatches them
+   * via `wsSpeakDispatch()` for TTS playback. Speak content is dispatched
+   * sentence-by-sentence so that audio playback can begin while the LLM is
+   * still generating.
    *
-   * Works for both voice and text chat — voice mode gets progressive
-   * sentence-level TTS dispatch, text chat just benefits from streaming speed.
+   * In **non-voice mode** (text chat), it streams raw text to the UI as
+   * 'streaming' kind messages via `wsChatMessage()`. No speak extraction
+   * occurs during streaming; speak tags (if any) are handled post-completion
+   * by `extractAndDispatchSpeakTags()`.
+   *
+   * Also handles thinking extraction post-stream via
+   * `extractAndDispatchThinking()`.
    */
   private async callLLMStreaming(
     state: BaseThreadState,
@@ -1404,6 +1420,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     nodeRunContext: any,
   ): Promise<NormalizedResponse | null> {
     const isVoiceMode = (state.metadata as any).inputSource === 'microphone';
+
+    this.voiceLog(state, 'LLM', 'STREAM_START', { isVoiceMode, model: this.llm?.getModel() });
 
     // Progressive extraction state (only active in voice mode)
     let contentBuffer = '';
@@ -1442,26 +1460,33 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           insideSpeakTag = true;
           const afterTag = contentBuffer.slice(openIdx + 7);
 
+          this.voiceLog(state, 'LLM', 'SPEAK_OPEN');
+
           speakBuffer = afterTag;
           sentenceBuffer = afterTag;
+          // Fall through to check for </speak> in same pass (handles non-streaming fallback
+          // where the entire response arrives as a single token)
+        } else {
+          return;
         }
-
-        return;
+      } else {
+        // We're inside a <speak> tag — accumulate
+        speakBuffer += token;
+        sentenceBuffer += token;
       }
-
-      // We're inside a <speak> tag — accumulate and check for boundaries
-      speakBuffer += token;
-      sentenceBuffer += token;
 
       // Check for closing </speak> tag
       const closeIdx = speakBuffer.indexOf('</speak>');
 
       if (closeIdx !== -1) {
-        const remaining = sentenceBuffer.replace('</speak>', '').trim();
+        // Only dispatch content BEFORE </speak>, not after
+        const speakContent = speakBuffer.slice(0, closeIdx).trim();
 
-        if (remaining.length > 0) {
-          this.wsChatMessage(state, remaining, 'assistant', 'speak');
-          spokenSentences.push(remaining);
+        if (speakContent.length > 0) {
+          console.log(`[BaseNode:onToken] Speak close-tag dispatch: "${speakContent.slice(0, 80)}"`);
+          this.voiceLog(state, 'LLM', 'SPEAK_CLOSE', { text: speakContent.slice(0, 200) });
+          this.wsSpeakDispatch(state, speakContent);
+          spokenSentences.push(speakContent);
         }
         insideSpeakTag = false;
         speakBuffer = '';
@@ -1494,9 +1519,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const remaining = sentenceBuffer.replace('</speak>', '').trim();
 
       if (remaining.length > 0) {
-        this.wsChatMessage(state, remaining, 'assistant', 'speak');
+        console.log(`[BaseNode:postStream] Speak flush dispatch: "${remaining.slice(0, 80)}"`);
+        this.voiceLog(state, 'LLM', 'SPEAK_FLUSH', { text: remaining.slice(0, 200) });
+        this.wsSpeakDispatch(state, remaining);
         spokenSentences.push(remaining);
       }
+    } else if (isVoiceMode) {
+      this.voiceLog(state, 'LLM', 'SPEAK_FLUSH', { text: 'none' });
     }
 
     // Strip <speak> tags from the final content so they don't display in chat
@@ -1513,8 +1542,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   }
 
   /**
-   * Check if the sentence buffer contains a complete sentence and dispatch it.
-   * Calls `onFlush` with the remaining (un-dispatched) text.
+   * Checks if the sentence buffer contains a complete sentence (ending with
+   * `.` `!` `?`) and dispatches it via `wsSpeakDispatch()` for progressive
+   * TTS during streaming. Skips abbreviations (Dr., Mr., etc.) and sentences
+   * shorter than 20 chars to avoid dispatching incomplete fragments.
+   *
+   * @param state      Thread state (used for WebSocket dispatch)
+   * @param buffer     The current sentence accumulation buffer
+   * @param spokenSentences  Array tracking all dispatched sentences
+   * @param onFlush    Callback receiving the remaining un-dispatched text
    */
   private tryDispatchSentence(
     state: BaseThreadState,
@@ -1544,7 +1580,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
 
       // Dispatch this sentence
-      this.wsChatMessage(state, candidate, 'assistant', 'speak');
+      console.log(`[BaseNode:tryDispatchSentence] Speak sentence dispatch: "${candidate.slice(0, 80)}"`);
+      this.voiceLog(state, 'LLM', 'SPEAK_SENTENCE', { text: candidate.slice(0, 200) });
+      this.wsSpeakDispatch(state, candidate);
       spokenSentences.push(candidate);
       lastSplit = splitPos + match[2].length;
     }
@@ -1594,11 +1632,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   }
 
   /**
-   * Extract <speak> tags from the LLM response and dispatch them as 'speak'
-   * kind messages to the frontend for text-to-speech playback.
-   * The tags are stripped from reply.content so they don't render in chat.
+   * Post-completion speak extraction for NON-voice mode only.
+   *
+   * Extracts all `<speak>...</speak>` tag content from the final LLM response
+   * and dispatches via `wsSpeakDispatch()`. Called after the LLM response is
+   * complete (not during streaming). Voice mode uses progressive extraction
+   * during streaming instead (in `callLLMStreaming`'s `onToken` handler).
+   *
+   * The tags are stripped from `reply.content` so they don't render in chat.
    */
   protected extractAndDispatchSpeakTags(state: BaseThreadState, reply: NormalizedResponse): void {
+    console.log(`[BaseNode:extractAndDispatchSpeakTags] CALLED — inputSource=${(state.metadata as any).inputSource}, content="${reply.content.slice(0, 80)}"`);
+    this.voiceLog(state, 'LLM', 'EXTRACT_SPEAK_TAGS', { inputSource: (state.metadata as any).inputSource, contentLength: reply.content.length });
     const speakTagRegex = /<speak>([\s\S]*?)<\/speak>/gi;
     const tagMatches = reply.content.match(speakTagRegex);
 
@@ -1615,7 +1660,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     reply.content = reply.content.replace(speakTagRegex, '').trim();
 
     if (spoken) {
-      this.wsChatMessage(state, spoken, 'assistant', 'speak');
+      console.log(`[BaseNode:extractAndDispatchSpeakTags] Dispatching speak (${spoken.length} chars): "${spoken.slice(0, 80)}"`);
+      this.wsSpeakDispatch(state, spoken);
     }
   }
 
@@ -1710,12 +1756,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   }
 
   /**
-     * Emit a chat message to the UI dashboard via WebSocket
-     * Connection ID is read from state.metadata.wsChannel (defaults to 'sulla-desktop')
-     * @param state BaseThreadState containing the connection ID in metadata
+     * Sends a chat message to the frontend via WebSocket as an
+     * 'assistant_message' event. Used for progress updates, streaming tokens,
+     * thinking content, and error messages.
+     *
+     * NEVER used for speak/TTS content — if `kind='speak'` leaks here, it is
+     * redirected to `wsSpeakDispatch()` as a safety net (with a warning log).
+     *
+     * @param state   BaseThreadState containing the connection ID in metadata
      * @param content Message content to display
-     * @param role 'assistant' | 'system' - defaults to 'assistant'
-     * @param kind Optional UI kind tag - defaults to 'progress'
+     * @param role    'assistant' | 'system' - defaults to 'assistant'
+     * @param kind    Optional UI kind tag - defaults to 'progress'
      * @returns true if message was sent via WebSocket
      */
   protected async wsChatMessage(
@@ -1759,6 +1810,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this.connectWebSocket(connectionId);
     }
 
+    // Speak messages must use wsSpeakDispatch — not wsChatMessage.
+    // If speak kind leaks here, redirect to the dedicated speak dispatch.
+    if (kind === 'speak') {
+      console.warn(`[BaseNode:wsChatMessage] speak kind redirected to wsSpeakDispatch`);
+      this.voiceLog(state, 'WS', 'SPEAK_REDIRECT', { text: content.slice(0, 200) });
+      return this.wsSpeakDispatch(state, content);
+    }
+
     // Send via WebSocket
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'assistant_message',
@@ -1772,7 +1831,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     });
 
     if (!sent) {
-      console.warn(`[Agent:${ this.name }] Failed to send chat message via WebSocket`);
+      console.warn(`[Agent:${ this.name }] Failed to send chat message via WebSocket (kind=${kind})`);
     } else {
       state.metadata.hadUserMessages = true;
     }
@@ -1801,6 +1860,68 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       } catch (e) { console.warn(`[BaseNode:wsChatMessage] node_thinking emit failed:`, e); }
     } else if ((state.metadata as any).isSubAgent) {
       console.warn(`[BaseNode:wsChatMessage] Sub-agent "${ this.name }" missing workflow metadata — workflowNodeId=${ workflowNodeId }, workflowParentChannel=${ workflowParentChannel }`);
+    }
+
+    return sent;
+  }
+
+  /**
+   * Dispatches speak text for TTS playback via a dedicated 'speak_dispatch'
+   * WebSocket event. This creates a message with kind='speak' in
+   * AgentPersonaModel, which VoicePipeline detects and enqueues for
+   * TTSPlayerService.
+   *
+   * IMPORTANT: This is the ONLY server-side path that should create TTS
+   * content. All speak content must flow through here — never through
+   * `wsChatMessage()`.
+   */
+
+  /**
+   * Log a voice pipeline event to ConversationLogger with a grep-friendly tag.
+   * Uses the same VOICE:<COMPONENT>:<EVENT> format as the frontend VoiceLogger.
+   * Search: grep "VOICE:LLM" or "VOICE:WS" in log files.
+   */
+  private voiceLog(state: BaseThreadState, component: string, event: string, data: Record<string, unknown> = {}): void {
+    const convId = (state.metadata as any).conversationId;
+    if (!convId) return;
+    try {
+      const { getConversationLogger } = require('../services/ConversationLogger');
+      getConversationLogger().log(convId, {
+        ts: new Date().toISOString(),
+        type: `VOICE:${component}:${event}`,
+        ...data,
+      });
+    } catch { /* best-effort */ }
+  }
+
+  protected async wsSpeakDispatch(state: BaseThreadState, text: string): Promise<boolean> {
+    const clean = text?.trim();
+    if (!clean) return false;
+
+    const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
+    const threadId = state.metadata.threadId;
+
+    if (!this.isWebSocketConnected(connectionId)) {
+      this.connectWebSocket(connectionId);
+    }
+
+    // Trace: log a stack snippet so we can identify which code path dispatched this
+    const callerStack = new Error().stack?.split('\n').slice(1, 4).map(l => l.trim()).join(' < ') || '';
+    console.log(`[BaseNode:wsSpeakDispatch] → text="${clean.slice(0, 80)}" | caller: ${callerStack}`);
+
+    this.voiceLog(state, 'WS', 'SPEAK_DISPATCH', { text: clean.slice(0, 200), caller: callerStack });
+
+    const sent = await this.dispatchToWebSocket(connectionId, {
+      type: 'speak_dispatch',
+      data: {
+        text:      clean,
+        thread_id: threadId,
+        timestamp: Date.now(),
+      },
+    });
+
+    if (!sent) {
+      console.warn(`[BaseNode:wsSpeakDispatch] Failed to send speak dispatch`);
     }
 
     return sent;

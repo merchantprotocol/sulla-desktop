@@ -1042,12 +1042,16 @@ export function initSullaEvents(): void {
   // Audio / Transcription handlers
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string }) => {
+  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean }) => {
     const { getTranscriptionService } = await import('@pkg/agent/services/TranscriptionService');
     const service = getTranscriptionService();
-    const text = await service.transcribe(Buffer.from(payload.audio), payload.mimeType);
+    const result = await service.transcribe(
+      Buffer.from(payload.audio),
+      payload.mimeType,
+      { diarize: payload.diarize },
+    );
 
-    return { text };
+    return result;
   });
 
   ipcMainProxy.handle('audio-speak', async(_event: unknown, payload: { text: string; voiceId?: string }) => {
@@ -1074,6 +1078,30 @@ export function initSullaEvents(): void {
     const value = await service.getIntegrationValue(integrationId, property);
 
     return value ? { value: value.value } : null;
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Voice event logging — persists frontend voice events to thread log files
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.on('voice-log', (_event: unknown, entry: { type: string; ts: string; threadId: string; channel: string; [key: string]: unknown }) => {
+    try {
+      const { getConversationLogger } = require('@pkg/agent/services/ConversationLogger');
+      const logger = getConversationLogger();
+      const { threadId, channel, ...eventData } = entry;
+
+      // Ensure the log file path is resolved with the correct channel prefix
+      // so voice logs land in the same file as the graph conversation
+      // (e.g., sulla-desktop_thread_123.log)
+      (logger as any).resolveFilePath(threadId, channel);
+
+      logger.log(threadId, {
+        ...eventData,
+        ts: entry.ts,
+      });
+    } catch (err) {
+      console.error('[Sulla] Voice log write failed:', err);
+    }
   });
 
   console.log('[Sulla] IPC event handlers initialized');

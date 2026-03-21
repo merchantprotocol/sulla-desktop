@@ -605,6 +605,13 @@ export class AgentPersonaService {
     }
 
     switch (msg.type) {
+    /**
+     * Handles incoming assistant_message WebSocket events. Creates chat messages
+     * in the messages array. Messages with kind='speak' are TTS-only and filtered
+     * from display by BrowserTabChat's displayMessages computed. Messages with
+     * kind='streaming' update in-place for real-time text display. Regular messages
+     * (kind='text', 'progress', etc.) appear as chat bubbles.
+     */
     case 'chat_message':
     case 'assistant_message':
     case 'user_message':
@@ -693,6 +700,11 @@ export class AgentPersonaService {
       const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
       let kind = (typeof data?.kind === 'string') ? data.kind : undefined;
       let finalContent = content;
+
+      // Log speak messages for TTS pipeline tracing
+      if (kind === 'speak') {
+        console.log(`[AgentPersonaModel] SPEAK received → channel="${agentId}", thread="${msgThreadId}", content="${content.slice(0, 80)}"`);
+      }
 
       // Auto-detect HTML: if the agent wraps its response in <html>...</html>,
       // treat it as an HTML message and strip the wrapper tags.
@@ -790,12 +802,36 @@ export class AgentPersonaService {
         };
       }
 
+      if (kind !== 'speak' && finalContent.includes('<speak>')) {
+        console.warn(`[AgentPersonaModel] ⚠️ LEAKED <speak> tags in non-speak message! kind=${kind}, content="${finalContent.slice(0, 120)}"`);
+      }
       console.log(`[AgentPersonaModel] messages.push (structured ${ msg.type })`, { role: message.role, kind: message.kind, contentChars: message.content.length, content: message.content.slice(0, 120) });
       this.messages.push(message);
       // Turn off loading when assistant responds
       if (role === 'assistant') {
         this.registry.setLoading(agentId, false);
       }
+      return;
+    }
+    /**
+     * Handles dedicated TTS dispatch events. Creates a message with kind='speak'
+     * that VoicePipeline watches for. These messages are filtered from the chat
+     * display — they only trigger TTS playback.
+     */
+    case 'speak_dispatch': {
+      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
+      const text = typeof data?.text === 'string' ? data.text.trim() : '';
+      if (!text) return;
+
+      console.log(`[AgentPersonaModel] speak_dispatch → "${text.slice(0, 80)}"`);
+      this.messages.push({
+        id:        `${ Date.now() }_speak`,
+        channelId: agentId,
+        threadId:  msgThreadId,
+        role:      'assistant',
+        kind:      'speak',
+        content:   text,
+      });
       return;
     }
     case 'register_or_activate_asset': {

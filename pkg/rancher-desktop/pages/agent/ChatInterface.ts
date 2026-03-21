@@ -155,8 +155,10 @@ export class ChatInterface {
   }
 
   stop(): void {
+    console.log(`[ChatInterface:stop] channelId=${this.channelId}, graphRunning was ${this.persona.graphRunning.value}`);
     this.persona.emitStopSignal(this.channelId);
     this.persona.graphRunning.value = false;
+    console.log(`[ChatInterface:stop] graphRunning now ${this.persona.graphRunning.value}`);
   }
 
   continueRun(): void {

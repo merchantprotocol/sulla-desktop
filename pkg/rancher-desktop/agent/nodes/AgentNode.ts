@@ -4,6 +4,7 @@ import type { BaseThreadState, NodeResult } from './Graph';
 import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { VOICE_MODE_PROMPT, SECRETARY_MODE_PROMPT, INTAKE_MODE_PROMPT } from '../prompts/voiceModes';
 
 // ============================================================================
 // AGENT PROMPT
@@ -134,16 +135,24 @@ export class AgentNode extends BaseNode {
     const wsChannel = String(state.metadata.wsChannel || 'sulla-desktop');
     const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
 
-    // When the user spoke via microphone, instruct the LLM to emit <speak> tags
+    // When the user spoke via microphone, append the appropriate voice mode prompt
     const isVoiceInput = (state.metadata as any).inputSource === 'microphone';
-    const voiceDirective = isVoiceInput
-      ? `\n\nVOICE MODE ACTIVE — The user is speaking to you via microphone.\n` +
-        `Wrap the spoken portions of your response in <speak>...</speak> XML tags.\n` +
-        `Keep spoken text natural, conversational, and concise — as if talking to a friend.\n` +
-        `Your full text response still displays in chat as normal.\n` +
-        `The <speak> content will additionally be read aloud via text-to-speech.\n` +
-        `Do NOT put markdown, code blocks, or URLs inside <speak> tags — only natural speech.`
-      : '';
+    const voiceMode = (state.metadata as any).voiceMode as string | undefined;
+    let voiceDirective = '';
+    if (isVoiceInput) {
+      switch (voiceMode) {
+        case 'secretary':
+          voiceDirective = SECRETARY_MODE_PROMPT;
+          break;
+        case 'intake':
+          voiceDirective = INTAKE_MODE_PROMPT;
+          break;
+        case 'voice':
+        default:
+          voiceDirective = VOICE_MODE_PROMPT;
+          break;
+      }
+    }
 
     const systemPrompt = `${ AGENT_PROMPT_BASE }\n\n${ channelAwareness }\n\n${ AGENT_PROMPT_DIRECTIVE }\n\n${ AGENT_PROMPT_COMPLETION_WRAPPERS }${ voiceDirective }`;
 

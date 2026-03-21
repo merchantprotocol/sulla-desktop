@@ -121,6 +121,10 @@ export interface IpcMainEvents {
     notify_email?: string;
   }) => void;
   // #endregion
+
+  // #region Voice Logging
+  'voice-log': (entry: { type: string; ts: string; threadId: string; channel: string; [key: string]: unknown }) => void;
+  // #endregion
 }
 
 /**
@@ -157,7 +161,7 @@ export interface IpcMainInvokeEvents {
   'browser-tab:exec-in-frame': (code: string) => unknown;
   'sulla-settings-get':     (property: string, defaultValue?: any) => any;
   'sulla-settings-set':     (property: string, value: any) => void;
-  'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string }) => { text: string };
+  'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };
   'audio-speak':            (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
   'integration-get-value':  (integrationId: string, property: string) => { value: string } | null;
   // #endregion
