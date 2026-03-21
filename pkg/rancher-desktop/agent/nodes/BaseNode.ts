@@ -9,13 +9,13 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { throwIfAborted } from '../services/AbortService';
 import { toolRegistry } from '../tools/registry';
-import { BaseTool } from '../tools/base';
 import { ConversationSummaryService } from '../services/ConversationSummaryService';
 import { ObservationalSummaryService } from '../services/ObservationalSummaryService';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir } from '../utils/sullaPaths';
 import { environmentPrompt, INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
+import { ToolExecutor } from '../controllers/ToolExecutor';
 import type { StreamContext } from '../controllers/Extractor';
 import fs from 'node:fs';
 
@@ -408,10 +408,31 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   protected llm:                 BaseLanguageModel | null = null;
   private currentNodeRunContext: NodeRunContext | null = null;
   private _chatController:       ChatController | null = null;
+  private _toolExecutor:         ToolExecutor | null = null;
 
   constructor(id: string, name: string) {
     this.id = id;
     this.name = name;
+  }
+
+  /** Lazy-init ToolExecutor. Passes a context that bridges back to this node. */
+  protected get toolExecutor(): ToolExecutor {
+    if (!this._toolExecutor) {
+      this._toolExecutor = new ToolExecutor({
+        nodeId:                this.id,
+        nodeName:              this.name,
+        get currentNodeRunContext() { return null; }, // overridden below
+        wsChatMessage:         (state, content, role, kind) => this.wsChatMessage(state, content, role, kind),
+        bumpStateVersion:      (state) => this.bumpStateVersion(state),
+      });
+      // Wire live currentNodeRunContext via property descriptor
+      const self = this;
+      Object.defineProperty(this._toolExecutor['ctx'], 'currentNodeRunContext', {
+        get() { return self.currentNodeRunContext; },
+        configurable: true,
+      });
+    }
+    return this._toolExecutor;
   }
 
   /**
@@ -1245,60 +1266,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
   }
 
-  private buildToolAccessPolicyForCall(options: LLMCallOptions): {
-    allowedCategories: string[] | null;
-    allowedToolNames:  string[] | null;
-  } {
-    const allowedCategories = options.allowedToolCategories?.length
-      ? [...new Set(options.allowedToolCategories)]
-      : null;
-    const allowedToolNames = options.allowedToolNames?.length
-      ? [...new Set(options.allowedToolNames)]
-      : null;
-
-    return {
-      allowedCategories,
-      allowedToolNames,
-    };
+  private buildToolAccessPolicyForCall(options: LLMCallOptions) {
+    return this.toolExecutor.buildToolAccessPolicyForCall(options);
   }
 
   private async filterLLMToolsByAccessPolicy(
     llmTools: any[],
     options: LLMCallOptions,
   ): Promise<{ tools: any[] }> {
-    const hasRestrictions = Boolean(options.allowedToolCategories?.length || options.allowedToolNames?.length);
-
-    if (!hasRestrictions || !Array.isArray(llmTools) || llmTools.length === 0) {
+    if (!Array.isArray(llmTools) || llmTools.length === 0) {
       return { tools: llmTools || [] };
     }
-
-    const allowedToolNamesSet = options.allowedToolNames?.length
-      ? new Set(options.allowedToolNames)
-      : null;
-    const allowedCategoriesSet = options.allowedToolCategories?.length
-      ? new Set(options.allowedToolCategories)
-      : null;
-    const filteredTools: any[] = [];
-    for (const llmTool of llmTools) {
-      const toolName = llmTool?.function?.name;
-      if (!toolName) {
-        continue;
-      }
-
-      if (allowedToolNamesSet && !allowedToolNamesSet.has(toolName)) {
-        continue;
-      }
-
-      const toolInstance = await toolRegistry.getTool(toolName);
-      const category = String(toolInstance?.metadata?.category || '').trim();
-      if (allowedCategoriesSet && !allowedCategoriesSet.has(category)) {
-        continue;
-      }
-
-      filteredTools.push(llmTool);
-    }
-
-    return { tools: filteredTools };
+    return this.toolExecutor.filterLLMToolsByAccessPolicy(llmTools, options);
   }
 
   protected getDefaultNodeRunPolicy(): Required<NodeRunPolicy> {
@@ -1745,12 +1724,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     this.voiceLog(state, 'WS', 'SPEAK_DISPATCH', { text: clean.slice(0, 200), caller: callerStack });
 
+    // Include pipelineSequence for turn correlation (voice barge-in filtering)
+    const pipelineSequence = (state.metadata as any).pipelineSequence ?? null;
+
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'speak_dispatch',
       data: {
         text:      clean,
         thread_id: threadId,
         timestamp: Date.now(),
+        pipelineSequence,
       },
     });
 
@@ -1761,15 +1744,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     return sent;
   }
 
-  /**
-     * Emit a tool call event to create/update tool cards in the UI
-     * @param state BaseThreadState containing the WebSocket channel
-     * @param toolRunId Unique identifier for this tool execution
-     * @param toolName Name of the tool being called
-     * @param args Arguments passed to the tool
-     * @param kind Optional kind of the event (e.g., 'thinking', 'info')
-     * @returns true if event was sent via WebSocket
-     */
   protected async emitToolCallEvent(
     state: BaseThreadState,
     toolRunId: string,
@@ -1777,31 +1751,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     args: Record<string, any>,
     kind?: string,
   ): Promise<boolean> {
-    const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
-
-    return await this.dispatchToWebSocket(connectionId, {
-      type: 'progress',
-      data: {
-        phase:     'tool_call',
-        toolRunId,
-        toolName,
-        args,
-        kind,
-        thread_id: state.metadata.threadId,
-      },
-      timestamp: Date.now(),
-    });
+    return this.toolExecutor.emitToolCallEvent(state, toolRunId, toolName, args, kind);
   }
 
-  /**
-     * Emit a tool result event to update tool card status in the UI
-     * @param state BaseThreadState containing the WebSocket channel
-     * @param toolRunId Same ID from the tool_call event
-     * @param success Whether the tool execution succeeded
-     * @param error Optional error message if success is false
-     * @param result Optional result data if success is true
-     * @returns true if event was sent via WebSocket
-     */
   protected async emitToolResultEvent(
     state: BaseThreadState,
     toolRunId: string,
@@ -1809,370 +1761,24 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     error?: string,
     result?: any,
   ): Promise<boolean> {
-    const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
-
-    return await this.dispatchToWebSocket(connectionId, {
-      type: 'progress',
-      data: {
-        phase:     'tool_result',
-        toolRunId,
-        success,
-        error,
-        result,
-        thread_id: state.metadata.threadId,
-      },
-      timestamp: Date.now(),
-    });
+    return this.toolExecutor.emitToolResultEvent(state, toolRunId, success, error, result);
   }
 
-  /**
-     * Process pending tool calls from an LLM reply.
-     * Extracted so callers of normalizedChat can control when tool execution
-     * happens relative to other work (e.g. emitting text to the UI first).
-     */
   protected async processPendingToolCalls(
     state: BaseThreadState,
     reply: { metadata: { tool_calls?: { name: string; id?: string; args: any }[] } },
   ): Promise<void> {
-    const toolCalls = reply.metadata.tool_calls || [];
-    if (toolCalls.length) {
-      console.log(`[${ this.name }] Processing ${ toolCalls.length } tool calls via executeToolCalls`);
-      await this.executeToolCalls(state, toolCalls);
-    }
+    return this.toolExecutor.processPendingToolCalls(state, reply);
   }
 
-  private stableStringify(value: unknown): string {
-    const normalize = (input: unknown): unknown => {
-      if (Array.isArray(input)) {
-        return input.map(item => normalize(item));
-      }
+  // stableStringify, buildToolRunDedupeKey, persistStructuredToolRunRecord → ToolExecutor
 
-      if (!input || typeof input !== 'object') {
-        return input;
-      }
-
-      const record = input as Record<string, unknown>;
-      const sortedKeys = Object.keys(record).sort((a, b) => a.localeCompare(b));
-      const normalized: Record<string, unknown> = {};
-      for (const key of sortedKeys) {
-        normalized[key] = normalize(record[key]);
-      }
-
-      return normalized;
-    };
-
-    return JSON.stringify(normalize(value));
-  }
-
-  private buildToolRunDedupeKey(toolName: string, args: unknown): string {
-    return `${ toolName }:${ this.stableStringify(args ?? {}) }`;
-  }
-
-  private persistStructuredToolRunRecord(
-    state: BaseThreadState,
-    payload: {
-      toolName:  string;
-      toolRunId: string;
-      args:      unknown;
-      success:   boolean;
-      result?:   unknown;
-      error?:    string;
-    },
-  ): void {
-    const metadataAny = state.metadata as any;
-    const dedupeKey = this.buildToolRunDedupeKey(payload.toolName, payload.args);
-    const record = {
-      toolName:  payload.toolName,
-      toolRunId: payload.toolRunId,
-      dedupeKey,
-      args:      payload.args ?? {},
-      success:   payload.success,
-      result:    payload.result,
-      error:     payload.error,
-      timestamp: Date.now(),
-      nodeId:    this.id,
-      nodeName:  this.name,
-    };
-
-    if (!Array.isArray(metadataAny.__toolRuns)) {
-      metadataAny.__toolRuns = [];
-    }
-    if (!metadataAny.__toolRunIndex || typeof metadataAny.__toolRunIndex !== 'object') {
-      metadataAny.__toolRunIndex = {};
-    }
-    metadataAny.__toolRuns.push(record);
-    metadataAny.__toolRunIndex[dedupeKey] = record;
-    this.bumpStateVersion(state);
-  }
-
-  /**
-     * Execute multiple tool calls, append results as 'tool' messages, return results array.
-     * - Appends each result immediately after execution (LLM sees sequential feedback)
-     * - Uses role: 'tool' + name/tool_call_id for API compatibility
-     * - Failed tools include help info
-     * - Minimal logging (no full JSON dump)
-     */
   protected async executeToolCalls(
     state: BaseThreadState,
-    toolCalls: { name: string, id?: string, args: any }[],
+    toolCalls: { name: string; id?: string; args: any }[],
     allowedTools?: string[],
   ): Promise<{ toolName: string; success: boolean; result?: unknown; error?: string }[]> {
-    if (!toolCalls?.length) return [];
-
-    state.metadata.hadToolCalls = true;
-    if (this.currentNodeRunContext) {
-      this.currentNodeRunContext.hadToolCalls = true;
-    }
-
-    // Check for abort before processing tools
-    throwIfAborted(state, 'Tool execution aborted');
-
-    const results: { toolName: string; success: boolean; result?: unknown; error?: string }[] = [];
-
-    for (const call of toolCalls) {
-      // Check for abort before each tool execution
-      throwIfAborted(state, `Tool execution aborted before ${ call.name }`);
-
-      // Use call.id or generate unique tool run ID for this execution
-      const toolRunId = call.id || `${ call.name }_${ Date.now() }_${ Math.random().toString(36).substr(2, 9) }`;
-      const toolName = call.name;
-      const args = call.args;
-
-      const policyBlockReason = await this.getToolPolicyBlockReason(state, toolName);
-      if (policyBlockReason) {
-        await this.emitToolCallEvent(state, toolRunId, toolName, args);
-        await this.emitToolResultEvent(state, toolRunId, false, policyBlockReason);
-
-        await this.appendToolResultMessage(state, toolName, {
-          toolName,
-          success:    false,
-          error:      policyBlockReason,
-          toolCallId: toolRunId,
-        });
-        this.persistStructuredToolRunRecord(state, {
-          toolName,
-          toolRunId,
-          args,
-          success: false,
-          error:   policyBlockReason,
-        });
-        results.push({ toolName, success: false, error: policyBlockReason });
-        if (this.currentNodeRunContext) {
-          this.currentNodeRunContext.toolTranscript.push({
-            toolName,
-            success: false,
-            error:   policyBlockReason,
-          });
-        }
-        continue;
-      }
-
-      // Disallowed → emit tool call and failure, then continue
-      if (allowedTools?.length && !allowedTools.includes(toolName)) {
-        await this.emitToolCallEvent(state, toolRunId, toolName, args);
-        await this.emitToolResultEvent(state, toolRunId, false, `Tool not allowed in this node: ${ toolName }`);
-
-        await this.appendToolResultMessage(state, toolName, {
-          toolName,
-          success:    false,
-          error:      `Tool not allowed in this node: ${ toolName }`,
-          toolCallId: toolRunId,
-        });
-        this.persistStructuredToolRunRecord(state, {
-          toolName,
-          toolRunId,
-          args,
-          success: false,
-          error:   `Tool not allowed in this node: ${ toolName }`,
-        });
-        results.push({ toolName, success: false, error: 'Not allowed' });
-        if (this.currentNodeRunContext) {
-          this.currentNodeRunContext.toolTranscript.push({
-            toolName,
-            success: false,
-            error:   `Tool not allowed in this node: ${ toolName }`,
-          });
-        }
-        continue;
-      }
-
-      try {
-        const tool = await toolRegistry.getTool(toolName);
-
-        // Emit tool call event before execution
-        await this.emitToolCallEvent(state, toolRunId, toolName, args);
-
-        try {
-          // Inject WebSocket capabilities into the tool
-          if (tool instanceof BaseTool) {
-            tool.setState(state);
-
-            tool.sendChatMessage = (content: string, kind = 'progress') =>
-              this.wsChatMessage(state, content, 'assistant', kind);
-
-            tool.emitProgress = async(data: any) => {
-              await this.dispatchToWebSocket(state.metadata.wsChannel || DEFAULT_WS_CHANNEL, {
-                type:      'progress_update',
-                data:      { ...data, kind: 'progress', thread_id: state.metadata.threadId },
-                timestamp: Date.now(),
-              });
-            };
-          }
-
-          const result = await tool.invoke(args);
-          const toolSuccess = result?.success === true;
-          const toolError = typeof result?.error === 'string'
-            ? result.error
-            : (!toolSuccess && typeof result?.result === 'string' ? result.result : undefined);
-
-          await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result);
-
-          await this.appendToolResultMessage(state, toolName, {
-            toolName,
-            success:    toolSuccess,
-            result,
-            error:      toolError,
-            toolCallId: toolRunId,
-          });
-          this.persistStructuredToolRunRecord(state, {
-            toolName,
-            toolRunId,
-            args,
-            success: toolSuccess,
-            result,
-            error:   toolError,
-          });
-
-          results.push({
-            toolName,
-            success: toolSuccess,
-            result,
-            error:   toolError,
-          });
-          if (this.currentNodeRunContext) {
-            this.currentNodeRunContext.toolTranscript.push({
-              toolName,
-              success: toolSuccess,
-              result,
-              error:   toolError,
-            });
-          }
-
-          // Conversation logging for tool calls
-          const convIdSuccess = (state.metadata as any).conversationId;
-          if (convIdSuccess) {
-            try {
-              const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-              getLogger().logToolCall(convIdSuccess, toolName, args, result);
-            } catch { /* best-effort */ }
-          }
-        } catch (err: any) {
-          const error = err.message || String(err);
-
-          // Emit tool result event on error
-          await this.emitToolResultEvent(state, toolRunId, false, error);
-
-          await this.appendToolResultMessage(state, toolName, {
-            toolName,
-            success:    false,
-            error,
-            toolCallId: toolRunId,
-          });
-          this.persistStructuredToolRunRecord(state, {
-            toolName,
-            toolRunId,
-            args,
-            success: false,
-            error,
-          });
-          results.push({ toolName, success: false, error });
-
-          // Conversation logging for failed tool calls
-          const convIdFail = (state.metadata as any).conversationId;
-          if (convIdFail) {
-            try {
-              const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-              getLogger().logToolCall(convIdFail, toolName, args, { error });
-            } catch { /* best-effort */ }
-          }
-          if (this.currentNodeRunContext) {
-            this.currentNodeRunContext.toolTranscript.push({
-              toolName,
-              success: false,
-              error,
-            });
-          }
-        }
-      } catch {
-        await this.emitToolCallEvent(state, toolRunId, toolName, args);
-        await this.emitToolResultEvent(state, toolRunId, false, `Unknown tool: ${ toolName }`);
-
-        await this.appendToolResultMessage(state, toolName, {
-          toolName,
-          success:    false,
-          error:      `Unknown tool: ${ toolName }`,
-          toolCallId: toolRunId,
-        });
-        this.persistStructuredToolRunRecord(state, {
-          toolName,
-          toolRunId,
-          args,
-          success: false,
-          error:   `Unknown tool: ${ toolName }`,
-        });
-        results.push({ toolName, success: false, error: 'Unknown tool' });
-        if (this.currentNodeRunContext) {
-          this.currentNodeRunContext.toolTranscript.push({
-            toolName,
-            success: false,
-            error:   'Unknown tool',
-          });
-        }
-        continue;
-      }
-    }
-
-    return results;
-  }
-
-  private async getToolPolicyBlockReason(state: BaseThreadState, toolName: string): Promise<string | null> {
-    const policy = (state.metadata as any).__toolAccessPolicy as {
-      allowedCategories: string[] | null;
-      allowedToolNames:  string[] | null;
-    } | undefined;
-
-    if (!policy) {
-      return null;
-    }
-
-    const allowedToolNames = policy.allowedToolNames;
-    if (allowedToolNames?.length && !allowedToolNames.includes(toolName)) {
-      return `Tool not allowed by name policy: ${ toolName }`;
-    }
-
-    let toolInstance: any;
-    try {
-      toolInstance = await toolRegistry.getTool(toolName);
-    } catch {
-      return null;
-    }
-
-    const category = String(toolInstance?.metadata?.category || '').trim();
-    const allowedCategories = policy.allowedCategories;
-    if (allowedCategories?.length && !allowedCategories.includes(category)) {
-      return `Tool category not allowed in this node: ${ toolName } (category: ${ category || 'unknown' })`;
-    }
-
-    // Agent config tool allowlist (defense in depth)
-    const agentTools = (state.metadata as any).agent?.tools;
-    if (Array.isArray(agentTools) && agentTools.length > 0) {
-      const metaNames = toolRegistry.getToolNamesForCategory('meta');
-      if (!agentTools.includes(toolName) && !metaNames.includes(toolName)) {
-        return `Tool not allowed by agent config: ${ toolName }`;
-      }
-    }
-
-    return null;
+    return this.toolExecutor.executeToolCalls(state, toolCalls, allowedTools);
   }
 
   /**
@@ -2191,186 +1797,19 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     return union === 0 ? 1 : intersection / union;
   }
 
-  /**
-     * Append tool result to state.messages as a proper role:'user' message with
-     * native tool_result content blocks (matching the tool_use_id from the
-     * assistant's tool_use call).  This is the format Anthropic/OpenAI expect
-     * and it persists across graph cycles so the LLM always sees the full
-     * tool_use → tool_result conversation.
-     */
   public async appendToolResultMessage(
     state: BaseThreadState,
     action: string,
     result: ToolResult,
   ): Promise<void> {
-    if (action === 'emit_chat_message') {
-      return;
-    }
-
-    // --- Format the result payload into a readable string ---
-
-    const formatPayload = (payload: unknown, maxLen?: number): string => {
-      if (payload == null) return 'null';
-
-      let parsed = payload;
-      if (typeof parsed === 'string') {
-        const trimmed = parsed.trim();
-        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-          try { parsed = JSON.parse(trimmed) } catch { /* keep as string */ }
-        }
-      }
-
-      // Unwrap tool envelope: { result: ..., toolName, success, ... } → just result
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const record = parsed as Record<string, any>;
-        if ('result' in record && ('toolName' in record || 'tool' in record || 'success' in record || 'toolCallId' in record)) {
-          parsed = record.result;
-        }
-      }
-
-      const serialized = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
-      if (maxLen && serialized.length > maxLen) {
-        return `${ serialized.substring(0, maxLen) }...`;
-      }
-      return serialized;
-    };
-
-    const contentText = formatPayload(result.result, 5000);
-    const errorText = String(result.error || 'unknown error').trim();
-    const showDetails = contentText.trim().length > 0 && contentText.trim() !== errorText;
-
-    const resultContent = result.success
-      ? `tool: ${ action }\nresult:\n${ contentText }`
-      : `tool: ${ action }\nerror: ${ errorText }${ showDetails ? `\nresult:\n${ contentText }` : '' }`;
-
-    const toolCallId = result.toolCallId || `${ action }_${ Date.now() }`;
-
-    // --- 1. Node run context (current LLM turn visibility) ---
-    if (this.currentNodeRunContext) {
-      this.currentNodeRunContext.messages.push({
-        role:         'tool',
-        content:      resultContent,
-        name:         action,
-        tool_call_id: toolCallId,
-        metadata:     {
-          nodeId:    this.id,
-          nodeName:  this.name,
-          kind:      'tool_result',
-          toolName:  action,
-          success:   result.success,
-          timestamp: Date.now(),
-        },
-      } as ChatMessage);
-    }
-
-    // --- 2. Persist to state.messages as native tool_result (user role) ---
-    // The assistant's tool_use message was already stored by appendResponse
-    // with the native content array. Now store the matching tool_result.
-    //
-    // Anthropic requires ALL tool_result blocks for a multi-tool_use assistant
-    // message to appear in the SAME immediately-following user message.
-    // So if the last message is already a user tool_result message AND the
-    // assistant message before it contains our tool_use_id, merge into it.
-    const newToolResultBlock = {
-      type:        'tool_result',
-      tool_use_id: toolCallId,
-      content:     resultContent,
-    };
-
-    const lastMsg = state.messages[state.messages.length - 1];
-    const secondToLast = state.messages.length >= 2 ? state.messages[state.messages.length - 2] : null;
-
-    const lastIsToolResult = lastMsg?.role === 'user' &&
-            Array.isArray(lastMsg.content) &&
-            lastMsg.content.some((b: any) => b?.type === 'tool_result');
-
-    const prevAssistantHasOurToolUse = secondToLast?.role === 'assistant' &&
-            Array.isArray(secondToLast.content) &&
-            secondToLast.content.some((b: any) => b?.type === 'tool_use' && b?.id === toolCallId);
-
-    if (lastIsToolResult && prevAssistantHasOurToolUse) {
-      // Merge into existing user tool_result message
-      (lastMsg.content as unknown as any[]).push(newToolResultBlock);
-    } else {
-      state.messages.push({
-        role:     'user',
-        content:  [newToolResultBlock],
-        metadata: {
-          nodeId:    this.id,
-          nodeName:  this.name,
-          kind:      'tool_result',
-          toolName:  action,
-          success:   result.success,
-          timestamp: Date.now(),
-        },
-      } as any);
-    }
-
-    this.bumpStateVersion(state);
-
-    // Training data: capture tool result
-    try {
-      const trainingConvId = (state as any).metadata?.conversationId;
-      if (trainingConvId) {
-        const { getTrainingDataLogger } = require('../services/TrainingDataLogger');
-        const tl = getTrainingDataLogger();
-        if (tl.hasSession(trainingConvId)) {
-          tl.logToolResult(trainingConvId, toolCallId, resultContent);
-        }
-      }
-    } catch { /* best-effort */ }
+    return this.toolExecutor.appendToolResultMessage(state, action, result);
   }
 
-  // ── Training data helpers ──
-
-  /**
-     * Log a complete LLM turn to the training data logger.
-     * Captures: latest user message, assistant response (with reasoning), tool calls.
-     */
   private logTrainingTurn(
     state: BaseThreadState,
     runCtx: NodeRunContext,
     reply: NormalizedResponse,
   ): void {
-    try {
-      const convId = (state as any).metadata?.conversationId;
-      if (!convId) return;
-
-      const { getTrainingDataLogger } = require('../services/TrainingDataLogger');
-      const tl = getTrainingDataLogger();
-      if (!tl.hasSession(convId)) return;
-
-      // Log the latest user message (skip synthetic summaries)
-      const lastUser = [...runCtx.messages].reverse().find((m: ChatMessage) =>
-        m.role === 'user' && !(m.metadata as any)?._conversationSummary,
-      );
-      if (lastUser?.content) {
-        const content = typeof lastUser.content === 'string'
-          ? lastUser.content
-          : JSON.stringify(lastUser.content);
-        tl.logUserMessage(convId, content);
-      }
-
-      // Log assistant response with reasoning and tool calls
-      const reasoning = reply.metadata.reasoning || undefined;
-      const toolCalls = reply.metadata.tool_calls || [];
-
-      const cleanedContent = stripProtocolTags(reply.content);
-
-      if (toolCalls.length > 0) {
-        tl.logToolCall(
-          convId,
-          toolCalls.map((tc: { id?: string; name: string; args: any }) => ({
-            id:   tc.id || `tc_${ Date.now() }_${ Math.random().toString(36).slice(2, 6) }`,
-            name: tc.name,
-            args: tc.args,
-          })),
-          cleanedContent || null,
-          { reasoning },
-        );
-      } else if (cleanedContent) {
-        tl.logAssistantMessage(convId, cleanedContent, { reasoning });
-      }
-    } catch { /* best-effort — never block conversation */ }
+    this.toolExecutor.logTrainingTurn(state, runCtx, reply);
   }
 }
