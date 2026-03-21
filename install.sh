@@ -319,38 +319,36 @@ run_silent() {
 run_with_status() {
   local label="$1"
   shift
+  echo "" >> "$INSTALL_LOG"
   echo "=== [$label] $(date) ===" >> "$INSTALL_LOG"
   echo "CMD: $*" >> "$INSTALL_LOG"
-
-  local last_update=0
+  echo "---" >> "$INSTALL_LOG"
 
   local current_phase="$label"
-
-  # Run the command in background, writing output to a temp file.
-  # We poll the file for new lines to update the spinner and use `wait`
-  # on the PID to detect completion.  This avoids the pipe-fd inheritance
-  # problem entirely: yarn/webpack child processes that outlive the main
-  # command can hold a pipe fd open forever, but they can't prevent
-  # `wait` from returning once the direct child exits.
-  local rws_tmpfile
-  rws_tmpfile="$(mktemp "${TMPDIR:-/tmp}/rws_output.XXXXXX")"
-
-  "$@" > "$rws_tmpfile" 2>&1 &
-  local cmd_pid=$!
-
   local last_update=0
   local bytes_read=0
 
-  # Poll: check if the process is still running, tail new output
-  while kill -0 "$cmd_pid" 2>/dev/null; do
-    # Flush new output to the install log
+  # Two temp files: one for command output, one as a "done" signal.
+  # The command writes stdout/stderr to the output file.  When it exits,
+  # the wrapper writes the exit code to the done file.  We poll for the
+  # done file — no pipes, no PIDs, no fd inheritance issues.
+  local rws_output rws_done
+  rws_output="$(mktemp "${TMPDIR:-/tmp}/rws_output.XXXXXX")"
+  rws_done="$(mktemp "${TMPDIR:-/tmp}/rws_done.XXXXXX")"
+  rm -f "$rws_done"
+
+  # Launch in a subshell — write exit code to done file when finished
+  ( "$@" > "$rws_output" 2>&1; echo $? > "$rws_done" ) &
+
+  # Poll for the done file
+  while [ ! -f "$rws_done" ]; do
+    # Flush any new output to the install log and update the spinner
     local new_output
-    new_output="$(tail -c +$((bytes_read + 1)) "$rws_tmpfile" 2>/dev/null)"
+    new_output="$(tail -c +$((bytes_read + 1)) "$rws_output" 2>/dev/null)"
     if [ -n "$new_output" ]; then
       echo "$new_output" >> "$INSTALL_LOG"
-      bytes_read="$(wc -c < "$rws_tmpfile")"
+      bytes_read="$(wc -c < "$rws_output")"
 
-      # Update spinner phase from the latest line
       local last_line
       last_line="$(echo "$new_output" | tail -1)"
 
@@ -388,20 +386,25 @@ run_with_status() {
     sleep 2
   done
 
-  # Process exited — collect exit code and flush remaining output
-  wait "$cmd_pid" 2>/dev/null
-  local rc=$?
+  # Done file exists — read exit code and flush remaining output
+  local rc
+  rc="$(cat "$rws_done" 2>/dev/null)"
+  rc="${rc:-1}"
 
   local remaining
-  remaining="$(tail -c +$((bytes_read + 1)) "$rws_tmpfile" 2>/dev/null)"
+  remaining="$(tail -c +$((bytes_read + 1)) "$rws_output" 2>/dev/null)"
   [ -n "$remaining" ] && echo "$remaining" >> "$INSTALL_LOG"
 
-  rm -f "$rws_tmpfile"
+  local rws_elapsed="$((SECONDS - last_update))"
+  if [ "$rc" -ne 0 ]; then
+    echo "--- FAILED (exit $rc)" >> "$INSTALL_LOG"
+  else
+    echo "--- COMPLETED (exit 0)" >> "$INSTALL_LOG"
+  fi
+
+  rm -f "$rws_output" "$rws_done"
 
   stop_spinner 2>/dev/null
-  if [ "$rc" -ne 0 ]; then
-    echo "EXIT CODE: $rc" >> "$INSTALL_LOG"
-  fi
   return "$rc"
 }
 
