@@ -342,8 +342,14 @@ run_with_status() {
       *"Fetching"*)   new_phase="${label}: fetching packages..." ;;
       *"Linking"*)    new_phase="${label}: linking packages..." ;;
       *"Building"*)   new_phase="${label}: building..." ;;
+      *"Downloading"*)
+                      new_phase="${label}: downloading dependencies..." ;;
       *"gyp"*|*"node-pre-gyp"*|*"prebuild"*|*"compiling"*|*"CC("*|*"CXX("*)
                       new_phase="${label}: compiling native modules..." ;;
+      *"HTTP 429"*|*"HTTP 403"*|*"rate"*|*"retry"*)
+                      new_phase="${label}: rate-limited by GitHub, retrying..." ;;
+      *"Network error fetching"*)
+                      new_phase="${label}: network error, retrying..." ;;
       *"webpack"*|*"ts-loader"*|*"babel"*)
                       new_phase="${label}: bundling application..." ;;
     esac
@@ -1136,6 +1142,13 @@ verify_build_artifacts() {
       return 1
     fi
   fi
+
+  # Lima (limactl) must exist on macOS and Linux — the VM won't start without it
+  case "$OS" in
+    macos)   [ -x "resources/darwin/lima/bin/limactl" ] || return 1 ;;
+    linux)   [ -x "resources/linux/lima/bin/limactl" ]  || return 1 ;;
+  esac
+
   return 0
 }
 
@@ -1213,6 +1226,24 @@ dump_build_verification() {
     else
       printf "  ${CROSS}  %s ${RED}EXISTS BUT FAILED TO EXECUTE${RESET}\n" "$rdctl_bin"
       printf "    ${DIM}arch: $(file "$rdctl_bin" 2>/dev/null || echo 'unknown')${RESET}\n"
+    fi
+  fi
+
+  # Lima (limactl) — required on macOS/Linux for VM management
+  local limactl_bin=""
+  case "$OS" in
+    macos)   limactl_bin="resources/darwin/lima/bin/limactl" ;;
+    linux)   limactl_bin="resources/linux/lima/bin/limactl" ;;
+  esac
+  if [ -n "$limactl_bin" ]; then
+    if [ -x "$limactl_bin" ]; then
+      printf "  ${CHECK}  %s\n" "$limactl_bin"
+    elif [ -f "$limactl_bin" ]; then
+      printf "  ${CROSS}  %s ${RED}EXISTS BUT NOT EXECUTABLE${RESET}\n" "$limactl_bin"
+    else
+      printf "  ${CROSS}  %s ${RED}MISSING${RESET}\n" "$limactl_bin"
+      printf "    ${DIM}Lima was not downloaded during postinstall — the VM cannot start without it.${RESET}\n"
+      printf "    ${DIM}Try: rm -rf node_modules && bash install.sh${RESET}\n"
     fi
   fi
 

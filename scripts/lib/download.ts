@@ -29,19 +29,81 @@ export type ArchiveDownloadOptions = DownloadOptions & {
   entryName?: string;
 };
 
-async function fetchWithRetry(url: string, maxAttempts = 3) {
+/**
+ * Fetch a URL with retry + exponential backoff for transient errors and
+ * GitHub rate limits (HTTP 403/429).  Unauthenticated GitHub API requests
+ * are capped at 60 req/h so hitting a rate limit during a fresh install is
+ * common.  The `x-ratelimit-reset` header tells us exactly when to retry;
+ * we honour it (clamped to a sane max) so the install can self-heal without
+ * credentials.
+ */
+async function fetchWithRetry(url: string, maxAttempts = 5) {
+  const BASE_DELAY_MS = 2_000;
+  const MAX_DELAY_MS  = 120_000; // never wait more than 2 minutes
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let response: Response | undefined;
+
     try {
-      return await fetch(url, { redirect: 'follow' });
+      response = await fetch(url, { redirect: 'follow' });
     } catch (ex: any) {
-      if (ex?.errno === 'EAI_AGAIN' && attempt < maxAttempts) {
-        console.log(`DNS resolution failed for ${ url }, attempt ${ attempt }/${ maxAttempts }...`);
+      // Network-level errors (DNS, socket reset, etc.)
+      if (attempt < maxAttempts) {
+        const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
+
+        console.log(`Network error fetching ${ url } (${ ex?.code ?? ex?.errno ?? ex?.message }), ` +
+                     `retry ${ attempt }/${ maxAttempts } in ${ (delay / 1000).toFixed(0) }s...`);
+        await new Promise(r => setTimeout(r, delay));
         continue;
       }
       console.dir(ex);
       throw ex;
     }
+
+    // Success — return immediately
+    if (response.ok) {
+      return response;
+    }
+
+    // Rate-limited or server error — retry with backoff
+    const retryable = response.status === 429 ||
+                      response.status === 403 ||
+                      (response.status >= 500 && response.status < 600);
+
+    if (retryable && attempt < maxAttempts) {
+      let delay = BASE_DELAY_MS * 2 ** (attempt - 1);
+
+      // Honour GitHub's x-ratelimit-reset if present
+      const resetEpoch = Number(response.headers.get('x-ratelimit-reset'));
+
+      if (resetEpoch > 0) {
+        const resetDelay = (resetEpoch * 1000) - Date.now() + 1_000; // +1s buffer
+
+        if (resetDelay > 0) {
+          delay = Math.min(resetDelay, MAX_DELAY_MS);
+        }
+      }
+
+      // Also check Retry-After header (seconds)
+      const retryAfter = Number(response.headers.get('retry-after'));
+
+      if (retryAfter > 0) {
+        delay = Math.min(retryAfter * 1000, MAX_DELAY_MS);
+      }
+
+      console.log(`HTTP ${ response.status } fetching ${ url }, ` +
+                   `retry ${ attempt }/${ maxAttempts } in ${ (delay / 1000).toFixed(0) }s...`);
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
+
+    // Non-retryable or exhausted attempts — throw
+    const requestId = response.headers.get('x-github-request-id');
+    const requestAnnotation = requestId ? ` [request: ${ requestId }]` : '';
+
+    throw new Error(`Error downloading ${ url } (${ response.status }) ${ response.statusText }${ requestAnnotation }`);
   }
+
   throw new Error(`Failed to fetch ${ url } after ${ maxAttempts } attempts`);
 }
 
