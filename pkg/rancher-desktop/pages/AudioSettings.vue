@@ -414,8 +414,8 @@ async function checkApiKey(): Promise<void> {
 async function checkGateway(): Promise<void> {
   try {
     const [urlResult, keyResult] = await Promise.all([
-      ipcRenderer.invoke('integration-get-value', 'enterprise_sulla', 'gateway_url'),
-      ipcRenderer.invoke('integration-get-value', 'enterprise_sulla', 'api_key'),
+      ipcRenderer.invoke('integration-get-value', 'enterprise_gateway', 'gateway_url'),
+      ipcRenderer.invoke('integration-get-value', 'enterprise_gateway', 'api_key'),
     ]);
     gatewayConnected.value = !!(urlResult?.value && keyResult?.value);
   } catch {
