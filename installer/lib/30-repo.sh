@@ -12,7 +12,7 @@ repo::resolve_version() {
   log REPO "Resolving target version (USE_NIGHTLY=$USE_NIGHTLY)"
   if [ "$USE_NIGHTLY" = true ]; then
     INSTALL_REF="main"
-    log REPO "Nightly mode — target ref: main"
+    log REPO "Nightly mode — target ref: main (will resolve to SHA after checkout)"
     step_ok "Target: main (nightly)"
     return
   fi
@@ -216,6 +216,17 @@ repo::ensure() {
   log REPO "Clone verification passed — package.json exists"
 
   repo::checkout_version
+
+  # For nightly, resolve INSTALL_REF to the actual commit SHA so the build
+  # cache can detect when code has changed (INSTALL_REF="main" never changes,
+  # but the SHA does on every new commit)
+  if [ "$USE_NIGHTLY" = true ]; then
+    local sha
+    sha="$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+    INSTALL_REF="main@${sha}"
+    log REPO "Nightly: resolved to commit $sha (INSTALL_REF=$INSTALL_REF)"
+  fi
+
   log REPO "Repository ready at $INSTALL_REF"
 
   # Guarantee we're in REPO_DIR — all subsequent phases depend on this
