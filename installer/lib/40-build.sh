@@ -227,8 +227,11 @@ build::yarn_install() {
   bootstrap_path
   build::verify_prerequisites
 
-  # Idempotent: skip if artifacts already exist
-  if build::verify_install_artifacts; then
+  # Idempotent: skip if artifacts already exist — BUT not on nightly,
+  # because nightly pulls new code and dependencies may have changed
+  if [ "$USE_NIGHTLY" = true ]; then
+    log BUILD "Nightly mode — forcing yarn install (ignoring cached artifacts)"
+  elif build::verify_install_artifacts; then
     log BUILD "Install artifacts already present — skipping yarn install"
     step_ok "Packages already installed — verified"
     return
@@ -316,14 +319,14 @@ build::yarn_build() {
       step_ok "Build up to date (${INSTALL_REF})"
       return
     fi
-    if [ -z "$build_ref" ]; then
+    if [ -z "$build_ref" ] && [ "$USE_NIGHTLY" != true ]; then
       log BUILD "Build artifacts present with no build-ref — using cached build"
       step_ok "Build artifacts present (cached)"
       return
     fi
-    # Stale build from different ref
-    log BUILD "Stale build detected: build-ref=${build_ref}, INSTALL_REF=${INSTALL_REF} — removing dist/"
-    step_warn "Stale build (${build_ref}) — rebuilding for ${INSTALL_REF}"
+    # Stale build — ref changed or nightly with unknown build state
+    log BUILD "Stale build detected: build-ref=${build_ref:-none}, INSTALL_REF=${INSTALL_REF} — removing dist/"
+    step_warn "Stale build (${build_ref:-unknown}) — rebuilding for ${INSTALL_REF}"
     rm -rf dist
   fi
 
