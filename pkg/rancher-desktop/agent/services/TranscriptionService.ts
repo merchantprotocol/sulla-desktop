@@ -234,8 +234,8 @@ export class TranscriptionService {
     const integrationService = getIntegrationService();
 
     const [urlValue, keyValue] = await Promise.all([
-      integrationService.getIntegrationValue('enterprise_sulla', 'gateway_url'),
-      integrationService.getIntegrationValue('enterprise_sulla', 'api_key'),
+      integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
+      integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),
     ]);
 
     const url = urlValue?.value?.trim();

@@ -6,9 +6,24 @@ import type { Integration } from './types';
  * Clicking a category in the sidebar lazy-loads the full native catalogs.
  */
 export const popularIntegrations: Record<string, Integration> = {
+  enterprise_gateway: {
+    id:          'enterprise_gateway',
+    sort:        1,
+    paid:        false,
+    beta:        false,
+    comingSoon:  false,
+    connected:   false,
+    name:        'Merchant Protocol Enterprise Gateway',
+    description: 'Connect to your Enterprise Gateway for centralized LLM routing, voice services, agent management, and webhook orchestration.',
+    category:    'AI Infrastructure',
+    icon:        'merchant-protocol-shield.png',
+    version:     '1.0.0',
+    lastUpdated: '2026-03-21 00:00:00',
+    developer:   'Merchant Protocol',
+  },
   slack: {
     id:          'slack',
-    sort:        1,
+    sort:        2,
     paid:        false,
     beta:        false,
     comingSoon:  false,
@@ -23,7 +38,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   gmail: {
     id:          'gmail',
-    sort:        2,
+    sort:        3,
     paid:        false,
     beta:        false,
     comingSoon:  false,
@@ -38,7 +53,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   microsoft_teams: {
     id:          'microsoft_teams',
-    sort:        3,
+    sort:        4,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -53,7 +68,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   zoom: {
     id:          'zoom',
-    sort:        4,
+    sort:        5,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -68,7 +83,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   github: {
     id:          'github',
-    sort:        5,
+    sort:        6,
     paid:        false,
     beta:        false,
     comingSoon:  false,
@@ -83,7 +98,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   jira: {
     id:          'jira',
-    sort:        6,
+    sort:        7,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -98,7 +113,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   notion: {
     id:          'notion',
-    sort:        7,
+    sort:        8,
     paid:        false,
     beta:        false,
     comingSoon:  false,
@@ -113,7 +128,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   google_drive: {
     id:          'google_drive',
-    sort:        8,
+    sort:        9,
     paid:        false,
     beta:        false,
     comingSoon:  false,
@@ -128,7 +143,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   dropbox: {
     id:          'dropbox',
-    sort:        9,
+    sort:        10,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -143,7 +158,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   salesforce: {
     id:          'salesforce',
-    sort:        10,
+    sort:        11,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -158,7 +173,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   hubspot: {
     id:          'hubspot',
-    sort:        11,
+    sort:        12,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -173,7 +188,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   stripe: {
     id:          'stripe',
-    sort:        12,
+    sort:        13,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -188,7 +203,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   quickbooks: {
     id:          'quickbooks',
-    sort:        13,
+    sort:        14,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -203,7 +218,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   shopify: {
     id:          'shopify',
-    sort:        14,
+    sort:        15,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -218,7 +233,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   zendesk: {
     id:          'zendesk',
-    sort:        15,
+    sort:        16,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -233,7 +248,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   mailchimp: {
     id:          'mailchimp',
-    sort:        16,
+    sort:        17,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -248,7 +263,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   google_ads: {
     id:          'google_ads',
-    sort:        17,
+    sort:        18,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -263,7 +278,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   figma: {
     id:          'figma',
-    sort:        18,
+    sort:        19,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -278,7 +293,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   asana: {
     id:          'asana',
-    sort:        19,
+    sort:        20,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -293,7 +308,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   trello: {
     id:          'trello',
-    sort:        20,
+    sort:        21,
     paid:        false,
     beta:        false,
     comingSoon:  false,
@@ -308,7 +323,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   openai: {
     id:          'openai',
-    sort:        21,
+    sort:        22,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -323,7 +338,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   anthropic: {
     id:          'anthropic',
-    sort:        22,
+    sort:        23,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -338,7 +353,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   ollama: {
     id:          'ollama',
-    sort:        23,
+    sort:        24,
     paid:        false,
     beta:        false,
     comingSoon:  false,
@@ -353,7 +368,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   nvidia: {
     id:          'nvidia',
-    sort:        24,
+    sort:        25,
     paid:        true,
     beta:        false,
     comingSoon:  false,
@@ -368,7 +383,7 @@ export const popularIntegrations: Record<string, Integration> = {
   },
   grok: {
     id:          'grok',
-    sort:        25,
+    sort:        26,
     paid:        true,
     beta:        false,
     comingSoon:  false,
