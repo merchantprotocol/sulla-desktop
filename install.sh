@@ -1153,9 +1153,18 @@ verify_install_artifacts() {
 
 # Verify that yarn build produced a launchable application.
 # Checks both the webpack output (dist/) and the platform binary (rdctl).
+# Every failed check is logged so we know exactly what's missing.
 verify_build_artifacts() {
-  [ -f "dist/app/background.js" ] || return 1
-  [ -f "dist/app/index.html" ]    || return 1
+  local ok=true
+
+  if [ ! -f "dist/app/background.js" ]; then
+    echo "VERIFY FAIL: dist/app/background.js missing" >> "$INSTALL_LOG"
+    ok=false
+  fi
+  if [ ! -f "dist/app/index.html" ]; then
+    echo "VERIFY FAIL: dist/app/index.html missing" >> "$INSTALL_LOG"
+    ok=false
+  fi
 
   # rdctl must exist and be executable on the host platform
   local rdctl_bin=""
@@ -1165,23 +1174,29 @@ verify_build_artifacts() {
     windows) rdctl_bin="resources/win32/bin/rdctl.exe" ;;
   esac
   if [ -n "$rdctl_bin" ]; then
-    [ -f "$rdctl_bin" ] || return 1
-    # Smoke-test: ask rdctl for its version to catch arch mismatches (EBADARCH)
-    if ! "$rdctl_bin" version >/dev/null 2>&1 && \
-       ! "$rdctl_bin" --version >/dev/null 2>&1 && \
-       ! "$rdctl_bin" paths >/dev/null 2>&1; then
-      echo "VERIFY: rdctl exists but failed to execute ($rdctl_bin)" >> "$INSTALL_LOG"
-      return 1
+    if [ ! -f "$rdctl_bin" ]; then
+      echo "VERIFY FAIL: $rdctl_bin missing" >> "$INSTALL_LOG"
+      ok=false
+    elif ! "$rdctl_bin" version >/dev/null 2>&1 && \
+         ! "$rdctl_bin" --version >/dev/null 2>&1 && \
+         ! "$rdctl_bin" paths >/dev/null 2>&1; then
+      echo "VERIFY FAIL: $rdctl_bin exists but cannot execute ($(file "$rdctl_bin" 2>/dev/null || echo 'unknown arch'))" >> "$INSTALL_LOG"
+      ok=false
     fi
   fi
 
   # Lima (limactl) must exist on macOS and Linux — the VM won't start without it
+  local limactl_bin=""
   case "$OS" in
-    macos)   [ -x "resources/darwin/lima/bin/limactl" ] || return 1 ;;
-    linux)   [ -x "resources/linux/lima/bin/limactl" ]  || return 1 ;;
+    macos)   limactl_bin="resources/darwin/lima/bin/limactl" ;;
+    linux)   limactl_bin="resources/linux/lima/bin/limactl" ;;
   esac
+  if [ -n "$limactl_bin" ] && [ ! -x "$limactl_bin" ]; then
+    echo "VERIFY FAIL: $limactl_bin missing or not executable" >> "$INSTALL_LOG"
+    ok=false
+  fi
 
-  return 0
+  [ "$ok" = true ]
 }
 
 # Dump full install verification results — shows every check with pass/fail
