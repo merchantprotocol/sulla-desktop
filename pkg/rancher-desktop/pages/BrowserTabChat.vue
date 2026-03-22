@@ -124,6 +124,7 @@
                 :is-recording="isRecording"
                 :audio-level="audioLevel"
                 :recording-duration="recordingDuration"
+                :voice-configured="isVoiceConfigured"
                 :model-selector="modelSelector"
                 @send="send"
                 @stop="stop"
@@ -148,6 +149,7 @@
           :is-recording="isRecording"
           :audio-level="audioLevel"
           :recording-duration="recordingDuration"
+          :voice-configured="isVoiceConfigured"
           :model-selector="modelSelector"
           :is-first-chat="isFirstChat"
           @send="send"
@@ -382,6 +384,17 @@ function showVoiceToast(message: string): void {
   voiceToastTimer = setTimeout(() => { voiceToast.value = ''; }, 5000);
 }
 
+// ─── Voice configuration check ──────────────────────────────
+const isVoiceConfigured = ref(false);
+async function checkVoiceConfig() {
+  try {
+    const result = await ipcRenderer.invoke('integration-get-value', 'elevenlabs', 'api_key');
+    isVoiceConfigured.value = !!(result?.value);
+  } catch {
+    isVoiceConfigured.value = false;
+  }
+}
+
 // ─── Voice Session ───────────────────────────────────────────
 // OOP voice system: VoiceRecorderService + TTSPlayerService + VoicePipeline
 // coordinated by useVoiceSession composable. Auto-cleans up on unmount.
@@ -416,6 +429,7 @@ onMounted(async () => {
   if (chatScrollContainer.value) attachScrollListeners(chatScrollContainer.value);
   await modelSelector.start();
   checkFirstChat();
+  checkVoiceConfig();
 });
 
 watch(() => messages.value.length, async () => {

@@ -281,9 +281,9 @@ aria-hidden="true"
               </svg>
             </button>
 
-            <!-- Mic start button: only when idle (not recording, not typing, not running, not playing) -->
+            <!-- Mic start button: only when idle (not recording, not typing, not running, not playing) and voice is configured -->
             <button
-              v-if="!isRecording && !queryValue.trim() && !graphRunning && !ttsPlaying"
+              v-if="voiceConfigured && !isRecording && !queryValue.trim() && !graphRunning && !ttsPlaying"
               type="button"
               class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-content text-page disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer transition-colors"
               aria-label="Voice (Ctrl+Shift+V)"
@@ -335,6 +335,7 @@ const props = withDefaults(defineProps<{
   isRecording?:      boolean;
   audioLevel?:       number;
   recordingDuration?: string;
+  voiceConfigured?:  boolean;
   modelSelector:     AgentModelSelectorController;
   formClass?:        string;
   panelClass?:       string;
@@ -345,6 +346,7 @@ const props = withDefaults(defineProps<{
   isRecording:        false,
   audioLevel:         0,
   recordingDuration:  '0:00',
+  voiceConfigured:    false,
 });
 
 const emit = defineEmits<{

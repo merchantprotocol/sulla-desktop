@@ -29,6 +29,7 @@
         :is-recording="isRecording"
         :audio-level="audioLevel"
         :recording-duration="recordingDuration"
+        :voice-configured="voiceConfigured"
         :model-selector="modelSelector"
         @send="$emit('send')"
         @stop="$emit('stop')"
@@ -87,6 +88,7 @@ const props = defineProps<{
   isRecording?: boolean;
   audioLevel?: number;
   recordingDuration?: string;
+  voiceConfigured?: boolean;
   modelSelector: any;
   isFirstChat?: boolean;
 }>();
