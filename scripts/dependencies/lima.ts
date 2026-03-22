@@ -24,8 +24,8 @@ import { simpleSpawn } from 'scripts/simple_process';
 
 export class Lima extends GlobalDependency(GitHubDependency) {
   readonly name = 'lima';
-  readonly githubOwner = 'merchantprotocol';
-  readonly githubRepo = 'sulla-lima';
+  readonly githubOwner = 'rancher-sandbox';
+  readonly githubRepo = 'rancher-desktop-lima';
 
   async download(context: DownloadContext): Promise<void> {
     const baseUrl = `https://github.com/${ this.githubOwner }/${ this.githubRepo }/releases/download`;
