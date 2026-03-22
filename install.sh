@@ -1141,13 +1141,23 @@ ensure_repo() {
 # Artifact verification — check real files, not exit codes
 # ---------------------------------------------------------------------------
 
-# Verify that yarn install produced a working node_modules tree.
-# Only checks what yarn install actually creates — node_modules.
-# Platform binaries (rdctl, docker, kubectl) and preload.js are
-# produced by postinstall/build, verified separately in build_app.
+# Verify that yarn install + postinstall produced a working tree.
+# Checks node_modules AND the critical postinstall outputs (lima).
+# If any are missing, yarn install must re-run.
 verify_install_artifacts() {
   [ -f "node_modules/.yarn-integrity" ] || return 1
   [ -d "node_modules/electron" ]        || return 1
+
+  # Postinstall downloads platform binaries — verify the critical ones
+  case "$OS" in
+    macos)
+      [ -f "resources/darwin/lima/bin/limactl" ] || return 1
+      ;;
+    linux)
+      [ -f "resources/linux/lima/bin/limactl" ]  || return 1
+      ;;
+  esac
+
   return 0
 }
 
@@ -1206,6 +1216,22 @@ dump_install_verification() {
   else
     printf "  ${CROSS}  node_modules/electron/ ${RED}MISSING${RESET}\n"
     all_ok=false
+  fi
+
+  # Lima (postinstall output)
+  local limactl_bin=""
+  case "$OS" in
+    macos)   limactl_bin="resources/darwin/lima/bin/limactl" ;;
+    linux)   limactl_bin="resources/linux/lima/bin/limactl" ;;
+  esac
+  if [ -n "$limactl_bin" ]; then
+    if [ -f "$limactl_bin" ]; then
+      printf "  ${CHECK}  %s\n" "$limactl_bin"
+    else
+      printf "  ${CROSS}  %s ${RED}MISSING${RESET}\n" "$limactl_bin"
+      printf "    ${DIM}Lima was not downloaded during postinstall — the VM cannot start without it.${RESET}\n"
+      all_ok=false
+    fi
   fi
 
   # Show last 30 lines of install log for context
