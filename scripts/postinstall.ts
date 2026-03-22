@@ -135,13 +135,18 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
     running.add(name);
     const item = dependenciesByName[name];
 
+    console.log(`[postinstall] START ${ name }`);
     try {
       await item.dependency.download(item.context);
+      console.log(`[postinstall] OK    ${ name }`);
     } catch (e: any) {
       // Log the failure but don't block other dependencies.
       // Non-critical tools (trivy, wasm-shims, etc.) can fail without
       // preventing the app from launching.
-      console.warn(`WARNING: Failed to download ${ name }: ${ e.message ?? e }`);
+      console.warn(`[postinstall] FAIL  ${ name }: ${ e.message ?? e }`);
+      if (e.stack) {
+        console.warn(e.stack);
+      }
       warnings.push(name);
     }
     done.add(name);
@@ -188,12 +193,35 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
     throw new Error(message.join('\n'));
   }
 
+  // Final summary
+  console.log(`\n[postinstall] ════════════════════════════════════════`);
+  console.log(`[postinstall] Dependency Download Summary`);
+  console.log(`[postinstall]   total:     ${ all.size }`);
+  console.log(`[postinstall]   completed: ${ done.size }`);
+  console.log(`[postinstall]   failed:    ${ warnings.length }`);
   if (warnings.length > 0) {
-    console.warn(`\nPostinstall completed with ${ warnings.length } warning(s):`);
     for (const name of warnings) {
-      console.warn(`  - ${ name }`);
+      console.warn(`[postinstall]   FAILED: ${ name }`);
     }
-    console.warn('These dependencies are non-critical and can be retried later.\n');
+  }
+
+  // Check for critical binaries
+  const resourcesDir = path.join(process.cwd(), 'resources');
+  const platform = os.platform();
+  const criticalBinaries = [
+    { name: 'limactl', path: path.join(resourcesDir, platform, 'lima', 'bin', 'limactl') },
+    { name: 'rdctl', path: path.join(resourcesDir, platform, 'bin', 'rdctl') },
+  ];
+
+  for (const bin of criticalBinaries) {
+    const exists = fs.existsSync(bin.path);
+
+    console.log(`[postinstall]   ${ exists ? '✔' : '✖' } ${ bin.name }: ${ bin.path }`);
+  }
+  console.log(`[postinstall] ════════════════════════════════════════\n`);
+
+  if (warnings.length > 0) {
+    console.warn('These dependencies failed and may need to be retried.\n');
   }
 }
 
