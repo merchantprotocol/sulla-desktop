@@ -77,6 +77,5 @@ controller::run() {
   stop_spinner 2>/dev/null
   show_cursor
   ui::print_success
-  ui::auto_close_terminal
   log BOOT "Installation complete"
 }

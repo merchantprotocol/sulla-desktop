@@ -325,25 +325,3 @@ ui::print_success() {
   printf "  ${GREEN}${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}\n"
   echo ""
 }
-
-# ---------------------------------------------------------------------------
-# Auto-close terminal
-# ---------------------------------------------------------------------------
-ui::auto_close_terminal() {
-  sleep 3
-  case "$OS" in
-    macos)
-      if [ "$TERM_PROGRAM" = "Apple_Terminal" ]; then
-        osascript -e 'tell application "Terminal" to close front window' 2>/dev/null || true
-      elif [ "$TERM_PROGRAM" = "iTerm.app" ]; then
-        osascript -e 'tell application "iTerm2" to close current session of current window' 2>/dev/null || true
-      fi
-      ;;
-    linux)
-      kill -HUP "$PPID" 2>/dev/null || true
-      ;;
-    windows)
-      exit 0
-      ;;
-  esac
-}
