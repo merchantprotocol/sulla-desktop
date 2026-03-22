@@ -1,7 +1,7 @@
 #!/bin/zsh
 
 # Resolve the project directory — look in the user's home directory
-PROJECT_DIR="$HOME/sulla-desktop"
+PROJECT_DIR="$HOME/.sulla-desktop"
 
 if [ ! -d "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/package.json" ]; then
   osascript -e 'display alert "Sulla Desktop" message "Could not find sulla-desktop in your home directory ('"$PROJECT_DIR"'). Please re-run the installer." as critical'
