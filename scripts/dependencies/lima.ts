@@ -40,21 +40,32 @@ export class Lima extends GlobalDependency(GitHubDependency) {
     }
 
     const url = `${ baseUrl }/v${ context.versions.lima }/lima.${ platform }.tar.gz`;
+    console.log(`[Lima] download starting`);
+    console.log(`[Lima]   owner/repo: ${ this.githubOwner }/${ this.githubRepo }`);
+    console.log(`[Lima]   version:    ${ context.versions.lima }`);
+    console.log(`[Lima]   platform:   ${ context.platform } -> ${ platform }`);
+    console.log(`[Lima]   arch:       os.arch()=${ os.arch() }, M1=${ process.env.M1 ?? '(unset)' }, isArm64=${ !!isArm64 }`);
+    console.log(`[Lima]   url:        ${ url }`);
+
     let expectedChecksum: string | undefined;
 
     try {
       expectedChecksum = (await getResource(`${ url }.sha512sum`)).split(/\s+/)[0];
+      console.log(`[Lima]   checksum:   ${ expectedChecksum?.slice(0, 16) }...`);
     } catch (e: any) {
-      console.warn(`WARNING: Could not fetch lima checksum: ${ e.message ?? e }`);
+      console.warn(`[Lima] WARNING: Could not fetch lima checksum: ${ e.message ?? e }`);
     }
     const limaDir = path.join(context.resourcesDir, context.platform, 'lima');
     const tarPath = path.join(context.resourcesDir, context.platform, `lima.${ platform }.v${ context.versions.lima }.tgz`);
+    console.log(`[Lima]   tarPath:    ${ tarPath }`);
+    console.log(`[Lima]   limaDir:    ${ limaDir }`);
 
     await download(url, tarPath, {
       expectedChecksum,
       checksumAlgorithm: 'sha512',
       access:            fs.constants.W_OK,
     });
+    console.log(`[Lima]   download complete, extracting...`);
     await fs.promises.mkdir(limaDir, { recursive: true });
 
     const child = childProcess.spawn('/usr/bin/tar', ['-xf', tarPath],
@@ -69,6 +80,27 @@ export class Lima extends GlobalDependency(GitHubDependency) {
         }
       });
     });
+
+    // Verify the critical binary exists after extraction
+    const limactlPath = path.join(limaDir, 'bin', 'limactl');
+    const limactlExists = fs.existsSync(limactlPath);
+
+    console.log(`[Lima]   extraction complete`);
+    console.log(`[Lima]   limactl exists: ${ limactlExists } (${ limactlPath })`);
+    if (!limactlExists) {
+      // List what was actually extracted so we can diagnose
+      const binDir = path.join(limaDir, 'bin');
+      const binExists = fs.existsSync(binDir);
+
+      console.error(`[Lima] ERROR: limactl not found after extraction!`);
+      console.error(`[Lima]   bin/ dir exists: ${ binExists }`);
+      if (binExists) {
+        console.error(`[Lima]   bin/ contents: ${ fs.readdirSync(binDir).join(', ') }`);
+      }
+      const topLevel = fs.readdirSync(limaDir);
+
+      console.error(`[Lima]   limaDir contents: ${ topLevel.join(', ') }`);
+    }
   }
 }
 
