@@ -162,7 +162,7 @@ const cards = [
   font-family: var(--font-mono);
   font-size: 0.85rem;
   font-weight: 400;
-  color: var(--text-dim);
+  color: var(--text-muted);
   text-align: center;
   margin: 0 0 2.5rem;
   line-height: 1.6;

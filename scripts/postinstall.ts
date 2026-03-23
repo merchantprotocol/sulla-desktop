@@ -206,7 +206,8 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
   }
 
   // Check for critical binaries
-  const resourcesDir = path.join(process.cwd(), 'resources');
+  const currentDir = new URL('.', import.meta.url).pathname;
+  const resourcesDir = path.join(currentDir, '..', 'resources');
   const platform = os.platform();
   const criticalBinaries = [
     { name: 'limactl', path: path.join(resourcesDir, platform, 'lima', 'bin', 'limactl') },
