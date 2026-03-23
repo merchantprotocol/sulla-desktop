@@ -2,7 +2,7 @@
 /*  Protocol Dark theme — Sulla Desktop noir terminal                  */
 /*  Brand color: Steel Blue #5096b3 (matching docs.sulladesktop.com)   */
 /* ------------------------------------------------------------------ */
-.theme-protocol-dark {
+.theme-default-dark {
   /* Typography tokens */
   --fs-display:  30px;
   --fs-heading:  18px;
@@ -105,21 +105,21 @@
 }
 
 /* ================================================================== */
-/*  COMPONENT OVERRIDES — only active when .theme-protocol-dark       */
+/*  COMPONENT OVERRIDES — only active when .theme-default-dark       */
 /* ================================================================== */
 
 /* ── Global: Font smoothing & selection ── */
-.theme-protocol-dark {
+.theme-default-dark {
   -webkit-font-smoothing: antialiased;
 }
 
-.theme-protocol-dark ::selection {
+.theme-default-dark ::selection {
   background: rgba(80, 150, 179, 0.3);
   color: #fff;
 }
 
 /* ── CRT Scanline Overlay — matches docs.sulladesktop.com ── */
-.theme-protocol-dark::after {
+.theme-default-dark::after {
   content: '';
   position: fixed;
   inset: 0;
@@ -135,7 +135,7 @@
 }
 
 /* ── Vignette — corner darkening matching docs site CRT overlay ── */
-.theme-protocol-dark::before {
+.theme-default-dark::before {
   content: '';
   position: fixed;
   inset: 0;
@@ -155,37 +155,37 @@
 }
 
 /* ── Global scrollbar ── */
-.theme-protocol-dark ::-webkit-scrollbar {
+.theme-default-dark ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-.theme-protocol-dark ::-webkit-scrollbar-track {
+.theme-default-dark ::-webkit-scrollbar-track {
   background: #0d1117;
 }
 
-.theme-protocol-dark ::-webkit-scrollbar-thumb {
+.theme-default-dark ::-webkit-scrollbar-thumb {
   background: #4485a0;
   border-radius: 3px;
 }
 
-.theme-protocol-dark ::-webkit-scrollbar-thumb:hover {
+.theme-default-dark ::-webkit-scrollbar-thumb:hover {
   background: #5096b3;
 }
 
 /* ── Title bar: draggable region for macOS hiddenInset ── */
-.theme-protocol-dark .app-titlebar {
+.theme-default-dark .app-titlebar {
   -webkit-app-region: drag;
 }
 
-.theme-protocol-dark .app-titlebar a,
-.theme-protocol-dark .app-titlebar button,
-.theme-protocol-dark .app-titlebar nav {
+.theme-default-dark .app-titlebar a,
+.theme-default-dark .app-titlebar button,
+.theme-default-dark .app-titlebar nav {
   -webkit-app-region: no-drag;
 }
 
 /* ── Ambient center glow (noir radial) ── */
-.theme-protocol-dark .page-root::before {
+.theme-default-dark .page-root::before {
   content: '';
   position: fixed;
   top: 50%;
@@ -200,11 +200,11 @@
 }
 
 /* ── Header: noir nav with backdrop blur ── */
-.theme-protocol-dark header {
+.theme-default-dark header {
   background: #0d1117 !important;
 }
 
-.theme-protocol-dark header nav a {
+.theme-default-dark header nav a {
   font-family: var(--font-mono);
   font-size: var(--fs-body-sm);
   letter-spacing: 0.08em;
@@ -212,16 +212,16 @@
 }
 
 /* Hide light/dark toggle — protocol theme is dark-only */
-.theme-protocol-dark header .fill-sky-400 {
+.theme-default-dark header .fill-sky-400 {
   display: none !important;
 }
 
-.theme-protocol-dark header button[aria-label*="Switch to"] {
+.theme-default-dark header button[aria-label*="Switch to"] {
   display: none !important;
 }
 
 /* ── Page background with subtle grid lines ── */
-.theme-protocol-dark .page-root {
+.theme-default-dark .page-root {
   background: #0d1117;           /* Level 0 — deepest, so cards at Level 100 stand out */
   color: #e6edf3;
   background-image:
@@ -233,56 +233,56 @@
 /* ── Composer input: Terminal look ── */
 
 /* Replace blue gradient glow lines with steel blue */
-.theme-protocol-dark .bg-linear-to-r.from-sky-300\/0,
-.theme-protocol-dark .bg-linear-to-r.from-blue-400\/0,
-.theme-protocol-dark [class*="from-sky-300"],
-.theme-protocol-dark [class*="from-blue-400"] {
+.theme-default-dark .bg-linear-to-r.from-sky-300\/0,
+.theme-default-dark .bg-linear-to-r.from-blue-400\/0,
+.theme-default-dark [class*="from-sky-300"],
+.theme-default-dark [class*="from-blue-400"] {
   background-image: none !important;
   background: linear-gradient(to right, transparent, #5096b3, transparent) !important;
   opacity: 0.7;
 }
 
 /* Composer panel: terminal border with glow on focus */
-.theme-protocol-dark .bg-surface.ring-1.ring-edge {
+.theme-default-dark .bg-surface.ring-1.ring-edge {
   background: #0d1117 !important;
   border: 1px solid var(--border-default);
   box-shadow: 0 0 0 0 transparent;
   transition: box-shadow 0.3s ease, border-color 0.3s ease;
 }
 
-.theme-protocol-dark .bg-surface.ring-1.ring-edge:focus-within {
+.theme-default-dark .bg-surface.ring-1.ring-edge:focus-within {
   border-color: var(--accent-primary);
   box-shadow: 0 0 15px rgba(80, 150, 179, 0.2), 0 0 30px rgba(80, 150, 179, 0.1);
 }
 
 /* Textarea: monospace terminal font, white text, bright glowing cursor */
-.theme-protocol-dark textarea {
+.theme-default-dark textarea {
   font-family: var(--font-mono) !important;
   font-size: var(--fs-body);
   color: #e6edf3 !important;
   caret-color: #7ec8e3;
 }
 
-.theme-protocol-dark textarea::placeholder {
+.theme-default-dark textarea::placeholder {
   color: var(--text-secondary) !important;
   font-family: var(--font-mono) !important;
 }
 
 /* Send button: steel blue */
-.theme-protocol-dark .bg-content.text-page {
+.theme-default-dark .bg-content.text-page {
   background: #4485a0 !important;
   color: #fff !important;
   transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
 }
 
-.theme-protocol-dark .bg-content.text-page:hover {
+.theme-default-dark .bg-content.text-page:hover {
   background: #5096b3 !important;
   box-shadow: 0 0 15px rgba(80, 150, 179, 0.4);
   transform: translateY(-1px);
 }
 
 /* ── User message bubbles: blue tinted with white text ── */
-.theme-protocol-dark .bg-surface-alt.ring-1.ring-edge-subtle {
+.theme-default-dark .bg-surface-alt.ring-1.ring-edge-subtle {
   background: rgba(80, 150, 179, 0.1) !important;
   border: 1px solid var(--brand-glow-soft) !important;
   border-radius: 10px !important;
@@ -294,7 +294,7 @@
   overflow-wrap: break-word;
 }
 
-.theme-protocol-dark .bg-surface-alt.ring-1.ring-edge-subtle .text-content {
+.theme-default-dark .bg-surface-alt.ring-1.ring-edge-subtle .text-content {
   color: #e6edf3 !important;
   font-family: var(--font-mono) !important;
   font-size: var(--fs-body) !important;
@@ -303,7 +303,7 @@
 }
 
 /* ── Assistant messages: prose with steel blue accents ── */
-.theme-protocol-dark .prose {
+.theme-default-dark .prose {
   color: rgb(139, 148, 158) !important;
   font-family: var(--font-mono) !important;
   font-size: var(--fs-body) !important;
@@ -311,25 +311,25 @@
   line-height: 23.12px !important;
 }
 
-.theme-protocol-dark .prose h1,
-.theme-protocol-dark .prose h2,
-.theme-protocol-dark .prose h3,
-.theme-protocol-dark .prose h4 {
+.theme-default-dark .prose h1,
+.theme-default-dark .prose h2,
+.theme-default-dark .prose h3,
+.theme-default-dark .prose h4 {
   color: #e6edf3;
 }
 
-.theme-protocol-dark .prose a {
+.theme-default-dark .prose a {
   color: #5096b3 !important;
   text-decoration: none;
   transition: color 0.3s, text-shadow 0.3s;
 }
 
-.theme-protocol-dark .prose a:hover {
+.theme-default-dark .prose a:hover {
   color: #e6edf3 !important;
   text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
 }
 
-.theme-protocol-dark .prose code {
+.theme-default-dark .prose code {
   background: rgba(80, 150, 179, 0.08);
   color: #6ab0cc;
   border: 1px solid var(--border-default);
@@ -339,7 +339,7 @@
   font-family: var(--font-mono);
 }
 
-.theme-protocol-dark .prose pre {
+.theme-default-dark .prose pre {
   background: #1a1e24;
   border: 1px solid var(--border-default);
   border-radius: 10px;
@@ -351,18 +351,18 @@
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
-.theme-protocol-dark .prose pre code {
+.theme-default-dark .prose pre code {
   background: none;
   border: none;
   padding: 0;
   color: inherit;
 }
 
-.theme-protocol-dark .prose strong {
+.theme-default-dark .prose strong {
   color: #e6edf3;
 }
 
-.theme-protocol-dark .prose blockquote {
+.theme-default-dark .prose blockquote {
   border-left: 3px solid var(--accent-primary);
   padding: 1.5rem 0 1.5rem 1.5rem;
   font-style: italic;
@@ -370,11 +370,11 @@
   box-shadow: -4px 0 20px rgba(80, 150, 179, 0.15);
 }
 
-.theme-protocol-dark .prose hr {
+.theme-default-dark .prose hr {
   border-color: var(--border-default);
 }
 
-.theme-protocol-dark .prose table th {
+.theme-default-dark .prose table th {
   background: #1c2128;
   color: #5096b3;
   text-transform: uppercase;
@@ -384,25 +384,25 @@
   border-bottom: 2px solid var(--accent-primary);
 }
 
-.theme-protocol-dark .prose table td {
+.theme-default-dark .prose table td {
   color: #8b949e;
   border-color: var(--border-default);
 }
 
-.theme-protocol-dark .prose table tr:hover {
+.theme-default-dark .prose table tr:hover {
   background: #1c2128;
 }
 
 /* ── "Thinking..." indicator: subtle, no flashy gradient ── */
-.theme-protocol-dark [class*="border-indigo"],
-.theme-protocol-dark [class*="border-cyan"],
-.theme-protocol-dark [class*="border-sky"] {
+.theme-default-dark [class*="border-indigo"],
+.theme-default-dark [class*="border-cyan"],
+.theme-default-dark [class*="border-sky"] {
   border-color: var(--brand-glow-soft) !important;
 }
 
-.theme-protocol-dark [class*="color-indigo"],
-.theme-protocol-dark [class*="color-cyan"],
-.theme-protocol-dark [class*="color-sky"] {
+.theme-default-dark [class*="color-indigo"],
+.theme-default-dark [class*="color-cyan"],
+.theme-default-dark [class*="color-sky"] {
   --color-indigo-400: rgba(80, 150, 179, 0.3);
   --color-cyan-400: rgba(80, 150, 179, 0.2);
   --color-sky-500: rgba(80, 150, 179, 0.3);
@@ -410,15 +410,15 @@
 }
 
 /* Kill the flashy gradient border on "Thinking..." — replace with simple muted border */
-.theme-protocol-dark .absolute.-inset-px[style*="border-box"],
-.theme-protocol-dark [style*="linear-gradient"] .absolute.-inset-px {
+.theme-default-dark .absolute.-inset-px[style*="border-box"],
+.theme-default-dark [style*="linear-gradient"] .absolute.-inset-px {
   background: none !important;
   border: 1px solid var(--brand-glow-soft) !important;
   border-radius: 12px;
 }
 
 /* The thinking text itself */
-.theme-protocol-dark .absolute.-inset-px + .relative {
+.theme-default-dark .absolute.-inset-px + .relative {
   color: #6e7681 !important;
   font-family: var(--font-mono);
   font-size: var(--fs-code);
@@ -426,23 +426,23 @@
 }
 
 /* Thinking bubble content: muted, subtle */
-.theme-protocol-dark .thinking-bubble {
+.theme-default-dark .thinking-bubble {
   opacity: 0.6;
 }
 
-.theme-protocol-dark .thinking-bubble-content {
+.theme-default-dark .thinking-bubble-content {
   color: #6e7681 !important;
   font-family: var(--font-mono) !important;
   font-size: var(--fs-body-sm) !important;
 }
 
 /* Override the Tailwind dark:prose-invert slate coloring */
-.theme-protocol-dark .dark\:text-slate-400 {
+.theme-default-dark .dark\:text-slate-400 {
   color: #8b949e !important;
 }
 
 /* ── Sulla assistant avatar & name ── */
-.theme-protocol-dark .sulla-avatar {
+.theme-default-dark .sulla-avatar {
   width: 32px;
   height: 32px;
   border-radius: 8px;
@@ -458,7 +458,7 @@
   font-weight: 700;
 }
 
-.theme-protocol-dark .sulla-name {
+.theme-default-dark .sulla-name {
   color: #5096b3;
   font-family: var(--font-mono);
   font-size: var(--fs-body-sm);
@@ -467,90 +467,90 @@
 }
 
 /* ── Tool cards: terminal aesthetic ── */
-.theme-protocol-dark .tool-card-cc {
+.theme-default-dark .tool-card-cc {
   background: #161b22;             /* Level 100 — visible on Level 0 page */
   border-color: var(--border-default);
   font-family: var(--font-mono);
   box-shadow: var(--shadow-sm);
 }
 
-.theme-protocol-dark .tool-card-cc-header:hover {
+.theme-default-dark .tool-card-cc-header:hover {
   background: rgba(80, 150, 179, 0.08);
 }
 
-.theme-protocol-dark .tool-card-cc-name {
+.theme-default-dark .tool-card-cc-name {
   color: #5096b3;
 }
 
 /* IN label + command text: terminal green */
-.theme-protocol-dark .tool-card-cc-cmd:has(.tool-card-cc-cmd-text:not(.tool-card-cc-exit)) .tool-card-cc-cmd-label {
+.theme-default-dark .tool-card-cc-cmd:has(.tool-card-cc-cmd-text:not(.tool-card-cc-exit)) .tool-card-cc-cmd-label {
   color: #3fb950;
 }
 
-.theme-protocol-dark .tool-card-cc-cmd-text:not(.tool-card-cc-exit) {
+.theme-default-dark .tool-card-cc-cmd-text:not(.tool-card-cc-exit) {
   color: #3fb950;
 }
 
 /* OUT label + exit code: muted gray */
-.theme-protocol-dark .tool-card-cc-cmd:has(.tool-card-cc-exit) .tool-card-cc-cmd-label {
+.theme-default-dark .tool-card-cc-cmd:has(.tool-card-cc-exit) .tool-card-cc-cmd-label {
   color: #6e7681;
 }
 
-.theme-protocol-dark .tool-card-cc-exit.success {
+.theme-default-dark .tool-card-cc-exit.success {
   color: #6e7681 !important;
 }
 
-.theme-protocol-dark .tool-card-cc-exit.failed {
+.theme-default-dark .tool-card-cc-exit.failed {
   color: #f85149 !important;
 }
 
-.theme-protocol-dark .tool-card-cc-output pre {
+.theme-default-dark .tool-card-cc-output pre {
   color: #8b949e;
 }
 
 /* ── Channel messages: steel blue instead of indigo ── */
-.theme-protocol-dark [class*="border-indigo-200"],
-.theme-protocol-dark [class*="border-indigo-800"] {
+.theme-default-dark [class*="border-indigo-200"],
+.theme-default-dark [class*="border-indigo-800"] {
   border-color: var(--brand-glow-soft) !important;
 }
 
-.theme-protocol-dark [class*="bg-indigo-50"],
-.theme-protocol-dark [class*="bg-indigo-950"] {
+.theme-default-dark [class*="bg-indigo-50"],
+.theme-default-dark [class*="bg-indigo-950"] {
   background: rgba(80, 150, 179, 0.04) !important;
 }
 
-.theme-protocol-dark [class*="bg-indigo-100"],
-.theme-protocol-dark [class*="bg-indigo-900"] {
+.theme-default-dark [class*="bg-indigo-100"],
+.theme-default-dark [class*="bg-indigo-900"] {
   background: rgba(80, 150, 179, 0.12) !important;
 }
 
-.theme-protocol-dark [class*="text-indigo-700"],
-.theme-protocol-dark [class*="text-indigo-300"] {
+.theme-default-dark [class*="text-indigo-700"],
+.theme-default-dark [class*="text-indigo-300"] {
   color: #5096b3 !important;
 }
 
 /* ── "Primary" badge on model selector ── */
-.theme-protocol-dark .bg-sky-100,
-.theme-protocol-dark [class*="bg-sky-100"] {
+.theme-default-dark .bg-sky-100,
+.theme-default-dark [class*="bg-sky-100"] {
   background: rgba(80, 150, 179, 0.12) !important;
 }
 
-.theme-protocol-dark [class*="bg-sky-900"] {
+.theme-default-dark [class*="bg-sky-900"] {
   background: rgba(80, 150, 179, 0.15) !important;
 }
 
-.theme-protocol-dark .text-sky-700,
-.theme-protocol-dark [class*="text-sky-700"] {
+.theme-default-dark .text-sky-700,
+.theme-default-dark [class*="text-sky-700"] {
   color: #4485a0 !important;
 }
 
-.theme-protocol-dark .text-sky-400,
-.theme-protocol-dark [class*="text-sky-400"] {
+.theme-default-dark .text-sky-400,
+.theme-default-dark [class*="text-sky-400"] {
   color: #5096b3 !important;
 }
 
 /* ── Composer bottom bar: edge-to-edge terminal input ── */
-.theme-protocol-dark .border-t.border-edge.bg-page\/80 {
+.theme-default-dark .border-t.border-edge.bg-page\/80 {
   background: #0d1117 !important;
   backdrop-filter: none;
   border-color: var(--border-default) !important;
@@ -558,29 +558,29 @@
 }
 
 /* Strip all wrapper padding/margins so input goes edge-to-edge */
-.theme-protocol-dark .border-t.border-edge.bg-page\/80 > div {
+.theme-default-dark .border-t.border-edge.bg-page\/80 > div {
   max-width: none !important;
   padding: 0 !important;
 }
 
-.theme-protocol-dark .border-t.border-edge.bg-page\/80 > div > div {
+.theme-default-dark .border-t.border-edge.bg-page\/80 > div > div {
   max-width: none !important;
   padding: 0 !important;
 }
 
-.theme-protocol-dark .border-t.border-edge.bg-page\/80 .pb-3 {
+.theme-default-dark .border-t.border-edge.bg-page\/80 .pb-3 {
   padding-bottom: 0 !important;
 }
 
 /* The composer form: full width, no margin */
-.theme-protocol-dark .border-t.border-edge.bg-page\/80 .group\/composer {
+.theme-default-dark .border-t.border-edge.bg-page\/80 .group\/composer {
   margin: 0 !important;
   width: 100% !important;
   max-width: none !important;
 }
 
 /* The composer panel: flat, no rounded corners, no ring, edge-to-edge */
-.theme-protocol-dark .border-t.border-edge.bg-page\/80 .bg-surface.ring-1.ring-edge {
+.theme-default-dark .border-t.border-edge.bg-page\/80 .bg-surface.ring-1.ring-edge {
   border-radius: 0 !important;
   border: none !important;
   box-shadow: none !important;
@@ -589,54 +589,54 @@
 }
 
 /* Remove the gradient glow lines inside the fixed bottom bar */
-.theme-protocol-dark .border-t.border-edge.bg-page\/80 [class*="from-sky-300"],
-.theme-protocol-dark .border-t.border-edge.bg-page\/80 [class*="from-blue-400"] {
+.theme-default-dark .border-t.border-edge.bg-page\/80 [class*="from-sky-300"],
+.theme-default-dark .border-t.border-edge.bg-page\/80 [class*="from-blue-400"] {
   display: none !important;
 }
 
 /* ── Continue button ── */
-.theme-protocol-dark .bg-content.text-page.shadow-sm {
+.theme-default-dark .bg-content.text-page.shadow-sm {
   background: #4485a0 !important;
   color: #fff !important;
 }
 
-.theme-protocol-dark .bg-content.text-page.shadow-sm:hover {
+.theme-default-dark .bg-content.text-page.shadow-sm:hover {
   background: #5096b3 !important;
   box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
 }
 
 /* ── Links ── */
-.theme-protocol-dark a {
+.theme-default-dark a {
   transition: color 0.3s, text-shadow 0.3s;
 }
 
-.theme-protocol-dark a:not([class]):hover {
+.theme-default-dark a:not([class]):hover {
   text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
 }
 
 /* ── Stroke colors: replace slate with muted gray ── */
-.theme-protocol-dark .stroke-slate-500 {
+.theme-default-dark .stroke-slate-500 {
   stroke: #6e7681;
 }
 
 /* ── Ring overrides for focus states ── */
-.theme-protocol-dark .ring-black\/5 {
+.theme-default-dark .ring-black\/5 {
   --tw-ring-color: var(--brand-glow-soft);
 }
 
-.theme-protocol-dark .shadow-black\/5 {
+.theme-default-dark .shadow-black\/5 {
   --tw-shadow-color: rgba(0, 0, 0, 0.3);
 }
 
 /* ── Model selector menu ── */
-.theme-protocol-dark .agent-model-selector-menu {
+.theme-default-dark .agent-model-selector-menu {
   background: #0d1117;
   border-color: var(--border-default);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(80, 150, 179, 0.05);
 }
 
 /* ── Audio player ── */
-.theme-protocol-dark .sulla-audio-player {
+.theme-default-dark .sulla-audio-player {
   background: #0d1117;
   border-color: var(--border-default);
 }
@@ -646,106 +646,106 @@
    ══════════════════════════════════════════════════════════════════ */
 
 /* Page root background override (scoped styles use #0f172a) */
-.theme-protocol-dark .page-root,
-.theme-protocol-dark .page-root.dark {
+.theme-default-dark .page-root,
+.theme-default-dark .page-root.dark {
   background: #0d1117 !important;  /* Level 0 — deepest, cards/panels at Level 100 pop */
   color: #e6edf3 !important;
 }
 
 /* "Add Event" button: steel blue instead of indigo */
-.theme-protocol-dark .bg-indigo-600 {
+.theme-default-dark .bg-indigo-600 {
   background: #4485a0 !important;
 }
 
-.theme-protocol-dark .bg-indigo-600:hover,
-.theme-protocol-dark .hover\:bg-indigo-700:hover {
+.theme-default-dark .bg-indigo-600:hover,
+.theme-default-dark .hover\:bg-indigo-700:hover {
   background: #5096b3 !important;
   box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
 }
 
 /* Focus rings: steel blue instead of indigo */
-.theme-protocol-dark .focus\:border-indigo-500:focus {
+.theme-default-dark .focus\:border-indigo-500:focus {
   border-color: var(--accent-primary) !important;
 }
 
-.theme-protocol-dark .focus\:ring-indigo-500:focus {
+.theme-default-dark .focus\:ring-indigo-500:focus {
   --tw-ring-color: rgba(80, 150, 179, 0.4) !important;
 }
 
 /* ── Modals: terminal aesthetic ── */
-.theme-protocol-dark .dark\:bg-neutral-900 {
+.theme-default-dark .dark\:bg-neutral-900 {
   background: #0d1117 !important;
 }
 
-.theme-protocol-dark .dark\:bg-neutral-800 {
+.theme-default-dark .dark\:bg-neutral-800 {
   background: #0d1117 !important;
 }
 
-.theme-protocol-dark .dark\:border-white\/10 {
+.theme-default-dark .dark\:border-white\/10 {
   border-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .dark\:text-white {
+.theme-default-dark .dark\:text-white {
   color: #e6edf3 !important;
 }
 
-.theme-protocol-dark .dark\:text-neutral-300 {
+.theme-default-dark .dark\:text-neutral-300 {
   color: #8b949e !important;
 }
 
-.theme-protocol-dark .dark\:text-neutral-400 {
+.theme-default-dark .dark\:text-neutral-400 {
   color: #6e7681 !important;
 }
 
-.theme-protocol-dark .dark\:text-neutral-500 {
+.theme-default-dark .dark\:text-neutral-500 {
   color: #484f58 !important;
 }
 
-.theme-protocol-dark .dark\:hover\:bg-neutral-700:hover {
+.theme-default-dark .dark\:hover\:bg-neutral-700:hover {
   background: #21262d !important;
 }
 
-.theme-protocol-dark .dark\:hover\:bg-neutral-800:hover {
+.theme-default-dark .dark\:hover\:bg-neutral-800:hover {
   background: #0d1117 !important;
 }
 
-.theme-protocol-dark .dark\:hover\:text-neutral-300:hover {
+.theme-default-dark .dark\:hover\:text-neutral-300:hover {
   color: #8b949e !important;
 }
 
 /* Delete button in edit modal */
-.theme-protocol-dark .dark\:border-red-900 {
+.theme-default-dark .dark\:border-red-900 {
   border-color: var(--border-error) !important;
 }
 
-.theme-protocol-dark .dark\:bg-red-950 {
+.theme-default-dark .dark\:bg-red-950 {
   background: rgba(248, 81, 73, 0.08) !important;
 }
 
-.theme-protocol-dark .dark\:text-red-400 {
+.theme-default-dark .dark\:text-red-400 {
   color: #f85149 !important;
 }
 
-.theme-protocol-dark .dark\:hover\:bg-red-900:hover {
+.theme-default-dark .dark\:hover\:bg-red-900:hover {
   background: rgba(248, 81, 73, 0.15) !important;
 }
 
 /* Modal inputs: terminal font */
-.theme-protocol-dark .fixed.inset-0.z-50 input,
-.theme-protocol-dark .fixed.inset-0.z-50 textarea {
+.theme-default-dark .fixed.inset-0.z-50 input,
+.theme-default-dark .fixed.inset-0.z-50 textarea {
   font-family: var(--font-mono) !important;
   background: #0d1117 !important;
   color: #e6edf3 !important;
   border-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .fixed.inset-0.z-50 input:focus,
-.theme-protocol-dark .fixed.inset-0.z-50 textarea:focus {
+.theme-default-dark .fixed.inset-0.z-50 input:focus,
+.theme-default-dark .fixed.inset-0.z-50 textarea:focus {
   border-color: var(--accent-primary) !important;
   box-shadow: 0 0 10px var(--brand-glow-soft);
 }
 
-.theme-protocol-dark .fixed.inset-0.z-50 label {
+.theme-default-dark .fixed.inset-0.z-50 label {
   font-family: var(--font-mono);
   color: #8b949e !important;
   letter-spacing: 0.04em;
@@ -753,14 +753,14 @@
   font-size: var(--fs-body-sm) !important;
 }
 
-.theme-protocol-dark .fixed.inset-0.z-50 h2 {
+.theme-default-dark .fixed.inset-0.z-50 h2 {
   font-family: var(--font-mono);
   color: #5096b3 !important;
   letter-spacing: 0.05em;
 }
 
 /* Modal container: terminal style */
-.theme-protocol-dark .fixed.inset-0.z-50 > .rounded-2xl {
+.theme-default-dark .fixed.inset-0.z-50 > .rounded-2xl {
   background: #0d1117 !important;
   border: 1px solid var(--border-default) !important;
   border-radius: 12px !important;
@@ -768,7 +768,7 @@
 }
 
 /* ── ScheduleX CSS variable overrides: kill purple, use steel blue ── */
-.theme-protocol-dark .sx__calendar-wrapper {
+.theme-default-dark .sx__calendar-wrapper {
   --sx-color-primary: #5096b3 !important;
   --sx-color-on-primary: #fff !important;
   --sx-color-primary-container: rgba(80, 150, 179, 0.15) !important;
@@ -797,65 +797,65 @@
 }
 
 /* ── ScheduleX calendar widget: dark terminal look ── */
-.theme-protocol-dark .sx__calendar-wrapper,
-.theme-protocol-dark .sx__view-container,
-.theme-protocol-dark .sx__month-grid-wrapper,
-.theme-protocol-dark .sx__week-grid,
-.theme-protocol-dark .sx__day-grid {
+.theme-default-dark .sx__calendar-wrapper,
+.theme-default-dark .sx__view-container,
+.theme-default-dark .sx__month-grid-wrapper,
+.theme-default-dark .sx__week-grid,
+.theme-default-dark .sx__day-grid {
   background: #0d1117 !important;
   color: #e6edf3 !important;
   font-family: var(--font-mono) !important;
 }
 
 /* Calendar header/toolbar */
-.theme-protocol-dark .sx__calendar-header {
+.theme-default-dark .sx__calendar-header {
   background: #0d1117 !important;
   border-color: var(--border-default) !important;
   font-family: var(--font-mono) !important;
 }
 
-.theme-protocol-dark .sx__calendar-header button {
+.theme-default-dark .sx__calendar-header button {
   color: #8b949e !important;
 }
 
-.theme-protocol-dark .sx__calendar-header button:hover {
+.theme-default-dark .sx__calendar-header button:hover {
   color: #e6edf3 !important;
   background: rgba(80, 150, 179, 0.08) !important;
 }
 
-.theme-protocol-dark .sx__calendar-header .sx__date-input {
+.theme-default-dark .sx__calendar-header .sx__date-input {
   color: #e6edf3 !important;
 }
 
 /* Calendar grid lines */
-.theme-protocol-dark .sx__month-grid-day,
-.theme-protocol-dark .sx__week-grid__day,
-.theme-protocol-dark .sx__day-grid__day {
+.theme-default-dark .sx__month-grid-day,
+.theme-default-dark .sx__week-grid__day,
+.theme-default-dark .sx__day-grid__day {
   border-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .sx__month-grid-cell {
+.theme-default-dark .sx__month-grid-cell {
   border-color: var(--border-subtle) !important;
 }
 
 /* Day numbers */
-.theme-protocol-dark .sx__month-grid-day__header-date {
+.theme-default-dark .sx__month-grid-day__header-date {
   color: #8b949e !important;
 }
 
-.theme-protocol-dark .sx__month-grid-day__header-date--is-today {
+.theme-default-dark .sx__month-grid-day__header-date--is-today {
   background: #4485a0 !important;
   color: #fff !important;
 }
 
 /* Week/day time column */
-.theme-protocol-dark .sx__time-grid-hour {
+.theme-default-dark .sx__time-grid-hour {
   border-color: var(--border-subtle) !important;
   color: #6e7681 !important;
 }
 
 /* Events in calendar */
-.theme-protocol-dark .sx__event {
+.theme-default-dark .sx__event {
   background: rgba(80, 150, 179, 0.15) !important;
   border-left: 3px solid var(--accent-primary) !important;
   color: #e6edf3 !important;
@@ -863,41 +863,41 @@
   font-size: var(--fs-body-sm) !important;
 }
 
-.theme-protocol-dark .sx__event:hover {
+.theme-default-dark .sx__event:hover {
   background: rgba(80, 150, 179, 0.25) !important;
 }
 
 /* View switcher tabs */
-.theme-protocol-dark .sx__view-selection button {
+.theme-default-dark .sx__view-selection button {
   color: #6e7681 !important;
   font-family: var(--font-mono) !important;
 }
 
-.theme-protocol-dark .sx__view-selection button.sx__view-selection-item--is-selected,
-.theme-protocol-dark .sx__view-selection button:hover {
+.theme-default-dark .sx__view-selection button.sx__view-selection-item--is-selected,
+.theme-default-dark .sx__view-selection button:hover {
   color: #5096b3 !important;
 }
 
 /* Today button */
-.theme-protocol-dark .sx__today-button {
+.theme-default-dark .sx__today-button {
   color: #5096b3 !important;
   border-color: var(--border-default) !important;
   font-family: var(--font-mono) !important;
 }
 
-.theme-protocol-dark .sx__today-button:hover {
+.theme-default-dark .sx__today-button:hover {
   background: rgba(80, 150, 179, 0.08) !important;
 }
 
 /* Forward/back navigation arrows */
-.theme-protocol-dark .sx__chevron-wrapper svg {
+.theme-default-dark .sx__chevron-wrapper svg {
   color: #8b949e !important;
   fill: #8b949e !important;
 }
 
 /* Day names row */
-.theme-protocol-dark .sx__month-grid-day__header-day-name,
-.theme-protocol-dark .sx__week-grid__day-name {
+.theme-default-dark .sx__month-grid-day__header-day-name,
+.theme-default-dark .sx__week-grid__day-name {
   color: #6e7681 !important;
   font-family: var(--font-mono) !important;
   text-transform: uppercase;
@@ -905,24 +905,24 @@
 }
 
 /* Month agenda items */
-.theme-protocol-dark .sx__month-agenda-day {
+.theme-default-dark .sx__month-agenda-day {
   border-color: var(--border-subtle) !important;
 }
 
-.theme-protocol-dark .sx__month-agenda-event {
+.theme-default-dark .sx__month-agenda-event {
   background: rgba(80, 150, 179, 0.08) !important;
   border-color: var(--border-default) !important;
   color: #e6edf3 !important;
 }
 
 /* Current time indicator */
-.theme-protocol-dark .sx__current-time-indicator {
+.theme-default-dark .sx__current-time-indicator {
   background: #5096b3 !important;
 }
 
 /* Date picker inputs: match terminal */
-.theme-protocol-dark input[type="date"],
-.theme-protocol-dark input[type="time"] {
+.theme-default-dark input[type="date"],
+.theme-default-dark input[type="time"] {
   color-scheme: dark;
 }
 
@@ -931,148 +931,148 @@
    ══════════════════════════════════════════════════════════════════ */
 
 /* Hero section background with gradient fade to page bg */
-.theme-protocol-dark .bg-slate-900 {
+.theme-default-dark .bg-slate-900 {
   background: #0d1117 !important;
 }
 
 /* Hero title gradient: steel blue instead of indigo */
-.theme-protocol-dark .from-indigo-200.via-sky-400.to-indigo-200,
-.theme-protocol-dark [class*="from-indigo-200"] {
+.theme-default-dark .from-indigo-200.via-sky-400.to-indigo-200,
+.theme-default-dark [class*="from-indigo-200"] {
   background-image: linear-gradient(to right, #5096b3, #7ec8e3, #5096b3) !important;
 }
 
 /* Search input */
-.theme-protocol-dark .dark\:bg-slate-800\/75 {
+.theme-default-dark .dark\:bg-slate-800\/75 {
   background: #0d1117 !important;
 }
 
-.theme-protocol-dark .dark\:ring-white\/5 {
+.theme-default-dark .dark\:ring-white\/5 {
   --tw-ring-color: var(--border-default) !important;
 }
 
 /* Category sidebar */
-.theme-protocol-dark .dark\:text-slate-500 {
+.theme-default-dark .dark\:text-slate-500 {
   color: #484f58 !important;
 }
 
-.theme-protocol-dark .dark\:text-slate-400 {
+.theme-default-dark .dark\:text-slate-400 {
   color: #6e7681 !important;
 }
 
-.theme-protocol-dark .dark\:text-slate-200 {
+.theme-default-dark .dark\:text-slate-200 {
   color: #e6edf3 !important;
 }
 
-.theme-protocol-dark .dark\:text-slate-300 {
+.theme-default-dark .dark\:text-slate-300 {
   color: #8b949e !important;
 }
 
-.theme-protocol-dark .dark\:text-slate-100 {
+.theme-default-dark .dark\:text-slate-100 {
   color: #e6edf3 !important;
 }
 
 /* Active category: steel blue instead of sky */
-.theme-protocol-dark .dark\:bg-sky-400\/10 {
+.theme-default-dark .dark\:bg-sky-400\/10 {
   background: rgba(80, 150, 179, 0.1) !important;
 }
 
-.theme-protocol-dark .dark\:text-sky-400 {
+.theme-default-dark .dark\:text-sky-400 {
   color: #5096b3 !important;
 }
 
 /* Sidebar hover states */
-.theme-protocol-dark .dark\:hover\:bg-slate-800:hover {
+.theme-default-dark .dark\:hover\:bg-slate-800:hover {
   background: #21262d !important;
 }
 
-.theme-protocol-dark .dark\:hover\:text-slate-200:hover {
+.theme-default-dark .dark\:hover\:text-slate-200:hover {
   color: #e6edf3 !important;
 }
 
 /* Integration cards */
-.theme-protocol-dark .dark\:bg-slate-800 {
+.theme-default-dark .dark\:bg-slate-800 {
   background: #161b22 !important;
 }
 
-.theme-protocol-dark .dark\:border-gray-700 {
+.theme-default-dark .dark\:border-gray-700 {
   border-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .dark\:hover\:border-gray-600:hover {
+.theme-default-dark .dark\:hover\:border-gray-600:hover {
   border-color: var(--brand-glow-soft) !important;
 }
 
 /* Card icon container */
-.theme-protocol-dark .dark\:bg-slate-700 {
+.theme-default-dark .dark\:bg-slate-700 {
   background: #21262d !important;
 }
 
 /* Category badge */
-.theme-protocol-dark .dark\:text-slate-200 {
+.theme-default-dark .dark\:text-slate-200 {
   color: #8b949e !important;
 }
 
 /* Connect/Manage buttons: steel blue */
-.theme-protocol-dark .bg-blue-600 {
+.theme-default-dark .bg-blue-600 {
   background: #4485a0 !important;
 }
 
-.theme-protocol-dark .bg-blue-600:hover,
-.theme-protocol-dark .hover\:bg-blue-700:hover {
+.theme-default-dark .bg-blue-600:hover,
+.theme-default-dark .hover\:bg-blue-700:hover {
   background: #5096b3 !important;
   box-shadow: 0 0 10px rgba(80, 150, 179, 0.2);
 }
 
 /* Beta badge */
-.theme-protocol-dark .bg-blue-500 {
+.theme-default-dark .bg-blue-500 {
   background: #4485a0 !important;
 }
 
 /* Coming soon badge */
-.theme-protocol-dark .bg-gray-400 {
+.theme-default-dark .bg-gray-400 {
   background: #484f58 !important;
 }
 
-.theme-protocol-dark .bg-gray-500 {
+.theme-default-dark .bg-gray-500 {
   background: #484f58 !important;
 }
 
-.theme-protocol-dark .hover\:bg-gray-600:hover {
+.theme-default-dark .hover\:bg-gray-600:hover {
   background: #6e7681 !important;
 }
 
 /* Disconnect/Manage (red) button */
-.theme-protocol-dark .bg-red-600 {
+.theme-default-dark .bg-red-600 {
   background: #da3633 !important;
 }
 
-.theme-protocol-dark .hover\:bg-red-700:hover {
+.theme-default-dark .hover\:bg-red-700:hover {
   background: #f85149 !important;
 }
 
 /* Mobile category select */
-.theme-protocol-dark .dark\:border-slate-700 {
+.theme-default-dark .dark\:border-slate-700 {
   border-color: var(--border-default) !important;
 }
 
 /* Connected status dot */
-.theme-protocol-dark .bg-green-500 {
+.theme-default-dark .bg-green-500 {
   background: #3fb950 !important;
 }
 
-.theme-protocol-dark .bg-gray-300 {
+.theme-default-dark .bg-gray-300 {
   background: #484f58 !important;
 }
 
 /* All text on integrations page: terminal font */
-.theme-protocol-dark .page-root h3,
-.theme-protocol-dark .page-root nav button,
-.theme-protocol-dark .page-root nav h3 {
+.theme-default-dark .page-root h3,
+.theme-default-dark .page-root nav button,
+.theme-default-dark .page-root nav h3 {
   font-family: var(--font-mono);
 }
 
 /* Fill colors for search icon */
-.theme-protocol-dark .dark\:fill-slate-500 {
+.theme-default-dark .dark\:fill-slate-500 {
   fill: #484f58 !important;
 }
 
@@ -1081,145 +1081,145 @@
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── Editor page root background ── */
-.theme-protocol-dark .page-root,
-.theme-protocol-dark .page-root.dark {
+.theme-default-dark .page-root,
+.theme-default-dark .page-root.dark {
   background: #0d1117 !important;  /* Level 0 — deepest background */
   color: #e6edf3 !important;
 }
 
 /* ── Editor header bar (title bar) ── */
-.theme-protocol-dark .editor-header-bar,
-.theme-protocol-dark .editor-header-bar.dark {
+.theme-default-dark .editor-header-bar,
+.theme-default-dark .editor-header-bar.dark {
   background: #0d1117 !important;
   border-bottom-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .editor-header-bar .header-btn,
-.theme-protocol-dark .editor-header-bar .header-btn.dark {
+.theme-default-dark .editor-header-bar .header-btn,
+.theme-default-dark .editor-header-bar .header-btn.dark {
   color: #8b949e !important;
 }
 
-.theme-protocol-dark .editor-header-bar .header-btn:hover,
-.theme-protocol-dark .editor-header-bar .header-btn.dark:hover {
+.theme-default-dark .editor-header-bar .header-btn:hover,
+.theme-default-dark .editor-header-bar .header-btn.dark:hover {
   background: rgba(80, 150, 179, 0.08) !important;
   color: #e6edf3 !important;
 }
 
-.theme-protocol-dark .editor-header-bar .header-separator,
-.theme-protocol-dark .editor-header-bar.dark .header-separator {
+.theme-default-dark .editor-header-bar .header-separator,
+.theme-default-dark .editor-header-bar.dark .header-separator {
   background: var(--border-default) !important;
 }
 
 /* Theme dropdown in editor header */
-.theme-protocol-dark .theme-dropdown,
-.theme-protocol-dark .theme-dropdown.dark {
+.theme-default-dark .theme-dropdown,
+.theme-default-dark .theme-dropdown.dark {
   background: #0d1117 !important;
   border-color: var(--border-default) !important;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
 }
 
-.theme-protocol-dark .theme-option.dark {
+.theme-default-dark .theme-option.dark {
   color: #8b949e !important;
   font-family: var(--font-mono);
   font-size: var(--fs-body-sm);
 }
 
-.theme-protocol-dark .theme-option.dark:hover {
+.theme-default-dark .theme-option.dark:hover {
   background: #21262d !important;
   color: #e6edf3 !important;
 }
 
-.theme-protocol-dark .theme-option.active {
+.theme-default-dark .theme-option.active {
   color: #5096b3 !important;
 }
 
-.theme-protocol-dark .theme-dot.active {
+.theme-default-dark .theme-dot.active {
   border-color: var(--accent-primary) !important;
   background: var(--accent-primary) !important;
 }
 
-.theme-protocol-dark .theme-group-label.dark {
+.theme-default-dark .theme-group-label.dark {
   color: #6e7681 !important;
   font-family: var(--font-mono);
 }
 
-.theme-protocol-dark .theme-group-section + .theme-group-section {
+.theme-default-dark .theme-group-section + .theme-group-section {
   border-top-color: var(--border-default) !important;
 }
 
 /* ── Icon Panel (left sidebar) ── */
-.theme-protocol-dark .icon-panel,
-.theme-protocol-dark .icon-panel.dark {
+.theme-default-dark .icon-panel,
+.theme-default-dark .icon-panel.dark {
   background: #0d1117 !important;
   border-right-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .icon-panel .icon-btn,
-.theme-protocol-dark .icon-panel.dark .icon-btn {
+.theme-default-dark .icon-panel .icon-btn,
+.theme-default-dark .icon-panel.dark .icon-btn {
   color: #6e7681 !important;
 }
 
-.theme-protocol-dark .icon-panel .icon-btn:hover,
-.theme-protocol-dark .icon-panel.dark .icon-btn:hover {
+.theme-default-dark .icon-panel .icon-btn:hover,
+.theme-default-dark .icon-panel.dark .icon-btn:hover {
   background: rgba(80, 150, 179, 0.06) !important;
   color: #8b949e !important;
 }
 
-.theme-protocol-dark .icon-panel .icon-btn.active,
-.theme-protocol-dark .icon-panel.dark .icon-btn.active {
+.theme-default-dark .icon-panel .icon-btn.active,
+.theme-default-dark .icon-panel.dark .icon-btn.active {
   background: rgba(80, 150, 179, 0.1) !important;
   color: #5096b3 !important;
 }
 
 /* Active indicator bar: steel blue */
-.theme-protocol-dark .icon-panel .icon-btn.active::after {
+.theme-default-dark .icon-panel .icon-btn.active::after {
   background: #5096b3 !important;
 }
 
 /* Agent icon (robot logo) in icon panel — recolor green to steel blue */
-.theme-protocol-dark .icon-panel .icon-logo,
-.theme-protocol-dark .icon-panel.dark .icon-logo {
+.theme-default-dark .icon-panel .icon-logo,
+.theme-default-dark .icon-panel.dark .icon-logo {
   filter: brightness(0) saturate(100%) invert(55%) sepia(30%) saturate(500%) hue-rotate(160deg) brightness(95%) contrast(90%) !important;
   opacity: 0.6 !important;
 }
 
-.theme-protocol-dark .icon-panel .icon-btn:hover .icon-logo {
+.theme-default-dark .icon-panel .icon-btn:hover .icon-logo {
   opacity: 0.8 !important;
 }
 
-.theme-protocol-dark .icon-panel .icon-btn.active .icon-logo {
+.theme-default-dark .icon-panel .icon-btn.active .icon-logo {
   opacity: 1 !important;
   filter: brightness(0) saturate(100%) invert(55%) sepia(40%) saturate(600%) hue-rotate(160deg) brightness(100%) contrast(90%) !important;
 }
 
 /* ── Left pane (file tree, git, docker, etc.) ── */
-.theme-protocol-dark .left-pane,
-.theme-protocol-dark .left-pane.dark {
+.theme-default-dark .left-pane,
+.theme-default-dark .left-pane.dark {
   background: #0d1117 !important;
   border-right-color: var(--border-default) !important;
 }
 
 /* ── Editor panel (center area) ── */
-.theme-protocol-dark .editor-panel,
-.theme-protocol-dark .editor-panel.dark {
+.theme-default-dark .editor-panel,
+.theme-default-dark .editor-panel.dark {
   background: var(--bg-primary);
 }
 
 /* ── Tab bar ── */
-.theme-protocol-dark .tab-bar,
-.theme-protocol-dark .tab-bar.dark {
+.theme-default-dark .tab-bar,
+.theme-default-dark .tab-bar.dark {
   background: #0d1117 !important;
   border-bottom-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .tab-bar.empty,
-.theme-protocol-dark .tab-bar.empty.dark {
+.theme-default-dark .tab-bar.empty,
+.theme-default-dark .tab-bar.empty.dark {
   background: #0d1117 !important;
 }
 
 /* Inactive tabs */
-.theme-protocol-dark .tab,
-.theme-protocol-dark .tab.dark {
+.theme-default-dark .tab,
+.theme-default-dark .tab.dark {
   background: #0d1117 !important;
   color: #6e7681 !important;
   border-right-color: var(--border-default) !important;
@@ -1227,40 +1227,40 @@
   font-size: var(--fs-body-sm) !important;
 }
 
-.theme-protocol-dark .tab:hover,
-.theme-protocol-dark .tab.dark:hover {
+.theme-default-dark .tab:hover,
+.theme-default-dark .tab.dark:hover {
   background: #21262d !important;
   color: #8b949e !important;
 }
 
 /* Active tab */
-.theme-protocol-dark .tab.active,
-.theme-protocol-dark .tab.active.dark {
+.theme-default-dark .tab.active,
+.theme-default-dark .tab.active.dark {
   background: #0d1117 !important;
   color: #e6edf3 !important;
   border-bottom-color: var(--bg-page) !important;
 }
 
 /* Tab actions */
-.theme-protocol-dark .tab-bar-action-btn,
-.theme-protocol-dark .tab-bar-action-btn.dark {
+.theme-default-dark .tab-bar-action-btn,
+.theme-default-dark .tab-bar-action-btn.dark {
   color: #6e7681 !important;
 }
 
-.theme-protocol-dark .tab-bar-action-btn:hover,
-.theme-protocol-dark .tab-bar-action-btn.dark:hover {
+.theme-default-dark .tab-bar-action-btn:hover,
+.theme-default-dark .tab-bar-action-btn.dark:hover {
   background: rgba(80, 150, 179, 0.08) !important;
   color: #8b949e !important;
 }
 
 /* Tab dirty dot: steel blue */
-.theme-protocol-dark .tab-dirty-dot {
+.theme-default-dark .tab-dirty-dot {
   background: #5096b3 !important;
 }
 
 /* ── Editor breadcrumb header ── */
-.theme-protocol-dark .editor-header,
-.theme-protocol-dark .editor-header.dark {
+.theme-default-dark .editor-header,
+.theme-default-dark .editor-header.dark {
   background: #0d1117 !important;
   border-bottom-color: var(--border-default) !important;
   color: #6e7681 !important;
@@ -1269,237 +1269,237 @@
 }
 
 /* ── Editor dropdown menu ── */
-.theme-protocol-dark .editor-dropdown,
-.theme-protocol-dark .editor-dropdown.dark {
+.theme-default-dark .editor-dropdown,
+.theme-default-dark .editor-dropdown.dark {
   background: #0d1117 !important;
   border-color: var(--border-default) !important;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
 }
 
-.theme-protocol-dark .editor-dropdown-item.dark {
+.theme-default-dark .editor-dropdown-item.dark {
   color: #8b949e !important;
   font-family: var(--font-mono);
 }
 
-.theme-protocol-dark .editor-dropdown-item.dark:hover {
+.theme-default-dark .editor-dropdown-item.dark:hover {
   background: #21262d !important;
   color: #e6edf3 !important;
 }
 
 /* ── Empty state (no tabs open) — Sulla icon fix ── */
-.theme-protocol-dark .empty-state {
+.theme-default-dark .empty-state {
   color: #6e7681 !important;
 }
 
 /* Recolor the green Sulla icon to steel blue */
-.theme-protocol-dark .empty-icon-img {
+.theme-default-dark .empty-icon-img {
   filter: brightness(0) saturate(100%) invert(55%) sepia(30%) saturate(500%) hue-rotate(160deg) brightness(95%) contrast(90%) !important;
   opacity: 0.4;
 }
 
-.theme-protocol-dark .empty-text {
+.theme-default-dark .empty-text {
   color: #8b949e !important;
   font-family: var(--font-mono);
 }
 
-.theme-protocol-dark .empty-hint {
+.theme-default-dark .empty-hint {
   color: #6e7681 !important;
   font-family: var(--font-mono);
   font-size: var(--fs-body-sm);
 }
 
 /* Loading spinner: steel blue */
-.theme-protocol-dark .loading-spinner {
+.theme-default-dark .loading-spinner {
   border-color: var(--brand-glow-soft) !important;
   border-top-color: var(--accent-primary) !important;
 }
 
 /* ── Bottom pane (terminal area) ── */
-.theme-protocol-dark .editor-bottom,
-.theme-protocol-dark .editor-bottom.dark {
+.theme-default-dark .editor-bottom,
+.theme-default-dark .editor-bottom.dark {
   background: #0d1117 !important;
   border-top-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .terminal-tabs-header,
-.theme-protocol-dark .terminal-tabs-header.dark {
+.theme-default-dark .terminal-tabs-header,
+.theme-default-dark .terminal-tabs-header.dark {
   background: #0d1117 !important;
   border-bottom-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .terminal-tab {
+.theme-default-dark .terminal-tab {
   background: #0d1117 !important;
   color: var(--text-secondary) !important;
   font-family: var(--font-mono) !important;
 }
 
-.theme-protocol-dark .terminal-tab:hover {
+.theme-default-dark .terminal-tab:hover {
   background: #21262d !important;
   color: #8b949e !important;
 }
 
-.theme-protocol-dark .terminal-tab.active {
+.theme-default-dark .terminal-tab.active {
   background: #0d1117 !important;
   color: #e6edf3 !important;
   border-bottom-color: var(--bg-page) !important;
 }
 
 /* ── Right pane ── */
-.theme-protocol-dark .right-pane,
-.theme-protocol-dark .right-pane.dark {
+.theme-default-dark .right-pane,
+.theme-default-dark .right-pane.dark {
   background: #0d1117 !important;
   border-left-color: var(--border-default) !important;
 }
 
 /* Right pane tabs */
-.theme-protocol-dark .rp-tab-bar {
+.theme-default-dark .rp-tab-bar {
   background: #0d1117 !important;
   border-bottom-color: var(--border-default) !important;
 }
 
-.theme-protocol-dark .rp-tab,
-.theme-protocol-dark .rp-tab.dark {
+.theme-default-dark .rp-tab,
+.theme-default-dark .rp-tab.dark {
   color: #6e7681 !important;
   font-family: var(--font-mono);
 }
 
-.theme-protocol-dark .rp-tab.active,
-.theme-protocol-dark .rp-tab.active.dark {
+.theme-default-dark .rp-tab.active,
+.theme-default-dark .rp-tab.active.dark {
   color: #5096b3 !important;
   border-bottom-color: var(--accent-primary) !important;
 }
 
 /* ── Resize handles: steel blue ── */
-.theme-protocol-dark .resize-handle:hover,
-.theme-protocol-dark .resize-handle:active,
-.theme-protocol-dark .resize-handle.dark:hover,
-.theme-protocol-dark .resize-handle.dark:active {
+.theme-default-dark .resize-handle:hover,
+.theme-default-dark .resize-handle:active,
+.theme-default-dark .resize-handle.dark:hover,
+.theme-default-dark .resize-handle.dark:active {
   background: #5096b3 !important;
 }
 
 /* ── Editor footer (status bar) ── */
-.theme-protocol-dark .editor-footer,
-.theme-protocol-dark .editor-footer.dark {
+.theme-default-dark .editor-footer,
+.theme-default-dark .editor-footer.dark {
   background: #0d1117 !important;
   border-top-color: var(--border-default) !important;
   color: #6e7681 !important;
   font-family: var(--font-mono);
 }
 
-.theme-protocol-dark .editor-footer .footer-lang {
+.theme-default-dark .editor-footer .footer-lang {
   background: rgba(80, 150, 179, 0.08) !important;
 }
 
-.theme-protocol-dark .editor-footer .footer-state.state-ok {
+.theme-default-dark .editor-footer .footer-state.state-ok {
   color: #3fb950 !important;
 }
 
-.theme-protocol-dark .editor-footer .footer-progress-bar-fill {
+.theme-default-dark .editor-footer .footer-progress-bar-fill {
   background: #5096b3 !important;
 }
 
 /* ── Save button: steel blue ── */
-.theme-protocol-dark .save-button,
-.theme-protocol-dark .save-button.dark {
+.theme-default-dark .save-button,
+.theme-default-dark .save-button.dark {
   background: #4485a0 !important;
 }
 
-.theme-protocol-dark .save-button:hover:not(:disabled),
-.theme-protocol-dark .save-button.dark:hover:not(:disabled) {
+.theme-default-dark .save-button:hover:not(:disabled),
+.theme-default-dark .save-button.dark:hover:not(:disabled) {
   background: #5096b3 !important;
   box-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
 }
 
-.theme-protocol-dark .save-button:disabled,
-.theme-protocol-dark .save-button.dark:disabled {
+.theme-default-dark .save-button:disabled,
+.theme-default-dark .save-button.dark:disabled {
   background: #21262d !important;
   color: #484f58 !important;
 }
 
 /* ── Workflow save bar ── */
-.theme-protocol-dark .workflow-save-bar,
-.theme-protocol-dark .workflow-save-bar.dark {
+.theme-default-dark .workflow-save-bar,
+.theme-default-dark .workflow-save-bar.dark {
   background: rgba(22, 27, 34, 0.9) !important;
   border-color: var(--border-default) !important;
   backdrop-filter: blur(12px);
   font-family: var(--font-mono);
 }
 
-.theme-protocol-dark .workflow-save-status.saving {
+.theme-default-dark .workflow-save-status.saving {
   color: #5096b3 !important;
 }
 
-.theme-protocol-dark .workflow-save-status.saved {
+.theme-default-dark .workflow-save-status.saved {
   color: #3fb950 !important;
 }
 
-.theme-protocol-dark .workflow-save-btn,
-.theme-protocol-dark .workflow-save-btn.dark {
+.theme-default-dark .workflow-save-btn,
+.theme-default-dark .workflow-save-btn.dark {
   background: #21262d !important;
   border-color: var(--border-default) !important;
   color: #8b949e !important;
 }
 
-.theme-protocol-dark .workflow-save-btn:hover,
-.theme-protocol-dark .workflow-save-btn.dark:hover {
+.theme-default-dark .workflow-save-btn:hover,
+.theme-default-dark .workflow-save-btn.dark:hover {
   background: var(--border-default) !important;
   border-color: var(--accent-primary) !important;
   color: var(--accent-primary) !important;
 }
 
-.theme-protocol-dark .workflow-save-divider,
-.theme-protocol-dark .workflow-save-divider.dark {
+.theme-default-dark .workflow-save-divider,
+.theme-default-dark .workflow-save-divider.dark {
   background: var(--border-default) !important;
 }
 
 /* Workflow settings inputs */
-.theme-protocol-dark .workflow-settings-input,
-.theme-protocol-dark .workflow-settings-textarea,
-.theme-protocol-dark .workflow-settings-input.dark,
-.theme-protocol-dark .workflow-settings-textarea.dark {
+.theme-default-dark .workflow-settings-input,
+.theme-default-dark .workflow-settings-textarea,
+.theme-default-dark .workflow-settings-input.dark,
+.theme-default-dark .workflow-settings-textarea.dark {
   background: #0d1117 !important;
   border-color: var(--border-default) !important;
   color: #e6edf3 !important;
   font-family: var(--font-mono);
 }
 
-.theme-protocol-dark .workflow-settings-input:focus,
-.theme-protocol-dark .workflow-settings-textarea:focus {
+.theme-default-dark .workflow-settings-input:focus,
+.theme-default-dark .workflow-settings-textarea:focus {
   border-color: var(--accent-primary) !important;
   box-shadow: 0 0 10px var(--brand-glow-soft) !important;
 }
 
 /* ── Inject variable context menu ── */
-.theme-protocol-dark .inject-menu,
-.theme-protocol-dark .inject-menu.dark {
+.theme-default-dark .inject-menu,
+.theme-default-dark .inject-menu.dark {
   background: #0d1117 !important;
   border-color: var(--border-default) !important;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
   font-family: var(--font-mono);
 }
 
-.theme-protocol-dark .inject-menu-item.dark:hover {
+.theme-default-dark .inject-menu-item.dark:hover {
   background: #21262d !important;
 }
 
 /* ── Pane close buttons ── */
-.theme-protocol-dark .pane-close-btn,
-.theme-protocol-dark .pane-close-btn.dark {
+.theme-default-dark .pane-close-btn,
+.theme-default-dark .pane-close-btn.dark {
   color: #6e7681 !important;
 }
 
-.theme-protocol-dark .pane-close-btn:hover,
-.theme-protocol-dark .pane-close-btn.dark:hover {
+.theme-default-dark .pane-close-btn:hover,
+.theme-default-dark .pane-close-btn.dark:hover {
   background: rgba(80, 150, 179, 0.08) !important;
   color: #8b949e !important;
 }
 
 /* ── Add terminal button: steel blue ── */
-.theme-protocol-dark .add-terminal-btn {
+.theme-default-dark .add-terminal-btn {
   background: #4485a0 !important;
 }
 
-.theme-protocol-dark .add-terminal-btn:hover {
+.theme-default-dark .add-terminal-btn:hover {
   background: #5096b3 !important;
 }
 
@@ -1508,34 +1508,34 @@
    ══════════════════════════════════════════════════════════════════ */
 
 /* Stat cards: subtle shadow for depth against Level 0 page */
-.theme-protocol-dark .stat-card {
+.theme-default-dark .stat-card {
   box-shadow: var(--shadow-sm);
 }
 
 /* Panels: subtle shadow for depth */
-.theme-protocol-dark .panel {
+.theme-default-dark .panel {
   box-shadow: var(--shadow-sm);
 }
 
 /* Conversation cards: shadow for depth */
-.theme-protocol-dark .conv-card {
+.theme-default-dark .conv-card {
   box-shadow: var(--shadow-sm);
 }
 
 /* Sidebar active state: steel blue left border + tinted background */
-.theme-protocol-dark .icon-panel .icon-btn.active {
+.theme-default-dark .icon-panel .icon-btn.active {
   border-left: 2px solid #5096b3 !important;
 }
 
 /* Cards on hover: lift with stronger border */
-.theme-protocol-dark .stat-card:hover,
-.theme-protocol-dark .panel:hover,
-.theme-protocol-dark .conv-card:hover {
+.theme-default-dark .stat-card:hover,
+.theme-default-dark .panel:hover,
+.theme-default-dark .conv-card:hover {
   border-color: var(--border-strong) !important;
   box-shadow: var(--shadow-md);
 }
 
 /* Live bubbles & user messages: ensure visible against page bg */
-.theme-protocol-dark .live-bubble {
+.theme-default-dark .live-bubble {
   box-shadow: var(--shadow-sm);
 }
