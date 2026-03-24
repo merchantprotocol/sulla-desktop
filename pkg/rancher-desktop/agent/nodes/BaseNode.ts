@@ -11,7 +11,7 @@ import { throwIfAborted } from '../services/AbortService';
 import { toolRegistry } from '../tools/registry';
 import { ConversationSummaryService } from '../services/ConversationSummaryService';
 import { ObservationalSummaryService } from '../services/ObservationalSummaryService';
-import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir } from '../utils/sullaPaths';
+import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir } from '../utils/sullaPaths';
 import { environmentPrompt, INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
@@ -39,9 +39,9 @@ Call **immediately** when **any** of these triggers fire:
 
 Must-call triggers:
 1. User expresses/changes preference, goal, constraint, hard no, identity signal, desired name/nickname
-2. User commits (deadline, budget, deliverable, strategy, “from now on”, “always/never again”)
+2. User commits (deadline, budget, deliverable, strategy, "from now on", "always/never again")
 3. Recurring pattern confirmed in user requests/behavior
-4. Breakthrough, major insight, painful lesson (yours or user’s)
+4. Breakthrough, major insight, painful lesson (yours or user's)
 5. You create/edit/delete/rename/configure anything persistent (article, memory, event, setting, container, agent, workflow, prompt, tool, integration)
 6. Important new/confirmed info about tools, environment, APIs, limits, capabilities
 7. High-value tool result that will shape future reasoning
@@ -53,8 +53,8 @@ Priority (pick exactly one):
 
 Content rules – enforced:
 - Exactly one concise sentence
-- Third-person/neutral voice only (“Human prefers…”, “User committed to…”)
-- No “I” or “you”
+- Third-person/neutral voice only ("Human prefers…", "User committed to…")
+- No "I" or "you"
 - Always include specifics when they exist: dates, numbers, names, versions, exact phrases, URLs
 - Maximize signal per character – never vague`;
 
@@ -289,6 +289,7 @@ async function getTemplateVariables(): Promise<Record<string, string>> {
     '{{primaryUserName}}':      primaryUserName || '',
     '{{botName}}':              botName,
     '{{sulla_home}}':           path.dirname(agentsDir),
+    '{{codebase_dir}}':         resolveSullaCodebaseDir(),
     '{{projects_dir}}':         projectsDir,
     '{{skills_dir}}':           skillsDir,
     '{{agents_dir}}':           agentsDir,

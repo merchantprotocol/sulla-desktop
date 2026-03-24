@@ -255,6 +255,7 @@ let audioChunks: Blob[] = [];
 let activeMimeType = 'audio/webm';
 let transcriptionMode = 'browser';
 let sttLanguage = 'en-US';
+let gatewaySessionId: string | null = null;
 
 let levelContext: AudioContext | null = null;
 let levelAnalyser: AnalyserNode | null = null;
@@ -758,7 +759,10 @@ function flushAndRestartSegment(): void {
 async function transcribeSegment(audioBlob: Blob, mimeType: string): Promise<void> {
   try {
     const arrayBuffer = await audioBlob.arrayBuffer();
-    const result = await ipcRenderer.invoke('audio-transcribe', { audio: arrayBuffer, mimeType, diarize: true });
+    const result = await ipcRenderer.invoke('audio-transcribe', {
+      audio: arrayBuffer, mimeType, diarize: true,
+      ...(gatewaySessionId ? { sessionId: gatewaySessionId } : {}),
+    });
     if (result?.text?.trim()) {
       const text = result.text.trim();
       addEntry(text);
@@ -773,7 +777,7 @@ async function transcribeSegment(audioBlob: Blob, mimeType: string): Promise<voi
 
 async function startSession(): Promise<void> {
   try {
-    transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
+    transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'secretaryTranscriptionMode', 'browser');
     sttLanguage = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     const audioInputDeviceId: string = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
 
@@ -794,6 +798,18 @@ async function startSession(): Promise<void> {
     decisions.value = [];
     insights.value = [];
     agentMessages.value = [];
+
+    // Start a gateway session for live call monitoring in GhostAgent
+    try {
+      const sessionResult = await ipcRenderer.invoke('desktop-session-start', { callerName: 'Sulla Secretary' });
+      gatewaySessionId = sessionResult?.sessionId || null;
+      if (gatewaySessionId) {
+        console.log('[SecretaryMode] Gateway session started:', gatewaySessionId);
+      }
+    } catch (err) {
+      console.warn('[SecretaryMode] Gateway session start failed (transcription will still work):', err);
+      gatewaySessionId = null;
+    }
 
     startSessionTimer();
     startAudioLevelMonitor();
@@ -831,6 +847,13 @@ function endSession(): void {
   if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
   mediaRecorder = null;
   audioChunks = [];
+
+  // End the gateway session
+  if (gatewaySessionId) {
+    ipcRenderer.invoke('desktop-session-end', gatewaySessionId).catch(() => {});
+    console.log('[SecretaryMode] Gateway session ended:', gatewaySessionId);
+    gatewaySessionId = null;
+  }
 
   updateTab(props.tabId, { title: `Secretary - ${ sessionDuration.value }` });
 }

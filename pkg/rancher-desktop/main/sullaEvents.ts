@@ -1042,13 +1042,13 @@ export function initSullaEvents(): void {
   // Audio / Transcription handlers
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean }) => {
+  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; sessionId?: string }) => {
     const { getTranscriptionService } = await import('@pkg/agent/services/TranscriptionService');
     const service = getTranscriptionService();
     const result = await service.transcribe(
       Buffer.from(payload.audio),
       payload.mimeType,
-      { diarize: payload.diarize },
+      { diarize: payload.diarize, sessionId: payload.sessionId },
     );
 
     return result;
@@ -1066,6 +1066,71 @@ export function initSullaEvents(): void {
       audio:    ab as ArrayBuffer,
       mimeType: result.mimeType,
     };
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Desktop gateway session lifecycle (secretary mode → GhostAgent)
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('desktop-session-start', async(_event: unknown, payload?: { callerName?: string }) => {
+    const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+    const integrationService = getIntegrationService();
+
+    const [urlValue, keyValue] = await Promise.all([
+      integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
+      integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),
+    ]);
+
+    const gatewayUrl = urlValue?.value?.trim();
+    const apiKey = keyValue?.value?.trim();
+    if (!gatewayUrl || !apiKey) {
+      return { sessionId: null, error: 'Gateway not configured' };
+    }
+
+    const response = await fetch(`${ gatewayUrl.replace(/\/+$/, '') }/api/desktop/sessions`, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${ apiKey }`,
+      },
+      body: JSON.stringify({ callerName: payload?.callerName || 'Sulla Secretary' }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+
+      return { sessionId: null, error: `Gateway returned ${ response.status }: ${ body }` };
+    }
+
+    const result = await response.json() as { sessionId: string; callId: string };
+    console.log(`[Desktop] Gateway session started: ${ result.sessionId }`);
+
+    return result;
+  });
+
+  ipcMainProxy.handle('desktop-session-end', async(_event: unknown, sessionId: string) => {
+    if (!sessionId) return { ok: false };
+
+    const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+    const integrationService = getIntegrationService();
+
+    const [urlValue, keyValue] = await Promise.all([
+      integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
+      integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),
+    ]);
+
+    const gatewayUrl = urlValue?.value?.trim();
+    const apiKey = keyValue?.value?.trim();
+    if (!gatewayUrl || !apiKey) return { ok: false };
+
+    await fetch(`${ gatewayUrl.replace(/\/+$/, '') }/api/desktop/sessions/${ sessionId }`, {
+      method:  'DELETE',
+      headers: { 'Authorization': `Bearer ${ apiKey }` },
+    }).catch(() => {});
+
+    console.log(`[Desktop] Gateway session ended: ${ sessionId }`);
+
+    return { ok: true };
   });
 
   // ─────────────────────────────────────────────────────────────

@@ -44,7 +44,7 @@ const VOICE_INTERIM_MSG_ID = '__voice_interim__';
 
 const DEFAULT_FLUSH_INTERVALS: Record<VoiceMode, number> = {
   voice:     5_000,  // Safety backstop — primary flush is silence-after-transcription
-  secretary: 30_000,
+  secretary: 5_000,
   intake:    15_000,
 };
 

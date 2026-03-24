@@ -248,8 +248,16 @@ class HostBridgeRegistryImpl {
     await this.refreshAllSnapshots(maxAgeMs);
 
     const lines: string[] = [];
-    lines.push('### Active Website Assets');
-    lines.push(`You have ${ this.bridges.size } website(s) open that you can interact with using the playwright tools (click_element, set_field, scroll_to_element, get_form_values, get_page_text). Each tool accepts an optional assetId parameter to target a specific website. DOM changes, navigation, clicks, and dialog alerts are streamed to you automatically — you do NOT need to poll for page state.\n`);
+    lines.push('### Open Browser Tabs');
+    lines.push(`You currently have **${ this.bridges.size } tab(s) open**. Each open tab consumes memory and CPU on the user's machine.`);
+    lines.push('');
+    lines.push('**Rules:**');
+    lines.push('- If you opened a tab and are done with it, close it IMMEDIATELY with `browser_tab(action: \'remove\', assetId: \'...\')`. Do not leave tabs open for later.');
+    lines.push('- Before opening a new tab, check if you can reuse an existing one by navigating it to the new URL.');
+    lines.push('- Keep no more than 3-5 tabs open at any time. Close finished tabs before opening new ones.');
+    lines.push('- When your task is complete, close ALL tabs you opened. Leave zero behind.');
+    lines.push('');
+    lines.push('Interact with tabs using playwright tools (click_element, set_field, scroll_to_element, get_form_values, get_page_text). Each accepts an `assetId` parameter. DOM changes, navigation, and alerts stream automatically.\n');
 
     for (const entry of this.bridges.values()) {
       // Skip entries with no URL or about:blank (not real pages)
