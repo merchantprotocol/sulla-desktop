@@ -164,6 +164,8 @@ export interface IpcMainInvokeEvents {
   'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };
   'audio-speak':            (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
   'integration-get-value':  (integrationId: string, property: string) => { value: string } | null;
+  'desktop-session-start':  (payload?: { callerName?: string }) => { sessionId: string | null; callId?: string; error?: string };
+  'desktop-session-end':    (sessionId: string) => { ok: boolean };
   // #endregion
 
   // #region Filesystem
