@@ -178,7 +178,18 @@ repo::ensure() {
     REPO_DIR="$(pwd)"
     log REPO "Detected in-place repo at: $REPO_DIR — using existing working tree"
     repo::checkout_version
-    step_ok "Repository ready (in-place)"
+
+    # Resolve INSTALL_REF to the actual commit SHA so the build cache
+    # can detect when code has changed (same logic as the clone path below)
+    if [ "$USE_NIGHTLY" = true ]; then
+      local sha
+      sha="$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+      INSTALL_REF="main@${sha}"
+      log REPO "Nightly (in-place): resolved to commit $sha (INSTALL_REF=$INSTALL_REF)"
+    fi
+
+    cd "$REPO_DIR" || assert_fail "Cannot cd to REPO_DIR: $REPO_DIR"
+    step_ok "Repository ready (in-place, ${INSTALL_REF})"
     return
   fi
 
