@@ -187,5 +187,10 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'audio-settings.html'),
       filename: 'audio-settings.html',
     },
+    'first-run': {
+      entry:    path.join(import.meta.dirname, 'entry', 'first-run.ts'),
+      template: path.join(import.meta.dirname, 'public', 'first-run.html'),
+      filename: 'first-run.html',
+    },
   },
 };
