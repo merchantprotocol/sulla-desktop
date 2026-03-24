@@ -14,6 +14,7 @@ const SULLA_AGENTS_DIR_ENV = 'SULLA_AGENTS_DIR';
 const SULLA_CONVERSATIONS_DIR_ENV = 'SULLA_CONVERSATIONS_DIR';
 const SULLA_WORKFLOWS_DIR_ENV = 'SULLA_WORKFLOWS_DIR';
 const SULLA_INTEGRATIONS_DIR_ENV = 'SULLA_INTEGRATIONS_DIR';
+const SULLA_CODEBASE_DIR_ENV = 'SULLA_CODEBASE_DIR';
 
 export function resolveSullaHomeDir(): string {
   const envPath = String(process.env[SULLA_HOME_DIR_ENV] || '').trim();
@@ -96,6 +97,15 @@ export function resolveSullaTrainingDir(): string {
 
 export function resolveSullaLogsDir(): string {
   return path.join(resolveSullaHomeDir(), 'logs');
+}
+
+export function resolveSullaCodebaseDir(): string {
+  const envPath = String(process.env[SULLA_CODEBASE_DIR_ENV] || '').trim();
+  if (envPath) {
+    return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
+  }
+
+  return path.join(os.homedir(), '.sulla-desktop');
 }
 
 export function resolveSullaConversationsDir(): string {

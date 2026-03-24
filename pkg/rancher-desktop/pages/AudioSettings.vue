@@ -266,6 +266,21 @@
 
           <template v-else>
             <div class="setting-section">
+              <h3>Transcription Mode</h3>
+              <select
+                v-model="secretaryTranscriptionMode"
+                class="setting-select"
+                @change="saveSettings"
+              >
+                <option value="browser">Browser (real-time)</option>
+                <option value="elevenlabs">ElevenLabs (high accuracy)</option>
+              </select>
+              <p class="description">
+                How secretary mode transcribes audio. Independent of the main transcription setting.
+              </p>
+            </div>
+
+            <div class="setting-section">
               <h3>Enable Secretary Mode</h3>
               <label class="toggle-row">
                 <input
@@ -434,6 +449,7 @@ const voices = ref<{ value: string; label: string; description?: string }[]>([])
 const loadingVoices = ref(false);
 
 // Secretary Mode
+const secretaryTranscriptionMode = ref('browser');
 const secretaryEnabled = ref(false);
 const secretaryAgentId = ref('');
 const secretaryAgentName = ref('');
@@ -460,6 +476,7 @@ async function loadSettings(): Promise<void> {
     vadSilenceDuration.value = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
     sttLanguage.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
+    secretaryTranscriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryTranscriptionMode', 'browser');
     secretaryEnabled.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryEnabled', false);
     secretaryAgentId.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryAgentId', '');
     secretaryAgentName.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryAgentName', '');
@@ -479,6 +496,7 @@ async function saveSettings(): Promise<void> {
     await ipcRenderer.invoke('sulla-settings-set', 'audioVadSilenceDuration', vadSilenceDuration.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioSttLanguage', sttLanguage.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioInputDeviceId', audioInputDeviceId.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'secretaryTranscriptionMode', secretaryTranscriptionMode.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryEnabled', secretaryEnabled.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentId', secretaryAgentId.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentName', secretaryAgentName.value);

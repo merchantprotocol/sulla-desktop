@@ -124,128 +124,237 @@
 
               <!-- Integration Grid -->
               <div class="flex-1 min-w-0">
-                <div
-                  v-if="categoryLoading"
-                  class="flex h-40 items-center justify-center text-sm text-slate-400 dark:text-slate-500"
-                >
-                  <svg
-                    class="animate-spin -ml-1 mr-2 h-4 w-4"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      class="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      stroke-width="4"
-                    />
-                    <path
-                      class="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                  Loading integrations…
-                </div>
-                <div
-                  v-else-if="filteredIntegrations.length === 0"
-                  class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:text-white/60"
-                >
-                  No integrations found.
-                </div>
-
-                <div
-                  v-else
-                  class="grid md:grid-cols-2 xl:grid-cols-3 gap-6"
-                >
+                <!-- Search results: grouped by category -->
+                <template v-if="isSearching">
                   <div
-                    v-for="integration in filteredIntegrations"
-                    :key="integration.id"
-                    class="group relative overflow-hidden rounded-xl bg-white shadow-sm border border-gray-200 transition-all duration-200 hover:shadow-lg hover:border-gray-300 dark:bg-slate-800 dark:border-gray-700 dark:hover:border-gray-600"
+                    v-if="searchResultsByCategory.length === 0"
+                    class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:text-white/60"
                   >
-                    <div class="p-6">
-                      <div class="flex items-start justify-between mb-4">
-                        <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700">
-                          <img
-                            v-if="isImageIcon(integration.icon) && safeIconSrc(integration.icon!)"
-                            :src="safeIconSrc(integration.icon!)"
-                            :alt="integration.name"
-                            class="h-8 w-8 object-contain"
-                          >
-                          <span
-                            v-else
-                            class="text-2xl"
-                          >{{ isImageIcon(integration.icon) ? '🔌' : integration.icon }}</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                          <!-- Only show connection status for integrations that are not coming soon -->
-                          <div
-                            v-if="!integration.comingSoon"
-                            class="flex items-center gap-2"
-                          >
-                            <div
-                              class="h-2 w-2 rounded-full"
-                              :class="integration.connected ? 'bg-green-500' : 'bg-gray-300'"
-                            />
-                            <span class="text-xs text-slate-500 dark:text-slate-400">
-                              {{ integration.connected ? 'Connected' : 'Disconnected' }}
-                            </span>
-                          </div>
-                          <!-- Beta/Coming Soon Badges -->
-                          <div class="flex gap-1 ml-2">
-                            <span
-                              v-if="integration.beta"
-                              class="inline-flex items-center rounded-full bg-blue-500 text-white text-xs px-2 py-0.5 font-medium"
-                            >
-                              BETA
-                            </span>
-                            <span
-                              v-if="integration.comingSoon"
-                              class="inline-flex items-center rounded-full bg-gray-400 text-white text-xs px-2 py-0.5 font-medium"
-                            >
-                              COMING SOON
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-2">
-                        {{ integration.name }}
+                    No integrations found.
+                  </div>
+                  <div
+                    v-else
+                    class="space-y-8"
+                  >
+                    <div
+                      v-for="group in searchResultsByCategory"
+                      :key="group.category"
+                    >
+                      <h3 class="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        {{ group.category }}
+                        <span class="ml-1.5 text-xs font-normal tabular-nums text-slate-400 dark:text-slate-500">{{ group.integrations.length }}</span>
                       </h3>
-
-                      <p class="text-sm text-slate-600 dark:text-slate-300 mb-4 line-clamp-2">
-                        {{ integration.description }}
-                      </p>
-
-                      <div class="flex items-center justify-between">
-                        <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800 dark:bg-slate-700 dark:text-slate-200">
-                          {{ integration.category }}
-                        </span>
-
-                        <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                          <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
-                        </div>
-                      </div>
-
-                      <div class="flex items-center justify-between mt-3">
-                        <router-link
-                          :to="`/Integrations/${integration.id}`"
-                          class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-                          :class="integration.comingSoon
-                            ? 'bg-gray-500 text-white hover:bg-gray-600'
-                            : integration.connected
-                              ? 'bg-red-600 text-white hover:bg-red-700'
-                              : 'bg-blue-600 text-white hover:bg-blue-700'"
+                      <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
+                        <div
+                          v-for="integration in group.integrations"
+                          :key="integration.id"
+                          class="group relative overflow-hidden rounded-xl bg-white shadow-sm border border-gray-200 transition-all duration-200 hover:shadow-lg hover:border-gray-300 dark:bg-slate-800 dark:border-gray-700 dark:hover:border-gray-600"
                         >
-                          {{ integration.comingSoon ? 'Read more' : (integration.connected ? 'Manage' : 'Connect now') }}
-                        </router-link>
+                          <div class="p-6">
+                            <div class="flex items-start justify-between mb-4">
+                              <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700">
+                                <img
+                                  v-if="isImageIcon(integration.icon) && safeIconSrc(integration.icon!)"
+                                  :src="safeIconSrc(integration.icon!)"
+                                  :alt="integration.name"
+                                  class="h-8 w-8 object-contain"
+                                >
+                                <span
+                                  v-else
+                                  class="text-2xl"
+                                >{{ isImageIcon(integration.icon) ? '🔌' : integration.icon }}</span>
+                              </div>
+                              <div class="flex items-center gap-2">
+                                <div
+                                  v-if="!integration.comingSoon"
+                                  class="flex items-center gap-2"
+                                >
+                                  <div
+                                    class="h-2 w-2 rounded-full"
+                                    :class="integration.connected ? 'bg-green-500' : 'bg-gray-300'"
+                                  />
+                                  <span class="text-xs text-slate-500 dark:text-slate-400">
+                                    {{ integration.connected ? 'Connected' : 'Disconnected' }}
+                                  </span>
+                                </div>
+                                <div class="flex gap-1 ml-2">
+                                  <span
+                                    v-if="integration.beta"
+                                    class="inline-flex items-center rounded-full bg-blue-500 text-white text-xs px-2 py-0.5 font-medium"
+                                  >
+                                    BETA
+                                  </span>
+                                  <span
+                                    v-if="integration.comingSoon"
+                                    class="inline-flex items-center rounded-full bg-gray-400 text-white text-xs px-2 py-0.5 font-medium"
+                                  >
+                                    COMING SOON
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-2">
+                              {{ integration.name }}
+                            </h3>
+
+                            <p class="text-sm text-slate-600 dark:text-slate-300 mb-4 line-clamp-2">
+                              {{ integration.description }}
+                            </p>
+
+                            <div class="flex items-center justify-between">
+                              <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800 dark:bg-slate-700 dark:text-slate-200">
+                                {{ integration.category }}
+                              </span>
+
+                              <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                                <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
+                              </div>
+                            </div>
+
+                            <div class="flex items-center justify-between mt-3">
+                              <router-link
+                                :to="`/Integrations/${integration.id}`"
+                                class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                                :class="integration.comingSoon
+                                  ? 'bg-gray-500 text-white hover:bg-gray-600'
+                                  : integration.connected
+                                    ? 'bg-red-600 text-white hover:bg-red-700'
+                                    : 'bg-blue-600 text-white hover:bg-blue-700'"
+                              >
+                                {{ integration.comingSoon ? 'Read more' : (integration.connected ? 'Manage' : 'Connect now') }}
+                              </router-link>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                </template>
+
+                <!-- Normal view: flat list for active category / popular -->
+                <template v-else>
+                  <div
+                    v-if="categoryLoading"
+                    class="flex h-40 items-center justify-center text-sm text-slate-400 dark:text-slate-500"
+                  >
+                    <svg
+                      class="animate-spin -ml-1 mr-2 h-4 w-4"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        class="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        stroke-width="4"
+                      />
+                      <path
+                        class="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
+                    </svg>
+                    Loading integrations…
+                  </div>
+                  <div
+                    v-else-if="filteredIntegrations.length === 0"
+                    class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:text-white/60"
+                  >
+                    No integrations found.
+                  </div>
+
+                  <div
+                    v-else
+                    class="grid md:grid-cols-2 xl:grid-cols-3 gap-6"
+                  >
+                    <div
+                      v-for="integration in filteredIntegrations"
+                      :key="integration.id"
+                      class="group relative overflow-hidden rounded-xl bg-white shadow-sm border border-gray-200 transition-all duration-200 hover:shadow-lg hover:border-gray-300 dark:bg-slate-800 dark:border-gray-700 dark:hover:border-gray-600"
+                    >
+                      <div class="p-6">
+                        <div class="flex items-start justify-between mb-4">
+                          <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700">
+                            <img
+                              v-if="isImageIcon(integration.icon) && safeIconSrc(integration.icon!)"
+                              :src="safeIconSrc(integration.icon!)"
+                              :alt="integration.name"
+                              class="h-8 w-8 object-contain"
+                            >
+                            <span
+                              v-else
+                              class="text-2xl"
+                            >{{ isImageIcon(integration.icon) ? '🔌' : integration.icon }}</span>
+                          </div>
+                          <div class="flex items-center gap-2">
+                            <div
+                              v-if="!integration.comingSoon"
+                              class="flex items-center gap-2"
+                            >
+                              <div
+                                class="h-2 w-2 rounded-full"
+                                :class="integration.connected ? 'bg-green-500' : 'bg-gray-300'"
+                              />
+                              <span class="text-xs text-slate-500 dark:text-slate-400">
+                                {{ integration.connected ? 'Connected' : 'Disconnected' }}
+                              </span>
+                            </div>
+                            <div class="flex gap-1 ml-2">
+                              <span
+                                v-if="integration.beta"
+                                class="inline-flex items-center rounded-full bg-blue-500 text-white text-xs px-2 py-0.5 font-medium"
+                              >
+                                BETA
+                              </span>
+                              <span
+                                v-if="integration.comingSoon"
+                                class="inline-flex items-center rounded-full bg-gray-400 text-white text-xs px-2 py-0.5 font-medium"
+                              >
+                                COMING SOON
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-2">
+                          {{ integration.name }}
+                        </h3>
+
+                        <p class="text-sm text-slate-600 dark:text-slate-300 mb-4 line-clamp-2">
+                          {{ integration.description }}
+                        </p>
+
+                        <div class="flex items-center justify-between">
+                          <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800 dark:bg-slate-700 dark:text-slate-200">
+                            {{ integration.category }}
+                          </span>
+
+                          <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                            <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
+                          </div>
+                        </div>
+
+                        <div class="flex items-center justify-between mt-3">
+                          <router-link
+                            :to="`/Integrations/${integration.id}`"
+                            class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                            :class="integration.comingSoon
+                              ? 'bg-gray-500 text-white hover:bg-gray-600'
+                              : integration.connected
+                                ? 'bg-red-600 text-white hover:bg-red-700'
+                                : 'bg-blue-600 text-white hover:bg-blue-700'"
+                          >
+                            {{ integration.comingSoon ? 'Read more' : (integration.connected ? 'Manage' : 'Connect now') }}
+                          </router-link>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
           </div>
@@ -382,6 +491,36 @@ const filteredIntegrations = computed(() => {
       }
       return a.name.localeCompare(b.name);
     });
+});
+
+const isSearching = computed(() => search.value.trim().length > 0);
+
+/** When searching, group matching integrations by category across all categories */
+const searchResultsByCategory = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return [];
+
+  const byCategory = new Map<string, Integration[]>();
+
+  for (const integration of Object.values(fullCatalog)) {
+    const hay = `${ integration.name } ${ integration.description } ${ integration.category }`.toLowerCase();
+    if (!hay.includes(q)) continue;
+
+    if (!byCategory.has(integration.category)) {
+      byCategory.set(integration.category, []);
+    }
+    byCategory.get(integration.category)!.push(integration);
+  }
+
+  const groups: { category: string; integrations: Integration[] }[] = [];
+  for (const [category, integrations] of [...byCategory.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    groups.push({
+      category,
+      integrations: integrations.sort((a, b) => a.name.localeCompare(b.name)),
+    });
+  }
+
+  return groups;
 });
 
 // Map category display name → file slug for dynamic imports

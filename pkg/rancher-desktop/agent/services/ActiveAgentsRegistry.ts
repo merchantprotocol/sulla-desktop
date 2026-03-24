@@ -166,13 +166,17 @@ export class ActiveAgentsRegistry {
       ``,
       ...lines,
       ``,
-      `To message another agent, use the **send_channel_message** tool with the \`target_channel\`. Your sender identity is auto-populated from your channel state.`,
+      `**To message another agent**, wrap your message in XML tags named after the target channel:`,
+      `\`\`\``,
+      `<channel:heartbeat>Are you online?</channel:heartbeat>`,
+      `<channel:workbook>Please update the status for task #42.</channel:workbook>`,
+      `\`\`\``,
+      `The system automatically detects these tags and routes the message. No tool call needed.`,
       ``,
-      `**Critical rules:**`,
-      `- \`send_channel_message\` is **fire-and-forget**. After sending, continue your work normally.`,
-      `- Do NOT poll, search Redis, or look for a reply. If the receiving agent responds, their reply will arrive on your channel as an incoming message automatically.`,
-      `- There is no inbox to check. There is no message thread in Redis. Do not go looking for one.`,
-      `- If no reply comes, the agent either hasn't responded yet or chose not to. You can try again or move on.`,
+      `**Rules:**`,
+      `- Channel messages are **fire-and-forget**. After sending, continue your work normally.`,
+      `- Do NOT poll or search for a reply. If the receiving agent responds, their reply arrives on your channel automatically.`,
+      `- If no reply comes, the agent either hasn't responded yet or chose not to. Try again or move on.`,
     ];
 
     return parts.join('\n');

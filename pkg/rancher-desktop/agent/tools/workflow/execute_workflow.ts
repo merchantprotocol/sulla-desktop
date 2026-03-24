@@ -73,6 +73,23 @@ export class ExecuteWorkflowWorker extends BaseTool {
       };
     }
 
+    // Enforce trigger-type gating: if the caller has a wsChannel that maps to a
+    // specific trigger type, only allow workflows that have a matching trigger node.
+    // This prevents heartbeat agents from executing schedule-only workflows, etc.
+    const wsChannel = (this.state as any)?.metadata?.wsChannel as string | undefined;
+    const gatedTriggers = ['heartbeat', 'calendar', 'schedule'];
+    if (wsChannel && gatedTriggers.includes(wsChannel)) {
+      const hasTrigger = (definition.nodes || []).some(
+        (node: any) => node.data?.category === 'trigger' && node.data?.subtype === wsChannel,
+      );
+      if (!hasTrigger) {
+        return {
+          successBoolean: false,
+          responseString: `Workflow "${ workflowId }" does not have a "${ wsChannel }" trigger. You can only execute workflows that match your trigger type. Check your available workflows in the system prompt.`,
+        };
+      }
+    }
+
     // Only resume from checkpoint if explicitly requested
     const resume = input.resume === true;
 

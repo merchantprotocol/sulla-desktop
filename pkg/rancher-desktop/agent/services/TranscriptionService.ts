@@ -14,6 +14,8 @@ import { getIntegrationService } from './IntegrationService';
 export interface TranscriptionOptions {
   /** Enable speaker diarization (ElevenLabs returns per-word speaker IDs). */
   diarize?: boolean;
+  /** Gateway desktop session ID — when set, the gateway forwards transcriptions to GhostAgent. */
+  sessionId?: string;
 }
 
 /** A single word with optional speaker attribution (from diarization). */
@@ -105,6 +107,7 @@ export class TranscriptionService {
             'Content-Type':  mimeType,
             'X-Mime-Type':   mimeType,
             'Authorization': `Bearer ${ gateway.apiKey }`,
+            ...(options?.sessionId ? { 'X-Session-Id': options.sessionId } : {}),
           },
           body: new Blob([audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer], { type: mimeType }),
         });
