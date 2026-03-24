@@ -293,7 +293,6 @@ elif [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
     git reset --hard origin/main >/dev/null 2>&1 || true
   else
     # Resolve latest release tag and checkout so installer code matches the release
-    local _release_tag
     _release_tag="$(curl -fsSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" 2>/dev/null \
       | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')" || true
     if [ -n "${_release_tag:-}" ]; then
