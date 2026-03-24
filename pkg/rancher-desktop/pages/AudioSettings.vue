@@ -95,6 +95,10 @@
                 <span class="summary-label">TTS Voice</span>
                 <span class="summary-value">{{ ttsVoiceName || 'Not selected' }}</span>
               </div>
+              <div class="summary-item">
+                <span class="summary-label">Secretary Mode</span>
+                <span class="summary-value">{{ secretaryEnabled ? (secretaryAgentName || 'Enabled') : 'Off' }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -240,6 +244,78 @@
           </div>
         </div>
 
+        <!-- Secretary Mode Tab -->
+        <div
+          v-if="currentNav === 'secretary'"
+          class="tab-content"
+        >
+          <h2>Secretary Mode</h2>
+          <p class="description">
+            When enabled, your transcribed audio is also forwarded to an ElevenLabs conversational agent.
+            You still receive the transcription as normal.
+          </p>
+
+          <div
+            v-if="!apiKeyConnected"
+            class="setting-section"
+          >
+            <p class="description warning">
+              Configure your ElevenLabs API key in Integrations to use Secretary Mode.
+            </p>
+          </div>
+
+          <template v-else>
+            <div class="setting-section">
+              <h3>Enable Secretary Mode</h3>
+              <label class="toggle-row">
+                <input
+                  v-model="secretaryEnabled"
+                  type="checkbox"
+                  class="setting-checkbox"
+                  @change="saveSettings"
+                >
+                <span>Forward transcriptions to an ElevenLabs agent</span>
+              </label>
+            </div>
+
+            <div class="setting-section">
+              <h3>ElevenLabs Agent</h3>
+              <div class="voice-select-row">
+                <select
+                  v-model="secretaryAgentId"
+                  class="setting-select"
+                  :disabled="loadingAgents || !secretaryEnabled"
+                  @change="onAgentChange"
+                >
+                  <option value="">
+                    Select an agent...
+                  </option>
+                  <option
+                    v-for="agent in elevenLabsAgents"
+                    :key="agent.value"
+                    :value="agent.value"
+                  >
+                    {{ agent.label }}
+                  </option>
+                </select>
+                <button
+                  class="refresh-btn"
+                  :disabled="loadingAgents"
+                  @click="fetchElevenLabsAgents"
+                >
+                  {{ loadingAgents ? 'Loading...' : 'Refresh' }}
+                </button>
+              </div>
+              <p
+                v-if="secretaryAgentName && secretaryEnabled"
+                class="description"
+              >
+                Active agent: <strong>{{ secretaryAgentName }}</strong>
+              </p>
+            </div>
+          </template>
+        </div>
+
         <!-- Sensitivity Tab -->
         <div
           v-if="currentNav === 'sensitivity'"
@@ -322,6 +398,7 @@ const navItems = [
   { id: 'overview', name: 'Overview' },
   { id: 'transcription', name: 'Transcription' },
   { id: 'voice', name: 'Voice' },
+  { id: 'secretary', name: 'Secretary Mode' },
   { id: 'sensitivity', name: 'Sensitivity' },
 ];
 
@@ -356,6 +433,13 @@ const sttLanguage = ref('en-US');
 const voices = ref<{ value: string; label: string; description?: string }[]>([]);
 const loadingVoices = ref(false);
 
+// Secretary Mode
+const secretaryEnabled = ref(false);
+const secretaryAgentId = ref('');
+const secretaryAgentName = ref('');
+const elevenLabsAgents = ref<{ value: string; label: string }[]>([]);
+const loadingAgents = ref(false);
+
 const transcriptionModeLabel = computed(() => {
   switch (transcriptionMode.value) {
     case 'browser': return 'Browser (real-time)';
@@ -376,6 +460,9 @@ async function loadSettings(): Promise<void> {
     vadSilenceDuration.value = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
     sttLanguage.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
+    secretaryEnabled.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryEnabled', false);
+    secretaryAgentId.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryAgentId', '');
+    secretaryAgentName.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryAgentName', '');
   } catch (err) {
     console.error('[AudioSettings] Failed to load settings:', err);
   }
@@ -392,6 +479,9 @@ async function saveSettings(): Promise<void> {
     await ipcRenderer.invoke('sulla-settings-set', 'audioVadSilenceDuration', vadSilenceDuration.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioSttLanguage', sttLanguage.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioInputDeviceId', audioInputDeviceId.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'secretaryEnabled', secretaryEnabled.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentId', secretaryAgentId.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentName', secretaryAgentName.value);
 
     // Store the display name of the selected voice
     const selected = voices.value.find(v => v.value === ttsVoice.value);
@@ -506,6 +596,53 @@ async function previewVoice(): Promise<void> {
   }
 }
 
+async function fetchElevenLabsAgents(): Promise<void> {
+  if (loadingAgents.value) return;
+  loadingAgents.value = true;
+
+  try {
+    const result = await ipcRenderer.invoke('integration-get-value', 'elevenlabs', 'api_key');
+    const apiKey = result?.value;
+
+    if (!apiKey) {
+      elevenLabsAgents.value = [];
+      return;
+    }
+
+    const response = await fetch('https://api.elevenlabs.io/v1/convai/agents', {
+      headers: { 'xi-api-key': apiKey },
+    });
+
+    if (!response.ok) {
+      console.warn('[AudioSettings] Failed to fetch ElevenLabs agents:', response.status);
+      elevenLabsAgents.value = [];
+      return;
+    }
+
+    const body = await response.json() as { agents?: { agent_id: string; name: string }[] };
+
+    if (body.agents && body.agents.length > 0) {
+      elevenLabsAgents.value = body.agents.map(a => ({
+        value: a.agent_id,
+        label: a.name,
+      }));
+    } else {
+      elevenLabsAgents.value = [];
+    }
+  } catch (err) {
+    console.warn('[AudioSettings] Error fetching ElevenLabs agents:', err);
+    elevenLabsAgents.value = [];
+  } finally {
+    loadingAgents.value = false;
+  }
+}
+
+function onAgentChange(): void {
+  const selected = elevenLabsAgents.value.find(a => a.value === secretaryAgentId.value);
+  secretaryAgentName.value = selected?.label || '';
+  saveSettings();
+}
+
 function getStaticVoices(): { value: string; label: string; description?: string }[] {
   // Only include voices with verified ElevenLabs IDs.
   // Full list loads dynamically from the API when an API key is configured.
@@ -520,6 +657,7 @@ onMounted(async() => {
   await checkGateway();
   await fetchVoices();
   await fetchAudioDevices();
+  await fetchElevenLabsAgents();
 });
 </script>
 
@@ -681,6 +819,22 @@ onMounted(async() => {
     opacity: 0.6;
     cursor: not-allowed;
   }
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: var(--fs-body);
+  color: var(--text-primary, var(--body-text));
+}
+
+.setting-checkbox {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent-primary, var(--primary, #3b82f6));
+  cursor: pointer;
 }
 
 .status-row {
