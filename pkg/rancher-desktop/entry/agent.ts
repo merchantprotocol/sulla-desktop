@@ -22,7 +22,6 @@ import AgentAutomations from '../pages/AgentAutomations.vue';
 // router match /Browser/:id for route.path / route.params without
 // rendering a duplicate component through router-view.
 const BrowserTabStub = { name: 'BrowserTabStub', render: () => null };
-import FirstRun from '../pages/FirstRun.vue';
 import ExtensionView from '../pages/ExtensionView.vue';
 await initiateWindowContext();
 
@@ -43,7 +42,6 @@ const router = createRouter({
     { path: '/Automations', component: AgentAutomations, name: 'AgentAutomations' },
     { path: '/Browser/:id', component: BrowserTabStub, name: 'BrowserTab' },
 
-    { path: '/FirstRun', component: FirstRun, name: 'FirstRun' },
     { path: '/Extension/:name/:path*', component: ExtensionView, name: 'ExtensionView' },
 
     // Catch-all: redirect unknown routes to /Chat to prevent white screens

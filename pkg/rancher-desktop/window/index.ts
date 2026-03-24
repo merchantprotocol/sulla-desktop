@@ -110,6 +110,7 @@ const dockerDashboardUrl = `${ webRoot }/index.html`;
 const languageModelSettingsUrl = `${ webRoot }/lm-settings.html`;
 const audioSettingsUrl = `${ webRoot }/audio-settings.html`;
 const editorUrl = `${ webRoot }/editor.html`;
+const firstRunUrl = `${ webRoot }/first-run.html`;
 
 console.log('[window/index] URLs configured:', { webRoot, mainUrl, dockerDashboardUrl });
 
@@ -775,10 +776,10 @@ export async function openFirstRunDialog() {
   const defaultWidth = Math.min(Math.trunc(width * 0.8), 1280);
   const defaultHeight = Math.min(Math.trunc(height * 0.8), 900);
 
-  console.log('[openFirstRunDialog] Creating window with name: first-run, url:', `${ mainUrl }#FirstRun`);
+  console.log('[openFirstRunDialog] Creating window with name: first-run, url:', `${ firstRunUrl }#FirstRun`);
   const window = createWindow(
     'first-run',
-    `${ mainUrl }#FirstRun`,
+    `${ firstRunUrl }#FirstRun`,
     {
       title:          'Sulla Desktop - First Run',
       width:          defaultWidth,
