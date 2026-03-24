@@ -136,14 +136,11 @@ export async function bootstrapSullaHome(): Promise<void> {
   fs.mkdirSync(trainingDir, { recursive: true });
   fs.mkdirSync(conversationsDir, { recursive: true });
 
-  // Ensure workflow subfolders exist
-  fs.mkdirSync(resolveSullaWorkflowsDraftDir(), { recursive: true });
-  fs.mkdirSync(resolveSullaWorkflowsProductionDir(), { recursive: true });
-  fs.mkdirSync(resolveSullaWorkflowsArchiveDir(), { recursive: true });
-
+  // Clone default repos before creating subfolders — check for .git to detect
+  // whether the directory is a real clone vs an empty dir created by mkdirSync.
   for (const { dir, repo } of BOOTSTRAP_REPOS) {
     const target = dir();
-    if (fs.existsSync(target)) {
+    if (fs.existsSync(path.join(target, '.git'))) {
       continue;
     }
     try {
@@ -154,4 +151,9 @@ export async function bootstrapSullaHome(): Promise<void> {
       console.error(`[Sulla] Failed to clone ${ repo }:`, err);
     }
   }
+
+  // Ensure workflow subfolders exist (after clone so they don't block it)
+  fs.mkdirSync(resolveSullaWorkflowsDraftDir(), { recursive: true });
+  fs.mkdirSync(resolveSullaWorkflowsProductionDir(), { recursive: true });
+  fs.mkdirSync(resolveSullaWorkflowsArchiveDir(), { recursive: true });
 }
