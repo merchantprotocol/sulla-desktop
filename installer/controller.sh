@@ -15,10 +15,8 @@ controller::run() {
   log BOOT "Controller starting (OS=$OS)"
   log BOOT "Arguments: $*"
 
-  local args=("$@")
-
   # Parse arguments
-  for arg in "${args[@]}"; do
+  for arg in "$@"; do
     case "$arg" in
       --nightly) USE_NIGHTLY=true ;;
       --help|-h)
