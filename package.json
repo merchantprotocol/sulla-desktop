@@ -157,7 +157,7 @@
     "vuex": "4.1.0",
     "which": "6.0.0",
     "yaml": "2.8.2",
-    "zod-to-json-schema": "3.23.5"
+    "zod-to-json-schema": "3.25.1"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
