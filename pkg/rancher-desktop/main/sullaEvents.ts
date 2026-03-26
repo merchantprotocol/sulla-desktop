@@ -1192,6 +1192,43 @@ export function initSullaEvents(): void {
   });
 
   // ─────────────────────────────────────────────────────────────
+  // Gateway transcript forwarding — main → renderer
+  // ─────────────────────────────────────────────────────────────
+
+  let gatewayTranscriptUnsub: (() => void) | null = null;
+
+  ipcMainProxy.handle('gateway-transcript-subscribe', async() => {
+    // Unsubscribe any existing subscription first
+    if (gatewayTranscriptUnsub) {
+      gatewayTranscriptUnsub();
+      gatewayTranscriptUnsub = null;
+    }
+
+    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
+    const windowModule = await import('@pkg/window');
+    const service = getGatewayListenerService();
+
+    gatewayTranscriptUnsub = service.onEvent((event) => {
+      if (event.event_type === 'transcript_turn' || event.event_type === 'transcript_partial') {
+        try {
+          windowModule.send('gateway-transcript' as any, event);
+        } catch { /* renderer not ready */ }
+      }
+    });
+
+    return { ok: true };
+  });
+
+  ipcMainProxy.handle('gateway-transcript-unsubscribe', async() => {
+    if (gatewayTranscriptUnsub) {
+      gatewayTranscriptUnsub();
+      gatewayTranscriptUnsub = null;
+    }
+
+    return { ok: true };
+  });
+
+  // ─────────────────────────────────────────────────────────────
   // Integration value helpers
   // ─────────────────────────────────────────────────────────────
 
@@ -1227,6 +1264,28 @@ export function initSullaEvents(): void {
     }
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // Integration value change relay — renderer → main process
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.on('integration-value-changed', async(_event: unknown, payload: { integration_id: string; property: string; action: string }) => {
+    console.log(`[Sulla] Integration value ${ payload.action }: ${ payload.integration_id }/${ payload.property }`);
+
+    // Notify main-process IntegrationService subscribers
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      // Re-read the value from DB so main-process callbacks get the current data
+      const value = await service.getIntegrationValue(payload.integration_id, payload.property);
+      if (value) {
+        // Fire the main-process onValueChange callbacks
+        (service as any).notifyValueChange(value, payload.action);
+      }
+    } catch (err) {
+      console.warn('[Sulla] Integration value relay failed:', err);
+    }
+  });
+
   console.log('[Sulla] IPC event handlers initialized');
 
   // Auto-connect gateway lobby listener once DB is ready
@@ -1254,21 +1313,27 @@ export function initSullaEvents(): void {
 
         if (url && key) {
           const service = getGatewayListenerService();
-          service.stopLobby();
           await service.startLobby();
           console.log('[Sulla] Gateway lobby listener connected');
         } else {
-          console.log('[Sulla] Gateway not configured — lobby listener skipped (will auto-start when config is added)');
+          const service = getGatewayListenerService();
+          service.stopLobby();
+          console.log('[Sulla] Gateway not configured — lobby listener stopped');
         }
       };
 
       await tryConnect();
 
-      // Re-connect whenever gateway config is added or changed
+      // Re-connect whenever gateway config is added or changed (debounced)
+      let gatewayReconnectTimer: ReturnType<typeof setTimeout> | null = null;
       integrationService.onValueChange((value, action) => {
         if (value.integration_id === 'enterprise_gateway' && (action === 'created' || action === 'updated')) {
-          console.log(`[Sulla] Gateway config ${ action }: ${ value.property }, reconnecting lobby...`);
-          tryConnect().catch(err => console.warn('[Sulla] Gateway lobby reconnect failed:', err));
+          console.log(`[Sulla] Gateway config ${ action }: ${ value.property }, scheduling reconnect...`);
+          if (gatewayReconnectTimer) clearTimeout(gatewayReconnectTimer);
+          gatewayReconnectTimer = setTimeout(() => {
+            gatewayReconnectTimer = null;
+            tryConnect().catch(err => console.warn('[Sulla] Gateway lobby reconnect failed:', err));
+          }, 1000);
         }
       });
     } catch (err) {

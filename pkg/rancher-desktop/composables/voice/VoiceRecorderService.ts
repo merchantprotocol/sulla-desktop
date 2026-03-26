@@ -4,9 +4,10 @@
  * Survives component mount/unmount cycles. The MediaStream persists across
  * stop()/start() cycles; only dispose() releases it.
  *
- * Supports two transcription modes:
+ * Supports three transcription modes:
  *   - 'browser': Web Speech API (SpeechRecognition) — free, real-time interim results
- *   - 'elevenlabs'/'gateway': Batch recording with VAD silence detection → ElevenLabs API
+ *   - 'elevenlabs': Batch recording with VAD silence detection → ElevenLabs API
+ *   - 'gateway': Real-time WebSocket audio streaming — gateway handles STT server-side
  */
 
 import { TypedEventEmitter } from './TypedEventEmitter';
@@ -116,10 +117,8 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
       if (this.transcriptionMode === 'browser') {
         this.startBrowserSTT();
       } else if (this.transcriptionMode === 'gateway') {
-        // Gateway mode: stream audio directly to the gateway AND run batch STT
+        // Gateway mode: stream audio via WebSocket — gateway handles STT server-side
         this.startGatewayAudioStream();
-        this.startBatchSegment();
-        this.startVAD();
       } else {
         this.startBatchSegment();
         this.startVAD();

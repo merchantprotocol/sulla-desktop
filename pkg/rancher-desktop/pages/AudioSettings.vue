@@ -160,23 +160,14 @@
             </p>
           </div>
 
-          <div class="setting-section">
-            <h3>Provider</h3>
-            <select
-              v-model="transcriptionProvider"
-              class="setting-select"
-              @change="saveSettings"
-            >
-              <option value="elevenlabs">ElevenLabs</option>
-            </select>
-          </div>
-
-          <div class="setting-section">
+          <div
+            v-if="transcriptionMode === 'elevenlabs'"
+            class="setting-section"
+          >
             <h3>Model</h3>
             <select
               v-model="transcriptionModel"
               class="setting-select"
-              :disabled="transcriptionMode === 'browser'"
               @change="saveSettings"
             >
               <option value="scribe_v1">Scribe v1 (default)</option>
@@ -184,9 +175,6 @@
             </select>
             <p class="description">
               Scribe v1 is ElevenLabs' production speech-to-text model with broad language support.
-              <template v-if="transcriptionMode === 'browser'">
-                (Not used in Browser mode.)
-              </template>
             </p>
           </div>
         </div>

@@ -113,7 +113,18 @@ export class GatewayListenerService {
 
   /** Connect the lobby listener WebSocket. */
   async startLobby(): Promise<void> {
-    if (this.lobbyWs) return; // already connected
+    // Mark intentional so the close handler from terminate() won't schedule a reconnect
+    this.lobbyIntentional = true;
+    this.clearLobbyReconnect();
+    this.clearPingTimer();
+
+    // Kill any existing connection (including zombies)
+    if (this.lobbyWs) {
+      try { this.lobbyWs.terminate(); } catch { /* ignore */ }
+      this.lobbyWs = null;
+    }
+
+    // Now open the fresh connection
     this.lobbyIntentional = false;
     this.lobbyReconnectAttempts = 0;
     this.lobbyReconnectDelay = RECONNECT_DELAY_MS;
@@ -125,8 +136,9 @@ export class GatewayListenerService {
   stopLobby(): void {
     this.lobbyIntentional = true;
     this.clearLobbyReconnect();
+    this.clearPingTimer();
     if (this.lobbyWs) {
-      this.lobbyWs.close(1000, 'Client disconnect');
+      try { this.lobbyWs.terminate(); } catch { /* ignore */ }
       this.lobbyWs = null;
     }
   }
