@@ -256,6 +256,8 @@ let activeMimeType = 'audio/webm';
 let transcriptionMode = 'browser';
 let sttLanguage = 'en-US';
 let gatewaySessionId: string | null = null;
+let gatewayStreamRecorder: MediaRecorder | null = null;
+let gatewayStreamActive = false;
 
 let levelContext: AudioContext | null = null;
 let levelAnalyser: AnalyserNode | null = null;
@@ -773,11 +775,78 @@ async function transcribeSegment(audioBlob: Blob, mimeType: string): Promise<voi
   }
 }
 
+// ── Gateway WebSocket streaming mode ───────────────────────────
+
+function onGatewayTranscript(_event: any, event: { event_type: string; text?: string; speaker?: string }): void {
+  if (!isListening.value) return;
+  if (event.event_type === 'transcript_turn' && event.text?.trim()) {
+    const text = event.text.trim();
+    addEntry(text);
+    checkAndHandleWakeWord(text);
+  }
+}
+
+async function startGatewayStreaming(): Promise<void> {
+  if (!mediaStream) return;
+
+  // Subscribe to transcript events from the gateway lobby WS
+  await ipcRenderer.invoke('gateway-transcript-subscribe');
+  ipcRenderer.on('gateway-transcript', onGatewayTranscript);
+
+  // Start audio session + WebSocket on the main process
+  try {
+    const result = await ipcRenderer.invoke('gateway-audio-start', { callerName: 'Sulla Secretary' });
+    if (result?.error || !result?.sessionId) {
+      console.warn('[SecretaryMode] Gateway audio start failed:', result?.error);
+      return;
+    }
+    gatewaySessionId = result.sessionId;
+    gatewayStreamActive = true;
+    console.log(`[SecretaryMode] Gateway audio stream started, session: ${result.sessionId}`);
+  } catch (err) {
+    console.error('[SecretaryMode] Gateway audio stream error:', err);
+    return;
+  }
+
+  // Stream audio chunks via a separate MediaRecorder (250ms timeslice)
+  const streamMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : 'audio/webm';
+
+  gatewayStreamRecorder = new MediaRecorder(mediaStream, { mimeType: streamMime });
+
+  gatewayStreamRecorder.ondataavailable = async(event: BlobEvent) => {
+    if (event.data.size > 0 && gatewayStreamActive) {
+      const arrayBuffer = await event.data.arrayBuffer();
+      ipcRenderer.invoke('gateway-audio-send', { audio: arrayBuffer }).catch(() => {});
+    }
+  };
+
+  gatewayStreamRecorder.start(250);
+}
+
+function stopGatewayStreaming(): void {
+  gatewayStreamActive = false;
+
+  ipcRenderer.removeListener('gateway-transcript', onGatewayTranscript);
+  ipcRenderer.invoke('gateway-transcript-unsubscribe').catch(() => {});
+
+  if (gatewayStreamRecorder && gatewayStreamRecorder.state !== 'inactive') {
+    try { gatewayStreamRecorder.stop(); } catch { /* ignore */ }
+  }
+  gatewayStreamRecorder = null;
+
+  if (gatewaySessionId) {
+    ipcRenderer.invoke('gateway-audio-stop').catch(() => {});
+    gatewaySessionId = null;
+  }
+}
+
 // ── Session lifecycle ──────────────────────────────────────────
 
 async function startSession(): Promise<void> {
   try {
-    transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'secretaryTranscriptionMode', 'browser');
+    transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
     sttLanguage = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     const audioInputDeviceId: string = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
 
@@ -799,16 +868,18 @@ async function startSession(): Promise<void> {
     insights.value = [];
     agentMessages.value = [];
 
-    // Start a gateway session for live call monitoring in GhostAgent
-    try {
-      const sessionResult = await ipcRenderer.invoke('desktop-session-start', { callerName: 'Sulla Secretary' });
-      gatewaySessionId = sessionResult?.sessionId || null;
-      if (gatewaySessionId) {
-        console.log('[SecretaryMode] Gateway session started:', gatewaySessionId);
+    // For non-gateway modes, create a REST-only gateway session for GhostAgent monitoring
+    if (transcriptionMode !== 'gateway') {
+      try {
+        const sessionResult = await ipcRenderer.invoke('desktop-session-start', { callerName: 'Sulla Secretary' });
+        gatewaySessionId = sessionResult?.sessionId || null;
+        if (gatewaySessionId) {
+          console.log('[SecretaryMode] Gateway session started:', gatewaySessionId);
+        }
+      } catch (err) {
+        console.warn('[SecretaryMode] Gateway session start failed (transcription will still work):', err);
+        gatewaySessionId = null;
       }
-    } catch (err) {
-      console.warn('[SecretaryMode] Gateway session start failed (transcription will still work):', err);
-      gatewaySessionId = null;
     }
 
     startSessionTimer();
@@ -816,7 +887,9 @@ async function startSession(): Promise<void> {
     startAnalysisLoop();
     updateTab(props.tabId, { title: 'Secretary - Recording' });
 
-    if (transcriptionMode === 'browser') {
+    if (transcriptionMode === 'gateway') {
+      startGatewayStreaming();
+    } else if (transcriptionMode === 'browser') {
       startBrowserRecognition();
     } else {
       startElevenLabsContinuous();
@@ -842,14 +915,19 @@ function endSession(): void {
     recognition = null;
   }
 
+  // Stop gateway streaming if active
+  if (transcriptionMode === 'gateway') {
+    stopGatewayStreaming();
+  }
+
   if (segmentInterval) { clearInterval(segmentInterval); segmentInterval = null; }
   if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
   mediaRecorder = null;
   audioChunks = [];
 
-  // End the gateway session
-  if (gatewaySessionId) {
+  // End the REST-only gateway session (non-gateway modes)
+  if (gatewaySessionId && transcriptionMode !== 'gateway') {
     ipcRenderer.invoke('desktop-session-end', gatewaySessionId).catch(() => {});
     console.log('[SecretaryMode] Gateway session ended:', gatewaySessionId);
     gatewaySessionId = null;

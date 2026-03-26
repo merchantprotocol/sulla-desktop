@@ -82,6 +82,19 @@ export class IntegrationService {
         console.warn('[IntegrationService] Value callback error:', err);
       }
     }
+
+    // Notify the main process when running in the renderer, so main-process
+    // subscribers (e.g. gateway lobby reconnect) see the change too.
+    try {
+      if (typeof process !== 'undefined' && process.type === 'renderer') {
+        const { ipcRenderer } = require('electron');
+        ipcRenderer.send('integration-value-changed', {
+          integration_id: value.integration_id,
+          property:       value.property,
+          action,
+        });
+      }
+    } catch { /* not in renderer or ipc unavailable */ }
   }
 
   private modelToValue(model: IntegrationValueModel): IntegrationValue {

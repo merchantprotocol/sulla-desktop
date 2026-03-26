@@ -125,6 +125,10 @@ export interface IpcMainEvents {
   // #region Voice Logging
   'voice-log': (entry: { type: string; ts: string; threadId: string; channel: string; [key: string]: unknown }) => void;
   // #endregion
+
+  // #region Integration relay (renderer → main)
+  'integration-value-changed': (payload: { integration_id: string; property: string; action: string }) => void;
+  // #endregion
 }
 
 /**
@@ -172,6 +176,8 @@ export interface IpcMainInvokeEvents {
   'gateway-audio-start':     (payload?: { callerName?: string }) => { sessionId: string | null; callId: string | null; error: string | null };
   'gateway-audio-stop':      () => { ok: boolean };
   'gateway-audio-send':      (payload: { audio: ArrayBuffer }) => { ok: boolean };
+  'gateway-transcript-subscribe':   () => { ok: boolean };
+  'gateway-transcript-unsubscribe': () => { ok: boolean };
   // #endregion
 
   // #region Filesystem
@@ -362,6 +368,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'gateway-transcript': (event: { event_type: string; text?: string; speaker?: string; session_id?: string; is_final?: boolean }) => void;
   'workflow-files-changed': () => void;
   'ollama-model-status': (event: Electron.IpcRendererEvent, payload: { status: string; model?: string }) => void;
   'backend-locked':      (action?: string) => void;
