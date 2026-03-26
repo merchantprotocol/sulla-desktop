@@ -199,6 +199,12 @@ import { ref, onUnmounted, nextTick } from 'vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { ChatInterface } from './agent/ChatInterface';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import {
+  SecretaryModeController,
+  type TranscriptEntry,
+  type InsightEntry,
+  type AgentMessage,
+} from '@pkg/controllers/SecretaryModeController';
 
 const props = defineProps<{ tabId: string }>();
 const emit = defineEmits<{ 'set-mode': [mode: BrowserTabMode] }>();
@@ -207,28 +213,9 @@ const { updateTab } = useBrowserTabs();
 
 const isMac = navigator.platform.toUpperCase().includes('MAC');
 
-// ── State ──────────────────────────────────────────────────────
-
-interface TranscriptEntry {
-  id: string;
-  timestamp: Date;
-  text: string;
-  type: 'transcript' | 'wake-command' | 'agent-response';
-}
-
-interface InsightEntry {
-  time: string;
-  text: string;
-}
-
-interface AgentMessage {
-  id: string;
-  time: string;
-  text: string;
-}
+// ── Reactive state (View owns this) ────────────────────────────
 
 const hasSessionEnded = ref(false);
-
 const transcript = ref<TranscriptEntry[]>([]);
 const isListening = ref(false);
 const wakeWordActive = ref(false);
@@ -246,86 +233,102 @@ const decisions = ref<string[]>([]);
 const insights = ref<InsightEntry[]>([]);
 const agentMessages = ref<AgentMessage[]>([]);
 
-// ── Audio state ────────────────────────────────────────────────
+// ── TTS state (view-owned, browser APIs) ────────────────────────
 
-let mediaStream: MediaStream | null = null;
-let recognition: any = null;
-let mediaRecorder: MediaRecorder | null = null;
-let audioChunks: Blob[] = [];
-let activeMimeType = 'audio/webm';
-let transcriptionMode = 'browser';
-let sttLanguage = 'en-US';
-let gatewaySessionId: string | null = null;
-let gatewayStreamRecorder: MediaRecorder | null = null;
-let gatewayStreamActive = false;
-
-let levelContext: AudioContext | null = null;
-let levelAnalyser: AnalyserNode | null = null;
-let levelInterval: ReturnType<typeof setInterval> | null = null;
-
-let sessionStartTime = 0;
-let timerInterval: ReturnType<typeof setInterval> | null = null;
-
-let segmentInterval: ReturnType<typeof setInterval> | null = null;
-const SEGMENT_DURATION = 15_000;
-
-// Barge-in: track active TTS audio so it can be interrupted
 let activeTTSAudio: HTMLAudioElement | null = null;
 let activeTTSUtterance: SpeechSynthesisUtterance | null = null;
 
-// Only trigger on explicit "hey sulla" — not casual mentions like "I have Sulla ready"
-const WAKE_PATTERNS = [/\bhey\s+(?:sulla|sula|soula|sola)\b/i];
+function stopTTS(): void {
+  if (activeTTSAudio) {
+    activeTTSAudio.pause();
+    activeTTSAudio.currentTime = 0;
+    if (activeTTSAudio.src) URL.revokeObjectURL(activeTTSAudio.src);
+    activeTTSAudio = null;
+  }
+  if (activeTTSUtterance) {
+    window.speechSynthesis?.cancel();
+    activeTTSUtterance = null;
+  }
+  controller?.setTTSActive(false);
+}
 
-let chatController: ChatInterface | null = null;
+async function playTTS(text: string): Promise<void> {
+  if (isMuted.value) return;
+  stopTTS();
 
-let analysisInterval: ReturnType<typeof setInterval> | null = null;
-let lastAnalyzedIndex = 0;
-const ANALYSIS_INTERVAL = 30_000;
-let analysisMessageCount = 0;
+  try {
+    const result = await ipcRenderer.invoke('audio-speak', { text });
+    if (result?.audio) {
+      const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      activeTTSAudio = audio;
+      controller?.setTTSActive(true);
+      audio.onended = () => { URL.revokeObjectURL(url); activeTTSAudio = null; controller?.setTTSActive(false); };
+      audio.onerror = () => { URL.revokeObjectURL(url); activeTTSAudio = null; controller?.setTTSActive(false); };
+      await audio.play().catch(() => { activeTTSAudio = null; controller?.setTTSActive(false); });
+    }
+  } catch {
+    if (window.speechSynthesis) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      activeTTSUtterance = utterance;
+      controller?.setTTSActive(true);
+      utterance.onend = () => { activeTTSUtterance = null; controller?.setTTSActive(false); };
+      window.speechSynthesis.speak(utterance);
+    }
+  }
+}
 
-const SECRETARY_SYSTEM_PROMPT = `You are Sulla, acting as a meeting secretary. You are listening to a live meeting transcript.
+// ── Chat interface (view-owned, bridges to controller) ──────────
 
-Your job:
-1. IDENTIFY ACTION ITEMS — any task, to-do, or commitment someone makes. Format each on its own line prefixed with "ACTION: "
-2. IDENTIFY DECISIONS — any agreement or conclusion reached. Format each on its own line prefixed with "DECISION: "
-3. PROVIDE KEY INSIGHTS — brief observations about what's being discussed, context that might be useful, or things the participants should be aware of. Format each on its own line prefixed with "INSIGHT: "
+let chatInterface: ChatInterface | null = null;
 
-Be concise. Don't repeat items you've already identified in previous analyses. Only surface NEW items from the latest transcript segment.
+function ensureChatInterface(): ChatInterface {
+  if (!chatInterface) {
+    chatInterface = new ChatInterface('sulla-desktop', props.tabId);
+    if (!chatInterface.threadId.value) {
+      chatInterface.newChat();
+    }
+  }
+  return chatInterface;
+}
 
-If there's nothing noteworthy in this segment, just say "LISTENING" and nothing else.
+async function sendToChat(prompt: string, inputSource: string): Promise<string | null> {
+  const ci = ensureChatInterface();
+  ci.query.value = prompt;
+  const voiceMode = inputSource === 'secretary-analysis' ? 'secretary' : undefined;
+  await ci.send({ inputSource, ...(voiceMode ? { voiceMode } : {}) });
 
-Do NOT respond conversationally. Do NOT summarize. Just extract the structured items.`;
+  return new Promise<string | null>((resolve) => {
+    const msgCountBefore = ci.messages.value.length;
+    const stopWatch = setInterval(() => {
+      if (!chatInterface) { clearInterval(stopWatch); resolve(null); return; }
+      const msgs = chatInterface.messages.value;
+      if (msgs.length > msgCountBefore) {
+        const lastMsg = msgs[msgs.length - 1];
+        if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content && !chatInterface.graphRunning.value) {
+          clearInterval(stopWatch);
+          resolve(lastMsg.content);
+        }
+      }
+    }, 500);
 
-// ── Helpers ────────────────────────────────────────────────────
+    setTimeout(() => { clearInterval(stopWatch); resolve(null); }, 60_000);
+  });
+}
+
+// ── View helpers ────────────────────────────────────────────────
 
 function generateEntryId(): string {
-  return `se_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 6) }`;
+  return `se_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function formatTimeNow(): string {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
 function formatTimeNowFull(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-function addEntry(text: string, type: TranscriptEntry['type'] = 'transcript'): void {
-  transcript.value.push({
-    id:        generateEntryId(),
-    timestamp: new Date(),
-    text,
-    type,
-  });
-  nextTick(() => {
-    if (transcriptScrollEl.value) {
-      transcriptScrollEl.value.scrollTop = transcriptScrollEl.value.scrollHeight;
-    }
-  });
 }
 
 function scrollAnalysis(): void {
@@ -346,602 +349,78 @@ function resetAndChoose(): void {
   sessionDuration.value = '0:00';
 }
 
-// ── Parse agent analysis response ──────────────────────────────
+// ── Controller (all business logic) ────────────────────────────
 
-function parseAnalysisResponse(text: string): void {
-  if (!text || text.trim() === 'LISTENING') return;
-
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const time = formatTimeNow();
-  let hasNewContent = false;
-
-  for (const line of lines) {
-    if (line.startsWith('ACTION:')) {
-      const item = line.slice(7).trim();
-      if (item && !actionItems.value.includes(item)) {
-        actionItems.value.push(item);
-        hasNewContent = true;
+const controller = new SecretaryModeController({
+  addEntry(text: string, type: TranscriptEntry['type'] = 'transcript') {
+    transcript.value.push({ id: generateEntryId(), timestamp: new Date(), text, type });
+    nextTick(() => {
+      if (transcriptScrollEl.value) {
+        transcriptScrollEl.value.scrollTop = transcriptScrollEl.value.scrollHeight;
       }
-    } else if (line.startsWith('DECISION:')) {
-      const item = line.slice(9).trim();
-      if (item && !decisions.value.includes(item)) {
-        decisions.value.push(item);
-        hasNewContent = true;
-      }
-    } else if (line.startsWith('INSIGHT:')) {
-      const item = line.slice(8).trim();
-      if (item) {
-        insights.value.push({ time, text: item });
-        hasNewContent = true;
-      }
-    } else if (line !== 'LISTENING') {
-      agentMessages.value.push({
-        id:   generateEntryId(),
-        time,
-        text: line,
-      });
-      hasNewContent = true;
-    }
-  }
-
-  if (hasNewContent) scrollAnalysis();
-}
-
-// ── Live analysis ──────────────────────────────────────────────
-
-function ensureChatController(): ChatInterface {
-  if (!chatController) {
-    chatController = new ChatInterface('sulla-desktop', props.tabId);
-    if (!chatController.threadId.value) {
-      chatController.newChat();
-    }
-  }
-  return chatController;
-}
-
-async function analyzeNewTranscript(): Promise<void> {
-  const entries = transcript.value.slice(lastAnalyzedIndex);
-  if (entries.length === 0) return;
-
-  const newText = entries
-    .filter(e => e.type === 'transcript')
-    .map(e => `[${ formatTime(e.timestamp) }] ${ e.text }`)
-    .join('\n');
-
-  if (!newText.trim()) return;
-
-  lastAnalyzedIndex = transcript.value.length;
-  isAnalyzing.value = true;
-
-  const controller = ensureChatController();
-
-  const isFirst = analysisMessageCount === 0;
-  const prompt = isFirst
-    ? `${ SECRETARY_SYSTEM_PROMPT }\n\n--- NEW TRANSCRIPT SEGMENT ---\n${ newText }`
-    : `--- NEW TRANSCRIPT SEGMENT ---\n${ newText }`;
-
-  analysisMessageCount++;
-  controller.query.value = prompt;
-  await controller.send({ inputSource: 'secretary-analysis', voiceMode: 'secretary' });
-
-  const msgCountBefore = controller.messages.value.length;
-  const stopWatch = setInterval(() => {
-    if (!chatController) {
-      clearInterval(stopWatch);
-      isAnalyzing.value = false;
-      return;
-    }
-    const msgs = chatController.messages.value;
-    if (msgs.length > msgCountBefore) {
-      const lastMsg = msgs[msgs.length - 1];
-      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content && !chatController.graphRunning.value) {
-        clearInterval(stopWatch);
-        parseAnalysisResponse(lastMsg.content);
-        isAnalyzing.value = false;
-      }
-    }
-  }, 500);
-
-  setTimeout(() => {
-    clearInterval(stopWatch);
-    isAnalyzing.value = false;
-  }, 60_000);
-}
-
-function startAnalysisLoop(): void {
-  analysisInterval = setInterval(() => {
-    if (!isListening.value) return;
-    analyzeNewTranscript();
-  }, ANALYSIS_INTERVAL);
-
-  setTimeout(() => {
-    if (isListening.value) analyzeNewTranscript();
-  }, 15_000);
-}
-
-function stopAnalysisLoop(): void {
-  if (analysisInterval) {
-    clearInterval(analysisInterval);
-    analysisInterval = null;
-  }
-}
-
-// ── Wake word detection ────────────────────────────────────────
-
-function checkAndHandleWakeWord(text: string): void {
-  // Muted: skip wake word detection entirely — just record
-  if (isMuted.value) return;
-
-  if (wakeWordActive.value) {
-    const command = text.trim();
-    if (command) {
-      wakeWordActive.value = false;
-      addEntry(command, 'wake-command');
-      sendWakeCommand(command);
-    }
-    return;
-  }
-
-  for (const pattern of WAKE_PATTERNS) {
-    const match = text.match(pattern);
-    if (match) {
-      const afterWake = text.slice(match.index! + match[0].length).trim();
-      if (afterWake.length > 3) {
-        addEntry(afterWake, 'wake-command');
-        sendWakeCommand(afterWake);
-      } else {
-        // Just "Hey Sulla" with nothing after — acknowledge immediately
-        wakeWordActive.value = true;
-        addEntry('Yes?', 'agent-response');
-        playTTS('Yes?');
-      }
-      return;
-    }
-  }
-}
-
-async function sendWakeCommand(command: string): Promise<void> {
-  const controller = ensureChatController();
-
-  const prompt = `You are in secretary mode during a live meeting. The user said "Hey Sulla" and then spoke to you.
-
-RULES:
-- Reply in ONE short sentence max (under 15 words).
-- If you don't understand, say exactly: "Sorry, could you say that again?"
-- No narration, no elaboration, no follow-up questions.
-- Be direct. Think walkie-talkie, not conversation.
-
-User: ${ command }`;
-  controller.query.value = prompt;
-  await controller.send({ inputSource: 'secretary-command' });
-
-  const msgCountBefore = controller.messages.value.length;
-  const stopWatch = setInterval(() => {
-    if (!chatController) {
-      clearInterval(stopWatch);
-      return;
-    }
-    const msgs = chatController.messages.value;
-    if (msgs.length > msgCountBefore) {
-      const lastMsg = msgs[msgs.length - 1];
-      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content && !chatController.graphRunning.value) {
-        clearInterval(stopWatch);
-        addEntry(lastMsg.content, 'agent-response');
-        playTTS(lastMsg.content);
-      }
-    }
-  }, 500);
-
-  setTimeout(() => clearInterval(stopWatch), 60_000);
-}
-
-async function sendChatMessage(): Promise<void> {
-  const text = chatInput.value.trim();
-  if (!text) return;
-  chatInput.value = '';
-
-  // Show the user's message in the notes pane as commentary
-  agentMessages.value.push({
-    id:   generateEntryId(),
-    time: formatTimeNow(),
-    text: `You: ${ text }`,
-  });
-  scrollAnalysis();
-
-  const controller = ensureChatController();
-
-  const prompt = `You are in secretary mode during a live meeting. The user sent you a private text message (not spoken aloud).
-
-RULES:
-- Reply in ONE short sentence max (under 15 words).
-- If you don't understand, ask them to clarify briefly.
-- No narration, no elaboration.
-
-User: ${ text }`;
-  controller.query.value = prompt;
-  await controller.send({ inputSource: 'secretary-chat' });
-
-  const msgCountBefore = controller.messages.value.length;
-  const stopWatch = setInterval(() => {
-    if (!chatController) {
-      clearInterval(stopWatch);
-      return;
-    }
-    const msgs = chatController.messages.value;
-    if (msgs.length > msgCountBefore) {
-      const lastMsg = msgs[msgs.length - 1];
-      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content && !chatController.graphRunning.value) {
-        clearInterval(stopWatch);
-        agentMessages.value.push({
-          id:   generateEntryId(),
-          time: formatTimeNow(),
-          text: lastMsg.content,
-        });
-        scrollAnalysis();
-        // Private chat — no TTS
-      }
-    }
-  }, 500);
-
-  setTimeout(() => clearInterval(stopWatch), 60_000);
-}
-
-function stopTTS(): void {
-  if (activeTTSAudio) {
-    activeTTSAudio.pause();
-    activeTTSAudio.currentTime = 0;
-    if (activeTTSAudio.src) URL.revokeObjectURL(activeTTSAudio.src);
-    activeTTSAudio = null;
-  }
-  if (activeTTSUtterance) {
-    window.speechSynthesis?.cancel();
-    activeTTSUtterance = null;
-  }
-}
-
-async function playTTS(text: string): Promise<void> {
-  // Don't play if muted
-  if (isMuted.value) return;
-
-  // Stop any currently playing TTS before starting new
-  stopTTS();
-
-  try {
-    const result = await ipcRenderer.invoke('audio-speak', { text });
-    if (result?.audio) {
-      const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      activeTTSAudio = audio;
-      audio.onended = () => { URL.revokeObjectURL(url); activeTTSAudio = null; };
-      audio.onerror = () => { URL.revokeObjectURL(url); activeTTSAudio = null; };
-      await audio.play().catch(() => { activeTTSAudio = null; });
-    }
-  } catch {
-    if (window.speechSynthesis) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      activeTTSUtterance = utterance;
-      utterance.onend = () => { activeTTSUtterance = null; };
-      window.speechSynthesis.speak(utterance);
-    }
-  }
-}
-
-// ── Audio capture ──────────────────────────────────────────────
-
-function startAudioLevelMonitor(): void {
-  if (!mediaStream) return;
-  try {
-    levelContext = new AudioContext();
-    const src = levelContext.createMediaStreamSource(mediaStream);
-    levelAnalyser = levelContext.createAnalyser();
-    levelAnalyser.fftSize = 256;
-    src.connect(levelAnalyser);
-    const buf = new Uint8Array(levelAnalyser.fftSize);
-    levelInterval = setInterval(() => {
-      if (!levelAnalyser || !isListening.value) return;
-      levelAnalyser.getByteTimeDomainData(buf);
-      let sum = 0;
-      for (let i = 0; i < buf.length; i++) {
-        const s = (buf[i] - 128) / 128;
-        sum += s * s;
-      }
-      const level = Math.min(100, Math.round(Math.sqrt(sum / buf.length) * 300));
-      audioLevel.value = level;
-
-      // Barge-in: if mic picks up speech while TTS is playing, cut it off
-      if (level > 25 && (activeTTSAudio || activeTTSUtterance)) {
-        stopTTS();
-      }
-    }, 50);
-  } catch { /* ignore */ }
-}
-
-function stopAudioLevelMonitor(): void {
-  if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
-  if (levelContext) { levelContext.close().catch(() => {}); levelContext = null; }
-  levelAnalyser = null;
-  audioLevel.value = 0;
-}
-
-function startSessionTimer(): void {
-  sessionStartTime = Date.now();
-  timerInterval = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
-    const mins = Math.floor(elapsed / 60);
-    const secs = elapsed % 60;
-    sessionDuration.value = `${ mins }:${ secs.toString().padStart(2, '0') }`;
-  }, 1000);
-}
-
-function stopSessionTimer(): void {
-  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-}
-
-// ── Browser STT ────────────────────────────────────────────────
-
-function startBrowserRecognition(): void {
-  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    transcriptionMode = 'elevenlabs';
-    startElevenLabsContinuous();
-    return;
-  }
-
-  recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = false;
-  recognition.lang = sttLanguage;
-
-  recognition.onresult = (event: any) => {
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        const text = event.results[i][0].transcript.trim();
-        if (text) {
-          addEntry(text);
-          checkAndHandleWakeWord(text);
-        }
-      }
-    }
-  };
-
-  recognition.onend = () => {
-    if (!isListening.value) return;
-    try { recognition?.start(); } catch { /* already started */ }
-  };
-
-  recognition.onerror = (event: any) => {
-    if (!isListening.value) return;
-    if (event.error === 'no-speech') {
-      try { recognition?.start(); } catch { /* ignore */ }
-    } else if (event.error === 'network' || event.error === 'service-not-allowed' || event.error === 'not-allowed') {
-      try { recognition?.stop(); } catch { /* ignore */ }
-      recognition = null;
-      transcriptionMode = 'elevenlabs';
-      if (mediaStream) startElevenLabsContinuous();
-    } else if (event.error !== 'aborted') {
-      try { recognition?.start(); } catch { /* ignore */ }
-    }
-  };
-
-  recognition.start();
-}
-
-// ── ElevenLabs continuous mode ─────────────────────────────────
-
-function startElevenLabsContinuous(): void {
-  startElevenLabsSegment();
-  segmentInterval = setInterval(() => {
-    if (!isListening.value) return;
-    flushAndRestartSegment();
-  }, SEGMENT_DURATION);
-}
-
-function startElevenLabsSegment(): void {
-  if (!mediaStream) return;
-  audioChunks = [];
-  mediaRecorder = new MediaRecorder(mediaStream, { mimeType: activeMimeType });
-  mediaRecorder.ondataavailable = (event: BlobEvent) => {
-    if (event.data.size > 0) audioChunks.push(event.data);
-  };
-  mediaRecorder.onstop = () => {
-    const audioBlob = new Blob(audioChunks, { type: activeMimeType });
-    audioChunks = [];
-    if (audioBlob.size > 0) transcribeSegment(audioBlob, activeMimeType);
-  };
-  mediaRecorder.start();
-}
-
-function flushAndRestartSegment(): void {
-  if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
-  mediaRecorder.stop();
-  if (isListening.value && mediaStream) startElevenLabsSegment();
-}
-
-async function transcribeSegment(audioBlob: Blob, mimeType: string): Promise<void> {
-  try {
-    const arrayBuffer = await audioBlob.arrayBuffer();
-    const result = await ipcRenderer.invoke('audio-transcribe', {
-      audio: arrayBuffer, mimeType, diarize: true,
-      ...(gatewaySessionId ? { sessionId: gatewaySessionId } : {}),
     });
-    if (result?.text?.trim()) {
-      const text = result.text.trim();
-      addEntry(text);
-      checkAndHandleWakeWord(text);
-    }
-  } catch (err) {
-    console.error('[SecretaryMode] Transcription failed:', err);
-  }
-}
+  },
+  setWakeWordActive:  (v) => { wakeWordActive.value = v; },
+  getWakeWordActive:  () => wakeWordActive.value,
+  setAudioLevel:      (v) => { audioLevel.value = v; },
+  setSessionDuration: (v) => { sessionDuration.value = v; },
+  setIsListening:     (v) => { isListening.value = v; },
+  getIsListening:     () => isListening.value,
+  setIsAnalyzing:     (v) => { isAnalyzing.value = v; },
+  getIsMuted:         () => isMuted.value,
+  getTranscript:      () => transcript.value,
+  addActionItem:      (item) => { actionItems.value.push(item); },
+  getActionItems:     () => actionItems.value,
+  addDecision:        (item) => { decisions.value.push(item); },
+  getDecisions:       () => decisions.value,
+  addInsight:         (entry) => { insights.value.push(entry); },
+  addAgentMessage:    (msg) => { agentMessages.value.push(msg); },
+  scrollAnalysis,
+  playTTS,
+  stopTTS,
+  sendToChat,
+});
 
-// ── Gateway WebSocket streaming mode ───────────────────────────
-
-function onGatewayTranscript(_event: any, event: { event_type: string; text?: string; speaker?: string }): void {
-  if (!isListening.value) return;
-  if (event.event_type === 'transcript_turn' && event.text?.trim()) {
-    const text = event.text.trim();
-    addEntry(text);
-    checkAndHandleWakeWord(text);
-  }
-}
-
-async function startGatewayStreaming(): Promise<void> {
-  if (!mediaStream) return;
-
-  // Subscribe to transcript events from the gateway lobby WS
-  await ipcRenderer.invoke('gateway-transcript-subscribe');
-  ipcRenderer.on('gateway-transcript', onGatewayTranscript);
-
-  // Start audio session + WebSocket on the main process
-  try {
-    const result = await ipcRenderer.invoke('gateway-audio-start', { callerName: 'Sulla Secretary' });
-    if (result?.error || !result?.sessionId) {
-      console.warn('[SecretaryMode] Gateway audio start failed:', result?.error);
-      return;
-    }
-    gatewaySessionId = result.sessionId;
-    gatewayStreamActive = true;
-    console.log(`[SecretaryMode] Gateway audio stream started, session: ${result.sessionId}`);
-  } catch (err) {
-    console.error('[SecretaryMode] Gateway audio stream error:', err);
-    return;
-  }
-
-  // Stream audio chunks via a separate MediaRecorder (250ms timeslice)
-  const streamMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-    ? 'audio/webm;codecs=opus'
-    : 'audio/webm';
-
-  gatewayStreamRecorder = new MediaRecorder(mediaStream, { mimeType: streamMime });
-
-  gatewayStreamRecorder.ondataavailable = async(event: BlobEvent) => {
-    if (event.data.size > 0 && gatewayStreamActive) {
-      const arrayBuffer = await event.data.arrayBuffer();
-      ipcRenderer.invoke('gateway-audio-send', { audio: arrayBuffer }).catch(() => {});
-    }
-  };
-
-  gatewayStreamRecorder.start(250);
-}
-
-function stopGatewayStreaming(): void {
-  gatewayStreamActive = false;
-
-  ipcRenderer.removeListener('gateway-transcript', onGatewayTranscript);
-  ipcRenderer.invoke('gateway-transcript-unsubscribe').catch(() => {});
-
-  if (gatewayStreamRecorder && gatewayStreamRecorder.state !== 'inactive') {
-    try { gatewayStreamRecorder.stop(); } catch { /* ignore */ }
-  }
-  gatewayStreamRecorder = null;
-
-  if (gatewaySessionId) {
-    ipcRenderer.invoke('gateway-audio-stop').catch(() => {});
-    gatewaySessionId = null;
-  }
-}
-
-// ── Session lifecycle ──────────────────────────────────────────
+// ── Session lifecycle (thin wrappers) ──────────────────────────
 
 async function startSession(): Promise<void> {
   try {
-    transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
-    sttLanguage = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
-    const audioInputDeviceId: string = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
-
-    const audioConstraints: boolean | MediaTrackConstraints = audioInputDeviceId
-      ? { deviceId: { exact: audioInputDeviceId } }
-      : true;
-
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-    activeMimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-
     isListening.value = true;
     hasSessionEnded.value = false;
-    lastAnalyzedIndex = 0;
-    analysisMessageCount = 0;
     actionItems.value = [];
     decisions.value = [];
     insights.value = [];
     agentMessages.value = [];
-
-    // For non-gateway modes, create a REST-only gateway session for GhostAgent monitoring
-    if (transcriptionMode !== 'gateway') {
-      try {
-        const sessionResult = await ipcRenderer.invoke('desktop-session-start', { callerName: 'Sulla Secretary' });
-        gatewaySessionId = sessionResult?.sessionId || null;
-        if (gatewaySessionId) {
-          console.log('[SecretaryMode] Gateway session started:', gatewaySessionId);
-        }
-      } catch (err) {
-        console.warn('[SecretaryMode] Gateway session start failed (transcription will still work):', err);
-        gatewaySessionId = null;
-      }
-    }
-
-    startSessionTimer();
-    startAudioLevelMonitor();
-    startAnalysisLoop();
     updateTab(props.tabId, { title: 'Secretary - Recording' });
 
-    if (transcriptionMode === 'gateway') {
-      startGatewayStreaming();
-    } else if (transcriptionMode === 'browser') {
-      startBrowserRecognition();
-    } else {
-      startElevenLabsContinuous();
-    }
+    await controller.startSession();
   } catch (err) {
     console.error('[SecretaryMode] Failed to start session:', err);
+    isListening.value = false;
   }
 }
 
 function endSession(): void {
   isListening.value = false;
   hasSessionEnded.value = true;
-  wakeWordActive.value = false;
-  stopTTS();
-  stopSessionTimer();
-  stopAudioLevelMonitor();
-  stopAnalysisLoop();
-  analyzeNewTranscript();
+  controller.endSession();
+  updateTab(props.tabId, { title: `Secretary - ${sessionDuration.value}` });
+}
 
-  if (recognition) {
-    try { recognition.abort(); } catch { /* ignore */ }
-    try { recognition.stop(); } catch { /* ignore */ }
-    recognition = null;
-  }
-
-  // Stop gateway streaming if active
-  if (transcriptionMode === 'gateway') {
-    stopGatewayStreaming();
-  }
-
-  if (segmentInterval) { clearInterval(segmentInterval); segmentInterval = null; }
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
-  mediaRecorder = null;
-  audioChunks = [];
-
-  // End the REST-only gateway session (non-gateway modes)
-  if (gatewaySessionId && transcriptionMode !== 'gateway') {
-    ipcRenderer.invoke('desktop-session-end', gatewaySessionId).catch(() => {});
-    console.log('[SecretaryMode] Gateway session ended:', gatewaySessionId);
-    gatewaySessionId = null;
-  }
-
-  updateTab(props.tabId, { title: `Secretary - ${ sessionDuration.value }` });
+async function sendChatMessage(): Promise<void> {
+  const text = chatInput.value.trim();
+  if (!text) return;
+  chatInput.value = '';
+  await controller.sendChatMessage(text);
 }
 
 // ── Lifecycle ──────────────────────────────────────────────────
 
 onUnmounted(() => {
   if (isListening.value) endSession();
-  chatController?.dispose();
-  chatController = null;
+  controller.dispose();
+  chatInterface?.dispose();
+  chatInterface = null;
 });
 </script>
 

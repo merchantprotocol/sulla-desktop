@@ -1,0 +1,654 @@
+/**
+ * SecretaryModeController — owns all decision-making for Secretary Mode.
+ *
+ * Runs in the renderer process. The Vue component (SecretaryMode.vue) delegates
+ * to this controller for all business logic and only handles rendering + UI events.
+ *
+ * Responsibilities:
+ *   - Session lifecycle (start/stop, mode selection)
+ *   - Transcription mode routing (gateway / browser / elevenlabs)
+ *   - Wake word detection state machine
+ *   - Barge-in logic (audio level → cut TTS)
+ *   - Audio level monitoring
+ *   - Analysis loop orchestration
+ *   - Gateway audio streaming (MediaRecorder → IPC)
+ *
+ * Does NOT own:
+ *   - Vue reactive state (passed in via callbacks)
+ *   - DOM rendering
+ *   - IPC handler registration (that's sullaEvents.ts)
+ */
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+// ─── Types ──────────────────────────────────────────────────────
+
+export interface TranscriptEntry {
+  id: string;
+  timestamp: Date;
+  text: string;
+  type: 'transcript' | 'wake-command' | 'agent-response';
+}
+
+export interface InsightEntry {
+  time: string;
+  text: string;
+}
+
+export interface AgentMessage {
+  id: string;
+  time: string;
+  text: string;
+}
+
+export interface SecretaryCallbacks {
+  addEntry: (text: string, type?: TranscriptEntry['type']) => void;
+  setWakeWordActive: (active: boolean) => void;
+  getWakeWordActive: () => boolean;
+  setAudioLevel: (level: number) => void;
+  setSessionDuration: (duration: string) => void;
+  setIsListening: (listening: boolean) => void;
+  getIsListening: () => boolean;
+  setIsAnalyzing: (analyzing: boolean) => void;
+  getIsMuted: () => boolean;
+  getTranscript: () => TranscriptEntry[];
+  addActionItem: (item: string) => void;
+  getActionItems: () => string[];
+  addDecision: (item: string) => void;
+  getDecisions: () => string[];
+  addInsight: (entry: InsightEntry) => void;
+  addAgentMessage: (msg: AgentMessage) => void;
+  scrollAnalysis: () => void;
+  playTTS: (text: string) => Promise<void>;
+  stopTTS: () => void;
+  sendToChat: (prompt: string, inputSource: string) => Promise<string | null>;
+}
+
+// ─── Constants ──────────────────────────────────────────────────
+
+const WAKE_PATTERNS = [/\bhey\s+(?:sulla|sula|soula|sola)\b/i];
+const SEGMENT_DURATION = 15_000;
+const ANALYSIS_INTERVAL = 30_000;
+const BARGE_IN_THRESHOLD = 25;
+
+const SECRETARY_SYSTEM_PROMPT = `You are Sulla, acting as a meeting secretary. You are listening to a live meeting transcript.
+
+Your job:
+1. IDENTIFY ACTION ITEMS — any task, to-do, or commitment someone makes. Format each on its own line prefixed with "ACTION: "
+2. IDENTIFY DECISIONS — any agreement or conclusion reached. Format each on its own line prefixed with "DECISION: "
+3. PROVIDE KEY INSIGHTS — brief observations about what's being discussed, context that might be useful, or things the participants should be aware of. Format each on its own line prefixed with "INSIGHT: "
+
+Be concise. Don't repeat items you've already identified in previous analyses. Only surface NEW items from the latest transcript segment.
+
+If there's nothing noteworthy in this segment, just say "LISTENING" and nothing else.
+
+Do NOT respond conversationally. Do NOT summarize. Just extract the structured items.`;
+
+// ─── Controller ─────────────────────────────────────────────────
+
+export class SecretaryModeController {
+  private cb: SecretaryCallbacks;
+
+  // Audio state
+  private mediaStream: MediaStream | null = null;
+  private activeMimeType = 'audio/webm';
+  private transcriptionMode = 'browser';
+  private sttLanguage = 'en-US';
+
+  // Browser STT
+  private recognition: any = null;
+
+  // ElevenLabs segmented recording
+  private mediaRecorder: MediaRecorder | null = null;
+  private audioChunks: Blob[] = [];
+  private segmentInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Gateway streaming
+  private gatewaySessionId: string | null = null;
+  private gatewayStreamRecorder: MediaRecorder | null = null;
+  private gatewayStreamActive = false;
+
+  // Audio level monitoring
+  private levelContext: AudioContext | null = null;
+  private levelAnalyser: AnalyserNode | null = null;
+  private levelInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Session timer
+  private sessionStartTime = 0;
+  private timerInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Analysis loop
+  private analysisInterval: ReturnType<typeof setInterval> | null = null;
+  private lastAnalyzedIndex = 0;
+  private analysisMessageCount = 0;
+
+  // Barge-in tracking (set by the view when TTS is active)
+  private hasTTSActive = false;
+
+  constructor(callbacks: SecretaryCallbacks) {
+    this.cb = callbacks;
+  }
+
+  // ─── Session lifecycle ────────────────────────────────────────
+
+  async startSession(): Promise<void> {
+    this.transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
+    this.sttLanguage = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
+    const audioInputDeviceId: string = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
+
+    const audioConstraints: boolean | MediaTrackConstraints = audioInputDeviceId
+      ? { deviceId: { exact: audioInputDeviceId } }
+      : true;
+
+    this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    this.activeMimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm';
+
+    this.lastAnalyzedIndex = 0;
+    this.analysisMessageCount = 0;
+
+    // For non-gateway modes, create a REST-only gateway session for GhostAgent monitoring
+    if (this.transcriptionMode !== 'gateway') {
+      try {
+        const sessionResult = await ipcRenderer.invoke('desktop-session-start', { callerName: 'Sulla Secretary' });
+        this.gatewaySessionId = sessionResult?.sessionId || null;
+      } catch {
+        this.gatewaySessionId = null;
+      }
+    }
+
+    this.startSessionTimer();
+    this.startAudioLevelMonitor();
+    this.startAnalysisLoop();
+
+    // Route to the correct transcription strategy
+    if (this.transcriptionMode === 'gateway') {
+      await this.startGatewayStreaming();
+    } else if (this.transcriptionMode === 'browser') {
+      this.startBrowserRecognition();
+    } else {
+      this.startElevenLabsContinuous();
+    }
+  }
+
+  endSession(): void {
+    this.cb.setWakeWordActive(false);
+    this.cb.stopTTS();
+    this.stopSessionTimer();
+    this.stopAudioLevelMonitor();
+    this.stopAnalysisLoop();
+    this.analyzeNewTranscript();
+
+    if (this.recognition) {
+      try { this.recognition.abort(); } catch { /* ignore */ }
+      try { this.recognition.stop(); } catch { /* ignore */ }
+      this.recognition = null;
+    }
+
+    if (this.transcriptionMode === 'gateway') {
+      this.stopGatewayStreaming();
+    }
+
+    if (this.segmentInterval) { clearInterval(this.segmentInterval); this.segmentInterval = null; }
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') this.mediaRecorder.stop();
+    if (this.mediaStream) { this.mediaStream.getTracks().forEach(t => t.stop()); this.mediaStream = null; }
+    this.mediaRecorder = null;
+    this.audioChunks = [];
+
+    // End the REST-only gateway session (non-gateway modes)
+    if (this.gatewaySessionId && this.transcriptionMode !== 'gateway') {
+      ipcRenderer.invoke('desktop-session-end', this.gatewaySessionId).catch((err) => {
+        console.warn('[SecretaryMode] desktop-session-end failed:', err);
+      });
+      this.gatewaySessionId = null;
+    }
+  }
+
+  dispose(): void {
+    if (this.cb.getIsListening()) this.endSession();
+  }
+
+  // ─── Wake word detection ──────────────────────────────────────
+
+  checkAndHandleWakeWord(text: string): void {
+    if (this.cb.getIsMuted()) return;
+
+    if (this.cb.getWakeWordActive()) {
+      const command = text.trim();
+      if (command) {
+        this.cb.setWakeWordActive(false);
+        this.cb.addEntry(command, 'wake-command');
+        this.sendWakeCommand(command);
+      }
+      return;
+    }
+
+    for (const pattern of WAKE_PATTERNS) {
+      const match = text.match(pattern);
+      if (match) {
+        const afterWake = text.slice(match.index! + match[0].length).trim();
+        if (afterWake.length > 3) {
+          this.cb.addEntry(afterWake, 'wake-command');
+          this.sendWakeCommand(afterWake);
+        } else {
+          this.cb.setWakeWordActive(true);
+          this.cb.addEntry('Yes?', 'agent-response');
+          this.cb.playTTS('Yes?');
+        }
+        return;
+      }
+    }
+  }
+
+  private async sendWakeCommand(command: string): Promise<void> {
+    const prompt = `You are in secretary mode during a live meeting. The user said "Hey Sulla" and then spoke to you.
+
+RULES:
+- Reply in ONE short sentence max (under 15 words).
+- If you don't understand, say exactly: "Sorry, could you say that again?"
+- No narration, no elaboration, no follow-up questions.
+- Be direct. Think walkie-talkie, not conversation.
+
+User: ${command}`;
+
+    const reply = await this.cb.sendToChat(prompt, 'secretary-command');
+    if (reply) {
+      this.cb.addEntry(reply, 'agent-response');
+      this.cb.playTTS(reply);
+    }
+  }
+
+  // ─── Chat message (private text input) ────────────────────────
+
+  async sendChatMessage(text: string): Promise<void> {
+    if (!text.trim()) return;
+
+    this.cb.addAgentMessage({
+      id:   this.generateEntryId(),
+      time: this.formatTimeNow(),
+      text: `You: ${text}`,
+    });
+    this.cb.scrollAnalysis();
+
+    const prompt = `You are in secretary mode during a live meeting. The user sent you a private text message (not spoken aloud).
+
+RULES:
+- Reply in ONE short sentence max (under 15 words).
+- If you don't understand, ask them to clarify briefly.
+- No narration, no elaboration.
+
+User: ${text}`;
+
+    const reply = await this.cb.sendToChat(prompt, 'secretary-chat');
+    if (reply) {
+      this.cb.addAgentMessage({
+        id:   this.generateEntryId(),
+        time: this.formatTimeNow(),
+        text: reply,
+      });
+      this.cb.scrollAnalysis();
+    }
+  }
+
+  // ─── Barge-in ─────────────────────────────────────────────────
+
+  setTTSActive(active: boolean): void {
+    this.hasTTSActive = active;
+  }
+
+  private checkBargeIn(level: number): void {
+    if (level > BARGE_IN_THRESHOLD && this.hasTTSActive) {
+      this.cb.stopTTS();
+    }
+  }
+
+  // ─── Audio level monitoring ───────────────────────────────────
+
+  private startAudioLevelMonitor(): void {
+    if (!this.mediaStream) return;
+    try {
+      this.levelContext = new AudioContext();
+      const src = this.levelContext.createMediaStreamSource(this.mediaStream);
+      this.levelAnalyser = this.levelContext.createAnalyser();
+      this.levelAnalyser.fftSize = 256;
+      src.connect(this.levelAnalyser);
+      const buf = new Uint8Array(this.levelAnalyser.fftSize);
+
+      this.levelInterval = setInterval(() => {
+        if (!this.levelAnalyser || !this.cb.getIsListening()) return;
+        this.levelAnalyser.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const s = (buf[i] - 128) / 128;
+          sum += s * s;
+        }
+        const level = Math.min(100, Math.round(Math.sqrt(sum / buf.length) * 300));
+        this.cb.setAudioLevel(level);
+        this.checkBargeIn(level);
+      }, 50);
+    } catch (err) {
+      console.warn('[SecretaryMode] Audio level monitor failed to initialize:', err);
+    }
+  }
+
+  private stopAudioLevelMonitor(): void {
+    if (this.levelInterval) { clearInterval(this.levelInterval); this.levelInterval = null; }
+    if (this.levelContext) { this.levelContext.close().catch(() => {}); this.levelContext = null; }
+    this.levelAnalyser = null;
+    this.cb.setAudioLevel(0);
+  }
+
+  // ─── Session timer ────────────────────────────────────────────
+
+  private startSessionTimer(): void {
+    this.sessionStartTime = Date.now();
+    this.timerInterval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - this.sessionStartTime) / 1000);
+      const mins = Math.floor(elapsed / 60);
+      const secs = elapsed % 60;
+      this.cb.setSessionDuration(`${mins}:${secs.toString().padStart(2, '0')}`);
+    }, 1000);
+  }
+
+  private stopSessionTimer(): void {
+    if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null; }
+  }
+
+  // ─── Browser STT ─────────────────────────────────────────────
+
+  private startBrowserRecognition(): void {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      this.transcriptionMode = 'elevenlabs';
+      this.startElevenLabsContinuous();
+      return;
+    }
+
+    this.recognition = new SpeechRecognition();
+    this.recognition.continuous = true;
+    this.recognition.interimResults = false;
+    this.recognition.lang = this.sttLanguage;
+
+    this.recognition.onresult = (event: any) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          const text = event.results[i][0].transcript.trim();
+          if (text) {
+            this.cb.addEntry(text);
+            this.checkAndHandleWakeWord(text);
+          }
+        }
+      }
+    };
+
+    this.recognition.onend = () => {
+      if (!this.cb.getIsListening()) return;
+      try { this.recognition?.start(); } catch { /* already started */ }
+    };
+
+    this.recognition.onerror = (event: any) => {
+      if (!this.cb.getIsListening()) return;
+      if (event.error === 'no-speech') {
+        try { this.recognition?.start(); } catch { /* ignore */ }
+      } else if (event.error === 'network' || event.error === 'service-not-allowed' || event.error === 'not-allowed') {
+        try { this.recognition?.stop(); } catch { /* ignore */ }
+        this.recognition = null;
+        this.transcriptionMode = 'elevenlabs';
+        if (this.mediaStream) this.startElevenLabsContinuous();
+      } else if (event.error !== 'aborted') {
+        try { this.recognition?.start(); } catch { /* ignore */ }
+      }
+    };
+
+    this.recognition.start();
+  }
+
+  // ─── ElevenLabs continuous mode ───────────────────────────────
+
+  private startElevenLabsContinuous(): void {
+    this.startElevenLabsSegment();
+    this.segmentInterval = setInterval(() => {
+      if (!this.cb.getIsListening()) return;
+      this.flushAndRestartSegment();
+    }, SEGMENT_DURATION);
+  }
+
+  private startElevenLabsSegment(): void {
+    if (!this.mediaStream) return;
+    this.audioChunks = [];
+    this.mediaRecorder = new MediaRecorder(this.mediaStream, { mimeType: this.activeMimeType });
+    this.mediaRecorder.ondataavailable = (event: BlobEvent) => {
+      if (event.data.size > 0) this.audioChunks.push(event.data);
+    };
+    this.mediaRecorder.onstop = () => {
+      const audioBlob = new Blob(this.audioChunks, { type: this.activeMimeType });
+      this.audioChunks = [];
+      if (audioBlob.size > 0) this.transcribeSegment(audioBlob, this.activeMimeType);
+    };
+    this.mediaRecorder.start();
+  }
+
+  private flushAndRestartSegment(): void {
+    if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') return;
+    this.mediaRecorder.stop();
+    if (this.cb.getIsListening() && this.mediaStream) this.startElevenLabsSegment();
+  }
+
+  private async transcribeSegment(audioBlob: Blob, mimeType: string): Promise<void> {
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const result = await ipcRenderer.invoke('audio-transcribe', {
+        audio: arrayBuffer, mimeType, diarize: true,
+        ...(this.gatewaySessionId ? { sessionId: this.gatewaySessionId } : {}),
+      });
+      if (result?.text?.trim()) {
+        const text = result.text.trim();
+        this.cb.addEntry(text);
+        this.checkAndHandleWakeWord(text);
+      }
+    } catch (err) {
+      console.error('[SecretaryMode] Transcription failed:', err);
+    }
+  }
+
+  // ─── Gateway WebSocket streaming ──────────────────────────────
+
+  private onGatewayTranscriptBound = this.onGatewayTranscript.bind(this);
+
+  private onGatewayTranscript(_event: any, event: { event_type: string; text?: string; speaker?: string }): void {
+    if (!this.cb.getIsListening()) {
+      console.warn('[SecretaryMode] Received transcript but not listening — dropped');
+      return;
+    }
+
+    if (event.event_type === 'transcript_turn' && event.text?.trim()) {
+      const text = event.text.trim();
+      console.log(`[SecretaryMode] Transcript received: "${text.slice(0, 80)}"`);
+      this.cb.addEntry(text);
+      this.checkAndHandleWakeWord(text);
+    } else if (event.event_type === 'transcript_partial' && event.text?.trim()) {
+      // Partial transcripts — could show as interim text in future
+      console.log(`[SecretaryMode] Partial transcript: "${event.text.trim().slice(0, 80)}"`);
+    } else {
+      console.log(`[SecretaryMode] Unhandled gateway event: ${event.event_type}`);
+    }
+  }
+
+  private async startGatewayStreaming(): Promise<void> {
+    if (!this.mediaStream) {
+      throw new Error('No media stream available for gateway streaming');
+    }
+
+    // Subscribe to transcript events from the gateway lobby WS
+    await ipcRenderer.invoke('gateway-transcript-subscribe');
+    ipcRenderer.on('gateway-transcript', this.onGatewayTranscriptBound);
+
+    // Start audio session + WebSocket on the main process
+    const result = await ipcRenderer.invoke('gateway-audio-start', { callerName: 'Sulla Secretary' });
+    if (result?.error || !result?.sessionId) {
+      const reason = result?.error || 'no session ID returned';
+      this.cb.addEntry(`Gateway audio connection failed: ${reason}`, 'transcript');
+      throw new Error(`Gateway audio start failed: ${reason}`);
+    }
+
+    this.gatewaySessionId = result.sessionId;
+    this.gatewayStreamActive = true;
+
+    // Stream audio chunks via a separate MediaRecorder (250ms timeslice)
+    const streamMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm';
+
+    this.gatewayStreamRecorder = new MediaRecorder(this.mediaStream, { mimeType: streamMime });
+
+    let chunkCount = 0;
+    this.gatewayStreamRecorder.ondataavailable = async(event: BlobEvent) => {
+      if (event.data.size > 0 && this.gatewayStreamActive) {
+        chunkCount++;
+        if (chunkCount <= 3 || chunkCount % 100 === 0) {
+          console.log(`[SecretaryMode] Sending audio chunk #${chunkCount} (${event.data.size} bytes)`);
+        }
+        const arrayBuffer = await event.data.arrayBuffer();
+        ipcRenderer.invoke('gateway-audio-send', { audio: arrayBuffer }).catch((err) => {
+          console.error('[SecretaryMode] Failed to send audio chunk:', err);
+        });
+      }
+    };
+
+    this.gatewayStreamRecorder.start(250);
+  }
+
+  private stopGatewayStreaming(): void {
+    this.gatewayStreamActive = false;
+
+    ipcRenderer.removeListener('gateway-transcript', this.onGatewayTranscriptBound);
+    ipcRenderer.invoke('gateway-transcript-unsubscribe').catch((err) => {
+      console.warn('[SecretaryMode] Transcript unsubscribe failed:', err);
+    });
+
+    if (this.gatewayStreamRecorder && this.gatewayStreamRecorder.state !== 'inactive') {
+      try { this.gatewayStreamRecorder.stop(); } catch (err) { console.warn('[SecretaryMode] Recorder stop error:', err); }
+    }
+    this.gatewayStreamRecorder = null;
+
+    if (this.gatewaySessionId) {
+      ipcRenderer.invoke('gateway-audio-stop').catch((err) => {
+        console.error('[SecretaryMode] gateway-audio-stop failed:', err);
+      });
+      this.gatewaySessionId = null;
+    }
+  }
+
+  // ─── Analysis loop ────────────────────────────────────────────
+
+  private startAnalysisLoop(): void {
+    this.analysisInterval = setInterval(() => {
+      if (!this.cb.getIsListening()) return;
+      this.analyzeNewTranscript();
+    }, ANALYSIS_INTERVAL);
+
+    setTimeout(() => {
+      if (this.cb.getIsListening()) this.analyzeNewTranscript();
+    }, 15_000);
+  }
+
+  private stopAnalysisLoop(): void {
+    if (this.analysisInterval) {
+      clearInterval(this.analysisInterval);
+      this.analysisInterval = null;
+    }
+  }
+
+  async analyzeNewTranscript(): Promise<void> {
+    const entries = this.cb.getTranscript().slice(this.lastAnalyzedIndex);
+    if (entries.length === 0) return;
+
+    const newText = entries
+      .filter(e => e.type === 'transcript')
+      .map(e => `[${this.formatTime(e.timestamp)}] ${e.text}`)
+      .join('\n');
+
+    if (!newText.trim()) return;
+
+    this.lastAnalyzedIndex = this.cb.getTranscript().length;
+    this.cb.setIsAnalyzing(true);
+
+    const isFirst = this.analysisMessageCount === 0;
+    const prompt = isFirst
+      ? `${SECRETARY_SYSTEM_PROMPT}\n\n--- NEW TRANSCRIPT SEGMENT ---\n${newText}`
+      : `--- NEW TRANSCRIPT SEGMENT ---\n${newText}`;
+
+    this.analysisMessageCount++;
+
+    const reply = await this.cb.sendToChat(prompt, 'secretary-analysis');
+    if (reply) {
+      this.parseAnalysisResponse(reply);
+    }
+    this.cb.setIsAnalyzing(false);
+  }
+
+  private parseAnalysisResponse(text: string): void {
+    if (!text || text.trim() === 'LISTENING') return;
+
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const time = this.formatTimeNow();
+    let hasNewContent = false;
+
+    for (const line of lines) {
+      if (line.startsWith('ACTION:')) {
+        const item = line.slice(7).trim();
+        if (item && !this.cb.getActionItems().includes(item)) {
+          this.cb.addActionItem(item);
+          hasNewContent = true;
+        }
+      } else if (line.startsWith('DECISION:')) {
+        const item = line.slice(9).trim();
+        if (item && !this.cb.getDecisions().includes(item)) {
+          this.cb.addDecision(item);
+          hasNewContent = true;
+        }
+      } else if (line.startsWith('INSIGHT:')) {
+        const item = line.slice(8).trim();
+        if (item) {
+          this.cb.addInsight({ time, text: item });
+          hasNewContent = true;
+        }
+      } else if (line !== 'LISTENING') {
+        this.cb.addAgentMessage({
+          id:   this.generateEntryId(),
+          time,
+          text: line,
+        });
+        hasNewContent = true;
+      }
+    }
+
+    if (hasNewContent) this.cb.scrollAnalysis();
+  }
+
+  // ─── Utility ──────────────────────────────────────────────────
+
+  private generateEntryId(): string {
+    return `se_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  private formatTime(date: Date): string {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  private formatTimeNow(): string {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  get currentTranscriptionMode(): string {
+    return this.transcriptionMode;
+  }
+
+  get currentSessionDuration(): string {
+    const elapsed = Math.floor((Date.now() - this.sessionStartTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+}

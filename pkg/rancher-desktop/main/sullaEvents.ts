@@ -1073,99 +1073,142 @@ export function initSullaEvents(): void {
   // ─────────────────────────────────────────────────────────────
 
   ipcMainProxy.handle('desktop-session-start', async(_event: unknown, payload?: { callerName?: string }) => {
-    const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-    const integrationService = getIntegrationService();
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const integrationService = getIntegrationService();
 
-    const [urlValue, keyValue] = await Promise.all([
-      integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
-      integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),
-    ]);
+      const [urlValue, keyValue] = await Promise.all([
+        integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
+        integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),
+      ]);
 
-    const gatewayUrl = urlValue?.value?.trim();
-    const apiKey = keyValue?.value?.trim();
-    if (!gatewayUrl || !apiKey) {
-      return { sessionId: null, error: 'Gateway not configured' };
+      const gatewayUrl = urlValue?.value?.trim();
+      const apiKey = keyValue?.value?.trim();
+      if (!gatewayUrl || !apiKey) {
+        return { sessionId: null, error: 'Gateway not configured' };
+      }
+
+      const response = await fetch(`${ gatewayUrl.replace(/\/+$/, '') }/api/desktop/sessions`, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${ apiKey }`,
+        },
+        body: JSON.stringify({ callerName: payload?.callerName || 'Sulla Secretary' }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        console.error(`[Desktop] Gateway session start failed (${response.status}): ${body}`);
+
+        return { sessionId: null, error: `Gateway returned ${ response.status }: ${ body }` };
+      }
+
+      const result = await response.json() as { sessionId: string; callId: string };
+      console.log(`[Desktop] Gateway session started: ${ result.sessionId }`);
+
+      return result;
+    } catch (err: any) {
+      console.error('[Desktop] desktop-session-start failed:', err.message);
+
+      return { sessionId: null, error: err.message };
     }
-
-    const response = await fetch(`${ gatewayUrl.replace(/\/+$/, '') }/api/desktop/sessions`, {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${ apiKey }`,
-      },
-      body: JSON.stringify({ callerName: payload?.callerName || 'Sulla Secretary' }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-
-      return { sessionId: null, error: `Gateway returned ${ response.status }: ${ body }` };
-    }
-
-    const result = await response.json() as { sessionId: string; callId: string };
-    console.log(`[Desktop] Gateway session started: ${ result.sessionId }`);
-
-    return result;
   });
 
   ipcMainProxy.handle('desktop-session-end', async(_event: unknown, sessionId: string) => {
-    if (!sessionId) return { ok: false };
+    if (!sessionId) return { ok: false, error: 'No session ID' };
 
-    const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-    const integrationService = getIntegrationService();
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const integrationService = getIntegrationService();
 
-    const [urlValue, keyValue] = await Promise.all([
-      integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
-      integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),
-    ]);
+      const [urlValue, keyValue] = await Promise.all([
+        integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
+        integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),
+      ]);
 
-    const gatewayUrl = urlValue?.value?.trim();
-    const apiKey = keyValue?.value?.trim();
-    if (!gatewayUrl || !apiKey) return { ok: false };
+      const gatewayUrl = urlValue?.value?.trim();
+      const apiKey = keyValue?.value?.trim();
+      if (!gatewayUrl || !apiKey) {
+        console.warn(`[Desktop] Cannot end session ${sessionId} — gateway not configured`);
 
-    await fetch(`${ gatewayUrl.replace(/\/+$/, '') }/api/desktop/sessions/${ sessionId }`, {
-      method:  'DELETE',
-      headers: { 'Authorization': `Bearer ${ apiKey }` },
-    }).catch(() => {});
+        return { ok: false, error: 'Gateway not configured' };
+      }
 
-    console.log(`[Desktop] Gateway session ended: ${ sessionId }`);
+      const resp = await fetch(`${ gatewayUrl.replace(/\/+$/, '') }/api/desktop/sessions/${ sessionId }`, {
+        method:  'DELETE',
+        headers: { 'Authorization': `Bearer ${ apiKey }` },
+      });
 
-    return { ok: true };
+      if (!resp.ok) {
+        console.warn(`[Desktop] Session DELETE returned ${resp.status} for ${sessionId}`);
+      }
+
+      console.log(`[Desktop] Gateway session ended: ${ sessionId }`);
+
+      return { ok: true };
+    } catch (err: any) {
+      console.error(`[Desktop] desktop-session-end failed for ${sessionId}:`, err.message);
+
+      return { ok: false, error: err.message };
+    }
   });
 
   // ─────────────────────────────────────────────────────────────
   // Gateway Listener — lobby WebSocket + audio streaming
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('gateway-listener-start', async() => {
-    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
-    const service = getGatewayListenerService();
-    await service.startLobby();
+  let audioSendErrCount = 0; // rate-limit audio-send error logging
 
-    return { ok: true };
+  // ─────────────────────────────────────────────────────────────
+  // Gateway — all IPC handlers delegate to GatewayConnectionController
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('gateway-listener-start', async() => {
+    try {
+      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+      await getGatewayConnectionController().startLobby();
+
+      return { ok: true };
+    } catch (err: any) {
+      console.error('[Sulla] gateway-listener-start failed:', err.message);
+
+      return { ok: false, error: err.message };
+    }
   });
 
   ipcMainProxy.handle('gateway-listener-stop', async() => {
-    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
-    const service = getGatewayListenerService();
-    service.stopLobby();
+    try {
+      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+      await getGatewayConnectionController().stopLobby();
 
-    return { ok: true };
+      return { ok: true };
+    } catch (err: any) {
+      console.error('[Sulla] gateway-listener-stop failed:', err.message);
+
+      return { ok: false, error: err.message };
+    }
   });
 
   ipcMainProxy.handle('gateway-listener-status', async() => {
-    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
-    const service = getGatewayListenerService();
+    try {
+      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
 
-    return service.getStatus();
+      return await getGatewayConnectionController().getStatus();
+    } catch (err: any) {
+      console.error('[Sulla] gateway-listener-status failed:', err.message);
+
+      return { lobbyConnected: false, audioConnected: false, sessionId: null, callId: null, error: err.message, lobbyReconnectAttempts: 0, audioReconnecting: false };
+    }
   });
 
   ipcMainProxy.handle('gateway-audio-start', async(_event: unknown, payload?: { callerName?: string }) => {
-    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
-    const service = getGatewayListenerService();
+    const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+    const controller = getGatewayConnectionController();
+    controller.resetAudioCount();
 
     try {
-      const result = await service.startAudioStream(payload?.callerName);
+      const result = await controller.startAudioSession(payload?.callerName);
 
       return { sessionId: result.sessionId, callId: result.callId, error: null };
     } catch (err: any) {
@@ -1176,56 +1219,73 @@ export function initSullaEvents(): void {
   });
 
   ipcMainProxy.handle('gateway-audio-stop', async() => {
-    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
-    const service = getGatewayListenerService();
-    await service.stopAudioStream();
+    try {
+      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+      await getGatewayConnectionController().stopAudioSession();
 
-    return { ok: true };
+      return { ok: true };
+    } catch (err: any) {
+      console.error('[Sulla] gateway-audio-stop failed:', err.message);
+
+      return { ok: false, error: err.message };
+    }
   });
 
   ipcMainProxy.handle('gateway-audio-send', async(_event: unknown, payload: { audio: ArrayBuffer }) => {
-    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
-    const service = getGatewayListenerService();
-    service.sendAudio(payload.audio);
+    try {
+      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+      await getGatewayConnectionController().sendAudioChunk(payload.audio);
 
-    return { ok: true };
+      return { ok: true };
+    } catch (err: any) {
+      // Rate-limit audio send error logging — don't spam on every chunk
+      audioSendErrCount++;
+      if (audioSendErrCount <= 3 || audioSendErrCount % 100 === 0) {
+        console.error(`[Sulla] gateway-audio-send failed (#${audioSendErrCount}): ${err.message}`);
+      }
+
+      return { ok: false, error: err.message };
+    }
   });
 
   // ─────────────────────────────────────────────────────────────
   // Gateway transcript forwarding — main → renderer
   // ─────────────────────────────────────────────────────────────
 
-  let gatewayTranscriptUnsub: (() => void) | null = null;
-
   ipcMainProxy.handle('gateway-transcript-subscribe', async() => {
-    // Unsubscribe any existing subscription first
-    if (gatewayTranscriptUnsub) {
-      gatewayTranscriptUnsub();
-      gatewayTranscriptUnsub = null;
-    }
+    try {
+      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+      const windowModule = await import('@pkg/window');
+      const controller = getGatewayConnectionController();
 
-    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
-    const windowModule = await import('@pkg/window');
-    const service = getGatewayListenerService();
-
-    gatewayTranscriptUnsub = service.onEvent((event) => {
-      if (event.event_type === 'transcript_turn' || event.event_type === 'transcript_partial') {
+      await controller.subscribeTranscripts((event) => {
         try {
+          console.log(`[Sulla] Sending gateway-transcript IPC: ${(event as any).event_type}`);
           windowModule.send('gateway-transcript' as any, event);
-        } catch { /* renderer not ready */ }
-      }
-    });
+        } catch (err: any) {
+          console.error(`[Sulla] gateway-transcript IPC send failed: ${err.message}`);
+        }
+      });
 
-    return { ok: true };
+      return { ok: true };
+    } catch (err: any) {
+      console.error('[Sulla] gateway-transcript-subscribe failed:', err.message);
+
+      return { ok: false, error: err.message };
+    }
   });
 
   ipcMainProxy.handle('gateway-transcript-unsubscribe', async() => {
-    if (gatewayTranscriptUnsub) {
-      gatewayTranscriptUnsub();
-      gatewayTranscriptUnsub = null;
-    }
+    try {
+      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+      getGatewayConnectionController().unsubscribeTranscripts();
 
-    return { ok: true };
+      return { ok: true };
+    } catch (err: any) {
+      console.error('[Sulla] gateway-transcript-unsubscribe failed:', err.message);
+
+      return { ok: false, error: err.message };
+    }
   });
 
   // ─────────────────────────────────────────────────────────────
@@ -1288,54 +1348,16 @@ export function initSullaEvents(): void {
 
   console.log('[Sulla] IPC event handlers initialized');
 
-  // Auto-connect gateway lobby listener once DB is ready
-  // NOTE: instantiateSullaStart() is not awaited in lima.ts, so sulla-first-run-complete
-  // fires before the DB is initialized. We wait for DatabaseManager.initialize() directly.
+  // Auto-connect gateway lobby listener once DB is ready.
+  // All decision-making lives in GatewayConnectionController.
   (async() => {
     try {
       const { getDatabaseManager } = await import('@pkg/agent/database/DatabaseManager');
       const dbManager = getDatabaseManager();
       await dbManager.initialize(); // returns immediately if already initialized, waits otherwise
 
-      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-      const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
-      const integrationService = getIntegrationService();
-
-      const tryConnect = async() => {
-        const [urlValue, keyValue] = await Promise.all([
-          integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
-          integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),
-        ]);
-
-        const url = urlValue?.value?.trim();
-        const key = keyValue?.value?.trim();
-        console.log(`[Sulla] Gateway config check: url=${ url ? 'set' : 'missing' }, apiKey=${ key ? 'set' : 'missing' }`);
-
-        if (url && key) {
-          const service = getGatewayListenerService();
-          await service.startLobby();
-          console.log('[Sulla] Gateway lobby listener connected');
-        } else {
-          const service = getGatewayListenerService();
-          service.stopLobby();
-          console.log('[Sulla] Gateway not configured — lobby listener stopped');
-        }
-      };
-
-      await tryConnect();
-
-      // Re-connect whenever gateway config is added or changed (debounced)
-      let gatewayReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-      integrationService.onValueChange((value, action) => {
-        if (value.integration_id === 'enterprise_gateway' && (action === 'created' || action === 'updated')) {
-          console.log(`[Sulla] Gateway config ${ action }: ${ value.property }, scheduling reconnect...`);
-          if (gatewayReconnectTimer) clearTimeout(gatewayReconnectTimer);
-          gatewayReconnectTimer = setTimeout(() => {
-            gatewayReconnectTimer = null;
-            tryConnect().catch(err => console.warn('[Sulla] Gateway lobby reconnect failed:', err));
-          }, 1000);
-        }
-      });
+      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+      await getGatewayConnectionController().initialize();
     } catch (err) {
       console.warn('[Sulla] Gateway lobby auto-connect failed:', err);
     }

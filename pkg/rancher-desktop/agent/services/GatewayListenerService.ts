@@ -94,6 +94,9 @@ export class GatewayListenerService {
   private audioReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private audioIntentionalClose = false;
 
+  // Per-session listener WebSocket (receives transcript events for the active session)
+  private sessionListenerWs: InstanceType<typeof WebSocket> | null = null;
+
   // Lobby reconnect tracking
   private lobbyReconnectAttempts = 0;
 
@@ -120,9 +123,13 @@ export class GatewayListenerService {
 
     // Kill any existing connection (including zombies)
     if (this.lobbyWs) {
-      try { this.lobbyWs.terminate(); } catch { /* ignore */ }
+      try { this.lobbyWs.terminate(); } catch (err) { console.warn('[GatewayListener] Lobby terminate error:', err); }
       this.lobbyWs = null;
     }
+
+    // Wait a tick so the close event from terminate() fires while lobbyIntentional is still true.
+    // Without this, the close handler can race and schedule a spurious reconnect.
+    await new Promise(resolve => setTimeout(resolve, 50));
 
     // Now open the fresh connection
     this.lobbyIntentional = false;
@@ -138,7 +145,7 @@ export class GatewayListenerService {
     this.clearLobbyReconnect();
     this.clearPingTimer();
     if (this.lobbyWs) {
-      try { this.lobbyWs.terminate(); } catch { /* ignore */ }
+      try { this.lobbyWs.terminate(); } catch (err) { console.warn('[GatewayListener] Lobby terminate error:', err); }
       this.lobbyWs = null;
     }
   }
@@ -162,11 +169,13 @@ export class GatewayListenerService {
    */
   async startAudioStream(callerName?: string): Promise<{ sessionId: string; callId: string }> {
     const config = await this.getConfig();
-    if (!config) throw new Error('Gateway not configured');
+    if (!config) throw new Error('Gateway not configured — set gateway_url and api_key in the Enterprise Gateway integration');
 
     // Create session via REST API
     const baseUrl = config.url.replace(/\/+$/, '');
-    const response = await fetch(`${baseUrl}/api/desktop/sessions`, {
+    const sessionUrl = `${baseUrl}/api/desktop/sessions`;
+    console.log(`[GatewayListener] Creating audio session at ${sessionUrl}`);
+    const response = await this.gatewayFetch(sessionUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -186,8 +195,12 @@ export class GatewayListenerService {
     this.audioIntentionalClose = false;
     this.audioReconnectAttempts = 0;
     this.audioReconnecting = false;
+    this.audioChunkCount = 0;
 
     await this.connectAudioWs(config);
+
+    // Connect the per-session listener to receive transcript events
+    this.connectSessionListener(config);
 
     return result;
   }
@@ -225,6 +238,20 @@ export class GatewayListenerService {
       });
     });
 
+    // Persistent error handler — prevents uncaught EventEmitter error crash.
+    // The connection-phase error handler above only covers the initial handshake;
+    // this one covers errors after the socket is open (ECONNRESET, etc.).
+    this.audioWs.on('error', (err: Error) => {
+      console.error(`[GatewayListener] Audio stream error (post-open): ${err.message}`);
+      this.lastError = `Audio error: ${err.message}`;
+      // 'close' event will fire after this, triggering reconnect
+    });
+
+    this.audioWs.on('message', (raw: Buffer | string) => {
+      const msg = typeof raw === 'string' ? raw : raw.toString('utf8');
+      console.log(`[GatewayListener] Audio WS message: ${msg.slice(0, 500)}`);
+    });
+
     this.audioWs.on('close', (code: number) => {
       console.log(`[GatewayListener] Audio stream closed for session ${this.activeSessionId} (code ${code})`);
       this.audioWs = null;
@@ -234,6 +261,93 @@ export class GatewayListenerService {
         this.scheduleAudioReconnect();
       }
     });
+  }
+
+  /**
+   * Open a per-session listener WebSocket (`/ws/listener/{sessionId}`) to receive
+   * transcript events for the active audio session. The lobby (`/ws/listener`)
+   * only receives session lifecycle events; transcripts are delivered on the
+   * session-specific channel.
+   */
+  private connectSessionListener(config: { url: string; apiKey: string }): void {
+    const sessionId = this.activeSessionId;
+    if (!sessionId) return;
+
+    // Close any existing session listener
+    this.closeSessionListener();
+
+    const baseUrl = config.url.replace(/\/+$/, '');
+    const wsUrl = this.httpToWs(baseUrl);
+    const listenerUrl = `${wsUrl}/ws/listener/${sessionId}?apiKey=${encodeURIComponent(config.apiKey)}`;
+    const wsOptions = this.getWsOptions(config);
+
+    console.log(`[GatewayListener] Connecting session listener for ${sessionId}`);
+    this.sessionListenerWs = new WebSocket(listenerUrl, wsOptions);
+
+    this.sessionListenerWs.on('open', () => {
+      console.log(`[GatewayListener] Session listener connected for ${sessionId}`);
+      // Opt into reliable delivery on the session channel too
+      if (this.sessionListenerWs?.readyState === WebSocket.OPEN) {
+        this.sessionListenerWs.send(JSON.stringify({ event_type: 'capabilities', reliable_delivery: true }));
+      }
+    });
+
+    this.sessionListenerWs.on('message', (data: Buffer) => {
+      const raw = data.toString();
+      try {
+        const event = JSON.parse(raw) as GatewayEvent;
+
+        // ACK reliable delivery messages
+        if (event._msg_id && this.sessionListenerWs?.readyState === WebSocket.OPEN) {
+          this.sessionListenerWs.send(JSON.stringify({ event_type: 'ack', _msg_id: event._msg_id }));
+        }
+
+        // Skip protocol-only messages
+        if (event.event_type === 'health_ping' || event.event_type === 'welcome' || event.event_type === 'capabilities_ack') {
+          return;
+        }
+
+        console.log(`[GatewayListener] Session event: ${event.event_type} for ${sessionId} (listeners: ${this.listeners.size})`);
+        this.emit(event);
+      } catch {
+        console.warn(`[GatewayListener] Session listener non-JSON message: ${raw.slice(0, 200)}`);
+      }
+    });
+
+    this.sessionListenerWs.on('error', (err: Error) => {
+      console.error(`[GatewayListener] Session listener error: ${err.message}`);
+      // Null the ref so closeSessionListener() doesn't try to terminate an errored socket.
+      // The 'close' event should fire after this and trigger reconnect, but if it doesn't
+      // (some ws versions), we schedule reconnect defensively here too.
+      this.sessionListenerWs = null;
+    });
+
+    this.sessionListenerWs.on('close', (code: number) => {
+      console.log(`[GatewayListener] Session listener closed (code ${code})`);
+      this.sessionListenerWs = null;
+
+      // Reconnect if the session is still active and we didn't close intentionally
+      if (!this.audioIntentionalClose && this.activeSessionId === sessionId) {
+        console.log('[GatewayListener] Reconnecting session listener in 2s...');
+        setTimeout(() => {
+          if (this.activeSessionId === sessionId && !this.audioIntentionalClose) {
+            this.getConfig().then((cfg) => {
+              if (cfg) this.connectSessionListener(cfg);
+              else console.warn('[GatewayListener] Session listener reconnect skipped — no config');
+            }).catch((err) => {
+              console.error(`[GatewayListener] Session listener reconnect config error: ${err.message || err}`);
+            });
+          }
+        }, 2000);
+      }
+    });
+  }
+
+  private closeSessionListener(): void {
+    if (this.sessionListenerWs) {
+      try { this.sessionListenerWs.terminate(); } catch (err) { console.warn('[GatewayListener] Session listener terminate error:', err); }
+      this.sessionListenerWs = null;
+    }
   }
 
   private scheduleAudioReconnect(): void {
@@ -270,18 +384,35 @@ export class GatewayListenerService {
   }
 
   /** Send a chunk of raw audio data to the gateway. */
+  private audioChunkCount = 0;
+
   sendAudio(data: Buffer | ArrayBuffer): void {
-    if (!this.audioWs || this.audioWs.readyState !== WebSocket.OPEN) return;
+    if (!this.audioWs || this.audioWs.readyState !== WebSocket.OPEN) {
+      if (this.audioChunkCount === 0) {
+        console.warn(`[GatewayListener] sendAudio called but WebSocket not open (ws=${!!this.audioWs}, readyState=${this.audioWs?.readyState})`);
+      }
+
+      return;
+    }
 
     // Skip if the outbound buffer is backed up — prevents memory runaway
     if (this.audioWs.bufferedAmount > AUDIO_BACKPRESSURE_THRESHOLD) {
       console.warn(`[GatewayListener] Audio backpressure — skipping chunk (buffered: ${this.audioWs.bufferedAmount})`);
+
       return;
     }
 
     // Send as binary frame
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-    this.audioWs.send(buf);
+    this.audioChunkCount++;
+    if (this.audioChunkCount <= 3 || this.audioChunkCount % 100 === 0) {
+      console.log(`[GatewayListener] Sending audio chunk #${this.audioChunkCount} (${buf.length} bytes)`);
+    }
+    try {
+      this.audioWs.send(buf);
+    } catch (err: any) {
+      console.error(`[GatewayListener] Audio send failed (chunk #${this.audioChunkCount}): ${err.message}`);
+    }
   }
 
   /** Close the audio stream and end the gateway session. */
@@ -296,7 +427,8 @@ export class GatewayListenerService {
       this.audioReconnectTimer = null;
     }
 
-    // Close WebSocket
+    // Close session listener and audio WebSocket
+    this.closeSessionListener();
     if (this.audioWs) {
       this.audioWs.close(1000, 'Recording stopped');
       this.audioWs = null;
@@ -307,13 +439,20 @@ export class GatewayListenerService {
       this.activeSessionId = null;
       this.activeCallId = null;
 
-      const config = await this.getConfig();
-      if (config) {
-        const baseUrl = config.url.replace(/\/+$/, '');
-        await fetch(`${baseUrl}/api/desktop/sessions/${sessionId}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${config.apiKey}` },
-        }).catch(() => {});
+      try {
+        const config = await this.getConfig();
+        if (config) {
+          const baseUrl = config.url.replace(/\/+$/, '');
+          const resp = await this.gatewayFetch(`${baseUrl}/api/desktop/sessions/${sessionId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${config.apiKey}` },
+          });
+          if (!resp.ok) {
+            console.warn(`[GatewayListener] Session DELETE failed (${resp.status}) for ${sessionId}`);
+          }
+        }
+      } catch (err: any) {
+        console.error(`[GatewayListener] Session DELETE error for ${sessionId}: ${err.message}`);
       }
 
       console.log(`[GatewayListener] Session ended: ${sessionId}`);
@@ -375,9 +514,10 @@ export class GatewayListenerService {
           return;
         }
 
+        console.log(`[GatewayListener] Lobby event: ${event.event_type} (listeners: ${this.listeners.size})`);
         this.emit(event);
-      } catch {
-        // non-JSON message, ignore
+      } catch (err) {
+        console.warn(`[GatewayListener] Lobby non-JSON message: ${data.toString().slice(0, 200)}`);
       }
     });
 
@@ -452,7 +592,11 @@ export class GatewayListenerService {
   /** Send a JSON message on the lobby WebSocket. */
   private lobbySend(msg: Record<string, unknown>): void {
     if (this.lobbyWs && this.lobbyWs.readyState === WebSocket.OPEN) {
-      this.lobbyWs.send(JSON.stringify(msg));
+      try {
+        this.lobbyWs.send(JSON.stringify(msg));
+      } catch (err: any) {
+        console.error(`[GatewayListener] Lobby send failed: ${err.message}`);
+      }
     }
   }
 
@@ -485,10 +629,41 @@ export class GatewayListenerService {
 
   private getWsOptions(config: { url: string }): Record<string, unknown> {
     // Skip SSL verification for local dev (self-signed certs)
-    const isLocal = config.url.includes('localhost') || config.url.includes('127.0.0.1');
-    if (isLocal) {
+    if (this.isLocalUrl(config.url)) {
       return { rejectUnauthorized: false };
     }
     return {};
+  }
+
+  /**
+   * Fetch wrapper that skips TLS verification for local/dev URLs
+   * (self-signed certs on localhost). Matches the same TLS policy as WebSocket.
+   */
+  private async gatewayFetch(url: string, init: RequestInit): Promise<Response> {
+    if (url.startsWith('https:') && this.isLocalUrl(url)) {
+      const { Agent } = require('undici');
+      const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+
+      return fetch(url, { ...init, dispatcher } as any);
+    }
+
+    return fetch(url, init);
+  }
+
+  private isLocalUrl(url: string): boolean {
+    try {
+      const { hostname } = new URL(url);
+
+      return hostname === 'localhost'
+        || hostname.endsWith('.localhost')
+        || hostname === '127.0.0.1'
+        || hostname.startsWith('127.')
+        || hostname === '0.0.0.0'
+        || hostname === '::1'
+        || hostname === '[::1]'
+        || hostname.endsWith('.local');
+    } catch {
+      return false;
+    }
   }
 }
