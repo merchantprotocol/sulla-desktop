@@ -52,6 +52,25 @@
             </p>
           </div>
 
+          <div class="setting-section">
+            <h3>Enterprise Gateway</h3>
+            <div class="status-row">
+              <span class="status-label">Connection:</span>
+              <span
+                class="status-badge"
+                :class="gatewayConnected ? 'badge-success' : 'badge-warning'"
+              >
+                {{ gatewayConnected ? 'Connected' : 'Not configured' }}
+              </span>
+            </div>
+            <p
+              v-if="!gatewayConnected"
+              class="description"
+            >
+              Configure your Enterprise Gateway in Integrations to enable gateway transcription.
+            </p>
+          </div>
+
           <!-- Audio Input Device -->
           <div class="setting-section">
             <h3>Microphone</h3>
@@ -121,8 +140,14 @@
               @change="saveSettings"
             >
               <option value="browser">Browser (real-time)</option>
-              <option value="elevenlabs">ElevenLabs (high accuracy)</option>
-              <option value="gateway">Enterprise Gateway</option>
+              <option
+                v-if="apiKeyConnected"
+                value="elevenlabs"
+              >ElevenLabs (high accuracy)</option>
+              <option
+                v-if="gatewayConnected"
+                value="gateway"
+              >Enterprise Gateway</option>
             </select>
             <p class="description">
               <strong>Browser</strong> uses Chrome's built-in speech recognition for instant, live transcription
@@ -132,12 +157,6 @@
               <strong>Enterprise Gateway</strong> routes audio through your Enterprise Gateway server,
               which handles transcription server-side. Configure the gateway URL and API key in
               Integrations &rarr; Enterprise Sulla.
-            </p>
-            <p
-              v-if="transcriptionMode === 'gateway' && !gatewayConnected"
-              class="description warning"
-            >
-              Enterprise Gateway is not configured. Add your gateway URL and API key in Integrations &rarr; Enterprise Sulla.
             </p>
           </div>
 
@@ -265,21 +284,6 @@
           </div>
 
           <template v-else>
-            <div class="setting-section">
-              <h3>Transcription Mode</h3>
-              <select
-                v-model="secretaryTranscriptionMode"
-                class="setting-select"
-                @change="saveSettings"
-              >
-                <option value="browser">Browser (real-time)</option>
-                <option value="elevenlabs">ElevenLabs (high accuracy)</option>
-              </select>
-              <p class="description">
-                How secretary mode transcribes audio. Independent of the main transcription setting.
-              </p>
-            </div>
-
             <div class="setting-section">
               <h3>Enable Secretary Mode</h3>
               <label class="toggle-row">
@@ -449,7 +453,6 @@ const voices = ref<{ value: string; label: string; description?: string }[]>([])
 const loadingVoices = ref(false);
 
 // Secretary Mode
-const secretaryTranscriptionMode = ref('browser');
 const secretaryEnabled = ref(false);
 const secretaryAgentId = ref('');
 const secretaryAgentName = ref('');
@@ -476,7 +479,6 @@ async function loadSettings(): Promise<void> {
     vadSilenceDuration.value = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
     sttLanguage.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
-    secretaryTranscriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryTranscriptionMode', 'browser');
     secretaryEnabled.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryEnabled', false);
     secretaryAgentId.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryAgentId', '');
     secretaryAgentName.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryAgentName', '');
@@ -496,7 +498,6 @@ async function saveSettings(): Promise<void> {
     await ipcRenderer.invoke('sulla-settings-set', 'audioVadSilenceDuration', vadSilenceDuration.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioSttLanguage', sttLanguage.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioInputDeviceId', audioInputDeviceId.value);
-    await ipcRenderer.invoke('sulla-settings-set', 'secretaryTranscriptionMode', secretaryTranscriptionMode.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryEnabled', secretaryEnabled.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentId', secretaryAgentId.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentName', secretaryAgentName.value);
