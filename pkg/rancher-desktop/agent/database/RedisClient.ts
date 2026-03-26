@@ -12,6 +12,9 @@ export class RedisClient {
   private connectionAttempts = 0;
   private maxConnectionAttempts = 10;
   private connectionRetryDelay = 2000;
+  private gaveUp = false;
+  private gaveUpAt = 0;
+  private cooldownMs = 30_000; // retry after 30s cooldown if we gave up
 
   constructor() {
     this.client = new Redis(REDIS_URL, {
@@ -61,16 +64,33 @@ export class RedisClient {
   async initialize(): Promise<boolean> {
     if (this.connected) return true;
 
+    // If we previously gave up, allow retrying after a cooldown period
+    if (this.gaveUp) {
+      if (Date.now() - this.gaveUpAt < this.cooldownMs) {
+        return false; // Still in cooldown, don't spam logs
+      }
+      // Cooldown expired — reset and try again
+      console.log('[RedisClient] Cooldown expired, retrying connection...');
+      this.gaveUp = false;
+      this.connectionAttempts = 0;
+    }
+
     // Stop trying if we've exceeded max attempts
     if (this.connectionAttempts >= this.maxConnectionAttempts) {
-      console.log(`[RedisClient] Max connection attempts (${ this.maxConnectionAttempts }) reached, giving up`);
+      console.log(`[RedisClient] Max connection attempts (${ this.maxConnectionAttempts }) reached, will retry after ${ this.cooldownMs / 1000 }s cooldown`);
+      this.gaveUp = true;
+      this.gaveUpAt = Date.now();
       return false;
     }
 
     try {
+      // With lazyConnect, we must explicitly connect before issuing commands
+      if (this.client.status === 'wait') {
+        await this.client.connect();
+      }
       await this.client.ping();
       this.connected = true;
-      this.connectionAttempts = 0; // Reset on successful connection
+      this.connectionAttempts = 0;
       return true;
     } catch (error) {
       this.connectionAttempts++;
@@ -198,6 +218,8 @@ export class RedisClient {
       await this.client.quit();
       this.connected = false;
     }
+    this.gaveUp = false;
+    this.connectionAttempts = 0;
   }
 
   // Pipeline support
@@ -209,8 +231,8 @@ export class RedisClient {
     if (!this.connected) {
       const ok = await this.initialize();
       if (!ok) {
-        if (this.connectionAttempts >= this.maxConnectionAttempts) {
-          throw new Error(`Redis not connected after ${ this.maxConnectionAttempts } attempts`);
+        if (this.gaveUp) {
+          throw new Error(`Redis not available (cooling down, will retry after ${ this.cooldownMs / 1000 }s)`);
         } else {
           throw new Error('Redis server not available yet');
         }

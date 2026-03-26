@@ -195,9 +195,16 @@ export class AnthropicService extends BaseLanguageModel {
     }
 
     // Anthropic requires the final turn to be a user message.
+    // When the agent is mid-loop (AGENT_CONTINUE), the last message is an assistant
+    // response. We must pad with a user turn, but a bare "continue" causes the LLM
+    // to treat its own prior output as acknowledged user input and re-summarize it.
+    // Use a directive that keeps the model focused on its plan.
     const lastProcessedMessage = processedMessages[processedMessages.length - 1];
     if (lastProcessedMessage?.role !== 'user') {
-      processedMessages.push({ role: 'user', content: 'continue' });
+      processedMessages.push({
+        role:    'user',
+        content: '[System: You are continuing your previous turn. Proceed with the next step of your plan. Do not re-summarize or re-analyze what you already said above — that was YOUR prior output, not a user message.]',
+      });
     }
 
     const anthropicBody: any = {

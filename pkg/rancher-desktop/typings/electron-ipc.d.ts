@@ -166,6 +166,12 @@ export interface IpcMainInvokeEvents {
   'integration-get-value':  (integrationId: string, property: string) => { value: string } | null;
   'desktop-session-start':  (payload?: { callerName?: string }) => { sessionId: string | null; callId?: string; error?: string };
   'desktop-session-end':    (sessionId: string) => { ok: boolean };
+  'gateway-listener-start':  () => { ok: boolean };
+  'gateway-listener-stop':   () => { ok: boolean };
+  'gateway-listener-status': () => { lobbyConnected: boolean; audioConnected: boolean; sessionId: string | null; callId: string | null; error: string | null };
+  'gateway-audio-start':     (payload?: { callerName?: string }) => { sessionId: string | null; callId: string | null; error: string | null };
+  'gateway-audio-stop':      () => { ok: boolean };
+  'gateway-audio-send':      (payload: { audio: ArrayBuffer }) => { ok: boolean };
   // #endregion
 
   // #region Filesystem

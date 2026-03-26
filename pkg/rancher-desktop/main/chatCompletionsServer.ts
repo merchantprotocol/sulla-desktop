@@ -171,6 +171,32 @@ export class ChatCompletionsServer {
       await this.handleIntegrationCall(req, res);
     });
 
+    // ── MCP Config Generation endpoints ─────────────────────────────
+    // Register: save MCP server credentials (server_url + optional auth_token)
+    this.app.post('/v1/mcp/register', async(req: Request, res: Response) => {
+      await this.handleMCPRegister(req, res);
+    });
+
+    // Discover: connect to an MCP account, list tools, diff against existing configs
+    this.app.post('/v1/mcp/:accountId/discover', async(req: Request, res: Response) => {
+      await this.handleMCPDiscover(req, res);
+    });
+
+    // Finalize: write YAML configs from discovered tools, then reload the config loader
+    this.app.post('/v1/mcp/:accountId/finalize', async(req: Request, res: Response) => {
+      await this.handleMCPFinalize(req, res);
+    });
+
+    // Refresh: re-discover tools and regenerate configs
+    this.app.post('/v1/mcp/:accountId/refresh', async(req: Request, res: Response) => {
+      await this.handleMCPRefresh(req, res);
+    });
+
+    // Remove: delete generated YAML configs for an MCP account
+    this.app.delete('/v1/mcp/:accountId/configs', async(req: Request, res: Response) => {
+      await this.handleMCPRemoveConfigs(req, res);
+    });
+
     // Backward compatibility aliases
     this.app.get('/v1/integrations', async(req: Request, res: Response) => {
       await this.handleListIntegrations(req, res);
@@ -701,6 +727,18 @@ export class ChatCompletionsServer {
               if (param.required) required.push(k);
             }
 
+            for (const [k, v] of Object.entries(ep.body_params || {})) {
+              const param = v as any;
+              const prop: any = { type: param.type || 'string', description: param.description || '' };
+              if (param.enum) prop.enum = param.enum;
+              if (param.default !== undefined) prop.default = param.default;
+              if (param.format) prop.format = param.format;
+              if (param.max !== undefined) prop.maximum = param.max;
+              if (param.min !== undefined) prop.minimum = param.min;
+              properties[k] = prop;
+              if (param.required) required.push(k);
+            }
+
             const endpoint: any = {
               name:        ep.endpoint.name,
               method:      ep.endpoint.method,
@@ -891,6 +929,136 @@ export class ChatCompletionsServer {
     } catch (error: any) {
       console.error(`[ChatCompletionsAPI] Integration call failed (${ slug }/${ endpoint }):`, error);
       res.status(500).json({ success: false, error: error.message || 'Integration call failed' });
+    }
+  }
+
+  // ── MCP Config Generation handlers ─────────────────────────────
+
+  private async handleMCPRegister(req: Request, res: Response) {
+    const { account_id, server_url, auth_token, label } = req.body || {};
+
+    if (!account_id || !server_url) {
+      return res.status(400).json({ success: false, error: 'account_id and server_url are required' });
+    }
+
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const svc = getIntegrationService();
+
+      const accountId = String(account_id);
+
+      // Save credentials
+      await svc.setIntegrationValue({ integration_id: 'mcp', account_id: accountId, property: 'server_url', value: String(server_url) });
+      if (auth_token) {
+        await svc.setIntegrationValue({ integration_id: 'mcp', account_id: accountId, property: 'auth_token', value: String(auth_token) });
+      }
+      if (label) {
+        await svc.setIntegrationValue({ integration_id: 'mcp', account_id: accountId, property: 'account_label', value: String(label) });
+      }
+
+      // Mark as connected
+      await svc.setConnectionStatus('mcp', true, accountId);
+
+      res.json({ success: true, accountId, server_url, message: `MCP account "${ accountId }" registered. Call POST /v1/mcp/${ accountId }/discover to list tools, then POST /v1/mcp/${ accountId }/finalize to generate configs.` });
+    } catch (error: any) {
+      console.error('[ChatCompletionsAPI] MCP register failed:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  private async handleMCPDiscover(req: Request, res: Response) {
+    const accountId = String(req.params.accountId);
+    try {
+      const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
+      const bridge = MCPBridge.getInstance();
+      const { tools, diff } = await bridge.discoverTools(accountId);
+
+      res.json({
+        success:   true,
+        accountId,
+        toolCount: tools.length,
+        tools:     tools.map(t => ({
+          name:        t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+        })),
+        diff,
+      });
+    } catch (error: any) {
+      console.error(`[ChatCompletionsAPI] MCP discover failed (${ accountId }):`, error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  private async handleMCPFinalize(req: Request, res: Response) {
+    const accountId = String(req.params.accountId);
+    try {
+      const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
+      const bridge = MCPBridge.getInstance();
+      const result = await bridge.finalizeConfigs(accountId);
+
+      // Reload the config loader so the new integration is immediately available
+      const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+      const loader = getIntegrationConfigLoader();
+      await loader.loadAll();
+
+      res.json({
+        success: true,
+        accountId,
+        dirName:       result.dirName,
+        endpointCount: result.endpointCount,
+        toolNames:     result.toolNames,
+      });
+    } catch (error: any) {
+      console.error(`[ChatCompletionsAPI] MCP finalize failed (${ accountId }):`, error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  private async handleMCPRefresh(req: Request, res: Response) {
+    const accountId = String(req.params.accountId);
+    try {
+      const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
+      const bridge = MCPBridge.getInstance();
+      const { result, diff } = await bridge.refreshConfigs(accountId);
+
+      // Reload the config loader
+      const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+      const loader = getIntegrationConfigLoader();
+      await loader.loadAll();
+
+      res.json({
+        success: true,
+        accountId,
+        dirName:       result.dirName,
+        endpointCount: result.endpointCount,
+        toolNames:     result.toolNames,
+        diff,
+      });
+    } catch (error: any) {
+      console.error(`[ChatCompletionsAPI] MCP refresh failed (${ accountId }):`, error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  private async handleMCPRemoveConfigs(req: Request, res: Response) {
+    const accountId = String(req.params.accountId);
+    try {
+      const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
+      const bridge = MCPBridge.getInstance();
+      const removed = bridge.removeConfigs(accountId);
+
+      if (removed) {
+        // Reload the config loader so the integration disappears
+        const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+        const loader = getIntegrationConfigLoader();
+        await loader.loadAll();
+      }
+
+      res.json({ success: true, accountId, removed });
+    } catch (error: any) {
+      console.error(`[ChatCompletionsAPI] MCP remove configs failed (${ accountId }):`, error);
+      res.status(500).json({ success: false, error: error.message });
     }
   }
 

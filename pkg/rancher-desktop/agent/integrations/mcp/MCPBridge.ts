@@ -8,6 +8,13 @@
 import { MCPClient } from './MCPClient';
 import type { MCPToolDefinition, MCPToolCallResult } from './MCPClient';
 import { getIntegrationService } from '../../services/IntegrationService';
+import {
+  generateConfigs,
+  removeConfigs,
+  diffConfigs,
+  type GenerateResult,
+  type DiffResult,
+} from './MCPConfigGenerator';
 
 const LOG = '[MCPBridge]';
 const INTEGRATION_ID = 'mcp';
@@ -161,6 +168,99 @@ export class MCPBridge {
       throw new Error(`${ LOG } No MCP client for account "${ accountId }". Connected accounts: ${ [...this.clients.keys()].join(', ') || 'none' }`);
     }
     return client.callTool(toolName, args);
+  }
+
+  // ── Config Generation (MCP → YAML) ────────────────────────────
+
+  /**
+   * Preview what tools an MCP server exposes without finalizing.
+   * Connects temporarily if not already connected, discovers tools,
+   * and returns a diff against any existing YAML configs on disk.
+   */
+  async discoverTools(accountId: string): Promise<{
+    tools: MCPToolDefinition[];
+    diff:  DiffResult;
+  }> {
+    // Initialize if not already connected
+    if (!this.clients.has(accountId)) {
+      await this.initializeAccount(accountId);
+    }
+
+    const tools = this.getToolsForAccount(accountId);
+    const diff = diffConfigs(accountId, tools);
+
+    return { tools, diff };
+  }
+
+  /**
+   * Finalize: write YAML integration configs for an MCP account's tools.
+   * After calling this, IntegrationConfigLoader.loadAll() will pick up
+   * the generated mcp-{accountId}/ directory.
+   */
+  async finalizeConfigs(accountId: string): Promise<GenerateResult> {
+    const client = this.clients.get(accountId);
+    if (!client) {
+      throw new Error(`${ LOG } Cannot finalize — account "${ accountId }" is not connected`);
+    }
+
+    const svc = getIntegrationService();
+    const accounts = await svc.getAccounts(INTEGRATION_ID);
+    const account = accounts.find(a => a.account_id === accountId);
+    const label = account?.label || accountId;
+
+    return generateConfigs(accountId, label, client.url, client.tools);
+  }
+
+  /**
+   * Refresh YAML configs for an account: re-discover tools and regenerate.
+   * Returns the diff of what changed.
+   */
+  async refreshConfigs(accountId: string): Promise<{
+    result: GenerateResult;
+    diff:   DiffResult;
+  }> {
+    // Re-discover tools from the live server
+    const client = this.clients.get(accountId);
+    if (!client) {
+      throw new Error(`${ LOG } Cannot refresh — account "${ accountId }" is not connected`);
+    }
+    await client.discoverTools();
+
+    const diff = diffConfigs(accountId, client.tools);
+    const result = await this.finalizeConfigs(accountId);
+
+    return { result, diff };
+  }
+
+  /**
+   * Remove YAML configs for an MCP account.
+   */
+  removeConfigs(accountId: string): boolean {
+    return removeConfigs(accountId);
+  }
+
+  /**
+   * Generate YAML configs for all currently connected accounts.
+   * Called on startup after initializeAll() to ensure configs exist.
+   */
+  async generateAllConfigs(): Promise<GenerateResult[]> {
+    const results: GenerateResult[] = [];
+
+    for (const [accountId, client] of this.clients) {
+      try {
+        const svc = getIntegrationService();
+        const accounts = await svc.getAccounts(INTEGRATION_ID);
+        const account = accounts.find(a => a.account_id === accountId);
+        const label = account?.label || accountId;
+
+        const result = generateConfigs(accountId, label, client.url, client.tools);
+        results.push(result);
+      } catch (err: any) {
+        console.error(`${ LOG } Failed to generate configs for "${ accountId }":`, err.message);
+      }
+    }
+
+    return results;
   }
 
   /**

@@ -1,12 +1,24 @@
 // Types for YAML-defined integration configs in ~/sulla/integrations
 
+/** Transport type — REST (default) uses fetch, MCP uses MCPBridge */
+export type IntegrationTransport = 'rest' | 'mcp';
+
 /** Top-level auth config (e.g. youtube.v3-auth.yaml) */
 export interface IntegrationAuthConfig {
   api: {
-    name:      string;
-    version:   string;
-    provider?: string;
-    base_url:  string;
+    name:       string;
+    version:    string;
+    provider?:  string;
+    base_url:   string;
+    /** Transport layer. Defaults to 'rest'. MCP-generated configs set this to 'mcp'. */
+    transport?: IntegrationTransport;
+  };
+  /** MCP-specific metadata (only present for transport: mcp) */
+  mcp?: {
+    /** The MCP account ID this config was generated from */
+    account_id: string;
+    /** ISO timestamp when tools were last synced from the MCP server */
+    synced_at:  string;
   };
   auth: {
     type:                         'oauth2' | 'apiKey' | 'bearer';
@@ -44,12 +56,15 @@ export interface EndpointConfig {
     method:      'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
     auth:        'required' | 'optional' | 'none';
     quota_cost?: number;
+    /** Transport override for this endpoint. If set to 'mcp', calls are routed via MCPBridge. */
+    transport?:  IntegrationTransport;
   };
   query_params?: Record<string, QueryParamDef>;
   path_params?:  Record<string, PathParamDef>;
+  body_params?:  Record<string, QueryParamDef>;
   pagination?:   PaginationConfig;
   response?:     ResponseConfig;
-  examples?:     Record<string, { params: Record<string, any> }>;
+  examples?:     Record<string, { params: Record<string, any>; body?: Record<string, any> }>;
 }
 
 export interface QueryParamDef {
