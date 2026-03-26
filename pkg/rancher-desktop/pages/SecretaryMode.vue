@@ -79,7 +79,7 @@
             v-if="isListening"
             class="dt-btn"
             :class="isMuted ? 'dt-btn-muted' : 'dt-btn-unmuted'"
-            @click="isMuted = !isMuted"
+            @click="toggleMute"
           >
             {{ isMuted ? 'UNMUTE' : 'MUTE' }}
           </button>
@@ -102,25 +102,39 @@
 
       <!-- Terminal body: transcript left, notes right -->
       <div class="dt-body dt-body-live">
-        <!-- LEFT: Transcript -->
+        <!-- LEFT: Meeting transcript -->
         <div class="dt-pane-left">
           <div class="dt-pane-hdr">
-            <span>TRANSCRIPT</span>
+            <span>MEETING TRANSCRIPT</span>
             <span class="dt-pane-count">{{ transcript.length }}</span>
           </div>
-          <div ref="transcriptScrollEl" class="dt-pane-scroll">
-            <div v-for="entry in transcript" :key="entry.id" class="dt-line-live">
-              <span class="dt-ts">{{ formatTime(entry.timestamp) }}</span>
-              <span
-                :class="{
-                  'dt-text-wake': entry.type === 'wake-command',
-                  'dt-text-agent': entry.type === 'agent-response',
-                }"
-              >{{ entry.text }}</span>
+          <div ref="transcriptScrollEl" class="dt-pane-scroll dt-timeline">
+            <div
+              v-for="entry in transcript"
+              :key="entry.id"
+              class="dt-turn"
+              :class="{ 'dt-turn-wake': entry.type === 'wake-command' }"
+            >
+              <div
+                class="dt-turn-bar"
+                :style="{ background: getSpeakerColor(entry.speaker || 'Unknown') }"
+              />
+              <div class="dt-turn-content">
+                <div class="dt-turn-header">
+                  <span
+                    class="dt-turn-speaker"
+                    :style="{ color: getSpeakerColor(entry.speaker || 'Unknown') }"
+                  >{{ entry.speaker || 'Speaker' }}</span>
+                  <span class="dt-turn-time">{{ formatTime(entry.timestamp) }}</span>
+                </div>
+                <div class="dt-turn-text">{{ entry.text }}</div>
+              </div>
             </div>
-            <div v-if="isListening && transcript.length === 0" class="dt-line-live dt-dim">
-              <span class="dt-ts">{{ formatTimeNowFull() }}</span>
-              <span>Listening...</span>
+            <div v-if="isListening && transcript.length === 0" class="dt-turn">
+              <div class="dt-turn-bar" style="background: var(--text-dim, #6e7681);" />
+              <div class="dt-turn-content">
+                <div class="dt-turn-text dt-dim">Listening...</div>
+              </div>
             </div>
           </div>
         </div>
@@ -252,6 +266,15 @@ function stopTTS(): void {
   controller?.setTTSActive(false);
 }
 
+function toggleMute(): void {
+  isMuted.value = !isMuted.value;
+  if (isMuted.value) {
+    // Immediately kill all playing audio
+    stopTTS();
+    controller?.stopAgentAudio();
+  }
+}
+
 async function playTTS(text: string): Promise<void> {
   if (isMuted.value) return;
   stopTTS();
@@ -331,6 +354,31 @@ function formatTimeNowFull(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+// ── Speaker color assignment (up to 12 distinct colors) ──────
+const SPEAKER_COLORS = [
+  '#58a6ff', // blue
+  '#3fb950', // green
+  '#d2a8ff', // purple
+  '#f0883e', // orange
+  '#f778ba', // pink
+  '#79c0ff', // light blue
+  '#7ee787', // light green
+  '#d29922', // yellow
+  '#ff7b72', // red
+  '#a5d6ff', // sky
+  '#ffa657', // peach
+  '#bc8cff', // lavender
+];
+const speakerColorMap = new Map<string, string>();
+
+function getSpeakerColor(speaker: string): string {
+  const key = speaker.toLowerCase();
+  if (speakerColorMap.has(key)) return speakerColorMap.get(key)!;
+  const color = SPEAKER_COLORS[speakerColorMap.size % SPEAKER_COLORS.length];
+  speakerColorMap.set(key, color);
+  return color;
+}
+
 function scrollAnalysis(): void {
   nextTick(() => {
     if (analysisScrollEl.value) {
@@ -352,8 +400,8 @@ function resetAndChoose(): void {
 // ── Controller (all business logic) ────────────────────────────
 
 const controller = new SecretaryModeController({
-  addEntry(text: string, type: TranscriptEntry['type'] = 'transcript') {
-    transcript.value.push({ id: generateEntryId(), timestamp: new Date(), text, type });
+  addEntry(text: string, type: TranscriptEntry['type'] = 'transcript', speaker?: string) {
+    transcript.value.push({ id: generateEntryId(), timestamp: new Date(), text, type, speaker });
     nextTick(() => {
       if (transcriptScrollEl.value) {
         transcriptScrollEl.value.scrollTop = transcriptScrollEl.value.scrollHeight;
@@ -749,23 +797,64 @@ onUnmounted(() => {
   padding: 0.5rem 0;
 }
 
-.dt-line-live {
-  color: var(--text-muted, #8b949e);
-  margin-bottom: 0.375rem;
-  line-height: 1.7;
+/* ── Meeting transcript turns ─────────────────────────── */
+
+.dt-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
-.dt-line-live.dt-dim {
+.dt-turn {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.375rem 0;
+  border-bottom: 1px solid var(--border-muted, #21262d);
+}
+
+.dt-turn:last-child {
+  border-bottom: none;
+}
+
+.dt-turn-wake {
+  background: rgba(80, 150, 179, 0.06);
+}
+
+.dt-turn-bar {
+  width: 3px;
+  min-width: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.dt-turn-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.dt-turn-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.125rem;
+}
+
+.dt-turn-speaker {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dt-turn-time {
+  font-size: 9px;
   color: var(--text-dim, #6e7681);
 }
 
-.dt-text-wake {
-  color: var(--accent-primary, #5096b3);
-  font-weight: 500;
-}
-
-.dt-text-agent {
-  color: var(--green-bright, #3FB950);
+.dt-turn-text {
+  font-size: 11px;
+  color: var(--text-muted, #8b949e);
+  line-height: 1.6;
 }
 
 /* ── Right pane sections ─────────────────────────────────── */

@@ -514,6 +514,13 @@ export class GatewayListenerService {
           return;
         }
 
+        // Transcript events are delivered via the per-session listener WS, not the lobby.
+        // Skip them here to prevent duplicate messages in the renderer.
+        if (event.event_type === 'transcript_turn' || event.event_type === 'transcript_partial') {
+          console.log(`[GatewayListener] Lobby: ignoring ${event.event_type} (delivered via session listener)`);
+          return;
+        }
+
         console.log(`[GatewayListener] Lobby event: ${event.event_type} (listeners: ${this.listeners.size})`);
         this.emit(event);
       } catch (err) {

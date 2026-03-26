@@ -17,25 +17,47 @@ export class RedisClient {
   private cooldownMs = 30_000; // retry after 30s cooldown if we gave up
 
   constructor() {
-    this.client = new Redis(REDIS_URL, {
+    this.client = this.createClient();
+  }
+
+  /**
+   * Create a fresh ioredis instance with proper reconnection settings.
+   * Called on construction and when a dead client needs to be replaced.
+   */
+  private createClient(): Redis {
+    const client = new Redis(REDIS_URL, {
+      // Never return null — always keep trying to reconnect.
+      // The Lima VM / Docker containers can restart at any time;
+      // a dead ioredis client cannot be revived, so we must keep retrying.
       retryStrategy: (times: number) => {
-        if (times > this.maxConnectionAttempts) {
-          return null; // Stop retrying
+        // Back off up to 10s between retries, indefinitely
+        const delay = Math.min(times * 200, 10_000);
+
+        if (times % 30 === 0) {
+          console.log(`[RedisClient] Still reconnecting (attempt ${ times }, next retry in ${ delay }ms)`);
         }
 
-        return Math.min(times * 50, 2000);
+        return delay;
       },
       maxRetriesPerRequest: 3,
       lazyConnect:          true, // Don't auto-connect on construction
+      // Enable built-in readiness checking so ioredis knows when it's safe
+      enableReadyCheck: true,
     });
 
-    this.client.on('connect', () => {
+    client.on('connect', () => {
       this.connected = true;
       this.connectionAttempts = 0;
+      this.gaveUp = false;
       console.log('[RedisClient] Connected');
     });
 
-    this.client.on('error', (err: any) => {
+    client.on('ready', () => {
+      this.connected = true;
+      console.log('[RedisClient] Ready');
+    });
+
+    client.on('error', (err: any) => {
       this.connected = false;
       // Reduce error verbosity for common startup errors
       if ((err).code === 'ECONNREFUSED' || (err).code === 'EPIPE' || (err).code === 'ECONNRESET') {
@@ -45,10 +67,20 @@ export class RedisClient {
       }
     });
 
-    this.client.on('close', () => {
+    client.on('close', () => {
       this.connected = false;
       console.log('[RedisClient] Connection closed');
     });
+
+    // If the client enters 'end' state (retryStrategy returned null or
+    // .disconnect() was called), it is permanently dead.  This should not
+    // happen with our retryStrategy, but guard against it defensively.
+    client.on('end', () => {
+      this.connected = false;
+      console.warn('[RedisClient] Client entered "end" state — will recreate on next command');
+    });
+
+    return client;
   }
 
   /**
@@ -64,6 +96,13 @@ export class RedisClient {
   async initialize(): Promise<boolean> {
     if (this.connected) return true;
 
+    // If the ioredis client is in 'end' state it is permanently dead and
+    // cannot be reconnected.  Replace it with a fresh instance.
+    if (this.client.status === 'end') {
+      console.log('[RedisClient] Replacing dead client instance');
+      this.client = this.createClient();
+    }
+
     // If we previously gave up, allow retrying after a cooldown period
     if (this.gaveUp) {
       if (Date.now() - this.gaveUpAt < this.cooldownMs) {
@@ -75,7 +114,9 @@ export class RedisClient {
       this.connectionAttempts = 0;
     }
 
-    // Stop trying if we've exceeded max attempts
+    // Stop trying if we've exceeded max attempts for this initialize() cycle.
+    // The background retryStrategy keeps trying independently; this limit only
+    // prevents the caller from blocking forever.
     if (this.connectionAttempts >= this.maxConnectionAttempts) {
       console.log(`[RedisClient] Max connection attempts (${ this.maxConnectionAttempts }) reached, will retry after ${ this.cooldownMs / 1000 }s cooldown`);
       this.gaveUp = true;

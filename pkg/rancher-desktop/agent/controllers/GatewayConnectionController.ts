@@ -20,8 +20,8 @@ const console = Logging.background;
 
 // ─── Types ──────────────────────────────────────────────────────
 
-/** Event types the renderer cares about for transcript display */
-const TRANSCRIPT_EVENT_TYPES = new Set(['transcript_turn', 'transcript_partial']);
+/** Event types the renderer cares about for transcript display and audio playback */
+const TRANSCRIPT_EVENT_TYPES = new Set(['transcript_turn', 'transcript_partial', 'agent_audio']);
 
 type TranscriptForwarder = (event: { event_type: string; [key: string]: unknown }) => void;
 
