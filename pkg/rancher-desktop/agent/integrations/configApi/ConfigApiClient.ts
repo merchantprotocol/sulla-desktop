@@ -83,6 +83,8 @@ export class ConfigApiClient {
 
   /**
    * Execute an API call against a named endpoint.
+   * If the endpoint or integration uses transport: 'mcp', the call is
+   * routed through MCPBridge instead of a standard HTTP fetch.
    */
   async call<T = any>(
     endpointName: string,
@@ -93,6 +95,12 @@ export class ConfigApiClient {
     if (!epConfig) {
       const available = this.endpointNames.join(', ');
       throw new Error(`${ LOG } Endpoint "${ endpointName }" not found. Available: ${ available }`);
+    }
+
+    // Route MCP-transport endpoints through MCPBridge
+    const transport = epConfig.endpoint.transport || this.integration.auth.api.transport || 'rest';
+    if (transport === 'mcp') {
+      return this.callMCP<T>(endpointName, params, options);
     }
 
     const ep = epConfig.endpoint;
@@ -160,6 +168,33 @@ export class ConfigApiClient {
   }
 
   // ── Private helpers ─────────────────────────────────────────────
+
+  /**
+   * Route an endpoint call through MCPBridge for MCP-transport integrations.
+   * The MCP account ID is resolved from the auth config's mcp.account_id field.
+   */
+  private async callMCP<T>(
+    endpointName: string,
+    params: Record<string, any>,
+    options: CallOptions,
+  ): Promise<T> {
+    const accountId = options.accountId || this.integration.auth.mcp?.account_id;
+    if (!accountId) {
+      throw new Error(`${ LOG } MCP transport requires an account_id (integration: ${ this.slug })`);
+    }
+
+    // Dynamic import to avoid circular deps and to keep MCPBridge out of the renderer bundle
+    const { MCPBridge } = await import('../mcp/MCPBridge');
+    const bridge = MCPBridge.getInstance();
+
+    const result = await bridge.callTool(accountId, endpointName, params);
+
+    if (result.isError) {
+      throw new Error(`${ LOG } MCP tool "${ endpointName }" returned error: ${ JSON.stringify(result.content) }`);
+    }
+
+    return result as unknown as T;
+  }
 
   /**
    * Resolve a credential value. Checks:

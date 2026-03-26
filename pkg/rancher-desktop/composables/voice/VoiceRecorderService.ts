@@ -83,6 +83,11 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
   private recordingStartTime = 0;
   private recordingTimer: ReturnType<typeof setInterval> | null = null;
 
+  // ── Gateway audio streaming ──
+  private gatewayStreamRecorder: MediaRecorder | null = null;
+  private gatewaySessionId: string | null = null;
+  private gatewayStreamActive = false;
+
   // ── Settings ──
   private sttLanguage = 'en-US';
   private audioInputDeviceId = '';
@@ -110,6 +115,11 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
 
       if (this.transcriptionMode === 'browser') {
         this.startBrowserSTT();
+      } else if (this.transcriptionMode === 'gateway') {
+        // Gateway mode: stream audio directly to the gateway AND run batch STT
+        this.startGatewayAudioStream();
+        this.startBatchSegment();
+        this.startVAD();
       } else {
         this.startBatchSegment();
         this.startVAD();
@@ -142,10 +152,13 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
       this.recognitionInterim = '';
     }
 
-    // ElevenLabs mode: flush last segment
+    // ElevenLabs/gateway mode: flush last segment
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       this.mediaRecorder.stop(); // triggers onstop → transcribe if hasSpeechInSegment
     }
+
+    // Gateway mode: stop audio streaming
+    this.stopGatewayAudioStream();
 
     this.stopVAD();
 
@@ -194,6 +207,9 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
     }
     this.mediaRecorder = null;
     this.audioChunks = [];
+
+    // Gateway audio stream cleanup
+    this.stopGatewayAudioStream();
 
     // Release the stream — this is the only place tracks are stopped
     if (this.mediaStream) {
@@ -585,5 +601,65 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
     }
     this.analyser = null;
     this.silenceStart = null;
+  }
+
+  // ─── Gateway Audio Streaming ────────────────────────────────
+
+  /**
+   * Start streaming audio to the gateway.
+   * Creates a session, opens the audio WebSocket, and starts a MediaRecorder
+   * with a timeslice so chunks are sent continuously.
+   */
+  private async startGatewayAudioStream(): Promise<void> {
+    if (!this.mediaStream) return;
+
+    try {
+      // Create session + open audio WebSocket on main process
+      const result = await this.ipcInvoke('gateway-audio-start', { callerName: 'Sulla Desktop' });
+      if (result?.error || !result?.sessionId) {
+        console.warn('[VoiceRecorder] Gateway audio start failed:', result?.error);
+        return;
+      }
+
+      this.gatewaySessionId = result.sessionId;
+      this.gatewayStreamActive = true;
+      console.log(`[VoiceRecorder] Gateway audio stream started, session: ${result.sessionId}`);
+
+      // Create a separate MediaRecorder for continuous streaming (250ms chunks)
+      const streamMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+
+      this.gatewayStreamRecorder = new MediaRecorder(this.mediaStream, { mimeType: streamMime });
+
+      this.gatewayStreamRecorder.ondataavailable = async(event: BlobEvent) => {
+        if (event.data.size > 0 && this.gatewayStreamActive) {
+          const arrayBuffer = await event.data.arrayBuffer();
+          this.ipcInvoke('gateway-audio-send', { audio: arrayBuffer }).catch(() => {});
+        }
+      };
+
+      this.gatewayStreamRecorder.start(250); // emit data every 250ms
+    } catch (err) {
+      console.error('[VoiceRecorder] Gateway audio stream error:', err);
+      this.gatewayStreamActive = false;
+    }
+  }
+
+  /**
+   * Stop the gateway audio stream and clean up.
+   */
+  private stopGatewayAudioStream(): void {
+    this.gatewayStreamActive = false;
+
+    if (this.gatewayStreamRecorder && this.gatewayStreamRecorder.state !== 'inactive') {
+      try { this.gatewayStreamRecorder.stop(); } catch { /* ignore */ }
+    }
+    this.gatewayStreamRecorder = null;
+
+    if (this.gatewaySessionId) {
+      this.ipcInvoke('gateway-audio-stop').catch(() => {});
+      this.gatewaySessionId = null;
+    }
   }
 }

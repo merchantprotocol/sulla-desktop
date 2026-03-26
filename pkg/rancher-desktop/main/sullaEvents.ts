@@ -1134,6 +1134,64 @@ export function initSullaEvents(): void {
   });
 
   // ─────────────────────────────────────────────────────────────
+  // Gateway Listener — lobby WebSocket + audio streaming
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('gateway-listener-start', async() => {
+    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
+    const service = getGatewayListenerService();
+    await service.startLobby();
+
+    return { ok: true };
+  });
+
+  ipcMainProxy.handle('gateway-listener-stop', async() => {
+    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
+    const service = getGatewayListenerService();
+    service.stopLobby();
+
+    return { ok: true };
+  });
+
+  ipcMainProxy.handle('gateway-listener-status', async() => {
+    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
+    const service = getGatewayListenerService();
+
+    return service.getStatus();
+  });
+
+  ipcMainProxy.handle('gateway-audio-start', async(_event: unknown, payload?: { callerName?: string }) => {
+    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
+    const service = getGatewayListenerService();
+
+    try {
+      const result = await service.startAudioStream(payload?.callerName);
+
+      return { sessionId: result.sessionId, callId: result.callId, error: null };
+    } catch (err: any) {
+      console.error('[Sulla] Gateway audio start failed:', err.message);
+
+      return { sessionId: null, callId: null, error: err.message };
+    }
+  });
+
+  ipcMainProxy.handle('gateway-audio-stop', async() => {
+    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
+    const service = getGatewayListenerService();
+    await service.stopAudioStream();
+
+    return { ok: true };
+  });
+
+  ipcMainProxy.handle('gateway-audio-send', async(_event: unknown, payload: { audio: ArrayBuffer }) => {
+    const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
+    const service = getGatewayListenerService();
+    service.sendAudio(payload.audio);
+
+    return { ok: true };
+  });
+
+  // ─────────────────────────────────────────────────────────────
   // Integration value helpers
   // ─────────────────────────────────────────────────────────────
 
@@ -1170,6 +1228,53 @@ export function initSullaEvents(): void {
   });
 
   console.log('[Sulla] IPC event handlers initialized');
+
+  // Auto-connect gateway lobby listener once DB is ready
+  // NOTE: instantiateSullaStart() is not awaited in lima.ts, so sulla-first-run-complete
+  // fires before the DB is initialized. We wait for DatabaseManager.initialize() directly.
+  (async() => {
+    try {
+      const { getDatabaseManager } = await import('@pkg/agent/database/DatabaseManager');
+      const dbManager = getDatabaseManager();
+      await dbManager.initialize(); // returns immediately if already initialized, waits otherwise
+
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const { getGatewayListenerService } = await import('@pkg/agent/services/GatewayListenerService');
+      const integrationService = getIntegrationService();
+
+      const tryConnect = async() => {
+        const [urlValue, keyValue] = await Promise.all([
+          integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
+          integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),
+        ]);
+
+        const url = urlValue?.value?.trim();
+        const key = keyValue?.value?.trim();
+        console.log(`[Sulla] Gateway config check: url=${ url ? 'set' : 'missing' }, apiKey=${ key ? 'set' : 'missing' }`);
+
+        if (url && key) {
+          const service = getGatewayListenerService();
+          service.stopLobby();
+          await service.startLobby();
+          console.log('[Sulla] Gateway lobby listener connected');
+        } else {
+          console.log('[Sulla] Gateway not configured — lobby listener skipped (will auto-start when config is added)');
+        }
+      };
+
+      await tryConnect();
+
+      // Re-connect whenever gateway config is added or changed
+      integrationService.onValueChange((value, action) => {
+        if (value.integration_id === 'enterprise_gateway' && (action === 'created' || action === 'updated')) {
+          console.log(`[Sulla] Gateway config ${ action }: ${ value.property }, reconnecting lobby...`);
+          tryConnect().catch(err => console.warn('[Sulla] Gateway lobby reconnect failed:', err));
+        }
+      });
+    } catch (err) {
+      console.warn('[Sulla] Gateway lobby auto-connect failed:', err);
+    }
+  })();
 }
 
 // Nightly training schedule, auto-preprocessing, and related timers

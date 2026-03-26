@@ -4,6 +4,7 @@ export { IntegrationConfigLoader, getIntegrationConfigLoader } from './Integrati
 export type {
   EndpointConfig,
   IntegrationAuthConfig,
+  IntegrationTransport,
   LoadedIntegration,
   PaginationConfig,
   QueryParamDef,

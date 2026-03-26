@@ -216,7 +216,19 @@ export async function instantiateSullaStart(): Promise<void> {
       const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
       const bridge = MCPBridge.getInstance();
       await bridge.initializeAll();
-      console.log('[Background] MCPBridge ready');
+
+      // Generate YAML configs for all connected MCP accounts so they're
+      // available through IntegrationConfigLoader alongside REST integrations
+      const genResults = await bridge.generateAllConfigs();
+      if (genResults.length > 0) {
+        // Reload the config loader to pick up newly generated MCP integration dirs
+        const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+        const loader = getIntegrationConfigLoader();
+        await loader.loadAll();
+        console.log(`[Background] MCPBridge ready — generated configs for ${ genResults.length } server(s)`);
+      } else {
+        console.log('[Background] MCPBridge ready');
+      }
     } catch (error) {
       console.error('[Background] Failed to initialize MCP bridge:', error);
     }
