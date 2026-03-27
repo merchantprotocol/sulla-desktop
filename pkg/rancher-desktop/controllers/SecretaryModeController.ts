@@ -28,6 +28,7 @@ export interface TranscriptEntry {
   timestamp: Date;
   text: string;
   type: 'transcript' | 'wake-command' | 'agent-response';
+  speaker?: string;
 }
 
 export interface InsightEntry {
@@ -42,7 +43,7 @@ export interface AgentMessage {
 }
 
 export interface SecretaryCallbacks {
-  addEntry: (text: string, type?: TranscriptEntry['type']) => void;
+  addEntry: (text: string, type?: TranscriptEntry['type'], speaker?: string) => void;
   setWakeWordActive: (active: boolean) => void;
   getWakeWordActive: () => boolean;
   setAudioLevel: (level: number) => void;
@@ -180,6 +181,9 @@ export class SecretaryModeController {
     this.stopAnalysisLoop();
     this.analyzeNewTranscript();
 
+    // Clean up agent audio playback
+    this.stopAgentAudio();
+
     if (this.recognition) {
       try { this.recognition.abort(); } catch { /* ignore */ }
       try { this.recognition.stop(); } catch { /* ignore */ }
@@ -218,7 +222,7 @@ export class SecretaryModeController {
       const command = text.trim();
       if (command) {
         this.cb.setWakeWordActive(false);
-        this.cb.addEntry(command, 'wake-command');
+        this.cb.addEntry(command, 'wake-command', 'You');
         this.sendWakeCommand(command);
       }
       return;
@@ -229,11 +233,11 @@ export class SecretaryModeController {
       if (match) {
         const afterWake = text.slice(match.index! + match[0].length).trim();
         if (afterWake.length > 3) {
-          this.cb.addEntry(afterWake, 'wake-command');
+          this.cb.addEntry(afterWake, 'wake-command', 'You');
           this.sendWakeCommand(afterWake);
         } else {
           this.cb.setWakeWordActive(true);
-          this.cb.addEntry('Yes?', 'agent-response');
+          this.cb.addEntry('Yes?', 'agent-response', 'Sulla');
           this.cb.playTTS('Yes?');
         }
         return;
@@ -254,7 +258,7 @@ User: ${command}`;
 
     const reply = await this.cb.sendToChat(prompt, 'secretary-command');
     if (reply) {
-      this.cb.addEntry(reply, 'agent-response');
+      this.cb.addEntry(reply, 'agent-response', 'Sulla');
       this.cb.playTTS(reply);
     }
   }
@@ -456,7 +460,7 @@ User: ${text}`;
 
   private onGatewayTranscriptBound = this.onGatewayTranscript.bind(this);
 
-  private onGatewayTranscript(_event: any, event: { event_type: string; text?: string; speaker?: string }): void {
+  private onGatewayTranscript(_event: any, event: { event_type: string; text?: string; speaker?: string; audio?: string; format?: string }): void {
     if (!this.cb.getIsListening()) {
       console.warn('[SecretaryMode] Received transcript but not listening — dropped');
       return;
@@ -464,14 +468,89 @@ User: ${text}`;
 
     if (event.event_type === 'transcript_turn' && event.text?.trim()) {
       const text = event.text.trim();
-      console.log(`[SecretaryMode] Transcript received: "${text.slice(0, 80)}"`);
-      this.cb.addEntry(text);
+      const speaker = event.speaker || 'Speaker';
+      console.log(`[SecretaryMode] Transcript received (${speaker}): "${text.slice(0, 80)}"`);
+      this.cb.addEntry(text, 'transcript', speaker);
       this.checkAndHandleWakeWord(text);
     } else if (event.event_type === 'transcript_partial' && event.text?.trim()) {
       // Partial transcripts — could show as interim text in future
       console.log(`[SecretaryMode] Partial transcript: "${event.text.trim().slice(0, 80)}"`);
+    } else if (event.event_type === 'agent_audio' && event.audio) {
+      // Agent speech audio — PCM 16kHz 16-bit mono, base64-encoded
+      if (!this.cb.getIsMuted()) {
+        this.playAgentAudioChunk(event.audio);
+      }
     } else {
       console.log(`[SecretaryMode] Unhandled gateway event: ${event.event_type}`);
+    }
+  }
+
+  // ─── Agent audio playback (PCM 16kHz via Web Audio API) ────────
+
+  private agentAudioContext: AudioContext | null = null;
+  private agentAudioNextTime = 0;
+  /** Track active buffer sources so we can stop them immediately on mute */
+  private agentAudioSources: AudioBufferSourceNode[] = [];
+
+  /**
+   * Immediately silence all scheduled agent audio by stopping every
+   * queued BufferSource and closing the AudioContext.
+   */
+  stopAgentAudio(): void {
+    for (const src of this.agentAudioSources) {
+      try { src.stop(); } catch { /* already stopped */ }
+    }
+    this.agentAudioSources = [];
+
+    if (this.agentAudioContext) {
+      this.agentAudioContext.close().catch(() => {});
+      this.agentAudioContext = null;
+      this.agentAudioNextTime = 0;
+    }
+  }
+
+  private playAgentAudioChunk(base64Pcm: string): void {
+    try {
+      // Decode base64 → raw PCM bytes
+      const raw = Uint8Array.from(atob(base64Pcm), c => c.charCodeAt(0));
+      const pcm16 = new Int16Array(raw.buffer, raw.byteOffset, raw.byteLength / 2);
+
+      // Convert Int16 PCM to Float32 for Web Audio API
+      const float32 = new Float32Array(pcm16.length);
+      for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / 32768;
+      }
+
+      // Create or reuse AudioContext
+      if (!this.agentAudioContext) {
+        this.agentAudioContext = new AudioContext({ sampleRate: 16000 });
+        this.agentAudioNextTime = 0;
+      }
+
+      const ctx = this.agentAudioContext;
+      const buffer = ctx.createBuffer(1, float32.length, 16000);
+      buffer.copyToChannel(float32, 0);
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+
+      // Schedule chunks back-to-back for gapless playback
+      const now = ctx.currentTime;
+      if (this.agentAudioNextTime < now) {
+        this.agentAudioNextTime = now;
+      }
+      source.start(this.agentAudioNextTime);
+      this.agentAudioNextTime += buffer.duration;
+
+      // Track source for immediate stop on mute
+      this.agentAudioSources.push(source);
+      source.onended = () => {
+        const idx = this.agentAudioSources.indexOf(source);
+        if (idx !== -1) this.agentAudioSources.splice(idx, 1);
+      };
+    } catch (err) {
+      console.warn('[SecretaryMode] Agent audio playback error:', err);
     }
   }
 

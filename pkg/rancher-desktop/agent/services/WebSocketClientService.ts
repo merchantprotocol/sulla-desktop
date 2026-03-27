@@ -130,6 +130,8 @@ class WebSocketConnection {
   public reconnectAttempts = 0;
   public messageHandlers = new Set<WebSocketMessageHandler>();
   public subscribed = new Set<string>();
+  private lastPongAt = 0;
+  private missedPings = 0;
 
   private config: Required<ConnectionConfig>;
 
@@ -158,6 +160,8 @@ class WebSocketConnection {
       this.ws.onopen = () => {
         console.log(`[WS ${ this.config.channel }] Connected`);
         this.reconnectAttempts = 0;
+        this.lastPongAt = Date.now();
+        this.missedPings = 0;
         if (this.config.channel && !this.subscribed.has(this.config.channel)) {
           this.sendNow({
             type:      'subscribe',
@@ -173,6 +177,10 @@ class WebSocketConnection {
       };
 
       this.ws.onmessage = async(event) => {
+        // Any inbound message proves the connection is alive — reset pong tracker
+        this.lastPongAt = Date.now();
+        this.missedPings = 0;
+
         const text = event.data instanceof Blob ? await event.data.text() : event.data as string;
         let msg: WebSocketMessage;
 
@@ -255,7 +263,9 @@ class WebSocketConnection {
     }
 
     this.reconnectAttempts++;
-    const delay = Math.min(this.config.reconnectInterval * (1.618 ** this.reconnectAttempts) + Math.random() * 600, 45000);
+    // Cap at 15s instead of 45s — the hub is local, long backoffs just delay
+    // message delivery and cause "connection down" errors in the UI.
+    const delay = Math.min(this.config.reconnectInterval * (1.3 ** Math.min(this.reconnectAttempts, 10)) + Math.random() * 400, 15000);
     console.log(`[WS ${ this.config.channel }] Reconnect attempt ${ this.reconnectAttempts } in ${ Math.round(delay / 1000) }s`);
     this.reconnectTimer = setTimeout(() => this.connect(), delay);
   }
@@ -263,6 +273,18 @@ class WebSocketConnection {
   private startHeartbeat() {
     this.heartbeatTimer = setInterval(() => {
       if (this.isConnected()) {
+        // Detect dead connections: if we haven't received ANY data from the
+        // server (ack, pong, message) since the last two heartbeat cycles,
+        // the TCP connection is likely half-open.  Force a reconnect so
+        // queued messages can be delivered on a fresh socket.
+        const silenceSec = (Date.now() - this.lastPongAt) / 1000;
+        if (silenceSec > 65) {
+          this.missedPings++;
+          console.warn(`[WS ${ this.config.channel }] No server activity for ${ Math.round(silenceSec) }s (missed=${ this.missedPings }) — forcing reconnect`);
+          this.scheduleReconnect();
+          return;
+        }
+
         // Send heartbeat on dedicated heartbeat channel, not the data channel
         this.sendNow({
           type:      'ping',
@@ -401,30 +423,22 @@ export class WebSocketClientService {
     const msgType = (message as any)?.type || '(unknown)';
     console.log(`[WSService] send() — channel="${ connectionId }", type="${ msgType }"`);
 
-    let conn = this.connections.get(connectionId);
-    if (!conn?.isConnected()) {
-      console.log(`[WSService] send() — channel="${ connectionId }" not connected, connecting...`);
-      this.connect(connectionId);
-      conn = this.connections.get(connectionId);
-      if (!conn) {
-        console.error(`[WSService] send() — failed to create connection for "${ connectionId }"`);
-        return false;
-      }
-
-      // Wait for connection to establish
-      let attempts = 0;
-      const maxAttempts = 50; // 5 seconds
-      while (!conn.isConnected() && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        attempts++;
-      }
-      if (!conn.isConnected()) {
-        console.error(`[WSService] send() — connection timeout for "${ connectionId }" after ${ attempts * 100 }ms`);
-        return false;
-      }
-      console.log(`[WSService] send() — channel="${ connectionId }" connected after ${ attempts * 100 }ms`);
+    // Ensure a connection exists (creates one if needed).
+    // connect() is idempotent — safe to call if already connected/connecting.
+    this.connect(connectionId);
+    const conn = this.connections.get(connectionId);
+    if (!conn) {
+      console.error(`[WSService] send() — failed to create connection for "${ connectionId }"`);
+      return false;
     }
 
+    // Delegate to the connection's send() which queues the message in the
+    // pending map.  If the socket is currently open, the message is sent
+    // immediately.  If the socket is reconnecting, the message waits in the
+    // queue and is flushed automatically when the connection comes back
+    // (via retryPending in onopen).  The promise resolves on server ack, or
+    // rejects if the message expires (maxMessageAgeMs) or the connection
+    // exhausts all reconnect attempts.
     try {
       if (typeof message === 'object' && message && 'type' in message) {
         this.logMessage(connectionId, 'out', message as WebSocketMessage);
