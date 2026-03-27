@@ -570,8 +570,10 @@ async function fetchAudioDevices(): Promise<void> {
     // Must request mic permission first to get device labels
     await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
     const devices = await navigator.mediaDevices.enumerateDevices();
+    const hiddenDevices = ['blackhole', 'sulla audio mirror'];
     audioInputDevices.value = devices
       .filter(d => d.kind === 'audioinput')
+      .filter(d => !hiddenDevices.some(h => (d.label || '').toLowerCase().includes(h)))
       .map((d, i) => ({
         value: d.deviceId,
         label: d.label || `Microphone ${ i + 1 }`,
