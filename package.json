@@ -141,7 +141,7 @@
     "posthog-node": "5.23.0",
     "preact": "^10.28.2",
     "preline": "^4.1.2",
-    "proxy-agent": "^6.5.0",
+    "proxy-agent": "^7.0.0",
     "rancher-icons": "git+https://github.com/rancher/icons.git#v2.0.21",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
