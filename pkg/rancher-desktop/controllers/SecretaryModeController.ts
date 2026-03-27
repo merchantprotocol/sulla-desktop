@@ -94,6 +94,7 @@ export class SecretaryModeController {
   private mediaStream: MediaStream | null = null;
   private activeMimeType = 'audio/webm';
   private transcriptionMode = 'browser';
+  private transcriptionModel = 'scribe_v2';
   private sttLanguage = 'en-US';
 
   // Browser STT
@@ -136,6 +137,7 @@ export class SecretaryModeController {
 
   async startSession(): Promise<void> {
     this.transcriptionMode = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
+    this.transcriptionModel = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionModel', 'scribe_v2');
     this.sttLanguage = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     const audioInputDeviceId: string = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
 
@@ -445,7 +447,7 @@ User: ${text}`;
     try {
       const arrayBuffer = await audioBlob.arrayBuffer();
       const result = await ipcRenderer.invoke('audio-transcribe', {
-        audio: arrayBuffer, mimeType, diarize: true,
+        audio: arrayBuffer, mimeType, diarize: true, model: this.transcriptionModel,
         ...(this.gatewaySessionId ? { sessionId: this.gatewaySessionId } : {}),
       });
       if (result?.text?.trim()) {

@@ -53,6 +53,7 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
   audioLevel = 0;
   recordingDuration = '0:00';
   transcriptionMode: 'browser' | 'elevenlabs' | 'gateway' = 'browser';
+  private transcriptionModel = 'scribe_v2';
 
   // ── Stream & recorder ──
   private mediaStream: MediaStream | null = null;
@@ -227,6 +228,7 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
 
   private async loadSettings(): Promise<void> {
     this.transcriptionMode = await this.ipcInvoke('sulla-settings-get', 'audioTranscriptionMode', 'elevenlabs');
+    this.transcriptionModel = await this.ipcInvoke('sulla-settings-get', 'audioTranscriptionModel', 'scribe_v2');
     this.vadSilenceThreshold = await this.ipcInvoke('sulla-settings-get', 'audioVadSilenceThreshold', 20);
     this.vadSilenceDuration = await this.ipcInvoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
     this.sttLanguage = await this.ipcInvoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
@@ -478,7 +480,7 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
   private async transcribe(audioBlob: Blob, mimeType: string): Promise<void> {
     try {
       const arrayBuffer = await audioBlob.arrayBuffer();
-      const result = await this.ipcInvoke('audio-transcribe', { audio: arrayBuffer, mimeType, diarize: true });
+      const result = await this.ipcInvoke('audio-transcribe', { audio: arrayBuffer, mimeType, diarize: true, model: this.transcriptionModel });
       if (result?.text?.trim()) {
         const raw = result.text.trim();
         // Scribe V2 labels non-speech as [background noise], [singing], [music], etc.

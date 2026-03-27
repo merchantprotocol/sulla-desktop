@@ -165,7 +165,7 @@ export interface IpcMainInvokeEvents {
   'browser-tab:exec-in-frame': (code: string) => unknown;
   'sulla-settings-get':     (property: string, defaultValue?: any) => any;
   'sulla-settings-set':     (property: string, value: any) => void;
-  'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };
+  'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };
   'audio-speak':            (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
   'integration-get-value':  (integrationId: string, property: string) => { value: string } | null;
   'desktop-session-start':  (payload?: { callerName?: string }) => { sessionId: string | null; callId?: string; error?: string };

@@ -1042,13 +1042,13 @@ export function initSullaEvents(): void {
   // Audio / Transcription handlers
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; sessionId?: string }) => {
+  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => {
     const { getTranscriptionService } = await import('@pkg/agent/services/TranscriptionService');
     const service = getTranscriptionService();
     const result = await service.transcribe(
       Buffer.from(payload.audio),
       payload.mimeType,
-      { diarize: payload.diarize, sessionId: payload.sessionId },
+      { diarize: payload.diarize, model: payload.model, sessionId: payload.sessionId },
     );
 
     return result;
