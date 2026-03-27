@@ -34,7 +34,7 @@ submit_error_report() {
   "app_version": "%s",
   "os_platform": "%s",
   "os_version": "%s",
-  "user_context": "install.sh — step: %s, nightly: %s"
+  "user_context": "install-dev.sh — step: %s, nightly: %s"
 }' "$step_name" "$log_tail" "$app_version" "$os_platform" "$os_version" "$step_name" "$USE_NIGHTLY")
 
   start_spinner "Submitting error report..."
