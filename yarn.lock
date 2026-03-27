@@ -2989,10 +2989,10 @@
   resolved "https://registry.npmjs.org/@schedule-x/theme-default/-/theme-default-4.2.0.tgz"
   integrity sha512-CtcnyTwoMNsLsikLJIlRquJoWVfx1G7LFc2GYEseGEIOzX8jQ63lCd1vZ9eMrlr0Sw9TiqX5Bn/pkvAmYolbyQ==
 
-"@schedule-x/vue@^4.0.0":
-  version "4.0.0"
-  resolved "https://registry.npmjs.org/@schedule-x/vue/-/vue-4.0.0.tgz"
-  integrity sha512-EQFE+4XYziwNsvWyo3+AtF+nADGlIgo0IXtEA/Cto0Dep9UQP/M5Ii2FLYNQE3yvMbtoBK3OCAdI6eE7WbjoYg==
+"@schedule-x/vue@^4.1.0":
+  version "4.1.0"
+  resolved "https://registry.yarnpkg.com/@schedule-x/vue/-/vue-4.1.0.tgz#453aa531dc462fe47b6cfb7e094e5ba8a09e0e03"
+  integrity sha512-PYOkl28cgJVS6RLidbE2cbrS8cns2xxnqjfdmWTUu6AW/UmB5JTcy1g5okeCMTVKAURpcB6rHj+LoXMdhbDhFQ==
 
 "@sideway/address@^4.1.5":
   version "4.1.5"
