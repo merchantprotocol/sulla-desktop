@@ -173,11 +173,14 @@ export interface IpcMainInvokeEvents {
   'gateway-listener-start':  () => { ok: boolean };
   'gateway-listener-stop':   () => { ok: boolean };
   'gateway-listener-status': () => { lobbyConnected: boolean; audioConnected: boolean; sessionId: string | null; callId: string | null; error: string | null };
-  'gateway-audio-start':     (payload?: { callerName?: string }) => { sessionId: string | null; callId: string | null; error: string | null };
+  'gateway-audio-start':     (payload?: { callerName?: string; channels?: Record<string, { label: string; source: string }> }) => { sessionId: string | null; callId: string | null; error: string | null };
   'gateway-audio-stop':      () => { ok: boolean };
-  'gateway-audio-send':      (payload: { audio: ArrayBuffer }) => { ok: boolean };
+  'gateway-audio-send':      (payload: { audio: ArrayBuffer; channel?: number }) => { ok: boolean };
   'gateway-transcript-subscribe':   () => { ok: boolean };
   'gateway-transcript-unsubscribe': () => { ok: boolean };
+  'audio-driver-connect':    () => { ok: boolean; alreadyConnected?: boolean; error?: string };
+  'audio-driver-disconnect': () => { ok: boolean; error?: string };
+  'audio-driver-status':     () => { connected: boolean; installed: boolean; socketExists: boolean };
   // #endregion
 
   // #region Filesystem

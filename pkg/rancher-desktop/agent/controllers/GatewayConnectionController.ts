@@ -83,9 +83,9 @@ export class GatewayConnectionController {
   /**
    * Start an audio session on the gateway and return session info.
    */
-  async startAudioSession(callerName?: string): Promise<{ sessionId: string; callId: string }> {
+  async startAudioSession(callerName?: string, options?: { channels?: Record<string, { label: string; source: string }> }): Promise<{ sessionId: string; callId: string }> {
     const { getGatewayListenerService } = await import('../services/GatewayListenerService');
-    return getGatewayListenerService().startAudioStream(callerName);
+    return getGatewayListenerService().startAudioStream(callerName, options);
   }
 
   /**
@@ -100,14 +100,23 @@ export class GatewayConnectionController {
    * Forward an audio chunk to the gateway.
    * Includes rate-limited logging for diagnostics.
    */
-  async sendAudioChunk(data: Buffer | ArrayBuffer): Promise<void> {
+  // Track per-channel counts separately for diagnostics
+  private audioChCountCh0 = 0;
+  private audioChCountCh1 = 0;
+
+  async sendAudioChunk(data: Buffer | ArrayBuffer, channel: number = 0): Promise<void> {
     this.audioIpcCount++;
-    if (this.audioIpcCount <= 3 || this.audioIpcCount % 100 === 0) {
+    if (channel === 0) this.audioChCountCh0++;
+    else if (channel === 1) this.audioChCountCh1++;
+
+    // Log first 5 per channel, then every 100th overall
+    const chCount = channel === 0 ? this.audioChCountCh0 : this.audioChCountCh1;
+    if (chCount <= 5 || this.audioIpcCount % 100 === 0) {
       const size = data instanceof ArrayBuffer ? data.byteLength : data.length;
-      console.log(`[GatewayConnection] Audio chunk #${this.audioIpcCount} (${size} bytes)`);
+      console.log(`[GatewayConnection] Audio IPC #${this.audioIpcCount} ch=${channel} chCount=${chCount} (${size} bytes)`);
     }
     const { getGatewayListenerService } = await import('../services/GatewayListenerService');
-    getGatewayListenerService().sendAudio(data);
+    getGatewayListenerService().sendAudio(data, channel);
   }
 
   /**

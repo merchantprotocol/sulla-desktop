@@ -118,6 +118,10 @@
                 <span class="summary-label">Secretary Mode</span>
                 <span class="summary-value">{{ secretaryEnabled ? (secretaryAgentName || 'Enabled') : 'Off' }}</span>
               </div>
+              <div class="summary-item">
+                <span class="summary-label">System Audio</span>
+                <span class="summary-value">{{ secretaryEnabled && transcriptionMode === 'gateway' ? 'Multi-channel (auto)' : 'Single channel' }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -489,7 +493,6 @@ async function saveSettings(): Promise<void> {
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryEnabled', secretaryEnabled.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentId', secretaryAgentId.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentName', secretaryAgentName.value);
-
     // Store the display name of the selected voice
     const selected = voices.value.find(v => v.value === ttsVoice.value);
     ttsVoiceName.value = selected?.label || '';

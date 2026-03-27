@@ -108,6 +108,8 @@ export class SecretaryModeController {
   private gatewaySessionId: string | null = null;
   private gatewayStreamRecorder: MediaRecorder | null = null;
   private gatewayStreamActive = false;
+  /** Whether the audio-driver is providing speaker audio */
+  private audioDriverConnected = false;
 
   // Audio level monitoring
   private levelContext: AudioContext | null = null;
@@ -559,12 +561,47 @@ User: ${text}`;
       throw new Error('No media stream available for gateway streaming');
     }
 
-    // Subscribe to transcript events from the gateway lobby WS
+    // ── Connect to audio-driver for system/speaker audio ────────
+    // The audio-driver captures system audio via WASAPI (Windows) or
+    // CoreAudio+BlackHole (macOS) and streams labeled chunks over a
+    // local Unix socket. Speaker chunks (channel 1) are forwarded
+    // to the gateway automatically by the main process.
+    try {
+      const driverResult = await ipcRenderer.invoke('audio-driver-connect');
+      this.audioDriverConnected = driverResult?.ok ?? false;
+      if (this.audioDriverConnected) {
+        console.log('[SecretaryMode] Connected to audio-driver for system audio (channel 1)');
+      } else {
+        console.log('[SecretaryMode] Audio-driver not available — speaker audio will not be captured');
+      }
+    } catch (err) {
+      console.log('[SecretaryMode] Audio-driver connection failed:', (err as Error).message);
+      this.audioDriverConnected = false;
+    }
+
+    const isMultiChannel = this.audioDriverConnected;
+    console.log(`[SecretaryMode] Multi-channel mode: ${isMultiChannel}`);
+
+    // ── Subscribe to transcript events ──────────────────────────
     await ipcRenderer.invoke('gateway-transcript-subscribe');
     ipcRenderer.on('gateway-transcript', this.onGatewayTranscriptBound);
 
-    // Start audio session + WebSocket on the main process
-    const result = await ipcRenderer.invoke('gateway-audio-start', { callerName: 'Sulla Secretary' });
+    // ── Create gateway session ──────────────────────────────────
+    const startPayload: { callerName: string; channels?: Record<string, { label: string; source: string; audioFormat?: { inputFormat: string; inputRate?: number; inputChannels?: number } }> } = {
+      callerName: 'Sulla Secretary',
+    };
+    if (isMultiChannel) {
+      startPayload.channels = {
+        '0': { label: 'User', source: 'mic' },
+        '1': {
+          label:       'Caller',
+          source:      'system_audio',
+          audioFormat: { inputFormat: 's16le', inputRate: 16000, inputChannels: 1 },
+        },
+      };
+    }
+
+    const result = await ipcRenderer.invoke('gateway-audio-start', startPayload);
     if (result?.error || !result?.sessionId) {
       const reason = result?.error || 'no session ID returned';
       this.cb.addEntry(`Gateway audio connection failed: ${reason}`, 'transcript');
@@ -573,29 +610,40 @@ User: ${text}`;
 
     this.gatewaySessionId = result.sessionId;
     this.gatewayStreamActive = true;
+    console.log(`[SecretaryMode] Gateway session started: ${result.sessionId}`);
 
-    // Stream audio chunks via a separate MediaRecorder (250ms timeslice)
+    // ── Channel 0: mic audio (captured here via getUserMedia) ───
     const streamMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : 'audio/webm';
 
     this.gatewayStreamRecorder = new MediaRecorder(this.mediaStream, { mimeType: streamMime });
-
-    let chunkCount = 0;
+    let micChunkCount = 0;
     this.gatewayStreamRecorder.ondataavailable = async(event: BlobEvent) => {
       if (event.data.size > 0 && this.gatewayStreamActive) {
-        chunkCount++;
-        if (chunkCount <= 3 || chunkCount % 100 === 0) {
-          console.log(`[SecretaryMode] Sending audio chunk #${chunkCount} (${event.data.size} bytes)`);
+        micChunkCount++;
+        if (micChunkCount <= 3 || micChunkCount % 100 === 0) {
+          console.log(`[SecretaryMode] Mic chunk #${micChunkCount} (${event.data.size} bytes)`);
         }
         const arrayBuffer = await event.data.arrayBuffer();
-        ipcRenderer.invoke('gateway-audio-send', { audio: arrayBuffer }).catch((err) => {
-          console.error('[SecretaryMode] Failed to send audio chunk:', err);
+        ipcRenderer.invoke('gateway-audio-send', { audio: arrayBuffer, channel: 0 }).catch((err) => {
+          console.error('[SecretaryMode] Failed to send mic chunk:', err);
         });
       }
     };
-
+    this.gatewayStreamRecorder.onerror = (e: Event) => {
+      console.error('[SecretaryMode] Mic recorder error:', (e as any).error?.message || e);
+    };
     this.gatewayStreamRecorder.start(250);
+    console.log(`[SecretaryMode] Mic recorder started — mime: ${this.gatewayStreamRecorder.mimeType}`);
+
+    // ── Channel 1: speaker audio ────────────────────────────────
+    // Handled by the audio-driver → AudioDriverClient → gateway pipeline.
+    // No MediaRecorder needed here — the main process forwards chunks
+    // from the audio-driver socket directly to the gateway WebSocket.
+    if (isMultiChannel) {
+      console.log('[SecretaryMode] Speaker audio (channel 1) provided by audio-driver');
+    }
   }
 
   private stopGatewayStreaming(): void {
@@ -606,10 +654,17 @@ User: ${text}`;
       console.warn('[SecretaryMode] Transcript unsubscribe failed:', err);
     });
 
+    // Stop mic recorder (channel 0)
     if (this.gatewayStreamRecorder && this.gatewayStreamRecorder.state !== 'inactive') {
-      try { this.gatewayStreamRecorder.stop(); } catch (err) { console.warn('[SecretaryMode] Recorder stop error:', err); }
+      try { this.gatewayStreamRecorder.stop(); } catch (err) { console.warn('[SecretaryMode] Mic recorder stop error:', err); }
     }
     this.gatewayStreamRecorder = null;
+
+    // Disconnect from audio-driver (speaker audio, channel 1)
+    if (this.audioDriverConnected) {
+      ipcRenderer.invoke('audio-driver-disconnect').catch(() => {});
+      this.audioDriverConnected = false;
+    }
 
     if (this.gatewaySessionId) {
       ipcRenderer.invoke('gateway-audio-stop').catch((err) => {
