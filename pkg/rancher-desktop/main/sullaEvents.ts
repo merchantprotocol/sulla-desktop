@@ -1042,13 +1042,13 @@ export function initSullaEvents(): void {
   // Audio / Transcription handlers
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; sessionId?: string }) => {
+  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => {
     const { getTranscriptionService } = await import('@pkg/agent/services/TranscriptionService');
     const service = getTranscriptionService();
     const result = await service.transcribe(
       Buffer.from(payload.audio),
       payload.mimeType,
-      { diarize: payload.diarize, sessionId: payload.sessionId },
+      { diarize: payload.diarize, model: payload.model, sessionId: payload.sessionId },
     );
 
     return result;
@@ -1202,13 +1202,14 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('gateway-audio-start', async(_event: unknown, payload?: { callerName?: string }) => {
+  ipcMainProxy.handle('gateway-audio-start', async(_event: unknown, payload?: { callerName?: string; channels?: Record<string, { label: string; source: string }> }) => {
     const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
     const controller = getGatewayConnectionController();
     controller.resetAudioCount();
 
     try {
-      const result = await controller.startAudioSession(payload?.callerName);
+      const options = payload?.channels ? { channels: payload.channels } : undefined;
+      const result = await controller.startAudioSession(payload?.callerName, options);
 
       return { sessionId: result.sessionId, callId: result.callId, error: null };
     } catch (err: any) {
@@ -1231,10 +1232,10 @@ export function initSullaEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('gateway-audio-send', async(_event: unknown, payload: { audio: ArrayBuffer }) => {
+  ipcMainProxy.handle('gateway-audio-send', async(_event: unknown, payload: { audio: ArrayBuffer; channel?: number }) => {
     try {
       const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
-      await getGatewayConnectionController().sendAudioChunk(payload.audio);
+      await getGatewayConnectionController().sendAudioChunk(payload.audio, payload.channel ?? 0);
 
       return { ok: true };
     } catch (err: any) {
@@ -1245,6 +1246,84 @@ export function initSullaEvents(): void {
       }
 
       return { ok: false, error: err.message };
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Audio Driver — local transport (speaker audio from audio-driver)
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('audio-driver-connect', async() => {
+    try {
+      const { getAudioDriverClient } = await import('@pkg/agent/services/AudioDriverClient');
+      const client = getAudioDriverClient();
+
+      if (client.connected) {
+        return { ok: true, alreadyConnected: true };
+      }
+
+      // Wire incoming speaker chunks to the gateway
+      client.removeAllListeners('chunk');
+      let speakerChunkCount = 0;
+
+      client.on('chunk', async(chunk: { source: string; channel: number; audio: Buffer }) => {
+        if (chunk.source === 'speaker') {
+          speakerChunkCount++;
+          if (speakerChunkCount <= 5 || speakerChunkCount % 100 === 0) {
+            console.log(`[Sulla] audio-driver speaker chunk #${ speakerChunkCount } (${ chunk.audio.length } bytes)`);
+          }
+          try {
+            const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+
+            await getGatewayConnectionController().sendAudioChunk(chunk.audio, 1);
+          } catch {
+            // Gateway not active — ignore
+          }
+        }
+      });
+
+      // connect() now auto-starts the daemon if it's not running
+      await client.connect();
+
+      return { ok: true };
+    } catch (err: any) {
+      console.error('[Sulla] audio-driver-connect failed:', err.message);
+
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMainProxy.handle('audio-driver-disconnect', async() => {
+    try {
+      const { getAudioDriverClient } = await import('@pkg/agent/services/AudioDriverClient');
+      getAudioDriverClient().disconnect();
+
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMainProxy.handle('audio-driver-status', async() => {
+    try {
+      const fs = await import('fs');
+      const { getAudioDriverClient } = await import('@pkg/agent/services/AudioDriverClient');
+      const socketPath = process.platform === 'win32' ? '\\\\.\\pipe\\audio-driver' : '/tmp/audio-driver.sock';
+      let installed = false;
+      let socketExists = false;
+
+      try {
+        fs.accessSync('/usr/local/bin/audio-driver', fs.constants.X_OK);
+        installed = true;
+      } catch { /* not installed */ }
+
+      try {
+        socketExists = fs.statSync(socketPath).isSocket();
+      } catch { /* no socket */ }
+
+      return { connected: getAudioDriverClient().connected, installed, socketExists };
+    } catch {
+      return { connected: false, installed: false, socketExists: false };
     }
   });
 
@@ -1347,6 +1426,42 @@ export function initSullaEvents(): void {
   });
 
   console.log('[Sulla] IPC event handlers initialized');
+
+  // ─────────────────────────────────────────────────────────────
+  // System sleep / wake — reconnect WebSocket channels on resume
+  // (cross-platform: macOS, Windows, Linux via Electron powerMonitor)
+  // ─────────────────────────────────────────────────────────────
+
+  const { powerMonitor, BrowserWindow } = require('electron') as typeof import('electron');
+
+  powerMonitor.on('suspend', () => {
+    console.log('[Power] System suspending — marking WebSocket connections stale');
+    try {
+      const { getWebSocketClientService } = require('@pkg/agent/services/WebSocketClientService');
+      getWebSocketClientService().markSuspended();
+    } catch (err) {
+      console.warn('[Power] Failed to mark connections suspended:', err);
+    }
+  });
+
+  powerMonitor.on('resume', () => {
+    console.log('[Power] System resumed — forcing WebSocket reconnect');
+    try {
+      const { getWebSocketClientService } = require('@pkg/agent/services/WebSocketClientService');
+      getWebSocketClientService().forceReconnectAll();
+    } catch (err) {
+      console.warn('[Power] Failed to reconnect WebSocket connections:', err);
+    }
+
+    // Notify all renderer windows so frontend services can react
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        win.webContents.send('system-resumed');
+      } catch (err) {
+        console.warn('[Power] Failed to notify renderer window of resume:', err);
+      }
+    }
+  });
 
   // Auto-connect gateway lobby listener once DB is ready.
   // All decision-making lives in GatewayConnectionController.

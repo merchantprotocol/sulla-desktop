@@ -192,6 +192,11 @@ export class ChatCompletionsServer {
       await this.handleMCPRefresh(req, res);
     });
 
+    // Discover source: resolve MCP server from URL, .mcp.json, or docker-compose.yml
+    this.app.post('/v1/mcp/discover-source', async(req: Request, res: Response) => {
+      await this.handleMCPDiscoverSource(req, res);
+    });
+
     // Remove: delete generated YAML configs for an MCP account
     this.app.delete('/v1/mcp/:accountId/configs', async(req: Request, res: Response) => {
       await this.handleMCPRemoveConfigs(req, res);
@@ -668,7 +673,25 @@ export class ChatCompletionsServer {
             const bridge = MCPBridge.getInstance();
 
             for (const account of accounts) {
-              const mcpTools = bridge.getToolsForAccount(account.account_id);
+              if (!account.connected) continue;
+
+              // Lazy init: if this account has no live client, initialize it now
+              let mcpTools = bridge.getToolsForAccount(account.account_id);
+              if (mcpTools.length === 0) {
+                try {
+                  await bridge.initializeAccount(account.account_id);
+                  mcpTools = bridge.getToolsForAccount(account.account_id);
+
+                  // If tools were discovered, generate YAML configs so they persist
+                  if (mcpTools.length > 0) {
+                    await bridge.finalizeConfigs(account.account_id);
+                    const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+                    await getIntegrationConfigLoader().loadAll();
+                  }
+                } catch (initErr: any) {
+                  console.warn(`[ChatCompletionsAPI] MCP lazy init failed for "${ account.account_id }":`, initErr.message);
+                }
+              }
 
               tools.push({
                 accountId: account.account_id,
@@ -893,6 +916,11 @@ export class ChatCompletionsServer {
         const bridge = MCPBridge.getInstance();
         const { params = {} } = req.body || {};
 
+        // Lazy init: if no client exists for this account, initialize on demand
+        if (bridge.getToolsForAccount(accountId).length === 0) {
+          await bridge.initializeAccount(accountId);
+        }
+
         const result = await bridge.callTool(accountId, endpoint, params);
         return res.json({ success: true, result });
       }
@@ -1037,6 +1065,61 @@ export class ChatCompletionsServer {
       });
     } catch (error: any) {
       console.error(`[ChatCompletionsAPI] MCP refresh failed (${ accountId }):`, error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  private async handleMCPDiscoverSource(req: Request, res: Response) {
+    const { url, file_path, auth_token, account_id, label, server_name, auto_register } = req.body || {};
+
+    if (!url && !file_path) {
+      return res.status(400).json({ success: false, error: 'Provide either "url" or "file_path"' });
+    }
+
+    try {
+      const { resolve } = await import('@pkg/agent/integrations/mcp/MCPSourceResolver');
+      const result = await resolve({ url, file_path, auth_token, account_id, label, server_name, auto_register });
+
+      // If resolution failed, return the probes + partial info
+      if ('probes' in result) {
+        return res.status(422).json({ success: false, ...result });
+      }
+
+      // If auto_register is requested, register + discover + finalize in one shot
+      if (auto_register) {
+        const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+        const svc = getIntegrationService();
+        const accountId = result.suggested_id;
+
+        // Register credentials
+        await svc.setIntegrationValue({ integration_id: 'mcp', account_id: accountId, property: 'server_url', value: result.resolved_url });
+        if (result.auth_token) {
+          await svc.setIntegrationValue({ integration_id: 'mcp', account_id: accountId, property: 'auth_token', value: result.auth_token });
+        }
+        await svc.setIntegrationValue({ integration_id: 'mcp', account_id: accountId, property: 'account_label', value: result.suggested_label });
+        await svc.setConnectionStatus('mcp', true, accountId);
+
+        // Initialize, finalize, reload
+        const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
+        const bridge = MCPBridge.getInstance();
+        await bridge.initializeAccount(accountId);
+        const genResult = await bridge.finalizeConfigs(accountId);
+
+        const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+        await getIntegrationConfigLoader().loadAll();
+
+        return res.json({
+          success: true,
+          ...result,
+          registered: true,
+          finalized:  true,
+          dir_name:   genResult.dirName,
+        });
+      }
+
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error('[ChatCompletionsAPI] MCP discover-source failed:', error);
       res.status(500).json({ success: false, error: error.message });
     }
   }

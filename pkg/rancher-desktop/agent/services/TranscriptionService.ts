@@ -16,6 +16,8 @@ export interface TranscriptionOptions {
   diarize?: boolean;
   /** Gateway desktop session ID — when set, the gateway forwards transcriptions to GhostAgent. */
   sessionId?: string;
+  /** ElevenLabs Scribe model ID (e.g. 'scribe_v2', 'scribe_v1'). Defaults to 'scribe_v2'. */
+  model?: string;
 }
 
 /** A single word with optional speaker attribution (from diarization). */
@@ -174,7 +176,7 @@ export class TranscriptionService {
       try {
         const formData = new FormData();
         formData.append('file', blob, `recording.${ ext }`);
-        formData.append('model_id', 'scribe_v2');
+        formData.append('model_id', options?.model || 'scribe_v2');
         if (options?.diarize) {
           formData.append('diarize', 'true');
         }

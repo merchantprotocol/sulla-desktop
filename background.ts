@@ -290,12 +290,27 @@ Electron.app.whenReady().then(() => {
   const fixer = new SullaWebRequestFixer(writeSullaWebRequestEvent);
   fixer.attachToSession(session);
 
-  // Grant microphone permission for audio capture
-  session.setPermissionRequestHandler((_webContents, permission, callback) => {
-    if (permission === 'media') {
-      callback(true);
+  // Grant microphone and screen-capture permissions for audio capture.
+  // setPermissionCheckHandler is needed because getDisplayMedia() triggers a
+  // synchronous permission *check* before it fires the async request handler.
+  // Without this, getDisplayMedia() fails with "Permission denied".
+  session.setPermissionCheckHandler(() => true);
+
+  session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(true);
+  });
+
+  // Allow getDisplayMedia() in renderer for system audio capture (multi-channel meetings).
+  // Without this handler, getDisplayMedia() silently fails in Electron.
+  session.setDisplayMediaRequestHandler(async(_request, callback) => {
+    // We need a screen source to satisfy Electron even though we only want audio.
+    // Pick the first available screen source.
+    const sources = await Electron.desktopCapturer.getSources({ types: ['screen'] });
+    if (sources.length > 0) {
+      callback({ video: sources[0], audio: 'loopback', enableLocalEcho: false });
     } else {
-      callback(true);
+      // No screen source available — deny the request
+      callback({});
     }
   });
 });

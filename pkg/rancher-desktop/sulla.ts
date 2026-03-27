@@ -211,27 +211,9 @@ export async function instantiateSullaStart(): Promise<void> {
       console.error('[Background] Failed to resume OAuth refresh timers:', error);
     }
 
-    // Initialize connected MCP server accounts so their tools appear in /v1/integrations
-    try {
-      const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
-      const bridge = MCPBridge.getInstance();
-      await bridge.initializeAll();
-
-      // Generate YAML configs for all connected MCP accounts so they're
-      // available through IntegrationConfigLoader alongside REST integrations
-      const genResults = await bridge.generateAllConfigs();
-      if (genResults.length > 0) {
-        // Reload the config loader to pick up newly generated MCP integration dirs
-        const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
-        const loader = getIntegrationConfigLoader();
-        await loader.loadAll();
-        console.log(`[Background] MCPBridge ready — generated configs for ${ genResults.length } server(s)`);
-      } else {
-        console.log('[Background] MCPBridge ready');
-      }
-    } catch (error) {
-      console.error('[Background] Failed to initialize MCP bridge:', error);
-    }
+    // MCP servers are initialized lazily — on first tool listing or tool call.
+    // This avoids blocking startup for MCP servers that may not be used.
+    console.log('[Background] MCP servers will initialize on first use (lazy init)');
 
     // Ensure llama.cpp binaries are installed, download user's model, and start server
     try {

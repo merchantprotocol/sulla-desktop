@@ -165,7 +165,7 @@ export interface IpcMainInvokeEvents {
   'browser-tab:exec-in-frame': (code: string) => unknown;
   'sulla-settings-get':     (property: string, defaultValue?: any) => any;
   'sulla-settings-set':     (property: string, value: any) => void;
-  'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };
+  'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };
   'audio-speak':            (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
   'integration-get-value':  (integrationId: string, property: string) => { value: string } | null;
   'desktop-session-start':  (payload?: { callerName?: string }) => { sessionId: string | null; callId?: string; error?: string };
@@ -173,11 +173,14 @@ export interface IpcMainInvokeEvents {
   'gateway-listener-start':  () => { ok: boolean };
   'gateway-listener-stop':   () => { ok: boolean };
   'gateway-listener-status': () => { lobbyConnected: boolean; audioConnected: boolean; sessionId: string | null; callId: string | null; error: string | null };
-  'gateway-audio-start':     (payload?: { callerName?: string }) => { sessionId: string | null; callId: string | null; error: string | null };
+  'gateway-audio-start':     (payload?: { callerName?: string; channels?: Record<string, { label: string; source: string }> }) => { sessionId: string | null; callId: string | null; error: string | null };
   'gateway-audio-stop':      () => { ok: boolean };
-  'gateway-audio-send':      (payload: { audio: ArrayBuffer }) => { ok: boolean };
+  'gateway-audio-send':      (payload: { audio: ArrayBuffer; channel?: number }) => { ok: boolean };
   'gateway-transcript-subscribe':   () => { ok: boolean };
   'gateway-transcript-unsubscribe': () => { ok: boolean };
+  'audio-driver-connect':    () => { ok: boolean; alreadyConnected?: boolean; error?: string };
+  'audio-driver-disconnect': () => { ok: boolean; error?: string };
+  'audio-driver-status':     () => { connected: boolean; installed: boolean; socketExists: boolean };
   // #endregion
 
   // #region Filesystem

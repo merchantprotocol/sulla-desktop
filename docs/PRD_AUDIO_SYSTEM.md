@@ -35,7 +35,8 @@ The Voice/Audio System enables hands-free interaction with Sulla through microph
 | `BaseNode.wsSpeakDispatch()` | Sends `speak_dispatch` WebSocket event with text and thread ID. Logs caller stack trace. The sole server-side path for TTS content |
 | `BaseNode.extractAndDispatchSpeakTags()` | Post-completion `<speak>` extraction for non-voice mode. Extracts all `<speak>...</speak>` content from final response and dispatches via `wsSpeakDispatch()` |
 | `AgentPersonaModel` (WebSocket handler) | Receives `speak_dispatch` events, creates messages with `kind='speak'` in the Vue messages array. These messages are filtered from chat display and exist solely to trigger TTS |
-| `sullaEvents.ts` | IPC handlers: `audio-transcribe` (routes to TranscriptionService), `audio-speak` (routes to TextToSpeechService), `voice-log` (persists frontend voice events to ConversationLogger) |
+| `sullaEvents.ts` | IPC handlers: `audio-transcribe` (routes to TranscriptionService), `audio-speak` (routes to TextToSpeechService), `voice-log` (persists frontend voice events to ConversationLogger), `audio-driver-connect/disconnect/status` (AudioDriverClient lifecycle) |
+| `AudioDriverClient.ts` | Connects to the local audio-driver daemon over a Unix socket (`/tmp/audio-driver.sock`). Receives labeled audio chunks (speaker/system audio) and emits `chunk` events. Speaker chunks are forwarded to the gateway as channel 1 by `sullaEvents.ts` |
 
 ### 2.3 Data Flows
 
@@ -56,6 +57,21 @@ Microphone
   -> VoiceRecorderService emits 'silence' event (after transcription completes)
   -> VoicePipeline.handleSilence() -> flush()
   -> ChatInterface.send({ inputSource: 'microphone', voiceMode, pipelineSequence })
+```
+
+**Multi-Channel Audio Flow (Secretary Mode with Audio Driver):**
+```
+Audio Driver daemon (system audio capture)
+  -> Unix socket /tmp/audio-driver.sock
+  -> AudioDriverClient receives labeled chunks
+  -> sullaEvents.ts 'audio-driver-connect' handler
+  -> Speaker chunks forwarded to GatewayConnectionController.sendAudioChunk(data, channel=1)
+  -> GatewayListenerService.sendAudio(data, channel=1) — prefixed with [0x01][channel] wire header
+  -> Gateway WebSocket (binary frame)
+  -> Gateway routes channel 1 to per-channel STT pipeline
+
+Meanwhile, mic audio continues on channel 0 (original path, no header prefix).
+Gateway session is created with a channel map: { "0": mic, "1": system_audio }.
 ```
 
 **TTS Flow (Text to Speech):**
@@ -593,6 +609,7 @@ Add a toggle between VAD mode and push-to-talk mode. In push-to-talk: recording 
 |------|-------|
 | `pkg/rancher-desktop/agent/services/TranscriptionService.ts` | 273 |
 | `pkg/rancher-desktop/agent/services/TextToSpeechService.ts` | 139 |
+| `pkg/rancher-desktop/agent/services/AudioDriverClient.ts` | 373 |
 | `pkg/rancher-desktop/agent/nodes/BaseNode.ts` | ~2000 (voice-relevant: lines 1389-1588, 1635-1665, 1869-1928) |
 | `pkg/rancher-desktop/agent/database/models/AgentPersonaModel.ts` | ~850 (voice-relevant: lines 605-835) |
 | `pkg/rancher-desktop/main/sullaEvents.ts` | ~1100 (voice-relevant: lines 1040-1095) |
@@ -603,6 +620,9 @@ Add a toggle between VAD mode and push-to-talk mode. In push-to-talk: recording 
 | `audio-transcribe` | Renderer -> Main | Send audio buffer for STT |
 | `audio-speak` | Renderer -> Main | Send text for TTS, receive audio buffer |
 | `voice-log` | Renderer -> Main | Persist frontend voice events to log files |
+| `audio-driver-connect` | Renderer -> Main | Connect to local audio-driver daemon for speaker audio capture |
+| `audio-driver-disconnect` | Renderer -> Main | Disconnect from audio-driver daemon |
+| `audio-driver-status` | Renderer -> Main | Query audio-driver install/connection status |
 | `sulla-settings-get` | Renderer -> Main | Read audio configuration |
 
 ### WebSocket Events

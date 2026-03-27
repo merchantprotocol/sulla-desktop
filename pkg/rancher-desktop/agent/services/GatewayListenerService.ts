@@ -167,7 +167,7 @@ export class GatewayListenerService {
    * Create a gateway session and open an audio WebSocket to stream mic data.
    * Returns the sessionId on success, or throws on failure.
    */
-  async startAudioStream(callerName?: string): Promise<{ sessionId: string; callId: string }> {
+  async startAudioStream(callerName?: string, options?: { channels?: Record<string, { label: string; source: string }> }): Promise<{ sessionId: string; callId: string }> {
     const config = await this.getConfig();
     if (!config) throw new Error('Gateway not configured — set gateway_url and api_key in the Enterprise Gateway integration');
 
@@ -181,7 +181,10 @@ export class GatewayListenerService {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.apiKey}`,
       },
-      body: JSON.stringify({ callerName: callerName || 'Sulla Desktop' }),
+      body: JSON.stringify({
+        callerName: callerName || 'Sulla Desktop',
+        ...((options?.channels) && { channels: options.channels }),
+      }),
     });
 
     if (!response.ok) {
@@ -383,10 +386,16 @@ export class GatewayListenerService {
     }, delay);
   }
 
-  /** Send a chunk of raw audio data to the gateway. */
+  /**
+   * Send a chunk of raw audio data to the gateway.
+   * @param data - Raw audio bytes
+   * @param channel - Virtual channel ID (0 = default/mono). When > 0, frames are
+   *                  prefixed with [0x01][channel] so the gateway can route them
+   *                  to the correct per-channel STT pipeline.
+   */
   private audioChunkCount = 0;
 
-  sendAudio(data: Buffer | ArrayBuffer): void {
+  sendAudio(data: Buffer | ArrayBuffer, channel: number = 0): void {
     if (!this.audioWs || this.audioWs.readyState !== WebSocket.OPEN) {
       if (this.audioChunkCount === 0) {
         console.warn(`[GatewayListener] sendAudio called but WebSocket not open (ws=${!!this.audioWs}, readyState=${this.audioWs?.readyState})`);
@@ -402,11 +411,26 @@ export class GatewayListenerService {
       return;
     }
 
-    // Send as binary frame
-    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    const audioBuf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
+    // Tag with virtual channel header when channel > 0
+    // Wire format: [0x01 magic][channel uint8][audio bytes...]
+    // Channel 0 sends raw (no header) for backward compatibility with
+    // gateways that don't understand the channel protocol yet.
+    let buf: Buffer;
+
+    if (channel > 0) {
+      buf = Buffer.allocUnsafe(2 + audioBuf.length);
+      buf[0] = 0x01; // magic byte
+      buf[1] = channel;
+      audioBuf.copy(buf, 2);
+    } else {
+      buf = audioBuf;
+    }
+
     this.audioChunkCount++;
     if (this.audioChunkCount <= 3 || this.audioChunkCount % 100 === 0) {
-      console.log(`[GatewayListener] Sending audio chunk #${this.audioChunkCount} (${buf.length} bytes)`);
+      console.log(`[GatewayListener] Sending audio chunk #${this.audioChunkCount} ch=${channel} (${buf.length} bytes)`);
     }
     try {
       this.audioWs.send(buf);

@@ -118,6 +118,10 @@
                 <span class="summary-label">Secretary Mode</span>
                 <span class="summary-value">{{ secretaryEnabled ? (secretaryAgentName || 'Enabled') : 'Off' }}</span>
               </div>
+              <div class="summary-item">
+                <span class="summary-label">System Audio</span>
+                <span class="summary-value">{{ secretaryEnabled && transcriptionMode === 'gateway' ? 'Multi-channel (auto)' : 'Single channel' }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -161,7 +165,7 @@
           </div>
 
           <div
-            v-if="transcriptionMode === 'elevenlabs'"
+            v-if="transcriptionMode !== 'gateway'"
             class="setting-section"
           >
             <h3>Model</h3>
@@ -170,11 +174,13 @@
               class="setting-select"
               @change="saveSettings"
             >
-              <option value="scribe_v1">Scribe v1 (default)</option>
+              <option value="scribe_v2">Scribe v2 (recommended)</option>
+              <option value="scribe_v1">Scribe v1</option>
               <option value="scribe_v1_experimental">Scribe v1 Experimental</option>
             </select>
             <p class="description">
-              Scribe v1 is ElevenLabs' production speech-to-text model with broad language support.
+              <strong>Scribe v2</strong> is the latest ElevenLabs model with improved accuracy and noise labeling.<br>
+              <strong>Scribe v1</strong> is the original production model with broad language support.
             </p>
           </div>
         </div>
@@ -416,7 +422,7 @@ const apiKeyConnected = ref(false);
 const gatewayConnected = ref(false);
 const transcriptionMode = ref('browser');
 const transcriptionProvider = ref('elevenlabs');
-const transcriptionModel = ref('scribe_v1');
+const transcriptionModel = ref('scribe_v2');
 const ttsProvider = ref('elevenlabs');
 const ttsVoice = ref('');
 const ttsVoiceName = ref('');
@@ -459,7 +465,7 @@ async function loadSettings(): Promise<void> {
   try {
     transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
     transcriptionProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionProvider', 'elevenlabs');
-    transcriptionModel.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionModel', 'scribe_v1');
+    transcriptionModel.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionModel', 'scribe_v2');
     ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'elevenlabs');
     ttsVoice.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoice', '');
     ttsVoiceName.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoiceName', '');
@@ -489,7 +495,6 @@ async function saveSettings(): Promise<void> {
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryEnabled', secretaryEnabled.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentId', secretaryAgentId.value);
     await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentName', secretaryAgentName.value);
-
     // Store the display name of the selected voice
     const selected = voices.value.find(v => v.value === ttsVoice.value);
     ttsVoiceName.value = selected?.label || '';
@@ -567,8 +572,10 @@ async function fetchAudioDevices(): Promise<void> {
     // Must request mic permission first to get device labels
     await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
     const devices = await navigator.mediaDevices.enumerateDevices();
+    const hiddenDevices = ['blackhole', 'sulla audio mirror'];
     audioInputDevices.value = devices
       .filter(d => d.kind === 'audioinput')
+      .filter(d => !hiddenDevices.some(h => (d.label || '').toLowerCase().includes(h)))
       .map((d, i) => ({
         value: d.deviceId,
         label: d.label || `Microphone ${ i + 1 }`,

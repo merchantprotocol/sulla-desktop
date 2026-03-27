@@ -52,6 +52,14 @@ export function markHubReady(): void {
   }
 }
 
+/** Reset the hub readiness gate so the probe loop restarts.
+ *  Called after system resume — the Docker hub container may need time to recover. */
+export function resetHubProbe(): void {
+  hubReady = null;
+  hubReadyResolve = null;
+  hubProbeRunning = false;
+}
+
 /** Probe the hub with a single WebSocket connection attempt.  Retries every 3 s until
  *  the connection succeeds, then calls markHubReady().  Safe to call multiple times —
  *  only the first invocation spawns a probe loop. */
@@ -132,6 +140,7 @@ class WebSocketConnection {
   public subscribed = new Set<string>();
   private lastPongAt = 0;
   private missedPings = 0;
+  public suspended = false;
 
   private config: Required<ConnectionConfig>;
 
@@ -235,7 +244,7 @@ class WebSocketConnection {
     this.pending.delete(id);
   }
 
-  private cleanup() {
+  cleanup() {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.heartbeatTimer = this.reconnectTimer = null;
@@ -277,8 +286,12 @@ class WebSocketConnection {
         // server (ack, pong, message) since the last two heartbeat cycles,
         // the TCP connection is likely half-open.  Force a reconnect so
         // queued messages can be delivered on a fresh socket.
+        //
+        // Skip this check when suspended — timers freeze during system sleep
+        // so silenceSec will be huge on first tick after wake.  The power
+        // resume handler calls forceReconnect() explicitly instead.
         const silenceSec = (Date.now() - this.lastPongAt) / 1000;
-        if (silenceSec > 65) {
+        if (silenceSec > 65 && !this.suspended) {
           this.missedPings++;
           console.warn(`[WS ${ this.config.channel }] No server activity for ${ Math.round(silenceSec) }s (missed=${ this.missedPings }) — forcing reconnect`);
           this.scheduleReconnect();
@@ -375,6 +388,21 @@ class WebSocketConnection {
     this.subscribed.clear();
     this.reconnectAttempts = 0;
   }
+
+  /** Mark this connection as suspended (system going to sleep).
+   *  Prevents the heartbeat timer from misinterpreting frozen timers as a dead connection. */
+  markSuspended(): void {
+    this.suspended = true;
+  }
+
+  /** Force a fresh reconnect — tears down the current socket and reconnects immediately.
+   *  Used after system resume to replace potentially half-open connections. */
+  forceReconnect(): void {
+    this.suspended = false;
+    this.cleanup();
+    this.reconnectAttempts = 0;
+    this.connect();
+  }
 }
 
 export class WebSocketClientService {
@@ -470,6 +498,46 @@ export class WebSocketClientService {
   disconnectAll(): void {
     this.connections.forEach(c => c.disconnect());
     this.connections.clear();
+  }
+
+  /** Called when the system is about to sleep.  Marks all connections as suspended
+   *  so heartbeat timers don't misfire on wake. */
+  markSuspended(): void {
+    for (const conn of this.connections.values()) {
+      conn.markSuspended();
+    }
+  }
+
+  /** Called after system resume.  Resets the hub readiness gate, tears down all
+   *  connections, then re-establishes them once the hub probe succeeds.
+   *
+   *  Previous implementation called conn.forceReconnect() (which opens a raw
+   *  WebSocket immediately) *before* the hub probe resolved, so the connections
+   *  raced against the Docker container restart.  Worse, any subsequent
+   *  send() → connect() call went through connectWhenReady() which awaited the
+   *  *new* hubReady promise — a promise that only resolves after probeHubUntilReady
+   *  succeeds.  If the direct forceReconnect() happened to grab the socket first,
+   *  the probe-based path stayed blocked and messages queued via send() never
+   *  flushed. */
+  forceReconnectAll(): void {
+    console.log(`[WSService] forceReconnectAll — reconnecting ${ this.connections.size } connections`);
+
+    // 1. Tear down every connection so stale sockets are closed immediately.
+    for (const conn of this.connections.values()) {
+      conn.suspended = false;
+      conn.cleanup();
+      conn.reconnectAttempts = 0;
+    }
+
+    // 2. Reset the hub gate and start probing.
+    resetHubProbe();
+    probeHubUntilReady();
+
+    // 3. Reconnect every channel through the hub readiness gate so they
+    //    wait for the probe to succeed before opening a new WebSocket.
+    for (const conn of this.connections.values()) {
+      this.connectWhenReady(conn);
+    }
   }
 
   getPendingCount(connectionId: string): number {

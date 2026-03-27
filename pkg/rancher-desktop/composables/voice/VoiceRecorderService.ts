@@ -53,6 +53,7 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
   audioLevel = 0;
   recordingDuration = '0:00';
   transcriptionMode: 'browser' | 'elevenlabs' | 'gateway' = 'browser';
+  private transcriptionModel = 'scribe_v2';
 
   // ── Stream & recorder ──
   private mediaStream: MediaStream | null = null;
@@ -86,6 +87,10 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
 
   // ── Gateway audio streaming ──
   private gatewayStreamRecorder: MediaRecorder | null = null;
+  /** Separate MediaRecorder for system audio (channel 1) when multi-channel is active */
+  private gatewaySystemRecorder: MediaRecorder | null = null;
+  /** System audio MediaStream provided via setSystemAudioStream() */
+  private systemAudioStream: MediaStream | null = null;
   private gatewaySessionId: string | null = null;
   private gatewayStreamActive = false;
 
@@ -223,6 +228,7 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
 
   private async loadSettings(): Promise<void> {
     this.transcriptionMode = await this.ipcInvoke('sulla-settings-get', 'audioTranscriptionMode', 'elevenlabs');
+    this.transcriptionModel = await this.ipcInvoke('sulla-settings-get', 'audioTranscriptionModel', 'scribe_v2');
     this.vadSilenceThreshold = await this.ipcInvoke('sulla-settings-get', 'audioVadSilenceThreshold', 20);
     this.vadSilenceDuration = await this.ipcInvoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
     this.sttLanguage = await this.ipcInvoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
@@ -474,7 +480,7 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
   private async transcribe(audioBlob: Blob, mimeType: string): Promise<void> {
     try {
       const arrayBuffer = await audioBlob.arrayBuffer();
-      const result = await this.ipcInvoke('audio-transcribe', { audio: arrayBuffer, mimeType, diarize: true });
+      const result = await this.ipcInvoke('audio-transcribe', { audio: arrayBuffer, mimeType, diarize: true, model: this.transcriptionModel });
       if (result?.text?.trim()) {
         const raw = result.text.trim();
         // Scribe V2 labels non-speech as [background noise], [singing], [music], etc.
@@ -605,16 +611,47 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
   // ─── Gateway Audio Streaming ────────────────────────────────
 
   /**
+   * Provide a system audio MediaStream for multi-channel gateway streaming.
+   * Call this before startGatewayAudioStream() to enable dual-channel mode.
+   * Channel 0 = mic (this.mediaStream), Channel 1 = system audio.
+   *
+   * When not set, falls back to single-channel mono (backward compatible).
+   */
+  setSystemAudioStream(stream: MediaStream | null): void {
+    this.systemAudioStream = stream;
+    console.log(`[VoiceRecorder] System audio stream ${stream ? 'set' : 'cleared'}`);
+  }
+
+  /**
    * Start streaming audio to the gateway.
-   * Creates a session, opens the audio WebSocket, and starts a MediaRecorder
+   * Creates a session, opens the audio WebSocket, and starts MediaRecorder(s)
    * with a timeslice so chunks are sent continuously.
+   *
+   * When systemAudioStream is set, opens a multi-channel session:
+   *   - Channel 0: mic audio (this.mediaStream)
+   *   - Channel 1: system audio (this.systemAudioStream)
+   * Otherwise, single-channel mono (original behavior).
    */
   private async startGatewayAudioStream(): Promise<void> {
     if (!this.mediaStream) return;
 
+    const isMultiChannel = !!this.systemAudioStream;
+
     try {
+      // Build channel map for multi-channel sessions
+      const startPayload: { callerName: string; channels?: Record<string, { label: string; source: string }> } = {
+        callerName: 'Sulla Desktop',
+      };
+
+      if (isMultiChannel) {
+        startPayload.channels = {
+          '0': { label: 'User', source: 'mic' },
+          '1': { label: 'Caller', source: 'system_audio' },
+        };
+      }
+
       // Create session + open audio WebSocket on main process
-      const result = await this.ipcInvoke('gateway-audio-start', { callerName: 'Sulla Desktop' });
+      const result = await this.ipcInvoke('gateway-audio-start', startPayload);
       if (result?.error || !result?.sessionId) {
         console.warn('[VoiceRecorder] Gateway audio start failed:', result?.error);
         return;
@@ -622,23 +659,35 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
 
       this.gatewaySessionId = result.sessionId;
       this.gatewayStreamActive = true;
-      console.log(`[VoiceRecorder] Gateway audio stream started, session: ${result.sessionId}`);
+      console.log(`[VoiceRecorder] Gateway audio stream started, session: ${result.sessionId}, multiChannel: ${isMultiChannel}`);
 
-      // Create a separate MediaRecorder for continuous streaming (250ms chunks)
       const streamMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm';
 
+      // Channel 0: mic audio
       this.gatewayStreamRecorder = new MediaRecorder(this.mediaStream, { mimeType: streamMime });
-
       this.gatewayStreamRecorder.ondataavailable = async(event: BlobEvent) => {
         if (event.data.size > 0 && this.gatewayStreamActive) {
           const arrayBuffer = await event.data.arrayBuffer();
-          this.ipcInvoke('gateway-audio-send', { audio: arrayBuffer }).catch(() => {});
+          // Channel 0 — no tag needed (backward compatible)
+          this.ipcInvoke('gateway-audio-send', { audio: arrayBuffer, channel: 0 }).catch(() => {});
         }
       };
+      this.gatewayStreamRecorder.start(250);
 
-      this.gatewayStreamRecorder.start(250); // emit data every 250ms
+      // Channel 1: system audio (only when multi-channel)
+      if (isMultiChannel && this.systemAudioStream) {
+        this.gatewaySystemRecorder = new MediaRecorder(this.systemAudioStream, { mimeType: streamMime });
+        this.gatewaySystemRecorder.ondataavailable = async(event: BlobEvent) => {
+          if (event.data.size > 0 && this.gatewayStreamActive) {
+            const arrayBuffer = await event.data.arrayBuffer();
+            this.ipcInvoke('gateway-audio-send', { audio: arrayBuffer, channel: 1 }).catch(() => {});
+          }
+        };
+        this.gatewaySystemRecorder.start(250);
+        console.log('[VoiceRecorder] System audio recorder started (channel 1)');
+      }
     } catch (err) {
       console.error('[VoiceRecorder] Gateway audio stream error:', err);
       this.gatewayStreamActive = false;
@@ -651,10 +700,17 @@ export class VoiceRecorderService extends TypedEventEmitter<VoiceRecorderEvents>
   private stopGatewayAudioStream(): void {
     this.gatewayStreamActive = false;
 
+    // Stop mic recorder (channel 0)
     if (this.gatewayStreamRecorder && this.gatewayStreamRecorder.state !== 'inactive') {
       try { this.gatewayStreamRecorder.stop(); } catch { /* ignore */ }
     }
     this.gatewayStreamRecorder = null;
+
+    // Stop system audio recorder (channel 1)
+    if (this.gatewaySystemRecorder && this.gatewaySystemRecorder.state !== 'inactive') {
+      try { this.gatewaySystemRecorder.stop(); } catch { /* ignore */ }
+    }
+    this.gatewaySystemRecorder = null;
 
     if (this.gatewaySessionId) {
       this.ipcInvoke('gateway-audio-stop').catch(() => {});
