@@ -1101,6 +1101,17 @@ const validateForm = (): boolean => {
   errors.value = {};
   let isValid = true;
 
+  // Validate Account Label field separately for new accounts
+  const isCreatingAccount = connectedAccounts.value.length === 0 || isAddingAccount.value;
+  if (isCreatingAccount) {
+    const label = newAccountLabel.value.trim();
+    if (!label) {
+      errors.value['__account_label'] = 'Account label is required';
+      isValid = false;
+    }
+  }
+
+  // Validate credential fields
   for (const property of integration.value.properties) {
     const error = validateField(property, formData.value[property.key] || '');
     if (error) {

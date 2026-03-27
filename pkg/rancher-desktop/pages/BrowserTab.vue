@@ -482,8 +482,8 @@ onUnmounted(() => {
 
 <style scoped>
 .browser-toolbar {
-  background-color: #2a2e34;
-  border-bottom: 1px solid #3a3f46;
+  background-color: var(--bg-surface-alt);
+  border-bottom: 1px solid var(--border-default);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   position: relative;
   z-index: 1;
@@ -544,5 +544,30 @@ onUnmounted(() => {
   height: 100%;
   border: none;
   display: block;
+}
+
+/* Theme-aware scrollbar styling for overflow-auto containers */
+.overflow-auto::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.overflow-auto::-webkit-scrollbar-track {
+  background: var(--bg-surface);
+  border-radius: 4px;
+}
+
+.overflow-auto::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 4px;
+  transition: background-color 150ms;
+}
+
+.overflow-auto::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.overflow-auto::-webkit-scrollbar-corner {
+  background: var(--bg-surface);
 }
 </style>

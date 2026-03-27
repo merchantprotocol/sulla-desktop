@@ -87,7 +87,7 @@
             stroke="currentColor"
             stroke-width="2"
             stroke-linecap="round"
-            class="h-3.5 w-3.5"
+            class="h-3.5 w-3.5 fill-sky-400"
           >
             <rect
               x="3"
