@@ -2979,10 +2979,10 @@
   resolved "https://registry.npmjs.org/@schedule-x/drag-and-drop/-/drag-and-drop-3.7.3.tgz"
   integrity sha512-nHwZKzdIKWNTdT5BEXy4vLlHOmOH3C3M744QUIU0EOXPAFZQR1bBTviGs2NhmvaLiGstnVx2/TZtdhocy60hgg==
 
-"@schedule-x/events-service@^4.1.0":
-  version "4.2.0"
-  resolved "https://registry.npmjs.org/@schedule-x/events-service/-/events-service-4.2.0.tgz"
-  integrity sha512-IeJdb3mvIGZFP5V399T+JyR2GnlRj4ZtsNt3d2yM5mGnXZDdyL7hcxyFD8UQ37+TUDW8/OBkH24WNSk2Gl7ynQ==
+"@schedule-x/events-service@^4.3.1":
+  version "4.3.1"
+  resolved "https://registry.yarnpkg.com/@schedule-x/events-service/-/events-service-4.3.1.tgz#57709b05534e225b85d6d4cd5fc69ba654360a83"
+  integrity sha512-jTdDraYe+F7nof6VRnF/GX3VJjl7CNUlfpMnZDQazgXlsRjiRHCiyxiyiw3LyOhpW0ssqIBkPWA/H+7qAF/BUQ==
 
 "@schedule-x/theme-default@^4.1.0":
   version "4.2.0"
