@@ -1,372 +1,432 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sulla Desktop — One-Line Installer (Bootstrap)
+# Sulla Desktop — Installer
 # ============================================================================
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/install.sh | bash
+# Downloads and installs the latest pre-built Sulla Desktop from GitHub.
+# No build tools required.
 #
-# Install nightly (latest from main, may be unstable):
-#   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/install.sh | bash -s -- --nightly
+# Usage:
+#   curl -fsSL https://sulladesktop.com/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/install.sh | sh
 #
 # Or if you already cloned the repo:
 #   bash install.sh
-#   bash install.sh --nightly
 #
-# Options:
-#   --nightly   Install from the latest main branch instead of the latest release.
-#               Use this if you want bleeding-edge features (may be unstable).
-#
-# Idempotent — safe to run multiple times.
-# Supports macOS (arm64/x86_64), Linux (apt/dnf/pacman), and Windows (Git Bash / MSYS2).
-#
-# Architecture:
-#   Phase 1 (this file): Bootstrap — detect OS, install git/curl, clone repo.
-#   Phase 2 (installer/): Source modular lib from cloned repo, run controller.
+# Supports macOS (arm64/x86_64), Linux, and Windows (Git Bash / MSYS2).
 # ============================================================================
 
 set -euo pipefail
 
-# ============================================================================
-# Phase 1: Inline Bootstrap
-# ============================================================================
-# These minimal definitions run BEFORE the repo is cloned. They are
-# overwritten by the full versions in installer/lib/ after cloning.
-# ============================================================================
+GITHUB_REPO="merchantprotocol/sulla-desktop"
 
-# --- Bootstrap logging (before lib modules are available) ---
-INSTALL_LOG="/tmp/sulla-install.log"
-: > "$INSTALL_LOG"
-_log() { printf "[%s] [%-8s] %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2" >> "$INSTALL_LOG"; }
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-_log BOOT "Sulla Desktop installer starting"
-_log BOOT "Arguments: $*"
-_log BOOT "Shell: $SHELL (bash $BASH_VERSION)"
-_log BOOT "User: $(whoami), HOME=$HOME"
+log()   { echo -e "${GREEN}[sulla]${NC} $1"; }
+warn()  { echo -e "${YELLOW}[sulla]${NC} $1"; }
+error() { echo -e "${RED}[sulla]${NC} $1" >&2; }
+info()  { echo -e "${CYAN}[sulla]${NC} $1"; }
 
-# --- Config ---
-REPO_URL="https://github.com/merchantprotocol/sulla-desktop.git"
-REPO_OWNER="merchantprotocol"
-REPO_NAME="sulla-desktop"
-INSTALL_DIR="$HOME/.sulla-desktop"
-USE_NIGHTLY=false
-INSTALL_FAILED=false
+# ─── Helpers ─────────────────────────────────────────────────
+
+require_cmd() {
+    if ! command -v "$1" &>/dev/null; then
+        error "$1 is required but not installed."
+        exit 1
+    fi
+}
+
+# Get the latest release tag from GitHub API
+get_latest_release() {
+    local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+    local release_json
+    release_json=$(curl -fsSL "$api_url" 2>/dev/null) || {
+        error "Failed to fetch latest release from GitHub."
+        error "Check your internet connection and try again."
+        exit 1
+    }
+    echo "$release_json"
+}
+
+# Extract a download URL from release JSON matching a pattern
+get_asset_url() {
+    local json="$1"
+    local pattern="$2"
+    echo "$json" \
+        | grep -o '"browser_download_url": *"[^"]*'"$pattern"'[^"]*"' \
+        | head -1 \
+        | sed 's/"browser_download_url": *"//' \
+        | sed 's/"$//'
+}
+
+# Extract version tag from release JSON
+get_release_tag() {
+    local json="$1"
+    echo "$json" \
+        | grep -o '"tag_name": *"[^"]*"' \
+        | head -1 \
+        | sed 's/"tag_name": *"//' \
+        | sed 's/"$//'
+}
+
+# ─── macOS installer ────────────────────────────────────────
+
+install_macos() {
+    local arch
+    arch=$(uname -m)
+
+    local arch_label
+    case "$arch" in
+        arm64|aarch64) arch_label="aarch64" ;;
+        x86_64)        arch_label="x86_64" ;;
+        *)
+            error "Unsupported macOS architecture: $arch"
+            exit 1
+            ;;
+    esac
+
+    log "Detected macOS ($arch_label)"
+    log "Fetching latest release..."
+
+    local release_json
+    release_json=$(get_latest_release)
+    local version
+    version=$(get_release_tag "$release_json")
+    log "Latest version: $version"
+
+    # Try DMG first, fall back to ZIP
+    local dmg_url
+    dmg_url=$(get_asset_url "$release_json" "mac.*\\.dmg")
+
+    if [ -n "$dmg_url" ]; then
+        install_macos_dmg "$dmg_url" "$version"
+    else
+        local zip_url
+        zip_url=$(get_asset_url "$release_json" "mac\\.${arch_label}\\.zip\\|mac.*${arch_label}.*\\.zip")
+        if [ -z "$zip_url" ]; then
+            # Try generic mac zip
+            zip_url=$(get_asset_url "$release_json" "mac.*\\.zip")
+        fi
+        if [ -n "$zip_url" ]; then
+            install_macos_zip "$zip_url" "$version"
+        else
+            error "No macOS artifact found in release $version"
+            exit 1
+        fi
+    fi
+}
+
+install_macos_dmg() {
+    local url="$1"
+    local version="$2"
+    local tmp_dmg="/tmp/SullaDesktop-${version}.dmg"
+
+    log "Downloading DMG..."
+    curl -fSL -o "$tmp_dmg" "$url" || {
+        error "Download failed."
+        exit 1
+    }
+
+    log "Mounting DMG..."
+    local mount_point
+    mount_point=$(hdiutil attach "$tmp_dmg" -nobrowse -noautoopen 2>/dev/null | grep '/Volumes/' | tail -1 | awk -F'\t' '{print $NF}')
+
+    if [ -z "$mount_point" ]; then
+        error "Failed to mount DMG."
+        rm -f "$tmp_dmg"
+        exit 1
+    fi
+
+    local app_name
+    app_name=$(ls "$mount_point" | grep '\.app$' | head -1)
+    if [ -z "$app_name" ]; then
+        error "No .app found in DMG."
+        hdiutil detach "$mount_point" -quiet 2>/dev/null || true
+        rm -f "$tmp_dmg"
+        exit 1
+    fi
+
+    log "Installing ${app_name} to /Applications..."
+    rm -rf "/Applications/${app_name}"
+    cp -R "${mount_point}/${app_name}" /Applications/
+
+    hdiutil detach "$mount_point" -quiet 2>/dev/null || true
+    rm -f "$tmp_dmg"
+
+    # Remove quarantine flag so Gatekeeper doesn't block unsigned app
+    xattr -cr "/Applications/${app_name}" 2>/dev/null || true
+
+    log "Installed to /Applications/${app_name}"
+    finish_macos "$app_name"
+}
+
+install_macos_zip() {
+    local url="$1"
+    local version="$2"
+    local tmp_zip="/tmp/SullaDesktop-${version}-mac.zip"
+
+    log "Downloading ZIP..."
+    curl -fSL -o "$tmp_zip" "$url" || {
+        error "Download failed."
+        exit 1
+    }
+
+    log "Extracting..."
+    local tmp_dir="/tmp/sulla-desktop-extract-$$"
+    mkdir -p "$tmp_dir"
+    unzip -qo "$tmp_zip" -d "$tmp_dir"
+    rm -f "$tmp_zip"
+
+    local app_name
+    app_name=$(find "$tmp_dir" -maxdepth 2 -name '*.app' -type d | head -1)
+    if [ -z "$app_name" ]; then
+        error "No .app found in ZIP."
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+
+    local basename_app
+    basename_app=$(basename "$app_name")
+
+    log "Installing ${basename_app} to /Applications..."
+    rm -rf "/Applications/${basename_app}"
+    mv "$app_name" /Applications/
+    rm -rf "$tmp_dir"
+
+    # Remove quarantine flag so Gatekeeper doesn't block unsigned app
+    xattr -cr "/Applications/${basename_app}" 2>/dev/null || true
+
+    log "Installed to /Applications/${basename_app}"
+    finish_macos "$basename_app"
+}
+
+finish_macos() {
+    local app_name="$1"
+    echo ""
+    log "Installation complete!"
+    log "Launch from Applications or run:"
+    log "  open '/Applications/${app_name}'"
+    echo ""
+}
+
+# ─── Linux installer ────────────────────────────────────────
+
+install_linux() {
+    log "Detected Linux"
+    log "Fetching latest release..."
+
+    local release_json
+    release_json=$(get_latest_release)
+    local version
+    version=$(get_release_tag "$release_json")
+    log "Latest version: $version"
+
+    local zip_url
+    zip_url=$(get_asset_url "$release_json" "linux.*\\.zip")
+    if [ -z "$zip_url" ]; then
+        error "No Linux artifact found in release $version"
+        exit 1
+    fi
+
+    local tmp_zip="/tmp/sulla-desktop-${version}-linux.zip"
+    log "Downloading..."
+    curl -fSL -o "$tmp_zip" "$zip_url" || {
+        error "Download failed."
+        exit 1
+    }
+
+    local install_dir="/opt/sulla-desktop"
+
+    log "Installing to ${install_dir}..."
+    sudo mkdir -p "$install_dir"
+    sudo unzip -qo "$tmp_zip" -d "$install_dir"
+    rm -f "$tmp_zip"
+
+    # Find the executable
+    local exe
+    exe=$(find "$install_dir" -maxdepth 2 -name 'sulla-desktop' -type f | head -1)
+    if [ -z "$exe" ]; then
+        exe=$(find "$install_dir" -maxdepth 2 -name 'Sulla*' -type f -executable | head -1)
+    fi
+
+    if [ -n "$exe" ]; then
+        sudo chmod +x "$exe"
+        sudo ln -sf "$exe" /usr/local/bin/sulla-desktop 2>/dev/null || true
+
+        # Create .desktop entry
+        local desktop_file="/usr/share/applications/sulla-desktop.desktop"
+        sudo tee "$desktop_file" > /dev/null << DESKTOP
+[Desktop Entry]
+Name=Sulla Desktop
+Exec=${exe}
+Terminal=false
+Type=Application
+Categories=Utility;
+DESKTOP
+        log "Desktop entry created."
+    fi
+
+    echo ""
+    log "Installation complete!"
+    log "Run: sulla-desktop"
+    echo ""
+}
+
+# ─── Windows installer (Git Bash / MSYS2) ───────────────────
+
+install_windows() {
+    log "Detected Windows"
+    log "Fetching latest release..."
+
+    local release_json
+    release_json=$(get_latest_release)
+    local version
+    version=$(get_release_tag "$release_json")
+    log "Latest version: $version"
+
+    # Prefer MSI installer
+    local msi_url
+    msi_url=$(get_asset_url "$release_json" "\\.msi")
+
+    if [ -n "$msi_url" ]; then
+        install_windows_msi "$msi_url" "$version"
+    else
+        local zip_url
+        zip_url=$(get_asset_url "$release_json" "win.*\\.zip")
+        if [ -n "$zip_url" ]; then
+            install_windows_zip "$zip_url" "$version"
+        else
+            error "No Windows artifact found in release $version"
+            exit 1
+        fi
+    fi
+}
+
+install_windows_msi() {
+    local url="$1"
+    local version="$2"
+    local tmp_msi="/tmp/SullaDesktop-${version}.msi"
+
+    log "Downloading MSI installer..."
+    curl -fSL -o "$tmp_msi" "$url" || {
+        error "Download failed."
+        exit 1
+    }
+
+    log "Running installer (you may see a UAC prompt)..."
+    # msiexec runs the MSI; /passive shows progress but no interaction
+    cmd.exe /c "msiexec /i \"$(cygpath -w "$tmp_msi")\" /passive" || {
+        warn "Silent install failed. Launching interactive installer..."
+        cmd.exe /c "msiexec /i \"$(cygpath -w "$tmp_msi")\""
+    }
+    rm -f "$tmp_msi"
+
+    echo ""
+    log "Installation complete!"
+    log "Launch Sulla Desktop from the Start menu."
+    echo ""
+}
+
+install_windows_zip() {
+    local url="$1"
+    local version="$2"
+    local tmp_zip="/tmp/SullaDesktop-${version}-win.zip"
+
+    log "Downloading ZIP..."
+    curl -fSL -o "$tmp_zip" "$url" || {
+        error "Download failed."
+        exit 1
+    }
+
+    local install_dir
+    install_dir="$(cygpath "$LOCALAPPDATA")/Programs/Sulla Desktop"
+
+    log "Extracting to ${install_dir}..."
+    mkdir -p "$install_dir"
+    unzip -qo "$tmp_zip" -d "$install_dir"
+    rm -f "$tmp_zip"
+
+    echo ""
+    log "Installation complete!"
+    log "Run: '${install_dir}/Sulla Desktop.exe'"
+    echo ""
+}
+
+# ─── Uninstall ───────────────────────────────────────────────
+
+uninstall() {
+    local os
+    os=$(uname -s)
+
+    case "$os" in
+        Darwin)
+            log "Removing Sulla Desktop from /Applications..."
+            rm -rf "/Applications/Sulla Desktop.app"
+            log "Uninstall complete."
+            ;;
+        Linux)
+            log "Removing Sulla Desktop..."
+            sudo rm -rf /opt/sulla-desktop
+            sudo rm -f /usr/local/bin/sulla-desktop
+            sudo rm -f /usr/share/applications/sulla-desktop.desktop
+            log "Uninstall complete."
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            log "To uninstall on Windows, use Add/Remove Programs or run:"
+            log '  msiexec /x "Sulla Desktop"'
+            ;;
+        *)
+            error "Unknown OS: $os"
+            exit 1
+            ;;
+    esac
+}
+
+# ─── Main ────────────────────────────────────────────────────
 
 for arg in "$@"; do
-  case "$arg" in
-    --nightly) USE_NIGHTLY=true ;;
-    --help|-h)
-      echo "Usage: install.sh [--nightly]"
-      echo ""
-      echo "  --nightly   Install from the latest main branch (may be unstable)"
-      echo "              Default: installs the latest stable release"
-      exit 0
-      ;;
-  esac
-done
-
-# --- Inline colors ---
-_BOLD="\033[1m"
-_DIM="\033[2m"
-_RESET="\033[0m"
-_GREEN="\033[1;32m"
-_RED="\033[1;31m"
-_YELLOW="\033[1;33m"
-_CYAN="\033[1;36m"
-_WHITE="\033[1;37m"
-_CHECK="${_GREEN}✔${_RESET}"
-_CROSS="${_RED}✖${_RESET}"
-
-# --- Inline spinner ---
-_SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-_SPINNER_PID=""
-
-_hide_cursor() { printf "\033[?25l"; }
-_show_cursor() { printf "\033[?25h"; }
-_clear_line() { printf "\r\033[2K"; }
-
-_start_spinner() {
-  local msg="$1"
-  _stop_spinner 2>/dev/null
-  (
-    local i=0
-    while true; do
-      local frame="${_SPINNER_FRAMES[$((i % ${#_SPINNER_FRAMES[@]}))]}"
-      printf "\r  ${_CYAN}%s${_RESET} %s" "$frame" "$msg"
-      sleep 0.08
-      i=$((i + 1))
-    done
-  ) &
-  _SPINNER_PID=$!
-  disown "$_SPINNER_PID" 2>/dev/null
-}
-
-_stop_spinner() {
-  if [ -n "${_SPINNER_PID:-}" ] && kill -0 "$_SPINNER_PID" 2>/dev/null; then
-    kill "$_SPINNER_PID" 2>/dev/null
-    wait "$_SPINNER_PID" 2>/dev/null || true
-  fi
-  _SPINNER_PID=""
-  _clear_line
-}
-
-_step_ok() {
-  _stop_spinner
-  printf "  ${_CHECK}  %s\n" "$1"
-}
-
-_step_fail() {
-  _stop_spinner
-  printf "  ${_CROSS}  %s\n" "$1"
-  printf "\n  ${_RED}${_BOLD}Bootstrap failed.${_RESET}\n\n"
-  _show_cursor
-  exit 1
-}
-
-_cleanup() {
-  _stop_spinner 2>/dev/null
-  _show_cursor
-}
-trap _cleanup EXIT
-
-# --- PATH Bootstrap ---
-_bootstrap_path() {
-  local candidates=(
-    /opt/homebrew/bin /opt/homebrew/sbin
-    /usr/local/bin /usr/local/sbin
-    /home/linuxbrew/.linuxbrew/bin /home/linuxbrew/.linuxbrew/sbin
-    /usr/local/go/bin "$HOME/go/bin"
-    /c/Go/bin "/c/Program Files/Go/bin"
-    "$HOME/.cargo/bin"
-    /usr/bin /usr/sbin /bin /sbin
-  )
-  for dir in "${candidates[@]}"; do
-    case ":$PATH:" in
-      *":$dir:"*) continue ;;
+    case "$arg" in
+        --uninstall)
+            uninstall
+            exit 0
+            ;;
+        --help|-h)
+            echo "Usage: install.sh [--uninstall]"
+            echo ""
+            echo "Downloads and installs the latest Sulla Desktop from GitHub."
+            echo ""
+            echo "  --uninstall   Remove Sulla Desktop"
+            echo ""
+            echo "For developer builds from source, use install-dev.sh instead."
+            exit 0
+            ;;
     esac
-    [ -d "$dir" ] && export PATH="$dir:$PATH"
-  done
-}
-_bootstrap_path
-_log BOOT "PATH bootstrap complete"
-
-# --- OS Detection ---
-_detect_os() {
-  case "$(uname -s)" in
-    Darwin*)  echo "macos"  ;;
-    Linux*)   echo "linux"  ;;
-    MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
-    *)        _step_fail "Unsupported OS: $(uname -s)" ;;
-  esac
-}
-
-# --- Bootstrap: ensure git + curl exist ---
-_command_exists() { command -v "$1" >/dev/null 2>&1; }
-
-_bootstrap_install_curl() {
-  local os="$1"
-  case "$os" in
-    linux)
-      if _command_exists apt-get; then
-        sudo apt-get update -qq && sudo apt-get install -yqq curl
-      elif _command_exists dnf; then
-        sudo dnf install -y curl
-      elif _command_exists yum; then
-        sudo yum install -y curl
-      elif _command_exists pacman; then
-        sudo pacman -Sy --noconfirm curl
-      else
-        _step_fail "Cannot install curl — no supported package manager found. Install curl manually and re-run."
-      fi
-      ;;
-    windows)
-      _step_fail "curl not found — please install Git for Windows: https://git-scm.com/download/win"
-      ;;
-    macos)
-      _step_fail "curl not found on macOS — this should never happen. Is your system corrupt?"
-      ;;
-  esac
-  _command_exists curl || _step_fail "curl installation failed"
-}
-
-_bootstrap_install_git() {
-  local os="$1"
-  case "$os" in
-    macos)
-      # Xcode CLT provides git — trigger install dialog
-      if ! xcode-select -p >/dev/null 2>&1; then
-        xcode-select --install >/dev/null 2>&1 || true
-        printf "  ${_YELLOW}⚠${_RESET}  Xcode CLT dialog opened — approve it, then re-run this installer.\n"
-        exit 1
-      fi
-      ;;
-    linux)
-      if _command_exists apt-get; then
-        sudo apt-get update -qq && sudo apt-get install -yqq git
-      elif _command_exists dnf; then
-        sudo dnf install -y git
-      elif _command_exists yum; then
-        sudo yum install -y git
-      elif _command_exists pacman; then
-        sudo pacman -Sy --noconfirm git
-      else
-        _step_fail "Cannot install git — no supported package manager found. Install git manually and re-run."
-      fi
-      ;;
-    windows)
-      _step_fail "git not found — please install Git for Windows: https://git-scm.com/download/win"
-      ;;
-  esac
-  _command_exists git || _step_fail "git installation failed"
-}
-
-# ============================================================================
-# Phase 1: Execute Bootstrap
-# ============================================================================
-_hide_cursor
-echo ""
-printf "  ${_BOLD}${_WHITE}Sulla Desktop${_RESET} ${_DIM}— Bootstrap${_RESET}\n"
-echo ""
-
-BOOTSTRAP_OS="$(_detect_os)"
-_log BOOT "Detected OS: $BOOTSTRAP_OS ($(uname -m))"
-_step_ok "Detected ${BOOTSTRAP_OS} ($(uname -m))"
-
-# Ensure curl
-if _command_exists curl; then
-  _log BOOT "curl already available: $(command -v curl)"
-  _step_ok "curl available"
-else
-  _log BOOT "curl not found, installing..."
-  _start_spinner "Installing curl..."
-  _bootstrap_install_curl "$BOOTSTRAP_OS"
-  _log BOOT "curl installed: $(command -v curl)"
-  _step_ok "curl installed"
-fi
-
-# Ensure git
-if _command_exists git && git --version >/dev/null 2>&1; then
-  _log BOOT "git already available: $(git --version)"
-  _step_ok "git available"
-else
-  _log BOOT "git not found, installing..."
-  _start_spinner "Installing git..."
-  _bootstrap_install_git "$BOOTSTRAP_OS"
-  _log BOOT "git installed: $(git --version)"
-  _step_ok "git installed"
-fi
-
-# Verify GitHub is reachable before attempting clone
-_log BOOT "Checking GitHub connectivity..."
-_start_spinner "Checking GitHub connectivity..."
-_gh_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
-  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}" 2>/dev/null)" || _gh_code="000"
-_log BOOT "GitHub API response code: $_gh_code"
-
-if [ "$_gh_code" = "000" ]; then
-  _log BOOT "GitHub unreachable (code 000)"
-  _step_fail "Cannot reach GitHub — check your internet connection"
-elif [ "$_gh_code" -ge 400 ] 2>/dev/null && [ "$_gh_code" != "404" ]; then
-  _log BOOT "GitHub returned error: HTTP $_gh_code"
-  _step_fail "GitHub returned HTTP ${_gh_code} — check your credentials or rate limits"
-fi
-_log BOOT "GitHub accessible"
-_step_ok "GitHub accessible"
-
-# ============================================================================
-# Phase 1.5: Get the repo (so we can source installer/lib/)
-# ============================================================================
-
-# If we're already inside the repo, use it directly
-if [ -f "package.json" ] && grep -q '"sulla-desktop"' package.json 2>/dev/null; then
-  INSTALLER_ROOT="$(pwd)/installer"
-  _log BOOT "Running from cloned repo at $(pwd)"
-  _step_ok "Running from cloned repo"
-elif [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
-  # Repo already exists — update it
-  _log BOOT "Existing repo found at $INSTALL_DIR, updating..."
-  _start_spinner "Updating repository..."
-  cd "$INSTALL_DIR"
-  git fetch origin --tags --force >/dev/null 2>&1 || true
-  if [ "$USE_NIGHTLY" = true ]; then
-    _log BOOT "Nightly mode: resetting to origin/main"
-    git checkout main >/dev/null 2>&1 || true
-    git reset --hard origin/main >/dev/null 2>&1 || true
-  else
-    # Resolve latest release tag and checkout so installer code matches the release
-    _release_tag="$(curl -fsSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" 2>/dev/null \
-      | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')" || true
-    if [ -n "${_release_tag:-}" ]; then
-      _log BOOT "Latest release: $_release_tag — checking out"
-      git checkout "$_release_tag" >/dev/null 2>&1 || true
-    else
-      _log BOOT "Could not resolve latest release — staying on current version"
-    fi
-  fi
-  INSTALLER_ROOT="$(pwd)/installer"
-  _log BOOT "Repository updated at $(pwd)"
-  _step_ok "Repository updated"
-else
-  # Fresh clone
-  _log BOOT "Cloning repository from $REPO_URL to $INSTALL_DIR"
-  _start_spinner "Cloning repository..."
-  git clone "$REPO_URL" "$INSTALL_DIR" >/dev/null 2>&1 || _step_fail "git clone failed"
-  cd "$INSTALL_DIR"
-  INSTALLER_ROOT="$(pwd)/installer"
-  _log BOOT "Repository cloned to $(pwd)"
-  _step_ok "Repository cloned"
-fi
-
-# ============================================================================
-# Phase 2: Hand off to modular installer
-# ============================================================================
-
-INSTALLER_LIB="$INSTALLER_ROOT/lib"
-INSTALLER_CONTROLLER="$INSTALLER_ROOT/controller.sh"
-
-if [ ! -d "$INSTALLER_LIB" ]; then
-  _step_fail "installer/lib/ not found in repo — is this a valid sulla-desktop checkout?"
-fi
-
-if [ ! -f "$INSTALLER_CONTROLLER" ]; then
-  _step_fail "installer/controller.sh not found — is this a valid sulla-desktop checkout?"
-fi
-
-_log BOOT "Installer modules found at $INSTALLER_LIB"
-_step_ok "Installer modules found"
-
-# Clear the bootstrap trap — the full UI module will set its own
-trap - EXIT
-
-# Source all modules in numeric order
-_log BOOT "Sourcing installer modules from: $INSTALLER_LIB"
-for lib_file in "$INSTALLER_LIB"/*.sh; do
-  [ -f "$lib_file" ] || continue
-  _log BOOT "Sourcing: $(basename "$lib_file")"
-  # shellcheck source=/dev/null
-  source "$lib_file"
 done
 
-# Source the controller
-_log BOOT "Sourcing controller: $INSTALLER_CONTROLLER"
-# shellcheck source=/dev/null
-source "$INSTALLER_CONTROLLER"
+require_cmd curl
 
-# Capture environment snapshot now that log() is available
-_log BOOT "Calling log_env_snapshot"
-log_env_snapshot
+log "Sulla Desktop Installer"
+echo ""
 
-# Detect OS (now using the full platform module)
-OS="$(detect_os)"
-_log BOOT "Full OS detection: $OS"
+OS="$(uname -s)"
 
-# Validate that the detected OS has a complete module
-validate_os_module "$OS"
-_log BOOT "OS module validated for: $OS"
-
-# Bootstrap PATH with the full version
-bootstrap_path
-_log BOOT "Full PATH bootstrap complete"
-
-# Hand off to the controller — this runs the entire install
-_log BOOT "Handing off to controller::run"
-controller::run "$@"
+case "$OS" in
+    Darwin)
+        install_macos
+        ;;
+    Linux)
+        install_linux
+        ;;
+    MINGW*|MSYS*|CYGWIN*|Windows_NT)
+        install_windows
+        ;;
+    *)
+        error "Unsupported OS: $OS"
+        error "Supported: macOS, Linux, Windows (Git Bash / MSYS2)"
+        exit 1
+        ;;
+esac

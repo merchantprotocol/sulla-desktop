@@ -130,6 +130,34 @@ jobs:
         AWS_DEFAULT_REGION: us-east-1
         OBS_WEBHOOK_TOKEN: ${{ secrets.OBS_WEBHOOK_TOKEN }}
 
+  release:
+    name: Create GitHub Release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - name: Download all artifacts
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        path: artifacts
+    - name: Prepare release assets
+      run: |
+        mkdir -p release
+        # Flatten artifacts into release directory
+        find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.zip' \) \
+          ! -name 'bats.tar.gz' -exec cp {} release/ \;
+        ls -lh release/
+    - name: Create release
+      uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2
+      with:
+        generate_release_notes: true
+        files: release/*
+
   sign-win:
     name: Test Signing (Windows)
     needs: package

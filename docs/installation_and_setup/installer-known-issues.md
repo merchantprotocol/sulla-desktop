@@ -35,10 +35,10 @@ The installer was rewritten from a 1610-line monolithic bash script into a modul
 
 **Symptom:** The app installed successfully but crashed on launch. Electron failed to spawn `rdctl` with error code -86 (EBADARCH).
 
-**Root cause:** `install.sh` never exported `M1=true` on ARM machines. `postinstall.ts` read `process.env.M1` to decide the Go cross-compilation target, defaulted to `amd64`, and produced an x86_64 binary that macOS refused to execute on Apple Silicon.
+**Root cause:** `install-dev.sh` never exported `M1=true` on ARM machines. `postinstall.ts` read `process.env.M1` to decide the Go cross-compilation target, defaulted to `amd64`, and produced an x86_64 binary that macOS refused to execute on Apple Silicon.
 
 **What we tried:**
-- First fix: Export `M1=true` in `install.sh` when `uname -m` reports `arm64` or `aarch64`
+- First fix: Export `M1=true` in `install-dev.sh` when `uname -m` reports `arm64` or `aarch64`
 - Second fix: Also detect ARM natively in `postinstall.ts` via `process.arch` so it works without the env var (IDE builds, manual `yarn install`)
 - Third fix: Add rdctl to `verify_build_artifacts` with an execution smoke-test so arch mismatches fail the build step instead of silently passing
 
@@ -71,7 +71,7 @@ The installer was rewritten from a 1610-line monolithic bash script into a modul
 
 **Symptom:** `yarn install` or `yarn build` failed with ENOENT for `gofmt`, `go`, or `git` — tools that were installed but not in PATH.
 
-**Root cause:** When `install.sh` is piped from curl (`curl ... | bash`), it runs in a non-interactive shell with a minimal PATH. Tools installed by Homebrew (Apple Silicon: `/opt/homebrew/bin`, Intel: `/usr/local/bin`), Linuxbrew, or Go (`/usr/local/go/bin`) were invisible. Node subprocesses during `yarn install`/`yarn build` (which call `gofmt`, `git describe`, etc.) inherited this broken PATH.
+**Root cause:** When `install-dev.sh` is piped from curl (`curl ... | bash`), it runs in a non-interactive shell with a minimal PATH. Tools installed by Homebrew (Apple Silicon: `/opt/homebrew/bin`, Intel: `/usr/local/bin`), Linuxbrew, or Go (`/usr/local/go/bin`) were invisible. Node subprocesses during `yarn install`/`yarn build` (which call `gofmt`, `git describe`, etc.) inherited this broken PATH.
 
 **What we tried:**
 - Added `bootstrap_path()` that pre-populates PATH with all well-known binary locations
@@ -81,7 +81,7 @@ The installer was rewritten from a 1610-line monolithic bash script into a modul
 
 **Current solution:**
 - `bootstrap_path()` in `02-platform.sh` adds all known paths (Homebrew ARM/Intel, Linuxbrew, Go, Cargo, MSYS2, system paths)
-- Called in `install.sh` bootstrap, and again before every build phase
+- Called in `install-dev.sh` bootstrap, and again before every build phase
 - `build::verify_prerequisites()` in `40-build.sh` asserts node, yarn, git, go, and gofmt are all in PATH before starting — with a clear error message listing exactly which tools are missing
 
 ---
@@ -162,7 +162,7 @@ The installer was rewritten from a 1610-line monolithic bash script into a modul
 
 **PR:** #158
 
-**Symptom:** Running `install.sh` a second time couldn't find Node, Yarn, or Go that were installed on the first run. The audit showed them as "missing" even though they were installed.
+**Symptom:** Running `install-dev.sh` a second time couldn't find Node, Yarn, or Go that were installed on the first run. The audit showed them as "missing" even though they were installed.
 
 **Root cause:** nvm and fnm shell initialization wasn't being sourced before the dependency audit. On the first run, the installers sourced nvm/fnm internally. On repeat runs, the audit ran without sourcing them first.
 
@@ -317,7 +317,7 @@ Three completely separate verification functions in `40-build.sh`:
 **Root cause:** node-pty prebuilds ship the `spawn-helper` binary without the executable (+x) permission bit set.
 
 **Current solution:**
-- Fixed in `postinstall.ts` with a `chmod +x` on the spawn-helper binary. This is outside the install.sh scope but is a related postinstall concern.
+- Fixed in `postinstall.ts` with a `chmod +x` on the spawn-helper binary. This is outside the install-dev.sh scope but is a related postinstall concern.
 
 ---
 
@@ -330,14 +330,14 @@ Three completely separate verification functions in `40-build.sh`:
 **Root cause:** No connectivity check before attempting the clone. Corporate firewalls, VPNs, and SSH key issues were only discovered deep in the install flow.
 
 **Current solution:**
-- `install.sh` bootstrap checks GitHub connectivity immediately after ensuring curl/git are available — before any dependency installation begins
+- `install-dev.sh` bootstrap checks GitHub connectivity immediately after ensuring curl/git are available — before any dependency installation begins
 - `assert_github_access()` in `03-assert.sh` hits the GitHub API and produces specific error messages for different failure modes (network error, 401/403 auth, 404 not found, unexpected status)
 
 ---
 
 ## Architecture: Why the Modular Rewrite Prevents These
 
-The original monolithic `install.sh` had OS-specific logic scattered across case statements throughout one file. Fixing a macOS issue could break Linux because the code was interleaved. The rewrite addresses this structurally:
+The original monolithic `install-dev.sh` had OS-specific logic scattered across case statements throughout one file. Fixing a macOS issue could break Linux because the code was interleaved. The rewrite addresses this structurally:
 
 | Problem Pattern | Old Script | New Architecture |
 |---|---|---|
@@ -352,7 +352,7 @@ The original monolithic `install.sh` had OS-specific logic scattered across case
 ### File Layout
 
 ```
-install.sh                    # Slim bootstrap (~320 lines) — detect OS, install git/curl, clone repo
+install-dev.sh                    # Slim bootstrap (~320 lines) — detect OS, install git/curl, clone repo
 installer/
   controller.sh               # Linear orchestrator — walks through all phases
   lib/

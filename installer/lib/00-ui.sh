@@ -32,7 +32,7 @@ SPINNER_PID=""
 STEP_RESULTS=()
 
 # Log file for suppressed output
-# NOTE: Do NOT truncate here — install.sh already initializes the log in Phase 1.
+# NOTE: Do NOT truncate here — install-dev.sh already initializes the log in Phase 1.
 # Truncating would wipe all bootstrap diagnostic logs.
 INSTALL_LOG="/tmp/sulla-install.log"
 

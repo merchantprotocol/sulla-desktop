@@ -62,14 +62,13 @@ curl -fsSL https://sulladesktop.com/install.sh | sh
 ```
 
 **What it does:**
-1. Installs dependencies if missing (git, nvm, Node.js 22, yarn, build tools)
-2. Clones the repository (or updates it if already cloned)
-3. Runs `yarn install` and `yarn build`
-4. Launches Sulla Desktop
+1. Downloads the latest pre-built release from GitHub
+2. Installs the app (DMG/ZIP on macOS, MSI on Windows, ZIP on Linux)
+3. Handles macOS Gatekeeper automatically (no "damaged app" warnings)
 
-The script is idempotent — safe to run multiple times. It skips anything already installed.
+No build tools required — just `curl`.
 
-> **Tip:** In the project root you'll find **Sulla Desktop.app** — drag it to your Dock (macOS) or taskbar to launch the app without the terminal.
+> **Developer?** Use `install-dev.sh` to build from source instead.
 
 ### Manual install
 

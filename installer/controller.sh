@@ -20,7 +20,7 @@ controller::run() {
     case "$arg" in
       --nightly) USE_NIGHTLY=true ;;
       --help|-h)
-        echo "Usage: install.sh [--nightly]"
+        echo "Usage: install-dev.sh [--nightly]"
         echo ""
         echo "  --nightly   Install from the latest main branch (may be unstable)"
         echo "              Default: installs the latest stable release"
