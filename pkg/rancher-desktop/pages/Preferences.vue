@@ -193,7 +193,6 @@ export default defineComponent({
   </div>
 </template>
 
-<style lang="scss" src="@pkg/assets/styles/app.scss"></style>
 <style lang="scss">
   .modal .vm--modal {
     background-color: var(--body-bg);
