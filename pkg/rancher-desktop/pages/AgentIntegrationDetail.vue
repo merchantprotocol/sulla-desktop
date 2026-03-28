@@ -1096,8 +1096,6 @@ const validateField = (property: any, value: string): string | null => {
 };
 
 const validateForm = (): boolean => {
-  if (!integration.value?.properties) return true;
-
   errors.value = {};
   let isValid = true;
 
@@ -1111,12 +1109,14 @@ const validateForm = (): boolean => {
     }
   }
 
-  // Validate credential fields
-  for (const property of integration.value.properties) {
-    const error = validateField(property, formData.value[property.key] || '');
-    if (error) {
-      errors.value[property.key] = error;
-      isValid = false;
+  // Validate credential fields (if any exist)
+  if (integration.value?.properties) {
+    for (const property of integration.value.properties) {
+      const error = validateField(property, formData.value[property.key] || '');
+      if (error) {
+        errors.value[property.key] = error;
+        isValid = false;
+      }
     }
   }
 
