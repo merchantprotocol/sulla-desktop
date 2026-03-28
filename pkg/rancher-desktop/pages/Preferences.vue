@@ -15,6 +15,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 import { preferencesNavItems } from '@pkg/window/preferenceConstants';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 
 export default defineComponent({
   name:       'preferences-modal',
@@ -22,6 +23,12 @@ export default defineComponent({
     PreferencesHeader, PreferencesNav, PreferencesBody, PreferencesFooter, EmptyState, PostHogTracker,
   },
   layout: 'preferences',
+  setup() {
+    // Initialize theme system so this window receives theme changes
+    const { currentTheme, isDark } = useTheme();
+
+    return { currentTheme, isDark };
+  },
   data() {
     return { preferencesLoaded: false };
   },
@@ -140,6 +147,7 @@ export default defineComponent({
   <div
     v-if="preferencesLoaded"
     class="modal-grid"
+    :class="{ dark: isDark }"
   >
     <preferences-header
       class="preferences-header"
@@ -192,31 +200,82 @@ export default defineComponent({
 
   .preferences-header {
     grid-area: header;
+    height: 3rem;
+    font-size: var(--fs-heading);
+    line-height: 2rem;
+    display: flex;
+    align-items: center;
+    padding: 0 0.75rem;
+    width: 100%;
+    border-bottom: 1px solid var(--border-default, var(--header-border));
+    background: var(--bg-page, var(--body-bg));
+    color: var(--text-primary, var(--body-text));
+
+    h1 {
+      flex: 1;
+      margin: 0;
+      font-size: inherit;
+      font-weight: normal;
+    }
   }
 
   .preferences-nav {
     grid-area: nav;
+    width: 200px;
+    border-right: 1px solid var(--border-default, var(--header-border));
+    padding-top: 0.75rem;
+    flex-shrink: 0;
+    background: var(--bg-page, var(--body-bg));
   }
 
   .preferences-body {
     grid-area: body;
     max-height: 100%;
     overflow: auto;
+    background: var(--bg-page, var(--body-bg));
+    color: var(--text-primary, var(--body-text));
+
+    h2 {
+      margin: 0 0 0.5rem;
+      font-size: var(--fs-heading);
+      font-weight: 500;
+      color: var(--text-primary, var(--body-text));
+    }
+
+    h3 {
+      margin: 1.5rem 0 0.75rem;
+      font-size: var(--fs-body);
+      font-weight: 500;
+      color: var(--text-primary, var(--body-text));
+    }
+
+    .description {
+      color: var(--text-muted, var(--muted));
+      margin-bottom: 1.5rem;
+    }
   }
 
   .preferences-footer {
     grid-area: footer;
+    border-top: 1px solid var(--border-default, var(--header-border));
+    background: var(--bg-page, var(--body-bg));
+    padding: 0.75rem 1rem;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
   }
 
   .modal-grid {
     height: 100vh;
     display: grid;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: 200px 1fr;
     grid-template-rows: auto 1fr auto;
     grid-template-areas:
       "header header"
       "nav body"
       "footer footer";
+    background: var(--bg-page, var(--body-bg));
+    color: var(--text-primary, var(--body-text));
   }
 
   .preferences-error {

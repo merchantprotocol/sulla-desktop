@@ -1,5 +1,8 @@
 <template>
-  <header class="app-titlebar flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-6 lg:pr-8 pt-3 lg:pt-1 pb-0 transition duration-500">
+  <header
+    class="app-titlebar relative flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-6 lg:pr-8 pt-3 lg:pt-1 pb-0 transition duration-500"
+    style="-webkit-app-region: drag; app-region: drag;"
+  >
     <div class="relative flex shrink-0 items-center pb-2">
       <a
         aria-label="Home page"
@@ -1008,6 +1011,23 @@ async function ctxCopyUrl() {
   }
 }
 </script>
+
+<style>
+/* Unscoped styles for drag region - must apply to header element */
+.app-titlebar {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.app-titlebar a,
+.app-titlebar button,
+.app-titlebar .tab-item,
+.app-titlebar input,
+.app-titlebar .overflow-x-auto {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+</style>
 
 <style scoped>
 .tab-item {
