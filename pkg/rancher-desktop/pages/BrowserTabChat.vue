@@ -568,4 +568,29 @@ onUnmounted(() => {
 }
 
 /* Tool card styles are in ChatToolCard.vue */
+
+/* Theme-aware scrollbar styling for overflow-y-auto containers */
+.overflow-y-auto::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: var(--bg-surface);
+  border-radius: 4px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 4px;
+  transition: background-color 150ms;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.overflow-y-auto::-webkit-scrollbar-corner {
+  background: var(--bg-surface);
+}
 </style>
