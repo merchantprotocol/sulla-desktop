@@ -2542,7 +2542,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   }
 
   protected async installCACerts(): Promise<void> {
-    const certs = await this.progressTracker.action('fetching certificates', 56,
+    const certs = await this.progressTracker.action('Fetching certificates', 56,
       new Promise<(string | Buffer)[]>((resolve) => {
         mainEvents.once('cert-ca-certificates', resolve);
         mainEvents.emit('cert-get-ca-certificates');
