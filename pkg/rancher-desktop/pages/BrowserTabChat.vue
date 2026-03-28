@@ -46,9 +46,9 @@
 
               <div v-else-if="m.kind === 'streaming'" class="max-w-[min(760px,92%)]">
                 <div class="flex gap-3">
-                  <div class="sulla-avatar" aria-hidden="true">S</div>
+                  <div class="sulla-avatar dark:text-slate-400" aria-hidden="true">S</div>
                   <div>
-                    <div class="sulla-name">Sulla</div>
+                    <div class="sulla-name dark:text-slate-400">Sulla</div>
                     <div class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert" v-html="renderMarkdown(m.content)" /><span class="streaming-cursor" />
                   </div>
                 </div>
@@ -56,9 +56,9 @@
 
               <div v-else-if="m.kind === 'html'" class="max-w-[min(760px,92%)]">
                 <div class="flex gap-3">
-                  <div class="sulla-avatar" aria-hidden="true">S</div>
+                  <div class="sulla-avatar dark:text-slate-400" aria-hidden="true">S</div>
                   <div class="flex-1 min-w-0">
-                    <div class="sulla-name">Sulla</div>
+                    <div class="sulla-name dark:text-slate-400">Sulla</div>
                     <HtmlMessageRenderer :content="m.content" :is-dark="isDark" />
                   </div>
                 </div>
@@ -70,9 +70,9 @@
                   <div v-if="m.image.alt" class="text-xs text-content-secondary">{{ m.image.alt }}</div>
                 </div>
                 <div v-else class="flex gap-3">
-                  <div class="sulla-avatar" aria-hidden="true">S</div>
+                  <div class="sulla-avatar dark:text-slate-400" aria-hidden="true">S</div>
                   <div>
-                    <div class="sulla-name">Sulla</div>
+                    <div class="sulla-name dark:text-slate-400">Sulla</div>
                     <div class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert" v-html="renderMarkdown(m.content)" />
                   </div>
                 </div>

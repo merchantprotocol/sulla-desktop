@@ -1185,21 +1185,15 @@ const handleConnect = async() => {
 
   errors.value = {};
 
+  // Validate all fields (including account label) through validateForm
+  if (!validateForm()) return;
+
   const isCreatingAccount = connectedAccounts.value.length === 0 || isAddingAccount.value;
   const label = newAccountLabel.value.trim();
-
-  if (isCreatingAccount && !label) {
-    errors.value['__account_label'] = 'Account label is required';
-
-    return;
-  }
 
   const targetAccountId = isCreatingAccount
     ? label.toLowerCase().replace(/[^a-z0-9]+/g, '_')
     : (editingAccountId.value || selectedAccountId.value || activeAccountId.value);
-
-  // Validate credential fields
-  if (!validateForm()) return;
 
   isLoading.value = true;
   try {

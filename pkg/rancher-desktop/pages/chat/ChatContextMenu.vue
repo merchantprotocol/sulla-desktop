@@ -165,8 +165,8 @@ defineExpose({ show, hide });
   position: fixed;
   z-index: 10000;
   min-width: 200px;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px rgba(63, 185, 80, 0.15);
   padding: 6px 0;
@@ -187,7 +187,7 @@ defineExpose({ show, hide });
   padding: 7px 14px;
   border: none;
   background: transparent;
-  color: #e6edf3;
+  color: var(--text-primary);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
@@ -196,12 +196,12 @@ defineExpose({ show, hide });
 }
 
 .chat-ctx-item:hover:not(.disabled) {
-  background: rgba(63, 185, 80, 0.1);
-  color: #3fb950;
+  background: var(--bg-surface-hover);
+  color: var(--accent-primary);
 }
 
 .chat-ctx-item:hover:not(.disabled) svg {
-  stroke: #3fb950;
+  stroke: var(--accent-primary);
 }
 
 .chat-ctx-item.disabled {
@@ -212,13 +212,13 @@ defineExpose({ show, hide });
 .chat-ctx-shortcut {
   margin-left: auto;
   font-size: 11px;
-  color: #8b949e;
+  color: var(--text-muted);
   padding-left: 16px;
 }
 
 .chat-ctx-separator {
   height: 1px;
-  background: #21262d;
+  background: var(--border-default);
   margin: 4px 0;
 }
 </style>

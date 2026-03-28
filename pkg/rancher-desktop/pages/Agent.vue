@@ -248,13 +248,13 @@
                 >
                   <div class="flex gap-3">
                     <div
-                      class="sulla-avatar"
+                      class="sulla-avatar dark:text-slate-400"
                       aria-hidden="true"
                     >
                       S
                     </div>
                     <div class="flex-1 min-w-0">
-                      <div class="sulla-name">
+                      <div class="sulla-name dark:text-slate-400">
                         Sulla
                       </div>
                       <HtmlMessageRenderer
@@ -290,13 +290,13 @@
                     class="flex gap-3"
                   >
                     <div
-                      class="sulla-avatar"
+                      class="sulla-avatar dark:text-slate-400"
                       aria-hidden="true"
                     >
                       S
                     </div>
                     <div>
-                      <div class="sulla-name">
+                      <div class="sulla-name dark:text-slate-400">
                         Sulla
                       </div>
                       <div

@@ -1,5 +1,5 @@
 <template>
-  <header class="sticky top-0 z-50 flex flex-none items-end justify-between bg-page pl-20 pr-4 pt-1 pb-0 transition duration-500 sm:pr-6 lg:pr-8 app-titlebar">
+  <header class="sticky top-0 z-50 flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-6 lg:pr-8 pt-3 lg:pt-1 pb-0 transition duration-500 app-titlebar">
     <div class="relative flex shrink-0 items-center pb-2">
       <a
         aria-label="Home page"
@@ -17,12 +17,12 @@
         >
       </a>
     </div>
-    <div class="hidden lg:flex items-end gap-0.5 self-stretch flex-1 min-w-0 ml-4">
+    <div class="flex items-end gap-0.5 self-stretch flex-1 min-w-0 ml-4 overflow-x-auto overflow-y-hidden lg:overflow-x-visible">
       <router-link
         v-for="(tab, index) in orderedTabs"
         :key="tab.id"
         :to="tab.route"
-        class="tab-item"
+        class="tab-item flex-shrink-0 text-sm md:text-base"
         :class="{
           'tab-native': tab.native,
           'tab-active': tab.isActive && !tab.native,
@@ -42,7 +42,7 @@
         <img
           v-if="tab.favicon"
           :src="tab.favicon"
-          class="h-3.5 w-3.5 rounded-sm"
+          class="h-3 w-3 md:h-3.5 md:w-3.5 rounded-sm"
           alt=""
         >
         <span :class="tab.closeable ? 'max-w-32 truncate' : ''">{{ tab.label }}</span>
@@ -53,7 +53,7 @@
           aria-label="Close tab"
           @click.prevent.stop="closeAnyTab(tab)"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3 w-3">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-2.5 w-2.5 md:h-3 md:w-3">
             <path d="M18 6L6 18M6 6l12 12" />
           </svg>
         </button>
@@ -64,7 +64,7 @@
         aria-label="New tab"
         @click="openNewBrowserTab"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="h-3.5 w-3.5">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="h-3 w-3 md:h-3.5 md:w-3.5">
           <path d="M12 5v14M5 12h14" />
         </svg>
       </button>
@@ -454,7 +454,7 @@
       class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
       @click="toggleMobileMenu"
     />
-    <div class="fixed top-14 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
+    <div class="fixed top-8 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
       <div class="flex justify-end px-4 py-2">
         <button
           type="button"
