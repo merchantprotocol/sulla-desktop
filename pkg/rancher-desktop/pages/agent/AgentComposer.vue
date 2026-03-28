@@ -340,7 +340,7 @@ const props = withDefaults(defineProps<{
   formClass?:        string;
   panelClass?:       string;
 }>(), {
-  formClass:          'group/composer mx-auto mb-3 w-full',
+  formClass:          'group/composer mx-auto w-full',
   panelClass:         '',
   ttsPlaying:         false,
   isRecording:        false,
