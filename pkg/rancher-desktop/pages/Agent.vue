@@ -339,7 +339,7 @@
       >
         <div class="relative mx-auto flex w-full max-w-8xl justify-center sm:px-2 lg:px-8 xl:px-12">
           <div class="max-w-[768px] min-w-0 flex-auto px-4 lg:pr-0 lg:pl-8 xl:px-16">
-            <div class="pb-3">
+            <div class="py-3">
               <div class="flex h-full flex-col items-center">
                 <AgentComposer
                   v-model="query"
