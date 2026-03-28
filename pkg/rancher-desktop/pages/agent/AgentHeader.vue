@@ -214,7 +214,7 @@
             aria-hidden="true"
             viewBox="0 0 24 24"
             fill="currentColor"
-            class="h-3.5 w-3.5"
+            class="h-3.5 w-3.5 fill-sky-400"
           >
             <circle cx="12" cy="5" r="1.5" />
             <circle cx="12" cy="12" r="1.5" />
@@ -1122,17 +1122,14 @@ async function ctxCopyUrl() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
   color: var(--text-secondary);
-  border-radius: 0.5rem;
+  border-radius: .5rem;
   cursor: pointer;
-  transition: color 150ms, background-color 150ms;
+  transition: color .15s, background-color .15s;
   background: transparent;
   border: none;
   flex-shrink: 0;
-  margin-bottom: 0.125rem;
-  padding-top: 7px;
+  padding: .6rem 1rem;
 }
 
 .tab-new:hover {
@@ -1246,10 +1243,10 @@ async function ctxCopyUrl() {
   right: 12px;
   z-index: 10000;
   min-width: 180px;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px rgba(63, 185, 80, 0.15);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px color-mix(in srgb, var(--accent-primary) 15%, transparent);
   padding: 6px 0;
   animation: tabCtxFadeIn 0.15s ease-out;
   font-family: var(--ifm-font-family-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
@@ -1263,7 +1260,7 @@ async function ctxCopyUrl() {
   padding: 7px 14px;
   border: none;
   background: transparent;
-  color: #e6edf3;
+  color: var(--text-primary);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
@@ -1272,8 +1269,8 @@ async function ctxCopyUrl() {
 }
 
 .more-menu-item:hover {
-  background: rgba(63, 185, 80, 0.1);
-  color: #3fb950;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  color: var(--accent-primary);
 }
 
 .more-menu-item-arrow,

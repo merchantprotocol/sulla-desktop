@@ -548,8 +548,8 @@ onUnmounted(() => {
 
 /* Theme-aware scrollbar styling for overflow-auto containers */
 .overflow-auto::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 .overflow-auto::-webkit-scrollbar-track {
