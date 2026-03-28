@@ -1,5 +1,5 @@
 <template>
-  <header class="sticky top-0 z-50 flex flex-none items-end justify-between bg-page pl-20 pr-4 pt-1 pb-0 transition duration-500 sm:pr-6 lg:pr-8 app-titlebar">
+  <header class="sticky top-0 z-50 flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-6 lg:pr-8 pt-3 lg:pt-1 pb-0 transition duration-500 app-titlebar">
     <div class="relative flex shrink-0 items-center pb-2">
       <a
         aria-label="Home page"
@@ -454,7 +454,7 @@
       class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
       @click="toggleMobileMenu"
     />
-    <div class="fixed top-14 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
+    <div class="fixed top-8 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
       <div class="flex justify-end px-4 py-2">
         <button
           type="button"
