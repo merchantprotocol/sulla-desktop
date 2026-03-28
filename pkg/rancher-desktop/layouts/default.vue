@@ -3,6 +3,7 @@
     class="wrapper"
     :class="{
       blur,
+      dark: isDark,
     }"
   >
     <rd-nav
@@ -58,6 +59,7 @@ import Volumes from '@pkg/pages/Volumes.vue';
 import initExtensions from '@pkg/preload/extensions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { mainRoutes } from '@pkg/window/constants';
+import { useTheme } from '@pkg/composables/useTheme';
 
 export default {
   name:       'App',
@@ -73,6 +75,13 @@ export default {
     Snapshots,
     Troubleshooting,
     Diagnostics,
+  },
+
+  setup() {
+    // Initialize theme system so this window receives theme changes
+    const { currentTheme, isDark } = useTheme();
+
+    return { currentTheme, isDark };
   },
 
   data() {
@@ -240,7 +249,8 @@ export default {
     "nav        body"    1fr
     "status-bar status-bar"
     / var(--nav-width) 1fr;
-  background-color: var(--body-bg);
+  background-color: var(--bg-page, var(--body-bg));
+  color: var(--text-primary, var(--body-text));
   width: 100vw;
   height: 100vh;
 
@@ -250,16 +260,19 @@ export default {
 
   .header {
     grid-area: header;
-    border-bottom: var(--header-border-size) solid var(--header-border);
+    border-bottom: var(--header-border-size) solid var(--border-default, var(--header-border));
   }
 
   .nav {
     grid-area: nav;
-    border-right: var(--nav-border-size) solid var(--nav-border);
+    border-right: var(--nav-border-size) solid var(--border-default, var(--nav-border));
+    background: var(--bg-page, var(--body-bg));
   }
 
   .title {
     grid-area: title;
+    border-bottom: 1px solid var(--border-default, var(--header-border));
+    background: var(--bg-page, var(--body-bg));
   }
 
   .body {
@@ -268,6 +281,7 @@ export default {
     flex-direction: column;
     padding: 0 20px 20px 20px;
     overflow: auto;
+    background: var(--bg-page, var(--body-bg));
   }
 
   .extension {
@@ -277,7 +291,8 @@ export default {
 
   .status-bar {
     grid-area: status-bar;
-    border-top: var(--nav-border-size) solid var(--nav-border);
+    border-top: 1px solid var(--border-default, var(--header-border));
+    background: var(--bg-page, var(--body-bg));
   }
 }
 </style>
