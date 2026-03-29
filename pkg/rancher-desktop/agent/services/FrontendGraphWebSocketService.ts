@@ -5,6 +5,7 @@ import { AbortService } from './AbortService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { saveThreadState } from '../nodes/ThreadStateStore';
+import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 
 const DEFAULT_CHANNEL_ID = 'sulla-desktop';
 

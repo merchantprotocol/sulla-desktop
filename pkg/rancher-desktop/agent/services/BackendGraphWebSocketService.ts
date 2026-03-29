@@ -7,6 +7,7 @@ import type { CalendarEventData } from './CalendarClient';
 import { AbortService } from './AbortService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import type { AgentGraphState } from '../nodes/Graph';
+import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 
 const SULLA_DESKTOP_CHANNEL_ID = 'sulla-desktop';
 const WORKBENCH_CHANNEL_ID = 'workbench';

@@ -196,6 +196,7 @@ import { useVoiceSession } from '@pkg/composables/voice';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
 
 const props = defineProps<{
   tabId: string;

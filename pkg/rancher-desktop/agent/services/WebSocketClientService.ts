@@ -1,5 +1,7 @@
 // WebSocketClientService.ts - Fixed version (all TS errors resolved)
 
+import { wsLogger as console } from '@pkg/agent/utils/agentLogger';
+
 export interface WebSocketMessage {
   type:        string;
   data:        unknown;
@@ -67,16 +69,22 @@ function probeHubUntilReady(): void {
   if (hubProbeRunning) return;
   hubProbeRunning = true;
 
+  let probeAttempt = 0;
+
   const attempt = () => {
+    probeAttempt++;
+    console.log(`[WSService] Hub probe attempt #${ probeAttempt } → ${ DEFAULT_WS_URL }`);
     let ws: WebSocket;
     try {
       ws = new WebSocket(DEFAULT_WS_URL);
-    } catch {
+    } catch (err) {
+      console.warn(`[WSService] Hub probe #${ probeAttempt } — constructor error: ${ (err as Error).message }. Retry in 3s`);
       setTimeout(attempt, 3000);
       return;
     }
 
     const timeout = setTimeout(() => {
+      console.warn(`[WSService] Hub probe #${ probeAttempt } — timed out after 5s. Retry in 3s`);
       try { ws.close(); } catch {}
       setTimeout(attempt, 3000);
     }, 5000);
@@ -84,13 +92,14 @@ function probeHubUntilReady(): void {
     ws.onopen = () => {
       clearTimeout(timeout);
       try { ws.close(); } catch {}
-      console.log('[WSService] Hub probe succeeded — marking ready');
+      console.log(`[WSService] Hub probe succeeded on attempt #${ probeAttempt } — marking ready`);
       markHubReady();
     };
 
     ws.onerror = () => {
       clearTimeout(timeout);
       try { ws.close(); } catch {}
+      console.warn(`[WSService] Hub probe #${ probeAttempt } — error. Retry in 3s`);
       setTimeout(attempt, 3000);
     };
   };
@@ -157,21 +166,29 @@ class WebSocketConnection {
   }
 
   connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return;
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+      console.log(`[WS ${ this.config.channel }] connect() skipped — already ${ this.ws?.readyState === WebSocket.OPEN ? 'OPEN' : 'CONNECTING' }`);
+      return;
+    }
     // If a reconnect timer is already scheduled, don't spawn a parallel attempt
-    if (this.reconnectTimer) return;
+    if (this.reconnectTimer) {
+      console.log(`[WS ${ this.config.channel }] connect() skipped — reconnect timer pending`);
+      return;
+    }
 
+    console.log(`[WS ${ this.config.channel }] connect() → opening socket to ${ this.config.url }`);
     this.cleanup();
 
     try {
       this.ws = new WebSocket(this.config.url);
 
       this.ws.onopen = () => {
-        console.log(`[WS ${ this.config.channel }] Connected`);
+        console.log(`[WS ${ this.config.channel }] Connected — pending=${ this.pending.size }`);
         this.reconnectAttempts = 0;
         this.lastPongAt = Date.now();
         this.missedPings = 0;
         if (this.config.channel && !this.subscribed.has(this.config.channel)) {
+          console.log(`[WS ${ this.config.channel }] Subscribing to channel`);
           this.sendNow({
             type:      'subscribe',
             data:      null,                    // required field
@@ -206,6 +223,10 @@ class WebSocketConnection {
           return;
         }
 
+        if (msg.type !== 'pong') {
+          console.log(`[WS ${ this.config.channel }] RECEIVED ${ msg.id || '(no-id)' } type="${ msg.type }" (handlers=${ this.messageHandlers.size })`);
+        }
+
         if (msg.id) this.ack(msg.id);
 
         this.messageHandlers.forEach(h => {
@@ -213,8 +234,14 @@ class WebSocketConnection {
         });
       };
 
-      this.ws.onerror = () => this.scheduleReconnect();
-      this.ws.onclose = () => this.scheduleReconnect();
+      this.ws.onerror = () => {
+        console.warn(`[WS ${ this.config.channel }] Socket error — scheduling reconnect`);
+        this.scheduleReconnect();
+      };
+      this.ws.onclose = (ev) => {
+        console.log(`[WS ${ this.config.channel }] Socket closed (code=${ ev.code }, reason="${ ev.reason || '' }") — scheduling reconnect`);
+        this.scheduleReconnect();
+      };
     } catch {
       this.scheduleReconnect();
     }
@@ -239,6 +266,10 @@ class WebSocketConnection {
 
   private clearPending(id: string) {
     const entry = this.pending.get(id);
+    if (entry) {
+      const ageMs = Date.now() - entry.queuedAt;
+      console.log(`[WS ${ this.config.channel }] ACK received for ${ id } (age=${ (ageMs / 1000) | 0 }s, attempts=${ entry.attempts })`);
+    }
     if (entry?.timeoutTimer) clearTimeout(entry.timeoutTimer);
     entry?.resolve?.(true);
     this.pending.delete(id);
@@ -314,9 +345,13 @@ class WebSocketConnection {
     if (!this.isConnected()) return;
 
     const now = Date.now();
+    const total = this.pending.size;
+    if (total > 0) {
+      console.log(`[WS ${ this.config.channel }] retryPending — ${ total } message(s) in queue`);
+    }
     for (const [id, entry] of [...this.pending.entries()]) {
       if (now - entry.queuedAt > this.config.maxMessageAgeMs) {
-        console.warn(`[WS ${ this.config.channel }] Dropping aged message ${ id } (age ${ (now - entry.queuedAt) / 1000 | 0 }s)`);
+        console.warn(`[WS ${ this.config.channel }] EXPIRED message ${ id } type="${ entry.message.type }" (age=${ (now - entry.queuedAt) / 1000 | 0 }s, attempts=${ entry.attempts })`);
         entry.reject?.(new Error('Message expired without server ack'));
         this.pending.delete(id);
         continue;
@@ -325,6 +360,7 @@ class WebSocketConnection {
       if (entry.timeoutTimer) continue;
 
       try {
+        console.log(`[WS ${ this.config.channel }] SENDING ${ id } type="${ entry.message.type }" (attempt=${ entry.attempts + 1 })`);
         this.ws!.send(JSON.stringify(entry.message));
         entry.lastSentAt = now;
         entry.attempts++;
@@ -355,6 +391,9 @@ class WebSocketConnection {
       return Promise.resolve(true);
     }
 
+    const connected = this.isConnected();
+    console.log(`[WS ${ this.config.channel }] QUEUED ${ fullMsg.id } type="${ fullMsg.type }" (connected=${ connected }, pending=${ this.pending.size + 1 })`);
+
     return new Promise<boolean>((resolve, reject) => {
       this.pending.set(fullMsg.id, {
         message:     fullMsg,
@@ -365,7 +404,7 @@ class WebSocketConnection {
         reject,
       });
 
-      if (this.isConnected()) this.retryPending();
+      if (connected) this.retryPending();
     });
   }
 
@@ -392,12 +431,14 @@ class WebSocketConnection {
   /** Mark this connection as suspended (system going to sleep).
    *  Prevents the heartbeat timer from misinterpreting frozen timers as a dead connection. */
   markSuspended(): void {
+    console.log(`[WS ${ this.config.channel }] SUSPENDED — pending=${ this.pending.size }`);
     this.suspended = true;
   }
 
   /** Force a fresh reconnect — tears down the current socket and reconnects immediately.
    *  Used after system resume to replace potentially half-open connections. */
   forceReconnect(): void {
+    console.log(`[WS ${ this.config.channel }] RESUME — forcing reconnect, pending=${ this.pending.size }`);
     this.suspended = false;
     this.cleanup();
     this.reconnectAttempts = 0;
@@ -442,9 +483,13 @@ export class WebSocketClientService {
 
   /** Wait for the hub readiness probe before opening the actual WebSocket. */
   private connectWhenReady(conn: WebSocketConnection): void {
+    console.log(`[WSService] connectWhenReady — channel="${ conn['config'].channel }", hubReady=${ hubReady !== null && hubReadyResolve === null }`);
     // Kick off the hub probe (no-op if already running)
     probeHubUntilReady();
-    getHubReadyPromise().then(() => conn.connect());
+    getHubReadyPromise().then(() => {
+      console.log(`[WSService] Hub ready — triggering connect for channel="${ conn['config'].channel }"`);
+      conn.connect();
+    });
   }
 
   async send(connectionId: string, message: unknown): Promise<boolean> {
@@ -491,11 +536,13 @@ export class WebSocketClientService {
   }
 
   disconnect(connectionId: string): void {
+    console.log(`[WSService] disconnect — channel="${ connectionId }"`);
     this.connections.get(connectionId)?.disconnect();
     this.connections.delete(connectionId);
   }
 
   disconnectAll(): void {
+    console.log(`[WSService] disconnectAll — ${ this.connections.size } connection(s)`);
     this.connections.forEach(c => c.disconnect());
     this.connections.clear();
   }
@@ -503,6 +550,7 @@ export class WebSocketClientService {
   /** Called when the system is about to sleep.  Marks all connections as suspended
    *  so heartbeat timers don't misfire on wake. */
   markSuspended(): void {
+    console.log(`[WSService] markSuspended — ${ this.connections.size } connection(s)`);
     for (const conn of this.connections.values()) {
       conn.markSuspended();
     }

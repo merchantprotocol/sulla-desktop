@@ -151,7 +151,7 @@ Current implementation (BaseNode.executeToolCalls + processPendingToolCalls):
 - Tool access policy enforcement: per-agent tool allowlists, category restrictions, sub-agent tool filtering
 - Deduplication: `buildToolRunDedupeKey()` prevents re-running identical tool calls within the same conversation
 - Structured tool run records persisted to `state.metadata.__toolRuns` for audit trail
-- Conversation logging: tool calls and results logged via ConversationLogger
+- Conversation logging: tool calls and results logged via SullaLogger (see §2.9)
 - Training data capture: tool calls logged for fine-tuning data generation
 - Results appended to conversation as tool_result messages for LLM context
 
@@ -167,17 +167,50 @@ Current implementation (AbortService + throwIfAborted):
 - Graph catch block: AbortError sets `waitingForUser=true` and `cycleComplete=true`, then sends `graph_execution_complete` with abort status
 - Graph.destroy() cleans up node resources
 
-### 2.9 Conversation Logging
+### 2.9 Logging (SullaLogger)
 
-**As a developer, I want every conversation persisted with full message history, tool calls, and graph lifecycle events so that I can debug issues and review past interactions.**
+**As a developer, I want every conversation persisted with full message history, tool calls, and graph lifecycle events — and infrastructure events (WebSocket, chat, message dispatch) persisted with timestamps — so that I can debug issues and review past interactions.**
 
-Current implementation (ConversationLogger service):
+All logs are written to `~/sulla/logs/` (or `$SULLA_HOME_DIR/logs/`) by a single service: **SullaLogger** (`pkg/rancher-desktop/agent/services/SullaLogger.ts`).
+
+SullaLogger provides two capabilities:
+
+#### Conversation logging (structured, per-conversation)
+
 - `logGraphStarted()` — records agent name, channel, parent conversation ID
 - `logMessage()` — records each user/assistant message (excludes thinking and streaming kinds)
 - `logToolCall()` — records tool name, arguments, and results
+- `logLLMCall()` — records full LLM request/response with model, tokens, tool calls
 - `logGraphCompleted()` — records final status (completed, aborted, failed, max_iterations, max_loops)
+- `logWorkflowStarted()` / `logWorkflowCompleted()` — workflow lifecycle
+- `logNodeEvent()` — per-node execution events
 - Conversation ID propagated through `state.metadata.conversationId`
 - Parent conversation tracking via `state.metadata.parentConversationId`
+- Output files: `index.log`, `index.jsonl`, `{channel}_{threadId}.log`, `conv_{id}.jsonl`
+- EventEmitter interface for live streaming to the Monitor Dashboard
+
+#### Topic logging (infrastructure, console-like)
+
+`SullaLogger.topic(name)` returns a console-compatible logger that writes to `~/sulla/logs/{name}.log`:
+
+| Topic file | Covers |
+|------------|--------|
+| `websocket.log` | WebSocket connection lifecycle, reconnects, heartbeat, message queue, ACKs |
+| `chat.log` | Chat interface sends, localStorage restore, stop signals, BrowserTabChat UI |
+| `frontend-graph.log` | Frontend & Backend graph WebSocket services, message routing |
+| `persona.log` | AgentPersonaModel subscriptions, message delivery |
+| `dispatcher.log` | MessageDispatcher validation, message type handling, asset lifecycle |
+
+Topic loggers are imported as `console` replacements via `agentLogger.ts`:
+
+```typescript
+import { wsLogger as console } from '@pkg/agent/utils/agentLogger';
+console.log('[WS] Connected');  // writes to ~/sulla/logs/websocket.log
+```
+
+#### Backward compatibility
+
+`ConversationLogger.ts` re-exports from SullaLogger — existing `getConversationLogger()` imports continue to work unchanged.
 
 ### 2.10 Training Data Capture
 
