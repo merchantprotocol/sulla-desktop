@@ -35,6 +35,25 @@ If you want to debug manually, use this sequence:
 6. Confirm expected input fields exist and are correctly mapped.
 7. Re-test after each small change.
 
+## Log files
+
+All agent and workflow logs are written to `~/sulla/logs/` by SullaLogger. Useful files for debugging:
+
+| File | What to look for |
+|------|-----------------|
+| `index.log` | Conversation start/complete entries — confirm your workflow or graph was created |
+| `{channel}_{threadId}.log` | Full event stream for a specific conversation (messages, tool calls, LLM calls) |
+| `websocket.log` | WebSocket connection state — check if messages were queued, sent, ACK'd, or expired |
+| `persona.log` | Message delivery from the chat interface to the WebSocket layer |
+| `frontend-graph.log` | Message routing and graph execution lifecycle |
+| `dispatcher.log` | Message validation — look for dropped or malformed messages |
+
+Tail any log in real time:
+
+```bash
+tail -f ~/sulla/logs/websocket.log
+```
+
 ## Common failure points
 
 - Missing or expired service credentials

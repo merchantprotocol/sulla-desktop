@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue';
 import { AgentPersonaService } from '@pkg/agent';
 import type { PersonaSidebarAsset } from '@pkg/agent';
 import { getAgentPersonaRegistry, AgentPersonaRegistry, type ChatMessage as RegistryChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
+import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
 
 export type ChatMessage = RegistryChatMessage;
 

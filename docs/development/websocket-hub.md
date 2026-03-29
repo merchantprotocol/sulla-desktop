@@ -185,6 +185,24 @@ The debug event handler in `pkg/rancher-desktop/main/sullaDebugEvents.ts` expose
 | `debug-ws-messages` | Retrieve recent logged messages (requires tap enabled) |
 | `debug-active-agents` | List all registered agents from the ActiveAgentsRegistry |
 
+## File-Based Logging
+
+All WebSocket infrastructure events are logged to disk via **SullaLogger** (`pkg/rancher-desktop/agent/services/SullaLogger.ts`). Log files are written to `~/sulla/logs/`:
+
+| File | Contents |
+|------|----------|
+| `websocket.log` | Connection lifecycle (open/close/error), reconnect attempts with backoff timing, heartbeat probes, message queue (QUEUED/SENDING/ACK/EXPIRED), hub readiness probes, suspend/resume events |
+| `persona.log` | Channel subscriptions, message delivery attempts and results, send failures |
+| `frontend-graph.log` | Inbound message routing, graph execution starts/completions, thread creation |
+
+These are plain text with ISO timestamps and can be tailed in real time:
+
+```bash
+tail -f ~/sulla/logs/websocket.log
+```
+
+To investigate a "message went into a black hole" scenario, check `websocket.log` for the QUEUED entry and whether a matching ACK or EXPIRED follows.
+
 ## Deployment
 
 The WebSocket server is defined in `pkg/rancher-desktop/assets/sulla-deployments.yaml`:

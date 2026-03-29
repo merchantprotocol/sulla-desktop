@@ -4,6 +4,7 @@ import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/ser
 import { AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import type { ChatMessage, AgentRegistryEntry } from '../registry/AgentPersonaRegistry';
 import { createMessageDispatcher, type DispatchContext } from './MessageDispatcher';
+import { personaLogger as console } from '@pkg/agent/utils/agentLogger';
 
 export type PersonaTemplateId =
   | 'terminal'

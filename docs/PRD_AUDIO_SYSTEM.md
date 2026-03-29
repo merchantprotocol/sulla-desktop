@@ -35,7 +35,7 @@ The Voice/Audio System enables hands-free interaction with Sulla through microph
 | `BaseNode.wsSpeakDispatch()` | Sends `speak_dispatch` WebSocket event with text and thread ID. Logs caller stack trace. The sole server-side path for TTS content |
 | `BaseNode.extractAndDispatchSpeakTags()` | Post-completion `<speak>` extraction for non-voice mode. Extracts all `<speak>...</speak>` content from final response and dispatches via `wsSpeakDispatch()` |
 | `AgentPersonaModel` (WebSocket handler) | Receives `speak_dispatch` events, creates messages with `kind='speak'` in the Vue messages array. These messages are filtered from chat display and exist solely to trigger TTS |
-| `sullaEvents.ts` | IPC handlers: `audio-transcribe` (routes to TranscriptionService), `audio-speak` (routes to TextToSpeechService), `voice-log` (persists frontend voice events to ConversationLogger), `audio-driver-connect/disconnect/status` (AudioDriverClient lifecycle) |
+| `sullaEvents.ts` | IPC handlers: `audio-transcribe` (routes to TranscriptionService), `audio-speak` (routes to TextToSpeechService), `voice-log` (persists frontend voice events to SullaLogger), `audio-driver-connect/disconnect/status` (AudioDriverClient lifecycle) |
 | `AudioDriverClient.ts` | Connects to the local audio-driver daemon over a Unix socket (`/tmp/audio-driver.sock`). Receives labeled audio chunks (speaker/system audio) and emits `chunk` events. Speaker chunks are forwarded to the gateway as channel 1 by `sullaEvents.ts` |
 
 ### 2.3 Data Flows

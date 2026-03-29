@@ -18,6 +18,7 @@ import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientServic
 import type { ChatMessage } from '../registry/AgentPersonaRegistry';
 import type { AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import { formatToolCard, formatToolResult } from '@pkg/agent/tools/toolCardFormatters';
+import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 
 // ─── Types ──────────────────────────────────────────────────────
 
