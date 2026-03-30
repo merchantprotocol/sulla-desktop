@@ -114,6 +114,11 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
       return bridge ? await bridge.setValue(args[1] as string, args[2] as string) : false;
     }
 
+    case 'resolve:pressKey': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+      return bridge ? await bridge.pressKey(args[1] as string, args[2] as string | undefined) : false;
+    }
+
     case 'resolve:getFormValues': {
       const bridge = hostBridgeRegistry.resolve(asString(args[0]));
 
@@ -138,6 +143,50 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
       const bridge = hostBridgeRegistry.resolve(asString(args[0]));
 
       return bridge ? await bridge.getPageText() : '';
+    }
+
+    case 'resolve:getReaderContent': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+      const maxChars = typeof args[1] === 'number' ? args[1] : undefined;
+
+      return bridge ? await bridge.getReaderContent(maxChars) : null;
+    }
+
+    case 'resolve:getScrollInfo': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+
+      return bridge ? await bridge.getScrollInfo() : null;
+    }
+
+    case 'resolve:scrollAndCapture': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+      const direction = typeof args[1] === 'string' ? args[1] : undefined;
+
+      return bridge ? await bridge.scrollAndCapture(direction) : null;
+    }
+
+    case 'resolve:scrollToTop': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+
+      return bridge ? await bridge.scrollToTop() : null;
+    }
+
+    case 'resolve:searchInPage': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+
+      return bridge ? await bridge.searchInPage(args[1] as string) : null;
+    }
+
+    case 'resolve:getPageHtml': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+
+      return bridge ? await bridge.getPageHtml() : '';
+    }
+
+    case 'resolve:execInPage': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+      if (!bridge) return null;
+      return await bridge.execInPage(args[1] as string);
     }
 
     case 'resolve:getPageTitle': {

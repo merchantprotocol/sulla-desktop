@@ -271,4 +271,81 @@ export const nativeCrmSalesIntegrations: Record<string, Integration> = {
     lastUpdated: '2026-03-07',
     developer:   'Smartlead',
   },
+  twenty: {
+    id:          'twenty',
+    sort:        19,
+    paid:        false,
+    beta:        false,
+    comingSoon:  false,
+    connected:   false,
+    name:        'Twenty CRM',
+    description: 'Open-source CRM. Manage people, companies, opportunities, notes, and tasks via REST and GraphQL APIs.',
+    category:    'CRM & Sales',
+    icon:        'twenty.svg',
+    version:     '1.0.0',
+    lastUpdated: '2026-03-30',
+    developer:   'Twenty',
+    properties:  [
+      {
+        key:         'bearer_token',
+        title:       'API Key',
+        hint:        'Generated in Twenty → Settings → API & Webhooks',
+        type:        'password',
+        required:    true,
+        placeholder: '',
+      },
+      {
+        key:         'base_url',
+        title:       'Base URL',
+        hint:        'Your Twenty instance URL (e.g. https://crm.example.com or http://localhost:30207)',
+        type:        'url',
+        required:    true,
+        placeholder: 'http://localhost:30207',
+      },
+    ],
+    installationGuide: {
+      title:       'Connect Twenty CRM',
+      description: 'Connect your self-hosted or cloud Twenty CRM instance to Sulla.',
+      steps: [
+        {
+          title:   'Get your API key',
+          content: 'In Twenty, go to Settings → API & Webhooks and generate a new API key.',
+        },
+        {
+          title:   'Enter your instance URL',
+          content: 'Provide the base URL of your Twenty instance (e.g. http://localhost:30207 for Docker or your cloud URL).',
+        },
+        {
+          title:   'Save credentials',
+          content: 'Paste your API key and base URL above, then click Save to connect.',
+        },
+      ],
+      importantNotes: [
+        'Both the REST and GraphQL APIs use the same Bearer token for authentication.',
+        'API keys are scoped to a workspace. Generate a new key per workspace if needed.',
+      ],
+    },
+    features: [
+      {
+        title:       'People & Companies',
+        description: 'Full CRUD for contacts and company records with filtering and cursor-based pagination.',
+      },
+      {
+        title:       'Opportunities',
+        description: 'Manage deals and sales pipeline stages.',
+      },
+      {
+        title:       'Notes & Tasks',
+        description: 'Create and manage notes and tasks linked to records.',
+      },
+      {
+        title:       'GraphQL Support',
+        description: 'Advanced queries and mutations via the GraphQL endpoint.',
+      },
+      {
+        title:       'Metadata Discovery',
+        description: 'Discover all standard and custom objects via the metadata API.',
+      },
+    ],
+  },
 };

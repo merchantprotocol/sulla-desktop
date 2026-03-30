@@ -1453,6 +1453,17 @@ export function initSullaEvents(): void {
       console.warn('[Power] Failed to reconnect WebSocket connections:', err);
     }
 
+    // Re-initialize the backend graph executor so it re-subscribes its
+    // message handlers on the freshly reconnected WebSocket channels.
+    // Without this, messages are delivered to the hub but the graph
+    // executor never picks them up after wake.
+    try {
+      const { getBackendGraphWebSocketService } = require('@pkg/agent/services/BackendGraphWebSocketService');
+      getBackendGraphWebSocketService().reinitialize();
+    } catch (err) {
+      console.warn('[Power] Failed to reinitialize backend graph service:', err);
+    }
+
     // Notify all renderer windows so frontend services can react
     for (const win of BrowserWindow.getAllWindows()) {
       try {

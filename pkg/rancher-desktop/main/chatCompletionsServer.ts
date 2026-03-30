@@ -635,7 +635,6 @@ export class ChatCompletionsServer {
         { toolName: 'add_observational_memory', slug: 'memory' },
         { toolName: 'remove_observational_memory', slug: 'memory' },
         { toolName: 'check_agent_jobs', slug: 'agents' },
-        { toolName: 'browser_tab', slug: 'playwright' },
       ];
 
       const nativeEndpointsByCategory = new Map<string, any[]>();
@@ -875,8 +874,8 @@ export class ChatCompletionsServer {
         usage: {
           call_method: 'POST',
           call_url:    'http://host.docker.internal:3000/v1/tools/{accountId}/{slug}/{endpoint}/call',
-          call_body:   '{"params": {"param_name": "value"}}',
-          notes:       'Each entry has a unique accountId + slug. Use them directly in the call URL. Parameters are described in each endpoint\'s inputSchema (JSON Schema format).',
+          call_body:   '{"action": "upsert", "param_name": "value"}',
+          notes:       'Each entry has a unique accountId + slug. Use them directly in the call URL. Send the inputSchema parameters as the JSON body — flat, no wrapper needed.',
         },
         tools: filtered,
       });
@@ -905,7 +904,9 @@ export class ChatCompletionsServer {
         if (!tool) {
           return res.status(404).json({ success: false, error: `Internal tool "${ prefixed }" or "${ endpoint }" not found` });
         }
-        const { params = {} } = req.body || {};
+        // Accept both { params: { ... } } and flat { action: "upsert", ... } formats
+        const body = req.body || {};
+        const params = body.params && typeof body.params === 'object' ? body.params : body;
         const result = await tool.call(params);
         return res.json({ success: true, result });
       }

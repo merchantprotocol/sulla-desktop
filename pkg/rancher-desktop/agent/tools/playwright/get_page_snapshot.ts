@@ -3,8 +3,9 @@ import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 import { wrapWithBlockingWarning } from './detect_blocking';
 
 /**
- * Get Page Snapshot Tool - Returns an actionable Markdown snapshot of the
- * currently active website asset (buttons, links, form fields).
+ * Get Page Snapshot Tool - Returns the full page state: title, URL,
+ * interactive elements (buttons, links, forms), reader-mode content,
+ * and scroll position.
  */
 export class GetPageSnapshotWorker extends BaseTool {
   name = '';
@@ -15,22 +16,44 @@ export class GetPageSnapshotWorker extends BaseTool {
     if (!isBridgeResolved(result)) return result;
 
     try {
+      const title = await result.bridge.getPageTitle();
+      const url = await result.bridge.getPageUrl();
       const markdown = await result.bridge.getActionableMarkdown();
-      if (!markdown.trim()) {
-        return {
-          successBoolean: true,
-          responseString: `[${ result.assetId }] Page snapshot is empty — the page may have no interactive elements.`,
-        };
+      const readerContent = await result.bridge.getReaderContent();
+      const scrollInfo = await result.bridge.getScrollInfo();
+
+      const parts: string[] = [];
+      parts.push(`[asset: ${ result.assetId }]`);
+      parts.push(`# ${ title }`);
+      parts.push(`**URL**: ${ url }`);
+
+      if (scrollInfo.moreBelow) {
+        parts.push(`**Scroll**: ${ scrollInfo.percent }% — more content below`);
       }
 
-      const url = await result.bridge.getPageUrl();
-      const raw = `[asset: ${ result.assetId }]\n${ markdown }`;
-      const { responseString, detection } = wrapWithBlockingWarning(raw, markdown, url);
+      if (markdown && markdown.trim()) {
+        parts.push('');
+        parts.push(markdown);
+      }
 
-      return {
-        successBoolean: !detection.blocked,
-        responseString,
-      };
+      if (readerContent && readerContent.content && readerContent.content.trim()) {
+        parts.push('');
+        parts.push('---');
+        parts.push('## Page Content');
+        parts.push(readerContent.content);
+        if (readerContent.truncated) {
+          parts.push('\n[Content truncated — use browse_page to read more]');
+        }
+      }
+
+      if (!markdown?.trim() && !readerContent?.content?.trim()) {
+        parts.push('\nPage has no visible content or interactive elements.');
+      }
+
+      const raw = parts.join('\n');
+      const { responseString, detection } = wrapWithBlockingWarning(raw, readerContent?.content || markdown || '', url);
+
+      return { successBoolean: !detection.blocked, responseString };
     } catch (error) {
       return {
         successBoolean: false,

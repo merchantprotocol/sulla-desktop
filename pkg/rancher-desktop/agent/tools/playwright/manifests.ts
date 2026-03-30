@@ -2,8 +2,27 @@ import type { ToolManifest } from '../registry';
 
 export const playwrightToolManifests: ToolManifest[] = [
   {
+    name:        'browser_tab',
+    description: 'Open, navigate, or close browser tabs. When opening a URL, waits for the page to load and returns the FULL page state: title, URL, interactive elements, reader-mode content, and scroll position — no follow-up call needed. Reuse the same assetId to navigate an existing tab to a new URL.',
+    category:    'playwright',
+    schemaDef:   {
+      action:    { type: 'enum', enum: ['upsert', 'remove'], default: 'upsert', description: 'upsert creates/updates an asset; remove deletes by assetId.' },
+      assetType: { type: 'enum', optional: true, enum: ['iframe', 'document'], description: 'Required for upsert.' },
+      assetId:   { type: 'string', optional: true, description: 'Stable asset ID. Reuse the same ID to update an existing tab.' },
+      skillSlug: { type: 'string', optional: true, description: 'Optional skill slug to associate with the asset.' },
+      title:     { type: 'string', optional: true },
+      url:       { type: 'string', optional: true, description: 'Required for iframe upsert.' },
+      content:   { type: 'string', optional: true, description: 'Document HTML/markdown content.' },
+      active:    { type: 'boolean', optional: true, default: true },
+      collapsed: { type: 'boolean', optional: true, default: true },
+      refKey:    { type: 'string', optional: true },
+    },
+    operationTypes: ['create', 'update', 'delete'],
+    loader:         () => import('./browser_tab'),
+  },
+  {
     name:        'click_element',
-    description: 'Click a button, link, or interactive element on a website asset. Use handles from get_page_snapshot (e.g. @btn-save, @link-home) or a CSS selector or data-test-id. Omit assetId to target the active asset.',
+    description: 'Click a button, link, or interactive element on a website asset. If the click causes navigation, automatically waits for the new page to load and returns the full page state (title, URL, elements, content). Use handles from get_page_snapshot (e.g. @btn-save, @link-home) or a CSS selector. Omit assetId to target the active asset.',
     category:    'playwright',
     schemaDef:   {
       handle:  { type: 'string', description: 'The element handle (@btn-<slug>, @link-<slug>, data-test-id, or CSS selector)' },
@@ -24,7 +43,7 @@ export const playwrightToolManifests: ToolManifest[] = [
   },
   {
     name:        'get_page_snapshot',
-    description: 'Get an actionable Markdown snapshot of a website asset showing all visible buttons, links, and form fields with their handles. Omit assetId to target the active asset, or specify one from list_active_pages.',
+    description: 'Get the full page state: title, URL, interactive elements (buttons, links, forms with handles), reader-mode content, and scroll position. Returns everything you need to understand and interact with the page. Omit assetId to target the active asset.',
     category:    'playwright',
     schemaDef:   {
       assetId: { type: 'string', optional: true, description: 'Target asset ID (omit for the currently active website)' },
@@ -34,7 +53,7 @@ export const playwrightToolManifests: ToolManifest[] = [
   },
   {
     name:        'get_page_text',
-    description: 'Get the visible text content (innerText) of a website asset, including the page title and URL. Omit assetId to target the active asset.',
+    description: 'Get the readable text content of a website asset with title, URL, and scroll position. Uses reader-mode extraction (strips nav, ads, boilerplate) with fallback to raw text. Omit assetId to target the active asset.',
     category:    'playwright',
     schemaDef:   {
       assetId: { type: 'string', optional: true, description: 'Target asset ID (omit for the currently active website)' },
@@ -54,12 +73,25 @@ export const playwrightToolManifests: ToolManifest[] = [
     loader:         () => import('./scroll_to_element'),
   },
   {
+    name:        'press_key',
+    description: 'Press a key on a website asset. Use for form submission (Enter), closing dialogs (Escape), navigating dropdowns (ArrowDown/ArrowUp), or tabbing between fields (Tab). Specify a handle to target a specific element, or omit to press on the currently focused element.',
+    category:    'playwright',
+    schemaDef:   {
+      key:     { type: 'string', description: 'Key to press: Enter, Escape, Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Backspace, Space' },
+      handle:  { type: 'string', optional: true, description: 'Element handle (@field-q, @btn-search) or CSS selector. Omit to target the focused element.' },
+      assetId: { type: 'string', optional: true, description: 'Target asset ID (omit for the currently active website)' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./press_key'),
+  },
+  {
     name:        'set_field',
-    description: 'Set the value of a form field (input, textarea, select) on a website asset. Use handles from get_page_snapshot (e.g. @field-email, @field-username). Omit assetId to target the active asset.',
+    description: 'Set the value of a form field (input, textarea, select) on a website asset. If submit is true, presses Enter after setting the value to submit the form. If the change triggers navigation (e.g. form auto-submit), returns the full new page state. Use handles from get_page_snapshot (e.g. @field-email, @field-username). Omit assetId to target the active asset.',
     category:    'playwright',
     schemaDef:   {
       handle:  { type: 'string', description: 'The field handle (@field-<id|name>) or element id/name' },
       value:   { type: 'string', description: 'The value to set' },
+      submit:  { type: 'boolean', optional: true, description: 'Press Enter after setting the value to submit the form. Defaults to false.' },
       assetId: { type: 'string', optional: true, description: 'Target asset ID (omit for the currently active website)' },
     },
     operationTypes: ['update'],
@@ -76,5 +108,29 @@ export const playwrightToolManifests: ToolManifest[] = [
     },
     operationTypes: ['read'],
     loader:         () => import('./wait_for_element'),
+  },
+  {
+    name:        'browse_page',
+    description: 'Browse and read web page content with smart extraction. Actions: "read" returns Readability-enhanced content (shows diff if page was read before); "scroll_down"/"scroll_up" scrolls and returns only NEW content; "scroll_to_top" resets; "search" finds text with context and highlights matches in the browser; "chunks" returns a table of contents; "chunk" returns a specific section by ID. Use this tool for research, reading articles, and navigating long pages.',
+    category:    'playwright',
+    schemaDef:   {
+      action:   { type: 'enum', enum: ['read', 'scroll_down', 'scroll_up', 'scroll_to_top', 'search', 'chunks', 'chunk'], description: 'What to do: read, scroll, search, or navigate by section' },
+      query:    { type: 'string', optional: true, description: 'Search query (required when action is "search")' },
+      chunk_id: { type: 'number', optional: true, description: 'Section ID to read (required when action is "chunk")' },
+      assetId:  { type: 'string', optional: true, description: 'Target asset ID (omit for the currently active website)' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./browse_page'),
+  },
+  {
+    name:        'synthesize_tabs',
+    description: 'Extract and combine reader-mode content from multiple open browser tabs into a single response with source attribution. Useful for cross-page research: comparing information, aggregating data from multiple sources, or building summaries from several references. Omit assetIds to synthesize all open tabs.',
+    category:    'playwright',
+    schemaDef:   {
+      assetIds:  { type: 'string', optional: true, description: 'Comma-separated asset IDs to synthesize (omit for all open tabs)' },
+      max_chars: { type: 'number', optional: true, description: 'Max characters per tab (default 4000)' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./synthesize_tabs'),
   },
 ];

@@ -1135,7 +1135,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const browserTools = new Set([
           'browser_tab', 'dom_observer', 'click_element', 'get_form_values',
           'get_page_snapshot', 'get_page_text', 'scroll_to_element',
-          'set_field', 'wait_for_element',
+          'set_field', 'wait_for_element', 'browse_page', 'synthesize_tabs',
         ]);
         llmTools = llmTools.filter((t: any) => !browserTools.has(t?.function?.name));
       }

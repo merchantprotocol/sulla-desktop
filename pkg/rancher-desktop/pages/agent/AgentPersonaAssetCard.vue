@@ -61,13 +61,16 @@
           :title="asset.title"
           class="block h-full w-full bg-white"
           :style="frameStyle"
+          allowpopups
         />
         <iframe
           v-else
+          ref="iframeEl"
           :src="asset.url || ''"
           :title="asset.title"
           class="block h-full w-full bg-white"
           :style="frameStyle"
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
         />
       </div>
 
@@ -153,8 +156,72 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch, type CSSPropert
 
 import type { PersonaSidebarAsset } from '@pkg/agent';
 import { getN8nVueBridgeService, N8nVueBridgeService, type N8nWebviewLike } from '@pkg/agent/services/N8nVueBridgeService';
-import { WebviewHostBridge, type WebviewLike, type HostBridgeEventMap, setActiveHostBridge, hostBridgeRegistry } from '@pkg/agent/scripts/injected';
+import { WebviewHostBridge, type WebviewLike, type HostBridgeEventMap, setActiveHostBridge, hostBridgeRegistry, buildGuestBridgeScript } from '@pkg/agent/scripts/injected';
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
+
+/**
+ * Creates a WebviewLike shim for a plain <iframe> so the host bridge
+ * can communicate with it the same way it does with Electron webviews.
+ *
+ * Uses contentWindow access for same-origin iframes, or injects scripts
+ * for cross-origin by leveraging Electron's relaxed security (webSecurity: false).
+ */
+function createIframeBridgeShim(iframe: HTMLIFrameElement, assetId: string): WebviewLike {
+  let injected = false;
+
+  const shim: WebviewLike = {
+    get src() {
+      return iframe.src;
+    },
+    getURL() {
+      try {
+        return iframe.contentWindow?.location?.href || iframe.src || '';
+      } catch {
+        return iframe.src || '';
+      }
+    },
+    async executeJavaScript(code: string): Promise<unknown> {
+      // Try direct access first (same-origin or Electron's webSecurity: false)
+      try {
+        const win = iframe.contentWindow as any;
+        if (!win) throw new Error('No contentWindow');
+
+        // Inject the guest bridge on first call if not already done
+        if (!injected && !win.__sullaBridgeInjected) {
+          const script = buildGuestBridgeScript();
+          win.eval(script);
+          injected = true;
+        }
+
+        // eslint-disable-next-line no-eval
+        return win.eval(code);
+      } catch (err) {
+        console.warn(`[IframeBridgeShim:${ assetId }] executeJavaScript failed`, { error: (err as Error).message, code: code.slice(0, 100) });
+        return undefined;
+      }
+    },
+    addEventListener(event: string, listener: (event: unknown) => void) {
+      if (event === 'dom-ready') {
+        // For iframes, 'load' is the equivalent of 'dom-ready'
+        iframe.addEventListener('load', () => {
+          injected = false; // Re-inject on new page load
+          listener({});
+        });
+      } else if (event === 'ipc-message') {
+        // Listen for postMessage from the guest bridge
+        window.addEventListener('message', (msgEvent: MessageEvent) => {
+          if (msgEvent.source !== iframe.contentWindow) return;
+          const payload = msgEvent.data;
+          if (payload && typeof payload === 'object' && payload.type && payload.type.startsWith('sulla:')) {
+            listener({ channel: 'sulla:guest:bridge', args: [payload] });
+          }
+        });
+      }
+    },
+  };
+
+  return shim;
+}
 
 type AssetSize = 'medium' | 'large';
 const N8N_INTERFACE_CHANNEL = 'n8n_interface';
@@ -174,6 +241,7 @@ const emit = defineEmits<{
 }>();
 
 const webviewEl = ref<HTMLElement | null>(null);
+const iframeEl = ref<HTMLIFrameElement | null>(null);
 let n8nVueBridgeService: N8nVueBridgeService | null = null;
 let hostBridge: WebviewHostBridge | null = null;
 const useWebview = ref(true);
@@ -330,40 +398,76 @@ const attachBridgeIfNeeded = async(): Promise<void> => {
 
   await nextTick();
 
-  if (!webviewEl.value) {
-    console.log('[SULLA_HOST_BRIDGE] card:webview_ref_missing_fallback_iframe', {
-      assetId: props.asset.id,
-      url:     props.asset.url || '',
+  // Try webview first, fall back to iframe
+  let element: HTMLElement | null = webviewEl.value;
+  let isWebview = false;
+
+  if (element) {
+    const candidate = element as unknown as WebviewLike;
+    const hasWebviewApi = typeof candidate.getURL === 'function' || typeof candidate.executeJavaScript === 'function';
+
+    console.log('[SULLA_HOST_BRIDGE] card:webview_runtime_probe', {
+      assetId:              props.asset.id,
+      tagName:              element.tagName,
+      propUrl:              props.asset.url || '',
+      hasWebviewApi,
     });
+
+    if (hasWebviewApi) {
+      isWebview = true;
+      useWebview.value = true;
+    } else {
+      // Webview element exists but APIs aren't available — switch to iframe
+      console.log('[SULLA_HOST_BRIDGE] card:webview_api_missing_switching_to_iframe', { assetId: props.asset.id });
+      useWebview.value = false;
+      await nextTick(); // Wait for iframe to render
+      element = iframeEl.value;
+    }
+  } else {
+    // No webview ref at all
     useWebview.value = false;
+    await nextTick();
+    element = iframeEl.value;
+  }
+
+  if (!element) {
+    console.log('[SULLA_HOST_BRIDGE] card:no_element_available', { assetId: props.asset.id });
     return;
   }
 
-  const candidate = webviewEl.value as unknown as WebviewLike;
-  const hasWebviewApi = typeof candidate.getURL === 'function' || typeof candidate.executeJavaScript === 'function';
-  const domSrc = (webviewEl.value).getAttribute('src') || '';
+  // Build a WebviewLike shim for iframes so the bridge can work with them
+  let bridgeTarget: WebviewLike;
 
-  console.log('[SULLA_HOST_BRIDGE] card:webview_runtime_probe', {
-    assetId:              props.asset.id,
-    tagName:              webviewEl.value.tagName,
-    domSrc,
-    propUrl:              props.asset.url || '',
-    hasGetURL:            typeof candidate.getURL === 'function',
-    hasExecuteJavaScript: typeof candidate.executeJavaScript === 'function',
-    hasWebviewApi,
-  });
-
-  if (!hasWebviewApi) {
-    console.log('[SULLA_HOST_BRIDGE] card:webview_api_missing_fallback_iframe', {
-      assetId: props.asset.id,
-      reason:  'Electron webview APIs not present on rendered element',
-    });
-    useWebview.value = false;
-    detachBridge();
-    return;
+  if (isWebview) {
+    bridgeTarget = element as unknown as WebviewLike;
+  } else {
+    // Create a WebviewLike adapter for the <iframe>
+    const iframe = element as HTMLIFrameElement;
+    bridgeTarget = createIframeBridgeShim(iframe, props.asset.id);
   }
 
-  useWebview.value = true;
+  // Intercept new-window events for webviews, or link clicks for iframes
+  if (isWebview) {
+    const wv = element as any;
+    if (!wv.__sullaNewWindowHandled) {
+      wv.__sullaNewWindowHandled = true;
+      wv.addEventListener('new-window', (e: any) => {
+        e.preventDefault();
+        if (!e.url) return;
+        const disposition = e.disposition || '';
+        if (disposition === 'current-tab' || disposition === '') {
+          if (wv.loadURL) wv.loadURL(e.url); else wv.src = e.url;
+          return;
+        }
+        // target="_blank": open as new Sulla tab
+        wsService.send('sulla-desktop', {
+          type: 'register_or_activate_asset',
+          data: { asset: { type: 'iframe', id: `tab_${ Date.now() }`, title: 'Loading...', url: e.url, active: true, collapsed: false } },
+          timestamp: Date.now(),
+        });
+      });
+    }
+  }
 
   // Generic host bridge — one per asset card, registered by assetId
   if (!hostBridge) {
@@ -371,7 +475,7 @@ const attachBridgeIfNeeded = async(): Promise<void> => {
     setActiveHostBridge(hostBridge);
     ensureHostBridgeEventStreaming();
   }
-  hostBridge.attach(candidate);
+  hostBridge.attach(bridgeTarget);
 
   // Register in the multi-asset registry
   hostBridgeRegistry.registerBridge(props.asset.id, hostBridge, {
@@ -393,7 +497,12 @@ const attachBridgeIfNeeded = async(): Promise<void> => {
   }
 };
 
-watch([() => props.asset.type, () => props.asset.url, isN8nAsset], () => {
+// Only re-attach bridge when the asset type changes or on initial render.
+// URL changes are handled by the iframe's native src binding + the shim's
+// load event listener, which re-injects the guest bridge automatically.
+// Re-running attachBridgeIfNeeded on URL changes creates duplicate shims
+// and leaks event listeners, causing stale content bugs.
+watch([() => props.asset.type, isN8nAsset], () => {
   void attachBridgeIfNeeded();
 }, { immediate: true });
 

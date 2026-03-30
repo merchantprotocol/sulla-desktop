@@ -553,7 +553,19 @@ export class AgentPersonaService {
     // ── Thread-ID filtering ──────────────────────────────────────────
     const msgThreadId = this.extractThreadId(msg);
     const myThreadId = this.state.threadId;
-    if (msgThreadId && myThreadId && msgThreadId !== myThreadId && msg.type !== 'workflow_execution_event') {
+
+    // Drop messages that don't carry a threadId when we already have an active thread.
+    // This prevents stray workflow / backend messages from leaking into the chat.
+    if (!msgThreadId && myThreadId) {
+      // Allow protocol-level messages that never carry a threadId
+      const threadExempt = msg.type === 'thread_created' || msg.type === 'ack'
+        || msg.type === 'ping' || msg.type === 'pong' || msg.type === 'subscribe';
+      if (!threadExempt) {
+        return;
+      }
+    }
+
+    if (msgThreadId && myThreadId && msgThreadId !== myThreadId) {
       return; // belongs to a different chat tab — ignore
     }
 

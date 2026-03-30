@@ -41,6 +41,18 @@ export class BackendGraphWebSocketService {
       abort.abort();
     }
     this.activeAborts.clear();
+    this.subscribedChannels.clear();
+  }
+
+  /**
+   * Tear down and re-establish all WebSocket channel subscriptions.
+   * Called after system resume to ensure the backend graph executor
+   * re-registers its message handlers on the freshly reconnected sockets.
+   */
+  reinitialize(): void {
+    console.log('[BackendGraphWS] reinitialize — re-subscribing to all channels after system resume');
+    this.dispose();
+    this.initialize();
   }
 
   private initialize(): void {

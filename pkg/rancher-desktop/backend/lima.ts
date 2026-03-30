@@ -2254,6 +2254,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
+    // One-time migration: copy data from old VM paths to new host-mounted paths
+    await this.progressTracker.action('Migrating Sulla data to host storage', 40, async() => {
+      await this.migrateSullaDataToHost();
+    });
+
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
       this.progressTracker.numeric('Deploying Sulla services with Docker Compose', 20, 100);
       t = Date.now();
@@ -2349,8 +2354,48 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       });
     }
 
-    const composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
+    // Resolve the persistent data directory for bind mounts (cross-platform via paths.appHome)
+    const sullaDataDir = path.join(paths.appHome, 'data');
+
+    await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
+    await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-redis'), { recursive: true });
+
+    let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
+    composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
+  }
+
+  /**
+   * One-time migration: copies data from old VM-internal paths (/var/lib/sulla/*)
+   * to the new host-mounted paths under paths.appHome/data/. Skips if the
+   * destination already contains data or the source doesn't exist.
+   */
+  private async migrateSullaDataToHost(): Promise<void> {
+    const sullaDataDir = path.join(paths.appHome, 'data');
+    const migrations = [
+      { src: '/var/lib/sulla/postgres', dest: path.join(sullaDataDir, 'sulla-postgres') },
+      { src: '/var/lib/sulla/redis', dest: path.join(sullaDataDir, 'sulla-redis') },
+    ];
+
+    for (const { src, dest } of migrations) {
+      try {
+        // Check if destination already has data (PG_VERSION for postgres, or any file for redis)
+        const destFiles = await fs.promises.readdir(dest);
+
+        if (destFiles.length > 0) {
+          console.log(`[Sulla] Migration skip: ${ dest } already has data`);
+          continue;
+        }
+
+        // Check if old VM path exists and has data, then copy
+        await this.execCommand({ root: true }, 'test', '-d', src);
+        console.log(`[Sulla] Migrating ${ src } -> ${ dest }`);
+        await this.execCommand({ root: true }, 'cp', '-a', `${ src }/.`, `${ dest }/`);
+        console.log(`[Sulla] Migration complete: ${ src } -> ${ dest }`);
+      } catch {
+        console.log(`[Sulla] Migration skip: ${ src } does not exist or copy failed`);
+      }
+    }
   }
 
   /**

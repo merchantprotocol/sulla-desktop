@@ -15,7 +15,7 @@ jest.unstable_mockModule('../../../database/registry/AgentPersonaRegistry', () =
 }));
 
 async function loadModule() {
-  return import('../browser_tab');
+  return import('../../playwright/browser_tab');
 }
 
 function configureWorker(worker: any, registration: any) {

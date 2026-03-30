@@ -79,6 +79,10 @@ export function createWindow(name: string, url: string, options: Electron.Browse
 
     console[method](`${ name }@${ lineNumber }: ${ message }`);
   });
+  // Intercept navigation on the main window to prevent it from leaving
+  // the app. Agent asset cards use <webview> tags with their own
+  // webContents, so their navigations are handled separately in the
+  // webview's own new-window/will-navigate events (AgentPersonaAssetCard).
   window.webContents.on('will-navigate', (event, input) => {
     if (isInternalURL(input)) {
       return;

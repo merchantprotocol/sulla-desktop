@@ -2233,6 +2233,11 @@
     zod "^3.25 || ^4.0"
     zod-to-json-schema "^3.25.1"
 
+"@mozilla/readability@^0.6.0":
+  version "0.6.0"
+  resolved "https://registry.yarnpkg.com/@mozilla/readability/-/readability-0.6.0.tgz#134e3ce3ff1676716e550de0b8de957bcc59208b"
+  integrity sha512-juG5VWh4qAivzTAeMzvY9xs9HY5rAcr2E4I7tiSSCokRFi7XIZCAu92ZkSTsIj1OPceCifL3cpfteP3pDT9/QQ==
+
 "@napi-rs/wasm-runtime@^0.2.11", "@napi-rs/wasm-runtime@^0.2.9":
   version "0.2.12"
   resolved "https://registry.yarnpkg.com/@napi-rs/wasm-runtime/-/wasm-runtime-0.2.12.tgz#3e78a8b96e6c33a6c517e1894efbd5385a7cb6f2"
@@ -6942,6 +6947,11 @@ csso@^4.2.0:
   dependencies:
     css-tree "^1.1.2"
 
+cssom@^0.5.0:
+  version "0.5.0"
+  resolved "https://registry.yarnpkg.com/cssom/-/cssom-0.5.0.tgz#d254fa92cd8b6fbd83811b9fbaed34663cc17c36"
+  integrity sha512-iKuQcq+NdHqlAcwUY0o/HL69XQrUaQdMjmStJ8JFmUaiiQErlhrmuigkg/CU4E2J0IyUKUrMAgl36TvN67MqTw==
+
 cssstyle@^4.2.1:
   version "4.6.0"
   resolved "https://registry.npmjs.org/cssstyle/-/cssstyle-4.6.0.tgz"
@@ -8945,6 +8955,11 @@ html-escaper@^2.0.0, html-escaper@^2.0.2:
   resolved "https://registry.npmjs.org/html-escaper/-/html-escaper-2.0.2.tgz"
   integrity sha512-H2iMtd0I4Mt5eYiapRdIDjp+XzelXQ0tFE4JS7YFwFevXXMmOp9myNrUvCg0D6ws8iqkRPBfKHgbwig1SmlLfg==
 
+html-escaper@^3.0.3:
+  version "3.0.3"
+  resolved "https://registry.yarnpkg.com/html-escaper/-/html-escaper-3.0.3.tgz#4d336674652beb1dcbc29ef6b6ba7f6be6fdfed6"
+  integrity sha512-RuMffC89BOWQoY0WKGpIhn5gX3iI54O6nRA0yC124NYVtzjmFWBIiFd8M0x+ZdX0P9R4lADg1mgP8C7PxGOWuQ==
+
 html-minifier-terser@^6.0.2:
   version "6.1.0"
   resolved "https://registry.npmjs.org/html-minifier-terser/-/html-minifier-terser-6.1.0.tgz"
@@ -8974,7 +8989,7 @@ html-webpack-plugin@^5.1.0:
     pretty-error "^4.0.0"
     tapable "^2.0.0"
 
-htmlparser2@^10.1.0:
+htmlparser2@^10.0.0, htmlparser2@^10.1.0:
   version "10.1.0"
   resolved "https://registry.npmjs.org/htmlparser2/-/htmlparser2-10.1.0.tgz"
   integrity sha512-VTZkM9GWRAtEpveh7MSF6SjjrpNVNNVJfFup7xTY3UpFtm67foy9HDVXneLtFVt4pMz5kZtgNcvCniNFb1hlEQ==
@@ -10378,6 +10393,17 @@ lines-and-columns@^1.1.6:
   version "1.2.4"
   resolved "https://registry.npmjs.org/lines-and-columns/-/lines-and-columns-1.2.4.tgz"
   integrity sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg==
+
+linkedom@^0.18.12:
+  version "0.18.12"
+  resolved "https://registry.yarnpkg.com/linkedom/-/linkedom-0.18.12.tgz#a8b1a1942b567dcb1888093df311055da1349a14"
+  integrity sha512-jalJsOwIKuQJSeTvsgzPe9iJzyfVaEJiEXl+25EkKevsULHvMJzpNqwvj1jOESWdmgKDiXObyjOYwlUqG7wo1Q==
+  dependencies:
+    css-select "^5.1.0"
+    cssom "^0.5.0"
+    html-escaper "^3.0.3"
+    htmlparser2 "^10.0.0"
+    uhyphen "^0.2.0"
 
 loader-runner@^4.1.0, loader-runner@^4.2.0, loader-runner@^4.3.1:
   version "4.3.1"
@@ -14470,6 +14496,11 @@ uglify-js@^3.1.4:
   version "3.19.3"
   resolved "https://registry.npmjs.org/uglify-js/-/uglify-js-3.19.3.tgz"
   integrity sha512-v3Xu+yuwBXisp6QYTcH4UbH+xYJXqnq2m/LtQVWKWzYc1iehYnLixoQDN9FH6/j9/oybfd6W9Ghwkl8+UMKTKQ==
+
+uhyphen@^0.2.0:
+  version "0.2.0"
+  resolved "https://registry.yarnpkg.com/uhyphen/-/uhyphen-0.2.0.tgz#8fdf0623314486e020a3c00ee5cc7a12fe722b81"
+  integrity sha512-qz3o9CHXmJJPGBdqzab7qAYuW8kQGKNEuoHFYrBwV6hWIMcpAmxDLXojcHfFr9US1Pe6zUswEIJIbLI610fuqA==
 
 un-eval@^1.2.0:
   version "1.2.0"

@@ -569,6 +569,7 @@ export class RecipeExtensionImpl implements Extension {
    *  - `music`       — ~/Music
    *  - `pictures`    — ~/Pictures
    *  - `data`        — extension's own data/ directory (auto-created)
+   *  - `appdata`     — shared app data directory (paths.appHome/data/, cross-platform)
    *  - `appdir`      — extension directory (same as ${APP_DIR})
    */
   protected resolvePathVariable(key: string): string | null {
@@ -586,6 +587,7 @@ export class RecipeExtensionImpl implements Extension {
       photos:    path.join(home, 'Pictures'),
       videos:    path.join(home, 'Movies'),
       data:      path.join(this.dir, 'data'),
+      appdata:   path.join(paths.appHome, 'data'),
       appdir:    this.dir,
     };
 

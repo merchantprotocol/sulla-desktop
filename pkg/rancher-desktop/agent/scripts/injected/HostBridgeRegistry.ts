@@ -21,12 +21,14 @@ export interface BridgeEntry {
   registeredAt:   number;
   lastSnapshot:   string;
   lastSnapshotAt: number;
+  lastContent:    string;
+  lastContentAt:  number;
   unsubs:         (() => void)[];
 }
 
 export interface RegistryDomEvent {
   assetId:   string;
-  type:      'domChange' | 'dialog' | 'routeChanged' | 'click';
+  type:      'domChange' | 'dialog' | 'routeChanged' | 'click' | 'pageContent' | 'contentAdded';
   message:   string;
   timestamp: number;
 }
@@ -89,6 +91,38 @@ class HostBridgeRegistryImpl {
       });
     }));
 
+    unsubs.push(bridge.on('pageContent', (payload) => {
+      // Cache the content on the entry
+      const entry = this.bridges.get(assetId);
+      if (entry) {
+        entry.lastContent = payload.content;
+        entry.lastContentAt = payload.timestamp;
+      }
+      // Emit as registry event so it flows to the agent
+      const truncNote = payload.truncated ? ' [truncated]' : '';
+      this.emitRegistryEvent({
+        assetId,
+        type:      'pageContent',
+        message:   `[CONTENT ${ assetId }] ${ payload.title }${ truncNote }\n${ payload.content }`,
+        timestamp: payload.timestamp,
+      });
+    }));
+
+    unsubs.push(bridge.on('contentAdded', (payload) => {
+      // Append new content to cached content
+      const entry = this.bridges.get(assetId);
+      if (entry) {
+        entry.lastContent = (entry.lastContent + '\n\n' + payload.content).slice(-8000);
+        entry.lastContentAt = payload.timestamp;
+      }
+      this.emitRegistryEvent({
+        assetId,
+        type:      'contentAdded',
+        message:   `[NEW CONTENT ${ assetId }] (${ payload.contentLength } chars added)\n${ payload.content }`,
+        timestamp: payload.timestamp,
+      });
+    }));
+
     this.bridges.set(assetId, {
       assetId,
       bridge,
@@ -97,6 +131,8 @@ class HostBridgeRegistryImpl {
       registeredAt:   Date.now(),
       lastSnapshot:   '',
       lastSnapshotAt: 0,
+      lastContent:    '',
+      lastContentAt:  0,
       unsubs,
     });
 
@@ -221,6 +257,24 @@ class HostBridgeRegistryImpl {
   }
 
   /**
+   * Refresh the cached reader content for a single entry.
+   * Only fetches if content is stale (older than maxAgeMs).
+   * Uses a reduced char limit for system prompt inclusion.
+   */
+  private async refreshContent(entry: BridgeEntry): Promise<void> {
+    if (!entry.bridge.isInjected()) return;
+    try {
+      const result = await entry.bridge.getReaderContent(8000);
+      if (result) {
+        entry.lastContent = result.content || '';
+        entry.lastContentAt = Date.now();
+      }
+    } catch {
+      // keep stale content on error
+    }
+  }
+
+  /**
    * Refresh snapshots for all registered bridges.
    * Snapshots older than `maxAgeMs` are re-fetched.
    */
@@ -230,6 +284,11 @@ class HostBridgeRegistryImpl {
     for (const entry of this.bridges.values()) {
       if (now - entry.lastSnapshotAt > maxAgeMs) {
         tasks.push(this.refreshSnapshot(entry));
+      }
+      // Refresh content with a longer staleness window (30s)
+      // since content changes less frequently than interactive elements
+      if (now - entry.lastContentAt > 30000) {
+        tasks.push(this.refreshContent(entry));
       }
     }
     await Promise.all(tasks);
@@ -272,10 +331,25 @@ class HostBridgeRegistryImpl {
       lines.push(`- **url**: ${ entry.url }`);
       lines.push(`- **status**: ${ status }`);
 
+      // Scroll position (when available)
+      if (entry.bridge.isInjected()) {
+        try {
+          const scroll = await entry.bridge.getScrollInfo();
+          const moreNote = scroll.moreBelow ? ' — more content below' : scroll.atBottom ? ' — at bottom' : '';
+          lines.push(`- **scroll**: ${ scroll.percent }% (${ scroll.scrollY }px / ${ scroll.scrollHeight }px)${ moreNote }`);
+        } catch { /* skip scroll info on error */ }
+      }
+
       if (entry.lastSnapshot.trim()) {
         lines.push(`\n<page_state asset="${ entry.assetId }">`);
         lines.push(entry.lastSnapshot);
         lines.push('</page_state>');
+      }
+
+      if (entry.lastContent.trim()) {
+        lines.push(`\n<page_content asset="${ entry.assetId }">`);
+        lines.push(entry.lastContent);
+        lines.push('</page_content>');
       }
       lines.push('');
     }

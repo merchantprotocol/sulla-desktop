@@ -109,8 +109,14 @@ export function buildGuestBridgeScript(): string {
       var btn = buttons[i];
       if (!isVisible(btn)) continue;
       var text = (btn.textContent || '').trim().slice(0, 60);
+      // Fall back to aria-label for icon-only buttons
+      if (!text) {
+        text = (btn.getAttribute('aria-label') || '').trim().slice(0, 60);
+      }
       if (!text) continue;
-      var handle = uniqueHandle('@btn-' + handleize(text));
+      var slug = handleize(text);
+      if (!slug) continue;
+      var handle = uniqueHandle('@btn-' + slug);
       stampHandle(btn, handle);
       var state = btn.disabled ? 'disabled' : 'enabled';
       lines.push('- **' + handle + '** "' + text + '" (' + state + ')');
@@ -124,11 +130,45 @@ export function buildGuestBridgeScript(): string {
       var link = links[j];
       if (!isVisible(link)) continue;
       var linkText = (link.textContent || '').trim().slice(0, 60);
+      // Fall back to aria-label for links with no visible text (icons, images, Google Maps results)
+      if (!linkText) {
+        linkText = (link.getAttribute('aria-label') || '').trim().slice(0, 60);
+      }
       if (!linkText) continue;
+      var linkSlug = handleize(linkText);
+      if (!linkSlug) continue;
       var href = link.getAttribute('href') || '';
-      var linkHandle = uniqueHandle('@link-' + handleize(linkText));
+      var linkHandle = uniqueHandle('@link-' + linkSlug);
       stampHandle(link, linkHandle);
       lines.push('- **' + linkHandle + '** "' + linkText + '" → ' + href);
+    }
+
+    // Clickable items — ARIA roles and elements with tabindex/onclick that
+    // aren't already captured as buttons or links (Google Maps listings, etc.)
+    lines.push('');
+    lines.push('## Clickable Items');
+    var clickableSelector = [
+      '[role="link"]:not(a):not(button)',
+      '[role="menuitem"]:not(a):not(button)',
+      '[role="option"]:not(a):not(button)',
+      '[role="tab"]:not(a):not(button)',
+      '[role="listitem"][tabindex]',
+      '[role="article"][tabindex]',
+      '[role="treeitem"]',
+      '[data-result-index]',
+      'div[tabindex="0"][role]',
+    ].join(', ');
+    var clickables = document.querySelectorAll(clickableSelector);
+    for (var ci = 0; ci < clickables.length; ci++) {
+      var item = clickables[ci];
+      if (!isVisible(item)) continue;
+      if (item.getAttribute('data-sulla-handle')) continue; // already stamped
+      var itemText = (item.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+      if (!itemText || itemText.length < 3) continue;
+      var itemRole = item.getAttribute('role') || 'item';
+      var itemHandle = uniqueHandle('@item-' + handleize(itemText.slice(0, 40)));
+      stampHandle(item, itemHandle);
+      lines.push('- **' + itemHandle + '** (' + itemRole + ') "' + itemText + '"');
     }
 
     // Form fields
@@ -161,31 +201,62 @@ export function buildGuestBridgeScript(): string {
     console.log('[SULLA_GUEST] click called', { handle: handle });
     if (!handle) { console.log('[SULLA_GUEST] click: handle is empty, returning false'); return false; }
 
+    var el = null;
+
     // Primary: resolve via stamped data-sulla-handle attribute
     var stamped = findByHandle(handle);
     console.log('[SULLA_GUEST] click: findByHandle result', { found: !!stamped, selector: '[data-sulla-handle=\"' + handle + '\"]' });
-    if (stamped) { console.log('[SULLA_GUEST] click: clicking stamped element', { tag: stamped.tagName, id: stamped.id, text: (stamped.textContent || '').slice(0, 60) }); stamped.click(); return true; }
+    if (stamped) { el = stamped; }
 
     // Debug: dump all stamped handles on the page
-    var allStamped = document.querySelectorAll('[data-sulla-handle]');
-    var stampedHandles = [];
-    for (var s = 0; s < allStamped.length; s++) { stampedHandles.push(allStamped[s].getAttribute('data-sulla-handle')); }
-    console.log('[SULLA_GUEST] click: all stamped handles on page (' + stampedHandles.length + ')', stampedHandles.slice(0, 20));
+    if (!el) {
+      var allStamped = document.querySelectorAll('[data-sulla-handle]');
+      var stampedHandles = [];
+      for (var s = 0; s < allStamped.length; s++) { stampedHandles.push(allStamped[s].getAttribute('data-sulla-handle')); }
+      console.log('[SULLA_GUEST] click: all stamped handles on page (' + stampedHandles.length + ')', stampedHandles.slice(0, 20));
+    }
 
     // data-test-id shortcut
-    var byTestId = document.querySelector('[data-test-id="' + handle + '"]');
-    console.log('[SULLA_GUEST] click: data-test-id lookup', { found: !!byTestId });
-    if (byTestId) { byTestId.click(); return true; }
+    if (!el) {
+      var byTestId = document.querySelector('[data-test-id="' + handle + '"]');
+      console.log('[SULLA_GUEST] click: data-test-id lookup', { found: !!byTestId });
+      if (byTestId) { el = byTestId; }
+    }
 
-    // Generic CSS selector fallback
-    try {
-      var generic = document.querySelector(handle);
-      console.log('[SULLA_GUEST] click: CSS selector fallback', { found: !!generic });
-      if (generic) { generic.click(); return true; }
-    } catch (e) { console.log('[SULLA_GUEST] click: CSS selector threw', e); }
+    // Generic CSS selector fallback — supports [n] index suffix for querySelectorAll
+    // e.g. "div.Nv2PK[1]" clicks the 2nd match, "div.Nv2PK" clicks the 1st
+    if (!el) {
+      try {
+        var indexMatch = handle.match(/^(.+)\[(\d+)\]$/);
+        if (indexMatch) {
+          var allMatches = document.querySelectorAll(indexMatch[1]);
+          var idx = parseInt(indexMatch[2], 10);
+          if (allMatches[idx]) { el = allMatches[idx]; }
+          console.log('[SULLA_GUEST] click: CSS selector with index', { selector: indexMatch[1], index: idx, found: !!el, total: allMatches.length });
+        } else {
+          var generic = document.querySelector(handle);
+          console.log('[SULLA_GUEST] click: CSS selector fallback', { found: !!generic });
+          if (generic) { el = generic; }
+        }
+      } catch (e) { console.log('[SULLA_GUEST] click: CSS selector threw', e); }
+    }
 
-    console.log('[SULLA_GUEST] click: ALL resolution strategies failed for handle', handle);
-    return false;
+    if (!el) {
+      console.log('[SULLA_GUEST] click: ALL resolution strategies failed for handle', handle);
+      return false;
+    }
+
+    // Strip target="_blank" from links so navigation stays inside the iframe
+    var anchor = el.closest ? el.closest('a[target]') : null;
+    if (!anchor && el.tagName === 'A' && el.hasAttribute('target')) { anchor = el; }
+    if (anchor) {
+      console.log('[SULLA_GUEST] click: stripping target attribute from link', { href: anchor.href, target: anchor.getAttribute('target') });
+      anchor.removeAttribute('target');
+    }
+
+    console.log('[SULLA_GUEST] click: clicking element', { tag: el.tagName, id: el.id, text: (el.textContent || '').slice(0, 60) });
+    el.click();
+    return true;
   };
 
   /**
@@ -226,6 +297,109 @@ export function buildGuestBridgeScript(): string {
     el.dispatchEvent(new Event('input',  { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
+  };
+
+  /**
+   * pressKey(key, handle?)
+   * Dispatches keydown, keypress, keyup events for the given key.
+   * If handle is provided, targets that element; otherwise uses the focused element.
+   */
+  bridge.pressKey = function (key, handle) {
+    var keyCodeMap = {
+      'Enter': 13, 'Escape': 27, 'Tab': 9,
+      'ArrowDown': 40, 'ArrowUp': 38, 'ArrowLeft': 37, 'ArrowRight': 39,
+      'Backspace': 8, 'Space': 32
+    };
+
+    var target = null;
+
+    if (handle) {
+      // Primary: resolve via stamped data-sulla-handle attribute
+      target = findByHandle(handle);
+
+      // data-test-id shortcut
+      if (!target) {
+        target = document.querySelector('[data-test-id="' + handle + '"]');
+      }
+
+      // Generic CSS selector — supports [n] index suffix for querySelectorAll
+      if (!target) {
+        try {
+          var pIndexMatch = handle.match(/^(.+)\[(\d+)\]$/);
+          if (pIndexMatch) {
+            var pAll = document.querySelectorAll(pIndexMatch[1]);
+            var pIdx = parseInt(pIndexMatch[2], 10);
+            if (pAll[pIdx]) { target = pAll[pIdx]; }
+          } else {
+            target = document.querySelector(handle);
+          }
+        } catch (e) { /* ignore invalid selector */ }
+      }
+    }
+
+    // Fall back to focused element, then document.body
+    if (!target) {
+      target = document.activeElement || document.body;
+    }
+
+    var code = key.length === 1 ? 'Key' + key.toUpperCase() : key;
+    var keyCode = keyCodeMap[key] || 0;
+    var eventProps = {
+      key: key,
+      code: code,
+      keyCode: keyCode,
+      which: keyCode,
+      bubbles: true,
+      cancelable: true
+    };
+
+    try {
+      // Focus the target so the page recognizes it as the active element
+      if (typeof target.focus === 'function') {
+        target.focus();
+      }
+
+      target.dispatchEvent(new KeyboardEvent('keydown', eventProps));
+      target.dispatchEvent(new KeyboardEvent('keypress', eventProps));
+      target.dispatchEvent(new KeyboardEvent('keyup', eventProps));
+
+      // For Enter: synthetic KeyboardEvent has isTrusted=false so many sites
+      // ignore it. We use multiple fallback strategies to trigger submission.
+      if (key === 'Enter') {
+        var form = target.closest ? target.closest('form') : null;
+        if (form) {
+          // Try requestSubmit (fires submit event handlers) then fall back to submit()
+          if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit();
+          } else {
+            form.submit();
+          }
+        } else {
+          // No form — try clicking the nearest search/submit button as fallback.
+          // Walk up from the target looking for a container with a button.
+          var searchBtn = null;
+          var container = target.parentElement;
+          for (var depth = 0; depth < 5 && container && !searchBtn; depth++) {
+            // Look for submit-like buttons by type, aria-label, or role
+            searchBtn = container.querySelector(
+              'button[type="submit"], input[type="submit"], ' +
+              'button[aria-label*="earch"], button[aria-label*="ubmit"], ' +
+              'button[aria-label*="Go"], button[jsaction*="search"]'
+            );
+            container = container.parentElement;
+          }
+          if (searchBtn) {
+            console.log('[SULLA_GUEST] pressKey: Enter fallback — clicking submit button', { tag: searchBtn.tagName, label: searchBtn.getAttribute('aria-label') });
+            searchBtn.click();
+          }
+        }
+      }
+
+      return true;
+    } catch (e) {
+      console.log('[SULLA_GUEST] pressKey error', e);
+      return false;
+    }
   };
 
   /**
@@ -291,6 +465,335 @@ export function buildGuestBridgeScript(): string {
     return (document.body.innerText || '').slice(0, 50000);
   };
 
+  /**
+   * getReaderContent(maxChars)
+   * Extracts the main readable content of the page in a structured,
+   * token-efficient format — similar to browser "reader view".
+   * Strips nav, ads, sidebars, footers, and boilerplate.
+   * Returns { title, url, content, contentLength, truncated }
+   */
+  bridge.getReaderContent = function (maxChars) {
+    maxChars = maxChars || 12000;
+
+    // --- Find main content container ---
+    var main = document.querySelector('main, article, [role="main"]');
+    if (!main) {
+      // Heuristic: find the largest text-dense block
+      var candidates = document.querySelectorAll('div, section');
+      var bestLen = 0;
+      for (var ci = 0; ci < candidates.length; ci++) {
+        var c = candidates[ci];
+        var cText = (c.innerText || '').trim();
+        if (cText.length > bestLen) {
+          bestLen = cText.length;
+          main = c;
+        }
+      }
+    }
+    if (!main) main = document.body;
+
+    // --- Tags/selectors to strip ---
+    var STRIP_SELECTORS = 'script, style, noscript, nav, header, footer, aside, ' +
+      '[role="navigation"], [role="banner"], [role="contentinfo"], ' +
+      '[aria-hidden="true"], .ad, .ads, .advertisement, .sidebar, ' +
+      '.cookie-banner, .popup, .modal, .nav, .menu, .footer, .header';
+
+    // --- Clone and clean ---
+    var clone = main.cloneNode(true);
+    var stripped = clone.querySelectorAll(STRIP_SELECTORS);
+    for (var si = 0; si < stripped.length; si++) {
+      stripped[si].parentNode && stripped[si].parentNode.removeChild(stripped[si]);
+    }
+
+    // --- Walk DOM and produce structured text ---
+    var output = [];
+    var charCount = 0;
+    var truncated = false;
+
+    function addLine(line) {
+      if (truncated) return;
+      if (charCount + line.length > maxChars) {
+        output.push(line.slice(0, maxChars - charCount));
+        truncated = true;
+        return;
+      }
+      output.push(line);
+      charCount += line.length + 1; // +1 for newline
+    }
+
+    function walkNode(node) {
+      if (truncated) return;
+      if (node.nodeType === 3) {
+        // Text node
+        var text = (node.textContent || '').trim();
+        if (text) addLine(text);
+        return;
+      }
+      if (node.nodeType !== 1) return;
+
+      var tag = node.tagName.toLowerCase();
+
+      // Skip hidden elements
+      if (tag === 'script' || tag === 'style' || tag === 'noscript') return;
+      try {
+        var style = window.getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+      } catch (_) {}
+
+      // Headings
+      var headingMatch = tag.match(/^h([1-6])$/);
+      if (headingMatch) {
+        var level = parseInt(headingMatch[1], 10);
+        var prefix = '';
+        for (var hi = 0; hi < level; hi++) prefix += '#';
+        var hText = (node.innerText || '').trim();
+        if (hText) {
+          addLine('');
+          addLine(prefix + ' ' + hText);
+          addLine('');
+        }
+        return; // don't recurse into heading children
+      }
+
+      // List items
+      if (tag === 'li') {
+        var liText = (node.innerText || '').trim();
+        if (liText) addLine('- ' + liText.split('\\n')[0]);
+        return;
+      }
+
+      // Table rows
+      if (tag === 'tr') {
+        var cells = node.querySelectorAll('td, th');
+        var rowParts = [];
+        for (var ri = 0; ri < cells.length; ri++) {
+          var cellText = (cells[ri].innerText || '').trim();
+          if (cellText) rowParts.push(cellText);
+        }
+        if (rowParts.length) addLine('| ' + rowParts.join(' | ') + ' |');
+        return;
+      }
+
+      // Blockquote
+      if (tag === 'blockquote') {
+        var bqText = (node.innerText || '').trim();
+        if (bqText) addLine('> ' + bqText.split('\\n').join('\\n> '));
+        return;
+      }
+
+      // Paragraph / div — recurse into children
+      if (tag === 'p') {
+        var pText = (node.innerText || '').trim();
+        if (pText) {
+          addLine('');
+          addLine(pText);
+        }
+        return;
+      }
+
+      // Links — inline, just recurse
+      if (tag === 'a') {
+        var linkText = (node.innerText || '').trim();
+        var href = node.getAttribute('href') || '';
+        if (linkText && href && href.indexOf('#') !== 0) {
+          addLine('[' + linkText + '](' + href + ')');
+        } else if (linkText) {
+          addLine(linkText);
+        }
+        return;
+      }
+
+      // Images with alt text
+      if (tag === 'img') {
+        var alt = node.getAttribute('alt') || '';
+        if (alt) addLine('[Image: ' + alt + ']');
+        return;
+      }
+
+      // Pre/code blocks
+      if (tag === 'pre' || tag === 'code') {
+        var codeText = (node.innerText || '').trim();
+        if (codeText) {
+          var fence = '\x60\x60\x60';
+          addLine('');
+          addLine(fence);
+          addLine(codeText);
+          addLine(fence);
+          addLine('');
+        }
+        return;
+      }
+
+      // Default: recurse into children
+      var children = node.childNodes;
+      for (var i = 0; i < children.length; i++) {
+        walkNode(children[i]);
+      }
+    }
+
+    walkNode(clone);
+
+    // Clean up: collapse excessive blank lines
+    var content = output.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
+
+    return {
+      title: document.title || '',
+      url: location.href,
+      content: content,
+      contentLength: content.length,
+      truncated: truncated,
+    };
+  };
+
+  /* ------------------------------------------------------------------ */
+  /*  Scroll tracking and incremental content capture                   */
+  /* ------------------------------------------------------------------ */
+
+  var sentParagraphHashes = {};
+  var scrollOpCount = 0;
+  var MAX_SCROLL_OPS = 20;
+
+  function hashStr(s) {
+    var h = 0;
+    for (var i = 0; i < s.length; i++) {
+      h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return String(h);
+  }
+
+  /**
+   * getScrollInfo()
+   * Returns current scroll position info.
+   */
+  bridge.getScrollInfo = function () {
+    var scrollY = window.scrollY || window.pageYOffset || 0;
+    var scrollHeight = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
+    var viewportHeight = window.innerHeight || 0;
+    var maxScroll = Math.max(0, scrollHeight - viewportHeight);
+    var percent = maxScroll > 0 ? Math.round((scrollY / maxScroll) * 100) : 100;
+
+    return {
+      scrollY: Math.round(scrollY),
+      scrollHeight: scrollHeight,
+      viewportHeight: viewportHeight,
+      percent: percent,
+      atTop: scrollY < 10,
+      atBottom: (scrollY + viewportHeight) >= (scrollHeight - 10),
+      moreBelow: (scrollY + viewportHeight) < (scrollHeight - 10),
+      moreAbove: scrollY > 10,
+    };
+  };
+
+  /**
+   * scrollAndCapture(direction)
+   * Smooth-scrolls one viewport in the given direction, waits for content
+   * to settle, then extracts only NEW content that hasn't been sent before.
+   * Returns { newContent, scrollInfo, noNewContent }
+   */
+  bridge.scrollAndCapture = function (direction) {
+    direction = direction || 'down';
+    scrollOpCount++;
+
+    return new Promise(function (resolve) {
+      var scrollAmount = Math.round(window.innerHeight * 0.8);
+      if (direction === 'up') scrollAmount = -scrollAmount;
+
+      window.scrollBy({ top: scrollAmount, behavior: 'smooth' });
+
+      // Wait for scroll animation + lazy content to load
+      setTimeout(function () {
+        // Extract reader content from current viewport area
+        var content = bridge.getReaderContent(4000);
+        if (!content || !content.content) {
+          resolve({ newContent: '', scrollInfo: bridge.getScrollInfo(), noNewContent: true });
+          return;
+        }
+
+        // Deduplicate: split into paragraphs and only keep new ones
+        var paragraphs = content.content.split('\\n\\n');
+        var newParagraphs = [];
+        for (var i = 0; i < paragraphs.length; i++) {
+          var p = paragraphs[i].trim();
+          if (!p || p.length < 20) continue;
+          var h = hashStr(p);
+          if (!sentParagraphHashes[h]) {
+            sentParagraphHashes[h] = true;
+            newParagraphs.push(p);
+          }
+        }
+
+        var newContent = newParagraphs.join('\\n\\n').trim();
+        resolve({
+          newContent: newContent.slice(0, 4000),
+          scrollInfo: bridge.getScrollInfo(),
+          noNewContent: newContent.length === 0,
+        });
+      }, 800);
+    });
+  };
+
+  /**
+   * scrollToTop()
+   * Scrolls to the top of the page.
+   */
+  bridge.scrollToTop = function () {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollOpCount = 0;
+    sentParagraphHashes = {};
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        resolve(bridge.getScrollInfo());
+      }, 500);
+    });
+  };
+
+  /**
+   * searchInPage(query)
+   * Searches for text within the page content.
+   * Returns up to 3 matches with surrounding context.
+   */
+  bridge.searchInPage = function (query) {
+    if (!query) return { matches: [], total: 0 };
+
+    var text = (document.body.innerText || '');
+    var lowerText = text.toLowerCase();
+    var lowerQuery = query.toLowerCase();
+    var matches = [];
+    var startIdx = 0;
+    var CONTEXT_CHARS = 200;
+    var MAX_MATCHES = 5;
+
+    while (matches.length < MAX_MATCHES) {
+      var idx = lowerText.indexOf(lowerQuery, startIdx);
+      if (idx === -1) break;
+
+      var ctxStart = Math.max(0, idx - CONTEXT_CHARS);
+      var ctxEnd = Math.min(text.length, idx + query.length + CONTEXT_CHARS);
+      var context = text.slice(ctxStart, ctxEnd);
+      if (ctxStart > 0) context = '...' + context;
+      if (ctxEnd < text.length) context = context + '...';
+
+      matches.push({
+        index: idx,
+        context: context,
+      });
+
+      startIdx = idx + query.length;
+    }
+
+    // Count total occurrences
+    var total = 0;
+    var countIdx = 0;
+    while (true) {
+      countIdx = lowerText.indexOf(lowerQuery, countIdx);
+      if (countIdx === -1) break;
+      total++;
+      countIdx += lowerQuery.length;
+    }
+
+    return { matches: matches, total: total, query: query };
+  };
+
   // Expose globally
   window[GLOBAL] = bridge;
 
@@ -319,6 +822,7 @@ export function buildGuestBridgeScript(): string {
 
   // Route / URL change listener (SPA-friendly)
   var lastPathname = location.href;
+  var contentEmitTimer = null;
   function checkRouteChange() {
     if (location.href !== lastPathname) {
       lastPathname = location.href;
@@ -328,6 +832,9 @@ export function buildGuestBridgeScript(): string {
         title: document.title,
         timestamp: Date.now(),
       });
+      // Re-emit reader content after navigation settles
+      if (contentEmitTimer) clearTimeout(contentEmitTimer);
+      contentEmitTimer = setTimeout(emitReaderContent, 1500);
     }
   }
   setInterval(checkRouteChange, 500);
@@ -352,6 +859,24 @@ export function buildGuestBridgeScript(): string {
     timestamp: Date.now(),
   });
 
+  // Auto-emit reader content after page settles
+  function emitReaderContent() {
+    var content = bridge.getReaderContent();
+    if (content && content.contentLength > 100) {
+      emitToHost('sulla:pageContent', {
+        title: content.title,
+        url: content.url,
+        content: content.content,
+        contentLength: content.contentLength,
+        truncated: content.truncated,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  // Emit content after initial page load settles
+  setTimeout(emitReaderContent, 1500);
+
   /* ------------------------------------------------------------------ */
   /*  Smart DOM MutationObserver                                        */
   /*  Watches for meaningful changes, debounces, and streams compact    */
@@ -365,6 +890,64 @@ export function buildGuestBridgeScript(): string {
     var pendingTextChanges = [];
     var pendingAttrChanges = [];
     var flushTimer = null;
+
+    // --- Content addition tracking (Tier 2) ---
+    var CONTENT_DEBOUNCE_MS = 2000;
+    var CONTENT_MIN_CHARS = 500;
+    var CONTENT_MAX_CHARS = 2000;
+    var CONTENT_THROTTLE_MS = 5000;
+    var pendingContentText = 0;
+    var contentFlushTimer = null;
+    var lastContentEmitAt = 0;
+    var pendingContentNodes = [];
+
+    function scheduleContentFlush() {
+      if (contentFlushTimer) return;
+      contentFlushTimer = setTimeout(flushContentAdditions, CONTENT_DEBOUNCE_MS);
+    }
+
+    function flushContentAdditions() {
+      contentFlushTimer = null;
+      if (pendingContentText < CONTENT_MIN_CHARS) {
+        pendingContentNodes = [];
+        pendingContentText = 0;
+        return;
+      }
+
+      // Throttle: don't emit more than once per CONTENT_THROTTLE_MS
+      var now = Date.now();
+      if (now - lastContentEmitAt < CONTENT_THROTTLE_MS) {
+        pendingContentNodes = [];
+        pendingContentText = 0;
+        return;
+      }
+
+      // Extract text from pending nodes
+      var parts = [];
+      var charCount = 0;
+      for (var i = 0; i < pendingContentNodes.length && charCount < CONTENT_MAX_CHARS; i++) {
+        var text = (pendingContentNodes[i].innerText || pendingContentNodes[i].textContent || '').trim();
+        if (text.length < 20) continue;
+        parts.push(text);
+        charCount += text.length;
+      }
+
+      pendingContentNodes = [];
+      pendingContentText = 0;
+
+      if (parts.length === 0) return;
+
+      var combined = parts.join('\\n\\n').slice(0, CONTENT_MAX_CHARS);
+      lastContentEmitAt = now;
+
+      emitToHost('sulla:contentAdded', {
+        content: combined,
+        contentLength: combined.length,
+        url: location.href,
+        title: document.title,
+        timestamp: now,
+      });
+    }
 
     // Track which text nodes we've seen to detect real changes
     var knownTexts = new WeakMap();
@@ -547,6 +1130,13 @@ export function buildGuestBridgeScript(): string {
               } else if ((added.textContent || '').trim().length > 10) {
                 // Non-interactive but has meaningful text content (like a notification/toast/alert)
                 pendingAdded.push(added);
+              }
+              // Track non-interactive content additions for contentAdded events
+              var addedText = (added.textContent || '').trim();
+              if (!interactiveAdded && addedText.length > 50) {
+                pendingContentNodes.push(added);
+                pendingContentText += addedText.length;
+                scheduleContentFlush();
               }
             }
           }

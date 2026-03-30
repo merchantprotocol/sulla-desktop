@@ -35,10 +35,13 @@ export interface PaginatedResult<T = any> {
 /**
  * Converts YAML-defined integration configs into live API calls.
  *
- * Credentials are resolved in order:
- *   1. Explicit `options.token` / `options.apiKey`
+ * Credentials are resolved exclusively from the IntegrationService:
+ *   1. Explicit `options.token` / `options.apiKey` passed at call time
  *   2. IntegrationService DB values (slug = folder name, e.g. "youtube")
- *   3. YAML `${ENV_VAR}` references -> process.env
+ *
+ * YAML `${ENV_VAR}` placeholders are only used for non-credential values.
+ * All secrets (bearer tokens, API keys, base URLs) must be stored via
+ * Settings → Integrations in the Sulla UI.
  *
  * Usage:
  *   const client = new ConfigApiClient(loadedIntegration, 'youtube');
@@ -54,6 +57,26 @@ export class ConfigApiClient {
     this.integration = integration;
     this.slug = slug;
     this.baseUrl = integration.auth.api.base_url.replace(/\/+$/, '');
+  }
+
+  /**
+   * Resolve the effective base URL from IntegrationService.
+   * Falls back to the raw YAML value only if it is a literal (non-placeholder) URL.
+   */
+  private async resolveBaseUrl(accountId?: string): Promise<string> {
+    // Always try IntegrationService first — it is the source of truth
+    const resolved = await this.resolveCredential('base_url', undefined, accountId);
+    if (resolved) {
+      return resolved.replace(/\/+$/, '');
+    }
+
+    // Fall back to the YAML value only if it's a literal URL (not a placeholder)
+    const raw = this.integration.auth.api.base_url;
+    if (/\$\{.+\}/.test(raw)) {
+      console.warn(`${ LOG } base_url for "${ this.slug }" is a placeholder (${ raw }) but no value found in IntegrationService. Configure it via Settings → Integrations.`);
+      return '';
+    }
+    return this.baseUrl;
   }
 
   /** Integration slug (folder name, used as IntegrationService ID) */
@@ -197,26 +220,20 @@ export class ConfigApiClient {
   }
 
   /**
-   * Resolve a credential value. Checks:
-   *  1. IntegrationService DB (slug + property)
-   *  2. YAML ${ENV_VAR} -> process.env
-   *  3. Raw string value
+   * Resolve a credential value from the IntegrationService.
+   * This is the ONLY source for secrets (tokens, keys, URLs).
+   * YAML placeholders like ${ENV_VAR} are never used for credentials.
    */
-  private async resolveCredential(property: string, yamlValue?: string, accountId?: string): Promise<string> {
-    // Try IntegrationService first (DB-stored credentials)
+  private async resolveCredential(property: string, _yamlValue?: string, accountId?: string): Promise<string> {
     try {
       const svc = getIntegrationService();
       const dbValue = await svc.getIntegrationValue(this.slug, property, accountId);
       if (dbValue?.value) {
         return dbValue.value;
       }
-    } catch {
-      // IntegrationService may not be initialized yet
-    }
-
-    // Fall back to YAML value (may be ${ENV_VAR} reference)
-    if (yamlValue) {
-      return this.resolveEnvValue(yamlValue);
+      console.warn(`${ LOG } No "${ property }" found in IntegrationService for "${ this.slug }" (account: ${ accountId || 'active' }). Configure it via Settings → Integrations.`);
+    } catch (err: any) {
+      console.error(`${ LOG } IntegrationService error resolving "${ property }" for "${ this.slug }":`, err?.message || err);
     }
 
     return '';
@@ -250,7 +267,8 @@ export class ConfigApiClient {
       }
     }
 
-    const url = new URL(this.baseUrl + urlPath);
+    const effectiveBaseUrl = await this.resolveBaseUrl(accountId);
+    const url = new URL(effectiveBaseUrl + urlPath);
 
     // Apply query params
     if (epConfig.query_params) {
@@ -330,13 +348,6 @@ export class ConfigApiClient {
     return { items, nextPageToken, prevPageToken, raw: data };
   }
 
-  private resolveEnvValue(value: string): string {
-    const match = /^\$\{(.+)\}$/.exec(value);
-    if (match) {
-      return process.env[match[1]] || '';
-    }
-    return value;
-  }
 }
 
 // ── Utilities ───────────────────────────────────────────────────

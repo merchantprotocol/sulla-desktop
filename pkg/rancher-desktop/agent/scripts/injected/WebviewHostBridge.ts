@@ -50,6 +50,21 @@ export interface HostBridgeEventMap {
     title:         string;
     timestamp:     number;
   };
+  pageContent: {
+    title:         string;
+    url:           string;
+    content:       string;
+    contentLength: number;
+    truncated:     boolean;
+    timestamp:     number;
+  };
+  contentAdded: {
+    content:       string;
+    contentLength: number;
+    url:           string;
+    title:         string;
+    timestamp:     number;
+  };
 }
 
 type EventHandler<K extends keyof HostBridgeEventMap> = (payload: HostBridgeEventMap[K]) => void;
@@ -169,6 +184,12 @@ export class WebviewHostBridge {
     return !!(await this.exec(`window.sullaBridge.setValue(${ safeHandle }, ${ safeValue })`));
   }
 
+  async pressKey(key: string, handle?: string): Promise<boolean> {
+    const safeKey = JSON.stringify(key);
+    const safeHandle = handle ? JSON.stringify(handle) : 'undefined';
+    return !!(await this.exec(`window.sullaBridge.pressKey(${ safeKey }, ${ safeHandle })`));
+  }
+
   async getFormValues(): Promise<Record<string, string>> {
     const result = await this.exec('window.sullaBridge.getFormValues()');
     return (result && typeof result === 'object' && !Array.isArray(result))
@@ -190,8 +211,95 @@ export class WebviewHostBridge {
     return String(await this.exec('window.sullaBridge.getPageText()') || '');
   }
 
+  async getReaderContent(maxChars?: number): Promise<{
+    title: string; url: string; content: string;
+    contentLength: number; truncated: boolean;
+  } | null> {
+    const arg = typeof maxChars === 'number' ? String(maxChars) : '';
+    const result = await this.exec(`window.sullaBridge.getReaderContent(${ arg })`);
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+      const r = result as Record<string, unknown>;
+      return {
+        title:         String(r.title || ''),
+        url:           String(r.url || ''),
+        content:       String(r.content || ''),
+        contentLength: Number(r.contentLength) || 0,
+        truncated:     r.truncated === true,
+      };
+    }
+    return null;
+  }
+
   async getPageTitle(): Promise<string> {
     return String(await this.exec('document.title') || '');
+  }
+
+  async getPageHtml(): Promise<string> {
+    return String(await this.exec('document.documentElement.outerHTML') || '');
+  }
+
+  async execInPage(code: string): Promise<unknown> {
+    return await this.exec(code);
+  }
+
+  async getScrollInfo(): Promise<{
+    scrollY: number; scrollHeight: number; viewportHeight: number;
+    percent: number; atTop: boolean; atBottom: boolean;
+    moreBelow: boolean; moreAbove: boolean;
+  }> {
+    const result = await this.exec('window.sullaBridge.getScrollInfo()');
+    if (result && typeof result === 'object') {
+      const r = result as Record<string, unknown>;
+      return {
+        scrollY:        Number(r.scrollY) || 0,
+        scrollHeight:   Number(r.scrollHeight) || 0,
+        viewportHeight: Number(r.viewportHeight) || 0,
+        percent:        Number(r.percent) || 0,
+        atTop:          r.atTop === true,
+        atBottom:       r.atBottom === true,
+        moreBelow:      r.moreBelow === true,
+        moreAbove:      r.moreAbove === true,
+      };
+    }
+    return { scrollY: 0, scrollHeight: 0, viewportHeight: 0, percent: 0, atTop: true, atBottom: true, moreBelow: false, moreAbove: false };
+  }
+
+  async scrollAndCapture(direction?: string): Promise<{
+    newContent: string; scrollInfo: Record<string, unknown>; noNewContent: boolean;
+  }> {
+    const dir = JSON.stringify(direction || 'down');
+    const result = await this.exec(`window.sullaBridge.scrollAndCapture(${ dir })`);
+    if (result && typeof result === 'object') {
+      const r = result as Record<string, unknown>;
+      return {
+        newContent:   String(r.newContent || ''),
+        scrollInfo:   (r.scrollInfo && typeof r.scrollInfo === 'object') ? r.scrollInfo as Record<string, unknown> : {},
+        noNewContent: r.noNewContent === true,
+      };
+    }
+    return { newContent: '', scrollInfo: {}, noNewContent: true };
+  }
+
+  async scrollToTop(): Promise<Record<string, unknown>> {
+    const result = await this.exec('window.sullaBridge.scrollToTop()');
+    if (result && typeof result === 'object') return result as Record<string, unknown>;
+    return {};
+  }
+
+  async searchInPage(query: string): Promise<{
+    matches: Array<{ index: number; context: string }>; total: number; query: string;
+  }> {
+    const safe = JSON.stringify(query);
+    const result = await this.exec(`window.sullaBridge.searchInPage(${ safe })`);
+    if (result && typeof result === 'object') {
+      const r = result as Record<string, unknown>;
+      return {
+        matches: Array.isArray(r.matches) ? r.matches as Array<{ index: number; context: string }> : [],
+        total:   Number(r.total) || 0,
+        query:   String(r.query || query),
+      };
+    }
+    return { matches: [], total: 0, query };
   }
 
   async getPageUrl(): Promise<string> {
@@ -303,6 +411,29 @@ export class WebviewHostBridge {
         url:          String(rec.url || ''),
         title:        String(rec.title || ''),
         timestamp:    this.asTimestamp(rec.timestamp),
+      });
+      return;
+    }
+
+    if (type === 'sulla:pageContent') {
+      this.emit('pageContent', {
+        title:         String(rec.title || ''),
+        url:           String(rec.url || ''),
+        content:       String(rec.content || ''),
+        contentLength: Number(rec.contentLength) || 0,
+        truncated:     rec.truncated === true,
+        timestamp:     this.asTimestamp(rec.timestamp),
+      });
+      return;
+    }
+
+    if (type === 'sulla:contentAdded') {
+      this.emit('contentAdded', {
+        content:       String(rec.content || ''),
+        contentLength: Number(rec.contentLength) || 0,
+        url:           String(rec.url || ''),
+        title:         String(rec.title || ''),
+        timestamp:     this.asTimestamp(rec.timestamp),
       });
     }
   }

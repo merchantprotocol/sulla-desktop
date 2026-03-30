@@ -132,6 +132,10 @@ export class ProxyBridge {
     return (await callRenderer('resolve:setValue', [this.assetId, handle, value])) as boolean;
   }
 
+  async pressKey(key: string, handle?: string): Promise<boolean> {
+    return (await callRenderer('resolve:pressKey', [this.assetId, key, handle])) as boolean;
+  }
+
   async getFormValues(): Promise<Record<string, string>> {
     return ((await callRenderer('resolve:getFormValues', [this.assetId])) as Record<string, string>) || {};
   }
@@ -146,6 +150,55 @@ export class ProxyBridge {
 
   async getPageText(): Promise<string> {
     return ((await callRenderer('resolve:getPageText', [this.assetId])) as string) || '';
+  }
+
+  async getReaderContent(maxChars?: number): Promise<{
+    title: string; url: string; content: string;
+    contentLength: number; truncated: boolean;
+  } | null> {
+    return (await callRenderer('resolve:getReaderContent', [this.assetId, maxChars])) as {
+      title: string; url: string; content: string;
+      contentLength: number; truncated: boolean;
+    } | null;
+  }
+
+  async getScrollInfo(): Promise<{
+    scrollY: number; scrollHeight: number; viewportHeight: number;
+    percent: number; atTop: boolean; atBottom: boolean;
+    moreBelow: boolean; moreAbove: boolean;
+  }> {
+    const result = await callRenderer('resolve:getScrollInfo', [this.assetId]);
+    return (result as any) || {
+      scrollY: 0, scrollHeight: 0, viewportHeight: 0, percent: 0,
+      atTop: true, atBottom: true, moreBelow: false, moreAbove: false,
+    };
+  }
+
+  async scrollAndCapture(direction?: string): Promise<{
+    newContent: string; scrollInfo: Record<string, unknown>; noNewContent: boolean;
+  }> {
+    const result = await callRenderer('resolve:scrollAndCapture', [this.assetId, direction]);
+    return (result as any) || { newContent: '', scrollInfo: {}, noNewContent: true };
+  }
+
+  async scrollToTop(): Promise<Record<string, unknown>> {
+    const result = await callRenderer('resolve:scrollToTop', [this.assetId]);
+    return (result as any) || {};
+  }
+
+  async searchInPage(query: string): Promise<{
+    matches: Array<{ index: number; context: string }>; total: number; query: string;
+  }> {
+    const result = await callRenderer('resolve:searchInPage', [this.assetId, query]);
+    return (result as any) || { matches: [], total: 0, query };
+  }
+
+  async getPageHtml(): Promise<string> {
+    return ((await callRenderer('resolve:getPageHtml', [this.assetId])) as string) || '';
+  }
+
+  async execInPage(code: string): Promise<unknown> {
+    return await callRenderer('resolve:execInPage', [this.assetId, code]);
   }
 
   async getPageTitle(): Promise<string> {

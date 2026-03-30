@@ -11,7 +11,7 @@ services:
       - POSTGRES_DB=sulla
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
-      - /var/lib/sulla/postgres:/var/lib/postgresql/data
+      - "{{sullaDataDir}}/sulla-postgres:/var/lib/postgresql/data"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sulla"]
@@ -26,7 +26,7 @@ services:
       - "30117:6379"
     command: redis-server --appendonly yes --save 60 1
     volumes:
-      - /var/lib/sulla/redis:/data
+      - "{{sullaDataDir}}/sulla-redis:/data"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

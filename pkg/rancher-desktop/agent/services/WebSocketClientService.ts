@@ -131,6 +131,7 @@ function generateUUID(): string {
 
 class WebSocketConnection {
   public ws: WebSocket | null = null;
+  private intentionalClose = false;
   public pending = new Map<string, {
     message:       WebSocketMessage;
     queuedAt:      number;
@@ -178,6 +179,7 @@ class WebSocketConnection {
 
     console.log(`[WS ${ this.config.channel }] connect() → opening socket to ${ this.config.url }`);
     this.cleanup();
+    this.intentionalClose = false;
 
     try {
       this.ws = new WebSocket(this.config.url);
@@ -235,10 +237,15 @@ class WebSocketConnection {
       };
 
       this.ws.onerror = () => {
+        if (this.intentionalClose) return;
         console.warn(`[WS ${ this.config.channel }] Socket error — scheduling reconnect`);
         this.scheduleReconnect();
       };
       this.ws.onclose = (ev) => {
+        if (this.intentionalClose) {
+          console.log(`[WS ${ this.config.channel }] Socket closed (code=${ ev.code }) — intentional, skipping reconnect`);
+          return;
+        }
         console.log(`[WS ${ this.config.channel }] Socket closed (code=${ ev.code }, reason="${ ev.reason || '' }") — scheduling reconnect`);
         this.scheduleReconnect();
       };
@@ -279,6 +286,9 @@ class WebSocketConnection {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.heartbeatTimer = this.reconnectTimer = null;
+    // Flag intentional close so the onclose/onerror handlers don't
+    // race with forceReconnectAll() by scheduling a competing reconnect.
+    this.intentionalClose = true;
     this.ws?.close();
     this.ws = null;
     this.subscribed.clear();
@@ -307,7 +317,10 @@ class WebSocketConnection {
     // message delivery and cause "connection down" errors in the UI.
     const delay = Math.min(this.config.reconnectInterval * (1.3 ** Math.min(this.reconnectAttempts, 10)) + Math.random() * 400, 15000);
     console.log(`[WS ${ this.config.channel }] Reconnect attempt ${ this.reconnectAttempts } in ${ Math.round(delay / 1000) }s`);
-    this.reconnectTimer = setTimeout(() => this.connect(), delay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
   }
 
   private startHeartbeat() {
