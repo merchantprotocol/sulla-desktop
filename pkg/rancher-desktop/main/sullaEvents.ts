@@ -380,9 +380,10 @@ export function initSullaEvents(): void {
   });
 
   ipcMainProxy.handle('filesystem-read-file', async(_event: unknown, filePath: string) => {
-    console.log('filesystem-read-file called with path:', filePath);
     const resolved = assertInsideSullaHome(filePath);
-    console.log('Resolved path:', resolved);
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`File not found: ${ resolved }`);
+    }
     const stat = fs.statSync(resolved);
     if (stat.isDirectory()) {
       throw new Error('Cannot read a directory as a file');
@@ -390,9 +391,7 @@ export function initSullaEvents(): void {
     if (stat.size > 5 * 1024 * 1024) {
       throw new Error('File too large to open (>5MB)');
     }
-    const content = fs.readFileSync(resolved, 'utf-8');
-    console.log('File read successfully, size:', content.length);
-    return content;
+    return fs.readFileSync(resolved, 'utf-8');
   });
 
   ipcMainProxy.handle('filesystem-write-file', async(_event: unknown, filePath: string, content: string) => {

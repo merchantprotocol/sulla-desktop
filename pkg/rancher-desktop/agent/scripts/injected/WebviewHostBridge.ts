@@ -187,7 +187,36 @@ export class WebviewHostBridge {
   async pressKey(key: string, handle?: string): Promise<boolean> {
     const safeKey = JSON.stringify(key);
     const safeHandle = handle ? JSON.stringify(handle) : 'undefined';
-    return !!(await this.exec(`window.sullaBridge.pressKey(${ safeKey }, ${ safeHandle })`));
+
+    // Step 1: Focus the target element inside the iframe (guest JS context)
+    await this.exec(`window.sullaBridge.focusElement(${ safeHandle })`);
+
+    // Step 2: Focus the iframe/webview DOM element itself in the renderer
+    // so Electron routes sendInputEvent to the correct frame
+    if (this.webview) {
+      try {
+        const el = this.webview as unknown as HTMLElement;
+        if (typeof el.focus === 'function') el.focus();
+      } catch { /* best effort */ }
+    }
+
+    // Step 3: Send trusted keyboard event via CDP through main process IPC.
+    // CDP Input.dispatchKeyEvent produces isTrusted=true events that work
+    // inside iframes — indistinguishable from real user input.
+    try {
+      const { ipcRenderer } = require('electron');
+
+      await ipcRenderer.invoke('browser-tab:send-input-event', { key, type: 'keyDown' });
+      if (key.length === 1 || key === 'Enter' || key === 'Space' || key === 'Tab') {
+        await ipcRenderer.invoke('browser-tab:send-input-event', { key, type: 'char' });
+      }
+      await ipcRenderer.invoke('browser-tab:send-input-event', { key, type: 'keyUp' });
+      return true;
+    } catch (err) {
+      // Fallback: use synthetic events via guest bridge if IPC fails
+      console.warn(`${ LOG_PREFIX } pressKey: trusted input failed, falling back to synthetic`, err);
+      return !!(await this.exec(`window.sullaBridge.pressKey(${ safeKey }, ${ safeHandle })`));
+    }
   }
 
   async getFormValues(): Promise<Record<string, string>> {

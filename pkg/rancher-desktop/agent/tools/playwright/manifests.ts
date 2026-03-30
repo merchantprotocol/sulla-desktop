@@ -133,4 +133,12 @@ export const playwrightToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./synthesize_tabs'),
   },
+  {
+    name:        'list_tabs',
+    description: 'List all open browser tabs with their assetId, URL, title, and status (ready/loading). Use to see what tabs are open before interacting.',
+    category:    'playwright',
+    schemaDef:   {},
+    operationTypes: ['read'],
+    loader:         () => import('./list_tabs'),
+  },
 ];

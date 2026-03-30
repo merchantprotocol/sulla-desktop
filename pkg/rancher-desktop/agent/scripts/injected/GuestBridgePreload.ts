@@ -300,6 +300,37 @@ export function buildGuestBridgeScript(): string {
   };
 
   /**
+   * focusElement(handle?)
+   * Focuses a target element by handle, CSS selector, or falls back to the active element.
+   * Used before sending trusted keyboard events via Electron's main process.
+   */
+  bridge.focusElement = function (handle) {
+    var target = null;
+    if (handle && handle !== 'undefined') {
+      target = findByHandle(handle);
+      if (!target) { target = document.querySelector('[data-test-id="' + handle + '"]'); }
+      if (!target) {
+        try {
+          var fiMatch = handle.match(/^(.+)\[(\d+)\]$/);
+          if (fiMatch) {
+            var fiAll = document.querySelectorAll(fiMatch[1]);
+            target = fiAll[parseInt(fiMatch[2], 10)] || null;
+          } else {
+            target = document.querySelector(handle);
+          }
+        } catch (e) { /* ignore */ }
+      }
+    }
+    if (!target) { target = document.activeElement || document.body; }
+    if (typeof target.focus === 'function') { target.focus(); }
+    // Also click into the element to ensure it's truly active (some SPAs need this)
+    if (typeof target.click === 'function' && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+      target.click();
+    }
+    return true;
+  };
+
+  /**
    * pressKey(key, handle?)
    * Dispatches keydown, keypress, keyup events for the given key.
    * If handle is provided, targets that element; otherwise uses the focused element.

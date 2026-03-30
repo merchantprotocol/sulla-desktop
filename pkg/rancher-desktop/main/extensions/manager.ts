@@ -308,8 +308,14 @@ export class ExtensionManagerImpl implements ExtensionManager {
     }
     await Promise.all(tasks);
 
-    // Start all installed extensions (recipe extensions run their start command)
-    await this.startInstalledExtensions();
+    // Start all installed extensions (recipe extensions run their start command).
+    // Deferred to allow the container engine to finish initializing — extensions
+    // that call Docker will fail if the socket isn't ready yet.
+    setTimeout(() => {
+      this.startInstalledExtensions().catch((err) => {
+        console.error('[ExtensionManager] startInstalledExtensions failed:', err);
+      });
+    }, 10_000);
 
     // Register a listener to shut down extensions on quit
     mainEvents.handle('extensions/shutdown', this.triggerExtensionShutdown);
