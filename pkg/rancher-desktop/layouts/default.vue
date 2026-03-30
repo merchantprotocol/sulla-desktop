@@ -16,7 +16,7 @@
     <the-title ref="title" />
     <main
       ref="body"
-      class="body"
+      class="body main-preferences"
     >
       <!-- Main tabs are always mounted, toggled with v-show to preserve state -->
       <Containers v-show="activeMainTab === '/Containers'" />
@@ -249,8 +249,8 @@ export default {
     "nav        body"    1fr
     "status-bar status-bar"
     / var(--nav-width) 1fr;
-  background-color: var(--bg-page, var(--body-bg));
-  color: var(--text-primary, var(--body-text));
+  background-color: var(--body-bg);
+  color: var(--body-text);
   width: 100vw;
   height: 100vh;
 
@@ -260,19 +260,19 @@ export default {
 
   .header {
     grid-area: header;
-    border-bottom: var(--header-border-size) solid var(--border-default, var(--header-border));
+    border-bottom: var(--header-border-size) solid var(--header-border);
   }
 
   .nav {
     grid-area: nav;
-    border-right: var(--nav-border-size) solid var(--border-default, var(--nav-border));
-    background: var(--bg-page, var(--body-bg));
+    border-right: var(--nav-border-size) solid var(--nav-border);
+    background: var(--nav-bg, var(--body-bg));
   }
 
   .title {
     grid-area: title;
-    border-bottom: 1px solid var(--border-default, var(--header-border));
-    background: var(--bg-page, var(--body-bg));
+    border-bottom: 1px solid var(--header-border);
+    background: var(--title-bg, var(--body-bg));
   }
 
   .body {
@@ -281,7 +281,11 @@ export default {
     flex-direction: column;
     padding: 0 20px 20px 20px;
     overflow: auto;
-    background: var(--bg-page, var(--body-bg));
+    background: var(--body-bg);
+  }
+
+  .main-preferences > div {
+    padding-top: 15px;
   }
 
   .extension {
@@ -291,8 +295,8 @@ export default {
 
   .status-bar {
     grid-area: status-bar;
-    border-top: 1px solid var(--border-default, var(--header-border));
-    background: var(--bg-page, var(--body-bg));
+    border-top: 1px solid var(--header-border);
+    background: var(--status-bar-bg, var(--body-bg));
   }
 }
 </style>
