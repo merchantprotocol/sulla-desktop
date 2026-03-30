@@ -90,7 +90,6 @@ export default defineComponent({
         </div>
       </transition>
     </div>
-    <hr>
     <div
       v-show="description"
       class="description"
@@ -102,7 +101,8 @@ export default defineComponent({
 
 <style lang="scss" scoped>
   .title {
-    padding: 20px 20px 0 20px;
+    padding: 10px 20px 10px 20px;
+    color: var(--body-text);
   }
 
   .title-top{
@@ -113,12 +113,21 @@ export default defineComponent({
     height: 27px;
     font-weight: bolder;
     font-size: var(--fs-heading);
+    color: var(--body-text);
   }
 
   .btn-back:focus {
     outline: none;
     box-shadow: none;
     background: var(--input-focus-bg);
+  }
+
+  h1 {
+    color: var(--body-text);
+  }
+
+  .description {
+    color: var(--muted);
   }
 
   .fade-group-item {
