@@ -99,22 +99,51 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 
 <style lang="scss" scoped>
 .sh-header {
-  background: var(--bg-header);
+  background: var(--bg-header, var(--body-bg, #ffffff));
   backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border-default, var(--header-border, #e5e7eb));
 }
 
 .sh-theme-toggle {
-  background: var(--bg-surface-hover);
-  --tw-ring-color: var(--border-default);
+  background: var(--bg-surface-hover, var(--input-bg, #f3f4f6));
+  --tw-ring-color: var(--border-default, var(--header-border, #e5e7eb));
+  color: var(--text-primary, var(--body-text, #1f2937));
 }
 
 .sh-quit-btn {
-  color: var(--text-secondary);
-  background: var(--bg-surface-hover);
-  --tw-ring-color: var(--border-default);
+  color: var(--text-secondary, var(--muted, #4b5563));
+  background: var(--bg-surface-hover, var(--input-bg, #f3f4f6));
+  --tw-ring-color: var(--border-default, var(--header-border, #e5e7eb));
+
+  &:hover {
+    background: var(--bg-surface-alt, #e5e7eb);
+    color: var(--text-primary, var(--body-text, #1f2937));
+  }
 
   &:active {
-    background: var(--bg-surface-alt);
+    background: var(--bg-surface-alt, #d1d5db);
+  }
+}
+
+.dark .sh-header {
+  background: var(--bg-header, rgba(13, 17, 23, 0.8));
+  border-bottom-color: var(--border-default, #30363d);
+}
+
+.dark .sh-theme-toggle {
+  background: var(--bg-surface-hover, #21262d);
+  --tw-ring-color: var(--border-default, #30363d);
+  color: var(--text-primary, #e6edf3);
+}
+
+.dark .sh-quit-btn {
+  color: var(--text-secondary, #8b949e);
+  background: var(--bg-surface-hover, #21262d);
+  --tw-ring-color: var(--border-default, #30363d);
+
+  &:hover {
+    background: var(--bg-surface-alt, #30363d);
+    color: var(--text-primary, #e6edf3);
   }
 }
 </style>

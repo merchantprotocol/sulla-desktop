@@ -191,13 +191,13 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 </script>
 <style lang="scss" scoped>
 .page-root {
-  background: var(--bg-page);
-  color: var(--text-primary);
+  background: var(--bg-page, var(--body-bg, #ffffff));
+  color: var(--text-primary, var(--body-text, #1f2937));
 }
 
 .page-root.dark {
-  background: var(--bg-page);
-  color: var(--text-primary);
+  background: var(--bg-page, #0d1117);
+  color: var(--text-primary, #e6edf3);
 }
 
 .button-area {
@@ -206,9 +206,13 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
 }
 
 .welcome-text {
-  color: var(--text-primary);
+  color: var(--text-primary, var(--body-text, #1f2937));
   margin-bottom: 1rem;
   line-height: 1.5;
+}
+
+.dark .welcome-text {
+  color: var(--text-primary, #e6edf3);
 }
 
 .first-run-container {
@@ -219,10 +223,10 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
   width: 100%;
   padding: 0.5rem;
   font-size: var(--fs-body);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-default, var(--header-border, #e5e7eb));
   border-radius: 4px;
-  background: var(--bg-input);
-  color: var(--text-primary);
+  background: var(--bg-input, var(--input-bg, #ffffff));
+  color: var(--text-primary, var(--body-text, #1f2937));
   margin-top: 0.5rem;
 
   option {
@@ -230,87 +234,164 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
   }
 
   option:disabled {
-    color: var(--text-dim);
+    color: var(--text-dim, var(--muted, #9ca3af));
     font-style: italic;
   }
+}
+
+.dark .model-select {
+  background: var(--bg-input, #21262d);
+  color: var(--text-primary, #e6edf3);
+  border-color: var(--border-default, #30363d);
 }
 
 .model-description {
   margin-top: 0.5rem;
   font-size: var(--fs-code);
-  color: var(--text-muted);
+  color: var(--text-muted, var(--muted, #6b7280));
   font-style: italic;
 }
 
+.dark .model-description {
+  color: var(--text-muted, #8b949e);
+}
+
 .model-disabled {
-  color: var(--text-dim);
+  color: var(--text-dim, var(--muted, #9ca3af));
+}
+
+.dark .model-disabled {
+  color: var(--text-dim, #6e7681);
 }
 
 /* Sidebar */
 .sidebar-bg {
-  background: var(--bg-surface);
+  background: var(--bg-surface, var(--body-bg, #f9fafb));
+}
+
+.dark .sidebar-bg {
+  background: var(--bg-surface, #161b22);
 }
 
 .sidebar-title {
-  color: var(--text-primary);
+  color: var(--text-primary, var(--body-text, #1f2937));
+}
+
+.dark .sidebar-title {
+  color: var(--text-primary, #e6edf3);
 }
 
 /* Step items */
 .step-active {
-  background: var(--bg-surface-alt);
-  border-color: var(--accent-primary);
+  background: var(--bg-surface-alt, #eff6ff);
+  border-color: var(--accent-primary, #3b82f6);
+}
+
+.dark .step-active {
+  background: var(--bg-surface-alt, #1c2026);
+  border-color: var(--accent-primary, #58a6ff);
 }
 
 .step-inactive {
-  background: var(--bg-surface);
-  border-color: var(--border-default);
+  background: var(--bg-surface, var(--body-bg, #ffffff));
+  border-color: var(--border-default, var(--header-border, #e5e7eb));
+}
+
+.dark .step-inactive {
+  background: var(--bg-surface, #161b22);
+  border-color: var(--border-default, #30363d);
 }
 
 .step-number-active {
-  background-color: var(--accent-primary);
+  background-color: var(--accent-primary, #3b82f6);
   color: #fff;
 }
 
+.dark .step-number-active {
+  background-color: var(--accent-primary, #58a6ff);
+}
+
 .step-number-inactive {
-  background-color: var(--bg-surface-hover);
-  color: var(--text-primary);
+  background-color: var(--bg-surface-hover, #f3f4f6);
+  color: var(--text-primary, var(--body-text, #1f2937));
+}
+
+.dark .step-number-inactive {
+  background-color: var(--bg-surface-hover, #21262d);
+  color: var(--text-primary, #e6edf3);
 }
 
 .step-name-active {
-  color: var(--accent-primary);
+  color: var(--accent-primary, #3b82f6);
+}
+
+.dark .step-name-active {
+  color: var(--accent-primary, #58a6ff);
 }
 
 .step-name-inactive {
-  color: var(--text-secondary);
+  color: var(--text-secondary, var(--muted, #4b5563));
+}
+
+.dark .step-name-inactive {
+  color: var(--text-secondary, #8b949e);
 }
 
 .step-desc-active {
-  color: var(--text-muted);
+  color: var(--text-muted, var(--muted, #6b7280));
+}
+
+.dark .step-desc-active {
+  color: var(--text-muted, #8b949e);
 }
 
 .step-desc-inactive {
-  color: var(--text-muted);
+  color: var(--text-dim, var(--muted, #9ca3af));
 }
 
-/* Progress section */
+.dark .step-desc-inactive {
+  color: var(--text-dim, #6e7681);
+}
+
+/* Progress */
 .progress-container {
-  background: var(--bg-surface);
+  background: var(--bg-surface, var(--body-bg, #f9fafb));
+}
+
+.dark .progress-container {
+  background: var(--bg-surface, #161b22);
 }
 
 .progress-title {
-  color: var(--text-primary);
+  color: var(--text-primary, var(--body-text, #1f2937));
+}
+
+.dark .progress-title {
+  color: var(--text-primary, #e6edf3);
 }
 
 .progress-track {
-  background: var(--bg-surface-hover);
+  background: var(--bg-surface-hover, #e5e7eb);
+}
+
+.dark .progress-track {
+  background: var(--bg-surface-hover, #21262d);
 }
 
 .progress-bar {
-  background-color: var(--accent-primary);
+  background-color: var(--accent-primary, #3b82f6);
+}
+
+.dark .progress-bar {
+  background-color: var(--accent-primary, #58a6ff);
 }
 
 .progress-description {
-  color: var(--text-muted);
+  color: var(--text-muted, var(--muted, #6b7280));
+}
+
+.dark .progress-description {
+  color: var(--text-muted, #8b949e);
 }
 </style>
 
