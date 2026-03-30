@@ -1,7 +1,6 @@
 <template>
   <div>
     <PostHogTracker page-name="Images" />
-    <RouterView />
     <Images
       class="content"
       data-test="imagesTable"
