@@ -335,8 +335,19 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   // Send trusted keyboard input via Chrome DevTools Protocol (CDP).
   // CDP Input.dispatchKeyEvent produces isTrusted=true events that work
   // inside iframes — unlike sendInputEvent which only targets the top frame.
-  ipcMainProxy.handle('browser-tab:send-input-event', async(event: Electron.IpcMainInvokeEvent, inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => {
-    const wc = event.sender;
+  ipcMainProxy.handle('browser-tab:send-input-event', async(event: Electron.IpcMainInvokeEvent, inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }, tabId?: string) => {
+    let wc: Electron.WebContents;
+
+    if (tabId) {
+      const { BrowserTabViewManager } = await import('@pkg/window/browserTabViewManager');
+      const mgr = BrowserTabViewManager.getInstance();
+      const viewWc = mgr.getWebContents(tabId);
+
+      if (!viewWc) return false;
+      wc = viewWc;
+    } else {
+      wc = event.sender;
+    }
 
     try {
       // Attach debugger if not already attached
@@ -386,8 +397,19 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     format?: 'jpeg' | 'png';
     quality?: number;
     clip?: { x: number; y: number; width: number; height: number; scale?: number };
-  }) => {
-    const wc = event.sender;
+  }, tabId?: string) => {
+    let wc: Electron.WebContents;
+
+    if (tabId) {
+      const { BrowserTabViewManager } = await import('@pkg/window/browserTabViewManager');
+      const mgr = BrowserTabViewManager.getInstance();
+      const viewWc = mgr.getWebContents(tabId);
+
+      if (!viewWc) return null;
+      wc = viewWc;
+    } else {
+      wc = event.sender;
+    }
 
     try {
       if (!wc.debugger.isAttached()) {
@@ -429,8 +451,19 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     y: number;
     button?: 'left' | 'right' | 'middle' | 'none';
     clickCount?: number;
-  }) => {
-    const wc = event.sender;
+  }, tabId?: string) => {
+    let wc: Electron.WebContents;
+
+    if (tabId) {
+      const { BrowserTabViewManager } = await import('@pkg/window/browserTabViewManager');
+      const mgr = BrowserTabViewManager.getInstance();
+      const viewWc = mgr.getWebContents(tabId);
+
+      if (!viewWc) return false;
+      wc = viewWc;
+    } else {
+      wc = event.sender;
+    }
 
     try {
       if (!wc.debugger.isAttached()) {
@@ -462,6 +495,54 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
 
     app.quit();
+  });
+
+  // ── Browser Tab Views (WebContentsView-based) ─────────────────────────────
+  const { BrowserTabViewManager } = await import('@pkg/window/browserTabViewManager');
+  const tabViewManager = BrowserTabViewManager.getInstance();
+
+  ipcMainProxy.handle('browser-tab-view:create', async(_event: Electron.IpcMainInvokeEvent, tabId: string, url: string, bounds: Electron.Rectangle) => {
+    tabViewManager.createView(tabId, url, bounds);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:destroy', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
+    tabViewManager.destroyView(tabId);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:navigate', async(_event: Electron.IpcMainInvokeEvent, tabId: string, url: string) => {
+    tabViewManager.navigateTo(tabId, url);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:go-back', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
+    tabViewManager.goBack(tabId);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:go-forward', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
+    tabViewManager.goForward(tabId);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:reload', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
+    tabViewManager.reload(tabId);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:stop', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
+    tabViewManager.stop(tabId);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:set-bounds', async(_event: Electron.IpcMainInvokeEvent, tabId: string, bounds: Electron.Rectangle) => {
+    tabViewManager.setBounds(tabId, bounds);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:show', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
+    tabViewManager.showView(tabId);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:hide', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
+    tabViewManager.hideView(tabId);
+  });
+
+  ipcMainProxy.handle('browser-tab-view:exec-js', async(_event: Electron.IpcMainInvokeEvent, tabId: string, code: string) => {
+    return tabViewManager.executeJavaScript(tabId, code);
   });
 }
 

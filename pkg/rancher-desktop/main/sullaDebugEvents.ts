@@ -156,12 +156,14 @@ export function initSullaDebugEvents(): void {
   // ─────────────────────────────────────────────────────────────
 
   ipcMainProxy.handle('debug-health-check', async() => {
-    const [chatApi, terminal, dashboard, wsHub] = await Promise.all([
+    const [chatApi, terminal, dashboard] = await Promise.all([
       httpProbe(3000, '/health'),
       tcpProbe(6108),
       httpProbe(6120),
-      tcpProbe(30118),
     ]);
+
+    // IPC Message Bus is always available (in-process)
+    const messageBus = { ok: true, error: undefined };
 
     // Redis check
     let redis = { ok: false, error: 'not checked' };
@@ -185,12 +187,12 @@ export function initSullaDebugEvents(): void {
     }
 
     return {
-      chatApi:   { name: 'Chat API', port: 3000, ...chatApi },
-      terminal:  { name: 'Terminal Server', port: 6108, ...terminal },
-      dashboard: { name: 'Dashboard', port: 6120, ...dashboard },
-      wsHub:     { name: 'WebSocket Hub', port: 30118, ...wsHub },
-      redis:     { name: 'Redis', ...redis },
-      heartbeat: { name: 'Heartbeat Service', ...heartbeat },
+      chatApi:    { name: 'Chat API', port: 3000, ...chatApi },
+      terminal:   { name: 'Terminal Server', port: 6108, ...terminal },
+      dashboard:  { name: 'Dashboard', port: 6120, ...dashboard },
+      messageBus: { name: 'IPC Message Bus', ...messageBus },
+      redis:      { name: 'Redis', ...redis },
+      heartbeat:  { name: 'Heartbeat Service', ...heartbeat },
     };
   });
 
@@ -320,10 +322,10 @@ export function initSullaDebugEvents(): void {
       }
       default: {
         // For port-based services, just return the probe result
-        const ports: Record<string, number> = { chatApi: 3000, terminal: 6108, dashboard: 6120, wsHub: 30118 };
+        const ports: Record<string, number> = { chatApi: 3000, terminal: 6108, dashboard: 6120 };
         const port = ports[serviceKey];
         if (port) {
-          const probe = serviceKey === 'terminal' || serviceKey === 'wsHub'
+          const probe = serviceKey === 'terminal'
             ? await tcpProbe(port)
             : await httpProbe(port, '/health');
           return { type: 'probe', port, ...probe };

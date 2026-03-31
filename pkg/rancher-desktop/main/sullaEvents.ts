@@ -9,6 +9,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
 import { initSullaDebugEvents } from './sullaDebugEvents';
+import { initMessageBusIpc } from './messageBusIpc';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -36,6 +37,8 @@ function assertInsideSullaHome(targetPath: string): string {
  * Initialize Sulla-specific IPC handlers.
  */
 export function initSullaEvents(): void {
+  initMessageBusIpc();
+
   // ─────────────────────────────────────────────────────────────
   // Settings handlers
   // ─────────────────────────────────────────────────────────────
@@ -1427,35 +1430,16 @@ export function initSullaEvents(): void {
   console.log('[Sulla] IPC event handlers initialized');
 
   // ─────────────────────────────────────────────────────────────
-  // System sleep / wake — reconnect WebSocket channels on resume
-  // (cross-platform: macOS, Windows, Linux via Electron powerMonitor)
+  // System sleep / wake
   // ─────────────────────────────────────────────────────────────
 
   const { powerMonitor, BrowserWindow } = require('electron') as typeof import('electron');
 
-  powerMonitor.on('suspend', () => {
-    console.log('[Power] System suspending — marking WebSocket connections stale');
-    try {
-      const { getWebSocketClientService } = require('@pkg/agent/services/WebSocketClientService');
-      getWebSocketClientService().markSuspended();
-    } catch (err) {
-      console.warn('[Power] Failed to mark connections suspended:', err);
-    }
-  });
-
   powerMonitor.on('resume', () => {
-    console.log('[Power] System resumed — forcing WebSocket reconnect');
-    try {
-      const { getWebSocketClientService } = require('@pkg/agent/services/WebSocketClientService');
-      getWebSocketClientService().forceReconnectAll();
-    } catch (err) {
-      console.warn('[Power] Failed to reconnect WebSocket connections:', err);
-    }
+    console.log('[Power] System resumed');
 
     // Re-initialize the backend graph executor so it re-subscribes its
-    // message handlers on the freshly reconnected WebSocket channels.
-    // Without this, messages are delivered to the hub but the graph
-    // executor never picks them up after wake.
+    // message handlers after wake.
     try {
       const { getBackendGraphWebSocketService } = require('@pkg/agent/services/BackendGraphWebSocketService');
       getBackendGraphWebSocketService().reinitialize();

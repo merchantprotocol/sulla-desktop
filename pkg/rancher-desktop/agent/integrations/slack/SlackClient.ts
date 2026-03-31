@@ -7,7 +7,7 @@ import { App, LogLevel } from '@slack/bolt';
 import type { AllMiddlewareArgs, SlackEventMiddlewareArgs } from '@slack/bolt';
 import type { ChatPostMessageResponse, WebAPICallResult } from '@slack/web-api';
 import {
-  WebSocketClientService,
+  getWebSocketClientService,
   type WebSocketMessage,
 } from '../../services/WebSocketClientService';
 
@@ -26,7 +26,7 @@ const TOKEN_PROPERTY = 'bot_token';
 const APP_TOKEN_PROPERTY = 'scopes_token';
 const APP_TOKEN_FALLBACK_PROPERTIES = ['app_token', 'app_level_token'];
 
-const WS_SERVICE = WebSocketClientService.getInstance();
+const WS_SERVICE = getWebSocketClientService();
 const SLACK_GRAPH_CHANNEL = 'slack-direct';
 
 function generateUUID(): string {

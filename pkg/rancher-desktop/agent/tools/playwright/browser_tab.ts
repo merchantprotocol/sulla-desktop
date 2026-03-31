@@ -7,14 +7,13 @@ import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
 /**
  * Browser Tab Tool — open, navigate, or close browser tabs.
  *
- * When opening/navigating an iframe tab, this tool:
+ * When opening/navigating a browser tab, this tool:
  *   1. Sends the upsert command to the frontend
  *   2. Listens for the pageContent event from that assetId (page loaded)
  *   3. Returns the full page state: title, URL, interactive elements, and
  *      reader-mode content — so the agent doesn't need a second call
  */
 
-const PAGE_LOAD_TIMEOUT = 60000; // dead-letter safety net — events should fire well before this
 
 export class BrowserTabWorker extends BaseTool {
   name = '';
@@ -22,8 +21,9 @@ export class BrowserTabWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const action = String(input.action || 'upsert').trim().toLowerCase();
-    // Default to 'iframe' — most common case and avoids the model forgetting assetType when navigating
-    const assetType = String(input.assetType || 'iframe').trim().toLowerCase();
+    // Default to 'browser'. Accept 'iframe' as a legacy alias.
+    let assetType = String(input.assetType || 'browser').trim().toLowerCase();
+    if (assetType === 'iframe') assetType = 'browser';
     const skillSlug = typeof input.skillSlug === 'string' ? input.skillSlug.trim() : '';
     const wsChannel = 'sulla-desktop';
 
@@ -50,8 +50,8 @@ export class BrowserTabWorker extends BaseTool {
     }
 
     /* ── Validate ── */
-    if (assetType !== 'iframe' && assetType !== 'document') {
-      return { successBoolean: false, responseString: 'assetType must be either iframe or document.' };
+    if (assetType !== 'browser' && assetType !== 'document') {
+      return { successBoolean: false, responseString: 'assetType must be browser or document.' };
     }
 
     const assetId = typeof input.assetId === 'string' && input.assetId.trim().length > 0
@@ -63,7 +63,7 @@ export class BrowserTabWorker extends BaseTool {
     const refKey = typeof input.refKey === 'string' ? input.refKey : undefined;
     const title = typeof input.title === 'string' && input.title.trim().length > 0
       ? input.title.trim()
-      : (assetType === 'iframe' ? 'Website' : 'Document');
+      : (assetType === 'browser' ? 'Website' : 'Document');
 
     /* ── Document upsert (no bridge needed) ── */
     if (assetType === 'document') {
@@ -81,55 +81,21 @@ export class BrowserTabWorker extends BaseTool {
     /* ── Iframe upsert — open URL and wait for page load ── */
     const url = typeof input.url === 'string' ? input.url.trim() : '';
     if (!url) {
-      return { successBoolean: false, responseString: 'url is required for iframe assets.' };
+      return { successBoolean: false, responseString: 'url is required for browser assets.' };
     }
-
-    // Listen for bridge injection event BEFORE sending upsert
-    const pageLoaded = this.waitForPageLoad(assetId);
 
     // Send the upsert command to the frontend
     await wsService.send(wsChannel, {
       type: 'register_or_activate_asset',
       data: {
-        asset: { type: 'iframe', id: assetId, title, url, active, collapsed, skillSlug: skillSlug || undefined, refKey },
+        asset: { type: 'browser', id: assetId, title, url, active, collapsed, skillSlug: skillSlug || undefined, refKey },
       },
       timestamp: Date.now(),
     });
 
-    // Wait for the bridge to inject (event-driven, not polling)
-    await pageLoaded;
-
-    // Always read and return the page state
+    // readPageState calls bridge methods which auto-wait for READY state
+    // via the WebviewHostBridge state machine. No manual waiting needed.
     return await this.readPageState(assetId, title, url);
-  }
-
-  /**
-   * Wait for a pageContent or routeChanged dom event from the target assetId.
-   * This fires when the GuestBridgePreload injects and emits sulla:pageContent.
-   */
-  private async waitForPageLoad(assetId: string): Promise<void> {
-    // Check if already loaded (bridge already injected from a previous load)
-    try {
-      const bridge = hostBridgeProxy.resolve(assetId);
-      if (await bridge.isInjected()) return; // already ready — no need to wait
-    } catch { /* not registered yet — wait for event */ }
-
-    // Not ready yet — wait for the injection event
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        unsub();
-        resolve(); // safety net — still try to read whatever is available
-      }, PAGE_LOAD_TIMEOUT);
-
-      const unsub = hostBridgeProxy.onDomEvent((event) => {
-        if (event.assetId !== assetId) return;
-        if (event.type === 'pageContent' || event.type === 'injected' || event.type === 'routeChanged') {
-          clearTimeout(timeout);
-          unsub();
-          resolve();
-        }
-      });
-    });
   }
 
   /**
@@ -175,13 +141,24 @@ export class BrowserTabWorker extends BaseTool {
         parts.push('');
         parts.push(tree);
       } else {
-        // Fallback: just return title + URL if dehydrate isn't available
         const text = await bridge.getPageText();
         if (text) {
           parts.push('');
           parts.push(text.substring(0, 2000));
         }
       }
+
+      parts.push('');
+      parts.push('---');
+      parts.push('**How to interact with this page:**');
+      parts.push('Use `exec_in_page` via the Tools API for multi-step workflows. Every page has `window.__sulla` helpers.');
+      parts.push('');
+      parts.push('Example — click a link, wait for page, extract text in ONE call:');
+      parts.push('```');
+      parts.push(`curl -s -X POST http://host.docker.internal:3000/v1/tools/internal/playwright/exec_in_page/call -H "Content-Type: application/json" -d '{"code":"return await __sulla.steps([() => __sulla.click(\\"a[href]\\"), () => __sulla.waitFor(\\"h1\\"), () => __sulla.text(\\"body\\").substring(0,2000)])", "assetId":"${ assetId }", "screenshot":true}'`);
+      parts.push('```');
+      parts.push('');
+      parts.push('Key tools: `exec_in_page` (run JS + __sulla helpers), `take_screenshot` (visual with grid), `click_at` (pixel coordinates), `click_element` (by handle). Load `web-research-playwright` skill for full reference.');
 
       return { successBoolean: true, responseString: parts.join('\n') };
     } catch (err) {

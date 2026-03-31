@@ -286,6 +286,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'set-mode': [mode: BrowserTabMode];
+  'navigate-url': [url: string];
 }>();
 
 const { updateTab } = useBrowserTabs();
@@ -463,7 +464,23 @@ const renderMarkdown = (markdown: string): string => {
 
 const composerRef = ref<InstanceType<typeof AgentComposer> | null>(null);
 
+/** Returns true if the input looks like a URL the user wants to navigate to */
+function looksLikeUrl(input: string): boolean {
+  const trimmed = input.trim();
+  if (/^https?:\/\//i.test(trimmed)) return true;
+  if (/^localhost(:\d+)?/i.test(trimmed)) return true;
+  if (/^127\.0\.0\.1(:\d+)?/i.test(trimmed)) return true;
+  if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(\/|$)/.test(trimmed)) return true;
+  return false;
+}
+
 const send = (metadata?: Record<string, unknown>) => {
+  // If the query looks like a URL, open it in a browser tab instead of chatting
+  if (!hasMessages.value && looksLikeUrl(query.value)) {
+    emit('navigate-url', query.value.trim());
+    query.value = '';
+    return;
+  }
   if (isFirstChat.value) {
     isFirstChat.value = false;
     ipcRenderer.invoke('mark-first-chat-complete');
@@ -472,6 +489,12 @@ const send = (metadata?: Record<string, unknown>) => {
 };
 
 const sendWithAttachments = () => {
+  // If the query looks like a URL, open it in a browser tab instead of chatting
+  if (!hasMessages.value && looksLikeUrl(query.value)) {
+    emit('navigate-url', query.value.trim());
+    query.value = '';
+    return;
+  }
   if (isFirstChat.value) {
     isFirstChat.value = false;
     ipcRenderer.invoke('mark-first-chat-complete');

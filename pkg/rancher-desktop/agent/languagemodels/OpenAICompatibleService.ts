@@ -399,6 +399,22 @@ export class OpenAICompatibleService extends BaseLanguageModel {
               arguments: typeof b.input === 'string' ? b.input : JSON.stringify(b.input ?? {}),
             },
           }));
+
+          // Alibaba / DashScope coding models require function.arguments to be
+          // valid JSON.  When the LLM returns malformed arguments (e.g. a plain
+          // string instead of a JSON object) we stored them as-is.  Re-validate
+          // and wrap non-JSON strings so the next request doesn't get rejected.
+          for (const tc of toolCalls) {
+            const args = tc.function.arguments;
+            if (typeof args === 'string') {
+              try {
+                JSON.parse(args);
+              } catch {
+                tc.function.arguments = JSON.stringify(args);
+              }
+            }
+          }
+
           result.push({
             role:       'assistant',
             content:    textContent,

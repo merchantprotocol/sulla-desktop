@@ -8,18 +8,8 @@
       :toggle-theme="toggleTheme"
     />
 
-    <!-- Welcome / New Tab page -->
-    <template v-if="tabMode === 'welcome'">
-      <div class="flex-1 min-h-0 overflow-hidden">
-        <NewTabWelcome
-          @start-chat="onStartChat"
-          @set-mode="onSetMode"
-        />
-      </div>
-    </template>
-
-    <!-- Browser mode: toolbar + iframe -->
-    <template v-else-if="tabMode === 'browser'">
+    <!-- Browser toolbar — always visible in welcome and browser modes -->
+    <template v-if="tabMode === 'welcome' || tabMode === 'browser'">
       <div class="flex items-center gap-2 px-4 py-2 browser-toolbar">
         <button
           class="browser-nav-btn"
@@ -75,19 +65,21 @@
           />
         </form>
       </div>
+    </template>
 
-      <div class="iframe-container" style="position: relative;">
-        <iframe
-          ref="iframeRef"
-          :src="currentUrl"
-          :data-asset-id="bridgeId()"
-          class="browser-frame"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
-          referrerpolicy="no-referrer-when-downgrade"
-          @load="onFrameLoad"
+    <!-- Welcome / New Tab page -->
+    <template v-if="tabMode === 'welcome'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <NewTabWelcome
+          @start-chat="onStartChat"
+          @set-mode="onSetMode"
         />
-        <CursorOverlay :asset-id="bridgeId()" />
       </div>
+    </template>
+
+    <!-- Browser mode: WebContentsView positioning container -->
+    <template v-else-if="tabMode === 'browser'">
+      <div ref="viewContainerRef" class="view-container" />
     </template>
 
     <!-- Embedded page modes -->
@@ -131,7 +123,7 @@
     <!-- Chat mode: independent chat session per tab -->
     <template v-else-if="tabMode === 'chat'">
       <div class="flex-1 min-h-0 overflow-hidden">
-        <BrowserTabChat :tab-id="props.tabId" @set-mode="onSetMode" />
+        <BrowserTabChat :tab-id="props.tabId" @set-mode="onSetMode" @navigate-url="onNavigateUrl" />
       </div>
     </template>
 
@@ -145,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
 import AgentHeader from './agent/AgentHeader.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
@@ -154,18 +146,16 @@ import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import SecretaryMode from './SecretaryMode.vue';
-import CursorOverlay from '@pkg/components/CursorOverlay.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { useStartupProgress } from './agent/useStartupProgress';
 import {
-  BRIDGE_CHANNEL,
   WebviewHostBridge,
   setActiveHostBridge,
   hostBridgeRegistry,
-  type HostBridgeEventMap,
 } from '@pkg/agent/scripts/injected';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const MODE_TITLES: Record<BrowserTabMode, string> = {
   welcome:      'New Tab',
@@ -185,6 +175,7 @@ const props = defineProps<{
 
 const { isDark, toggleTheme } = useTheme();
 const { updateTab, getTab } = useBrowserTabs();
+const { showOverlay } = useStartupProgress();
 
 const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
 const tabContent = computed(() => getTab(props.tabId)?.content || '');
@@ -193,137 +184,92 @@ function onSetMode(mode: BrowserTabMode) {
   updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
 }
 
+function onNavigateUrl(input: string) {
+  addressBarUrl.value = normalizeUrl(input);
+  navigate();
+}
+
 function onStartChat(_chatQuery: string) {
   // Switch this tab to chat mode
   updateTab(props.tabId, { mode: 'chat', title: 'New Chat' });
 }
 
-/** Bridge ID: use the agent's asset ID if this tab was created by browser_tab */
+// Bridge registration — lets agent tools see this tab as open
+let hostBridge: WebviewHostBridge | null = null;
+
+/** Asset ID used by the bridge registry and agent tools */
 const bridgeId = () => {
   const bt = getTab(props.tabId);
-
   return bt?.assetId || `browser-tab-${ props.tabId }`;
 };
 
-const iframeRef = ref<HTMLIFrameElement | null>(null);
-const addressInput = ref<HTMLInputElement | null>(null);
-const addressBarUrl = ref('');
-const currentUrl = ref('about:blank');
-const loading = ref(true);
-const canGoBack = ref(false);
-const canGoForward = ref(false);
-
-// Navigation history (iframe doesn't expose history state)
-const navHistory: string[] = [];
-let navIndex = -1;
-
-// Bridge integration
-let hostBridge: WebviewHostBridge | null = null;
-const bridgeUnsubs: (() => void)[] = [];
-
-// Create an adapter that lets WebviewHostBridge work with our iframe via main-process IPC
-function createIframeBridgeAdapter() {
+/**
+ * Create a WebviewLike adapter that routes executeJavaScript through IPC
+ * to the main process BrowserTabViewManager instead of an iframe.
+ */
+function createViewBridgeAdapter() {
   const domReadyListeners: ((event: unknown) => void)[] = [];
-  const ipcMessageListeners: ((event: unknown) => void)[] = [];
 
   return {
-    get src() {
-      return currentUrl.value;
-    },
-    getURL() {
-      return currentUrl.value;
-    },
-    async executeJavaScript(code: string, _userGesture?: boolean): Promise<unknown> {
-      // Try direct contentWindow access first (same renderer process)
-      const iframe = iframeRef.value;
-      if (iframe?.contentWindow) {
-        try {
-          return (iframe.contentWindow as any).eval(code);
-        } catch { /* cross-origin or security error — fall through to IPC */ }
-      }
-      // Fallback: IPC to main process (targets frame by URL)
+    get src() { return addressBarUrl.value; },
+    getURL() { return addressBarUrl.value; },
+    async executeJavaScript(code: string): Promise<unknown> {
       try {
-        return await ipcRenderer.invoke('browser-tab:exec-in-frame', code, currentUrl.value);
+        return await ipcRenderer.invoke('browser-tab-view:exec-js', props.tabId, code);
       } catch (err) {
-        console.warn('[BrowserTab] executeJavaScript failed:', err);
+        console.warn('[BrowserTab] executeJavaScript via IPC failed:', err);
         return undefined;
       }
     },
-    addEventListener(event: 'dom-ready' | 'ipc-message', listener: (event: unknown) => void) {
-      if (event === 'dom-ready') {
-        domReadyListeners.push(listener);
-      } else if (event === 'ipc-message') {
-        ipcMessageListeners.push(listener);
-      }
+    addEventListener(event: string, listener: (event: unknown) => void) {
+      if (event === 'dom-ready') domReadyListeners.push(listener);
     },
-    removeEventListener(event: 'dom-ready' | 'ipc-message', listener: (event: unknown) => void) {
+    removeEventListener(event: string, listener: (event: unknown) => void) {
       if (event === 'dom-ready') {
         const idx = domReadyListeners.indexOf(listener);
         if (idx >= 0) domReadyListeners.splice(idx, 1);
-      } else if (event === 'ipc-message') {
-        const idx = ipcMessageListeners.indexOf(listener);
-        if (idx >= 0) ipcMessageListeners.splice(idx, 1);
       }
     },
-    // Called by our iframe load handler
     emitDomReady() {
       for (const fn of domReadyListeners) {
         try { fn({}) } catch { /* no-op */ }
       }
     },
-    // Called by our postMessage handler
-    emitIpcMessage(channel: string, args: unknown[]) {
-      for (const fn of ipcMessageListeners) {
-        try { fn({ channel, args }) } catch { /* no-op */ }
-      }
-    },
   };
 }
 
-let bridgeAdapter: ReturnType<typeof createIframeBridgeAdapter> | null = null;
+let bridgeAdapter: ReturnType<typeof createViewBridgeAdapter> | null = null;
 
 function setupBridge() {
-  bridgeAdapter = createIframeBridgeAdapter();
-  hostBridge = new WebviewHostBridge({ injectDelayMs: 800 });
+  bridgeAdapter = createViewBridgeAdapter();
+  hostBridge = new WebviewHostBridge({ injectDelayMs: 100 });
   hostBridge.attach(bridgeAdapter);
   setActiveHostBridge(hostBridge);
 
-  // Register in the multi-asset registry using the agent's asset ID when available
   const id = bridgeId();
-
   hostBridgeRegistry.registerBridge(id, hostBridge, {
     title: getTab(props.tabId)?.title || 'Browser Tab',
-    url:   currentUrl.value,
+    url:   addressBarUrl.value,
   });
   hostBridgeRegistry.setActiveBridge(id);
-
-  // Log bridge events
-  bridgeUnsubs.push(hostBridge.on('injected', (payload: HostBridgeEventMap['injected']) => {
-    console.log('[BrowserTab] bridge:injected', payload);
-    updateTab(props.tabId, { title: payload.title });
-  }));
-  bridgeUnsubs.push(hostBridge.on('routeChanged', (payload: HostBridgeEventMap['routeChanged']) => {
-    console.log('[BrowserTab] bridge:routeChanged', payload);
-    addressBarUrl.value = payload.url;
-    updateTab(props.tabId, { title: payload.title, url: payload.url });
-  }));
-  bridgeUnsubs.push(hostBridge.on('domChange', (payload: HostBridgeEventMap['domChange']) => {
-    console.log('[BrowserTab] bridge:domChange', payload.summary.slice(0, 200));
-  }));
-  bridgeUnsubs.push(hostBridge.on('click', (payload: HostBridgeEventMap['click']) => {
-    console.log('[BrowserTab] bridge:click', payload);
-  }));
 }
 
-// Listen for postMessage from the iframe (bridge events)
-function onBridgeMessage(event: MessageEvent) {
-  if (!event.data || typeof event.data !== 'object') return;
-  const { type } = event.data;
+const viewContainerRef = ref<HTMLDivElement | null>(null);
+const addressInput = ref<HTMLInputElement | null>(null);
+const addressBarUrl = ref('');
+const loading = ref(false);
+const canGoBack = ref(false);
+const canGoForward = ref(false);
+let viewCreated = false;
 
-  if (typeof type === 'string' && type.startsWith('sulla:')) {
-    // Forward to the bridge adapter as an ipc-message
-    bridgeAdapter?.emitIpcMessage(BRIDGE_CHANNEL, [event.data]);
-  }
+/** Returns true if the input looks like a URL the user wants to navigate to */
+function looksLikeUrl(input: string): boolean {
+  const trimmed = input.trim();
+  if (/^https?:\/\//i.test(trimmed)) return true;
+  if (/^localhost(:\d+)?/i.test(trimmed)) return true;
+  if (/^127\.0\.0\.1(:\d+)?/i.test(trimmed)) return true;
+  if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(\/|$)/.test(trimmed)) return true;
+  return false;
 }
 
 function normalizeUrl(input: string): string {
@@ -335,6 +281,9 @@ function normalizeUrl(input: string): string {
   if (/^https?:\/\//i.test(trimmed)) {
     return trimmed;
   }
+  if (/^localhost(:\d+)?/i.test(trimmed) || /^127\.0\.0\.1(:\d+)?/i.test(trimmed)) {
+    return `http://${ trimmed }`;
+  }
   if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/.test(trimmed)) {
     return `https://${ trimmed }`;
   }
@@ -342,83 +291,114 @@ function normalizeUrl(input: string): string {
   return `https://www.google.com/search?q=${ encodeURIComponent(trimmed) }`;
 }
 
+function sendBounds() {
+  const el = viewContainerRef.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  // setBounds() uses logical/CSS pixels, not physical pixels.
+  // Subtract footer height (22px) so the view doesn't cover it.
+  const FOOTER_HEIGHT = 22;
+  const remainingHeight = window.innerHeight - rect.y - FOOTER_HEIGHT;
+  ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, {
+    x:      Math.round(rect.x),
+    y:      Math.round(rect.y),
+    width:  Math.round(rect.width),
+    height: Math.round(remainingHeight),
+  });
+}
+
+/**
+ * Create the WebContentsView if it doesn't exist yet.
+ * Must be called after the viewContainerRef div is in the DOM (browser mode).
+ */
+function ensureView(url: string) {
+  if (viewCreated) return;
+  viewCreated = true;
+
+  nextTick(() => {
+    const el = viewContainerRef.value;
+    const rect = el?.getBoundingClientRect();
+    const FOOTER_HEIGHT = 22;
+    const remainingHeight = rect ? window.innerHeight - rect.y - FOOTER_HEIGHT : 600;
+    const bounds = rect
+      ? {
+        x:      Math.round(rect.x),
+        y:      Math.round(rect.y),
+        width:  Math.round(rect.width),
+        height: Math.round(remainingHeight),
+      }
+      : { x: 0, y: 0, width: 800, height: 600 };
+
+    ipcRenderer.invoke('browser-tab-view:create', props.tabId, url, bounds);
+
+    // Register with bridge so agent tools can see this tab
+    setupBridge();
+
+    if (props.isVisible) {
+      ipcRenderer.invoke('browser-tab-view:show', props.tabId);
+    }
+
+    // Set up ResizeObserver to track bounds changes
+    if (el) {
+      resizeObserver = new ResizeObserver(() => {
+        if (props.isVisible) {
+          sendBounds();
+        }
+      });
+      resizeObserver.observe(el);
+    }
+  });
+}
+
 function navigate() {
-  const url = normalizeUrl(addressBarUrl.value);
+  const input = addressBarUrl.value.trim();
+  if (!input) return;
 
-  // If we were in welcome mode, switch to browser
-  if (tabMode.value === 'welcome') {
-    onSetMode('browser');
+  // If input looks like a URL, navigate the browser
+  if (looksLikeUrl(input)) {
+    const url = normalizeUrl(input);
+
+    if (tabMode.value !== 'browser') {
+      onSetMode('browser');
+    }
+
+    addressBarUrl.value = url;
+    loading.value = true;
+
+    if (!viewCreated) {
+      ensureView(url);
+    } else {
+      ipcRenderer.invoke('browser-tab-view:navigate', props.tabId, url);
+    }
+    return;
   }
 
-  // Push to history
-  if (navIndex < navHistory.length - 1) {
-    navHistory.splice(navIndex + 1);
-  }
-  navHistory.push(url);
-  navIndex = navHistory.length - 1;
-
-  currentUrl.value = url;
-  addressBarUrl.value = url;
-  loading.value = true;
-  updateNavButtons();
-
-  hostBridgeRegistry.updateMeta(bridgeId(), { url });
+  // Otherwise treat it as a chat message — switch to chat mode
+  onStartChat(input);
+  addressBarUrl.value = '';
 }
 
 function goBack() {
-  if (navIndex > 0) {
-    navIndex--;
-    const url = navHistory[navIndex];
-
-    currentUrl.value = url;
-    addressBarUrl.value = url;
-    loading.value = true;
-    updateNavButtons();
-  }
+  ipcRenderer.invoke('browser-tab-view:go-back', props.tabId);
 }
 
 function goForward() {
-  if (navIndex < navHistory.length - 1) {
-    navIndex++;
-    const url = navHistory[navIndex];
-
-    currentUrl.value = url;
-    addressBarUrl.value = url;
-    loading.value = true;
-    updateNavButtons();
-  }
+  ipcRenderer.invoke('browser-tab-view:go-forward', props.tabId);
 }
 
 function reload() {
-  if (iframeRef.value) {
-    loading.value = true;
-    iframeRef.value.src = currentUrl.value;
-  }
+  loading.value = true;
+  ipcRenderer.invoke('browser-tab-view:reload', props.tabId);
 }
 
 function stop() {
-  if (iframeRef.value) {
-    iframeRef.value.contentWindow?.stop();
-    loading.value = false;
-  }
-}
-
-function updateNavButtons() {
-  canGoBack.value = navIndex > 0;
-  canGoForward.value = navIndex < navHistory.length - 1;
+  ipcRenderer.invoke('browser-tab-view:stop', props.tabId);
+  loading.value = false;
 }
 
 function focusAddressBar() {
   addressInput.value?.focus();
   addressInput.value?.select();
-}
-
-function onFrameLoad() {
-  loading.value = false;
-  updateNavButtons();
-
-  // Trigger bridge injection via the adapter
-  bridgeAdapter?.emitDomReady();
 }
 
 // Handle keyboard shortcuts
@@ -433,61 +413,91 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+// IPC state-update listener
+function onStateUpdate(_event: unknown, state: { tabId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean }) {
+  if (state.tabId !== props.tabId) return;
+  addressBarUrl.value = state.url;
+  canGoBack.value = state.canGoBack;
+  canGoForward.value = state.canGoForward;
+  loading.value = state.isLoading;
+  if (state.title) {
+    updateTab(props.tabId, { title: state.title, url: state.url });
+    hostBridgeRegistry.updateMeta(bridgeId(), { title: state.title, url: state.url });
+  }
+}
+
+// ResizeObserver for bounds tracking
+let resizeObserver: ResizeObserver | null = null;
+
 // ── Visibility management ──
 // This component is rendered with v-show (never removed from DOM).
-// We watch the isVisible prop to manage event listeners and bridge state.
+// We watch the isVisible prop to manage event listeners and view visibility.
 
-watch(() => props.isVisible, (visible) => {
+// Should the native view be visible right now?
+const shouldShowView = () => props.isVisible && !showOverlay.value && viewCreated && tabMode.value === 'browser';
+
+watch([() => props.isVisible, showOverlay], ([visible]) => {
   if (visible) {
     window.addEventListener('keydown', onKeydown);
-    window.addEventListener('message', onBridgeMessage);
-    if (tabMode.value === 'browser') {
+  } else {
+    window.removeEventListener('keydown', onKeydown);
+  }
+
+  if (shouldShowView()) {
+    ipcRenderer.invoke('browser-tab-view:show', props.tabId);
+    nextTick(() => sendBounds());
+    if (hostBridge) {
       hostBridgeRegistry.setActiveBridge(bridgeId());
       setActiveHostBridge(hostBridge);
     }
-  } else {
-    window.removeEventListener('keydown', onKeydown);
-    window.removeEventListener('message', onBridgeMessage);
+  } else if (viewCreated) {
+    ipcRenderer.invoke('browser-tab-view:hide', props.tabId);
   }
 }, { immediate: true });
 
 // ── Lifecycle ──
-// onMounted: fires once when the tab is created. Sets URL and starts bridge.
+// onMounted: fires once when the tab is created. Sets URL and creates the WebContentsView.
 // onUnmounted: fires when the tab is closed (removed from the tab list).
 
 onMounted(() => {
+  // Listen for state updates from the main process
+  ipcRenderer.on('browser-tab-view:state-update' as any, onStateUpdate);
+
   // Read initial URL from the shared tab state
   const tab = getTab(props.tabId);
   const url = tab?.url || '';
 
   if (url && url !== 'about:blank') {
-    currentUrl.value = url;
     addressBarUrl.value = url;
-    navHistory.push(url);
-    navIndex = 0;
-    // If URL was set, ensure mode is browser
+    // If URL was set, ensure mode is browser and create the view
     if (tab?.mode === 'welcome') {
       onSetMode('browser');
     }
+    ensureView(url);
   }
-
-  setupBridge();
+  // If no URL, stay in welcome mode — view will be created when user navigates
 });
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown);
-  window.removeEventListener('message', onBridgeMessage);
 
-  while (bridgeUnsubs.length > 0) {
-    const unsub = bridgeUnsubs.pop();
-    try { unsub?.() } catch { /* no-op */ }
+  ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
+
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
   }
 
+  // Unregister from bridge registry
   hostBridgeRegistry.unregisterBridge(bridgeId());
   hostBridge?.detach();
   hostBridge = null;
   bridgeAdapter = null;
   setActiveHostBridge(null);
+
+  if (viewCreated) {
+    ipcRenderer.invoke('browser-tab-view:destroy', props.tabId);
+  }
 });
 </script>
 
@@ -544,17 +554,14 @@ onUnmounted(() => {
   cursor: default;
 }
 
-.iframe-container {
-  flex: 1 1 0;
-  min-height: 0;
+.view-container {
+  /* This div is only a positioning reference for the native WebContentsView.
+     It must not take up visible space — the WebContentsView renders on top
+     of the window at OS level, not inside the DOM. We keep it in the layout
+     flow at zero height so getBoundingClientRect() reports the correct
+     x/y position (right below the toolbar). */
+  flex: 0 0 0px;
   overflow: hidden;
-}
-
-.browser-frame {
-  width: 100%;
-  height: 100%;
-  border: none;
-  display: block;
 }
 
 /* Theme-aware scrollbar styling for overflow-auto containers */

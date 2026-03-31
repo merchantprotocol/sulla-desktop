@@ -1,14 +1,12 @@
 import { ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { markHubReady } from '@pkg/agent/services/WebSocketClientService';
 import type { IpcRendererEvent } from 'electron';
 
 /** Backend states that mean the system is already booted */
 const READY_STATES = new Set(['STARTED', 'DISABLED']);
 
 export class StartupProgressController {
-  private readonly WS_URL = 'ws://localhost:30118/';
   private readinessInterval: ReturnType<typeof setInterval> | null = null;
   private k8sReady = false;
   private systemMarkedReady = false;
@@ -67,7 +65,6 @@ export class StartupProgressController {
     ipcRenderer.on('k8s-check-state' as any, this.handleStateChange);
 
     this.startReadinessCheck();
-    this.probeWebSocket();
   }
 
   dispose(): void {
@@ -135,7 +132,6 @@ export class StartupProgressController {
 
     if (READY_STATES.has(stateStr)) {
       this.markReady();
-      markHubReady();
     } else if (stateStr === 'STARTING' || stateStr === 'STOPPING') {
       // Backend is (re)starting — show overlay
       if (this.systemMarkedReady) {
@@ -204,41 +200,6 @@ export class StartupProgressController {
     console.log('[StartupProgressController] Main process restarted - showing overlay');
     this.resetForStartup();
   };
-
-  private probeWebSocket(): void {
-    console.log('[StartupProgressController] Probing websocket at', this.WS_URL);
-    let ws: WebSocket;
-
-    try {
-      ws = new WebSocket(this.WS_URL);
-    } catch {
-      console.log('[StartupProgressController] WebSocket probe failed to create');
-      return;
-    }
-
-    const cleanup = () => {
-      try { ws.close(); } catch {}
-    };
-
-    const timeout = setTimeout(() => {
-      console.log('[StartupProgressController] WebSocket probe timed out');
-      cleanup();
-    }, 5000);
-
-    ws.onopen = () => {
-      clearTimeout(timeout);
-      console.log('[StartupProgressController] WebSocket probe connected — services are running');
-      markHubReady();
-      this.markReady();
-      cleanup();
-    };
-
-    ws.onerror = () => {
-      clearTimeout(timeout);
-      console.log('[StartupProgressController] WebSocket probe failed — services not yet available');
-      cleanup();
-    };
-  }
 
   private startReadinessCheck(): void {
     if (this.readinessInterval) return;

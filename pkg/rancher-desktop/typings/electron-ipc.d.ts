@@ -129,6 +129,10 @@ export interface IpcMainEvents {
   // #region Integration relay (renderer → main)
   'integration-value-changed': (payload: { integration_id: string; property: string; action: string }) => void;
   // #endregion
+
+  // #region IPC Message Bus
+  'message-bus:send': (channelId: string, message: any) => void;
+  // #endregion
 }
 
 /**
@@ -162,6 +166,19 @@ export interface IpcMainInvokeEvents {
   'start-sulla-custom-env': () => void;
   'sulla-restart-ollama':   () => void;
   'app-quit':               () => void;
+
+  // Browser tab views (WebContentsView-based)
+  'browser-tab-view:create':    (tabId: string, url: string, bounds: Electron.Rectangle) => void;
+  'browser-tab-view:destroy':   (tabId: string) => void;
+  'browser-tab-view:navigate':  (tabId: string, url: string) => void;
+  'browser-tab-view:go-back':   (tabId: string) => void;
+  'browser-tab-view:go-forward': (tabId: string) => void;
+  'browser-tab-view:reload':    (tabId: string) => void;
+  'browser-tab-view:stop':      (tabId: string) => void;
+  'browser-tab-view:set-bounds': (tabId: string, bounds: Electron.Rectangle) => void;
+  'browser-tab-view:show':      (tabId: string) => void;
+  'browser-tab-view:hide':      (tabId: string) => void;
+  'browser-tab-view:exec-js':   (tabId: string, code: string) => unknown;
   'browser-tab:exec-in-frame': (code: string, targetUrl?: string) => unknown;
   'browser-tab:send-input-event': (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;
   'browser-tab:capture-screenshot': (options?: {
@@ -341,6 +358,10 @@ export interface IpcMainInvokeEvents {
   'snapshot-cancel':                () => void;
   // #endregion
 
+  // #region IPC Message Bus
+  'message-bus:connect': (channelId: string) => boolean;
+  // #endregion
+
   // #region Debug & Monitoring
   'debug-heartbeat-status':    () => { initialized: boolean; isExecuting: boolean; lastTriggerMs: number; schedulerRunning: boolean; totalTriggers: number; totalErrors: number; totalSkips: number; uptimeMs: number };
   'debug-heartbeat-history':   (limit?: number) => { ts: number; type: string; message: string; durationMs?: number; error?: string; meta?: Record<string, unknown> }[];
@@ -383,6 +404,14 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'browser-tab-view:state-update': (payload: {
+    tabId:        string;
+    url:          string;
+    title:        string;
+    canGoBack:    boolean;
+    canGoForward: boolean;
+    isLoading:    boolean;
+  }) => void;
   'gateway-transcript': (event: { event_type: string; text?: string; speaker?: string; session_id?: string; is_final?: boolean }) => void;
   'workflow-files-changed': () => void;
   'ollama-model-status': (event: Electron.IpcRendererEvent, payload: { status: string; model?: string }) => void;
@@ -492,6 +521,10 @@ export interface IpcRendererEvents {
 
   // #region Snapshots
   'snapshot-cancel': () => void;
+  // #endregion
+
+  // #region IPC Message Bus
+  'message-bus:message': (channelId: string, message: any) => void;
   // #endregion
 
   // #region Agent Configuration

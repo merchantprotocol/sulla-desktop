@@ -3,15 +3,15 @@ import type { ToolManifest } from '../registry';
 export const playwrightToolManifests: ToolManifest[] = [
   {
     name:        'browser_tab',
-    description: 'Open, navigate, or close browser tabs. When opening a URL, waits for the page to load and returns the FULL page state: title, URL, interactive elements, reader-mode content, and scroll position — no follow-up call needed. Reuse the same assetId to navigate an existing tab to a new URL.',
+    description: 'Open, navigate, or close browser tabs. Returns a dehydrated DOM tree showing page structure and interactive elements. Reuse the same assetId to navigate an existing tab to a new URL.',
     category:    'playwright',
     schemaDef:   {
       action:    { type: 'enum', enum: ['upsert', 'remove'], default: 'upsert', description: 'upsert creates/updates an asset; remove deletes by assetId.' },
-      assetType: { type: 'enum', optional: true, enum: ['iframe', 'document'], description: 'Required for upsert.' },
+      assetType: { type: 'enum', optional: true, enum: ['browser', 'iframe', 'document'], description: 'Type of tab to open. Defaults to browser.' },
       assetId:   { type: 'string', optional: true, description: 'Stable asset ID. Reuse the same ID to update an existing tab.' },
       skillSlug: { type: 'string', optional: true, description: 'Optional skill slug to associate with the asset.' },
       title:     { type: 'string', optional: true },
-      url:       { type: 'string', optional: true, description: 'Required for iframe upsert.' },
+      url:       { type: 'string', optional: true, description: 'Required for browser tab upsert.' },
       content:   { type: 'string', optional: true, description: 'Document HTML/markdown content.' },
       active:    { type: 'boolean', optional: true, default: true },
       collapsed: { type: 'boolean', optional: true, default: true },
@@ -43,11 +43,11 @@ export const playwrightToolManifests: ToolManifest[] = [
   },
   {
     name:        'get_page_snapshot',
-    description: 'Get page state. In "full" mode (default): title, URL, interactive elements (buttons, links, forms with handles), reader-mode content, and scroll position. In "dehydrated" mode: compressed DOM tree (~5k tokens) for quick action planning. Omit assetId to target the active asset.',
+    description: 'Get page state. Default "dehydrated" mode returns a compressed DOM tree (~5k tokens) showing interactive elements — ideal for planning actions. "full" mode returns complete content with handles, reader-mode text, and scroll position. Omit assetId to target the active asset.',
     category:    'playwright',
     schemaDef:   {
       assetId: { type: 'string', optional: true, description: 'Target asset ID (omit for the currently active website)' },
-      mode:    { type: 'enum', optional: true, enum: ['full', 'dehydrated'], description: 'full returns complete page with content. dehydrated returns compressed DOM tree (~5k tokens) for action planning. Default: full' },
+      mode:    { type: 'enum', optional: true, enum: ['full', 'dehydrated'], description: 'dehydrated (default) returns compressed DOM tree. full returns complete content with handles and reader text.' },
     },
     operationTypes: ['read'],
     loader:         () => import('./get_page_snapshot'),

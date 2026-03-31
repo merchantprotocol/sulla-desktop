@@ -4,9 +4,9 @@
 // Handles connection lifecycle, graceful shutdown, reconnection
 
 import { Client, GatewayIntentBits, ReactionEmoji, ChannelType } from 'discord.js';
-import type { WebSocketMessage } from '../../services/WebSocketClientService';
 import {
-  WebSocketClientService,
+  getWebSocketClientService,
+  type WebSocketMessage,
 } from '../../services/WebSocketClientService';
 import {
   getIntegrationService,
@@ -17,7 +17,7 @@ import { incomingMessage } from './prompts/incoming_message';
 const INTEGRATION_ID = 'discord';
 const TOKEN_PROPERTY = 'bot_token';
 
-const WS_SERVICE = WebSocketClientService.getInstance();
+const WS_SERVICE = getWebSocketClientService();
 const DISCORD_EVENTS_CHANNEL = 'heartbeat';
 
 function generateUUID(): string {
