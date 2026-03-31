@@ -15,7 +15,27 @@ export class GetPageSnapshotWorker extends BaseTool {
     const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
 
+    const mode = input.mode || 'full';
+
     try {
+      if (mode === 'dehydrated') {
+        const title = await result.bridge.getPageTitle();
+        const url = await result.bridge.getPageUrl();
+        const dehydrated = await result.bridge.execInPage(
+          'return window.__sulla ? window.__sulla.dehydrate() : { tree: "runtime not loaded", stats: {} }',
+        ) as { tree?: string; stats?: Record<string, unknown> };
+        const stats = dehydrated.stats || {};
+        const parts: string[] = [];
+        parts.push(`[asset: ${ result.assetId }]`);
+        parts.push(`# Dehydrated DOM — ${ title }`);
+        parts.push(`**URL**: ${ url }`);
+        parts.push(`**Stats**: ${ stats.tokens ?? '?' } tokens | ${ stats.interactiveCount ?? '?' } interactive | ${ stats.textNodes ?? '?' } text nodes | depth ${ stats.depth ?? '?' }`);
+        parts.push('');
+        parts.push(dehydrated.tree || '');
+
+        return { successBoolean: true, responseString: parts.join('\n') };
+      }
+
       const title = await result.bridge.getPageTitle();
       const url = await result.bridge.getPageUrl();
       const markdown = await result.bridge.getActionableMarkdown();

@@ -9,6 +9,8 @@
  * plain static page.
  */
 
+import { buildSullaRuntimeScript } from './SullaRuntime';
+
 const BRIDGE_CHANNEL = 'sulla:guest:bridge';
 const GLOBAL_NAME = 'sullaBridge';
 
@@ -1289,6 +1291,9 @@ export function buildGuestBridgeScript(): string {
   })();
 
 })();
+
+// ── Inject __sulla runtime library ──
+${buildSullaRuntimeScript()}
 `;
 }
 

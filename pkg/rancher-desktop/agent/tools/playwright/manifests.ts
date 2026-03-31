@@ -43,10 +43,11 @@ export const playwrightToolManifests: ToolManifest[] = [
   },
   {
     name:        'get_page_snapshot',
-    description: 'Get the full page state: title, URL, interactive elements (buttons, links, forms with handles), reader-mode content, and scroll position. Returns everything you need to understand and interact with the page. Omit assetId to target the active asset.',
+    description: 'Get page state. In "full" mode (default): title, URL, interactive elements (buttons, links, forms with handles), reader-mode content, and scroll position. In "dehydrated" mode: compressed DOM tree (~5k tokens) for quick action planning. Omit assetId to target the active asset.',
     category:    'playwright',
     schemaDef:   {
       assetId: { type: 'string', optional: true, description: 'Target asset ID (omit for the currently active website)' },
+      mode:    { type: 'enum', optional: true, enum: ['full', 'dehydrated'], description: 'full returns complete page with content. dehydrated returns compressed DOM tree (~5k tokens) for action planning. Default: full' },
     },
     operationTypes: ['read'],
     loader:         () => import('./get_page_snapshot'),
@@ -198,11 +199,15 @@ export const playwrightToolManifests: ToolManifest[] = [
   },
   {
     name:        'exec_in_page',
-    description: 'Execute arbitrary JavaScript in the page context. Returns the result. Use for anything the other tools cannot do: reading DOM properties, calling widget APIs, injecting styles, triggering events, querying element positions, or interacting with third-party iframes via their JS APIs.',
+    description: 'Execute arbitrary JavaScript in the page context with enhanced diagnostics. Returns result, console logs, timing, DOM mutation count, navigation detection, and page state. Captures window.__sulla.__log entries (cleared before execution). Use window.__sulla.waitFor(selector) and window.__sulla.waitForIdle() helpers for post-execution synchronization. Optionally capture a screenshot after execution. Use for anything the other tools cannot do: reading DOM properties, calling widget APIs, injecting styles, triggering events, querying element positions, or interacting with third-party iframes via their JS APIs.',
     category:    'playwright',
     schemaDef:   {
-      code:    { type: 'string', description: 'JavaScript code to execute in the page. The return value is sent back.' },
-      assetId: { type: 'string', optional: true, description: 'Target tab (omit for the active tab)' },
+      code:        { type: 'string', description: 'JavaScript code to execute in the page. The return value is sent back.' },
+      screenshot:  { type: 'boolean', optional: true, description: 'Capture a screenshot after execution and include screenshotBase64 + screenshotMediaType in the response.' },
+      waitFor:     { type: 'string', optional: true, description: 'CSS selector to wait for after code execution (uses window.__sulla.waitFor if available).' },
+      waitForIdle: { type: 'boolean', optional: true, description: 'Wait for the page to become idle after execution (uses window.__sulla.waitForIdle if available).' },
+      timeout:     { type: 'number', optional: true, default: 30000, description: 'Maximum execution timeout in milliseconds (default 30000).' },
+      assetId:     { type: 'string', optional: true, description: 'Target tab (omit for the active tab)' },
     },
     operationTypes: ['execute'],
     loader:         () => import('./exec_in_page'),
