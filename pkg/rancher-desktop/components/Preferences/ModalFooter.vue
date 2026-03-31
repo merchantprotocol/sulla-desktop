@@ -52,7 +52,7 @@ export default defineComponent({
   .preferences-footer {
     display: flex;
     justify-content: space-between;
-    border-top: 1px solid var(--header-border);
+    border-top: 1px solid var(--border-default, var(--header-border));
     padding: var(--preferences-content-padding);
 
     .preferences-alert {

@@ -16,10 +16,11 @@
 @import "./fonts/icons";
 
 @import "./themes/light";
-@media screen and (prefers-color-scheme: dark) {
-  @import "./themes/dark";
-}
+// @media screen and (prefers-color-scheme: dark) {
+//   @import "./themes/dark";
+// }
 @import './themes/_suse.scss';
+
 
 
 @import "./global/columns";

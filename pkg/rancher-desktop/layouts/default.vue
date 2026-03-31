@@ -2,7 +2,8 @@
   <div
     class="wrapper"
     :class="{
-      blur
+      blur,
+      dark: isDark,
     }"
   >
     <rd-nav
@@ -43,6 +44,7 @@
 
 import { mapGetters, mapState } from 'vuex';
 
+import '../entry/agent-tailwind.css';
 import ActionMenu from '@pkg/components/ActionMenu.vue';
 import Nav from '@pkg/components/Nav.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
@@ -248,8 +250,8 @@ export default {
     "nav        body"    1fr
     "status-bar status-bar"
     / var(--nav-width) 1fr;
-  background: var(--bg-page, var(--body-bg));
-  color: var(--text-primary, var(--body-text));
+  background-color: var(--body-bg);
+  color: var(--body-text);
   width: 100vw;
   height: 100vh;
 
@@ -259,40 +261,19 @@ export default {
 
   .header {
     grid-area: header;
-    border-bottom: var(--border-default,var(--header-border));
+    border-bottom: var(--header-border-size) solid var(--header-border);
   }
 
   .nav {
     grid-area: nav;
-    border-right: 1px solid var(--border-default,var(--header-border));
-    background: var(--bg-page,var(--body-bg));
-  }
-  
-  .nav ul li a:is(.router-link-active,.rd-link-active) {
-    background: var(--bg-active, var(--primary-light-bg, rgba(59, 130, 246, .05)));
-    color: var(--accent-primary, var(--primary, #3b82f6));
-    border-left: 2px solid var(--accent-primary, var(--primary, #3b82f6));
-    font-weight: 500;
-  }
-
-  .nav ul li a:hover {
-      background: var(--bg-surface-hover, var(--nav-active));
-      color: var(--text-primary, var(--body-text));
-  }
-
-  .nav ul li a {
-      font-size: var(--fs-heading);
-      line-height: 1.75rem;
-      padding: .5rem .75rem;
-      cursor: pointer;
-      user-select: none;
-      color: var(--text-muted, var(--muted));
-      transition: background .15s, color .15s;
+    border-right: var(--nav-border-size) solid var(--nav-border);
+    background: var(--nav-bg, var(--body-bg));
   }
 
   .title {
     grid-area: title;
-    border-bottom: 1px solid var(--border-default,var(--header-border));
+    border-bottom: 1px solid var(--header-border);
+    background: var(--title-bg, var(--body-bg));
   }
 
   .body {
@@ -301,6 +282,7 @@ export default {
     flex-direction: column;
     padding: 0 20px 20px 20px;
     overflow: auto;
+    background: var(--body-bg);
   }
 
   .main-preferences > div {
@@ -314,9 +296,8 @@ export default {
 
   .status-bar {
     grid-area: status-bar;
-    border-top: 1px solid var(--border-default,var(--header-border));
-    background: var(--bg-page, var(--body-bg));
-    color: var(--text-primary, var(--body-text));
+    border-top: 1px solid var(--header-border);
+    background: var(--status-bar-bg, var(--body-bg));
   }
 }
 </style>
