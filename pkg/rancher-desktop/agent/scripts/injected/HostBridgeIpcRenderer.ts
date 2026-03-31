@@ -14,40 +14,17 @@ import { closeTabByAssetId } from '@pkg/composables/useBrowserTabs';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 
 /**
- * Get the bounding rect offset of the iframe for a given assetId.
- * CDP mouse events target the full renderer window, but tool coordinates
- * are relative to the iframe content. This returns the offset to translate.
+ * Extract the tabId from an assetId string.
+ * Asset IDs follow the format `browser-tab-{tabId}`.
  */
-/**
- * Find the iframe for a specific assetId (or the first visible one).
- * Each iframe has a data-asset-id attribute set by BrowserTab.vue.
- */
-function findIframe(assetId?: string): HTMLIFrameElement | null {
-  if (assetId) {
-    const specific = document.querySelector(`iframe[data-asset-id="${ assetId }"]`) as HTMLIFrameElement | null;
-    if (specific) return specific;
+function extractTabId(assetId?: string): string | undefined {
+  if (!assetId) return undefined;
+  const prefix = 'browser-tab-';
+  if (assetId.startsWith(prefix)) {
+    return assetId.slice(prefix.length);
   }
-  // Fallback: find the visible (active) iframe
-  const iframes = document.querySelectorAll('iframe.browser-frame') as NodeListOf<HTMLIFrameElement>;
-  for (const iframe of iframes) {
-    const rect = iframe.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0 && getComputedStyle(iframe.closest('.browser-tab-layer') || iframe).visibility !== 'hidden') {
-      return iframe;
-    }
-  }
-  // Last resort: any iframe with size
-  for (const iframe of iframes) {
-    const rect = iframe.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) return iframe;
-  }
-  return null;
-}
 
-function getIframeOffset(assetId?: string): { x: number; y: number } {
-  const iframe = findIframe(assetId);
-  if (!iframe) return { x: 0, y: 0 };
-  const rect = iframe.getBoundingClientRect();
-  return { x: Math.round(rect.left), y: Math.round(rect.top) };
+  return undefined;
 }
 
 const WS_CHANNEL = 'bridge-ipc';
@@ -243,43 +220,11 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
 
     case 'resolve:captureScreenshot': {
       const options = (args[1] as any) || {};
+      const tabId = extractTabId(asString(args[0]));
       try {
         const { ipcRenderer } = require('electron');
-        const iframe = findIframe(asString(args[0]));
 
-        if (iframe && !options.clip) {
-          // Temporarily make the target tab visible for screenshot capture
-          // (hidden tabs use visibility:hidden which prevents painting)
-          const tabLayer = iframe.closest('.browser-tab-layer') as HTMLElement | null;
-          const wasHidden = tabLayer?.classList.contains('browser-tab-hidden');
-          if (wasHidden && tabLayer) {
-            tabLayer.style.visibility = 'visible';
-            tabLayer.style.zIndex = '9999';
-            // Force a repaint so CDP captures the now-visible content
-            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-          }
-
-          const rect = iframe.getBoundingClientRect();
-          options.clip = {
-            x:      Math.round(rect.left),
-            y:      Math.round(rect.top),
-            width:  Math.round(rect.width),
-            height: Math.round(rect.height),
-            scale:  1,
-          };
-
-          const result = await ipcRenderer.invoke('browser-tab:capture-screenshot', options);
-
-          // Restore hidden state
-          if (wasHidden && tabLayer) {
-            tabLayer.style.visibility = '';
-            tabLayer.style.zIndex = '';
-          }
-
-          return result;
-        }
-
-        return await ipcRenderer.invoke('browser-tab:capture-screenshot', options);
+        return await ipcRenderer.invoke('browser-tab:capture-screenshot', options, tabId);
       } catch (err) {
         console.warn('[HostBridgeIpcRenderer] captureScreenshot error:', err);
         return null;
@@ -287,22 +232,22 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
     }
 
     case 'resolve:clickAtCoordinate': {
-      const offset = getIframeOffset(asString(args[0]));
-      const x = (args[1] as number) + offset.x;
-      const y = (args[2] as number) + offset.y;
+      const x = args[1] as number;
+      const y = args[2] as number;
       const options = (args[3] as any) || {};
+      const tabId = extractTabId(asString(args[0]));
       try {
         const { ipcRenderer } = require('electron');
         await ipcRenderer.invoke('browser-tab:send-mouse-event', {
           type: 'mousePressed', x, y,
           button: options.button ?? 'left',
           clickCount: options.clickCount ?? 1,
-        });
+        }, tabId);
         await ipcRenderer.invoke('browser-tab:send-mouse-event', {
           type: 'mouseReleased', x, y,
           button: options.button ?? 'left',
           clickCount: options.clickCount ?? 1,
-        });
+        }, tabId);
         return true;
       } catch (err) {
         console.warn('[HostBridgeIpcRenderer] clickAtCoordinate error:', err);
@@ -311,14 +256,14 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
     }
 
     case 'resolve:moveMouse': {
-      const moveOffset = getIframeOffset(asString(args[0]));
-      const mx = (args[1] as number) + moveOffset.x;
-      const my = (args[2] as number) + moveOffset.y;
+      const mx = args[1] as number;
+      const my = args[2] as number;
+      const tabId = extractTabId(asString(args[0]));
       try {
         const { ipcRenderer } = require('electron');
         await ipcRenderer.invoke('browser-tab:send-mouse-event', {
           type: 'mouseMoved', x: mx, y: my, button: 'none',
-        });
+        }, tabId);
         return true;
       } catch (err) {
         console.warn('[HostBridgeIpcRenderer] moveMouse error:', err);
@@ -327,21 +272,21 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
     }
 
     case 'resolve:dragFromTo': {
-      const dragOffset = getIframeOffset(asString(args[0]));
-      const fromX = (args[1] as number) + dragOffset.x;
-      const fromY = (args[2] as number) + dragOffset.y;
-      const toX = (args[3] as number) + dragOffset.x;
-      const toY = (args[4] as number) + dragOffset.y;
+      const fromX = args[1] as number;
+      const fromY = args[2] as number;
+      const toX = args[3] as number;
+      const toY = args[4] as number;
+      const tabId = extractTabId(asString(args[0]));
       try {
         const { ipcRenderer } = require('electron');
-        await ipcRenderer.invoke('browser-tab:send-mouse-event', { type: 'mousePressed', x: fromX, y: fromY, button: 'left' });
+        await ipcRenderer.invoke('browser-tab:send-mouse-event', { type: 'mousePressed', x: fromX, y: fromY, button: 'left' }, tabId);
         const steps = 10;
         for (let i = 1; i <= steps; i++) {
           const mx = fromX + (toX - fromX) * (i / steps);
           const my = fromY + (toY - fromY) * (i / steps);
-          await ipcRenderer.invoke('browser-tab:send-mouse-event', { type: 'mouseMoved', x: mx, y: my, button: 'left' });
+          await ipcRenderer.invoke('browser-tab:send-mouse-event', { type: 'mouseMoved', x: mx, y: my, button: 'left' }, tabId);
         }
-        await ipcRenderer.invoke('browser-tab:send-mouse-event', { type: 'mouseReleased', x: toX, y: toY, button: 'left' });
+        await ipcRenderer.invoke('browser-tab:send-mouse-event', { type: 'mouseReleased', x: toX, y: toY, button: 'left' }, tabId);
         return true;
       } catch (err) {
         console.warn('[HostBridgeIpcRenderer] dragFromTo error:', err);
@@ -370,12 +315,13 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
 
     case 'resolve:typeText': {
       const text = args[1] as string;
+      const tabId = extractTabId(asString(args[0]));
       try {
         const { ipcRenderer } = require('electron');
         for (const char of text) {
-          await ipcRenderer.invoke('browser-tab:send-input-event', { key: char, type: 'keyDown' });
-          await ipcRenderer.invoke('browser-tab:send-input-event', { key: char, type: 'char' });
-          await ipcRenderer.invoke('browser-tab:send-input-event', { key: char, type: 'keyUp' });
+          await ipcRenderer.invoke('browser-tab:send-input-event', { key: char, type: 'keyDown' }, tabId);
+          await ipcRenderer.invoke('browser-tab:send-input-event', { key: char, type: 'char' }, tabId);
+          await ipcRenderer.invoke('browser-tab:send-input-event', { key: char, type: 'keyUp' }, tabId);
         }
         return true;
       } catch (err) {
@@ -387,9 +333,11 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
     case 'resolve:annotateElements': {
       const bridge = hostBridgeRegistry.resolve(asString(args[0]));
       if (!bridge) return [];
+      // With WebContentsView, DOM overlays created here wouldn't be visible
+      // over the native view. Return element data only — the agent tools
+      // use the rect/label data, not the visual overlay.
       return await bridge.execInPage(`
         (function() {
-          // Remove existing annotations
           document.querySelectorAll('[data-sulla-annotation]').forEach(el => el.remove());
           const interactive = document.querySelectorAll('a, button, input, textarea, select, [role="button"], [tabindex], [onclick]');
           const results = [];
@@ -399,16 +347,6 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
             if (rect.width === 0 || rect.height === 0) continue;
             if (rect.top > window.innerHeight || rect.bottom < 0) continue;
             const label = el.textContent?.trim().slice(0, 30) || el.getAttribute('aria-label') || el.tagName.toLowerCase();
-            // Create overlay
-            const overlay = document.createElement('div');
-            overlay.setAttribute('data-sulla-annotation', String(index));
-            overlay.style.cssText = 'position:fixed;border:2px solid #ff4444;background:rgba(255,68,68,0.1);pointer-events:none;z-index:999999;' +
-              'top:' + rect.top + 'px;left:' + rect.left + 'px;width:' + rect.width + 'px;height:' + rect.height + 'px;';
-            const badge = document.createElement('span');
-            badge.style.cssText = 'position:absolute;top:-10px;left:-4px;background:#ff4444;color:white;font-size:10px;padding:1px 4px;border-radius:4px;font-weight:bold;';
-            badge.textContent = String(index);
-            overlay.appendChild(badge);
-            document.body.appendChild(overlay);
             results.push({ index, label, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: Math.round(rect.width), height: Math.round(rect.height) });
             index++;
             if (index > 50) break;

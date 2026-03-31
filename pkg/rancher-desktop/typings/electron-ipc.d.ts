@@ -162,6 +162,19 @@ export interface IpcMainInvokeEvents {
   'start-sulla-custom-env': () => void;
   'sulla-restart-ollama':   () => void;
   'app-quit':               () => void;
+
+  // Browser tab views (WebContentsView-based)
+  'browser-tab-view:create':    (tabId: string, url: string, bounds: Electron.Rectangle) => void;
+  'browser-tab-view:destroy':   (tabId: string) => void;
+  'browser-tab-view:navigate':  (tabId: string, url: string) => void;
+  'browser-tab-view:go-back':   (tabId: string) => void;
+  'browser-tab-view:go-forward': (tabId: string) => void;
+  'browser-tab-view:reload':    (tabId: string) => void;
+  'browser-tab-view:stop':      (tabId: string) => void;
+  'browser-tab-view:set-bounds': (tabId: string, bounds: Electron.Rectangle) => void;
+  'browser-tab-view:show':      (tabId: string) => void;
+  'browser-tab-view:hide':      (tabId: string) => void;
+  'browser-tab-view:exec-js':   (tabId: string, code: string) => unknown;
   'browser-tab:exec-in-frame': (code: string, targetUrl?: string) => unknown;
   'browser-tab:send-input-event': (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;
   'browser-tab:capture-screenshot': (options?: {
@@ -383,6 +396,14 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'browser-tab-view:state-update': (payload: {
+    tabId:        string;
+    url:          string;
+    title:        string;
+    canGoBack:    boolean;
+    canGoForward: boolean;
+    isLoading:    boolean;
+  }) => void;
   'gateway-transcript': (event: { event_type: string; text?: string; speaker?: string; session_id?: string; is_final?: boolean }) => void;
   'workflow-files-changed': () => void;
   'ollama-model-status': (event: Electron.IpcRendererEvent, payload: { status: string; model?: string }) => void;
