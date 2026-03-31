@@ -14,7 +14,7 @@ import { wrapWithBlockingWarning } from './detect_blocking';
  *      reader-mode content — so the agent doesn't need a second call
  */
 
-const PAGE_LOAD_TIMEOUT = 20000;
+const PAGE_LOAD_TIMEOUT = 45000;
 
 export class BrowserTabWorker extends BaseTool {
   name = '';
@@ -100,19 +100,16 @@ export class BrowserTabWorker extends BaseTool {
     const loadResult = await pageLoaded;
 
     if (!loadResult.loaded) {
-      // Timeout — page didn't load in time. Still return what we can.
+      // Timeout — page didn't fire pageContent in time, but the page
+      // may still have loaded. Try to read whatever state is available.
       try {
-        const allAssets = await hostBridgeProxy.getAllAssetInfo();
-        const found = allAssets.find(a => a.assetId === assetId);
+        return await this.readPageState(assetId, title, url);
+      } catch { /* fall through */ }
 
-        if (found && found.isInjected) {
-          return await this.readPageState(assetId, title, url);
-        }
-      } catch { /* ignore */ }
-
+      // Last resort: return basic info so the model knows the tab exists
       return {
         successBoolean: true,
-        responseString: `Opened tab id=${ assetId } url=${ url } — page is still loading (timed out after ${ PAGE_LOAD_TIMEOUT / 1000 }s). Use get_page_snapshot(assetId: '${ assetId }') to check when ready.`,
+        responseString: `Opened tab id=${ assetId } url=${ url } — page loaded but content extraction timed out. Use exec_in_page(code: "return document.body.innerText.substring(0, 2000)", assetId: "${ assetId }") to read the page.`,
       };
     }
 
@@ -135,9 +132,9 @@ export class BrowserTabWorker extends BaseTool {
         if (event.assetId !== assetId) return;
 
         // pageContent = full page content ready
+        // injected = bridge injected (page loaded, sullaBridge available)
         // routeChanged = navigation happened (SPA)
-        // These both indicate the bridge injected and the page is loaded
-        if (event.type === 'pageContent' || event.type === 'routeChanged') {
+        if (event.type === 'pageContent' || event.type === 'injected' || event.type === 'routeChanged') {
           clearTimeout(timeout);
           unsub();
           resolve({ loaded: true });
