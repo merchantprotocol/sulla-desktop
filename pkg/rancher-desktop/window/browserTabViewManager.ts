@@ -30,6 +30,7 @@ export class BrowserTabViewManager {
   private retryTimers = new Map<string, ReturnType<typeof setInterval>>();
   private acceptedCertHosts = new Set<string>(); // hosts where user clicked "Proceed"
   private sessionInitialised = false;
+  private webRequestFixer: SullaWebRequestFixer | null = null;
 
   private constructor() {}
 
@@ -49,11 +50,11 @@ export class BrowserTabViewManager {
     const sess = session.fromPartition(SESSION_PARTITION);
 
     if (!this.sessionInitialised) {
-      const fixer = new SullaWebRequestFixer((event) => {
+      this.webRequestFixer = new SullaWebRequestFixer((event) => {
         console.log('[BrowserTabView] webRequest event:', JSON.stringify(event));
       });
 
-      fixer.attachToSession(sess);
+      this.webRequestFixer.attachToSession(sess);
 
       // Set a clean User-Agent that matches a normal Chrome browser.
       // The default includes "Electron" and "SullaDesktop" which fingerprint
@@ -266,6 +267,11 @@ export class BrowserTabViewManager {
 
   getWebContents(tabId: string): Electron.WebContents | null {
     return this.views.get(tabId)?.webContents ?? null;
+  }
+
+  /** Returns the SullaWebRequestFixer instance for the shared browser session. */
+  getWebRequestFixer(): SullaWebRequestFixer | null {
+    return this.webRequestFixer;
   }
 
   /**
