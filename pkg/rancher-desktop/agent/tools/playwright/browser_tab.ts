@@ -14,7 +14,7 @@ import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
  *      reader-mode content — so the agent doesn't need a second call
  */
 
-const PAGE_LOAD_TIMEOUT = 45000;
+const PAGE_LOAD_TIMEOUT = 60000; // dead-letter safety net — events should fire well before this
 
 export class BrowserTabWorker extends BaseTool {
   name = '';
@@ -84,7 +84,7 @@ export class BrowserTabWorker extends BaseTool {
       return { successBoolean: false, responseString: 'url is required for iframe assets.' };
     }
 
-    // Set up a listener for pageContent event from this assetId BEFORE sending upsert
+    // Listen for bridge injection event BEFORE sending upsert
     const pageLoaded = this.waitForPageLoad(assetId);
 
     // Send the upsert command to the frontend
@@ -96,24 +96,10 @@ export class BrowserTabWorker extends BaseTool {
       timestamp: Date.now(),
     });
 
-    // Wait for the page to load (pageContent event or timeout)
-    const loadResult = await pageLoaded;
+    // Wait for the bridge to inject (event-driven, not polling)
+    await pageLoaded;
 
-    if (!loadResult.loaded) {
-      // Timeout — page didn't fire pageContent in time, but the page
-      // may still have loaded. Try to read whatever state is available.
-      try {
-        return await this.readPageState(assetId, title, url);
-      } catch { /* fall through */ }
-
-      // Last resort: return basic info so the model knows the tab exists
-      return {
-        successBoolean: true,
-        responseString: `Opened tab id=${ assetId } url=${ url } — page loaded but content extraction timed out. Use exec_in_page(code: "return document.body.innerText.substring(0, 2000)", assetId: "${ assetId }") to read the page.`,
-      };
-    }
-
-    // Page loaded — read the full state
+    // Always read and return the page state
     return await this.readPageState(assetId, title, url);
   }
 
