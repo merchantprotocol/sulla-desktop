@@ -50,7 +50,7 @@ export default defineComponent({
     display: flex;
     flex-direction: column;
     height: 100%;
-    border-right: 1px solid var(--header-border);
+    border-right: 1px solid var(--border-default, var(--header-border));;
     padding-top: 0.75rem;
   }
 </style>

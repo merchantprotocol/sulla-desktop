@@ -22,7 +22,6 @@ export default defineComponent({
 
 <template>
   <div>
-    <RouterView />
     <Snapshots
       data-test="snapshotsPage"
       class="snapshots-page"

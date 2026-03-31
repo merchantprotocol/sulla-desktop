@@ -72,4 +72,232 @@
   --terminal-cursor: #cccccc;
   --terminal-selection-bg: rgba(59, 130, 246, 0.5);
   --terminal-selection-fg: #ffffff;
+
+  /* Default Colors */
+  --default: #334155;
+  --default-text: #94a3b8;
+  --default-hover-bg: #475569;
+  --default-hover-text: #ffffff;
+  --default-active-bg: #0f172a;
+  --default-active-text: #ffffff;
+  --default-border: #334155;
+  --default-banner-bg: rgba(51, 65, 85, 0.15);
+  --default-light-bg: rgba(51, 65, 85, 0.05);
+
+  /* Muted */
+  --muted: #94a3b8;
+
+  /* Body */
+  --body-bg: #0f172a;
+  --body-text: #ffffff;
+
+  /* Scrollbar Dropdown */
+  --scrollbar-thumb-dropdown: #475569;
+
+  /* Header */
+  --header-bg: #0f172a;
+  --header-border: rgba(255, 255, 255, 0.1);
+  --header-btn-bg: #1e293b;
+  --header-btn-text: #ffffff;
+  --header-border-size: 1px;
+
+  /* Footer */
+  --footer-bg: #0f172a;
+  --footer-border: rgba(255, 255, 255, 0.1);
+
+  /* Nav */
+  --nav-width: 230px;
+  --nav-bg: #0f172a;
+  --nav-active: rgba(56, 189, 248, 0.15);
+  --nav-border: rgba(255, 255, 255, 0.1);
+  --nav-hover: #334155;
+  --nav-expander-hover: rgba(56, 189, 248, 0.08);
+  --nav-border-size: 1px;
+
+  /* Disabled */
+  --disabled-bg: #334155;
+  --disabled-text: #94a3b8;
+
+  /* Box & Borders */
+  --box-bg: #0f172a;
+  --subtle-border: #0f172a;
+  --border: rgba(255, 255, 255, 0.1);
+
+  /* Top Menu */
+  --topmenu-bg: #0f172a;
+  --topmenu-text: #ffffff;
+  --topmost-border: rgba(255, 255, 255, 0.1);
+  --topmost-shadow: #1e293b;
+  --topmost-light-hover: rgba(255, 255, 255, 0.1);
+
+  /* Accent Button */
+  --accent-btn: rgba(56, 189, 248, 0.15);
+  --accent-btn-hover: #38bdf8;
+  --accent-btn-hover-text: #0f172a;
+
+  /* Modal */
+  --modal-bg: #1e293b;
+  --modal-border: #4b5563;
+  --overlay-bg: rgba(0, 0, 0, 0.75);
+  --shadow: rgba(0, 0, 0, 0.9);
+
+  /* Checkbox */
+  --checkbox-tick: #ffffff;
+  --checkbox-border: rgba(255, 255, 255, 0.1);
+  --checkbox-tick-disabled: #94a3b8;
+  --checkbox-disabled-bg: #334155;
+  --checkbox-tick-locked: #0f172a;
+  --checkbox-locked-bg: #94a3b8;
+  --checkbox-ticked-bg: #38bdf8;
+  --checkbox-locked-border: #94a3b8;
+  --checkbox-locked-shadow: #94a3b8;
+
+  /* Dropdown */
+  --dropdown-bg: #475569;
+  --dropdown-border: #94a3b8;
+  --dropdown-divider: #94a3b8;
+  --dropdown-text: #38bdf8;
+  --dropdown-active-text: #ffffff;
+  --dropdown-active-bg: #0ea5e9;
+  --dropdown-hover-text: #ffffff;
+  --dropdown-hover-bg: #38bdf8;
+  --dropdown-disabled-bg: #334155;
+  --dropdown-disabled-text: #94a3b8;
+  --dropdown-locked-text: #ffffff;
+
+  /* Input */
+  --input-text: #ffffff;
+  --input-label: #cbd5e1;
+  --input-placeholder: #94a3b8;
+  --input-border: var(--border);
+  --input-bg: var(--body-bg);
+  --input-bg-accent: #243447;
+  --input-hover-bg: var(--box-bg);
+  --input-focus-bg: var(--box-bg);
+  --input-disabled-text: #94a3b8;
+  --input-disabled-label: #94a3b8;
+  --input-disabled-bg: #334155;
+  --input-disabled-border: rgba(255, 255, 255, 0.1);
+  --input-disabled-placeholder: #334155;
+  --input-addon-bg: #1e293b;
+  --input-locked-text: #ffffff;
+
+  /* Radio */
+  --radio-locked-bg: var(--body-bg);
+  --radio-locked-shadow: var(--body-bg);
+
+  /* Progress */
+  --progress-bg: rgba(255, 255, 255, 0.1);
+  --progress-divider: #ffffff;
+
+  /* Sortable Table */
+  --sortable-table-bg: #2d3748;
+  --sortable-table-row-bg: #1e293b;
+  --sortable-table-header-bg: #0f172a;
+  --sortable-table-accent-bg: #1e293b;
+  --sortable-table-accent-alt: #334155;
+  --sortable-table-top-divider: var(--border);
+  --sortable-table-hover-bg: #0f172a;
+  --sortable-table-selected-bg: rgba(56, 189, 248, 0.15);
+  --sortable-table-group-label: #cbd5e1;
+
+  /* Tag */
+  --tag-primary: #ffffff;
+  --tag-bg: #334155;
+
+  /* Popover */
+  --popover-bg: var(--body-bg);
+  --popover-border: var(--border);
+  --popover-text: var(--body-text);
+
+  /* Tooltip */
+  --tooltip-bg: #334155;
+  --tooltip-border: #ffffff;
+  --tooltip-text: var(--body-text);
+  --tooltip-text-warning: var(--body-text);
+
+  /* Icon */
+  --icon-circle: rgba(255, 255, 255, 0.1);
+
+  /* Tabbed */
+  --tabbed-border: rgba(255, 255, 255, 0.1);
+  --tabbed-sidebar-bg: #0f172a;
+  --tabbed-container-bg: #1e293b;
+
+  /* YAML Editor */
+  --yaml-editor-bg: #0f172a;
+
+  /* Diff */
+  --diff-border: var(--border);
+  --diff-header-bg: var(--nav-bg);
+  --diff-header-border: var(--border);
+  --diff-header: rgba(15, 23, 42, 0.3);
+  --diff-linenum-bg: var(--nav-bg);
+  --diff-linenum: var(--muted);
+  --diff-linenum-border: var(--border);
+  --diff-line-ins-bg: var(--status-success);
+  --diff-line-del-bg: rgba(248, 113, 113, 0.75);
+  --diff-del-bg: rgba(248, 113, 113, 0.3);
+  --diff-del-border: #f87171;
+  --diff-ins-bg: rgba(74, 222, 128, 0.3);
+  --diff-ins-border: rgba(74, 222, 128, 0.5);
+  --diff-chg-ins: rgba(74, 222, 128, 0.25);
+  --diff-chg-del: rgba(251, 191, 36, 0.5);
+  --diff-empty-placeholder: #0f172a;
+
+  /* Window Manager */
+  --wm-tabs-bg: #334155;
+  --wm-tab-bg: #0f172a;
+  --wm-closer-hover-bg: #334155;
+  --wm-tab-active-bg: #1e293b;
+  --wm-title-bg: #0f172a;
+  --wm-title-border: rgba(255, 255, 255, 0.1);
+  --wm-body-bg: #0f172a;
+  --wm-border: #0f172a;
+
+  /* Glance */
+  --glance-divider: rgba(255, 255, 255, 0.1);
+
+  /* Resource Gauge */
+  --resource-gauge-back-circle: 51, 65, 85, 0.5;
+
+  /* Simple Box */
+  --simple-box-bg: #0f172a;
+  --simple-box-border: #0f172a;
+  --simple-box-divider: rgba(255, 255, 255, 0.1);
+  --simple-box-shadow: rgba(0, 0, 0, 0.15);
+
+  /* Terminal (additional) */
+  --terminal-selection: #38bdf8;
+
+  /* Logs */
+  --logs-bg: var(--wm-body-bg);
+  --logs-highlight: var(--wm-body-bg);
+  --logs-highlight-bg: var(--status-warning);
+  --logs-text: var(--body-text);
+
+  /* Gauge */
+  --gauge-divider: rgba(255, 255, 255, 0.3);
+  --gauge-success-primary: 74, 222, 128;
+  --gauge-success-secondary: 150, 247, 180;
+  --gauge-warning-primary: 251, 191, 36;
+  --gauge-warning-secondary: 126, 95, 18;
+  --gauge-error-primary: 248, 113, 113;
+  --gauge-error-secondary: 120, 45, 42;
+
+  /* Product */
+  --product-icon: #cbd5e1;
+  --product-icon-active: #ffffff;
+
+  /* Button */
+  --button-icon: rgba(255, 255, 255, 0.1);
+  --button-icon-bg: #ffffff;
+
+  /* Border Utilities */
+  --border-width: 1px;
+  --border-radius: 4px;
+  --border-radius-md: 6px;
+  --border-radius-lg: 8px;
+  --outline: var(--accent-primary);
+  --outline-width: 1px;
 }

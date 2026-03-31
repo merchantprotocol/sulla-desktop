@@ -44,6 +44,7 @@
 
 import { mapGetters, mapState } from 'vuex';
 
+import '../entry/agent-tailwind.css';
 import ActionMenu from '@pkg/components/ActionMenu.vue';
 import Nav from '@pkg/components/Nav.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';

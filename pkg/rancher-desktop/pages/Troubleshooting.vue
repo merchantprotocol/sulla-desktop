@@ -233,6 +233,7 @@ export default {
   }
 
   .description {
-    line-height: 0.50rem;
+    display: block;
+    margin-top: 10px;
   }
 </style>

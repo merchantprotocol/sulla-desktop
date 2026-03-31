@@ -20,7 +20,7 @@ export default defineComponent({ name: 'preferences-header' });
     align-items: center;
     padding: 0 0.75rem;
     width: 100%;
-    border-bottom: 1px solid var(--header-border);
+    border-bottom: 1px solid var(--border-default, var(--header-border));;
   }
 
   .title {

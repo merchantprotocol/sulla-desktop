@@ -72,4 +72,272 @@
   --terminal-cursor: #5e81ac;
   --terminal-selection-bg: rgba(136, 192, 208, 0.25);
   --terminal-selection-fg: #2e3440;
+
+  /* Default Colors */
+  --default: #d8dee9;
+  --default-text: #3b4252;
+  --default-hover-bg: #c9d1e0;
+  --default-hover-text: #2e3440;
+  --default-active-bg: #a5b1c2;
+  --default-active-text: #2e3440;
+  --default-border: #d8dee9;
+  --default-banner-bg: rgba(216, 222, 233, 0.15);
+  --default-light-bg: rgba(216, 222, 233, 0.05);
+
+  /* Muted */
+  --muted: #4c566a;
+
+  /* Body */
+  --body-bg: #eceff4;
+  --body-text: #2e3440;
+
+  /* Scrollbar */
+  --scrollbar-thumb: #d8dee9;
+  --scrollbar-thumb-dropdown: #e5e9f0;
+  --scrollbar-track: transparent;
+
+  /* Header */
+  --header-bg: #eceff4;
+  --header-btn-bg: #e5e9f0;
+  --header-btn-text: #3b4252;
+  --header-input-text: #eceff4;
+  --header-height: 55px;
+  --header-border: #d8dee9;
+  --header-border-size: 1px;
+
+  /* Nav */
+  --nav-width: 230px;
+  --nav-bg: #eceff4;
+  --nav-active: #e5e9f0;
+  --nav-hover: #d8dee9;
+  --nav-expander-hover: #c9d1e0;
+  --nav-border: #d8dee9;
+  --nav-border-size: 1px;
+
+  /* Footer */
+  --footer-bg: #eceff4;
+  --footer-border: #d8dee9;
+
+  /* Top Menu */
+  --topmenu-bg: #eceff4;
+  --topmenu-text: #2e3440;
+  --topmost-border: #d8dee9;
+  --topmost-shadow: #ffffff;
+  --topmost-light-hover: #e5e9f0;
+
+  /* Accent Button */
+  --accent-btn: rgba(136, 192, 208, 0.1);
+  --accent-btn-hover: #88c0d0;
+  --accent-btn-hover-text: #eceff4;
+
+  /* Modal */
+  --modal-bg: #eceff4;
+  --modal-border: #4c566a;
+  --overlay-bg: rgba(229, 233, 240, 0.75);
+  --shadow: rgba(216, 222, 233, 0.85);
+
+  /* Checkbox */
+  --checkbox-tick: #ffffff;
+  --checkbox-border: #d8dee9;
+  --checkbox-tick-disabled: #a5b1c2;
+  --checkbox-disabled-bg: #d8dee9;
+  --checkbox-tick-locked: #2e3440;
+  --checkbox-locked-bg: #e5e9f0;
+  --checkbox-ticked-bg: #5e81ac;
+  --checkbox-locked-border: #e5e9f0;
+  --checkbox-locked-shadow: #e5e9f0;
+
+  /* Dropdown */
+  --dropdown-bg: #eceff4;
+  --dropdown-border: #d8dee9;
+  --dropdown-divider: #d8dee9;
+  --dropdown-text: #5e81ac;
+  --dropdown-active-text: #eceff4;
+  --dropdown-active-bg: #4c566a;
+  --dropdown-hover-text: var(--body-text);
+  --dropdown-hover-bg: #e5e9f0;
+  --dropdown-disabled-text: var(--muted);
+  --dropdown-disabled-bg: #d8dee9;
+  --dropdown-locked-text: #2e3440;
+
+  /* Input */
+  --input-text: #2e3440;
+  --input-label: #3b4252;
+  --input-placeholder: #a5b1c2;
+  --input-border: var(--border);
+  --input-bg: var(--body-bg);
+  --input-bg-accent: #dbe3ec;
+  --input-hover-bg: var(--bg-surface);
+  --input-focus-bg: var(--bg-surface);
+  --input-disabled-text: #4c566a;
+  --input-disabled-label: #a5b1c2;
+  --input-disabled-bg: #d8dee9;
+  --input-disabled-border: #e5e9f0;
+  --input-disabled-placeholder: #d8dee9;
+  --input-addon-bg: #3b4252;
+  --input-locked-text: #2e3440;
+
+  /* Radio */
+  --radio-locked-bg: var(--body-bg);
+  --radio-locked-shadow: var(--body-bg);
+
+  /* Progress */
+  --progress-bg: #d8dee9;
+  --progress-divider: #d8dee9;
+
+  /* Sortable Table */
+  --sortable-table-bg: #e1e5ec;
+  --sortable-table-row-bg: #eceff4;
+  --sortable-table-header-bg: #e5e9f0;
+  --sortable-table-accent-bg: #e5e9f0;
+  --sortable-table-accent-alt: #eceff4;
+  --sortable-table-top-divider: var(--border);
+  --sortable-table-body-divider: #d8dee9;
+  --sortable-table-hover-bg: #e5e9f0;
+  --sortable-table-selected-bg: rgba(136, 192, 208, 0.05);
+  --sortable-table-group-label: #3b4252;
+
+  /* Tag */
+  --tag-primary: #2e3440;
+  --tag-bg: #d8dee9;
+
+  /* Popover */
+  --popover-bg: var(--body-bg);
+  --popover-border: var(--border);
+  --popover-text: var(--body-text);
+  --popover-border-radius: 4px;
+
+  /* Tooltip */
+  --tooltip-bg: #d8dee9;
+  --tooltip-border: var(--tag-primary);
+  --tooltip-text: var(--tag-primary);
+  --tooltip-bg-warning: rgba(235, 203, 139, 0.8);
+  --tooltip-text-warning: var(--body-text);
+
+  /* Icon */
+  --icon-circle: #d8dee9;
+
+  /* Tabbed */
+  --tabbed-border: #d8dee9;
+  --tabbed-sidebar-bg: #e5e9f0;
+  --tabbed-container-bg: #f1f4f8;
+
+  /* YAML Editor */
+  --yaml-editor-bg: #e5e9f0;
+
+  /* Diff */
+  --diff-border: var(--border);
+  --diff-header-bg: var(--nav-bg);
+  --diff-header-border: var(--border);
+  --diff-header: rgba(46, 52, 64, 0.3);
+  --diff-linenum-bg: var(--nav-bg);
+  --diff-linenum: var(--muted);
+  --diff-linenum-border: var(--border);
+  --diff-line-ins-bg: var(--status-success);
+  --diff-line-del-bg: rgba(191, 97, 106, 0.75);
+  --diff-del-bg: rgba(191, 97, 106, 0.3);
+  --diff-del-border: #bf616a;
+  --diff-ins-bg: rgba(163, 190, 140, 0.3);
+  --diff-ins-border: rgba(163, 190, 140, 0.5);
+  --diff-chg-ins: rgba(163, 190, 140, 0.25);
+  --diff-chg-del: rgba(235, 203, 139, 0.5);
+  --diff-empty-placeholder: #eceff4;
+
+  /* Window Manager */
+  --wm-tabs-bg: #d8dee9;
+  --wm-tab-bg: #e5e9f0;
+  --wm-closer-hover-bg: #e5e9f0;
+  --wm-tab-active-bg: #e5e9f0;
+  --wm-title-bg: #eceff4;
+  --wm-title-border: #d8dee9;
+  --wm-body-bg: #e5e9f0;
+  --wm-border: var(--border);
+  --wm-tab-height: 29px;
+
+  /* Glance */
+  --glance-bg-rgb: 136, 192, 208;
+  --glance-divider: #d8dee9;
+
+  /* Resource Gauge */
+  --resource-gauge-back-circle: 255, 255, 255, 0.15;
+
+  /* Simple Box */
+  --simple-box-bg: #eceff4;
+  --simple-box-border: #d8dee9;
+  --simple-box-divider: #d8dee9;
+  --simple-box-shadow: none;
+
+  /* Terminal (additional) */
+  --terminal-selection: rgba(136, 192, 208, 0.5);
+  --terminal-text: var(--body-text);
+
+  /* Logs */
+  --logs-bg: var(--wm-body-bg);
+  --logs-highlight: var(--wm-body-bg);
+  --logs-highlight-bg: var(--status-warning);
+  --logs-text: var(--body-text);
+
+  /* Gauge */
+  --gauge-divider: #eceff4;
+  --gauge-zero: #d8dee9;
+  --gauge-success-primary: 163, 190, 140;
+  --gauge-success-secondary: 190, 211, 172;
+  --gauge-warning-primary: 235, 203, 139;
+  --gauge-warning-secondary: 196, 160, 80;
+  --gauge-error-primary: 191, 97, 106;
+  --gauge-error-secondary: 148, 66, 72;
+
+  /* Sizzle Colors */
+  --sizzle-0: 180, 210, 30;
+  --sizzle-1: 225, 45, 74;
+  --sizzle-2: 212, 66, 148;
+  --sizzle-3: 0, 169, 217;
+  --sizzle-4: 244, 136, 68;
+  --sizzle-5: 0, 147, 128;
+  --sizzle-6: 136, 81, 165;
+  --sizzle-7: 45, 47, 149;
+  --sizzle-8: 255, 235, 0;
+  --sizzle-success: 163, 190, 140;
+  --sizzle-info: 136, 192, 208;
+  --sizzle-warning: 235, 203, 139;
+  --sizzle-error: 191, 97, 106;
+  --sizzle-unknown: 216, 222, 233;
+
+  /* App Accents */
+  --app-rancher-accent: #88c0d0;
+  --app-rancher-accent-text: #2e3440;
+  --app-partner-accent: #fea424;
+  --app-partner-accent-text: #000000;
+  --app-color1-accent: rgba(191, 97, 106, 1);
+  --app-color1-accent-text: #ffffff;
+  --app-color2-accent: rgba(180, 142, 173, 1);
+  --app-color2-accent-text: #ffffff;
+  --app-color3-accent: rgba(136, 192, 208, 1);
+  --app-color3-accent-text: #ffffff;
+  --app-color4-accent: rgba(235, 203, 139, 1);
+  --app-color4-accent-text: #2e3440;
+  --app-color5-accent: rgba(163, 190, 140, 1);
+  --app-color5-accent-text: #2e3440;
+  --app-color6-accent: rgba(129, 161, 193, 1);
+  --app-color6-accent-text: #ffffff;
+  --app-color7-accent: rgba(94, 129, 172, 1);
+  --app-color7-accent-text: #ffffff;
+  --app-color8-accent: rgba(255, 235, 0, 1);
+  --app-color8-accent-text: #2e3440;
+
+  /* Product */
+  --product-icon: #3b4252;
+  --product-icon-active: #2e3440;
+
+  /* Button */
+  --button-icon: #4c566a;
+  --button-icon-bg: #3b4252;
+
+  /* Border Utilities */
+  --border-width: 1px;
+  --border-radius: 4px;
+  --border-radius-md: 6px;
+  --border-radius-lg: 8px;
+  --outline: var(--accent-primary);
+  --outline-width: 1px;
 }

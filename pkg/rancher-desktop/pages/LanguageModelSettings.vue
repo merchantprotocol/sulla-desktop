@@ -1293,7 +1293,7 @@ export default defineComponent({
           <!-- Not Running Message -->
           <div
             v-else
-            class="not-running-message"
+            class="not-running-message mb-10"
           >
             <p v-if="containerStats.status === 'offline'">
               Ollama service is offline. Make sure it's running on port 30114.

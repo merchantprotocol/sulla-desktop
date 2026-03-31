@@ -102,6 +102,233 @@
   /* Scrollbar */
   --scrollbar-thumb: #4485a0;
   --scrollbar-track: #0d1117;
+
+  /* Default Colors */
+  --default: #161b22;
+  --default-text: #8b949e;
+  --default-hover-bg: #21262d;
+  --default-hover-text: #e6edf3;
+  --default-active-bg: #0d1117;
+  --default-active-text: #e6edf3;
+  --default-border: #161b22;
+  --default-banner-bg: rgba(22, 27, 34, 0.15);
+  --default-light-bg: rgba(22, 27, 34, 0.05);
+
+  /* Muted */
+  --muted: #8b949e;
+
+  /* Body */
+  --body-text: #e6edf3;
+
+  /* Scrollbar Dropdown */
+  --scrollbar-thumb-dropdown: #30363d;
+
+  /* Header */
+  --header-bg: #0d1117;
+  --header-border: #30363d;
+  --header-btn-bg: #161b22;
+  --header-btn-text: #e6edf3;
+  --header-border-size: 1px;
+
+  /* Footer */
+  --footer-bg: #0d1117;
+  --footer-border: #30363d;
+
+  /* Nav */
+  --nav-width: 230px;
+  --nav-bg: #0d1117;
+  --nav-active: rgba(80, 150, 179, 0.15);
+  --nav-border: #30363d;
+  --nav-hover: #21262d;
+  --nav-expander-hover: rgba(80, 150, 179, 0.08);
+  --nav-border-size: 1px;
+
+  /* Disabled */
+  --disabled-bg: #484f58;
+  --disabled-text: #b1bac4;
+
+  /* Box & Borders */
+  --box-bg: #0d1117;
+  --subtle-border: #0d1117;
+  --border: #30363d;
+
+  /* Top Menu */
+  --topmenu-bg: #0d1117;
+  --topmenu-text: #e6edf3;
+  --topmost-border: #30363d;
+  --topmost-shadow: #161b22;
+  --topmost-light-hover: #30363d;
+
+  /* Accent Button */
+  --accent-btn: rgba(80, 150, 179, 0.15);
+  --accent-btn-hover: #5096b3;
+  --accent-btn-hover-text: #e6edf3;
+
+  /* Modal */
+  --modal-bg: #161b22;
+  --modal-border: #30363d;
+  --overlay-bg: rgba(0, 0, 0, 0.75);
+  --shadow: rgba(0, 0, 0, 0.9);
+
+  /* Checkbox */
+  --checkbox-tick: #e6edf3;
+  --checkbox-border: #30363d;
+  --checkbox-tick-disabled: #b1bac4;
+  --checkbox-disabled-bg: #484f58;
+  --checkbox-tick-locked: #0d1117;
+  --checkbox-locked-bg: #b1bac4;
+  --checkbox-ticked-bg: #5096b3;
+  --checkbox-locked-border: #b1bac4;
+  --checkbox-locked-shadow: #b1bac4;
+
+  /* Dropdown */
+  --dropdown-bg: #30363d;
+  --dropdown-border: #8b949e;
+  --dropdown-divider: #8b949e;
+  --dropdown-text: #5096b3;
+  --dropdown-active-text: #e6edf3;
+  --dropdown-active-bg: #4485a0;
+  --dropdown-hover-text: #e6edf3;
+  --dropdown-hover-bg: #5096b3;
+  --dropdown-disabled-bg: #484f58;
+  --dropdown-disabled-text: #8b949e;
+  --dropdown-locked-text: #e6edf3;
+
+  /* Input */
+  --input-text: #e6edf3;
+  --input-label: #b1bac4;
+  --input-placeholder: #8b949e;
+  --input-border: var(--border);
+  --input-bg: var(--body-bg);
+  --input-bg-accent: #21262d;
+  --input-hover-bg: var(--box-bg);
+  --input-focus-bg: var(--box-bg);
+  --input-disabled-text: #b1bac4;
+  --input-disabled-label: #8b949e;
+  --input-disabled-bg: #484f58;
+  --input-disabled-border: #30363d;
+  --input-disabled-placeholder: #484f58;
+  --input-addon-bg: #161b22;
+  --input-locked-text: #e6edf3;
+
+  /* Radio */
+  --radio-locked-bg: var(--body-bg);
+  --radio-locked-shadow: var(--body-bg);
+
+  /* Progress */
+  --progress-bg: #30363d;
+  --progress-divider: #e6edf3;
+
+  /* Sortable Table */
+  --sortable-table-bg: #1c2128;
+  --sortable-table-row-bg: #161b22;
+  --sortable-table-header-bg: #0d1117;
+  --sortable-table-accent-bg: #161b22;
+  --sortable-table-accent-alt: #21262d;
+  --sortable-table-top-divider: var(--border);
+  --sortable-table-hover-bg: #0d1117;
+  --sortable-table-selected-bg: rgba(80, 150, 179, 0.15);
+  --sortable-table-group-label: #b1bac4;
+
+  /* Tag */
+  --tag-primary: #e6edf3;
+  --tag-bg: #30363d;
+
+  /* Popover */
+  --popover-bg: var(--body-bg);
+  --popover-border: var(--border);
+  --popover-text: var(--body-text);
+
+  /* Tooltip */
+  --tooltip-bg: #30363d;
+  --tooltip-border: #e6edf3;
+  --tooltip-text: var(--body-text);
+  --tooltip-text-warning: var(--body-text);
+
+  /* Icon */
+  --icon-circle: #30363d;
+
+  /* Tabbed */
+  --tabbed-border: #30363d;
+  --tabbed-sidebar-bg: #0d1117;
+  --tabbed-container-bg: #161b22;
+
+  /* YAML Editor */
+  --yaml-editor-bg: #0d1117;
+
+  /* Diff */
+  --diff-border: var(--border);
+  --diff-header-bg: var(--nav-bg);
+  --diff-header-border: var(--border);
+  --diff-header: rgba(13, 17, 23, 0.3);
+  --diff-linenum-bg: var(--nav-bg);
+  --diff-linenum: var(--muted);
+  --diff-linenum-border: var(--border);
+  --diff-line-ins-bg: var(--status-success);
+  --diff-line-del-bg: rgba(248, 81, 73, 0.75);
+  --diff-del-bg: rgba(248, 81, 73, 0.3);
+  --diff-del-border: #f85149;
+  --diff-ins-bg: rgba(63, 185, 80, 0.3);
+  --diff-ins-border: rgba(63, 185, 80, 0.5);
+  --diff-chg-ins: rgba(63, 185, 80, 0.25);
+  --diff-chg-del: rgba(227, 179, 65, 0.5);
+  --diff-empty-placeholder: #0d1117;
+
+  /* Window Manager */
+  --wm-tabs-bg: #30363d;
+  --wm-tab-bg: #0d1117;
+  --wm-closer-hover-bg: #30363d;
+  --wm-tab-active-bg: #161b22;
+  --wm-title-bg: #0d1117;
+  --wm-title-border: #30363d;
+  --wm-body-bg: #0d1117;
+  --wm-border: #0d1117;
+
+  /* Glance */
+  --glance-divider: #30363d;
+
+  /* Resource Gauge */
+  --resource-gauge-back-circle: 48, 55, 66, 0.5;
+
+  /* Simple Box */
+  --simple-box-bg: #0d1117;
+  --simple-box-border: #0d1117;
+  --simple-box-divider: #30363d;
+  --simple-box-shadow: rgba(0, 0, 0, 0.15);
+
+  /* Terminal (additional) */
+  --terminal-selection: #5096b3;
+
+  /* Logs */
+  --logs-bg: var(--wm-body-bg);
+  --logs-highlight: var(--wm-body-bg);
+  --logs-highlight-bg: var(--status-warning);
+  --logs-text: var(--body-text);
+
+  /* Gauge */
+  --gauge-divider: rgba(255, 255, 255, 0.3);
+  --gauge-success-primary: 63, 185, 80;
+  --gauge-success-secondary: 150, 247, 180;
+  --gauge-warning-primary: 227, 179, 65;
+  --gauge-warning-secondary: 126, 95, 18;
+  --gauge-error-primary: 248, 81, 73;
+  --gauge-error-secondary: 120, 45, 42;
+
+  /* Product */
+  --product-icon: #b1bac4;
+  --product-icon-active: #e6edf3;
+
+  /* Button */
+  --button-icon: #30363d;
+  --button-icon-bg: #e6edf3;
+
+  /* Border Utilities */
+  --border-width: 1px;
+  --border-radius: 4px;
+  --border-radius-md: 6px;
+  --border-radius-lg: 8px;
+  --outline: var(--accent-primary);
+  --outline-width: 1px;
 }
 
 /* ================================================================== */
