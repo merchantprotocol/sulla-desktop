@@ -26,9 +26,12 @@ export default function buildApplicationMenu(): void {
     rebuildMenu();
   });
 
-  // Refresh extensions list for the menu
+  // Refresh extensions list for the menu.
+  // Listen to the same event the tray uses — 'settings-update' fires reliably
+  // whenever extensions change, whereas 'extensions/changed' may not fire.
   refreshExtensions();
   mainEvents.on('extensions/changed' as any, () => refreshExtensions());
+  mainEvents.on('settings-update' as any, () => refreshExtensions());
 }
 
 function rebuildMenu(): void {
@@ -128,11 +131,16 @@ interface ExtensionData {
 
 let installedExtensions: Record<string, ExtensionData> = {};
 
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
 async function refreshExtensions(): Promise<void> {
   try {
     const credentials = await mainEvents.invoke('api-get-credentials');
 
     if (!credentials) {
+      // API server not ready yet — retry in a few seconds
+      scheduleRetry();
+
       return;
     }
 
@@ -142,14 +150,31 @@ async function refreshExtensions(): Promise<void> {
     });
 
     if (!response.ok) {
+      scheduleRetry();
+
       return;
     }
 
     installedExtensions = await response.json();
     rebuildMenu();
+
+    // Success — cancel any pending retry
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
   } catch {
-    // Extensions API may not be available yet
+    // Extensions API may not be available yet — retry
+    scheduleRetry();
   }
+}
+
+function scheduleRetry(): void {
+  if (refreshTimer) return; // already scheduled
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refreshExtensions();
+  }, 5_000);
 }
 
 function getExtensionsSubmenu(): MenuItemConstructorOptions[] {
