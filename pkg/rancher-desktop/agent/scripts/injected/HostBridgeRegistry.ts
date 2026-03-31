@@ -317,24 +317,12 @@ class HostBridgeRegistryImpl {
 
     const lines: string[] = [];
     lines.push('### Open Browser Tabs');
-    lines.push(`You currently have **${ this.bridges.size } tab(s) open**. Each open tab consumes memory and CPU on the user's machine.`);
     lines.push('');
-    lines.push('**Rules:**');
-    lines.push('- Close tabs IMMEDIATELY when done: `browser_tab(action: "remove", assetId: "...")`');
-    lines.push('- Reuse existing tabs by navigating to new URLs instead of opening new ones.');
-    lines.push('- Keep no more than 3-5 tabs open. Close finished tabs before opening new ones.');
-    lines.push('- When your task is complete, close ALL tabs you opened.');
+    lines.push('**IMPORTANT**: If you have not already loaded the `web-research-playwright` skill in this conversation, load it now before doing any more browser work. It contains critical patterns for fast, reliable page interaction.');
     lines.push('');
-    lines.push('**How to interact with pages — prefer `exec_in_page` for multi-step workflows:**');
+    lines.push(`You have **${ this.bridges.size } tab(s) open**. Close tabs when done. Reuse tabs instead of opening new ones. Max 3-5 open at a time.`);
     lines.push('');
-    lines.push('Every page has `window.__sulla` — a helper library with DOM queries, wait functions, click/fill/scroll helpers, and data extraction. For full docs, load the `web-research-playwright` skill.');
-    lines.push('');
-    lines.push('- **Quick overview**: `get_page_snapshot(mode: "dehydrated")` — compressed DOM tree (~5k tokens) showing interactive elements. Use for planning actions.');
-    lines.push('- **Multi-step workflows**: `exec_in_page` with `__sulla.steps([fn1, fn2, ...])` — click, wait, extract in one call. Supports `screenshot: true`, `waitForIdle: true`.');
-    lines.push('- **Data extraction**: `exec_in_page` with `__sulla.text(sel)`, `__sulla.table(sel)`, `__sulla.forms()`.');
-    lines.push('- **Visual interaction** (widgets, popups, shadow DOM): `take_screenshot(annotate: true)` for coordinates, then `click_at(x, y)`.');
-    lines.push('- **Simple single actions**: `click_element`, `set_field(submit: true)`, `browse_page`.');
-    lines.push('- **Debug**: Check `sullaLog` in `exec_in_page` response — every `__sulla` call is logged with timing and success/failure.');
+    lines.push('Use `exec_in_page` + `__sulla` helpers for multi-step workflows (click → wait → extract in one call). Every page has `window.__sulla` with DOM queries, wait functions, interaction helpers, and data extraction.');
     lines.push('');
 
     for (const entry of this.bridges.values()) {
