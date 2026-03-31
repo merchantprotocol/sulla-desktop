@@ -174,7 +174,10 @@
 
     <template v-else-if="tabMode === 'vault'">
       <div class="flex-1 min-h-0 overflow-auto">
-        <AgentConnectedAccounts embedded />
+        <AgentConnectedAccounts
+          embedded
+          @open-integration="onOpenIntegration"
+        />
       </div>
     </template>
 
@@ -262,6 +265,11 @@ const tabContent = computed(() => getTab(props.tabId)?.content || '');
 
 function onSetMode(mode: BrowserTabMode) {
   updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
+}
+
+function onOpenIntegration(integrationId: string, _accountId: string) {
+  // Switch this tab to integrations mode — the user can manage the account there
+  updateTab(props.tabId, { mode: 'integrations', title: 'Integrations' });
 }
 
 function onNavigateUrl(input: string) {

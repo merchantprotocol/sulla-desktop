@@ -205,6 +205,10 @@ const props = defineProps<{
   embedded?: boolean;
 }>();
 
+const emit = defineEmits<{
+  'open-integration': [integrationId: string, accountId: string];
+}>();
+
 const router = useRouter();
 const { isDark, toggleTheme } = useTheme();
 
@@ -290,11 +294,16 @@ const formatDate = (date: Date): string => {
 };
 
 const openAccount = (account: FlatAccount) => {
-  router.push({
-    name:   'AgentIntegrationDetail',
-    params: { id: account.integrationId },
-    query:  { account: account.accountId },
-  });
+  if (props.embedded) {
+    // When embedded in a browser tab, emit event so the tab switches mode
+    emit('open-integration', account.integrationId, account.accountId);
+  } else {
+    router.push({
+      name:   'AgentIntegrationDetail',
+      params: { id: account.integrationId },
+      query:  { account: account.accountId },
+    });
+  }
 };
 
 const loadAccounts = async() => {
