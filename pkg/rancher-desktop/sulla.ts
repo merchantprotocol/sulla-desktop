@@ -545,6 +545,106 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return tabViewManager.executeJavaScript(tabId, code);
   });
 
+  // ── Vault: credential save & autofill IPC handlers ────────────────────────
+  const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+
+  ipcMainProxy.handle('vault:save-credential', async(_event: Electron.IpcMainInvokeEvent, data: { origin: string; username: string; password: string }) => {
+    try {
+      const service = getIntegrationService();
+      await service.initialize();
+
+      // Generate account ID from origin + username
+      const accountId = (data.origin + '_' + data.username)
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 200);
+
+      // Save as a website integration account
+      await service.setFormValues([
+        { integration_id: 'website', account_id: accountId, property: 'website_url', value: data.origin },
+        { integration_id: 'website', account_id: accountId, property: 'username', value: data.username },
+        { integration_id: 'website', account_id: accountId, property: 'password', value: data.password },
+        { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'none' },
+      ]);
+
+      // Set account label and mark as connected
+      await service.setAccountLabel('website', accountId, `${ data.username } @ ${ data.origin.replace(/^https?:\/\//, '') }`);
+      await service.setConnectionStatus('website', true, accountId);
+
+      console.log(`[Vault] Saved credential for ${ data.origin } (${ data.username })`);
+      return { success: true, accountId };
+    } catch (err: any) {
+      console.error('[Vault] Failed to save credential:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMainProxy.handle('vault:autofill', async(_event: Electron.IpcMainInvokeEvent, data: { tabId?: string; accountId: string }) => {
+    try {
+      const service = getIntegrationService();
+      await service.initialize();
+
+      // Get the saved credentials for this account
+      const formValues = await service.getFormValues('website', data.accountId);
+      const storedValues: Record<string, string> = {};
+      for (const fv of formValues) {
+        storedValues[fv.property] = fv.value;
+      }
+
+      const username = storedValues['username'] || '';
+      const password = storedValues['password'] || '';
+
+      if (!username || !password) {
+        console.warn('[Vault] Autofill: missing username or password for account', data.accountId);
+        return { success: false, error: 'Missing credentials' };
+      }
+
+      // Find the active tab to autofill — if tabId provided use it,
+      // otherwise find the first visible browser tab with a matching origin
+      let targetTabId = data.tabId;
+
+      if (!targetTabId) {
+        // Try to find the tab from the main window's rendered browser tabs
+        // For now, we'll need the tabId passed from the renderer
+        console.warn('[Vault] Autofill: no tabId provided');
+        return { success: false, error: 'No target tab specified' };
+      }
+
+      // Execute autofill in the target tab — password goes directly to the
+      // browser tab via executeJavaScript, never enters the LLM context
+      const fillScript = `
+        (function() {
+          var bridge = window.sullaBridge;
+          if (!bridge) return { success: false, error: 'Bridge not available' };
+
+          var loginForm = bridge.detectLoginForm();
+          if (!loginForm || !loginForm.hasLoginForm) return { success: false, error: 'No login form found' };
+
+          var usernameOk = false;
+          var passwordOk = false;
+
+          if (loginForm.usernameHandle) {
+            usernameOk = bridge.setValue(loginForm.usernameHandle, ${ JSON.stringify(username) });
+          }
+          if (loginForm.passwordHandle) {
+            passwordOk = bridge.setValue(loginForm.passwordHandle, ${ JSON.stringify(password) });
+          }
+
+          return { success: usernameOk || passwordOk, usernameOk: usernameOk, passwordOk: passwordOk };
+        })();
+      `;
+
+      const result = await tabViewManager.executeJavaScript(targetTabId, fillScript);
+      console.log(`[Vault] Autofill result for ${ data.accountId }:`, result);
+      return { success: true, ...(result as any) };
+    } catch (err: any) {
+      console.error('[Vault] Autofill failed:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
 }
 
 /**

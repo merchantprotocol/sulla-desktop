@@ -579,13 +579,14 @@ export class BrowserTabViewManager {
 
     // ── Vault: handle bridge events from guest pages ──
     // Route vault-related events from the guest bridge to the renderer.
-    wc.on('ipc-message' as any, (_event: unknown, channel: string, ...args: any[]) => {
-      if (channel !== 'browser-tab-view:bridge-event') return;
-      const [type, data] = args;
-      if (!type || !data) return;
+    // Uses wc.ipc.on() which receives the payload as { type, data } directly,
+    // matching the preload's ipcRenderer.send('browser-tab-view:bridge-event', { type, data }).
+    wc.ipc.on('browser-tab-view:bridge-event', (_event: Electron.IpcMainEvent, msg: { type: string; data: any }) => {
+      if (!msg?.type?.startsWith('sulla:vault:')) return;
+
+      const { type, data } = msg;
 
       if (type === 'sulla:vault:credentialsCaptured') {
-        // Forward captured credentials to the renderer's BrowserTab component
         if (!mainWindow.isDestroyed()) {
           mainWindow.webContents.send('vault:credentials-captured', {
             tabId,
@@ -597,7 +598,6 @@ export class BrowserTabViewManager {
       }
 
       if (type === 'sulla:vault:loginFormDetected') {
-        // Check for matching vault entries and offer autofill
         this.checkVaultForAutofill(tabId, data.origin, mainWindow);
       }
     });
