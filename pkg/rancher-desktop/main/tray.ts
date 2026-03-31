@@ -79,7 +79,7 @@ export class Tray {
     },
     {
       id:      'dashboard',
-      label:   'Kubernetes Dashboard',
+      label:   'Cluster Dashboard',
       icon:    path.join(paths.resources, 'icons', 'kubernetes-icon-color.png'),
       type:    'normal',
       enabled: false,
