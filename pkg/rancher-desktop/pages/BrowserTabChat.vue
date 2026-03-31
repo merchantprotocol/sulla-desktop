@@ -546,6 +546,12 @@ onMounted(async () => {
   await modelSelector.start();
   checkFirstChat();
   checkVoiceConfig();
+
+  // Scroll to bottom on initial load if messages exist
+  if (chatScrollContainer.value && messages.value.length > 0) {
+    await nextTick();
+    chatScrollContainer.value.scrollTop = chatScrollContainer.value.scrollHeight;
+  }
 });
 
 watch(() => messages.value.length, async () => {
