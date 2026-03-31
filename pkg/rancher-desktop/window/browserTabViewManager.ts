@@ -27,6 +27,7 @@ export class BrowserTabViewManager {
   private views = new Map<string, WebContentsView>();
   private failedUrls = new Map<string, string>(); // tabId → original URL that failed
   private retryTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private acceptedCertHosts = new Set<string>(); // hosts where user clicked "Proceed"
   private sessionInitialised = false;
 
   private constructor() {}
@@ -266,6 +267,41 @@ export class BrowserTabViewManager {
     return this.views.get(tabId)?.webContents ?? null;
   }
 
+  /**
+   * Mark a host's certificate as accepted and reload the tab.
+   * Called when the user clicks "Proceed" on the certificate warning page.
+   */
+  acceptCertificate(tabId: string): void {
+    const originalUrl = this.failedUrls.get(tabId);
+
+    if (!originalUrl) {
+      console.warn(`[BrowserTabView] acceptCertificate: no failed URL for tabId=${ tabId }`);
+
+      return;
+    }
+
+    try {
+      const host = new URL(originalUrl).host;
+
+      this.acceptedCertHosts.add(host);
+      console.log(`[BrowserTabView] Certificate accepted for host=${ host }`);
+    } catch {
+      console.warn(`[BrowserTabView] acceptCertificate: invalid URL ${ originalUrl }`);
+
+      return;
+    }
+
+    this.failedUrls.delete(tabId);
+
+    const wc = this.getWebContents(tabId);
+
+    if (wc) {
+      wc.loadURL(originalUrl).catch((err) => {
+        console.error(`[BrowserTabView] acceptCertificate reload failed:`, err);
+      });
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Auto-retry for failed loads
   // ---------------------------------------------------------------------------
@@ -355,6 +391,40 @@ export class BrowserTabViewManager {
     wc.on('page-title-updated', sendState);
     wc.on('did-start-loading', sendState);
     wc.on('did-stop-loading', sendState);
+
+    // Chrome-style certificate error handling: show a warning page with an
+    // "Advanced > Proceed" option instead of silently accepting or hard-blocking.
+    wc.on('certificate-error', (event, url, error, certificate, callback) => {
+      // If user previously accepted this host, proceed silently
+      try {
+        const host = new URL(url).host;
+
+        if (this.acceptedCertHosts.has(host)) {
+          event.preventDefault();
+          callback(true);
+
+          return;
+        }
+      } catch { /* fall through to warning page */ }
+
+      // Block the load and show the certificate warning page
+      callback(false);
+
+      const certPage = buildCertErrorPage(url, error, certificate);
+
+      wc.loadURL(`data:text/html;charset=utf-8,${ encodeURIComponent(certPage) }`).catch(() => {});
+      this.failedUrls.set(tabId, url);
+      console.warn(`[BrowserTabView] certificate-error tabId=${ tabId } error=${ error } url=${ url }`);
+    });
+
+    // Intercept the "Proceed anyway" action from the certificate warning page.
+    // The page navigates to sulla://accept-cert which we catch here.
+    wc.on('will-navigate', (event, url) => {
+      if (url === 'sulla://accept-cert') {
+        event.preventDefault();
+        this.acceptCertificate(tabId);
+      }
+    });
 
     // Clear failed URL and stop retry polling on successful navigation.
     wc.on('did-navigate', () => {
@@ -503,6 +573,115 @@ function buildErrorPage(url: string, errorCode: number, errorDescription: string
     <p class="detail">${ info.detail }</p>
     <a class="retry-btn" href="${ url }">Reload</a>
     <p class="error-code">ERR_${ errorDescription.replace(/^net::ERR_/i, '').replace(/\s+/g, '_').toUpperCase() } (${ errorCode })</p>
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * Generates a Chrome-style certificate warning page with Advanced / Proceed option.
+ */
+function buildCertErrorPage(url: string, error: string, certificate: Electron.Certificate): string {
+  let hostname = '';
+
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    hostname = url;
+  }
+
+  const issuer = certificate.issuerName || 'Unknown';
+  const subject = certificate.subjectName || hostname;
+  const validFrom = certificate.validStart ? new Date(certificate.validStart * 1000).toLocaleDateString() : 'Unknown';
+  const validTo = certificate.validExpiry ? new Date(certificate.validExpiry * 1000).toLocaleDateString() : 'Unknown';
+  const fingerprint = certificate.fingerprint || 'Unknown';
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Your connection is not private</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 40px;
+    }
+    .error-container { max-width: 560px; text-align: center; }
+    .error-icon {
+      width: 72px; height: 72px; margin: 0 auto 24px;
+      border-radius: 50%; background: #3b1d1d;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 32px;
+    }
+    h1 { font-size: 22px; font-weight: 600; margin-bottom: 8px; color: #f85149; }
+    .hostname { font-size: 14px; color: #8b949e; margin-bottom: 16px; word-break: break-all; }
+    .detail { font-size: 14px; color: #8b949e; line-height: 1.6; margin-bottom: 24px; text-align: left; }
+    .btn {
+      display: inline-block; padding: 8px 20px; border-radius: 6px;
+      border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
+      font-size: 14px; cursor: pointer; margin: 4px; text-decoration: none;
+    }
+    .btn:hover { background: #30363d; }
+    .btn-proceed { border-color: #f8514966; color: #f85149; }
+    .btn-proceed:hover { background: #3b1d1d; }
+    .advanced-toggle {
+      font-size: 13px; color: #58a6ff; cursor: pointer;
+      margin-top: 16px; display: inline-block; background: none; border: none;
+    }
+    .advanced-toggle:hover { text-decoration: underline; }
+    .advanced-section {
+      display: none; margin-top: 20px; text-align: left;
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px;
+    }
+    .advanced-section.open { display: block; }
+    .cert-table { width: 100%; font-size: 13px; }
+    .cert-table td { padding: 4px 0; vertical-align: top; }
+    .cert-table td:first-child { color: #8b949e; width: 110px; white-space: nowrap; }
+    .cert-table td:last-child { color: #c9d1d9; word-break: break-all; font-family: monospace; font-size: 12px; }
+    .proceed-warning {
+      font-size: 13px; color: #8b949e; margin: 16px 0 12px;
+      line-height: 1.5; text-align: left;
+    }
+    .error-code { font-size: 12px; color: #484f58; font-family: monospace; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="error-container">
+    <div class="error-icon">\uD83D\uDD12</div>
+    <h1>Your connection is not private</h1>
+    <p class="hostname">${ hostname }</p>
+    <p class="detail">
+      Attackers might be trying to steal your information from <strong>${ hostname }</strong>
+      (for example, passwords, messages, or credit cards). The server's security certificate
+      is not trusted by this application.
+    </p>
+    <a class="btn" href="${ url }">Back to safety</a>
+    <button class="advanced-toggle" onclick="document.getElementById('adv').classList.toggle('open')">
+      Advanced
+    </button>
+    <div id="adv" class="advanced-section">
+      <table class="cert-table">
+        <tr><td>Subject</td><td>${ subject }</td></tr>
+        <tr><td>Issuer</td><td>${ issuer }</td></tr>
+        <tr><td>Valid from</td><td>${ validFrom }</td></tr>
+        <tr><td>Valid until</td><td>${ validTo }</td></tr>
+        <tr><td>Fingerprint</td><td>${ fingerprint }</td></tr>
+        <tr><td>Error</td><td>${ error }</td></tr>
+      </table>
+      <p class="proceed-warning">
+        This server could not prove that it is <strong>${ hostname }</strong>; its security
+        certificate is not trusted. Proceeding may expose your data to third parties.
+      </p>
+      <a class="btn btn-proceed" href="sulla://accept-cert">Proceed to ${ hostname } (unsafe)</a>
+    </div>
+    <p class="error-code">NET::${ error.toUpperCase().replace(/\s+/g, '_') }</p>
   </div>
 </body>
 </html>`;

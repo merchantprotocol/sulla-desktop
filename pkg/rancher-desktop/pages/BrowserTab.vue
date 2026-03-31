@@ -123,7 +123,7 @@
     <!-- Chat mode: independent chat session per tab -->
     <template v-else-if="tabMode === 'chat'">
       <div class="flex-1 min-h-0 overflow-hidden">
-        <BrowserTabChat :tab-id="props.tabId" @set-mode="onSetMode" />
+        <BrowserTabChat :tab-id="props.tabId" @set-mode="onSetMode" @navigate-url="onNavigateUrl" />
       </div>
     </template>
 
@@ -182,6 +182,11 @@ const tabContent = computed(() => getTab(props.tabId)?.content || '');
 
 function onSetMode(mode: BrowserTabMode) {
   updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
+}
+
+function onNavigateUrl(input: string) {
+  addressBarUrl.value = normalizeUrl(input);
+  navigate();
 }
 
 function onStartChat(_chatQuery: string) {
@@ -353,7 +358,7 @@ function navigate() {
   if (looksLikeUrl(input)) {
     const url = normalizeUrl(input);
 
-    if (tabMode.value === 'welcome') {
+    if (tabMode.value !== 'browser') {
       onSetMode('browser');
     }
 
