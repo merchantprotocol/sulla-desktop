@@ -628,7 +628,7 @@ export class ChatCompletionsServer {
       // ── Build native tool endpoints by category (for merging with integrations or standalone) ──
       const { toolRegistry } = await import('@pkg/agent/tools/registry');
       const { ToolRegistry } = await import('@pkg/agent/tools/registry');
-      const INTERNAL_CATEGORIES = ['bridge', 'calendar', 'docker', 'extensions', 'github', 'integrations', 'kubectl', 'lima', 'n8n', 'pg', 'playwright', 'rdctl', 'redis', 'slack'];
+      const INTERNAL_CATEGORIES = ['bridge', 'calendar', 'chrome', 'computer-use', 'docker', 'extensions', 'github', 'integrations', 'kubectl', 'lima', 'n8n', 'pg', 'playwright', 'rdctl', 'redis', 'slack'];
 
       // Individual stateless tools from mixed categories (where the rest of the category uses state)
       const INTERNAL_INDIVIDUAL_TOOLS = [
