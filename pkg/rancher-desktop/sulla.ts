@@ -381,6 +381,77 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
   });
 
+  // ── Screenshot capture via CDP ───────────────────────────────────────────
+  ipcMainProxy.handle('browser-tab:capture-screenshot', async(event: Electron.IpcMainInvokeEvent, options?: {
+    format?: 'jpeg' | 'png';
+    quality?: number;
+    clip?: { x: number; y: number; width: number; height: number; scale?: number };
+  }) => {
+    const wc = event.sender;
+
+    try {
+      if (!wc.debugger.isAttached()) {
+        wc.debugger.attach('1.3');
+      }
+
+      const cdpParams: Record<string, unknown> = {
+        format:               options?.format ?? 'jpeg',
+        quality:              options?.quality ?? 80,
+        captureBeyondViewport: false,
+      };
+
+      if (options?.clip) {
+        cdpParams.clip = {
+          x:      options.clip.x,
+          y:      options.clip.y,
+          width:  options.clip.width,
+          height: options.clip.height,
+          scale:  options.clip.scale ?? 1,
+        };
+      }
+
+      const result = await wc.debugger.sendCommand('Page.captureScreenshot', cdpParams);
+
+      return {
+        base64:    result.data as string,
+        mediaType: `image/${ cdpParams.format }`,
+      };
+    } catch (err) {
+      console.warn('[Sulla] browser-tab:capture-screenshot CDP error:', err);
+      return null;
+    }
+  });
+
+  // ── Mouse events via CDP ────────────────────────────────────────────────
+  ipcMainProxy.handle('browser-tab:send-mouse-event', async(event: Electron.IpcMainInvokeEvent, mouseEvent: {
+    type: 'mousePressed' | 'mouseReleased' | 'mouseMoved';
+    x: number;
+    y: number;
+    button?: 'left' | 'right' | 'middle' | 'none';
+    clickCount?: number;
+  }) => {
+    const wc = event.sender;
+
+    try {
+      if (!wc.debugger.isAttached()) {
+        wc.debugger.attach('1.3');
+      }
+
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type:       mouseEvent.type,
+        x:          mouseEvent.x,
+        y:          mouseEvent.y,
+        button:     mouseEvent.button ?? 'left',
+        clickCount: mouseEvent.clickCount ?? 1,
+      });
+
+      return true;
+    } catch (err) {
+      console.warn('[Sulla] browser-tab:send-mouse-event CDP error:', err);
+      return false;
+    }
+  });
+
   // Handle app quit requests from the UI
   ipcMainProxy.handle('app-quit', async() => {
     console.log('[Sulla] Quitting application...');

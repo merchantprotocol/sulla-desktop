@@ -12,7 +12,6 @@ export class WaitForElementWorker extends BaseTool {
     const { selector, timeout = 5000 } = input;
     const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
-
     try {
       const found = await result.bridge.waitForSelector(selector, timeout);
       if (found) {

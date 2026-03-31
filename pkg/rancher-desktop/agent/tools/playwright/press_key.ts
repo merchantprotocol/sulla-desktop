@@ -9,7 +9,6 @@ export class PressKeyWorker extends BaseTool {
     const { key, handle } = input;
     const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
-
     try {
       const success = await result.bridge.pressKey(key, handle);
       if (!success) {

@@ -255,7 +255,31 @@ export class BrowsePageWorker extends BaseTool {
   /* ── scroll_down / scroll_up ── */
 
   private async handleScroll(bridge: any, assetId: string, direction: string): Promise<ToolResponse> {
-    const result = await bridge.scrollAndCapture(direction);
+    let result: any;
+    try {
+      result = await bridge.scrollAndCapture(direction);
+    } catch {
+      result = null;
+    }
+
+    // Fallback: if sullaBridge.scrollAndCapture failed, use plain window.scrollBy
+    if (!result || (result.noNewContent && !result.scrollInfo?.percent)) {
+      try {
+        const px = direction === 'up' ? -600 : 600;
+        await bridge.execInPage(`window.scrollBy(0, ${ px })`);
+        await new Promise(r => setTimeout(r, 300));
+        const info = await bridge.getScrollInfo();
+        const pct = info?.percent ?? '?';
+        const more = info?.moreBelow !== false;
+        return {
+          successBoolean: true,
+          responseString: `[${ assetId }] Scrolled ${ direction }. Scroll: ${ pct }%${ more ? ' — more content below.' : ' — at bottom.' }`,
+        };
+      } catch {
+        return { successBoolean: true, responseString: `[${ assetId }] Scrolled ${ direction }.` };
+      }
+    }
+
     const scroll = result.scrollInfo || {};
     const percent = scroll.percent ?? '?';
     const moreBelow = scroll.moreBelow !== false;
@@ -280,7 +304,12 @@ export class BrowsePageWorker extends BaseTool {
   /* ── scroll_to_top ── */
 
   private async handleScrollToTop(bridge: any, assetId: string): Promise<ToolResponse> {
-    await bridge.scrollToTop();
+    try {
+      await bridge.scrollToTop();
+    } catch {
+      // Fallback
+      try { await bridge.execInPage('window.scrollTo(0, 0)'); } catch { /* */ }
+    }
     return { successBoolean: true, responseString: `[${ assetId }] Scrolled to top of page.` };
   }
 

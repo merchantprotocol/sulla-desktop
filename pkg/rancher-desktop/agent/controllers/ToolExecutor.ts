@@ -411,7 +411,15 @@ export class ToolExecutor {
 
     const toolCallId = result.toolCallId || `${ action }_${ Date.now() }`;
 
-    // 1. Node run context (current LLM turn visibility)
+    // Check if the tool result contains a screenshot (from visual tools)
+    const toolResult = result.result as any;
+    const screenshotBase64 = toolResult?.screenshotBase64
+      || toolResult?.result?.screenshotBase64;
+    const screenshotMediaType = toolResult?.screenshotMediaType
+      || toolResult?.result?.screenshotMediaType
+      || 'image/jpeg';
+
+    // 1. Node run context (current LLM turn visibility) — text only
     if (this.ctx.currentNodeRunContext) {
       this.ctx.currentNodeRunContext.messages.push({
         role:         'tool',
@@ -430,10 +438,22 @@ export class ToolExecutor {
     }
 
     // 2. Persist to state.messages as native tool_result (user role)
+    // When a screenshot is present, include it as an image content block
+    // so the LLM can see the page visually.
+    let toolResultContent: string | any[];
+    if (screenshotBase64) {
+      toolResultContent = [
+        { type: 'image', source: { type: 'base64', media_type: screenshotMediaType, data: screenshotBase64 } },
+        { type: 'text', text: resultContent },
+      ];
+    } else {
+      toolResultContent = resultContent;
+    }
+
     const newToolResultBlock = {
       type:        'tool_result',
       tool_use_id: toolCallId,
-      content:     resultContent,
+      content:     toolResultContent,
     };
 
     const lastMsg = state.messages[state.messages.length - 1];

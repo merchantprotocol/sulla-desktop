@@ -333,7 +333,8 @@ export class AgentPersonaService {
 
   // Internal clean version
   private async _addUserMessage(content: string, extraMetadata?: Record<string, unknown>): Promise<boolean> {
-    if (!content.trim()) return false;
+    const hasAttachments = Array.isArray(extraMetadata?.attachments) && (extraMetadata!.attachments as any[]).length > 0;
+    if (!content.trim() && !hasAttachments) return false;
 
     const id = this.state.agentId;
     console.log(`[AgentPersonaService] _addUserMessage() — channel="${ id }", threadId="${ this.state.threadId || '(none)' }", content="${ content.slice(0, 80) }"`);
@@ -341,13 +342,23 @@ export class AgentPersonaService {
     this.waitingForUser.value = false;
     this.currentActivity.value = 'Thinking';
 
-    this.messages.push({
+    // Build local message with optional image preview for the chat UI
+    const attachments = extraMetadata?.attachments as any[] | undefined;
+    const firstImage = attachments?.find((a: any) => a?.type === 'image' && a?.source?.data);
+    const localMessage: any = {
       id:        `user_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
       channelId: id,
       threadId:  this.state.threadId,
       role:      'user',
-      content,
-    });
+      content:   content || (firstImage ? '(image attached)' : ''),
+    };
+    if (firstImage) {
+      localMessage.image = {
+        dataUrl:     `data:${ firstImage.source.media_type };base64,${ firstImage.source.data }`,
+        contentType: firstImage.source.media_type,
+      };
+    }
+    this.messages.push(localMessage);
 
     this.registry.setLoading(id, true);
 

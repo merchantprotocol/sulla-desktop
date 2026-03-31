@@ -11,7 +11,6 @@ export class GetFormValuesWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
-
     try {
       const values = await result.bridge.getFormValues();
       const entries = Object.entries(values);

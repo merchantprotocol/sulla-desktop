@@ -76,7 +76,7 @@
         </form>
       </div>
 
-      <div class="iframe-container">
+      <div class="iframe-container" style="position: relative;">
         <iframe
           ref="iframeRef"
           :src="currentUrl"
@@ -85,6 +85,7 @@
           referrerpolicy="no-referrer-when-downgrade"
           @load="onFrameLoad"
         />
+        <CursorOverlay :asset-id="bridgeId()" />
       </div>
     </template>
 
@@ -152,6 +153,7 @@ import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import SecretaryMode from './SecretaryMode.vue';
+import CursorOverlay from '@pkg/components/CursorOverlay.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';

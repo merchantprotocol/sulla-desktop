@@ -16,7 +16,6 @@ export class SetFieldWorker extends BaseTool {
     const { handle, value } = input;
     const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
-
     try {
       // Listen for navigation before setting the field
       const navPromise = waitForNavigation(result.assetId);

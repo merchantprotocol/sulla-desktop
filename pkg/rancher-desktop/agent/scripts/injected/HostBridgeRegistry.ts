@@ -28,7 +28,7 @@ export interface BridgeEntry {
 
 export interface RegistryDomEvent {
   assetId:   string;
-  type:      'domChange' | 'dialog' | 'routeChanged' | 'click' | 'pageContent' | 'contentAdded';
+  type:      'domChange' | 'dialog' | 'routeChanged' | 'click' | 'pageContent' | 'contentAdded' | 'injected';
   message:   string;
   timestamp: number;
 }
@@ -104,6 +104,15 @@ class HostBridgeRegistryImpl {
         assetId,
         type:      'pageContent',
         message:   `[CONTENT ${ assetId }] ${ payload.title }${ truncNote }\n${ payload.content }`,
+        timestamp: payload.timestamp,
+      });
+    }));
+
+    unsubs.push(bridge.on('injected', (payload) => {
+      this.emitRegistryEvent({
+        assetId,
+        type:      'injected',
+        message:   `[INJECTED ${ assetId }] Bridge ready on ${ payload.url }`,
         timestamp: payload.timestamp,
       });
     }));

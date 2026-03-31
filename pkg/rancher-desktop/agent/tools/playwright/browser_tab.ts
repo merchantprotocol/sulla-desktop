@@ -3,6 +3,7 @@ import { getWebSocketClientService } from '../../services/WebSocketClientService
 import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
 import { wrapWithBlockingWarning } from './detect_blocking';
 
+
 /**
  * Browser Tab Tool — open, navigate, or close browser tabs.
  *
@@ -34,10 +35,18 @@ export class BrowserTabWorker extends BaseTool {
       if (!removeId) {
         return { successBoolean: false, responseString: 'assetId is required when action is remove.' };
       }
+      // Close the tab directly via bridge → renderer tab system
+      const closed = await hostBridgeProxy.closeTabByAssetId(removeId);
+      // Also notify the persona asset system for cleanup
       await wsService.send(wsChannel, {
         type: 'deactivate_asset', data: { assetId: removeId }, timestamp: Date.now(),
       });
-      return { successBoolean: true, responseString: `Removed active asset ${ removeId }` };
+      return {
+        successBoolean: true,
+        responseString: closed
+          ? `Closed tab "${ removeId }"`
+          : `Tab "${ removeId }" not found in tab system (asset deactivated)`,
+      };
     }
 
     /* ── Validate ── */

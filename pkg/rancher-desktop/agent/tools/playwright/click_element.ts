@@ -6,8 +6,9 @@ import { waitForNavigation, formatPageState } from './wait_for_navigation';
  * Click Element Tool - Clicks a button, link, or element on a website asset.
  *
  * If the click triggers navigation (new page, SPA route change), this tool
- * automatically waits for the new page to load and returns the full page
- * state — title, URL, interactive elements, and reader content.
+ * waits for the page to load and returns the full page state.
+ * Bridge readiness is handled by the state machine in WebviewHostBridge —
+ * commands auto-wait for READY state after navigation.
  */
 export class ClickElementWorker extends BaseTool {
   name = '';
@@ -19,7 +20,6 @@ export class ClickElementWorker extends BaseTool {
     if (!isBridgeResolved(result)) return result;
 
     try {
-      // Start listening for navigation BEFORE the click
       const navPromise = waitForNavigation(result.assetId);
 
       const clicked = await result.bridge.click(handle);
@@ -31,7 +31,6 @@ export class ClickElementWorker extends BaseTool {
         };
       }
 
-      // Wait to see if the click caused navigation
       const navResult = await navPromise;
 
       if (navResult && navResult.navigated) {
@@ -42,7 +41,7 @@ export class ClickElementWorker extends BaseTool {
         };
       }
 
-      // No navigation — just confirm the click. Read current state for context.
+      // No navigation — read current state. Bridge auto-waits if it's recovering.
       try {
         const snapshot = await result.bridge.getActionableMarkdown();
         const readerContent = await result.bridge.getReaderContent();

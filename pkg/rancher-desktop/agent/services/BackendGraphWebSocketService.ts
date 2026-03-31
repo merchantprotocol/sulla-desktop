@@ -177,7 +177,8 @@ export class BackendGraphWebSocketService {
 
     const data = typeof msg.data === 'string' ? { content: msg.data } : (msg.data as any);
     const content = (data?.content ?? '').trim();
-    if (!content) return;
+    const hasAttachments = Array.isArray(data?.metadata?.attachments) && data.metadata.attachments.length > 0;
+    if (!content && !hasAttachments) return;
 
     // ThreadId is owned by the frontend chat interface — reuse it to maintain conversation
     const threadIdFromMsg = data?.threadId as string | undefined;
@@ -197,10 +198,10 @@ export class BackendGraphWebSocketService {
     const overrideAgentId = metadata?.agentId as string | undefined;
     const inputSource = metadata?.inputSource as string | undefined;
 
-    await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource);
+    await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource, metadata);
   }
 
-  private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string): Promise<void> {
+  private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<void> {
     const agentId = overrideAgentId || await getAgentIdForTrigger(triggerType);
 
     // Use the frontend's threadId if provided (maintains conversation).
@@ -242,11 +243,20 @@ export class BackendGraphWebSocketService {
       // Reset each dispatch so keyboard messages don't inherit a prior voice flag.
       (state.metadata as any).inputSource = inputSource || 'keyboard';
 
-      // Append user message
+      // Append user message — include image attachments as content blocks if present
+      const attachments = metadata?.attachments as any[] | undefined;
+      const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+      const messageContent: any = hasAttachments
+        ? [
+          { type: 'text', text: message },
+          ...attachments.filter((a: any) => a?.type === 'image' && a?.source?.type === 'base64'),
+        ]
+        : message;
+
       state.messages.push({
         id:        nextMessageId(),
         role:      'user',
-        content:   message,
+        content:   messageContent,
         timestamp: Date.now(),
         metadata:  { source: 'backend', inputSource: inputSource || 'keyboard' },
       } as any);

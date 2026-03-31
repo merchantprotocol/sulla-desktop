@@ -10,7 +10,25 @@
  */
 
 import { hostBridgeRegistry } from './HostBridgeRegistry';
+import { closeTabByAssetId } from '@pkg/composables/useBrowserTabs';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
+
+/**
+ * Get the bounding rect offset of the iframe for a given assetId.
+ * CDP mouse events target the full renderer window, but tool coordinates
+ * are relative to the iframe content. This returns the offset to translate.
+ */
+function getIframeOffset(assetId?: string): { x: number; y: number } {
+  // Find the iframe element in the renderer DOM
+  const iframes = document.querySelectorAll('iframe.browser-frame, iframe[src]');
+  for (const iframe of iframes) {
+    const rect = iframe.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      return { x: Math.round(rect.left), y: Math.round(rect.top) };
+    }
+  }
+  return { x: 0, y: 0 };
+}
 
 const WS_CHANNEL = 'bridge-ipc';
 
@@ -199,6 +217,185 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
       const bridge = hostBridgeRegistry.resolve(asString(args[0]));
 
       return bridge ? await bridge.getPageUrl() : '';
+    }
+
+    // ── Visual / Computer Use methods (CDP-based) ──
+
+    case 'resolve:captureScreenshot': {
+      const options = (args[1] as any) || {};
+      try {
+        const { ipcRenderer } = require('electron');
+        // Crop to iframe bounds so screenshot matches grid/annotation coordinates
+        if (!options.clip) {
+          const offset = getIframeOffset(asString(args[0]));
+          const iframe = document.querySelector('iframe.browser-frame, iframe[src]') as HTMLIFrameElement | null;
+          if (iframe) {
+            const rect = iframe.getBoundingClientRect();
+            options.clip = {
+              x:      Math.round(rect.left),
+              y:      Math.round(rect.top),
+              width:  Math.round(rect.width),
+              height: Math.round(rect.height),
+              scale:  1,
+            };
+          }
+        }
+        return await ipcRenderer.invoke('browser-tab:capture-screenshot', options);
+      } catch (err) {
+        console.warn('[HostBridgeIpcRenderer] captureScreenshot error:', err);
+        return null;
+      }
+    }
+
+    case 'resolve:clickAtCoordinate': {
+      const offset = getIframeOffset(asString(args[0]));
+      const x = (args[1] as number) + offset.x;
+      const y = (args[2] as number) + offset.y;
+      const options = (args[3] as any) || {};
+      try {
+        const { ipcRenderer } = require('electron');
+        await ipcRenderer.invoke('browser-tab:send-mouse-event', {
+          type: 'mousePressed', x, y,
+          button: options.button ?? 'left',
+          clickCount: options.clickCount ?? 1,
+        });
+        await ipcRenderer.invoke('browser-tab:send-mouse-event', {
+          type: 'mouseReleased', x, y,
+          button: options.button ?? 'left',
+          clickCount: options.clickCount ?? 1,
+        });
+        return true;
+      } catch (err) {
+        console.warn('[HostBridgeIpcRenderer] clickAtCoordinate error:', err);
+        return false;
+      }
+    }
+
+    case 'resolve:moveMouse': {
+      const moveOffset = getIframeOffset(asString(args[0]));
+      const mx = (args[1] as number) + moveOffset.x;
+      const my = (args[2] as number) + moveOffset.y;
+      try {
+        const { ipcRenderer } = require('electron');
+        await ipcRenderer.invoke('browser-tab:send-mouse-event', {
+          type: 'mouseMoved', x: mx, y: my, button: 'none',
+        });
+        return true;
+      } catch (err) {
+        console.warn('[HostBridgeIpcRenderer] moveMouse error:', err);
+        return false;
+      }
+    }
+
+    case 'resolve:dragFromTo': {
+      const dragOffset = getIframeOffset(asString(args[0]));
+      const fromX = (args[1] as number) + dragOffset.x;
+      const fromY = (args[2] as number) + dragOffset.y;
+      const toX = (args[3] as number) + dragOffset.x;
+      const toY = (args[4] as number) + dragOffset.y;
+      try {
+        const { ipcRenderer } = require('electron');
+        await ipcRenderer.invoke('browser-tab:send-mouse-event', { type: 'mousePressed', x: fromX, y: fromY, button: 'left' });
+        const steps = 10;
+        for (let i = 1; i <= steps; i++) {
+          const mx = fromX + (toX - fromX) * (i / steps);
+          const my = fromY + (toY - fromY) * (i / steps);
+          await ipcRenderer.invoke('browser-tab:send-mouse-event', { type: 'mouseMoved', x: mx, y: my, button: 'left' });
+        }
+        await ipcRenderer.invoke('browser-tab:send-mouse-event', { type: 'mouseReleased', x: toX, y: toY, button: 'left' });
+        return true;
+      } catch (err) {
+        console.warn('[HostBridgeIpcRenderer] dragFromTo error:', err);
+        return false;
+      }
+    }
+
+    case 'resolve:scrollAtCoordinate': {
+      const x = args[1] as number;
+      const y = args[2] as number;
+      const deltaX = args[3] as number;
+      const deltaY = args[4] as number;
+      try {
+        const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+        if (bridge) {
+          // Use JS scrollBy via bridge — more reliable than CDP scroll
+          await bridge.execInPage(`window.scrollBy(${deltaX}, ${deltaY})`);
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.warn('[HostBridgeIpcRenderer] scrollAtCoordinate error:', err);
+        return false;
+      }
+    }
+
+    case 'resolve:typeText': {
+      const text = args[1] as string;
+      try {
+        const { ipcRenderer } = require('electron');
+        for (const char of text) {
+          await ipcRenderer.invoke('browser-tab:send-input-event', { key: char, type: 'keyDown' });
+          await ipcRenderer.invoke('browser-tab:send-input-event', { key: char, type: 'char' });
+          await ipcRenderer.invoke('browser-tab:send-input-event', { key: char, type: 'keyUp' });
+        }
+        return true;
+      } catch (err) {
+        console.warn('[HostBridgeIpcRenderer] typeText error:', err);
+        return false;
+      }
+    }
+
+    case 'resolve:annotateElements': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+      if (!bridge) return [];
+      return await bridge.execInPage(`
+        (function() {
+          // Remove existing annotations
+          document.querySelectorAll('[data-sulla-annotation]').forEach(el => el.remove());
+          const interactive = document.querySelectorAll('a, button, input, textarea, select, [role="button"], [tabindex], [onclick]');
+          const results = [];
+          let index = 1;
+          for (const el of interactive) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) continue;
+            if (rect.top > window.innerHeight || rect.bottom < 0) continue;
+            const label = el.textContent?.trim().slice(0, 30) || el.getAttribute('aria-label') || el.tagName.toLowerCase();
+            // Create overlay
+            const overlay = document.createElement('div');
+            overlay.setAttribute('data-sulla-annotation', String(index));
+            overlay.style.cssText = 'position:fixed;border:2px solid #ff4444;background:rgba(255,68,68,0.1);pointer-events:none;z-index:999999;' +
+              'top:' + rect.top + 'px;left:' + rect.left + 'px;width:' + rect.width + 'px;height:' + rect.height + 'px;';
+            const badge = document.createElement('span');
+            badge.style.cssText = 'position:absolute;top:-10px;left:-4px;background:#ff4444;color:white;font-size:10px;padding:1px 4px;border-radius:4px;font-weight:bold;';
+            badge.textContent = String(index);
+            overlay.appendChild(badge);
+            document.body.appendChild(overlay);
+            results.push({ index, label, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: Math.round(rect.width), height: Math.round(rect.height) });
+            index++;
+            if (index > 50) break;
+          }
+          return results;
+        })()
+      `);
+    }
+
+    case 'resolve:removeAnnotations': {
+      const bridge = hostBridgeRegistry.resolve(asString(args[0]));
+      if (bridge) {
+        await bridge.execInPage(`document.querySelectorAll('[data-sulla-annotation]').forEach(el => el.remove())`);
+      }
+      return;
+    }
+
+    // ── Tab management ──
+
+    case 'closeTabByAssetId': {
+      const assetId = asString(args[0]);
+      if (!assetId) return false;
+      // Unregister from bridge registry
+      hostBridgeRegistry.unregisterBridge(assetId);
+      // Close the actual browser tab
+      return closeTabByAssetId(assetId);
     }
 
     default:
