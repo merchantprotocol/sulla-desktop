@@ -1,6 +1,10 @@
 // src/services/ThreadStateStore.ts
 import type { BaseThreadState } from '../nodes/Graph';
 import Redis from 'ioredis';
+import fs from 'node:fs';
+import readline from 'node:readline';
+
+import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
 
 // Redis client for thread state persistence
 let redis: Redis | null = null;
@@ -75,7 +79,141 @@ export async function loadThreadState(threadId: string): Promise<BaseThreadState
 
   // Fallback to memory store
   const saved = threadStore.get(threadId);
-  return saved ? await reconstructState(saved) : null;
+  if (saved) return await reconstructState(saved);
+
+  // Final fallback: restore from disk JSONL via ConversationHistoryModel
+  try {
+    const restored = await restoreFromDisk(threadId);
+    if (restored) {
+      console.log(`[ThreadStateStore] Restored thread ${ threadId } from disk JSONL, messages=${ restored.messages.length }`);
+      return restored;
+    }
+  } catch (err) {
+    console.error('[ThreadStateStore] Disk restoration failed for thread', threadId, err);
+  }
+
+  return null;
+}
+
+/**
+ * Restore a thread state from disk JSONL files when Redis TTL has expired.
+ * Looks up the conversation in ConversationHistoryModel, reads the JSONL log file,
+ * parses message events, and reconstructs a minimal BaseThreadState.
+ */
+async function restoreFromDisk(threadId: string): Promise<BaseThreadState | null> {
+  // 1. Look up conversation record by thread_id
+  const record = await ConversationHistoryModel.getByThread(threadId);
+  if (!record || !record.log_file) {
+    return null;
+  }
+
+  // 2. Check log file exists
+  if (!fs.existsSync(record.log_file)) {
+    console.warn(`[ThreadStateStore] Log file not found for thread ${ threadId }: ${ record.log_file }`);
+    return null;
+  }
+
+  // 3. Read and parse JSONL file line by line
+  const messages: BaseThreadState['messages'] = [];
+  const fileStream = fs.createReadStream(record.log_file, { encoding: 'utf-8' });
+  const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    try {
+      const event = JSON.parse(trimmed);
+
+      // Only reconstruct from message events
+      if (event.type === 'message' && event.role && event.content) {
+        messages.push({
+          role:     event.role,
+          content:  event.content,
+          metadata: { timestamp: event.ts ? new Date(event.ts).getTime() : Date.now() },
+        });
+      }
+    } catch {
+      // Skip malformed lines
+    }
+  }
+
+  if (messages.length === 0) {
+    console.warn(`[ThreadStateStore] No messages found in log file for thread ${ threadId }`);
+    return null;
+  }
+
+  // 4. Inject conversation summary from DB as the first message if available
+  if (record.last_summary) {
+    try {
+      const observations = JSON.parse(record.last_summary);
+      if (Array.isArray(observations) && observations.length > 0) {
+        const sections: string[] = [];
+        const critical = observations.filter((o: any) => o.priority === '\uD83D\uDD34');
+        const valuable = observations.filter((o: any) => o.priority === '\uD83D\uDFE1');
+        const low = observations.filter((o: any) => o.priority === '\u26AA');
+
+        if (critical.length > 0) {
+          sections.push(`**Critical Context:**\n${ critical.map((o: any) => `• ${ o.content }`).join('\n') }`);
+        }
+        if (valuable.length > 0) {
+          sections.push(`**Key Context:**\n${ valuable.map((o: any) => `• ${ o.content }`).join('\n') }`);
+        }
+        if (low.length > 0) {
+          sections.push(`**Background:**\n${ low.map((o: any) => `• ${ o.content }`).join('\n') }`);
+        }
+
+        if (sections.length > 0) {
+          messages.unshift({
+            role:     'assistant',
+            content:  `## Conversation Summary\n\n${ sections.join('\n\n') }`,
+            metadata: { _conversationSummary: true, timestamp: Date.now() },
+          });
+        }
+      }
+    } catch {
+      // Skip malformed summary JSON
+    }
+  }
+
+  // 5. Build reconstructed BaseThreadState
+  const state: BaseThreadState = {
+    messages,
+    metadata: {
+      action:               'direct_answer',
+      threadId,
+      wsChannel:            record.channel_id ?? '',
+      conversationId:       record.id,
+      cycleComplete:        false,
+      waitingForUser:       true, // Restored conversations wait for user input
+      isSubAgent:           false,
+      subAgentDepth:        0,
+      llmModel:             '',
+      llmLocal:             false,
+      options:              {},
+      currentNodeId:        'input_handler',
+      consecutiveSameNode:  0,
+      iterations:           0,
+      revisionCount:        0,
+      maxIterationsReached: false,
+      memory:               {
+        knowledgeBaseContext: '',
+        chatSummariesContext: record.summary ?? '',
+      },
+      subGraph: {
+        state:    'completed',
+        name:     'hierarchical',
+        prompt:   '',
+        response: '',
+      },
+      finalSummary:         '',
+      finalState:           'running',
+      n8nLiveEventsEnabled: false,
+      returnTo:             null,
+    },
+  };
+
+  return state;
 }
 
 export async function deleteThreadState(threadId: string): Promise<void> {

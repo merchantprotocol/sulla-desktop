@@ -26,6 +26,7 @@ import path from 'node:path';
 import util from 'node:util';
 
 import { resolveSullaLogsDir } from '../utils/sullaPaths';
+import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
 
 // ── Types ──
 
@@ -325,6 +326,10 @@ class SullaLogger extends EventEmitter {
   /** Maps conversationId → resolved JSONL file path (set on start). */
   private jsonlPaths = new Map<string, string>();
 
+  // ── Activity throttle: track last DB update per conversationId ──
+  private lastActivityUpdate = new Map<string, number>();
+  private static readonly ACTIVITY_THROTTLE_MS = 30_000; // 30 seconds
+
   // ── Topic log cache (static, shared across all callers) ──
   private static topics = new Map<string, TopicLog>();
 
@@ -395,6 +400,19 @@ class SullaLogger extends EventEmitter {
       fs.appendFileSync(this.indexPath, formatMeta(meta), 'utf-8');
       fs.appendFileSync(this.indexJsonlPath, JSON.stringify(meta) + '\n', 'utf-8');
       this.emit('conversation', { kind: 'start', meta });
+
+      // Record to conversation history DB (fire-and-forget)
+      const logFile = this.resolveJsonlPath(meta.id);
+      ConversationHistoryModel.recordConversation({
+        id:         meta.id,
+        type:       meta.type,
+        title:      meta.name,
+        thread_id:  meta.id,
+        channel_id: meta.channel,
+        agent_id:   meta.agentId,
+        status:     'active',
+        log_file:   logFile,
+      }).catch(err => globalThis.console.error('[SullaLogger] Failed to record conversation to history:', err));
     } catch (err) {
       // Use globalThis.console to avoid circular reference
       globalThis.console.error('[SullaLogger] Failed to write index entry:', err);
@@ -408,6 +426,12 @@ class SullaLogger extends EventEmitter {
       fs.appendFileSync(this.indexPath, formatMeta(meta as any), 'utf-8');
       fs.appendFileSync(this.indexJsonlPath, JSON.stringify({ ...meta, _update: true }) + '\n', 'utf-8');
       this.emit('conversation', { kind: 'update', meta });
+
+      // If status indicates completion, close in history DB
+      if (meta.status === 'completed' || meta.status === 'failed') {
+        ConversationHistoryModel.closeConversation(meta.id)
+          .catch(err => globalThis.console.error('[SullaLogger] Failed to close conversation in history:', err));
+      }
     } catch (err) {
       globalThis.console.error('[SullaLogger] Failed to update index:', err);
     }
@@ -422,6 +446,15 @@ class SullaLogger extends EventEmitter {
       const jsonlPath = this.resolveJsonlPath(conversationId);
       fs.appendFileSync(jsonlPath, JSON.stringify(event) + '\n', 'utf-8');
       this.emit('event', { conversationId, event });
+
+      // Throttled activity update to history DB (max once per 30s per conversation)
+      const now = Date.now();
+      const lastUpdate = this.lastActivityUpdate.get(conversationId) ?? 0;
+      if (now - lastUpdate >= SullaLogger.ACTIVITY_THROTTLE_MS) {
+        this.lastActivityUpdate.set(conversationId, now);
+        ConversationHistoryModel.updateActivity(conversationId)
+          .catch(err => globalThis.console.error('[SullaLogger] Failed to update activity in history:', err));
+      }
     } catch (err) {
       globalThis.console.error('[SullaLogger] Failed to write event:', err);
     }
