@@ -3,6 +3,7 @@ import path from 'path';
 import Electron, { WebContentsView, session } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
+import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 import paths from '@pkg/utils/paths';
 import Logging from '@pkg/utils/logging';
 import { getWindow } from '@pkg/window';
@@ -29,6 +30,7 @@ export class BrowserTabViewManager {
   private retryTimers = new Map<string, ReturnType<typeof setInterval>>();
   private acceptedCertHosts = new Set<string>(); // hosts where user clicked "Proceed"
   private sessionInitialised = false;
+  private webRequestFixer: SullaWebRequestFixer | null = null;
 
   private constructor() {}
 
@@ -48,11 +50,11 @@ export class BrowserTabViewManager {
     const sess = session.fromPartition(SESSION_PARTITION);
 
     if (!this.sessionInitialised) {
-      const fixer = new SullaWebRequestFixer((event) => {
+      this.webRequestFixer = new SullaWebRequestFixer((event) => {
         console.log('[BrowserTabView] webRequest event:', JSON.stringify(event));
       });
 
-      fixer.attachToSession(sess);
+      this.webRequestFixer.attachToSession(sess);
 
       // Set a clean User-Agent that matches a normal Chrome browser.
       // The default includes "Electron" and "SullaDesktop" which fingerprint
@@ -267,6 +269,11 @@ export class BrowserTabViewManager {
     return this.views.get(tabId)?.webContents ?? null;
   }
 
+  /** Returns the SullaWebRequestFixer instance for the shared browser session. */
+  getWebRequestFixer(): SullaWebRequestFixer | null {
+    return this.webRequestFixer;
+  }
+
   /**
    * Mark a host's certificate as accepted and reload the tab.
    * Called when the user clicks "Proceed" on the certificate warning page.
@@ -431,26 +438,98 @@ export class BrowserTabViewManager {
     wc.on('did-start-loading', sendState);
     wc.on('did-stop-loading', sendState);
 
-    // Forward right-click context to the renderer so the Vue-based
-    // BrowserContextMenu can display a styled menu matching the app theme.
+    // Inject a Shadow DOM context menu directly into the web page.
+    // This renders inside the native WebContentsView layer so it's
+    // always on top, and Shadow DOM isolates styles from the host page.
     wc.on('context-menu', (_event, params) => {
-      if (mainWindow.isDestroyed()) {
-        return;
-      }
-      mainWindow.webContents.send('browser-context-menu:show', {
+      if (mainWindow.isDestroyed()) return;
+
+      const ctx = {
         tabId,
         x:                    params.x,
         y:                    params.y,
-        selectionText:        params.selectionText,
-        linkURL:              params.linkURL,
-        srcURL:               params.srcURL,
-        mediaType:            params.mediaType,
+        selectionText:        params.selectionText || '',
+        linkURL:              params.linkURL || '',
+        srcURL:               params.srcURL || '',
+        mediaType:            params.mediaType || '',
         isEditable:           params.isEditable,
-        misspelledWord:       params.misspelledWord,
-        dictionarySuggestions: params.dictionarySuggestions,
+        misspelledWord:       params.misspelledWord || '',
+        dictionarySuggestions: params.dictionarySuggestions || [],
         canGoBack:            wc.canGoBack(),
         canGoForward:         wc.canGoForward(),
         pageURL:              wc.getURL(),
+      };
+
+      const script = buildContextMenuInjection(ctx);
+
+      wc.executeJavaScript(script, true).catch((err) => {
+        console.error('[BrowserTabView] context menu injection failed:', err);
+      });
+    });
+
+    // Handle context menu actions from the injected Shadow DOM menu.
+    // The menu calls __sullaBridgeEmit('context-menu-action', payload)
+    // which arrives here via the preload's ipcRenderer.send().
+    wc.ipc.on('browser-tab-view:bridge-event', (_event: Electron.IpcMainEvent, msg: { type: string; data: any }) => {
+      if (msg.type !== 'context-menu-action') return;
+      const { action, ...data } = msg.data || {};
+
+      // Always remove the menu element first to avoid it interfering
+      // with actions like select-all or DOM-based operations.
+      wc.executeJavaScript(
+        'var m=document.querySelector("sulla-context-menu");if(m)m.remove();', true,
+      ).catch(() => {}).then(() => {
+        switch (action) {
+        case 'copy':              wc.copy(); break;
+        case 'cut':               wc.cut(); break;
+        case 'paste':             wc.paste(); break;
+        case 'select-all':        wc.selectAll(); break;
+        case 'undo':              wc.undo(); break;
+        case 'redo':              wc.redo(); break;
+        case 'go-back':           wc.goBack(); break;
+        case 'go-forward':        wc.goForward(); break;
+        case 'reload':            wc.reload(); break;
+        case 'copy-image':        wc.copyImageAt(data.x ?? 0, data.y ?? 0); break;
+        case 'inspect':           wc.inspectElement(data.x ?? 0, data.y ?? 0); break;
+        case 'replace-selection':  wc.replace(data.text ?? ''); break;
+        case 'add-to-dictionary': wc.session.addWordToSpellCheckerDictionary(data.word ?? ''); break;
+
+        case 'copy-link':
+        case 'copy-image-address': {
+          const { clipboard } = require('electron') as typeof Electron;
+
+          clipboard.writeText(data.url ?? '');
+          break;
+        }
+
+        case 'save-image':
+          if (data.srcURL) wc.downloadURL(data.srcURL);
+          break;
+
+        case 'view-source':
+          wc.executeJavaScript('document.documentElement.outerHTML', true).then((html) => {
+            const { BrowserWindow: BW } = require('electron');
+            const win = new BW({ width: 800, height: 600, title: `Source: ${ wc.getURL() }` });
+
+            win.loadURL(`data:text/plain;charset=utf-8,${ encodeURIComponent(html as string) }`);
+          }).catch(() => {});
+          break;
+
+        // AI actions — forward to renderer
+        case 'open-link-tab':
+        case 'ai-ask':
+        case 'ai-summarize':
+        case 'ai-translate':
+        case 'ai-explain-page':
+        case 'ai-screenshot':
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('browser-context-menu:ai-action', { tabId, action, ...data });
+          }
+          break;
+
+        default:
+          console.warn(`[BrowserTabView] Unknown context menu action: ${ action }`);
+        }
       });
     });
 

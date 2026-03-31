@@ -11,7 +11,7 @@ import { IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { CommandOrControl, Shortcuts } from '@pkg/utils/shortcuts';
-import { mainRoutes } from '@pkg/window/constants';
+
 import { openPreferences } from '@pkg/window/preferences';
 
 const console = Logging[`window_${ process.type || 'unknown' }`];
@@ -169,18 +169,6 @@ export function openMain() {
       () => openPreferences(),
       'open preferences',
     );
-
-    mainRoutes.forEach(({ route }, index) => {
-      Shortcuts.register(
-        window,
-        {
-          ...CommandOrControl,
-          key: index + 1,
-        },
-        () => window.webContents.send('route', { path: route }),
-        `switch main tabs ${ route }`,
-      );
-    });
 
     Shortcuts.register(
       window,

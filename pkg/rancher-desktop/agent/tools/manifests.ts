@@ -22,11 +22,13 @@ import { extensionsToolManifests } from './extensions/manifests';
 import { agentToolManifests } from './agents/manifests';
 import { bridgeToolManifests } from './bridge/manifests';
 import { computerUseToolManifests } from './computer-use/manifests';
+import { chromeToolManifests } from './chrome/manifests';
 import { skillsToolManifests } from './skills/manifests';
 
 toolRegistry.registerManifests([
   ...agentToolManifests,
   ...bridgeToolManifests,
+  ...chromeToolManifests,
   ...computerUseToolManifests,
   ...calendarToolManifests,
   ...dockerToolManifests,
