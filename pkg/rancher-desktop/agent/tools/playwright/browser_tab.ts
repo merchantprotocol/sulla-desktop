@@ -7,7 +7,7 @@ import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
 /**
  * Browser Tab Tool — open, navigate, or close browser tabs.
  *
- * When opening/navigating an iframe tab, this tool:
+ * When opening/navigating a browser tab, this tool:
  *   1. Sends the upsert command to the frontend
  *   2. Listens for the pageContent event from that assetId (page loaded)
  *   3. Returns the full page state: title, URL, interactive elements, and
@@ -21,8 +21,9 @@ export class BrowserTabWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const action = String(input.action || 'upsert').trim().toLowerCase();
-    // Default to 'iframe' — most common case and avoids the model forgetting assetType when navigating
-    const assetType = String(input.assetType || 'iframe').trim().toLowerCase();
+    // Default to 'browser'. Accept 'iframe' as a legacy alias.
+    let assetType = String(input.assetType || 'browser').trim().toLowerCase();
+    if (assetType === 'iframe') assetType = 'browser';
     const skillSlug = typeof input.skillSlug === 'string' ? input.skillSlug.trim() : '';
     const wsChannel = 'sulla-desktop';
 
@@ -49,8 +50,8 @@ export class BrowserTabWorker extends BaseTool {
     }
 
     /* ── Validate ── */
-    if (assetType !== 'iframe' && assetType !== 'document') {
-      return { successBoolean: false, responseString: 'assetType must be either iframe or document.' };
+    if (assetType !== 'browser' && assetType !== 'document') {
+      return { successBoolean: false, responseString: 'assetType must be browser or document.' };
     }
 
     const assetId = typeof input.assetId === 'string' && input.assetId.trim().length > 0
@@ -62,7 +63,7 @@ export class BrowserTabWorker extends BaseTool {
     const refKey = typeof input.refKey === 'string' ? input.refKey : undefined;
     const title = typeof input.title === 'string' && input.title.trim().length > 0
       ? input.title.trim()
-      : (assetType === 'iframe' ? 'Website' : 'Document');
+      : (assetType === 'browser' ? 'Website' : 'Document');
 
     /* ── Document upsert (no bridge needed) ── */
     if (assetType === 'document') {
@@ -80,14 +81,14 @@ export class BrowserTabWorker extends BaseTool {
     /* ── Iframe upsert — open URL and wait for page load ── */
     const url = typeof input.url === 'string' ? input.url.trim() : '';
     if (!url) {
-      return { successBoolean: false, responseString: 'url is required for iframe assets.' };
+      return { successBoolean: false, responseString: 'url is required for browser assets.' };
     }
 
     // Send the upsert command to the frontend
     await wsService.send(wsChannel, {
       type: 'register_or_activate_asset',
       data: {
-        asset: { type: 'iframe', id: assetId, title, url, active, collapsed, skillSlug: skillSlug || undefined, refKey },
+        asset: { type: 'browser', id: assetId, title, url, active, collapsed, skillSlug: skillSlug || undefined, refKey },
       },
       timestamp: Date.now(),
     });

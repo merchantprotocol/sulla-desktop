@@ -7,11 +7,11 @@ export const playwrightToolManifests: ToolManifest[] = [
     category:    'playwright',
     schemaDef:   {
       action:    { type: 'enum', enum: ['upsert', 'remove'], default: 'upsert', description: 'upsert creates/updates an asset; remove deletes by assetId.' },
-      assetType: { type: 'enum', optional: true, enum: ['iframe', 'document'], description: 'Required for upsert.' },
+      assetType: { type: 'enum', optional: true, enum: ['browser', 'iframe', 'document'], description: 'Type of tab to open. Defaults to browser.' },
       assetId:   { type: 'string', optional: true, description: 'Stable asset ID. Reuse the same ID to update an existing tab.' },
       skillSlug: { type: 'string', optional: true, description: 'Optional skill slug to associate with the asset.' },
       title:     { type: 'string', optional: true },
-      url:       { type: 'string', optional: true, description: 'Required for iframe upsert.' },
+      url:       { type: 'string', optional: true, description: 'Required for browser tab upsert.' },
       content:   { type: 'string', optional: true, description: 'Document HTML/markdown content.' },
       active:    { type: 'boolean', optional: true, default: true },
       collapsed: { type: 'boolean', optional: true, default: true },

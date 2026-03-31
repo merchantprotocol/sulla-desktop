@@ -33,6 +33,16 @@ export function buildGuestBridgeScript(): string {
   function emitToHost(type, data) {
     var payload = { type: type, data: data };
 
+    // WebContentsView preload path (set by browserTabPreload.ts)
+    // This is the preferred path when running inside a WebContentsView tab,
+    // as it uses ipcRenderer.send() directly to the main process.
+    try {
+      if (typeof window.__sullaBridgeEmit === 'function') {
+        window.__sullaBridgeEmit(type, data);
+        return;
+      }
+    } catch (_) {}
+
     // Electron webview ipcRenderer path
     try {
       if (window.electron && window.electron.ipcRenderer && window.electron.ipcRenderer.sendToHost) {
