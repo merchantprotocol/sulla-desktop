@@ -11,7 +11,57 @@
     >
       <div class="absolute -top-px right-11 left-20 h-[2px] bg-linear-to-r from-sky-300/0 via-sky-300/70 to-sky-300/0" />
       <div class="absolute right-20 -bottom-px left-11 h-[2px] bg-linear-to-r from-blue-400/0 via-blue-400 to-blue-400/0" />
+      <!-- Attachment thumbnail preview strip -->
+      <div
+        v-if="pendingAttachments.length > 0"
+        class="flex gap-2 px-3 pt-2 pb-0 overflow-x-auto"
+      >
+        <div
+          v-for="(att, idx) in pendingAttachments"
+          :key="idx"
+          class="relative shrink-0 group"
+        >
+          <img
+            :src="att.preview"
+            class="h-16 w-16 rounded-lg object-cover ring-1 ring-edge"
+            :alt="att.name"
+          >
+          <button
+            type="button"
+            class="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-surface ring-1 ring-edge text-content-muted hover:text-content hover:bg-surface-hover opacity-0 group-hover:opacity-100 transition-opacity"
+            aria-label="Remove attachment"
+            @click="removeAttachment(idx)"
+          >
+            <svg width="10" height="10" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M11.7816 4.03157C12.0724 3.74081 12.0724 3.25991 11.7816 2.96915C11.4909 2.67839 11.0099 2.67839 10.7192 2.96915L7.50005 6.18827L4.28091 2.96915C3.99015 2.67839 3.50925 2.67839 3.21849 2.96915C2.92773 3.25991 2.92773 3.74081 3.21849 4.03157L6.43761 7.25071L3.21849 10.4698C2.92773 10.7606 2.92773 11.2415 3.21849 11.5323C3.50925 11.823 3.99015 11.823 4.28091 11.5323L7.50005 8.31315L10.7192 11.5323C11.0099 11.823 11.4909 11.823 11.7816 11.5323C12.0724 11.2415 12.0724 10.7606 11.7816 10.4698L8.56248 7.25071L11.7816 4.03157Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
       <div class="flex flex-wrap items-end gap-1 p-2">
+        <!-- Attachment button -->
+        <button
+          type="button"
+          class="order-1 mb-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-content-muted hover:text-content-secondary hover:bg-surface-hover"
+          aria-label="Attach file"
+          title="Attach image or file"
+          :disabled="showOverlay"
+          @click="triggerFileInput"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+          </svg>
+        </button>
+        <input
+          ref="fileInputEl"
+          type="file"
+          accept="image/*"
+          multiple
+          class="hidden"
+          @change="handleFileSelect"
+        >
+
         <textarea
           ref="composerTextareaEl"
           v-model="queryValue"
@@ -180,7 +230,7 @@ aria-hidden="true"
 
           <div class="flex items-center gap-2">
             <button
-              v-if="queryValue.trim()"
+              v-if="queryValue.trim() || pendingAttachments.length > 0"
               type="button"
               class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-content text-page disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer"
               aria-label="Send"
@@ -349,6 +399,13 @@ const props = withDefaults(defineProps<{
   voiceConfigured:    false,
 });
 
+export interface PendingAttachment {
+  name:      string;
+  mediaType: string;
+  base64:    string;
+  preview:   string;  // data: URL for thumbnail
+}
+
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   send:                [];
@@ -359,7 +416,57 @@ const emit = defineEmits<{
 }>();
 
 const composerTextareaEl = ref<HTMLTextAreaElement | null>(null);
+const fileInputEl = ref<HTMLInputElement | null>(null);
 const isComposerMultiline = ref(false);
+const pendingAttachments = ref<PendingAttachment[]>([]);
+
+function triggerFileInput(): void {
+  fileInputEl.value?.click();
+}
+
+function handleFileSelect(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  if (!input.files?.length) return;
+
+  for (const file of Array.from(input.files)) {
+    if (!file.type.startsWith('image/')) continue;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      // Extract base64 from data URL: "data:image/png;base64,AAAA..."
+      const base64 = dataUrl.split(',')[1];
+      if (base64) {
+        pendingAttachments.value.push({
+          name:      file.name,
+          mediaType: file.type,
+          base64,
+          preview:   dataUrl,
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Reset input so the same file can be selected again
+  input.value = '';
+}
+
+function removeAttachment(index: number): void {
+  pendingAttachments.value.splice(index, 1);
+}
+
+/**
+ * Get and clear pending attachments. Called by the parent when sending
+ * so it can include them in the message content blocks.
+ */
+function consumeAttachments(): PendingAttachment[] {
+  const attachments = [...pendingAttachments.value];
+  pendingAttachments.value = [];
+  return attachments;
+}
+
+defineExpose({ consumeAttachments, pendingAttachments });
 
 let composerMirrorEl: HTMLDivElement | null = null;
 let composerMeasureCanvas: HTMLCanvasElement | null = null;

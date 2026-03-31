@@ -24,6 +24,12 @@
               </div>
               <div v-else-if="m.role === 'user'" class="flex justify-end">
                 <div class="max-w-[min(760px,92%)] rounded-3xl p-6 bg-surface-alt ring-1 ring-edge-subtle">
+                  <img
+                    v-if="m.image?.dataUrl"
+                    :src="m.image.dataUrl"
+                    :alt="m.image.alt || 'Attached image'"
+                    class="mb-2 max-h-64 rounded-xl object-contain"
+                  >
                   <div class="whitespace-pre-wrap text-content">{{ m.content }}</div>
                 </div>
               </div>
@@ -115,6 +121,7 @@
           <div class="py-3">
             <div class="flex h-full flex-col items-center">
               <AgentComposer
+                ref="composerRef"
                 v-model="query"
                 :loading="loading"
                 :show-overlay="false"
@@ -126,7 +133,7 @@
                 :recording-duration="recordingDuration"
                 :voice-configured="isVoiceConfigured"
                 :model-selector="modelSelector"
-                @send="send"
+                @send="sendWithAttachments"
                 @stop="stop"
                 @primary-action="handlePrimaryAction"
                 @toggle-recording="voice.toggleRecording()"
@@ -357,12 +364,23 @@ const renderMarkdown = (markdown: string): string => {
   });
 };
 
+const composerRef = ref<InstanceType<typeof AgentComposer> | null>(null);
+
 const send = (metadata?: Record<string, unknown>) => {
   if (isFirstChat.value) {
     isFirstChat.value = false;
     ipcRenderer.invoke('mark-first-chat-complete');
   }
   chatController.send(metadata);
+};
+
+const sendWithAttachments = () => {
+  if (isFirstChat.value) {
+    isFirstChat.value = false;
+    ipcRenderer.invoke('mark-first-chat-complete');
+  }
+  const attachments = composerRef.value?.consumeAttachments?.() || [];
+  chatController.send(undefined, attachments.length > 0 ? attachments : undefined);
 };
 const stop = () => {
   console.log(`[BrowserTabChat:stop] clicked — graphRunning=${graphRunning.value}, ttsPlaying=${isTTSPlaying.value}, recording=${isRecording.value}`);

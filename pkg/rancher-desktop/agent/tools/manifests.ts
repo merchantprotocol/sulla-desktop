@@ -21,11 +21,13 @@ import { workflowToolManifests } from './workflow/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
 import { agentToolManifests } from './agents/manifests';
 import { bridgeToolManifests } from './bridge/manifests';
+import { computerUseToolManifests } from './computer-use/manifests';
 import { skillsToolManifests } from './skills/manifests';
 
 toolRegistry.registerManifests([
   ...agentToolManifests,
   ...bridgeToolManifests,
+  ...computerUseToolManifests,
   ...calendarToolManifests,
   ...dockerToolManifests,
   ...extensionsToolManifests,

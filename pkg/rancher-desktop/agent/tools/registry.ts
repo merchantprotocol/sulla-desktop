@@ -31,6 +31,10 @@ export interface ToolManifest {
   schemaDef:       Record<string, any>;
   operationTypes?: ToolOperation[];
   loader:          () => Promise<any>;
+  /** When true, this tool uses a provider-native format (e.g. Anthropic computer_20250124) */
+  isAnthropicNative?: boolean;
+  /** Raw Anthropic tool definition — injected directly, not converted. */
+  anthropicToolDefinition?: Record<string, any>;
 }
 
 export class ToolRegistry {
@@ -42,13 +46,16 @@ export class ToolRegistry {
   private descriptions = new Map<string, string>();
   private schemaDefs = new Map<string, Record<string, any>>();
   private operationTypesMap = new Map<string, ToolOperation[]>();
+  /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
+  private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'meta', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
+    'meta', 'bridge', 'browser', 'calendar', 'computer-use', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
 
   private categoryDescriptions: Record<string, string> = {
+    'computer-use':     'Visual computer use tools — screenshot-based interaction with coordinate clicking, typing, and scrolling. Anthropic-native computer_20250124 protocol.',
     meta:               'Tools for browsing available tools, installing skills, and meta management.',
     bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',
     browser:            'Web search tools like Brave and DuckDuckGo.',
@@ -117,6 +124,9 @@ export class ToolRegistry {
     for (const m of manifests) {
       if (this.loaders.has(m.name)) continue;
       this.schemaDefs.set(m.name, m.schemaDef);
+      if (m.isAnthropicNative && m.anthropicToolDefinition) {
+        this.nativeToolDefs.set(m.name, m.anthropicToolDefinition);
+      }
       this.operationTypesMap.set(m.name, Array.isArray(m.operationTypes) ? [...m.operationTypes] : []);
       this.register(m.name, m.description, m.category, async() => {
         const mod = await m.loader();
@@ -303,6 +313,16 @@ export class ToolRegistry {
 
   getToolNames(): string[] {
     return Array.from(this.loaders.keys());
+  }
+
+  /** Get native tool definitions that should be passed directly to the provider (not converted). */
+  getNativeToolDefinitions(): Map<string, Record<string, any>> {
+    return this.nativeToolDefs;
+  }
+
+  /** Check if a tool has a native (non-function) definition. */
+  isNativeTool(name: string): boolean {
+    return this.nativeToolDefs.has(name);
   }
 
   // For browse_tools — cheap metadata only, no loading instances or schemas

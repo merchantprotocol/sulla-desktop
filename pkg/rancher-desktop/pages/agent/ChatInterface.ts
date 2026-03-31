@@ -174,8 +174,8 @@ export class ChatInterface {
     this.persona.removeAsset(assetId);
   }
 
-  async send(metadata?: Record<string, unknown>): Promise<void> {
-    if (!this.query.value.trim()) return;
+  async send(metadata?: Record<string, unknown>, attachments?: Array<{ mediaType: string; base64: string }>): Promise<void> {
+    if (!this.query.value.trim() && !attachments?.length) return;
 
     const text = this.query.value;
     this.query.value = '';
@@ -185,7 +185,12 @@ export class ChatInterface {
       localStorage.setItem(this.hasSentMessageKey, 'true');
     }
 
-    await this.persona.addUserMessage('', text, metadata);
+    // Include attachments in metadata so the backend can build ContentBlock arrays
+    const sendMetadata = attachments?.length
+      ? { ...metadata, attachments: attachments.map(a => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: a.mediaType, data: a.base64 } })) }
+      : metadata;
+
+    await this.persona.addUserMessage('', text, sendMetadata);
   }
 
   /**

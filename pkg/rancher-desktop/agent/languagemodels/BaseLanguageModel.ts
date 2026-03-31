@@ -8,10 +8,34 @@ export enum FinishReason {
   ContentFilter = 'content_filter',
 }
 
+/**
+ * Content block types for multimodal messages (images, tool results, etc.).
+ * Uses Anthropic's native format — other providers convert in buildRequestBody().
+ */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  | { type: 'tool_use'; id: string; name: string; input: any }
+  | { type: 'tool_result'; tool_use_id: string; content: string | ContentBlock[] }
+  | { type: 'thinking'; thinking: string };
+
+/**
+ * Extract the plain-text content from a ChatMessage's content field.
+ * Handles both string and ContentBlock[] formats.
+ */
+export function getTextContent(content: string | ContentBlock[]): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return String(content ?? '');
+  return content
+    .filter((b): b is { type: 'text'; text: string } => b?.type === 'text' && typeof (b as any).text === 'string')
+    .map(b => b.text)
+    .join('\n');
+}
+
 export interface ChatMessage {
   id?:           string;
   role:          'user' | 'assistant' | 'system' | 'tool';
-  content:       string;
+  content:       string | ContentBlock[];
   name?:         string;
   tool_call_id?: string;
   timestamp?:    number;

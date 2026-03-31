@@ -4,17 +4,29 @@
  * Host-side bridge that communicates with the guest preload script
  * (`window.sullaBridge`) injected into any website webview or iframe.
  *
+ * Implements a state machine so that commands automatically wait until
+ * the bridge is ready. No tool-level polling or waitForBridgeReady needed.
+ *
+ * States:
+ *   DETACHED   → no webview attached
+ *   ATTACHED   → webview attached, waiting for dom-ready
+ *   INJECTING  → dom-ready fired, guest script being injected
+ *   READY      → sullaBridge available, commands execute immediately
+ *   NAVIGATING → page navigation detected, waiting for reinject
+ *
  * Usage:
  *   const bridge = new WebviewHostBridge();
  *   bridge.attach(webviewElement);
+ *   // Commands auto-wait for READY state:
  *   const markdown = await bridge.getActionableMarkdown();
  *   await bridge.click('@btn-save');
- *   await bridge.setValue('@field-email', 'test@example.com');
  */
 
 import { buildGuestBridgeScript, BRIDGE_CHANNEL } from './GuestBridgePreload';
 
 type JsonRecord = Record<string, unknown>;
+
+export type BridgeState = 'DETACHED' | 'ATTACHED' | 'INJECTING' | 'READY' | 'NAVIGATING';
 
 export interface WebviewLike {
   src?:                 string;
@@ -74,6 +86,7 @@ export interface HostBridgeConfig {
 }
 
 const LOG_PREFIX = '[SULLA_HOST_BRIDGE]';
+const READY_TIMEOUT = 15000; // max wait for bridge to become ready
 
 export class WebviewHostBridge {
   private readonly injectDelayMs: number;
@@ -85,10 +98,68 @@ export class WebviewHostBridge {
   private boundDomReady:   ((event: unknown) => void) | null = null;
   private boundIpcMessage: ((event: unknown) => void) | null = null;
   private lastInjectedForUrl = '';
-  private injected = false;
+
+  // ── State machine ──────────────────────────────────────────────
+  private _state: BridgeState = 'DETACHED';
+  private readyResolvers: Array<() => void> = [];
+  private readyTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config: HostBridgeConfig = {}) {
     this.injectDelayMs = config.injectDelayMs ?? 500;
+  }
+
+  /** Current bridge state. */
+  get state(): BridgeState {
+    return this._state;
+  }
+
+  /** Transition to a new state. Resolves waiters when entering READY. */
+  private setState(newState: BridgeState): void {
+    const prev = this._state;
+    if (prev === newState) return;
+    this._state = newState;
+    console.log(`${ LOG_PREFIX } state: ${ prev } → ${ newState }`);
+
+    if (newState === 'READY') {
+      // Resolve all pending waiters
+      const resolvers = this.readyResolvers.splice(0);
+      for (const resolve of resolvers) resolve();
+      if (this.readyTimeout) {
+        clearTimeout(this.readyTimeout);
+        this.readyTimeout = null;
+      }
+    }
+  }
+
+  /**
+   * Returns a promise that resolves when the bridge is in READY state.
+   * If already READY, resolves immediately. If DETACHED, rejects.
+   * All bridge commands call this internally — tools never need to wait manually.
+   */
+  whenReady(timeoutMs = READY_TIMEOUT): Promise<void> {
+    if (this._state === 'READY') return Promise.resolve();
+    if (this._state === 'DETACHED') return Promise.reject(new Error('Bridge is detached'));
+
+    return new Promise((resolve, reject) => {
+      this.readyResolvers.push(resolve);
+
+      // Safety net timeout — if bridge never becomes ready
+      if (!this.readyTimeout) {
+        this.readyTimeout = setTimeout(() => {
+          this.readyTimeout = null;
+          const pending = this.readyResolvers.splice(0);
+          for (const r of pending) {
+            // Resolve anyway so tools don't hang forever — they'll get undefined from exec
+            r();
+          }
+        }, timeoutMs);
+      }
+    });
+  }
+
+  /** Back-compat: returns true when state is READY. */
+  isInjected(): boolean {
+    return this._state === 'READY';
   }
 
   /* ------------------------------------------------------------------ */
@@ -109,7 +180,7 @@ export class WebviewHostBridge {
     webview.addEventListener('dom-ready', this.boundDomReady);
     webview.addEventListener('ipc-message', this.boundIpcMessage);
 
-    console.log(`${ LOG_PREFIX } attached`);
+    this.setState('ATTACHED');
   }
 
   detach(): void {
@@ -126,12 +197,16 @@ export class WebviewHostBridge {
     this.boundDomReady = null;
     this.boundIpcMessage = null;
     this.lastInjectedForUrl = '';
-    this.injected = false;
-    console.log(`${ LOG_PREFIX } detached`);
-  }
 
-  isInjected(): boolean {
-    return this.injected;
+    // Reject any pending waiters
+    const pending = this.readyResolvers.splice(0);
+    for (const r of pending) r(); // resolve to unblock, exec will return undefined
+    if (this.readyTimeout) {
+      clearTimeout(this.readyTimeout);
+      this.readyTimeout = null;
+    }
+
+    this.setState('DETACHED');
   }
 
   /* ------------------------------------------------------------------ */
@@ -163,36 +238,31 @@ export class WebviewHostBridge {
   }
 
   /* ------------------------------------------------------------------ */
-  /*  Host → Guest commands                                             */
+  /*  Host → Guest commands (all auto-wait for READY)                   */
   /* ------------------------------------------------------------------ */
 
   async getActionableMarkdown(): Promise<string> {
-    return String(await this.exec('window.sullaBridge.getActionableMarkdown()') || '');
+    return String(await this.execWhenReady('window.sullaBridge.getActionableMarkdown()') || '');
   }
 
   async click(handle: string): Promise<boolean> {
     const safe = JSON.stringify(handle);
-    console.log(`${ LOG_PREFIX } click: invoking guest`, { handle, injected: this.injected, hasWebview: !!this.webview });
-    const raw = await this.exec(`window.sullaBridge.click(${ safe })`);
-    console.log(`${ LOG_PREFIX } click: guest returned`, { raw, type: typeof raw });
+    const raw = await this.execWhenReady(`window.sullaBridge.click(${ safe })`);
     return !!raw;
   }
 
   async setValue(handle: string, value: string): Promise<boolean> {
     const safeHandle = JSON.stringify(handle);
     const safeValue = JSON.stringify(value);
-    return !!(await this.exec(`window.sullaBridge.setValue(${ safeHandle }, ${ safeValue })`));
+    return !!(await this.execWhenReady(`window.sullaBridge.setValue(${ safeHandle }, ${ safeValue })`));
   }
 
   async pressKey(key: string, handle?: string): Promise<boolean> {
     const safeKey = JSON.stringify(key);
     const safeHandle = handle ? JSON.stringify(handle) : 'undefined';
 
-    // Step 1: Focus the target element inside the iframe (guest JS context)
-    await this.exec(`window.sullaBridge.focusElement(${ safeHandle })`);
+    await this.execWhenReady(`window.sullaBridge.focusElement(${ safeHandle })`);
 
-    // Step 2: Focus the iframe/webview DOM element itself in the renderer
-    // so Electron routes sendInputEvent to the correct frame
     if (this.webview) {
       try {
         const el = this.webview as unknown as HTMLElement;
@@ -200,12 +270,8 @@ export class WebviewHostBridge {
       } catch { /* best effort */ }
     }
 
-    // Step 3: Send trusted keyboard event via CDP through main process IPC.
-    // CDP Input.dispatchKeyEvent produces isTrusted=true events that work
-    // inside iframes — indistinguishable from real user input.
     try {
       const { ipcRenderer } = require('electron');
-
       await ipcRenderer.invoke('browser-tab:send-input-event', { key, type: 'keyDown' });
       if (key.length === 1 || key === 'Enter' || key === 'Space' || key === 'Tab') {
         await ipcRenderer.invoke('browser-tab:send-input-event', { key, type: 'char' });
@@ -213,14 +279,13 @@ export class WebviewHostBridge {
       await ipcRenderer.invoke('browser-tab:send-input-event', { key, type: 'keyUp' });
       return true;
     } catch (err) {
-      // Fallback: use synthetic events via guest bridge if IPC fails
       console.warn(`${ LOG_PREFIX } pressKey: trusted input failed, falling back to synthetic`, err);
       return !!(await this.exec(`window.sullaBridge.pressKey(${ safeKey }, ${ safeHandle })`));
     }
   }
 
   async getFormValues(): Promise<Record<string, string>> {
-    const result = await this.exec('window.sullaBridge.getFormValues()');
+    const result = await this.execWhenReady('window.sullaBridge.getFormValues()');
     return (result && typeof result === 'object' && !Array.isArray(result))
       ? result as Record<string, string>
       : {};
@@ -228,16 +293,16 @@ export class WebviewHostBridge {
 
   async waitForSelector(selector: string, timeoutMs = 5000): Promise<boolean> {
     const safeSel = JSON.stringify(selector);
-    return !!(await this.exec(`window.sullaBridge.waitForSelector(${ safeSel }, ${ timeoutMs })`));
+    return !!(await this.execWhenReady(`window.sullaBridge.waitForSelector(${ safeSel }, ${ timeoutMs })`));
   }
 
   async scrollTo(selector: string): Promise<boolean> {
     const safe = JSON.stringify(selector);
-    return !!(await this.exec(`window.sullaBridge.scrollTo(${ safe })`));
+    return !!(await this.execWhenReady(`window.sullaBridge.scrollTo(${ safe })`));
   }
 
   async getPageText(): Promise<string> {
-    return String(await this.exec('window.sullaBridge.getPageText()') || '');
+    return String(await this.execWhenReady('window.sullaBridge.getPageText()') || '');
   }
 
   async getReaderContent(maxChars?: number): Promise<{
@@ -245,7 +310,7 @@ export class WebviewHostBridge {
     contentLength: number; truncated: boolean;
   } | null> {
     const arg = typeof maxChars === 'number' ? String(maxChars) : '';
-    const result = await this.exec(`window.sullaBridge.getReaderContent(${ arg })`);
+    const result = await this.execWhenReady(`window.sullaBridge.getReaderContent(${ arg })`);
     if (result && typeof result === 'object' && !Array.isArray(result)) {
       const r = result as Record<string, unknown>;
       return {
@@ -259,8 +324,13 @@ export class WebviewHostBridge {
     return null;
   }
 
+  /** getPageTitle and getPageUrl don't need sullaBridge — they use native JS. */
   async getPageTitle(): Promise<string> {
     return String(await this.exec('document.title') || '');
+  }
+
+  async getPageUrl(): Promise<string> {
+    return String(await this.exec('location.href') || '');
   }
 
   async getPageHtml(): Promise<string> {
@@ -276,7 +346,7 @@ export class WebviewHostBridge {
     percent: number; atTop: boolean; atBottom: boolean;
     moreBelow: boolean; moreAbove: boolean;
   }> {
-    const result = await this.exec('window.sullaBridge.getScrollInfo()');
+    const result = await this.execWhenReady('window.sullaBridge.getScrollInfo()');
     if (result && typeof result === 'object') {
       const r = result as Record<string, unknown>;
       return {
@@ -297,7 +367,7 @@ export class WebviewHostBridge {
     newContent: string; scrollInfo: Record<string, unknown>; noNewContent: boolean;
   }> {
     const dir = JSON.stringify(direction || 'down');
-    const result = await this.exec(`window.sullaBridge.scrollAndCapture(${ dir })`);
+    const result = await this.execWhenReady(`window.sullaBridge.scrollAndCapture(${ dir })`);
     if (result && typeof result === 'object') {
       const r = result as Record<string, unknown>;
       return {
@@ -310,7 +380,7 @@ export class WebviewHostBridge {
   }
 
   async scrollToTop(): Promise<Record<string, unknown>> {
-    const result = await this.exec('window.sullaBridge.scrollToTop()');
+    const result = await this.execWhenReady('window.sullaBridge.scrollToTop()');
     if (result && typeof result === 'object') return result as Record<string, unknown>;
     return {};
   }
@@ -319,7 +389,7 @@ export class WebviewHostBridge {
     matches: Array<{ index: number; context: string }>; total: number; query: string;
   }> {
     const safe = JSON.stringify(query);
-    const result = await this.exec(`window.sullaBridge.searchInPage(${ safe })`);
+    const result = await this.execWhenReady(`window.sullaBridge.searchInPage(${ safe })`);
     if (result && typeof result === 'object') {
       const r = result as Record<string, unknown>;
       return {
@@ -331,10 +401,6 @@ export class WebviewHostBridge {
     return { matches: [], total: 0, query };
   }
 
-  async getPageUrl(): Promise<string> {
-    return String(await this.exec('location.href') || '');
-  }
-
   /* ------------------------------------------------------------------ */
   /*  Manual injection (for non-webview iframes via postMessage)        */
   /* ------------------------------------------------------------------ */
@@ -342,9 +408,9 @@ export class WebviewHostBridge {
   async injectNow(): Promise<void> {
     if (!this.webview) return;
     await this.webview.executeJavaScript(buildGuestBridgeScript(), false);
-    this.injected = true;
     const url = this.getCurrentUrl();
     this.lastInjectedForUrl = url;
+    this.setState('READY');
     console.log(`${ LOG_PREFIX } manual inject done`, { url });
   }
 
@@ -352,35 +418,79 @@ export class WebviewHostBridge {
   /*  Internals                                                         */
   /* ------------------------------------------------------------------ */
 
+  /** Execute JS in guest. Does NOT wait for READY — use execWhenReady for sullaBridge calls. */
   private async exec(code: string): Promise<unknown> {
     if (!this.webview) {
-      console.warn(`${ LOG_PREFIX } exec: no webview attached`);
       return undefined;
     }
-    console.log(`${ LOG_PREFIX } exec: running`, { code: code.slice(0, 200), injected: this.injected });
     try {
-      const result = await this.webview.executeJavaScript(code, true);
-      console.log(`${ LOG_PREFIX } exec: success`, { resultType: typeof result, result: typeof result === 'string' ? result.slice(0, 200) : result });
-      return result;
+      return await this.webview.executeJavaScript(code, true);
     } catch (error) {
       console.error(`${ LOG_PREFIX } exec: ERROR`, { code: code.slice(0, 200), error });
       return undefined;
     }
   }
 
+  /** Wait for READY state, then execute JS. Commands auto-queue here. */
+  private async execWhenReady(code: string): Promise<unknown> {
+    try {
+      await this.whenReady();
+    } catch {
+      return undefined; // detached
+    }
+    const result = await this.exec(code);
+
+    // If sullaBridge returned undefined for a bridge method call, it's likely
+    // dead from navigation. Force reinject and retry.
+    if (result === undefined && code.includes('sullaBridge.') && this._state === 'READY') {
+      console.log(`${ LOG_PREFIX } dead bridge detected, forcing reinject`);
+      this.lastInjectedForUrl = ''; // allow reinjection
+      this.setState('NAVIGATING');
+      // Force reinject now — don't wait for dom-ready which may have already fired
+      if (this.webview) {
+        this.setState('INJECTING');
+        await this.delay(300); // brief delay for page to settle
+        if (this.webview) {
+          // Clear the guard flag so the guest script runs fresh and emits sulla:injected
+          await this.webview.executeJavaScript('window.__sullaBridgeInjected = false', false);
+          await this.webview.executeJavaScript(buildGuestBridgeScript(), false);
+          this.lastInjectedForUrl = this.getCurrentUrl();
+          // sulla:injected event will transition to READY
+        }
+      }
+      // Wait for READY then retry
+      try {
+        await this.whenReady();
+        return await this.exec(code);
+      } catch {
+        return undefined;
+      }
+    }
+
+    return result;
+  }
+
   private async handleDomReady(): Promise<void> {
     if (!this.webview) return;
 
     const currentUrl = this.getCurrentUrl();
-    if (this.lastInjectedForUrl === currentUrl) return;
+    if (this.lastInjectedForUrl === currentUrl && this._state === 'READY') return;
+
+    // New URL means navigation happened — queue any in-flight commands
+    if (this._state === 'READY') {
+      this.setState('NAVIGATING');
+    }
+    this.setState('INJECTING');
 
     await this.delay(this.injectDelayMs);
     if (!this.webview) return;
 
     console.log(`${ LOG_PREFIX } injecting guest bridge`, { url: currentUrl });
+    // Clear the guard flag so the guest script runs fresh on the new page
+    await this.webview.executeJavaScript('window.__sullaBridgeInjected = false', false);
     await this.webview.executeJavaScript(buildGuestBridgeScript(), false);
-    this.injected = true;
     this.lastInjectedForUrl = currentUrl;
+    // Don't set READY here — wait for sulla:injected event from guest
   }
 
   private handleIpcMessage(event: unknown): void {
@@ -391,6 +501,8 @@ export class WebviewHostBridge {
     const rec = this.asRecord(data);
 
     if (type === 'sulla:injected') {
+      // Guest bridge is loaded and ready — transition to READY
+      this.setState('READY');
       this.emit('injected', {
         url:       String(rec.url || ''),
         title:     String(rec.title || ''),
@@ -400,6 +512,10 @@ export class WebviewHostBridge {
     }
 
     if (type === 'sulla:routeChanged') {
+      // Page is navigating — bridge will be destroyed and reinjected
+      if (this._state === 'READY') {
+        this.setState('NAVIGATING');
+      }
       this.emit('routeChanged', {
         url:       String(rec.url || ''),
         path:      String(rec.path || ''),

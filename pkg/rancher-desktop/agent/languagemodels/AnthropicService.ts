@@ -244,11 +244,19 @@ export class AnthropicService extends BaseLanguageModel {
   protected buildFetchOptions(body: any, signal?: AbortSignal): RequestInit {
     const headers: Record<string, string> = {
       'Content-Type':      'application/json',
-      'anthropic-version': '2024-10-22',
+      'anthropic-version': '2025-01-24',
     };
 
     if (this.apiKey) {
       headers['x-api-key'] = this.apiKey;
+    }
+
+    // Enable computer use beta when computer use tools are in the request
+    const hasComputerUse = body.tools?.some((t: any) =>
+      t.type === 'computer_20250124' || t.type === 'text_editor_20250124' || t.type === 'bash_20250124',
+    );
+    if (hasComputerUse) {
+      headers['anthropic-beta'] = 'computer-use-2025-01-24';
     }
 
     return {

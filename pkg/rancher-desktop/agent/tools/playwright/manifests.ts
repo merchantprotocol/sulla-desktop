@@ -141,4 +141,70 @@ export const playwrightToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./list_tabs'),
   },
+
+  // ── Visual / Computer Use tools ─────────────────────────────────────
+
+  {
+    name:        'take_screenshot',
+    description: 'Capture a visual screenshot of a website tab. Returns the image so you can SEE the page. By default includes a coordinate grid overlay so you know exact pixel positions for click_at/type_at. Set annotate to true to also draw numbered boxes on interactive elements.',
+    category:    'playwright',
+    schemaDef:   {
+      assetId:  { type: 'string', optional: true, description: 'Target tab (omit for the active tab)' },
+      grid:     { type: 'boolean', optional: true, description: 'Show coordinate grid overlay (default true)' },
+      annotate: { type: 'boolean', optional: true, description: 'Draw numbered boxes on interactive elements (default false)' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./screenshot'),
+  },
+  {
+    name:        'click_at',
+    description: 'Click at pixel coordinates on a website tab using trusted mouse events. Use take_screenshot first to identify coordinates. After clicking, automatically captures a screenshot so you can see the result. Useful for elements that DOM handles cannot reach.',
+    category:    'playwright',
+    schemaDef:   {
+      x:            { type: 'number', description: 'X coordinate in pixels' },
+      y:            { type: 'number', description: 'Y coordinate in pixels' },
+      button:       { type: 'enum', optional: true, enum: ['left', 'right', 'middle'], description: 'Mouse button (default left)' },
+      double_click: { type: 'boolean', optional: true, description: 'Double-click instead of single click' },
+      assetId:      { type: 'string', optional: true, description: 'Target tab (omit for the active tab)' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./click_coordinates'),
+  },
+  {
+    name:        'type_at',
+    description: 'Click at coordinates to focus an element, then type text using trusted keyboard events. After typing, captures a screenshot. Set submit to true to press Enter after typing. Use for chat widgets, search boxes, or any input that DOM-based set_field cannot reach.',
+    category:    'playwright',
+    schemaDef:   {
+      x:       { type: 'number', description: 'X coordinate to click for focus' },
+      y:       { type: 'number', description: 'Y coordinate to click for focus' },
+      text:    { type: 'string', description: 'Text to type' },
+      submit:  { type: 'boolean', optional: true, description: 'Press Enter after typing (default false)' },
+      assetId: { type: 'string', optional: true, description: 'Target tab (omit for the active tab)' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./type_coordinates'),
+  },
+  {
+    name:        'move_mouse',
+    description: 'Move the mouse to coordinates without clicking. Triggers hover effects, dropdown menus, and tooltips. Shows a cursor at the position and captures a screenshot of the hover state.',
+    category:    'playwright',
+    schemaDef:   {
+      x:       { type: 'number', description: 'X coordinate in pixels' },
+      y:       { type: 'number', description: 'Y coordinate in pixels' },
+      assetId: { type: 'string', optional: true, description: 'Target tab (omit for the active tab)' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./move_mouse'),
+  },
+  {
+    name:        'exec_in_page',
+    description: 'Execute arbitrary JavaScript in the page context. Returns the result. Use for anything the other tools cannot do: reading DOM properties, calling widget APIs, injecting styles, triggering events, querying element positions, or interacting with third-party iframes via their JS APIs.',
+    category:    'playwright',
+    schemaDef:   {
+      code:    { type: 'string', description: 'JavaScript code to execute in the page. The return value is sent back.' },
+      assetId: { type: 'string', optional: true, description: 'Target tab (omit for the active tab)' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./exec_in_page'),
+  },
 ];

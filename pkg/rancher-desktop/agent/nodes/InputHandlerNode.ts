@@ -19,7 +19,7 @@
 //   - Always returns { type: 'next' } — routing lives in graph edges
 
 import type { BaseThreadState, NodeResult } from './Graph';
-import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import { type ChatMessage, getTextContent } from '../languagemodels/BaseLanguageModel';
 import { BaseNode, JSON_ONLY_RESPONSE_INSTRUCTIONS } from './BaseNode';
 
 // ============================================================================
@@ -187,7 +187,7 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
     const latestUserMsg = this.findLatestUserMessage(state.messages);
 
     if (latestUserMsg) {
-      const original = latestUserMsg.content;
+      const original = getTextContent(latestUserMsg.content);
       const sanitized = this.sanitizeMessage(original);
 
       // Check for injection patterns (flag but don't block — downstream decides)
@@ -212,7 +212,7 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
       console.warn(`[InputHandler] Rate limited: ${ rateCheck.reason }`);
     }
 
-    if (latestUserMsg && this.isSpam(latestUserMsg.content)) {
+    if (latestUserMsg && this.isSpam(getTextContent(latestUserMsg.content))) {
       diagnostics.spamDetected = true;
       console.warn(`[InputHandler] Spam detected in thread ${ state.metadata.threadId }`);
     }

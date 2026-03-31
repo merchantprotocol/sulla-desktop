@@ -871,6 +871,49 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return;
     }
 
+    // Strip image content blocks from older tool results to reduce context size.
+    // Keep only the most recent 5 screenshots — older ones are replaced with
+    // "[screenshot omitted]" text placeholders.
+    {
+      const MAX_RECENT_SCREENSHOTS = 5;
+      let screenshotCount = 0;
+      // Walk backwards from newest to oldest
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const msg = state.messages[i];
+        if (!Array.isArray(msg.content)) continue;
+        let modified = false;
+        msg.content = (msg.content as any[]).map((block: any) => {
+          if (block?.type === 'tool_result' && Array.isArray(block.content)) {
+            const hasImage = block.content.some((b: any) => b?.type === 'image');
+            if (hasImage) {
+              screenshotCount++;
+              if (screenshotCount > MAX_RECENT_SCREENSHOTS) {
+                modified = true;
+                return {
+                  ...block,
+                  content: block.content
+                    .filter((b: any) => b?.type !== 'image')
+                    .concat([{ type: 'text', text: '[screenshot omitted]' }]),
+                };
+              }
+            }
+          }
+          // Also strip standalone image blocks in user messages
+          if (block?.type === 'image') {
+            screenshotCount++;
+            if (screenshotCount > MAX_RECENT_SCREENSHOTS) {
+              modified = true;
+              return { type: 'text', text: '[screenshot omitted]' };
+            }
+          }
+          return block;
+        });
+        if (modified) {
+          this.bumpStateVersion(state);
+        }
+      }
+    }
+
     // If over hard char budget, do a fast synchronous trim first (no LLM)
     if (charWeight > HARD_CHAR_BUDGET) {
       console.log(`[${ this.name }] ensureMessageBudget: ctx=${ contextWindowTokens } tokens, budget=${ Math.round(HARD_CHAR_BUDGET / 1000) }k chars, actual=${ Math.round(charWeight / 1000) }k chars — fast trimming`);
@@ -1056,8 +1099,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       let i = 0;
       while (totalTokens > inputBudgetTokens && i < messages.length) {
         if (!systemIndices.has(i) && i !== latestUserIdx && !toolPairIndices.has(i)) {
-          const content = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content);
-          totalTokens -= estimateTokens(content);
+          const rawContent = messages[i].content;
+          totalTokens -= estimateTokens(typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent));
           messages.splice(i, 1);
           // Rebuild protected indices after splice
           if (latestUserIdx > i) latestUserIdx--;
@@ -1144,6 +1187,26 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (!await this.isN8nEnabled()) {
         const n8nToolNames = new Set(toolRegistry.getToolNamesForCategory('n8n'));
         llmTools = llmTools.filter((t: any) => !n8nToolNames.has(t?.function?.name));
+      }
+
+      // Inject Anthropic-native computer use tools when:
+      // 1. Provider is Anthropic (supports computer_20250124)
+      // 2. Browser tabs are open
+      // 3. Not blocked by userVisibleBrowser flag
+      if ((state.metadata as any).userVisibleBrowser !== false) {
+        const providerName = (state.metadata as any).providerName
+          || (state.metadata as any).provider
+          || '';
+        const isAnthropic = typeof providerName === 'string' &&
+          providerName.toLowerCase().includes('anthropic');
+
+        if (isAnthropic) {
+          const nativeDefs = toolRegistry.getNativeToolDefinitions();
+          for (const [, def] of nativeDefs) {
+            // Avoid duplicates — native tools use raw definitions, not function format
+            llmTools.push(def);
+          }
+        }
       }
     }
 

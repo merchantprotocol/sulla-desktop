@@ -789,10 +789,14 @@ watch(
         updateTab(tab.id, { title: asset.title || 'Website', assetId: asset.id });
       }
     }
-    // Clean up removed assets
+    // Clean up removed assets — close the corresponding browser tab
     for (const id of knownAssetIds.value) {
       if (!currentIds.includes(id)) {
         knownAssetIds.value.delete(id);
+        const tab = browserTabs.find((t: any) => t.assetId === id);
+        if (tab) {
+          closeBrowserTab(tab.id);
+        }
       }
     }
   },

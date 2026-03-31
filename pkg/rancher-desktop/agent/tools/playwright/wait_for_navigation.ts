@@ -1,15 +1,18 @@
 /**
  * wait_for_navigation.ts
  *
- * Shared helper for interaction tools (click_element, set_field, etc.)
- * that may trigger page navigation. Listens for navigation/content events
- * and returns the new page state when it settles.
+ * Shared helper for interaction tools (click_element, set_field) that may
+ * trigger page navigation. Listens for navigation/content events and
+ * returns the new page state when it settles.
+ *
+ * Bridge readiness is handled by the state machine in WebviewHostBridge —
+ * commands auto-wait for READY state, so no manual waiting is needed here.
  */
 
-import { hostBridgeProxy, ProxyBridge } from '../../scripts/injected/HostBridgeProxy';
+import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
 import { wrapWithBlockingWarning } from './detect_blocking';
 
-const NAV_LISTEN_WINDOW = 3000; // How long to wait for a nav event after interaction
+const NAV_LISTEN_WINDOW = 3000;
 
 interface PageState {
   navigated:  boolean;
@@ -23,8 +26,8 @@ interface PageState {
 
 /**
  * Listen for navigation events on a specific assetId for a short window.
- * If navigation happens, wait for content to settle and return the new state.
- * If no navigation, return null (the page didn't change).
+ * If navigation happens, waits for the bridge to reach READY (via its
+ * state machine), then reads and returns the new page state.
  */
 export async function waitForNavigation(assetId: string): Promise<PageState | null> {
   return new Promise((resolve) => {
@@ -33,7 +36,7 @@ export async function waitForNavigation(assetId: string): Promise<PageState | nu
     const timeout = setTimeout(() => {
       unsub();
       if (!navDetected) {
-        resolve(null); // No navigation happened
+        resolve(null);
       }
     }, NAV_LISTEN_WINDOW);
 
@@ -41,20 +44,20 @@ export async function waitForNavigation(assetId: string): Promise<PageState | nu
       if (event.assetId !== assetId) return;
 
       if (event.type === 'routeChanged' || event.type === 'pageContent') {
-        if (navDetected) return; // Already handling
+        if (navDetected) return;
         navDetected = true;
         clearTimeout(timeout);
         unsub();
 
-        // Give the page a moment to finish rendering
-        setTimeout(async() => {
+        // Read state — bridge commands auto-wait for READY via state machine
+        (async() => {
           try {
             const state = await readPageState(assetId);
             resolve(state);
           } catch {
             resolve({ navigated: true, pageTitle: '', pageUrl: '', snapshot: '', content: '', scrollInfo: {}, truncated: false });
           }
-        }, 1000);
+        })();
       }
     });
   });
@@ -62,22 +65,29 @@ export async function waitForNavigation(assetId: string): Promise<PageState | nu
 
 /**
  * Read full page state from a bridge.
+ * Bridge methods auto-wait for READY — no manual waiting needed.
  */
 async function readPageState(assetId: string): Promise<PageState> {
   const bridge = hostBridgeProxy.resolve(assetId);
+
   const pageTitle = await bridge.getPageTitle();
   const pageUrl = await bridge.getPageUrl();
-  const snapshot = await bridge.getActionableMarkdown();
-  const readerContent = await bridge.getReaderContent();
-  const scrollInfo = await bridge.getScrollInfo();
+
+  let snapshot = '';
+  let readerContent: { content: string; truncated: boolean } | null = null;
+  let scrollInfo: Record<string, unknown> = {};
+
+  try { snapshot = await bridge.getActionableMarkdown() || ''; } catch { /* */ }
+  try { readerContent = await bridge.getReaderContent(); } catch { /* */ }
+  try { scrollInfo = await bridge.getScrollInfo() as Record<string, unknown>; } catch { /* */ }
 
   return {
     navigated:  true,
     pageTitle,
     pageUrl,
-    snapshot:   snapshot || '',
+    snapshot,
     content:    readerContent?.content || '',
-    scrollInfo: scrollInfo as Record<string, unknown>,
+    scrollInfo,
     truncated:  readerContent?.truncated || false,
   };
 }

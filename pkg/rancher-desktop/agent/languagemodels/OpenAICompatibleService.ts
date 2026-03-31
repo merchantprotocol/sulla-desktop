@@ -416,34 +416,78 @@ export class OpenAICompatibleService extends BaseLanguageModel {
 
       // --- User message with Anthropic-style tool_result content blocks ---
       if (m.role === 'user' && Array.isArray(m.content)) {
-        const toolResultBlocks = m.content.filter((b: any) => b?.type === 'tool_result');
-        const textBlocks = m.content.filter((b: any) => b?.type !== 'tool_result');
+        const contentArr = m.content as any[];
+        const toolResultBlocks = contentArr.filter((b: any) => b?.type === 'tool_result');
+        const imageBlocks = contentArr.filter((b: any) => b?.type === 'image');
+        const textBlocks = contentArr.filter((b: any) => b?.type !== 'tool_result' && b?.type !== 'image');
 
-        // Emit one role:tool message per tool_result block
+        // Emit one role:tool message per tool_result block.
+        // Images inside tool results are extracted and emitted as a separate
+        // role:user message, since OpenAI-compatible APIs don't support
+        // image_url content blocks in role:tool messages.
+        const extractedImages: any[] = [];
         for (const block of toolResultBlocks) {
-          const content = typeof block.content === 'string'
-            ? block.content
-            : JSON.stringify(block.content ?? '');
+          if (Array.isArray(block.content)) {
+            const textParts: string[] = [];
+            for (const inner of block.content) {
+              if (inner?.type === 'image' && inner?.source?.type === 'base64') {
+                // Collect images to emit as a user message after all tool results
+                extractedImages.push({
+                  type:      'image_url',
+                  image_url: { url: `data:${ inner.source.media_type };base64,${ inner.source.data }` },
+                });
+              } else if (inner?.type === 'text') {
+                textParts.push(inner.text);
+              }
+            }
+            result.push({
+              role:         'tool',
+              tool_call_id: block.tool_use_id,
+              content:      textParts.join('\n') || JSON.stringify(block.content ?? ''),
+            });
+          } else {
+            result.push({
+              role:         'tool',
+              tool_call_id: block.tool_use_id,
+              content:      typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''),
+            });
+          }
+        }
+
+        // Emit extracted screenshot images as a user message so vision models can see them
+        if (extractedImages.length > 0) {
           result.push({
-            role:         'tool',
-            tool_call_id: block.tool_use_id,
-            content,
+            role:    'user',
+            content: [
+              { type: 'text', text: 'Here is the screenshot from the tool result above:' },
+              ...extractedImages,
+            ],
           });
         }
 
-        // If there were also non-tool text blocks, emit them as a user message
-        const remainingText = textBlocks
-          .map((b: any) => {
-            if (typeof b === 'string') return b;
-            if (typeof b.content === 'string') return b.content;
-            if (typeof b.text === 'string') return b.text;
-            return '';
-          })
-          .filter(Boolean)
-          .join('\n')
-          .trim();
-        if (remainingText) {
-          result.push({ role: 'user', content: remainingText });
+        // Build remaining content parts (text + images) as a user message
+        const contentParts: any[] = [];
+        for (const b of textBlocks) {
+          const text = typeof b === 'string' ? b : (b.text ?? b.content ?? '');
+          if (typeof text === 'string' && text.trim()) {
+            contentParts.push({ type: 'text', text: text.trim() });
+          }
+        }
+        for (const b of imageBlocks) {
+          if (b?.source?.type === 'base64') {
+            contentParts.push({
+              type:      'image_url',
+              image_url: { url: `data:${ b.source.media_type };base64,${ b.source.data }` },
+            });
+          }
+        }
+        if (contentParts.length > 0) {
+          // Use array format only when images are present; plain string otherwise
+          const hasImages = contentParts.some((p: any) => p.type === 'image_url');
+          result.push({
+            role:    'user',
+            content: hasImages ? contentParts : contentParts.map((p: any) => p.text).join('\n'),
+          });
         }
         continue;
       }

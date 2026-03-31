@@ -201,3 +201,49 @@ export function useBrowserTabs() {
     clearClosedTabs,
   };
 }
+
+/**
+ * Close a browser tab by its assetId (the bridge/tool identifier).
+ * Standalone function (not inside the composable) so it can be called
+ * from non-Vue code like HostBridgeIpcRenderer.
+ *
+ * Returns true if a tab was found and closed.
+ */
+export function closeTabByAssetId(assetId: string): boolean {
+  const tab = tabs.find(t => t.assetId === assetId);
+  if (!tab) return false;
+
+  const idx = tabs.findIndex(t => t.id === tab.id);
+  if (idx === -1) return false;
+
+  // Save to closed-tab history
+  if (tab.url !== 'about:blank' || tab.mode === 'chat') {
+    closedTabs.unshift({
+      id:       tab.id,
+      url:      tab.url,
+      title:    tab.title,
+      favicon:  tab.favicon,
+      mode:     tab.mode,
+      closedAt: Date.now(),
+    });
+    if (closedTabs.length > MAX_HISTORY) {
+      closedTabs.splice(MAX_HISTORY);
+    }
+  }
+
+  tabs.splice(idx, 1);
+
+  // Always keep at least one tab
+  if (tabs.length === 0) {
+    tabs.push({
+      id:      `tab_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 8) }`,
+      url:     'about:blank',
+      title:   'New Chat',
+      favicon: '',
+      loading: false,
+      mode:    'chat',
+    });
+  }
+
+  return true;
+}

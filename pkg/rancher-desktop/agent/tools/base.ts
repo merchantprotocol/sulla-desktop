@@ -220,11 +220,13 @@ export abstract class BaseTool<TState = any> {
   async call(rawInput: unknown): Promise<ToolResult> {
     const validated = this.parseInput(rawInput);
     try {
-      const { successBoolean, responseString } = await this._validatedCall(validated);
+      const response = await this._validatedCall(validated);
+      const { successBoolean, responseString, ...extra } = response as any;
       return {
         toolName: this.name,
         success:  successBoolean,
         result:   responseString,
+        ...extra,
       };
     } catch (error) {
       return {

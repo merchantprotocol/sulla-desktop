@@ -1,5 +1,5 @@
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { BaseLanguageModel, type ChatMessage, type NormalizedResponse } from './BaseLanguageModel';
+import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, getTextContent } from './BaseLanguageModel';
 import { getIntegrationService } from '../services/IntegrationService';
 import { getLlamaCppService } from '../services/LlamaCppService';
 
@@ -115,7 +115,8 @@ export class OllamaService extends BaseLanguageModel {
   /**
    * Rough token estimate: ~4 characters per token for English text.
    */
-  private static estimateTokens(text: string): number {
+  private static estimateTokens(content: string | any): number {
+    const text = typeof content === 'string' ? content : getTextContent(content);
     return Math.ceil((text?.length ?? 0) / 4);
   }
 
@@ -147,7 +148,32 @@ export class OllamaService extends BaseLanguageModel {
         // Only pass role + content (strip internal metadata fields)
         const msg: Record<string, any> = { role: m.role, content: '' };
         if (Array.isArray(m.content)) {
-          msg.content = m.content.map((c: any) => typeof c === 'string' ? c : c.text ?? JSON.stringify(c)).join('\n');
+          // Extract base64 images for Ollama vision models — check both
+          // top-level image blocks and images nested inside tool_result blocks
+          const images: string[] = [];
+          const textParts: string[] = [];
+          for (const c of m.content as any[]) {
+            if (c?.type === 'image' && c?.source?.type === 'base64') {
+              images.push(c.source.data);
+            } else if (c?.type === 'tool_result' && Array.isArray(c.content)) {
+              for (const inner of c.content) {
+                if (inner?.type === 'image' && inner?.source?.type === 'base64') {
+                  images.push(inner.source.data);
+                } else if (inner?.type === 'text') {
+                  textParts.push(inner.text);
+                }
+              }
+              if (typeof c.content === 'string') textParts.push(c.content);
+            } else if (typeof c === 'string') {
+              textParts.push(c);
+            } else if (c?.text) {
+              textParts.push(c.text);
+            } else if (c?.type !== 'image') {
+              textParts.push(JSON.stringify(c));
+            }
+          }
+          msg.content = textParts.join('\n');
+          if (images.length > 0) msg.images = images;
         } else {
           msg.content = m.content;
         }

@@ -83,7 +83,7 @@ function ensureInit(): void {
 /*  RPC helper                                                         */
 /* ------------------------------------------------------------------ */
 
-async function callRenderer(method: string, args: unknown[] = [], timeoutMs = 15000): Promise<unknown> {
+async function callRenderer(method: string, args: unknown[] = [], timeoutMs = 30000): Promise<unknown> {
   ensureInit();
 
   const requestId = `br-${ Date.now() }-${ ++requestCounter }`;
@@ -208,6 +208,58 @@ export class ProxyBridge {
   async getPageUrl(): Promise<string> {
     return ((await callRenderer('resolve:getPageUrl', [this.assetId])) as string) || '';
   }
+
+  // ── Visual / Computer Use methods ─────────────────────────────────
+
+  /** Capture a screenshot of the page via CDP. Returns base64 + mediaType. */
+  async captureScreenshot(options?: {
+    format?: 'jpeg' | 'png';
+    quality?: number;
+    clip?: { x: number; y: number; width: number; height: number };
+  }): Promise<{ base64: string; mediaType: string } | null> {
+    return (await callRenderer('resolve:captureScreenshot', [this.assetId, options])) as {
+      base64: string; mediaType: string;
+    } | null;
+  }
+
+  /** Move mouse to coordinates via CDP (triggers hover effects). */
+  async moveMouse(x: number, y: number): Promise<boolean> {
+    return (await callRenderer('resolve:moveMouse', [this.assetId, x, y])) as boolean;
+  }
+
+  /** Click at pixel coordinates via CDP (trusted mouse events). */
+  async clickAtCoordinate(x: number, y: number, options?: {
+    button?: 'left' | 'right' | 'middle';
+    clickCount?: number;
+  }): Promise<boolean> {
+    return (await callRenderer('resolve:clickAtCoordinate', [this.assetId, x, y, options])) as boolean;
+  }
+
+  /** Dispatch a mouse move + press + release (drag) via CDP. */
+  async dragFromTo(
+    fromX: number, fromY: number, toX: number, toY: number,
+  ): Promise<boolean> {
+    return (await callRenderer('resolve:dragFromTo', [this.assetId, fromX, fromY, toX, toY])) as boolean;
+  }
+
+  /** Scroll at pixel coordinates via CDP wheel event. */
+  async scrollAtCoordinate(x: number, y: number, deltaX: number, deltaY: number): Promise<boolean> {
+    return (await callRenderer('resolve:scrollAtCoordinate', [this.assetId, x, y, deltaX, deltaY])) as boolean;
+  }
+
+  /** Type text character-by-character via CDP keyboard events. */
+  async typeText(text: string): Promise<boolean> {
+    return (await callRenderer('resolve:typeText', [this.assetId, text])) as boolean;
+  }
+
+  /** Add/remove element annotation overlays for numbered bounding boxes. */
+  async annotateElements(): Promise<Array<{ index: number; label: string; x: number; y: number; width: number; height: number }>> {
+    return (await callRenderer('resolve:annotateElements', [this.assetId])) as any[] || [];
+  }
+
+  async removeAnnotations(): Promise<void> {
+    await callRenderer('resolve:removeAnnotations', [this.assetId]);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -240,6 +292,11 @@ export const hostBridgeProxy = {
 
   async getAllAssetInfo(): Promise<AssetInfo[]> {
     return ((await callRenderer('getAllAssetInfo')) as AssetInfo[]) || [];
+  },
+
+  /** Close a browser tab by its assetId. Removes from both bridge registry and tab system. */
+  async closeTabByAssetId(assetId: string): Promise<boolean> {
+    return ((await callRenderer('closeTabByAssetId', [assetId])) as boolean) || false;
   },
 
   onDomEvent(handler: DomEventHandler): () => void {

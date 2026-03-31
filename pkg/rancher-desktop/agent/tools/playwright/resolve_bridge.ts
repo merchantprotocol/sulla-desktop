@@ -4,6 +4,10 @@
  * Shared helper for all playwright tools. Resolves a bridge from the
  * main-process proxy by assetId — with fuzzy matching when an exact
  * match isn't found. Never silently returns a different tab's content.
+ *
+ * The bridge itself handles readiness via its internal state machine
+ * (DETACHED → ATTACHED → INJECTING → READY). Commands auto-wait for
+ * READY, so resolveBridge just needs to find the right bridge.
  */
 
 import { hostBridgeProxy, ProxyBridge, AssetInfo } from '../../scripts/injected/HostBridgeProxy';
@@ -24,20 +28,12 @@ function matchScore(query: string, asset: AssetInfo): number {
   const title = (asset.title || '').toLowerCase();
   const url = (asset.url || '').toLowerCase();
 
-  // Exact ID match
   if (id === q) return 100;
-
-  // ID contains query or query contains ID
   if (id.includes(q)) return 80;
   if (q.includes(id)) return 70;
-
-  // URL contains query (useful when passing a domain name)
   if (url.includes(q)) return 60;
-
-  // Title contains query
   if (title.includes(q)) return 50;
 
-  // Partial ID overlap — split on common delimiters and check token overlap
   const qTokens = q.split(/[-_\s./]+/).filter(Boolean);
   const idTokens = id.split(/[-_\s./]+/).filter(Boolean);
   const titleTokens = title.split(/[-_\s./]+/).filter(Boolean);
@@ -64,20 +60,21 @@ function formatAssetLine(a: AssetInfo): string {
 /**
  * Resolves a bridge from the proxy.
  *
+ * The returned bridge's commands auto-wait for the READY state via
+ * the state machine in WebviewHostBridge — no manual waiting needed.
+ *
  * When assetId is provided:
  *   1. Exact match → return it
  *   2. No exact match → fuzzy search by ID, title, URL
- *   3. Single close match → return it with a note
+ *   3. Single close match → return it
  *   4. Multiple close matches → return an error listing them
  *   5. No matches at all → return error with all available assets
  *
  * When assetId is omitted → returns the currently active asset.
- * Never silently returns content from the wrong tab.
  */
 export async function resolveBridge(assetId?: string): Promise<BridgeResolution | ToolResponse> {
   const allAssets = await hostBridgeProxy.getAllAssetInfo();
 
-  // No assets at all
   if (allAssets.length === 0) {
     return {
       successBoolean: false,
@@ -85,32 +82,23 @@ export async function resolveBridge(assetId?: string): Promise<BridgeResolution 
     };
   }
 
-  // No assetId provided — use the active asset
+  // No assetId provided — use the active asset or the only open one
   if (!assetId || !assetId.trim()) {
     const activeId = await hostBridgeProxy.getActiveAssetId();
     const active = activeId ? allAssets.find(a => a.assetId === activeId) : null;
 
-    if (active && active.isInjected) {
+    if (active) {
       return { bridge: hostBridgeProxy.resolve(active.assetId), assetId: active.assetId };
     }
 
-    // No active — if there's exactly one injected asset, use it
-    const injected = allAssets.filter(a => a.isInjected);
-    if (injected.length === 1) {
-      return { bridge: hostBridgeProxy.resolve(injected[0].assetId), assetId: injected[0].assetId };
+    if (allAssets.length === 1) {
+      return { bridge: hostBridgeProxy.resolve(allAssets[0].assetId), assetId: allAssets[0].assetId };
     }
 
-    if (injected.length > 1) {
-      const list = injected.map(formatAssetLine).join('\n');
-      return {
-        successBoolean: false,
-        responseString: `Multiple tabs are open. Specify which one with the assetId parameter:\n${ list }`,
-      };
-    }
-
+    const list = allAssets.map(formatAssetLine).join('\n');
     return {
       successBoolean: false,
-      responseString: 'No tabs are ready yet. All may still be loading. Wait and try again.',
+      responseString: `Multiple tabs are open. Specify which one with the assetId parameter:\n${ list }`,
     };
   }
 
@@ -120,12 +108,6 @@ export async function resolveBridge(assetId?: string): Promise<BridgeResolution 
   // 1. Exact match
   const exact = allAssets.find(a => a.assetId === query);
   if (exact) {
-    if (!exact.isInjected) {
-      return {
-        successBoolean: false,
-        responseString: `Tab "${ exact.assetId }" is still loading (bridge not yet injected). Wait a few seconds and try again.`,
-      };
-    }
     return { bridge: hostBridgeProxy.resolve(exact.assetId), assetId: exact.assetId };
   }
 
@@ -135,19 +117,11 @@ export async function resolveBridge(assetId?: string): Promise<BridgeResolution 
     .filter(s => s.score > 0)
     .sort((a, b) => b.score - a.score);
 
-  // Single strong match
   if (scored.length === 1 || (scored.length > 1 && scored[0].score >= 60 && scored[0].score > scored[1].score + 20)) {
     const best = scored[0].asset;
-    if (!best.isInjected) {
-      return {
-        successBoolean: false,
-        responseString: `Matched "${ query }" → "${ best.assetId }" but it's still loading. Wait a few seconds.`,
-      };
-    }
     return { bridge: hostBridgeProxy.resolve(best.assetId), assetId: best.assetId };
   }
 
-  // Multiple close matches
   if (scored.length > 1) {
     const list = scored.slice(0, 5).map(s => `${ formatAssetLine(s.asset) } (match: ${ s.score }%)`).join('\n');
     return {
@@ -156,7 +130,6 @@ export async function resolveBridge(assetId?: string): Promise<BridgeResolution 
     };
   }
 
-  // No matches at all
   const available = allAssets.map(formatAssetLine).join('\n');
   return {
     successBoolean: false,

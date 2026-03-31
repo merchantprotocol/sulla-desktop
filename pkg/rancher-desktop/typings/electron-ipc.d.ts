@@ -164,6 +164,17 @@ export interface IpcMainInvokeEvents {
   'app-quit':               () => void;
   'browser-tab:exec-in-frame': (code: string, targetUrl?: string) => unknown;
   'browser-tab:send-input-event': (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;
+  'browser-tab:capture-screenshot': (options?: {
+    format?: 'jpeg' | 'png';
+    quality?: number;
+    clip?: { x: number; y: number; width: number; height: number; scale?: number };
+  }) => { base64: string; mediaType: string } | null;
+  'browser-tab:send-mouse-event': (mouseEvent: {
+    type: 'mousePressed' | 'mouseReleased' | 'mouseMoved';
+    x: number; y: number;
+    button?: 'left' | 'right' | 'middle' | 'none';
+    clickCount?: number;
+  }) => boolean;
   'sulla-settings-get':     (property: string, defaultValue?: any) => any;
   'sulla-settings-set':     (property: string, value: any) => void;
   'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };

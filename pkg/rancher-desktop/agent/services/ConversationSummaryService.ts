@@ -188,7 +188,7 @@ export class ConversationSummaryService {
     const recentMessages = workingMessages.slice(-SCORING_CONFIG.RELEVANCY_CONTEXT_SIZE);
     const recentContext = recentMessages
       .filter(m => typeof m.content === 'string')
-      .map(m => m.content);
+      .map(m => m.content as string);
 
     return workingMessages.map((message, index) => {
       // Skip system messages and latest user message

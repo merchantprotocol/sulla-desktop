@@ -126,10 +126,32 @@ export class GoogleService extends BaseLanguageModel {
         return typeof m.content === 'string' && m.content.length > 0;
       });
 
-    const contents: any[] = sanitizedMessages.map(m => ({
-      role:  m.role === 'assistant' ? 'model' : m.role,
-      parts: Array.isArray(m.content) ? [{ text: JSON.stringify(m.content) }] : [{ text: m.content }],
-    }));
+    const contents: any[] = sanitizedMessages.map(m => {
+      const role = m.role === 'assistant' ? 'model' : m.role;
+      if (Array.isArray(m.content)) {
+        const parts: any[] = [];
+        for (const block of m.content as any[]) {
+          if (block?.type === 'image' && block?.source?.type === 'base64') {
+            parts.push({ inlineData: { mimeType: block.source.media_type, data: block.source.data } });
+          } else if (block?.type === 'tool_result' && Array.isArray(block.content)) {
+            // Extract images nested inside tool_result blocks
+            for (const inner of block.content) {
+              if (inner?.type === 'image' && inner?.source?.type === 'base64') {
+                parts.push({ inlineData: { mimeType: inner.source.media_type, data: inner.source.data } });
+              } else if (inner?.type === 'text') {
+                parts.push({ text: inner.text });
+              }
+            }
+          } else if (block?.type === 'text' && block?.text) {
+            parts.push({ text: block.text });
+          } else {
+            parts.push({ text: JSON.stringify(block) });
+          }
+        }
+        return { role, parts: parts.length > 0 ? parts : [{ text: '' }] };
+      }
+      return { role, parts: [{ text: m.content }] };
+    });
 
     return {
       contents,

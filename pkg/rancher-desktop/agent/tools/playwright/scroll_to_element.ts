@@ -12,7 +12,6 @@ export class ScrollToElementWorker extends BaseTool {
     const { selector } = input;
     const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
-
     try {
       const scrolled = await result.bridge.scrollTo(selector);
       if (scrolled) {
