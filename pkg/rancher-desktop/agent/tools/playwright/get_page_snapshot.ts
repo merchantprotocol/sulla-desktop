@@ -15,7 +15,7 @@ export class GetPageSnapshotWorker extends BaseTool {
     const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
 
-    const mode = input.mode || 'full';
+    const mode = input.mode || 'dehydrated';
 
     try {
       if (mode === 'dehydrated') {

@@ -1,12 +1,11 @@
 import { BaseTool, ToolResponse } from '../base';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
-import { waitForNavigation, formatPageState } from './wait_for_navigation';
 
 /**
  * Set Field Tool - Sets the value of a form field on a website asset.
  *
- * If setting the field triggers navigation (e.g., form auto-submit),
- * waits for the new page and returns the full page state.
+ * If submit is true, presses Enter after setting the value and returns
+ * the dehydrated DOM so the model sees the new page state immediately.
  */
 export class SetFieldWorker extends BaseTool {
   name = '';
@@ -16,10 +15,8 @@ export class SetFieldWorker extends BaseTool {
     const { handle, value } = input;
     const result = await resolveBridge(input.assetId);
     if (!isBridgeResolved(result)) return result;
-    try {
-      // Listen for navigation before setting the field
-      const navPromise = waitForNavigation(result.assetId);
 
+    try {
       const success = await result.bridge.setValue(handle, value);
 
       if (!success) {
@@ -29,43 +26,39 @@ export class SetFieldWorker extends BaseTool {
         };
       }
 
-      // Submit the form by pressing Enter if requested
+      // Submit by pressing Enter if requested
       if (input.submit) {
         await result.bridge.pressKey('Enter', handle);
-        // Give the page time to process the submission and update
-        await new Promise(r => setTimeout(r, 1500));
       }
 
-      // Check if setting the field triggered navigation (auto-submit, etc.)
-      const navResult = await navPromise;
-
-      if (navResult && navResult.navigated) {
-        const pageState = formatPageState(result.assetId, navResult);
-        return {
-          successBoolean: true,
-          responseString: `[${ result.assetId }] Set field ${ handle } = "${ value }"${ input.submit ? ' and submitted' : '' } → page navigated.\n\n${ pageState }`,
-        };
-      }
-
-      // When submit was requested, read the page state even without navigation
-      // (SPA pages update in place without triggering navigation events)
+      // If submitted, return dehydrated DOM showing the result
       if (input.submit) {
+        const title = await result.bridge.getPageTitle();
+        const url = await result.bridge.getPageUrl();
+
+        let tree = '';
+        let stats: any = {};
         try {
-          const snapshot = await result.bridge.getActionableMarkdown();
-          const readerContent = await result.bridge.getReaderContent();
-          const content = readerContent?.content
-            ? `\n\nPage content:\n${ readerContent.content.slice(0, 4000) }`
-            : (snapshot ? `\n\nInteractive elements:\n${ snapshot.slice(0, 2000) }` : '');
-          return {
-            successBoolean: true,
-            responseString: `[${ result.assetId }] Set field ${ handle } = "${ value }" and submitted.${ content }`,
-          };
-        } catch {
-          return {
-            successBoolean: true,
-            responseString: `[${ result.assetId }] Set field ${ handle } = "${ value }" and submitted. Use get_page_snapshot to see results.`,
-          };
+          const raw = await result.bridge.execInPage(
+            'window.__sulla ? window.__sulla.dehydrate({ maxTokens: 4000 }) : null',
+          );
+          if (raw && typeof raw === 'object') {
+            const d = raw as any;
+            tree = d.tree || '';
+            stats = d.stats || {};
+          }
+        } catch { /* */ }
+
+        const parts: string[] = [];
+        parts.push(`[${ result.assetId }] Set ${ handle } = "${ value }" and submitted`);
+        parts.push(`# ${ title }`);
+        parts.push(`**URL**: ${ url }`);
+        if (tree) {
+          parts.push(`**Stats**: ${ stats.tokens ?? '?' } tokens | ${ stats.interactiveCount ?? '?' } interactive | depth ${ stats.depth ?? '?' }`);
+          parts.push('');
+          parts.push(tree);
         }
+        return { successBoolean: true, responseString: parts.join('\n') };
       }
 
       return {

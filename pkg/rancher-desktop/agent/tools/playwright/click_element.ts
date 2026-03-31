@@ -1,14 +1,11 @@
 import { BaseTool, ToolResponse } from '../base';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
-import { waitForNavigation, formatPageState } from './wait_for_navigation';
 
 /**
  * Click Element Tool - Clicks a button, link, or element on a website asset.
  *
- * If the click triggers navigation (new page, SPA route change), this tool
- * waits for the page to load and returns the full page state.
- * Bridge readiness is handled by the state machine in WebviewHostBridge —
- * commands auto-wait for READY state after navigation.
+ * After clicking, returns the dehydrated DOM so the model immediately knows
+ * the new page state. Bridge methods auto-wait for READY via state machine.
  */
 export class ClickElementWorker extends BaseTool {
   name = '';
@@ -20,8 +17,6 @@ export class ClickElementWorker extends BaseTool {
     if (!isBridgeResolved(result)) return result;
 
     try {
-      const navPromise = waitForNavigation(result.assetId);
-
       const clicked = await result.bridge.click(handle);
 
       if (!clicked) {
@@ -31,34 +26,41 @@ export class ClickElementWorker extends BaseTool {
         };
       }
 
-      const navResult = await navPromise;
+      // Read dehydrated DOM — bridge auto-waits if page is navigating/reinjecting
+      const title = await result.bridge.getPageTitle();
+      const url = await result.bridge.getPageUrl();
 
-      if (navResult && navResult.navigated) {
-        const pageState = formatPageState(result.assetId, navResult);
-        return {
-          successBoolean: true,
-          responseString: `[${ result.assetId }] Clicked "${ handle }" → page navigated.\n\n${ pageState }`,
-        };
-      }
-
-      // No navigation — read current state. Bridge auto-waits if it's recovering.
+      let tree = '';
+      let stats: any = {};
       try {
-        const snapshot = await result.bridge.getActionableMarkdown();
-        const readerContent = await result.bridge.getReaderContent();
-        const stateInfo = readerContent?.content
-          ? `\n\nCurrent page content (may have updated):\n${ readerContent.content.slice(0, 3000) }`
-          : (snapshot ? `\n\nCurrent interactive elements:\n${ snapshot.slice(0, 2000) }` : '');
+        const raw = await result.bridge.execInPage(
+          'window.__sulla ? window.__sulla.dehydrate({ maxTokens: 4000 }) : null',
+        );
+        if (raw && typeof raw === 'object') {
+          const d = raw as any;
+          tree = d.tree || '';
+          stats = d.stats || {};
+        }
+      } catch { /* runtime not available */ }
 
-        return {
-          successBoolean: true,
-          responseString: `[${ result.assetId }] Clicked "${ handle }" — no navigation detected (page may have updated in place).${ stateInfo }`,
-        };
-      } catch {
-        return {
-          successBoolean: true,
-          responseString: `[${ result.assetId }] Clicked "${ handle }" successfully.`,
-        };
+      const parts: string[] = [];
+      parts.push(`[${ result.assetId }] Clicked "${ handle }"`);
+      parts.push(`# ${ title }`);
+      parts.push(`**URL**: ${ url }`);
+
+      if (tree) {
+        parts.push(`**Stats**: ${ stats.tokens ?? '?' } tokens | ${ stats.interactiveCount ?? '?' } interactive | depth ${ stats.depth ?? '?' }`);
+        parts.push('');
+        parts.push(tree);
+      } else {
+        // Fallback
+        try {
+          const text = await result.bridge.getPageText();
+          if (text) parts.push('\n' + text.substring(0, 2000));
+        } catch { /* */ }
       }
+
+      return { successBoolean: true, responseString: parts.join('\n') };
     } catch (error) {
       return {
         successBoolean: false,
