@@ -129,6 +129,10 @@ export interface IpcMainEvents {
   // #region Integration relay (renderer → main)
   'integration-value-changed': (payload: { integration_id: string; property: string; action: string }) => void;
   // #endregion
+
+  // #region IPC Message Bus
+  'message-bus:send': (channelId: string, message: any) => void;
+  // #endregion
 }
 
 /**
@@ -354,6 +358,10 @@ export interface IpcMainInvokeEvents {
   'snapshot-cancel':                () => void;
   // #endregion
 
+  // #region IPC Message Bus
+  'message-bus:connect': (channelId: string) => boolean;
+  // #endregion
+
   // #region Debug & Monitoring
   'debug-heartbeat-status':    () => { initialized: boolean; isExecuting: boolean; lastTriggerMs: number; schedulerRunning: boolean; totalTriggers: number; totalErrors: number; totalSkips: number; uptimeMs: number };
   'debug-heartbeat-history':   (limit?: number) => { ts: number; type: string; message: string; durationMs?: number; error?: string; meta?: Record<string, unknown> }[];
@@ -513,6 +521,10 @@ export interface IpcRendererEvents {
 
   // #region Snapshots
   'snapshot-cancel': () => void;
+  // #endregion
+
+  // #region IPC Message Bus
+  'message-bus:message': (channelId: string, message: any) => void;
   // #endregion
 
   // #region Agent Configuration

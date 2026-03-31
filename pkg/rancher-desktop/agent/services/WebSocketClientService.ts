@@ -642,4 +642,13 @@ export class WebSocketClientService {
   }
 }
 
-export const getWebSocketClientService = () => WebSocketClientService.getInstance();
+export function getWebSocketClientService(): WebSocketClientService | import('./IpcMessageBus').IpcMessageBus | import('./IpcMessageBusRenderer').IpcMessageBusRenderer {
+  const isMain = typeof process !== 'undefined' && (process as any).type === 'browser';
+  if (isMain) {
+    const { IpcMessageBus } = require('./IpcMessageBus');
+    return IpcMessageBus.getInstance();
+  } else {
+    const { IpcMessageBusRenderer } = require('./IpcMessageBusRenderer');
+    return IpcMessageBusRenderer.getInstance();
+  }
+}

@@ -33,15 +33,3 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
-
-  ws-server:
-    image: ghcr.io/merchantprotocol/sulla-docker-websocket:latest
-    container_name: sulla_ws_server
-    ports:
-      - "30118:8080"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8080"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
