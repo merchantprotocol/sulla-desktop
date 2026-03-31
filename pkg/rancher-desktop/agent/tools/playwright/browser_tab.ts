@@ -1,7 +1,7 @@
 import { BaseTool, ToolResponse } from '../base';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
-import { wrapWithBlockingWarning } from './detect_blocking';
+
 
 
 /**
@@ -152,8 +152,7 @@ export class BrowserTabWorker extends BaseTool {
     try {
       const bridge = hostBridgeProxy.resolve(assetId);
 
-      // Confirm the bridge for this exact assetId is registered and injected
-      // on the renderer side before reading. If not ready yet, wait briefly.
+      // Wait for bridge injection
       for (let attempt = 0; attempt < 6; attempt++) {
         const injected = await bridge.isInjected();
         if (injected) break;
@@ -162,42 +161,44 @@ export class BrowserTabWorker extends BaseTool {
 
       const pageTitle = await bridge.getPageTitle();
       const pageUrl = await bridge.getPageUrl();
-      const snapshot = await bridge.getActionableMarkdown();
-      const readerContent = await bridge.getReaderContent();
-      const scrollInfo = await bridge.getScrollInfo();
+
+      // Return dehydrated DOM — compact, actionable, token-efficient
+      let tree = '';
+      let stats: any = {};
+      try {
+        const raw = await bridge.execInPage(
+          'window.__sulla ? window.__sulla.dehydrate({ maxTokens: 4000 }) : null',
+        );
+        if (raw && typeof raw === 'object') {
+          const d = raw as any;
+          tree = d.tree || '';
+          stats = d.stats || {};
+        }
+      } catch { /* runtime not available — fall back to basic info */ }
 
       const parts: string[] = [];
       parts.push(`[asset: ${ assetId }]`);
       parts.push(`# ${ pageTitle || fallbackTitle }`);
       parts.push(`**URL**: ${ pageUrl || fallbackUrl }`);
 
-      if (scrollInfo.moreBelow) {
-        parts.push(`**Scroll**: ${ scrollInfo.percent }% — more content below. Use browse_page(action: 'scroll_down', assetId: '${ assetId }') to continue.`);
-      }
-
-      if (snapshot && snapshot.trim()) {
+      if (tree) {
+        parts.push(`**Stats**: ${ stats.tokens ?? '?' } tokens | ${ stats.interactiveCount ?? '?' } interactive | depth ${ stats.depth ?? '?' }`);
         parts.push('');
-        parts.push(snapshot);
-      }
-
-      if (readerContent && readerContent.content && readerContent.content.trim()) {
-        parts.push('');
-        parts.push('---');
-        parts.push('## Page Content');
-        parts.push(readerContent.content);
-        if (readerContent.truncated) {
-          parts.push('\n[Content truncated — use browse_page to read more]');
+        parts.push(tree);
+      } else {
+        // Fallback: just return title + URL if dehydrate isn't available
+        const text = await bridge.getPageText();
+        if (text) {
+          parts.push('');
+          parts.push(text.substring(0, 2000));
         }
       }
 
-      const raw = parts.join('\n');
-      const { responseString, detection } = wrapWithBlockingWarning(raw, readerContent?.content || snapshot || '', pageUrl || fallbackUrl);
-
-      return { successBoolean: !detection.blocked, responseString };
+      return { successBoolean: true, responseString: parts.join('\n') };
     } catch (err) {
       return {
         successBoolean: true,
-        responseString: `Opened tab id=${ assetId } url=${ fallbackUrl } — bridge connected but content read failed: ${ (err as Error).message }. Try get_page_snapshot(assetId: '${ assetId }').`,
+        responseString: `Opened tab id=${ assetId } url=${ fallbackUrl } — bridge connected but content read failed: ${ (err as Error).message }`,
       };
     }
   }
