@@ -162,7 +162,8 @@ export interface IpcMainInvokeEvents {
   'start-sulla-custom-env': () => void;
   'sulla-restart-ollama':   () => void;
   'app-quit':               () => void;
-  'browser-tab:exec-in-frame': (code: string) => unknown;
+  'browser-tab:exec-in-frame': (code: string, targetUrl?: string) => unknown;
+  'browser-tab:send-input-event': (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;
   'sulla-settings-get':     (property: string, defaultValue?: any) => any;
   'sulla-settings-set':     (property: string, value: any) => void;
   'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };

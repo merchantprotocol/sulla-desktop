@@ -300,11 +300,27 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
   });
 
-  // Execute JavaScript in a child frame (used by BrowserTab iframe bridge injection)
-  ipcMainProxy.handle('browser-tab:exec-in-frame', async(event: Electron.IpcMainInvokeEvent, code: string) => {
+  // Execute JavaScript in a child frame (used by BrowserTab iframe bridge injection).
+  // When targetUrl is provided, only executes in the frame whose URL matches.
+  // Without targetUrl, executes in the first frame that succeeds (legacy behavior).
+  ipcMainProxy.handle('browser-tab:exec-in-frame', async(event: Electron.IpcMainInvokeEvent, code: string, targetUrl?: string) => {
     const sender = event.sender;
     const frames = sender.mainFrame.frames;
 
+    // If a target URL is specified, find the matching frame
+    if (targetUrl) {
+      const targetOrigin = new URL(targetUrl).origin;
+      for (const frame of frames) {
+        try {
+          const frameUrl = frame.url;
+          if (frameUrl && new URL(frameUrl).origin === targetOrigin) {
+            return await frame.executeJavaScript(code, true);
+          }
+        } catch { /* skip frames that error */ }
+      }
+    }
+
+    // Fallback: try all frames (legacy behavior for single-tab usage)
     for (const frame of frames) {
       try {
         return await frame.executeJavaScript(code, true);
@@ -314,6 +330,55 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
 
     return undefined;
+  });
+
+  // Send trusted keyboard input via Chrome DevTools Protocol (CDP).
+  // CDP Input.dispatchKeyEvent produces isTrusted=true events that work
+  // inside iframes — unlike sendInputEvent which only targets the top frame.
+  ipcMainProxy.handle('browser-tab:send-input-event', async(event: Electron.IpcMainInvokeEvent, inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => {
+    const wc = event.sender;
+
+    try {
+      // Attach debugger if not already attached
+      if (!wc.debugger.isAttached()) {
+        wc.debugger.attach('1.3');
+      }
+
+      const keyCodeMap: Record<string, { code: string; keyCode: number; text?: string }> = {
+        Enter:      { code: 'Enter',      keyCode: 13, text: '\r' },
+        Escape:     { code: 'Escape',     keyCode: 27 },
+        Tab:        { code: 'Tab',        keyCode: 9 },
+        Space:      { code: 'Space',      keyCode: 32, text: ' ' },
+        Backspace:  { code: 'Backspace',  keyCode: 8 },
+        ArrowUp:    { code: 'ArrowUp',    keyCode: 38 },
+        ArrowDown:  { code: 'ArrowDown',  keyCode: 40 },
+        ArrowLeft:  { code: 'ArrowLeft',  keyCode: 37 },
+        ArrowRight: { code: 'ArrowRight', keyCode: 39 },
+      };
+
+      const mapped = keyCodeMap[inputEvent.key] || { code: inputEvent.key, keyCode: 0 };
+
+      const cdpType = inputEvent.type === 'char' ? 'char'
+        : inputEvent.type === 'keyUp' ? 'keyUp' : 'rawKeyDown';
+
+      const params: Record<string, unknown> = {
+        type:                  cdpType,
+        key:                   inputEvent.key,
+        code:                  mapped.code,
+        windowsVirtualKeyCode: mapped.keyCode,
+        nativeVirtualKeyCode:  mapped.keyCode,
+      };
+      if (cdpType === 'char' && mapped.text) {
+        params.text = mapped.text;
+        params.unmodifiedText = mapped.text;
+      }
+
+      await wc.debugger.sendCommand('Input.dispatchKeyEvent', params);
+      return true;
+    } catch (err) {
+      console.warn('[Sulla] browser-tab:send-input-event CDP error:', err);
+      return false;
+    }
   });
 
   // Handle app quit requests from the UI

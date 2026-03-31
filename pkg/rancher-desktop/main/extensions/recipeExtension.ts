@@ -886,21 +886,28 @@ export class RecipeExtensionImpl implements Extension {
     const resolved = this.resolveCommand(cmd);
 
     sullaLog({ topic: 'extensions', level: 'info', message: `Starting ${ this.id }`, data: { command: resolved, cwd: this.dir } });
-    const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir });
 
-    if (stdout) {
-      const summarizedStdout = this.summarizeCommandOutput(stdout);
+    try {
+      const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir });
 
-      if (summarizedStdout) {
-        sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } start stdout]\n${ summarizedStdout }` });
+      if (stdout) {
+        const summarizedStdout = this.summarizeCommandOutput(stdout);
+
+        if (summarizedStdout) {
+          sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } start stdout]\n${ summarizedStdout }` });
+        }
       }
-    }
-    if (stderr) {
-      const summarizedStderr = this.summarizeCommandOutput(stderr);
+      if (stderr) {
+        const summarizedStderr = this.summarizeCommandOutput(stderr);
 
-      if (summarizedStderr) {
-        sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } start stderr]\n${ summarizedStderr }` });
+        if (summarizedStderr) {
+          sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } start stderr]\n${ summarizedStderr }` });
+        }
       }
+    } catch (err: any) {
+      const stderr = err?.stderr || '';
+      sullaLog({ topic: 'extensions', level: 'error', message: `Failed to start ${ this.id }: ${ err.message || err }${ stderr ? `\n${ stderr }` : '' }` });
+      throw err;
     }
     sullaLog({ topic: 'extensions', level: 'info', message: `Started ${ this.id } successfully` });
 

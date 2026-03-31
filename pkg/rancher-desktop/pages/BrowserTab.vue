@@ -231,10 +231,18 @@ function createIframeBridgeAdapter() {
       return currentUrl.value;
     },
     async executeJavaScript(code: string, _userGesture?: boolean): Promise<unknown> {
+      // Try direct contentWindow access first (same renderer process)
+      const iframe = iframeRef.value;
+      if (iframe?.contentWindow) {
+        try {
+          return (iframe.contentWindow as any).eval(code);
+        } catch { /* cross-origin or security error — fall through to IPC */ }
+      }
+      // Fallback: IPC to main process (targets frame by URL)
       try {
-        return await ipcRenderer.invoke('browser-tab:exec-in-frame', code);
+        return await ipcRenderer.invoke('browser-tab:exec-in-frame', code, currentUrl.value);
       } catch (err) {
-        console.warn('[BrowserTab] executeJavaScript via IPC failed:', err);
+        console.warn('[BrowserTab] executeJavaScript failed:', err);
         return undefined;
       }
     },
