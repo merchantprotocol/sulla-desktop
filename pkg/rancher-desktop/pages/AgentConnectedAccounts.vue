@@ -11,23 +11,6 @@
       />
 
       <div class="flex w-full flex-col">
-        <!-- Password Manager toggle bar -->
-        <div class="flex items-center gap-1 px-4 py-2 bg-slate-900 border-b border-slate-700/50">
-          <button
-            type="button"
-            class="px-3 py-1.5 text-xs font-medium rounded-md bg-teal-500/15 text-teal-400"
-          >
-            My Passwords
-          </button>
-          <button
-            type="button"
-            class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-            @click="$emit('switch-to-integrations')"
-          >
-            Add New
-          </button>
-        </div>
-
         <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
           <div class="py-16 sm:px-2 lg:relative lg:px-0 lg:py-20">
             <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
@@ -60,6 +43,16 @@
                       class="h-11 w-full rounded-lg bg-white/95 pr-4 pl-12 text-sm text-slate-900 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-300/50 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-white/5 dark:ring-inset"
                     >
                   </div>
+                  <button
+                    type="button"
+                    class="h-11 px-4 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium transition-colors flex items-center gap-2"
+                    @click="$emit('new-account')"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    New Account
+                  </button>
                 </div>
               </div>
             </div>
@@ -223,8 +216,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'open-integration': [integrationId: string, accountId: string];
-  'switch-to-integrations': [];
+  'new-account': [];
+  'edit-account': [data: { integrationId: string; accountId: string }];
 }>();
 
 const router = useRouter();
@@ -313,8 +306,7 @@ const formatDate = (date: Date): string => {
 
 const openAccount = (account: FlatAccount) => {
   if (props.embedded) {
-    // When embedded in a browser tab, emit event so the tab switches mode
-    emit('open-integration', account.integrationId, account.accountId);
+    emit('edit-account', { integrationId: account.integrationId, accountId: account.accountId });
   } else {
     router.push({
       name:   'AgentIntegrationDetail',

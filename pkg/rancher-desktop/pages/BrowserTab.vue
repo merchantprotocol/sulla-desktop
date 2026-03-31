@@ -177,10 +177,27 @@
 
     <template v-else-if="tabMode === 'vault'">
       <div class="flex-1 min-h-0 overflow-auto">
+        <!-- Vault sub-navigation: list → picker → editor -->
         <AgentConnectedAccounts
+          v-if="vaultScreen === 'list'"
           embedded
-          @open-integration="onOpenIntegration"
-          @switch-to-integrations="onSetMode('integrations')"
+          @new-account="vaultScreen = 'picker'"
+          @edit-account="showAccountEditor"
+        />
+        <AgentIntegrations
+          v-else-if="vaultScreen === 'picker'"
+          embedded
+          @back-to-vault="vaultScreen = 'list'"
+          @create-account="showNewAccountEditor"
+        />
+        <AccountEditor
+          v-else-if="vaultScreen === 'editor'"
+          :integration-id="editorIntegrationId"
+          :account-id="editorAccountId"
+          embedded
+          @back="goBackFromEditor"
+          @saved="onAccountSaved"
+          @deleted="onAccountDeleted"
         />
       </div>
     </template>
@@ -229,6 +246,7 @@ import AgentCalendar from './AgentCalendar.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
+import AccountEditor from './AccountEditor.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
@@ -271,9 +289,33 @@ function onSetMode(mode: BrowserTabMode) {
   updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
 }
 
-function onOpenIntegration(integrationId: string, _accountId: string) {
-  // Switch this tab to integrations mode — the user can manage the account there
-  updateTab(props.tabId, { mode: 'integrations', title: 'Integrations' });
+// ── Vault sub-navigation state ──
+const vaultScreen = ref<'list' | 'picker' | 'editor'>('list');
+const editorIntegrationId = ref('');
+const editorAccountId = ref<string | undefined>(undefined);
+
+function showAccountEditor(data: { integrationId: string; accountId: string }) {
+  editorIntegrationId.value = data.integrationId;
+  editorAccountId.value = data.accountId;
+  vaultScreen.value = 'editor';
+}
+
+function showNewAccountEditor(data: { integrationId: string }) {
+  editorIntegrationId.value = data.integrationId;
+  editorAccountId.value = undefined;
+  vaultScreen.value = 'editor';
+}
+
+function goBackFromEditor() {
+  vaultScreen.value = editorAccountId.value ? 'list' : 'picker';
+}
+
+function onAccountSaved() {
+  vaultScreen.value = 'list';
+}
+
+function onAccountDeleted() {
+  vaultScreen.value = 'list';
 }
 
 function onNavigateUrl(input: string) {
