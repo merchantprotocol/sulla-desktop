@@ -282,6 +282,7 @@ import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
 
 const props = defineProps<{
   tabId: string;
+  initialPrompt?: string;
 }>();
 
 const emit = defineEmits<{
@@ -395,6 +396,14 @@ const moveQueuedMessageUp = (messageId: string) => {
 const moveQueuedMessageDown = (messageId: string) => {
   chatController.moveQueuedMessageDown(messageId);
 };
+
+// When an AI context-menu action sets an initial prompt, auto-fill and send it
+watch(() => props.initialPrompt, (prompt) => {
+  if (prompt && prompt.trim()) {
+    query.value = prompt;
+    nextTick(() => send());
+  }
+}, { immediate: true });
 
 // Model selector — shares the same global model settings
 const modelName = ref('');

@@ -392,6 +392,29 @@ export class BrowserTabViewManager {
     wc.on('did-start-loading', sendState);
     wc.on('did-stop-loading', sendState);
 
+    // Forward right-click context to the renderer so the Vue-based
+    // BrowserContextMenu can display a styled menu matching the app theme.
+    wc.on('context-menu', (_event, params) => {
+      if (mainWindow.isDestroyed()) {
+        return;
+      }
+      mainWindow.webContents.send('browser-context-menu:show', {
+        tabId,
+        x:                    params.x,
+        y:                    params.y,
+        selectionText:        params.selectionText,
+        linkURL:              params.linkURL,
+        srcURL:               params.srcURL,
+        mediaType:            params.mediaType,
+        isEditable:           params.isEditable,
+        misspelledWord:       params.misspelledWord,
+        dictionarySuggestions: params.dictionarySuggestions,
+        canGoBack:            wc.canGoBack(),
+        canGoForward:         wc.canGoForward(),
+        pageURL:              wc.getURL(),
+      });
+    });
+
     // Chrome-style certificate error handling: show a warning page with an
     // "Advanced > Proceed" option instead of silently accepting or hard-blocking.
     wc.on('certificate-error', (event, url, error, certificate, callback) => {
