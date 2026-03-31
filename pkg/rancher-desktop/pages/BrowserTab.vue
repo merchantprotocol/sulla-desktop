@@ -3,15 +3,6 @@
     class="h-full overflow-hidden font-sans page-root flex flex-col"
     :class="{ dark: isDark }"
   >
-    <BrowserContextMenu
-      ref="browserContextMenu"
-      @go-back="goBack"
-      @go-forward="goForward"
-      @reload="reload"
-      @open-link-tab="onOpenLinkTab"
-      @ai-action="onAIAction"
-    />
-
     <AgentHeader
       :is-dark="isDark"
       :toggle-theme="toggleTheme"
@@ -132,7 +123,7 @@
     <!-- Chat mode: independent chat session per tab -->
     <template v-else-if="tabMode === 'chat'">
       <div class="flex-1 min-h-0 overflow-hidden">
-        <BrowserTabChat :tab-id="props.tabId" :initial-prompt="pendingAIPrompt" @set-mode="onSetMode" @navigate-url="onNavigateUrl" />
+        <BrowserTabChat :tab-id="props.tabId" @set-mode="onSetMode" @navigate-url="onNavigateUrl" />
       </div>
     </template>
 
@@ -155,8 +146,6 @@ import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import SecretaryMode from './SecretaryMode.vue';
-import BrowserContextMenu from './browser/BrowserContextMenu.vue';
-import type { BrowserContextPayload } from './browser/BrowserContextMenu.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
@@ -205,69 +194,52 @@ function onStartChat(_chatQuery: string) {
   updateTab(props.tabId, { mode: 'chat', title: 'New Chat' });
 }
 
-// ── Context menu ──
-const browserContextMenu = ref<InstanceType<typeof BrowserContextMenu> | null>(null);
-const pendingAIPrompt = ref('');
+// ── Context menu AI actions (forwarded from main process) ──
 
-// Clear the pending prompt after the chat tab has had a chance to pick it up
-watch(tabMode, (mode, oldMode) => {
-  if (oldMode !== 'chat' && mode === 'chat' && pendingAIPrompt.value) {
-    // Give the chat component one tick to read the prop, then clear
-    nextTick(() => { pendingAIPrompt.value = ''; });
-  }
-});
+function openAIChatTab(prompt: string) {
+  const tab = createTab('about:blank', { mode: 'chat' });
 
-function onContextMenuShow(_event: unknown, payload: BrowserContextPayload) {
+  updateTab(tab.id, { title: 'New Chat', content: prompt });
+}
+
+function onContextMenuAIAction(_event: unknown, payload: { tabId: string; action: string; text?: string; lang?: string; url?: string }) {
   if (payload.tabId !== props.tabId) return;
-  if (!props.isVisible) return;
-  browserContextMenu.value?.show(payload);
-}
 
-function onOpenLinkTab(url: string) {
-  createTab(url);
-}
+  const { action, text, lang, url } = payload;
 
-function onAIAction(action: string, text?: string, lang?: string) {
-  const AI_PROMPTS: Record<string, (t?: string, l?: string) => string> = {
-    'ask':                (t) => `Explain this:\n\n${ t }`,
-    'summarize':          (t) => `Summarize the following:\n\n${ t }`,
-    'translate':          (t, l) => `Translate the following to ${ l }:\n\n${ t }`,
-    'explain-page':       ()  => `Explain the web page I'm currently viewing at ${ addressBarUrl.value }`,
-    'screenshot-analyze': ()  => 'Analyze the screenshot of the page I\'m currently viewing',
+  if (action === 'open-link-tab' && url) {
+    createTab(url);
+
+    return;
+  }
+
+  const AI_PROMPTS: Record<string, () => string> = {
+    'ai-ask':          () => `Explain this:\n\n${ text }`,
+    'ai-summarize':    () => `Summarize the following:\n\n${ text }`,
+    'ai-translate':    () => `Translate the following to ${ lang }:\n\n${ text }`,
+    'ai-explain-page': () => `Explain the web page I'm currently viewing at ${ addressBarUrl.value }`,
+    'ai-screenshot':   () => 'Analyze the screenshot of the page I\'m currently viewing',
   };
 
   const promptBuilder = AI_PROMPTS[action];
 
   if (!promptBuilder) return;
 
-  if (action === 'screenshot-analyze') {
-    pendingAIPrompt.value = promptBuilder();
-    onSetMode('chat');
-
-    return;
-  }
-
-  if (action === 'explain-page') {
-    // Get page text via JS execution, then send to chat
+  if (action === 'ai-explain-page') {
     ipcRenderer.invoke('browser-tab-view:exec-js', props.tabId, 'document.body.innerText').then((pageText) => {
       const prompt = pageText
         ? `Explain this web page (${ addressBarUrl.value }):\n\n${ (pageText as string).slice(0, 8000) }`
         : promptBuilder();
 
-      pendingAIPrompt.value = prompt;
-      onSetMode('chat');
+      openAIChatTab(prompt);
     }).catch(() => {
-      pendingAIPrompt.value = promptBuilder();
-      onSetMode('chat');
+      openAIChatTab(promptBuilder());
     });
 
     return;
   }
 
-  const prompt = promptBuilder(text, lang);
-
-  pendingAIPrompt.value = prompt;
-  onSetMode('chat');
+  openAIChatTab(promptBuilder());
 }
 
 // Bridge registration — lets agent tools see this tab as open
@@ -538,7 +510,7 @@ watch([() => props.isVisible, showOverlay], ([visible]) => {
 onMounted(() => {
   // Listen for state updates from the main process
   ipcRenderer.on('browser-tab-view:state-update' as any, onStateUpdate);
-  ipcRenderer.on('browser-context-menu:show' as any, onContextMenuShow);
+  ipcRenderer.on('browser-context-menu:ai-action' as any, onContextMenuAIAction);
 
   // Read initial URL from the shared tab state
   const tab = getTab(props.tabId);
@@ -559,7 +531,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown);
 
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
-  ipcRenderer.removeListener('browser-context-menu:show' as any, onContextMenuShow);
+  ipcRenderer.removeListener('browser-context-menu:ai-action' as any, onContextMenuAIAction);
 
   if (resizeObserver) {
     resizeObserver.disconnect();

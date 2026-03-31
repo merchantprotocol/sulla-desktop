@@ -140,7 +140,6 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
-  'browser-context-menu:action': (tabId: string, action: string, payload?: Record<string, unknown>) => unknown;
   'get-locked-fields':         () => import('@pkg/config/settings').LockedSettingsType;
   'settings-write':            (arg: RecursivePartial<import('@pkg/config/settings').Settings>) => void;
   'transient-settings-fetch':  () => import('@pkg/config/transientSettings').TransientSettings;
@@ -405,20 +404,12 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
-  'browser-context-menu:show': (payload: {
-    tabId:                string;
-    x:                    number;
-    y:                    number;
-    selectionText:        string;
-    linkURL:              string;
-    srcURL:               string;
-    mediaType:            string;
-    isEditable:           boolean;
-    misspelledWord:       string;
-    dictionarySuggestions: string[];
-    canGoBack:            boolean;
-    canGoForward:         boolean;
-    pageURL:              string;
+  'browser-context-menu:ai-action': (payload: {
+    tabId:   string;
+    action:  string;
+    text?:   string;
+    lang?:   string;
+    url?:    string;
   }) => void;
   'browser-tab-view:state-update': (payload: {
     tabId:        string;

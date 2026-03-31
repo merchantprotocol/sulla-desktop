@@ -282,7 +282,6 @@ import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
 
 const props = defineProps<{
   tabId: string;
-  initialPrompt?: string;
 }>();
 
 const emit = defineEmits<{
@@ -290,7 +289,7 @@ const emit = defineEmits<{
   'navigate-url': [url: string];
 }>();
 
-const { updateTab } = useBrowserTabs();
+const { updateTab, getTab } = useBrowserTabs();
 
 /**
  * Generate a short tab title from the user's first message — no LLM required.
@@ -397,13 +396,17 @@ const moveQueuedMessageDown = (messageId: string) => {
   chatController.moveQueuedMessageDown(messageId);
 };
 
-// When an AI context-menu action sets an initial prompt, auto-fill and send it
-watch(() => props.initialPrompt, (prompt) => {
-  if (prompt && prompt.trim()) {
-    query.value = prompt;
+// If the tab was created with a content field (e.g. from an AI context menu action),
+// use it as the initial prompt and auto-send, then clear it.
+onMounted(() => {
+  const tab = getTab(props.tabId);
+
+  if (tab?.content && tab.content.trim()) {
+    query.value = tab.content;
+    updateTab(props.tabId, { content: '' });
     nextTick(() => send());
   }
-}, { immediate: true });
+});
 
 // Model selector — shares the same global model settings
 const modelName = ref('');
