@@ -21,9 +21,10 @@ export class GetPageSnapshotWorker extends BaseTool {
       if (mode === 'dehydrated') {
         const title = await result.bridge.getPageTitle();
         const url = await result.bridge.getPageUrl();
-        const dehydrated = await result.bridge.execInPage(
-          'return window.__sulla ? window.__sulla.dehydrate() : { tree: "runtime not loaded", stats: {} }',
-        ) as { tree?: string; stats?: Record<string, unknown> };
+        const raw = await result.bridge.execInPage(
+          'window.__sulla ? window.__sulla.dehydrate() : { tree: "runtime not loaded", stats: {} }',
+        );
+        const dehydrated = (raw && typeof raw === 'object' ? raw : { tree: '', stats: {} }) as { tree?: string; stats?: Record<string, unknown> };
         const stats = dehydrated.stats || {};
         const parts: string[] = [];
         parts.push(`[asset: ${ result.assetId }]`);

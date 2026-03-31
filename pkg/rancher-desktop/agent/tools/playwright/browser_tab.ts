@@ -1,7 +1,7 @@
 import { BaseTool, ToolResponse } from '../base';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
-import { wrapWithBlockingWarning } from './detect_blocking';
+
 
 
 /**
@@ -14,7 +14,7 @@ import { wrapWithBlockingWarning } from './detect_blocking';
  *      reader-mode content — so the agent doesn't need a second call
  */
 
-const PAGE_LOAD_TIMEOUT = 20000;
+const PAGE_LOAD_TIMEOUT = 60000; // dead-letter safety net — events should fire well before this
 
 export class BrowserTabWorker extends BaseTool {
   name = '';
@@ -84,7 +84,7 @@ export class BrowserTabWorker extends BaseTool {
       return { successBoolean: false, responseString: 'url is required for iframe assets.' };
     }
 
-    // Set up a listener for pageContent event from this assetId BEFORE sending upsert
+    // Listen for bridge injection event BEFORE sending upsert
     const pageLoaded = this.waitForPageLoad(assetId);
 
     // Send the upsert command to the frontend
@@ -96,27 +96,10 @@ export class BrowserTabWorker extends BaseTool {
       timestamp: Date.now(),
     });
 
-    // Wait for the page to load (pageContent event or timeout)
-    const loadResult = await pageLoaded;
+    // Wait for the bridge to inject (event-driven, not polling)
+    await pageLoaded;
 
-    if (!loadResult.loaded) {
-      // Timeout — page didn't load in time. Still return what we can.
-      try {
-        const allAssets = await hostBridgeProxy.getAllAssetInfo();
-        const found = allAssets.find(a => a.assetId === assetId);
-
-        if (found && found.isInjected) {
-          return await this.readPageState(assetId, title, url);
-        }
-      } catch { /* ignore */ }
-
-      return {
-        successBoolean: true,
-        responseString: `Opened tab id=${ assetId } url=${ url } — page is still loading (timed out after ${ PAGE_LOAD_TIMEOUT / 1000 }s). Use get_page_snapshot(assetId: '${ assetId }') to check when ready.`,
-      };
-    }
-
-    // Page loaded — read the full state
+    // Always read and return the page state
     return await this.readPageState(assetId, title, url);
   }
 
@@ -124,23 +107,26 @@ export class BrowserTabWorker extends BaseTool {
    * Wait for a pageContent or routeChanged dom event from the target assetId.
    * This fires when the GuestBridgePreload injects and emits sulla:pageContent.
    */
-  private waitForPageLoad(assetId: string): Promise<{ loaded: boolean }> {
+  private async waitForPageLoad(assetId: string): Promise<void> {
+    // Check if already loaded (bridge already injected from a previous load)
+    try {
+      const bridge = hostBridgeProxy.resolve(assetId);
+      if (await bridge.isInjected()) return; // already ready — no need to wait
+    } catch { /* not registered yet — wait for event */ }
+
+    // Not ready yet — wait for the injection event
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         unsub();
-        resolve({ loaded: false });
+        resolve(); // safety net — still try to read whatever is available
       }, PAGE_LOAD_TIMEOUT);
 
       const unsub = hostBridgeProxy.onDomEvent((event) => {
         if (event.assetId !== assetId) return;
-
-        // pageContent = full page content ready
-        // routeChanged = navigation happened (SPA)
-        // These both indicate the bridge injected and the page is loaded
-        if (event.type === 'pageContent' || event.type === 'routeChanged') {
+        if (event.type === 'pageContent' || event.type === 'injected' || event.type === 'routeChanged') {
           clearTimeout(timeout);
           unsub();
-          resolve({ loaded: true });
+          resolve();
         }
       });
     });
@@ -155,8 +141,7 @@ export class BrowserTabWorker extends BaseTool {
     try {
       const bridge = hostBridgeProxy.resolve(assetId);
 
-      // Confirm the bridge for this exact assetId is registered and injected
-      // on the renderer side before reading. If not ready yet, wait briefly.
+      // Wait for bridge injection
       for (let attempt = 0; attempt < 6; attempt++) {
         const injected = await bridge.isInjected();
         if (injected) break;
@@ -165,42 +150,44 @@ export class BrowserTabWorker extends BaseTool {
 
       const pageTitle = await bridge.getPageTitle();
       const pageUrl = await bridge.getPageUrl();
-      const snapshot = await bridge.getActionableMarkdown();
-      const readerContent = await bridge.getReaderContent();
-      const scrollInfo = await bridge.getScrollInfo();
+
+      // Return dehydrated DOM — compact, actionable, token-efficient
+      let tree = '';
+      let stats: any = {};
+      try {
+        const raw = await bridge.execInPage(
+          'window.__sulla ? window.__sulla.dehydrate({ maxTokens: 4000 }) : null',
+        );
+        if (raw && typeof raw === 'object') {
+          const d = raw as any;
+          tree = d.tree || '';
+          stats = d.stats || {};
+        }
+      } catch { /* runtime not available — fall back to basic info */ }
 
       const parts: string[] = [];
       parts.push(`[asset: ${ assetId }]`);
       parts.push(`# ${ pageTitle || fallbackTitle }`);
       parts.push(`**URL**: ${ pageUrl || fallbackUrl }`);
 
-      if (scrollInfo.moreBelow) {
-        parts.push(`**Scroll**: ${ scrollInfo.percent }% — more content below. Use browse_page(action: 'scroll_down', assetId: '${ assetId }') to continue.`);
-      }
-
-      if (snapshot && snapshot.trim()) {
+      if (tree) {
+        parts.push(`**Stats**: ${ stats.tokens ?? '?' } tokens | ${ stats.interactiveCount ?? '?' } interactive | depth ${ stats.depth ?? '?' }`);
         parts.push('');
-        parts.push(snapshot);
-      }
-
-      if (readerContent && readerContent.content && readerContent.content.trim()) {
-        parts.push('');
-        parts.push('---');
-        parts.push('## Page Content');
-        parts.push(readerContent.content);
-        if (readerContent.truncated) {
-          parts.push('\n[Content truncated — use browse_page to read more]');
+        parts.push(tree);
+      } else {
+        // Fallback: just return title + URL if dehydrate isn't available
+        const text = await bridge.getPageText();
+        if (text) {
+          parts.push('');
+          parts.push(text.substring(0, 2000));
         }
       }
 
-      const raw = parts.join('\n');
-      const { responseString, detection } = wrapWithBlockingWarning(raw, readerContent?.content || snapshot || '', pageUrl || fallbackUrl);
-
-      return { successBoolean: !detection.blocked, responseString };
+      return { successBoolean: true, responseString: parts.join('\n') };
     } catch (err) {
       return {
         successBoolean: true,
-        responseString: `Opened tab id=${ assetId } url=${ fallbackUrl } — bridge connected but content read failed: ${ (err as Error).message }. Try get_page_snapshot(assetId: '${ assetId }').`,
+        responseString: `Opened tab id=${ assetId } url=${ fallbackUrl } — bridge connected but content read failed: ${ (err as Error).message }`,
       };
     }
   }

@@ -605,11 +605,20 @@ function handleSecretaryShortcut(e: KeyboardEvent): void {
   }
 }
 
+function handleNavigateTab(event: Event) {
+  const tabId = (event as CustomEvent).detail?.tabId;
+  if (tabId) {
+    router.push(`/Browser/${ tabId }`);
+  }
+}
+
 onMounted(() => {
   window.addEventListener('keydown', handleSecretaryShortcut);
+  window.addEventListener('sulla:navigate-tab', handleNavigateTab);
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', handleSecretaryShortcut);
+  window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
 });
 
 function onRestoreClosedTab(index: number) {
