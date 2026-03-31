@@ -207,6 +207,7 @@ import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
 
 const props = defineProps<{
   tabId: string;
+  initialPrompt?: string;
 }>();
 
 const emit = defineEmits<{
@@ -298,6 +299,14 @@ const { query, messages, hasMessages, graphRunning } = chatController;
 const loading = chatController.loading;
 const currentActivity = chatController.currentActivity;
 const showContinueButton = chatController.showContinueButton;
+
+// When an AI context-menu action sets an initial prompt, auto-fill and send it
+watch(() => props.initialPrompt, (prompt) => {
+  if (prompt && prompt.trim()) {
+    query.value = prompt;
+    nextTick(() => send());
+  }
+}, { immediate: true });
 
 // Model selector — shares the same global model settings
 const modelName = ref('');
