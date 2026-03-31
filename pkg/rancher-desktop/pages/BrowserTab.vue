@@ -80,6 +80,7 @@
         <iframe
           ref="iframeRef"
           :src="currentUrl"
+          :data-asset-id="bridgeId()"
           class="browser-frame"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
           referrerpolicy="no-referrer-when-downgrade"
