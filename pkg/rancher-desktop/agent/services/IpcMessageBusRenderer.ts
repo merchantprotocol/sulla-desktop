@@ -87,19 +87,10 @@ export class IpcMessageBusRenderer {
 
     this.logMessage(connectionId, 'out', fullMsg);
 
-    // Dispatch locally to renderer-side handlers
-    const handlers = this.channels.get(connectionId);
-    if (handlers) {
-      for (const h of handlers) {
-        try {
-          h(fullMsg);
-        } catch (e) {
-          console.error('[IpcMessageBusRenderer] handler error:', e);
-        }
-      }
-    }
-
-    // Forward to main process for cross-process dispatch
+    // Forward to main process which dispatches to main-side handlers
+    // and broadcasts back to all subscribed renderers (including this one).
+    // Do NOT dispatch locally here — the broadcast handles delivery to
+    // avoid double-delivery.
     (ipcRenderer as any).send('message-bus:send', connectionId, fullMsg);
     return true;
   }

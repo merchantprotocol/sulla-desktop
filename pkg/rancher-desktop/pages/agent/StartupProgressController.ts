@@ -1,7 +1,6 @@
 import { ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { markHubReady } from '@pkg/agent/services/WebSocketClientService';
 import type { IpcRendererEvent } from 'electron';
 
 /** Backend states that mean the system is already booted */
@@ -133,7 +132,6 @@ export class StartupProgressController {
 
     if (READY_STATES.has(stateStr)) {
       this.markReady();
-      markHubReady();
     } else if (stateStr === 'STARTING' || stateStr === 'STOPPING') {
       // Backend is (re)starting — show overlay
       if (this.systemMarkedReady) {

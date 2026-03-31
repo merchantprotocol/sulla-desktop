@@ -325,7 +325,7 @@ export function initSullaDebugEvents(): void {
         const ports: Record<string, number> = { chatApi: 3000, terminal: 6108, dashboard: 6120 };
         const port = ports[serviceKey];
         if (port) {
-          const probe = serviceKey === 'terminal' || serviceKey === 'wsHub'
+          const probe = serviceKey === 'terminal'
             ? await tcpProbe(port)
             : await httpProbe(port, '/health');
           return { type: 'probe', port, ...probe };
