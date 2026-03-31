@@ -1193,45 +1193,89 @@ export class ChromeApiService implements ChromeApi {
   // chrome.sidePanel (Tier 2)
   // =========================================================================
 
+  /** Width fraction the side panel occupies (0.3 = 30%). */
+  private sidePanelWidthFraction = 0.3;
+
+  /** Notify the main renderer that side panel state changed so browser tabs can adjust bounds. */
+  private notifySidePanelState(open: boolean, width: number): void {
+    const mainWindow = require('@pkg/window').getWindow('main-agent');
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('side-panel:state-changed', { open, width });
+    }
+  }
+
+  /** Reposition the side panel view to match the current window size. */
+  private repositionSidePanel(): void {
+    if (!this.sidePanelView) return;
+
+    const mainWindow = require('@pkg/window').getWindow('main-agent');
+
+    if (!mainWindow) return;
+
+    const bounds = mainWindow.getBounds();
+    const panelWidth = Math.floor(bounds.width * this.sidePanelWidthFraction);
+
+    this.sidePanelView.setBounds({
+      x:      bounds.width - panelWidth,
+      y:      0,
+      width:  panelWidth,
+      height: bounds.height,
+    });
+  }
+
+  private sidePanelResizeHandler: (() => void) | null = null;
+
   sidePanel = {
     open: async(_options: { tabId?: string }): Promise<void> => {
-      if (!this.sidePanelOptions.path) {
-        console.warn('[ChromeApi] sidePanel.open: no path set');
-
-        return;
-      }
-
       if (this.sidePanelView) return; // already open
 
       const mainWindow = require('@pkg/window').getWindow('main-agent');
 
       if (!mainWindow) return;
 
-      const sess = session.fromPartition(SESSION_PARTITION);
+      const { webRoot } = require('@pkg/window');
+      const sidePanelUrl = `${ webRoot }/side-panel.html`;
+
       const view = new WebContentsView({
         webPreferences: {
           webSecurity:      false,
           contextIsolation: false,
-          nodeIntegration:  false,
-          partition:        SESSION_PARTITION,
+          nodeIntegration:  true,
+          webviewTag:       false,
         },
       });
 
+      this.sidePanelView = view;
+
       const bounds = mainWindow.getBounds();
+      const panelWidth = Math.floor(bounds.width * this.sidePanelWidthFraction);
 
       view.setBounds({
-        x:      Math.floor(bounds.width * 0.7),
+        x:      bounds.width - panelWidth,
         y:      0,
-        width:  Math.floor(bounds.width * 0.3),
+        width:  panelWidth,
         height: bounds.height,
       });
 
       mainWindow.contentView.addChildView(view);
-      view.webContents.loadURL(this.sidePanelOptions.path).catch((err: Error) => {
+      view.webContents.loadURL(sidePanelUrl).catch((err: Error) => {
         console.error('[ChromeApi] sidePanel load failed:', err);
       });
 
-      this.sidePanelView = view;
+      // Track window resizes to keep the panel positioned correctly
+      this.sidePanelResizeHandler = () => {
+        this.repositionSidePanel();
+        // Re-notify renderer so browser tabs re-calculate bounds
+        const newBounds = mainWindow.getBounds();
+        const newPanelWidth = Math.floor(newBounds.width * this.sidePanelWidthFraction);
+
+        this.notifySidePanelState(true, newPanelWidth);
+      };
+      mainWindow.on('resize', this.sidePanelResizeHandler);
+
+      // Notify renderer to shrink browser tab bounds
+      this.notifySidePanelState(true, panelWidth);
     },
 
     close: async(_options: { tabId?: string }): Promise<void> => {
@@ -1243,10 +1287,19 @@ export class ChromeApiService implements ChromeApi {
         try {
           mainWindow.contentView.removeChildView(this.sidePanelView);
         } catch { /* may already be detached */ }
+
+        // Remove resize listener
+        if (this.sidePanelResizeHandler) {
+          mainWindow.removeListener('resize', this.sidePanelResizeHandler);
+          this.sidePanelResizeHandler = null;
+        }
       }
 
       (this.sidePanelView.webContents as any).close?.();
       this.sidePanelView = null;
+
+      // Notify renderer to restore full-width browser tab bounds
+      this.notifySidePanelState(false, 0);
     },
 
     setOptions: async(options: SidePanelOptions): Promise<void> => {
@@ -1255,6 +1308,22 @@ export class ChromeApiService implements ChromeApi {
 
     getOptions: async(): Promise<SidePanelOptions> => {
       return { ...this.sidePanelOptions };
+    },
+
+    /** Send a prompt to the side panel chat. Call after open() has loaded. */
+    sendPrompt: async(prompt: string): Promise<void> => {
+      if (!this.sidePanelView) return;
+
+      // Wait for the page to finish loading before sending
+      const wc = this.sidePanelView.webContents;
+
+      if (wc.isLoading()) {
+        await new Promise<void>((resolve) => {
+          wc.once('did-finish-load', () => resolve());
+        });
+      }
+
+      wc.send('side-panel:set-prompt', prompt);
     },
   };
 

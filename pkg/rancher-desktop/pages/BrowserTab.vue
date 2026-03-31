@@ -196,10 +196,10 @@ function onStartChat(_chatQuery: string) {
 
 // ── Context menu AI actions (forwarded from main process) ──
 
-function openAIChatTab(prompt: string) {
-  const tab = createTab('about:blank', { mode: 'chat' });
-
-  updateTab(tab.id, { title: 'New Chat', content: prompt });
+/** Open the side panel and send a prompt to it. */
+async function openSidePanelChat(prompt: string) {
+  await ipcRenderer.invoke('chrome-api:sidePanel:open', {});
+  await ipcRenderer.invoke('chrome-api:sidePanel:sendPrompt', prompt);
 }
 
 function onContextMenuAIAction(_event: unknown, payload: { tabId: string; action: string; text?: string; lang?: string; url?: string }) {
@@ -231,15 +231,24 @@ function onContextMenuAIAction(_event: unknown, payload: { tabId: string; action
         ? `Explain this web page (${ addressBarUrl.value }):\n\n${ (pageText as string).slice(0, 8000) }`
         : promptBuilder();
 
-      openAIChatTab(prompt);
+      openSidePanelChat(prompt);
     }).catch(() => {
-      openAIChatTab(promptBuilder());
+      openSidePanelChat(promptBuilder());
     });
 
     return;
   }
 
-  openAIChatTab(promptBuilder());
+  openSidePanelChat(promptBuilder());
+}
+
+// ── Side panel state: adjust browser view bounds when panel opens/closes ──
+
+const sidePanelWidth = ref(0);
+
+function onSidePanelStateChanged(_event: unknown, state: { open: boolean; width: number }) {
+  sidePanelWidth.value = state.open ? state.width : 0;
+  nextTick(() => sendBounds());
 }
 
 // Bridge registration — lets agent tools see this tab as open
@@ -347,10 +356,12 @@ function sendBounds() {
   // Subtract footer height (22px) so the view doesn't cover it.
   const FOOTER_HEIGHT = 22;
   const remainingHeight = window.innerHeight - rect.y - FOOTER_HEIGHT;
+  // Shrink width when side panel is open so views don't overlap
+  const availableWidth = Math.round(rect.width) - sidePanelWidth.value;
   ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, {
     x:      Math.round(rect.x),
     y:      Math.round(rect.y),
-    width:  Math.round(rect.width),
+    width:  Math.max(availableWidth, 200),
     height: Math.round(remainingHeight),
   });
 }
@@ -511,6 +522,7 @@ onMounted(() => {
   // Listen for state updates from the main process
   ipcRenderer.on('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.on('browser-context-menu:ai-action' as any, onContextMenuAIAction);
+  ipcRenderer.on('side-panel:state-changed' as any, onSidePanelStateChanged);
 
   // Read initial URL from the shared tab state
   const tab = getTab(props.tabId);
@@ -532,6 +544,7 @@ onUnmounted(() => {
 
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.removeListener('browser-context-menu:ai-action' as any, onContextMenuAIAction);
+  ipcRenderer.removeListener('side-panel:state-changed' as any, onSidePanelStateChanged);
 
   if (resizeObserver) {
     resizeObserver.disconnect();

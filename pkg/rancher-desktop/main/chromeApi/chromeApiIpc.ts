@@ -260,6 +260,10 @@ export function initChromeApiIpc(): void {
     return chrome.sidePanel.getOptions();
   });
 
+  ipcMainProxy.handle('chrome-api:sidePanel:sendPrompt' as any, async(_event: Electron.IpcMainInvokeEvent, prompt: string) => {
+    return chrome.sidePanel.sendPrompt(prompt);
+  });
+
   // ── chrome.runtime ───────────────────────────────────────────────────────
 
   ipcMainProxy.handle('chrome-api:runtime:sendMessage' as any, async(_event: Electron.IpcMainInvokeEvent, message: any) => {

@@ -489,6 +489,7 @@ export interface ChromeApi {
     close(options: { tabId?: string }): Promise<void>;
     setOptions(options: SidePanelOptions): Promise<void>;
     getOptions(): Promise<SidePanelOptions>;
+    sendPrompt(prompt: string): Promise<void>;
   };
 
   runtime: {
