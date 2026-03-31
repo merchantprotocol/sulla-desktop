@@ -72,7 +72,7 @@ export class ToolRegistry {
     rdctl:              'Sulla Desktop / rdctl management commands.',
     integrations:       'Tools for checking integration status and retrieving integration credentials.',
     lima:               'Lima VM instance management.',
-    playwright:         'Full browser automation suite — open/close tabs, read page content (reader-mode extraction), scroll with incremental content capture, search within pages, interact with elements (click, fill forms), cross-tab research synthesis. Page content and DOM changes stream automatically. Available via Tools API at /v1/tools/list?search=playwright.',
+    playwright:         'Browser automation suite with two interaction modes: (1) DOM tools — click_element, set_field, browse_page for simple actions; (2) exec_in_page + window.__sulla helpers for multi-step workflows in one call. Also includes visual tools — take_screenshot with coordinate grid, click_at/type_at for pixel-precise interaction, get_page_snapshot(mode: "dehydrated") for compressed DOM overview. Load the web-research-playwright skill for full docs.',
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
     projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',
     // Integration catalog categories (tools executed via ActivePieces)
