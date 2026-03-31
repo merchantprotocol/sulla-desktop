@@ -837,6 +837,259 @@ export function buildGuestBridgeScript(): string {
     return { matches: matches, total: total, query: query };
   };
 
+  /* ------------------------------------------------------------------ */
+  /*  Vault: login form detection & credential capture                  */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * detectLoginForm()
+   * Scans the page for login forms containing password fields.
+   * Returns { hasLoginForm, usernameSelector, passwordSelector, formAction }
+   * or null if no login form found.
+   */
+  bridge.detectLoginForm = function () {
+    var passwordFields = document.querySelectorAll('input[type="password"]');
+    if (passwordFields.length === 0) return null;
+
+    for (var pi = 0; pi < passwordFields.length; pi++) {
+      var pwField = passwordFields[pi];
+      if (!isVisible(pwField)) continue;
+
+      // Skip credit card / payment forms
+      var autocomplete = (pwField.getAttribute('autocomplete') || '').toLowerCase();
+      if (autocomplete.indexOf('cc-') === 0) continue;
+
+      // Find the containing form (or nearest ancestor)
+      var form = pwField.closest ? pwField.closest('form') : null;
+      var searchRoot = form || (pwField.parentElement ? pwField.parentElement.parentElement : document.body) || document.body;
+
+      // Find username field: input[type=email], input[type=text] with user/email/login in name/id/autocomplete
+      var usernameField = null;
+      var candidates = searchRoot.querySelectorAll('input[type="email"], input[type="text"], input[type="tel"]');
+      for (var ci = 0; ci < candidates.length; ci++) {
+        var c = candidates[ci];
+        if (!isVisible(c)) continue;
+        var cName = ((c.name || '') + ' ' + (c.id || '') + ' ' + (c.getAttribute('autocomplete') || '') + ' ' + (c.placeholder || '')).toLowerCase();
+        if (cName.match(/user|email|login|account|phone|ident/)) {
+          usernameField = c;
+          break;
+        }
+      }
+      // Fallback: first visible text/email input before the password field
+      if (!usernameField) {
+        var allInputs = searchRoot.querySelectorAll('input[type="email"], input[type="text"]');
+        for (var ai = 0; ai < allInputs.length; ai++) {
+          if (isVisible(allInputs[ai])) {
+            usernameField = allInputs[ai];
+            break;
+          }
+        }
+      }
+
+      var usernameSelector = usernameField
+        ? (usernameField.id ? '#' + usernameField.id : (usernameField.name ? '[name="' + usernameField.name + '"]' : null))
+        : null;
+      var passwordSelector = pwField.id ? '#' + pwField.id : (pwField.name ? '[name="' + pwField.name + '"]' : null);
+
+      // Stamp handles for autofill
+      if (usernameField && !usernameField.getAttribute('data-sulla-handle')) {
+        stampHandle(usernameField, '@vault-username');
+      }
+      if (!pwField.getAttribute('data-sulla-handle')) {
+        stampHandle(pwField, '@vault-password');
+      }
+
+      return {
+        hasLoginForm: true,
+        usernameSelector: usernameSelector,
+        passwordSelector: passwordSelector,
+        usernameHandle: usernameField ? (usernameField.getAttribute('data-sulla-handle') || '@vault-username') : null,
+        passwordHandle: pwField.getAttribute('data-sulla-handle') || '@vault-password',
+        formAction: form ? (form.action || '') : '',
+        origin: location.origin,
+      };
+    }
+
+    return null;
+  };
+
+  /**
+   * getVaultMatchesForOrigin()
+   * Emits a request to the host to look up saved credentials for the current origin.
+   * The host responds via executeJavaScript with the matches.
+   * Returns a promise resolved by the host callback.
+   */
+  bridge.getVaultMatchesForOrigin = function () {
+    return new Promise(function (resolve) {
+      // Store the resolver so the host can call it
+      window.__sullaVaultMatchesResolve = resolve;
+      emitToHost('sulla:vault:getMatches', {
+        origin: location.origin,
+        url: location.href,
+        timestamp: Date.now(),
+      });
+      // Timeout after 5s
+      setTimeout(function () {
+        if (window.__sullaVaultMatchesResolve) {
+          window.__sullaVaultMatchesResolve([]);
+          delete window.__sullaVaultMatchesResolve;
+        }
+      }, 5000);
+    });
+  };
+
+  /**
+   * autofillFromVault(accountId)
+   * Requests the host to autofill the login form with a specific vault account.
+   * The host decrypts the password and calls setValue directly — password never
+   * enters the guest bridge or LLM context.
+   */
+  bridge.autofillFromVault = function (accountId) {
+    var loginForm = bridge.detectLoginForm();
+    if (!loginForm || !loginForm.hasLoginForm) {
+      console.log('[SULLA_GUEST] autofillFromVault: no login form detected');
+      return false;
+    }
+
+    emitToHost('sulla:vault:autofillRequest', {
+      accountId: accountId,
+      origin: location.origin,
+      usernameHandle: loginForm.usernameHandle,
+      passwordHandle: loginForm.passwordHandle,
+      timestamp: Date.now(),
+    });
+    return true;
+  };
+
+  // --- Login form submission interception ---
+  // Captures credentials when a login form is submitted, before navigation.
+  (function interceptLoginSubmission() {
+    var captured = false;
+
+    function captureCredentials() {
+      if (captured) return;
+      var loginForm = bridge.detectLoginForm();
+      if (!loginForm || !loginForm.hasLoginForm) return;
+
+      var usernameEl = loginForm.usernameHandle ? findByHandle(loginForm.usernameHandle) : null;
+      if (!usernameEl && loginForm.usernameSelector) {
+        usernameEl = document.querySelector(loginForm.usernameSelector);
+      }
+      var passwordEl = loginForm.passwordHandle ? findByHandle(loginForm.passwordHandle) : null;
+      if (!passwordEl && loginForm.passwordSelector) {
+        passwordEl = document.querySelector(loginForm.passwordSelector);
+      }
+
+      var username = usernameEl ? (usernameEl.value || '').trim() : '';
+      var password = passwordEl ? (passwordEl.value || '') : '';
+
+      if (!username || !password) return;
+
+      captured = true;
+      emitToHost('sulla:vault:credentialsCaptured', {
+        origin: location.origin,
+        url: location.href,
+        username: username,
+        password: password,
+        title: document.title,
+        timestamp: Date.now(),
+      });
+
+      // Reset after a delay to allow re-capture on failed logins
+      setTimeout(function () { captured = false; }, 5000);
+    }
+
+    // Intercept form submit events
+    document.addEventListener('submit', function (e) {
+      var form = e.target;
+      if (form && form.querySelector && form.querySelector('input[type="password"]')) {
+        captureCredentials();
+      }
+    }, true);
+
+    // Also intercept clicks on submit-like buttons near password fields
+    document.addEventListener('click', function (e) {
+      var target = e.target;
+      if (!target || !target.closest) return;
+
+      var btn = target.closest('button[type="submit"], input[type="submit"], button:not([type])');
+      if (!btn) return;
+
+      // Check if this button is near a password field
+      var form = btn.closest('form');
+      if (form && form.querySelector('input[type="password"]')) {
+        // Small delay to let the form populate
+        setTimeout(captureCredentials, 50);
+      }
+    }, true);
+  })();
+
+  // --- MutationObserver for SPA-rendered login forms ---
+  // Watches for password fields appearing after initial page load.
+  (function watchForLoginForms() {
+    var loginFormNotified = false;
+
+    function checkForLoginForm() {
+      if (loginFormNotified) return;
+      var result = bridge.detectLoginForm();
+      if (result && result.hasLoginForm) {
+        loginFormNotified = true;
+        emitToHost('sulla:vault:loginFormDetected', {
+          origin: location.origin,
+          url: location.href,
+          title: document.title,
+          usernameHandle: result.usernameHandle,
+          passwordHandle: result.passwordHandle,
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    // Check on initial load
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      setTimeout(checkForLoginForm, 500);
+    } else {
+      document.addEventListener('DOMContentLoaded', function () {
+        setTimeout(checkForLoginForm, 500);
+      });
+    }
+
+    // Watch for dynamically added password fields
+    var loginObserver = new MutationObserver(function (mutations) {
+      if (loginFormNotified) return;
+      for (var i = 0; i < mutations.length; i++) {
+        var added = mutations[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          var node = added[j];
+          if (node.nodeType !== 1) continue;
+          if (node.tagName === 'INPUT' && node.type === 'password') {
+            setTimeout(checkForLoginForm, 100);
+            return;
+          }
+          if (node.querySelector && node.querySelector('input[type="password"]')) {
+            setTimeout(checkForLoginForm, 100);
+            return;
+          }
+        }
+      }
+    });
+
+    loginObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+
+    // Reset when URL changes (SPA navigation)
+    var lastLoginUrl = location.href;
+    setInterval(function () {
+      if (location.href !== lastLoginUrl) {
+        lastLoginUrl = location.href;
+        loginFormNotified = false;
+        setTimeout(checkForLoginForm, 1000);
+      }
+    }, 500);
+  })();
+
   // Expose globally
   window[GLOBAL] = bridge;
 

@@ -1,5 +1,10 @@
 <template>
   <div class="agent-router-root">
+    <!-- Master password unlock — renders ABOVE everything including startup overlay and native views -->
+    <VaultUnlockScreen
+      v-if="!uiUnlocked && vaultSetUp"
+    />
+
     <div class="agent-router-content flex flex-col">
       <!--
         Non-browser routes use keep-alive normally.
@@ -112,12 +117,15 @@ import { useRoute } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
+import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 
 const route = useRoute();
 const { tabs: browserTabs } = useBrowserTabs();
+const { uiUnlocked, vaultSetUp, tryAutoUnlock } = useVaultUnlock();
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
 
@@ -205,7 +213,10 @@ async function refreshFooterStats() {
 
 const presenceTracker = getHumanPresenceTracker();
 
-onMounted(() => {
+onMounted(async() => {
+  // Attempt vault auto-unlock via safeStorage before anything else
+  await tryAutoUnlock();
+
   // Start human presence tracker — top-level shell ensures presence is tracked
   // whenever the app is open, regardless of which tab/pane is active
   presenceTracker.setCurrentView('Sulla Desktop');

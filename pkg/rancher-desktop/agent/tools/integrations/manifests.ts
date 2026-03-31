@@ -44,4 +44,23 @@ export const integrationsToolManifests: ToolManifest[] = [
     operationTypes: ['update'],
     loader:         () => import('./set_active_integration_account'),
   },
+  {
+    name:        'vault_list',
+    description: 'List all saved website credentials in the vault. Shows website URLs and usernames for accounts where AI access is permitted. Passwords are never included in the response.',
+    category:    'integrations',
+    schemaDef:   {},
+    operationTypes: ['read'],
+    loader:         () => import('./vault_list'),
+  },
+  {
+    name:        'vault_autofill',
+    description: 'Autofill a login form on the current browser tab with saved vault credentials. The password is injected directly into the browser — it never appears in this conversation. Requires the credential to have AI access set to "autofill" or "full".',
+    category:    'integrations',
+    schemaDef:   {
+      origin:     { type: 'string', optional: true, description: 'The website origin to match (e.g. "https://github.com"). If omitted, uses account_id directly.' },
+      account_id: { type: 'string', optional: true, description: 'The specific vault account ID to use for autofill. If omitted, matches by origin.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./vault_autofill'),
+  },
 ];

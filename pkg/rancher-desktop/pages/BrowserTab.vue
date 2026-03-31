@@ -76,6 +76,77 @@
       </div>
     </template>
 
+    <!-- Vault: Save credential banner -->
+    <div
+      v-if="vaultSavePrompt.visible"
+      class="flex items-center gap-3 px-4 py-2 text-sm vault-banner vault-save-banner"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4 shrink-0 text-teal-400">
+        <path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+      </svg>
+      <span class="flex-1 truncate">
+        {{ vaultSavePrompt.isUpdate ? 'Update' : 'Save' }} password for
+        <strong>{{ vaultSavePrompt.origin }}</strong>
+        as <strong>{{ vaultSavePrompt.username }}</strong>?
+      </span>
+      <button
+        type="button"
+        class="vault-banner-btn vault-banner-btn-primary"
+        @click="handleVaultSave"
+      >
+        {{ vaultSavePrompt.isUpdate ? 'Update' : 'Save' }}
+      </button>
+      <button
+        type="button"
+        class="vault-banner-btn"
+        @click="vaultSavePrompt.visible = false"
+      >
+        Dismiss
+      </button>
+    </div>
+
+    <!-- Vault: Autofill banner -->
+    <div
+      v-if="vaultAutofillPrompt.visible"
+      class="flex items-center gap-3 px-4 py-2 text-sm vault-banner vault-autofill-banner"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4 shrink-0 text-sky-400">
+        <path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+      </svg>
+      <span class="flex-1 truncate">
+        Autofill
+        <strong>{{ vaultAutofillPrompt.username }}</strong>
+        on <strong>{{ vaultAutofillPrompt.origin }}</strong>?
+      </span>
+      <select
+        v-if="vaultAutofillPrompt.accounts.length > 1"
+        v-model="vaultAutofillPrompt.selectedAccountId"
+        class="vault-select"
+      >
+        <option
+          v-for="acct in vaultAutofillPrompt.accounts"
+          :key="acct.accountId"
+          :value="acct.accountId"
+        >
+          {{ acct.username }}
+        </option>
+      </select>
+      <button
+        type="button"
+        class="vault-banner-btn vault-banner-btn-primary"
+        @click="handleVaultAutofill"
+      >
+        Autofill
+      </button>
+      <button
+        type="button"
+        class="vault-banner-btn"
+        @click="vaultAutofillPrompt.visible = false"
+      >
+        Dismiss
+      </button>
+    </div>
+
     <!-- Welcome / New Tab page -->
     <template v-if="tabMode === 'welcome'">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -162,6 +233,7 @@ import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowser
 import { useTheme } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { useStartupProgress } from './agent/useStartupProgress';
+import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import {
   WebviewHostBridge,
   setActiveHostBridge,
@@ -338,6 +410,85 @@ const canGoBack = ref(false);
 const canGoForward = ref(false);
 let viewCreated = false;
 
+// ── Vault state ──
+const vaultSavePrompt = ref<{
+  visible: boolean;
+  origin: string;
+  username: string;
+  password: string;
+  isUpdate: boolean;
+}>({ visible: false, origin: '', username: '', password: '', isUpdate: false });
+
+const vaultAutofillPrompt = ref<{
+  visible: boolean;
+  origin: string;
+  username: string;
+  accounts: { accountId: string; username: string }[];
+  selectedAccountId: string;
+}>({ visible: false, origin: '', username: '', accounts: [], selectedAccountId: '' });
+
+function onVaultCredentialsCaptured(_event: unknown, data: { tabId: string; origin: string; username: string; password: string }) {
+  if (data.tabId !== props.tabId) return;
+  vaultSavePrompt.value = {
+    visible:  true,
+    origin:   data.origin,
+    username: data.username,
+    password: data.password,
+    isUpdate: false,
+  };
+  // Auto-dismiss after 15 seconds
+  setTimeout(() => { vaultSavePrompt.value.visible = false; }, 15000);
+}
+
+function onVaultAutofillOffer(_event: unknown, data: { tabId: string; origin: string; accounts: { accountId: string; username: string }[] }) {
+  if (data.tabId !== props.tabId) return;
+  if (data.accounts.length === 0) return;
+  vaultAutofillPrompt.value = {
+    visible:           true,
+    origin:            data.origin,
+    username:          data.accounts[0].username,
+    accounts:          data.accounts,
+    selectedAccountId: data.accounts[0].accountId,
+  };
+}
+
+// Watch selected account to update displayed username
+watch(() => vaultAutofillPrompt.value.selectedAccountId, (newId) => {
+  const acct = vaultAutofillPrompt.value.accounts.find(a => a.accountId === newId);
+  if (acct) vaultAutofillPrompt.value.username = acct.username;
+});
+
+async function handleVaultSave() {
+  const { origin, username, password } = vaultSavePrompt.value;
+  vaultSavePrompt.value.visible = false;
+
+  try {
+    await ipcRenderer.invoke('vault:save-credential', {
+      origin,
+      username,
+      password,
+    });
+    console.log('[BrowserTab] Vault credential saved for', origin);
+  } catch (err) {
+    console.error('[BrowserTab] Failed to save vault credential:', err);
+  }
+}
+
+async function handleVaultAutofill() {
+  const { selectedAccountId } = vaultAutofillPrompt.value;
+  vaultAutofillPrompt.value.visible = false;
+
+  try {
+    await ipcRenderer.invoke('vault:autofill', {
+      tabId:     props.tabId,
+      accountId: selectedAccountId,
+    });
+    console.log('[BrowserTab] Vault autofill triggered for', selectedAccountId);
+  } catch (err) {
+    console.error('[BrowserTab] Vault autofill failed:', err);
+  }
+}
+
 /** Returns true if the input looks like a URL the user wants to navigate to */
 function looksLikeUrl(input: string): boolean {
   const trimmed = input.trim();
@@ -510,7 +661,8 @@ let resizeObserver: ResizeObserver | null = null;
 // We watch the isVisible prop to manage event listeners and view visibility.
 
 // Should the native view be visible right now?
-const shouldShowView = () => props.isVisible && !showOverlay.value && viewCreated && tabMode.value === 'browser';
+const { uiUnlocked } = useVaultUnlock();
+const shouldShowView = () => props.isVisible && !showOverlay.value && uiUnlocked.value && viewCreated && tabMode.value === 'browser';
 
 watch([() => props.isVisible, showOverlay], ([visible]) => {
   if (visible) {
@@ -539,6 +691,8 @@ onMounted(() => {
   // Listen for state updates from the main process
   ipcRenderer.on('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.on('browser-context-menu:show' as any, onContextMenuShow);
+  ipcRenderer.on('vault:credentials-captured' as any, onVaultCredentialsCaptured);
+  ipcRenderer.on('vault:autofill-offer' as any, onVaultAutofillOffer);
 
   // Read initial URL from the shared tab state
   const tab = getTab(props.tabId);
@@ -560,6 +714,8 @@ onUnmounted(() => {
 
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.removeListener('browser-context-menu:show' as any, onContextMenuShow);
+  ipcRenderer.removeListener('vault:credentials-captured' as any, onVaultCredentialsCaptured);
+  ipcRenderer.removeListener('vault:autofill-offer' as any, onVaultAutofillOffer);
 
   if (resizeObserver) {
     resizeObserver.disconnect();
@@ -665,5 +821,58 @@ onUnmounted(() => {
 
 .overflow-auto::-webkit-scrollbar-corner {
   background: var(--bg-surface);
+}
+
+/* Vault banner styles */
+.vault-banner {
+  background-color: var(--bg-surface-alt);
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  z-index: 1;
+}
+
+.vault-save-banner {
+  border-left: 3px solid var(--accent-primary);
+}
+
+.vault-autofill-banner {
+  border-left: 3px solid #38bdf8; /* sky-400 */
+}
+
+.vault-banner-btn {
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+}
+
+.vault-banner-btn:hover {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.vault-banner-btn-primary {
+  background-color: var(--accent-primary);
+  color: var(--text-on-accent);
+  border-color: var(--accent-primary);
+}
+
+.vault-banner-btn-primary:hover {
+  background-color: var(--accent-primary-hover);
+}
+
+.vault-select {
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  outline: none;
 }
 </style>

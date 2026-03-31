@@ -68,19 +68,51 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
           storedValues[fv.property] = fv.value;
         }
 
+        // Check LLM access level for this account
+        const llmAccess = storedValues['llm_access'] || (integration_slug === 'website' ? 'none' : 'full');
+
+        // If access is 'none', skip this account entirely
+        if (llmAccess === 'none') {
+          const defaultMarker = acct.active ? ' ★ DEFAULT' : '';
+          responseString += `--- Account: ${ acct.label } (${ acct.account_id })${ defaultMarker } ---\n`;
+          responseString += `[VAULT PROTECTED] — AI access is set to "none" for this account.\n\n`;
+          continue;
+        }
+
         const defaultMarker = acct.active ? ' ★ DEFAULT' : '';
         responseString += `--- Account: ${ acct.label } (${ acct.account_id })${ defaultMarker } ---\n`;
         responseString += `Enabled: ${ status.connected ? 'Yes' : 'No' }\n`;
         responseString += `Connected at: ${ status.connected_at ? new Date(status.connected_at).toLocaleString() : 'Never' }\n`;
         responseString += `Last sync at: ${ status.last_sync_at ? new Date(status.last_sync_at).toLocaleString() : 'Never' }\n`;
+        responseString += `AI Access: ${ llmAccess }\n`;
         responseString += `Credentials:\n`;
 
         catalogProperties.forEach(prop => {
+          // Skip llm_access from display — it's shown in the header above
+          if (prop.key === 'llm_access') return;
+
           const hasValue = prop.key in storedValues;
           let displayValue = '[NOT SET]';
           if (hasValue) {
             const raw = String(storedValues[prop.key]);
-            if (secretKeys.has(prop.key) && !include_secrets) {
+
+            // Apply LLM access restrictions
+            if (llmAccess === 'metadata') {
+              // Metadata-only: show non-secret fields, mask secrets
+              if (secretKeys.has(prop.key)) {
+                displayValue = '[VAULT PROTECTED]';
+              } else {
+                displayValue = raw;
+              }
+            } else if (llmAccess === 'autofill') {
+              // Autofill: same as metadata — agent can trigger autofill but not see passwords
+              if (secretKeys.has(prop.key)) {
+                displayValue = '[VAULT PROTECTED — use vault_autofill tool to fill this]';
+              } else {
+                displayValue = raw;
+              }
+            } else if (secretKeys.has(prop.key) && !include_secrets) {
+              // Full access with secrets masked by default
               displayValue = raw.length > 4 ? '****' + raw.slice(-4) : '****';
             } else {
               displayValue = raw;

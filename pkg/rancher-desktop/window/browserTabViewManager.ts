@@ -361,6 +361,45 @@ export class BrowserTabViewManager {
    * Attach webContents event listeners that forward navigation/loading state
    * back to the renderer process via the MAIN window's webContents.
    */
+  /**
+   * Check if the vault has saved credentials for the given origin.
+   * If so, send an autofill offer to the renderer.
+   */
+  private async checkVaultForAutofill(tabId: string, origin: string, mainWindow: Electron.BrowserWindow): Promise<void> {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      const accounts = await service.getAccounts('website');
+      const matches: { accountId: string; username: string }[] = [];
+
+      for (const acct of accounts) {
+        const urlValue = await service.getIntegrationValue('website', 'website_url', acct.account_id);
+        if (!urlValue?.value) continue;
+
+        try {
+          const savedOrigin = new URL(urlValue.value).origin;
+          if (savedOrigin === origin) {
+            const usernameValue = await service.getIntegrationValue('website', 'username', acct.account_id);
+            matches.push({
+              accountId: acct.account_id,
+              username:  usernameValue?.value || acct.label,
+            });
+          }
+        } catch { /* invalid saved URL */ }
+      }
+
+      if (matches.length > 0 && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('vault:autofill-offer', {
+          tabId,
+          origin,
+          accounts: matches,
+        });
+      }
+    } catch (err) {
+      console.error('[BrowserTabView] checkVaultForAutofill error:', err);
+    }
+  }
+
   private attachListeners(tabId: string, view: WebContentsView, mainWindow: Electron.BrowserWindow): void {
     const wc = view.webContents;
 
@@ -457,6 +496,42 @@ export class BrowserTabViewManager {
         this.failedUrls.delete(tabId);
         this.stopRetry(tabId);
       }
+    });
+
+    // ── Vault: handle bridge events from guest pages ──
+    // Route vault-related events from the guest bridge to the renderer.
+    wc.on('ipc-message' as any, (_event: unknown, channel: string, ...args: any[]) => {
+      if (channel !== 'browser-tab-view:bridge-event') return;
+      const [type, data] = args;
+      if (!type || !data) return;
+
+      if (type === 'sulla:vault:credentialsCaptured') {
+        // Forward captured credentials to the renderer's BrowserTab component
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('vault:credentials-captured', {
+            tabId,
+            origin:   data.origin,
+            username: data.username,
+            password: data.password,
+          });
+        }
+      }
+
+      if (type === 'sulla:vault:loginFormDetected') {
+        // Check for matching vault entries and offer autofill
+        this.checkVaultForAutofill(tabId, data.origin, mainWindow);
+      }
+    });
+
+    // Also check vault on successful navigation (for pages where the login
+    // form is already rendered in the initial HTML, not SPA-injected)
+    wc.on('did-stop-loading', () => {
+      const url = wc.getURL();
+      if (url.startsWith('data:') || url === 'about:blank') return;
+      try {
+        const origin = new URL(url).origin;
+        this.checkVaultForAutofill(tabId, origin, mainWindow);
+      } catch { /* invalid URL */ }
     });
 
     // Show a Chrome-style error page when a site can't be reached,
