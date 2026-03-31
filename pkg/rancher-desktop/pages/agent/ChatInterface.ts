@@ -4,6 +4,8 @@ import { AgentPersonaService } from '@pkg/agent';
 import type { PersonaSidebarAsset } from '@pkg/agent';
 import { getAgentPersonaRegistry, AgentPersonaRegistry, type ChatMessage as RegistryChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
+import { ChatMessageQueue, createMessageQueue, type QueuedMessage } from './ChatMessageQueue';
+import type { PendingAttachment } from './AgentComposer.vue';
 
 export type ChatMessage = RegistryChatMessage;
 
@@ -17,6 +19,7 @@ export class ChatInterface {
   /** Unique key for this tab's localStorage — scoped by tabId when provided */
   private readonly storageScope: string;
   private readonly messagesStorageKey: string;
+  private readonly messageQueue: ChatMessageQueue;
 
   readonly query = ref('');
   readonly transcriptEl = ref<HTMLElement | null>(null);
@@ -42,6 +45,9 @@ export class ChatInterface {
     this.registry = getAgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(channelId, tabId);
 
+    // Initialize message queue
+    this.messageQueue = createMessageQueue();
+
     // Restore threadId from localStorage so the next message reuses the same backend thread.
     // If none exists, generate one immediately so thread-ID filtering works from the start
     // and messages from other tabs don't leak into this persona.
@@ -53,10 +59,19 @@ export class ChatInterface {
     // Restore persisted messages from localStorage
     this.restoreMessages();
 
+    // Watch persona messages for persistence
     watch(() => this.persona.messages, () => {
       this.messages.value = [...this.persona.messages];
       this.persistMessages();
     }, { deep: true });
+
+    // Watch graphRunning to process next queued message when current one completes
+    watch(() => this.persona.graphRunning.value, (isRunning) => {
+      if (!isRunning && this.messageQueue.hasPendingMessages.value) {
+        console.log('[ChatInterface] Graph finished, processing next queued message');
+        this.processNextQueuedMessage();
+      }
+    });
 
     this.messages.value = [...this.persona.messages];
   }
@@ -146,6 +161,8 @@ export class ChatInterface {
     try {
       localStorage.removeItem(this.messagesStorageKey);
     } catch { /* ignore */ }
+    // Clear message queue
+    this.messageQueue.clear();
     // Reset the "has sent" flag so the empty-state composer appears
     this.hasSentMessage.value = false;
     localStorage.removeItem(this.hasSentMessageKey);
@@ -159,7 +176,9 @@ export class ChatInterface {
     console.log(`[ChatInterface:stop] channelId=${this.channelId}, graphRunning was ${this.persona.graphRunning.value}`);
     this.persona.emitStopSignal(this.channelId);
     this.persona.graphRunning.value = false;
-    console.log(`[ChatInterface:stop] graphRunning now ${this.persona.graphRunning.value}`);
+    // Clear the queue when stopping
+    this.messageQueue.clear();
+    console.log(`[ChatInterface:stop] graphRunning now ${this.persona.graphRunning.value}, queue cleared`);
   }
 
   continueRun(): void {
@@ -174,10 +193,35 @@ export class ChatInterface {
     this.persona.removeAsset(assetId);
   }
 
+  /**
+   * Send a message. If the graph is currently running, the message will be
+   * queued and sent automatically when the current processing completes.
+   */
   async send(metadata?: Record<string, unknown>, attachments?: Array<{ mediaType: string; base64: string }>): Promise<void> {
     if (!this.query.value.trim() && !attachments?.length) return;
 
     const text = this.query.value;
+
+    // If graph is running, queue the message
+    if (this.persona.graphRunning.value) {
+      console.log(`[ChatInterface:send] Graph running, queuing message: ${ text.slice(0, 50) }...`);
+      this.messageQueue.enqueue(text, attachments as PendingAttachment[], metadata);
+      this.query.value = '';
+      return;
+    }
+
+    // Send immediately
+    await this.sendMessageInternal(text, metadata, attachments);
+  }
+
+  /**
+   * Internal method to send a message immediately
+   */
+  private async sendMessageInternal(
+    text: string,
+    metadata?: Record<string, unknown>,
+    attachments?: Array<{ mediaType: string; base64: string }>,
+  ): Promise<void> {
     this.query.value = '';
 
     if (!this.hasSentMessage.value) {
@@ -191,6 +235,50 @@ export class ChatInterface {
       : metadata;
 
     await this.persona.addUserMessage('', text, sendMetadata);
+  }
+
+  /**
+   * Process the next queued message when graph finishes
+   */
+  private async processNextQueuedMessage(): Promise<void> {
+    const nextMessage = this.messageQueue.shift();
+    if (!nextMessage) return;
+
+    console.log(`[ChatInterface:processNextQueuedMessage] Sending queued message: ${ nextMessage.content.slice(0, 50) }...`);
+
+    const attachments = nextMessage.attachments?.map(a => ({
+      mediaType: a.mediaType,
+      base64:    a.base64,
+    }));
+
+    await this.sendMessageInternal(nextMessage.content, nextMessage.metadata, attachments);
+  }
+
+  // ─── Queue Management ───────────────────────────────────────────
+
+  /** Get the message queue for UI display */
+  getQueue(): ChatMessageQueue {
+    return this.messageQueue;
+  }
+
+  /** Remove a specific message from the queue */
+  removeQueuedMessage(messageId: string): boolean {
+    return this.messageQueue.dequeue(messageId);
+  }
+
+  /** Clear all pending messages */
+  clearQueue(): void {
+    this.messageQueue.clear();
+  }
+
+  /** Move a queued message up in priority */
+  moveQueuedMessageUp(messageId: string): boolean {
+    return this.messageQueue.moveUp(messageId);
+  }
+
+  /** Move a queued message down in priority */
+  moveQueuedMessageDown(messageId: string): boolean {
+    return this.messageQueue.moveDown(messageId);
   }
 
   /**

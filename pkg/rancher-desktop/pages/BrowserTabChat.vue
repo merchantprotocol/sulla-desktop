@@ -84,6 +84,80 @@
                 </div>
               </div>
             </div>
+
+            <!-- Queued Messages (like Windsurf) -->
+            <div v-if="hasQueuedMessages" class="mb-6 space-y-2">
+              <div class="flex items-center gap-2 px-4 mb-2">
+                <div class="text-xs font-medium text-content-secondary uppercase tracking-wide">
+                  Pending ({{ queuedMessageCount }})
+                </div>
+                <div class="flex-1 h-px bg-edge" />
+                <button
+                  type="button"
+                  class="text-xs text-content-muted hover:text-content-secondary transition-colors"
+                  @click="clearQueue"
+                >
+                  Clear all
+                </button>
+              </div>
+              <div
+                v-for="(msg, idx) in queuedMessages"
+                :key="msg.id"
+                class="flex justify-end"
+              >
+                <div class="max-w-[min(760px,92%)] rounded-2xl p-4 bg-surface-alt/50 ring-1 ring-edge-subtle/50 border border-dashed border-edge">
+                  <div class="flex items-start gap-3">
+                    <div class="flex-1 min-w-0">
+                      <div class="whitespace-pre-wrap text-content/70 text-sm">{{ msg.content }}</div>
+                      <div v-if="msg.attachments?.length" class="mt-2 flex gap-1">
+                        <span
+                          v-for="att in msg.attachments"
+                          :key="att.name"
+                          class="text-xs text-content-muted"
+                        >
+                          📎 {{ att.name }}
+                        </span>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <button
+                        v-if="idx > 0"
+                        type="button"
+                        class="p-1 rounded text-content-muted hover:text-content hover:bg-surface-hover transition-colors"
+                        title="Move up"
+                        @click="moveQueuedMessageUp(msg.id)"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M7.14645 2.14645C7.34171 1.95118 7.65829 1.95118 7.85355 2.14645L11.8536 6.14645C12.0488 6.34171 12.0488 6.65829 11.8536 6.85355C11.6583 7.04882 11.3417 7.04882 11.1464 6.85355L8 3.70711L8 12.5C8 12.7761 7.77614 13 7.5 13C7.22386 13 7 12.7761 7 12.5L7 3.70711L3.85355 6.85355C3.65829 7.04882 3.34171 7.04882 3.14645 6.85355C2.95118 6.65829 2.95118 6.34171 3.14645 6.14645L7.14645 2.14645Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+                        </svg>
+                      </button>
+                      <button
+                        v-if="idx < queuedMessages.length - 1"
+                        type="button"
+                        class="p-1 rounded text-content-muted hover:text-content hover:bg-surface-hover transition-colors"
+                        title="Move down"
+                        @click="moveQueuedMessageDown(msg.id)"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform: rotate(180deg)">
+                          <path d="M7.14645 2.14645C7.34171 1.95118 7.65829 1.95118 7.85355 2.14645L11.8536 6.14645C12.0488 6.34171 12.0488 6.65829 11.8536 6.85355C11.6583 7.04882 11.3417 7.04882 11.1464 6.85355L8 3.70711L8 12.5C8 12.7761 7.77614 13 7.5 13C7.22386 13 7 12.7761 7 12.5L7 3.70711L3.85355 6.85355C3.65829 7.04882 3.34171 7.04882 3.14645 6.85355C2.95118 6.65829 2.95118 6.34171 3.14645 6.14645L7.14645 2.14645Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="p-1 rounded text-content-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                        title="Remove from queue"
+                        @click="removeQueuedMessage(msg.id)"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M11.7816 4.03157C12.0724 3.74081 12.0724 3.25991 11.7816 2.96915C11.4909 2.67839 11.0099 2.67839 10.7192 2.96915L7.50005 6.18827L4.28091 2.96915C3.99015 2.67839 3.50925 2.67839 3.21849 2.96915C2.92773 3.25991 2.92773 3.74081 3.21849 4.03157L6.43761 7.25071L3.21849 10.4698C2.92773 10.7606 2.92773 11.2415 3.21849 11.5323C3.50925 11.823 3.99015 11.823 4.28091 11.5323L7.50005 8.31315L10.7192 11.5323C11.0099 11.823 11.4909 11.823 11.7816 11.5323C12.0724 11.2415 12.0724 10.7606 11.7816 10.4698L8.56248 7.25071L11.7816 4.03157Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Thinking indicator (graph running, not TTS) -->
             <div v-if="loading || (graphRunning && !isTTSPlaying)" class="mb-3 flex items-center gap-2 px-4">
               <div class="typing-dots">
@@ -198,6 +272,7 @@ import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import ChatToolCard from '@pkg/components/ChatToolCard.vue';
 import SubAgentBubble from './editor/workflow/SubAgentBubble.vue';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
+import type { QueuedMessage } from './agent/ChatMessageQueue';
 import { useTheme } from '@pkg/composables/useTheme';
 import { useVoiceSession } from '@pkg/composables/voice';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
@@ -298,6 +373,28 @@ const { query, messages, hasMessages, graphRunning } = chatController;
 const loading = chatController.loading;
 const currentActivity = chatController.currentActivity;
 const showContinueButton = chatController.showContinueButton;
+
+// ─── Message Queue ─────────────────────────────────────────────
+const messageQueue = chatController.getQueue();
+const queuedMessages = messageQueue.pendingMessages;
+const hasQueuedMessages = messageQueue.hasPendingMessages;
+const queuedMessageCount = messageQueue.queueLength;
+
+const removeQueuedMessage = (messageId: string) => {
+  chatController.removeQueuedMessage(messageId);
+};
+
+const clearQueue = () => {
+  chatController.clearQueue();
+};
+
+const moveQueuedMessageUp = (messageId: string) => {
+  chatController.moveQueuedMessageUp(messageId);
+};
+
+const moveQueuedMessageDown = (messageId: string) => {
+  chatController.moveQueuedMessageDown(messageId);
+};
 
 // Model selector — shares the same global model settings
 const modelName = ref('');
@@ -472,6 +569,12 @@ onMounted(async () => {
   await modelSelector.start();
   checkFirstChat();
   checkVoiceConfig();
+
+  // Scroll to bottom on initial load if messages exist
+  if (chatScrollContainer.value && messages.value.length > 0) {
+    await nextTick();
+    chatScrollContainer.value.scrollTop = chatScrollContainer.value.scrollHeight;
+  }
 });
 
 watch(() => messages.value.length, async () => {

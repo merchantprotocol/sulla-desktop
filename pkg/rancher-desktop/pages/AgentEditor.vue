@@ -1129,10 +1129,17 @@
             :agent-registry="agentRegistry"
             :hide-agent-selector="false"
             :total-tokens-used="chatTotalTokensUsed"
+            :queued-messages="chatQueueMessages"
+            :has-queued-messages="chatHasQueuedMessages"
+            :queued-message-count="chatQueuedMessageCount"
             @update:query="chatUpdateQuery"
             @send="chatSend()"
             @stop="chatStop()"
             @close="rightPaneVisible = false"
+            @remove="chatRemoveQueuedMessage"
+            @clear-queue="chatClearQueue"
+            @move-up="chatMoveQueuedMessageUp"
+            @move-down="chatMoveQueuedMessageDown"
           />
           <TrainingHelpPane
             v-show="rightPaneTab === 'help'"
@@ -1155,10 +1162,17 @@
           :agent-registry="agentRegistry"
           :hide-agent-selector="!agentMode && !workflowMode"
           :total-tokens-used="chatTotalTokensUsed"
+          :queued-messages="chatQueueMessages"
+          :has-queued-messages="chatHasQueuedMessages"
+          :queued-message-count="chatQueuedMessageCount"
           @update:query="chatUpdateQuery"
           @send="chatSend()"
           @stop="chatStop()"
           @close="rightPaneVisible = false"
+          @remove="chatRemoveQueuedMessage"
+          @clear-queue="chatClearQueue"
+          @move-up="chatMoveQueuedMessageUp"
+          @move-down="chatMoveQueuedMessageDown"
         />
       </div>
     </div>
@@ -1601,6 +1615,16 @@ export default defineComponent({
     };
     const chatStop = () => editorChat.stop();
     const chatUpdateQuery = (val: string) => { editorChat.query.value = val };
+
+    // Queue management for EditorChat
+    const chatQueue = editorChat.getQueue();
+    const chatQueueMessages = chatQueue.pendingMessages;
+    const chatHasQueuedMessages = chatQueue.hasPendingMessages;
+    const chatQueuedMessageCount = chatQueue.queueLength;
+    const chatRemoveQueuedMessage = (messageId: string) => editorChat.removeQueuedMessage(messageId);
+    const chatClearQueue = () => editorChat.clearQueue();
+    const chatMoveQueuedMessageUp = (messageId: string) => editorChat.moveQueuedMessageUp(messageId);
+    const chatMoveQueuedMessageDown = (messageId: string) => editorChat.moveQueuedMessageDown(messageId);
 
     // ── Canvas-path event dispatcher ──────────────────────────────────
     // Receives workflow execution events forwarded by EditorChatInterface and
@@ -3066,6 +3090,13 @@ export default defineComponent({
       chatSend,
       chatStop,
       chatUpdateQuery,
+      chatQueueMessages,
+      chatHasQueuedMessages,
+      chatQueuedMessageCount,
+      chatRemoveQueuedMessage,
+      chatClearQueue,
+      chatMoveQueuedMessageUp,
+      chatMoveQueuedMessageDown,
       modelSelector,
       agentRegistry,
       chatTotalTokensUsed,
