@@ -5,6 +5,7 @@ import { ref, watch, computed } from 'vue';
 import { AgentPersonaRegistry, type ChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import { AgentPersonaService } from '@pkg/agent';
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
+import { ChatMessageQueue, createMessageQueue, type QueuedMessage } from '../agent/ChatMessageQueue';
 
 const WORKBENCH_CHANNEL = 'workbench';
 
@@ -41,6 +42,7 @@ export type WorkflowExecutionEventHandler = (event: {
 export class EditorChatInterface {
   private readonly registry: AgentPersonaRegistry;
   private readonly persona:  AgentPersonaService;
+  private readonly messageQueue: ChatMessageQueue;
 
   readonly query = ref('');
   readonly messages = ref<ChatMessage[]>([]);
@@ -74,6 +76,9 @@ export class EditorChatInterface {
     this.registry = new AgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(WORKBENCH_CHANNEL);
 
+    // Initialize message queue
+    this.messageQueue = createMessageQueue();
+
     // Watch the persona's messages and mirror into our ref.
     // We watch the full array (deep) so sub-agent activity updates
     // (thinkingLines.push, status change) also trigger a UI refresh,
@@ -85,6 +90,14 @@ export class EditorChatInterface {
     );
 
     this.updateMessages();
+
+    // Watch graphRunning to process next queued message when current one completes
+    watch(() => this.persona.graphRunning.value, (isRunning) => {
+      if (!isRunning && this.messageQueue.hasPendingMessages.value) {
+        console.log('[EditorChatInterface] Graph finished, processing next queued message');
+        this.processNextQueuedMessage();
+      }
+    });
 
     // ── Canvas-path WebSocket listener ──────────────────────────────────
     // Subscribes to the `workbench` channel and forwards `workflow_execution_event`
@@ -170,15 +183,50 @@ export class EditorChatInterface {
     this.messages.value = filtered;
   }
 
+  /**
+   * Send a message. If the graph is currently running, the message will be
+   * queued and sent automatically when the current processing completes.
+   */
   async send(): Promise<void> {
     const text = this.query.value.trim();
     if (!text) return;
 
+    // If graph is running, queue the message
+    if (this.persona.graphRunning.value) {
+      console.log(`[EditorChatInterface:send] Graph running, queuing message: ${ text.slice(0, 50) }...`);
+      this.messageQueue.enqueue(text, [], {
+        workflowId: this.activeWorkflowId.value || undefined,
+        agentId:    this.activeAgentId.value || undefined,
+      });
+      this.query.value = '';
+      return;
+    }
+
+    // Send immediately
+    await this.sendMessageInternal(text);
+  }
+
+  /**
+   * Internal method to send a message immediately
+   */
+  private async sendMessageInternal(text: string): Promise<void> {
     this.query.value = '';
     await this.persona.addUserMessage('', text, {
       workflowId: this.activeWorkflowId.value || undefined,
       agentId:    this.activeAgentId.value || undefined,
     });
+  }
+
+  /**
+   * Process the next queued message when graph finishes
+   */
+  private async processNextQueuedMessage(): Promise<void> {
+    const nextMessage = this.messageQueue.shift();
+    if (!nextMessage) return;
+
+    console.log(`[EditorChatInterface:processNextQueuedMessage] Sending queued message: ${ nextMessage.content.slice(0, 50) }...`);
+
+    await this.sendMessageInternal(nextMessage.content);
   }
 
   /** Clear all messages and reset the thread so the next send starts a fresh conversation. */
@@ -189,6 +237,8 @@ export class EditorChatInterface {
     this.messages.value = [];
     this.persona.messages.splice(0);
     this.persona.clearThreadId();
+    // Clear message queue
+    this.messageQueue.clear();
 
     // Tell the backend to discard the old thread
     if (oldThreadId) {
@@ -204,6 +254,35 @@ export class EditorChatInterface {
   stop(): void {
     this.persona.emitStopSignal(WORKBENCH_CHANNEL);
     this.persona.graphRunning.value = false;
+    // Clear the queue when stopping
+    this.messageQueue.clear();
+  }
+
+  // ─── Queue Management ───────────────────────────────────────────
+
+  /** Get the message queue for UI display */
+  getQueue(): ChatMessageQueue {
+    return this.messageQueue;
+  }
+
+  /** Remove a specific message from the queue */
+  removeQueuedMessage(messageId: string): boolean {
+    return this.messageQueue.dequeue(messageId);
+  }
+
+  /** Clear all pending messages */
+  clearQueue(): void {
+    this.messageQueue.clear();
+  }
+
+  /** Move a queued message up in priority */
+  moveQueuedMessageUp(messageId: string): boolean {
+    return this.messageQueue.moveUp(messageId);
+  }
+
+  /** Move a queued message down in priority */
+  moveQueuedMessageDown(messageId: string): boolean {
+    return this.messageQueue.moveDown(messageId);
   }
 
   dispose(): void {

@@ -137,6 +137,70 @@
         </div>
       </div>
 
+      <!-- Queued Messages (like Windsurf) -->
+      <div
+        v-if="hasQueuedMessages"
+        class="chat-queued-messages"
+        :class="{ dark: isDark }"
+      >
+        <div class="chat-queue-header">
+          <span class="chat-queue-title">Pending ({{ queuedMessageCount }})</span>
+          <button
+            type="button"
+            class="chat-queue-clear"
+            :class="{ dark: isDark }"
+            @click="$emit('clear-queue')"
+          >
+            Clear all
+          </button>
+        </div>
+        <div
+          v-for="(msg, idx) in queuedMessages"
+          :key="msg.id"
+          class="chat-queued-item"
+          :class="{ dark: isDark }"
+        >
+          <div class="chat-queued-content">{{ msg.content }}</div>
+          <div class="chat-queued-actions">
+            <button
+              v-if="idx > 0"
+              type="button"
+              class="chat-queued-btn"
+              :class="{ dark: isDark }"
+              title="Move up"
+              @click="$emit('move-up', msg.id)"
+            >
+              <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7.14645 2.14645C7.34171 1.95118 7.65829 1.95118 7.85355 2.14645L11.8536 6.14645C12.0488 6.34171 12.0488 6.65829 11.8536 6.85355C11.6583 7.04882 11.3417 7.04882 11.1464 6.85355L8 3.70711L8 12.5C8 12.7761 7.77614 13 7.5 13C7.22386 13 7 12.7761 7 12.5L7 3.70711L3.85355 6.85355C3.65829 7.04882 3.34171 7.04882 3.14645 6.85355C2.95118 6.65829 2.95118 6.34171 3.14645 6.14645L7.14645 2.14645Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+              </svg>
+            </button>
+            <button
+              v-if="idx < queuedMessages.length - 1"
+              type="button"
+              class="chat-queued-btn"
+              :class="{ dark: isDark }"
+              title="Move down"
+              @click="$emit('move-down', msg.id)"
+            >
+              <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform: rotate(180deg)">
+                <path d="M7.14645 2.14645C7.34171 1.95118 7.65829 1.95118 7.85355 2.14645L11.8536 6.14645C12.0488 6.34171 12.0488 6.65829 11.8536 6.85355C11.6583 7.04882 11.3417 7.04882 11.1464 6.85355L8 3.70711L8 12.5C8 12.7761 7.77614 13 7.5 13C7.22386 13 7 12.7761 7 12.5L7 3.70711L3.85355 6.85355C3.65829 7.04882 3.34171 7.04882 3.14645 6.85355C2.95118 6.65829 2.95118 6.34171 3.14645 6.14645L7.14645 2.14645Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="chat-queued-btn remove"
+              :class="{ dark: isDark }"
+              title="Remove"
+              @click="$emit('remove', msg.id)"
+            >
+              <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M11.7816 4.03157C12.0724 3.74081 12.0724 3.25991 11.7816 2.96915C11.4909 2.67839 11.0099 2.67839 10.7192 2.96915L7.50005 6.18827L4.28091 2.96915C3.99015 2.67839 3.50925 2.67839 3.21849 2.96915C2.92773 3.25991 2.92773 3.74081 3.21849 4.03157L6.43761 7.25071L3.21849 10.4698C2.92773 10.7606 2.92773 11.2415 3.21849 11.5323C3.50925 11.823 3.99015 11.823 4.28091 11.5323L7.50005 8.31315L10.7192 11.5323C11.0099 11.823 11.4909 11.823 11.7816 11.5323C12.0724 11.2415 12.0724 10.7606 11.7816 10.4698L8.56248 7.25071L11.7816 4.03157Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Activity status indicator -->
       <div
         v-if="loading || graphRunning"
@@ -449,6 +513,7 @@ import { marked } from 'marked';
 import type { ChatMessage } from '@pkg/agent';
 import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
 import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
+import type { QueuedMessage } from '../agent/ChatMessageQueue';
 import WorkflowNodeCard from './workflow/WorkflowNodeCard.vue';
 import SubAgentBubble from './workflow/SubAgentBubble.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
@@ -466,6 +531,9 @@ const props = defineProps<{
   agentRegistry?:     AgentPersonaRegistry;
   totalTokensUsed?:   number;
   hideAgentSelector?: boolean;
+  queuedMessages?:    QueuedMessage[];
+  hasQueuedMessages?: boolean;
+  queuedMessageCount?: number;
 }>();
 
 const showAgentMenu = ref(false);
@@ -487,6 +555,10 @@ const emit = defineEmits<{
   send:           [];
   stop:           [];
   close:          [];
+  remove:         [messageId: string];
+  'clear-queue':  [];
+  'move-up':      [messageId: string];
+  'move-down':    [messageId: string];
 }>();
 
 const tokenLabel = computed(() => {
@@ -1139,5 +1211,99 @@ watch(() => props.messages.length, () => scrollToBottom());
   font-size: var(--fs-caption);
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* ─── Queued Messages ─── */
+.chat-queued-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px dashed var(--border-default);
+}
+
+.chat-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 4px;
+}
+
+.chat-queue-title {
+  font-size: var(--fs-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+}
+
+.chat-queue-clear {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.chat-queue-clear:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.chat-queued-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-surface-alt);
+  border: 1px dashed var(--border-default);
+  border-radius: 8px;
+  opacity: 0.8;
+}
+
+.chat-queued-content {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-code);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.chat-queued-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.chat-queued-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chat-queued-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.chat-queued-btn.remove:hover {
+  background: var(--bg-error);
+  color: var(--text-error);
 }
 </style>
