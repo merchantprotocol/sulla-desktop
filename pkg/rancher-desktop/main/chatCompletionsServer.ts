@@ -616,6 +616,7 @@ export class ChatCompletionsServer {
       const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
       const { integrations: catalogIntegrations } = await import('@pkg/agent/integrations/catalog');
       const loader = getIntegrationConfigLoader();
+      await loader.loadAll(); // Ensure YAML configs are loaded before querying
       const svc = getIntegrationService();
 
       // IntegrationService is the source of truth for what's enabled
