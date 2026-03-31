@@ -3,7 +3,7 @@ import type { ToolManifest } from '../registry';
 export const playwrightToolManifests: ToolManifest[] = [
   {
     name:        'browser_tab',
-    description: 'Open, navigate, or close browser tabs. Returns a dehydrated DOM tree showing page structure and interactive elements. Reuse the same assetId to navigate an existing tab to a new URL. IMPORTANT: Before doing any web research or multi-page browsing, load the web-research-playwright skill first — it contains essential patterns for fast multi-step workflows using exec_in_page + __sulla helpers.',
+    description: 'Open, navigate, or close browser tabs. Returns a dehydrated DOM tree showing page structure and interactive elements. Reuse the same assetId to navigate an existing tab to a new URL.',
     category:    'playwright',
     schemaDef:   {
       action:    { type: 'enum', enum: ['upsert', 'remove'], default: 'upsert', description: 'upsert creates/updates an asset; remove deletes by assetId.' },

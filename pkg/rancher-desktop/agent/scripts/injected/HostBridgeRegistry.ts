@@ -317,12 +317,7 @@ class HostBridgeRegistryImpl {
 
     const lines: string[] = [];
     lines.push('### Open Browser Tabs');
-    lines.push('');
-    lines.push('**IMPORTANT**: If you have not already loaded the `web-research-playwright` skill in this conversation, load it now before doing any more browser work. It contains critical patterns for fast, reliable page interaction.');
-    lines.push('');
     lines.push(`You have **${ this.bridges.size } tab(s) open**. Close tabs when done. Reuse tabs instead of opening new ones. Max 3-5 open at a time.`);
-    lines.push('');
-    lines.push('Use `exec_in_page` + `__sulla` helpers for multi-step workflows (click → wait → extract in one call). Every page has `window.__sulla` with DOM queries, wait functions, interaction helpers, and data extraction.');
     lines.push('');
 
     for (const entry of this.bridges.values()) {

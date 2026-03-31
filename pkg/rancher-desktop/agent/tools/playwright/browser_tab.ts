@@ -140,13 +140,16 @@ export class BrowserTabWorker extends BaseTool {
         parts.push('');
         parts.push(tree);
       } else {
-        // Fallback: just return title + URL if dehydrate isn't available
         const text = await bridge.getPageText();
         if (text) {
           parts.push('');
           parts.push(text.substring(0, 2000));
         }
       }
+
+      parts.push('');
+      parts.push('---');
+      parts.push('**Interaction guide**: Use `exec_in_page` with `__sulla` helpers for multi-step workflows. Example: `__sulla.steps([() => __sulla.click("a"), () => __sulla.waitFor("h1"), () => __sulla.text("body")])` runs click→wait→extract in one call. Use `take_screenshot(annotate: true)` for visual coordinate-based interaction. See `web-research-playwright` skill for full patterns.');
 
       return { successBoolean: true, responseString: parts.join('\n') };
     } catch (err) {
