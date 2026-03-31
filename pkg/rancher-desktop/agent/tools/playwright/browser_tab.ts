@@ -14,7 +14,6 @@ import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
  *      reader-mode content — so the agent doesn't need a second call
  */
 
-const PAGE_LOAD_TIMEOUT = 60000; // dead-letter safety net — events should fire well before this
 
 export class BrowserTabWorker extends BaseTool {
   name = '';
@@ -84,9 +83,6 @@ export class BrowserTabWorker extends BaseTool {
       return { successBoolean: false, responseString: 'url is required for iframe assets.' };
     }
 
-    // Listen for bridge injection event BEFORE sending upsert
-    const pageLoaded = this.waitForPageLoad(assetId);
-
     // Send the upsert command to the frontend
     await wsService.send(wsChannel, {
       type: 'register_or_activate_asset',
@@ -96,40 +92,9 @@ export class BrowserTabWorker extends BaseTool {
       timestamp: Date.now(),
     });
 
-    // Wait for the bridge to inject (event-driven, not polling)
-    await pageLoaded;
-
-    // Always read and return the page state
+    // readPageState calls bridge methods which auto-wait for READY state
+    // via the WebviewHostBridge state machine. No manual waiting needed.
     return await this.readPageState(assetId, title, url);
-  }
-
-  /**
-   * Wait for a pageContent or routeChanged dom event from the target assetId.
-   * This fires when the GuestBridgePreload injects and emits sulla:pageContent.
-   */
-  private async waitForPageLoad(assetId: string): Promise<void> {
-    // Check if already loaded (bridge already injected from a previous load)
-    try {
-      const bridge = hostBridgeProxy.resolve(assetId);
-      if (await bridge.isInjected()) return; // already ready — no need to wait
-    } catch { /* not registered yet — wait for event */ }
-
-    // Not ready yet — wait for the injection event
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        unsub();
-        resolve(); // safety net — still try to read whatever is available
-      }, PAGE_LOAD_TIMEOUT);
-
-      const unsub = hostBridgeProxy.onDomEvent((event) => {
-        if (event.assetId !== assetId) return;
-        if (event.type === 'pageContent' || event.type === 'injected' || event.type === 'routeChanged') {
-          clearTimeout(timeout);
-          unsub();
-          resolve();
-        }
-      });
-    });
   }
 
   /**
