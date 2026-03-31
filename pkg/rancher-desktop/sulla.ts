@@ -544,6 +544,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('browser-tab-view:exec-js', async(_event: Electron.IpcMainInvokeEvent, tabId: string, code: string) => {
     return tabViewManager.executeJavaScript(tabId, code);
   });
+
 }
 
 /**

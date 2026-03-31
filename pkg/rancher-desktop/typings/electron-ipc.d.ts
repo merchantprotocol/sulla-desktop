@@ -404,6 +404,13 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'browser-context-menu:ai-action': (payload: {
+    tabId:   string;
+    action:  string;
+    text?:   string;
+    lang?:   string;
+    url?:    string;
+  }) => void;
   'browser-tab-view:state-update': (payload: {
     tabId:        string;
     url:          string;

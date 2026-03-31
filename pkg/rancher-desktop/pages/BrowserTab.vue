@@ -174,7 +174,7 @@ const props = defineProps<{
 }>();
 
 const { isDark, toggleTheme } = useTheme();
-const { updateTab, getTab } = useBrowserTabs();
+const { updateTab, getTab, createTab } = useBrowserTabs();
 const { showOverlay } = useStartupProgress();
 
 const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
@@ -192,6 +192,54 @@ function onNavigateUrl(input: string) {
 function onStartChat(_chatQuery: string) {
   // Switch this tab to chat mode
   updateTab(props.tabId, { mode: 'chat', title: 'New Chat' });
+}
+
+// ── Context menu AI actions (forwarded from main process) ──
+
+function openAIChatTab(prompt: string) {
+  const tab = createTab('about:blank', { mode: 'chat' });
+
+  updateTab(tab.id, { title: 'New Chat', content: prompt });
+}
+
+function onContextMenuAIAction(_event: unknown, payload: { tabId: string; action: string; text?: string; lang?: string; url?: string }) {
+  if (payload.tabId !== props.tabId) return;
+
+  const { action, text, lang, url } = payload;
+
+  if (action === 'open-link-tab' && url) {
+    createTab(url);
+
+    return;
+  }
+
+  const AI_PROMPTS: Record<string, () => string> = {
+    'ai-ask':          () => `Explain this:\n\n${ text }`,
+    'ai-summarize':    () => `Summarize the following:\n\n${ text }`,
+    'ai-translate':    () => `Translate the following to ${ lang }:\n\n${ text }`,
+    'ai-explain-page': () => `Explain the web page I'm currently viewing at ${ addressBarUrl.value }`,
+    'ai-screenshot':   () => 'Analyze the screenshot of the page I\'m currently viewing',
+  };
+
+  const promptBuilder = AI_PROMPTS[action];
+
+  if (!promptBuilder) return;
+
+  if (action === 'ai-explain-page') {
+    ipcRenderer.invoke('browser-tab-view:exec-js', props.tabId, 'document.body.innerText').then((pageText) => {
+      const prompt = pageText
+        ? `Explain this web page (${ addressBarUrl.value }):\n\n${ (pageText as string).slice(0, 8000) }`
+        : promptBuilder();
+
+      openAIChatTab(prompt);
+    }).catch(() => {
+      openAIChatTab(promptBuilder());
+    });
+
+    return;
+  }
+
+  openAIChatTab(promptBuilder());
 }
 
 // Bridge registration — lets agent tools see this tab as open
@@ -462,6 +510,7 @@ watch([() => props.isVisible, showOverlay], ([visible]) => {
 onMounted(() => {
   // Listen for state updates from the main process
   ipcRenderer.on('browser-tab-view:state-update' as any, onStateUpdate);
+  ipcRenderer.on('browser-context-menu:ai-action' as any, onContextMenuAIAction);
 
   // Read initial URL from the shared tab state
   const tab = getTab(props.tabId);
@@ -482,6 +531,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown);
 
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
+  ipcRenderer.removeListener('browser-context-menu:ai-action' as any, onContextMenuAIAction);
 
   if (resizeObserver) {
     resizeObserver.disconnect();
