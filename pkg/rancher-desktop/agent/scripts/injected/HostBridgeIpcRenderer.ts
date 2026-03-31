@@ -18,16 +18,36 @@ import { getWebSocketClientService } from '../../services/WebSocketClientService
  * CDP mouse events target the full renderer window, but tool coordinates
  * are relative to the iframe content. This returns the offset to translate.
  */
-function getIframeOffset(assetId?: string): { x: number; y: number } {
-  // Find the iframe element in the renderer DOM
-  const iframes = document.querySelectorAll('iframe.browser-frame, iframe[src]');
+/**
+ * Find the iframe for a specific assetId (or the first visible one).
+ * Each iframe has a data-asset-id attribute set by BrowserTab.vue.
+ */
+function findIframe(assetId?: string): HTMLIFrameElement | null {
+  if (assetId) {
+    const specific = document.querySelector(`iframe[data-asset-id="${ assetId }"]`) as HTMLIFrameElement | null;
+    if (specific) return specific;
+  }
+  // Fallback: find the visible (active) iframe
+  const iframes = document.querySelectorAll('iframe.browser-frame') as NodeListOf<HTMLIFrameElement>;
   for (const iframe of iframes) {
     const rect = iframe.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      return { x: Math.round(rect.left), y: Math.round(rect.top) };
+    if (rect.width > 0 && rect.height > 0 && getComputedStyle(iframe.closest('.browser-tab-layer') || iframe).visibility !== 'hidden') {
+      return iframe;
     }
   }
-  return { x: 0, y: 0 };
+  // Last resort: any iframe with size
+  for (const iframe of iframes) {
+    const rect = iframe.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) return iframe;
+  }
+  return null;
+}
+
+function getIframeOffset(assetId?: string): { x: number; y: number } {
+  const iframe = findIframe(assetId);
+  if (!iframe) return { x: 0, y: 0 };
+  const rect = iframe.getBoundingClientRect();
+  return { x: Math.round(rect.left), y: Math.round(rect.top) };
 }
 
 const WS_CHANNEL = 'bridge-ipc';
@@ -225,21 +245,40 @@ async function handleMethod(method: string, args: unknown[]): Promise<unknown> {
       const options = (args[1] as any) || {};
       try {
         const { ipcRenderer } = require('electron');
-        // Crop to iframe bounds so screenshot matches grid/annotation coordinates
-        if (!options.clip) {
-          const offset = getIframeOffset(asString(args[0]));
-          const iframe = document.querySelector('iframe.browser-frame, iframe[src]') as HTMLIFrameElement | null;
-          if (iframe) {
-            const rect = iframe.getBoundingClientRect();
-            options.clip = {
-              x:      Math.round(rect.left),
-              y:      Math.round(rect.top),
-              width:  Math.round(rect.width),
-              height: Math.round(rect.height),
-              scale:  1,
-            };
+        const iframe = findIframe(asString(args[0]));
+
+        if (iframe && !options.clip) {
+          // Temporarily make the target tab visible for screenshot capture
+          // (hidden tabs use visibility:hidden which prevents painting)
+          const tabLayer = iframe.closest('.browser-tab-layer') as HTMLElement | null;
+          const wasHidden = tabLayer?.classList.contains('browser-tab-hidden');
+          if (wasHidden && tabLayer) {
+            tabLayer.style.visibility = 'visible';
+            tabLayer.style.zIndex = '9999';
+            // Force a repaint so CDP captures the now-visible content
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
           }
+
+          const rect = iframe.getBoundingClientRect();
+          options.clip = {
+            x:      Math.round(rect.left),
+            y:      Math.round(rect.top),
+            width:  Math.round(rect.width),
+            height: Math.round(rect.height),
+            scale:  1,
+          };
+
+          const result = await ipcRenderer.invoke('browser-tab:capture-screenshot', options);
+
+          // Restore hidden state
+          if (wasHidden && tabLayer) {
+            tabLayer.style.visibility = '';
+            tabLayer.style.zIndex = '';
+          }
+
+          return result;
         }
+
         return await ipcRenderer.invoke('browser-tab:capture-screenshot', options);
       } catch (err) {
         console.warn('[HostBridgeIpcRenderer] captureScreenshot error:', err);

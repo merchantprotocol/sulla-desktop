@@ -233,16 +233,23 @@ export function closeTabByAssetId(assetId: string): boolean {
 
   tabs.splice(idx, 1);
 
-  // Always keep at least one tab
+  // Always keep at least one tab — create a new chat tab and
+  // dispatch a custom event so AgentHeader can navigate the router
   if (tabs.length === 0) {
-    tabs.push({
+    const newTab = {
       id:      `tab_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 8) }`,
       url:     'about:blank',
       title:   'New Chat',
       favicon: '',
       loading: false,
-      mode:    'chat',
-    });
+      mode:    'chat' as BrowserTabMode,
+    };
+    tabs.push(newTab);
+
+    // Notify the UI to navigate to the new tab
+    try {
+      window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: newTab.id } }));
+    } catch { /* non-browser context */ }
   }
 
   return true;

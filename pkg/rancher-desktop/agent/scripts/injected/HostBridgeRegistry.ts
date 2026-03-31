@@ -320,12 +320,22 @@ class HostBridgeRegistryImpl {
     lines.push(`You currently have **${ this.bridges.size } tab(s) open**. Each open tab consumes memory and CPU on the user's machine.`);
     lines.push('');
     lines.push('**Rules:**');
-    lines.push('- If you opened a tab and are done with it, close it IMMEDIATELY with `browser_tab(action: \'remove\', assetId: \'...\')`. Do not leave tabs open for later.');
-    lines.push('- Before opening a new tab, check if you can reuse an existing one by navigating it to the new URL.');
-    lines.push('- Keep no more than 3-5 tabs open at any time. Close finished tabs before opening new ones.');
-    lines.push('- When your task is complete, close ALL tabs you opened. Leave zero behind.');
+    lines.push('- Close tabs IMMEDIATELY when done: `browser_tab(action: "remove", assetId: "...")`');
+    lines.push('- Reuse existing tabs by navigating to new URLs instead of opening new ones.');
+    lines.push('- Keep no more than 3-5 tabs open. Close finished tabs before opening new ones.');
+    lines.push('- When your task is complete, close ALL tabs you opened.');
     lines.push('');
-    lines.push('Interact with tabs using playwright tools (click_element, set_field, scroll_to_element, get_form_values, get_page_text). Each accepts an `assetId` parameter. DOM changes, navigation, and alerts stream automatically.\n');
+    lines.push('**How to interact with pages — prefer `exec_in_page` for multi-step workflows:**');
+    lines.push('');
+    lines.push('Every page has `window.__sulla` — a helper library with DOM queries, wait functions, click/fill/scroll helpers, and data extraction. For full docs, load the `web-research-playwright` skill.');
+    lines.push('');
+    lines.push('- **Quick overview**: `get_page_snapshot(mode: "dehydrated")` — compressed DOM tree (~5k tokens) showing interactive elements. Use for planning actions.');
+    lines.push('- **Multi-step workflows**: `exec_in_page` with `__sulla.steps([fn1, fn2, ...])` — click, wait, extract in one call. Supports `screenshot: true`, `waitForIdle: true`.');
+    lines.push('- **Data extraction**: `exec_in_page` with `__sulla.text(sel)`, `__sulla.table(sel)`, `__sulla.forms()`.');
+    lines.push('- **Visual interaction** (widgets, popups, shadow DOM): `take_screenshot(annotate: true)` for coordinates, then `click_at(x, y)`.');
+    lines.push('- **Simple single actions**: `click_element`, `set_field(submit: true)`, `browse_page`.');
+    lines.push('- **Debug**: Check `sullaLog` in `exec_in_page` response — every `__sulla` call is logged with timing and success/failure.');
+    lines.push('');
 
     for (const entry of this.bridges.values()) {
       // Skip entries with no URL or about:blank (not real pages)
