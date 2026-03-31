@@ -1,5 +1,5 @@
 import { OpenAICompatibleService } from './OpenAICompatibleService';
-import { type LLMServiceConfig } from './BaseLanguageModel';
+import { type LLMServiceConfig, type ChatMessage } from './BaseLanguageModel';
 import { getIntegrationService } from '../services/IntegrationService';
 
 /**
@@ -26,6 +26,27 @@ export class AlibabaService extends OpenAICompatibleService {
 
   constructor(config: LLMServiceConfig) {
     super(config);
+  }
+
+  /**
+   * DashScope coding models require strict JSON in function.arguments and
+   * reject additionalProperties in tool parameter schemas.  Sanitize the
+   * request body before it's sent.
+   */
+  protected override buildRequestBody(messages: ChatMessage[], options: any): any {
+    const body = super.buildRequestBody(messages, options);
+
+    // Strip additionalProperties from tool parameter schemas — some DashScope
+    // code models reject it.
+    if (body.tools) {
+      for (const tool of body.tools) {
+        if (tool?.function?.parameters) {
+          delete tool.function.parameters.additionalProperties;
+        }
+      }
+    }
+
+    return body;
   }
 }
 
