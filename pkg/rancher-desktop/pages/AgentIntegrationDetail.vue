@@ -1305,6 +1305,28 @@ onMounted(async() => {
   const integrationId = route.params.id as string;
   integration.value = mergedIntegrations.value[integrationId] || null;
 
+  // Inject llm_access property into all integrations so users can control AI access per account
+  if (integration.value && integration.value.properties) {
+    const hasLlmAccess = integration.value.properties.some(p => p.key === 'llm_access');
+    if (!hasLlmAccess) {
+      integration.value = {
+        ...integration.value,
+        properties: [
+          ...integration.value.properties,
+          {
+            key:         'llm_access',
+            title:       'AI Access Level',
+            hint:        'Controls what the AI agent can see and do with this credential',
+            type:        'select' as const,
+            required:    false,
+            placeholder: 'full',
+            selectBoxId: 'vault_llm_access',
+          },
+        ],
+      };
+    }
+  }
+
   // If integration not found, redirect back to integrations list
   if (!integration.value) {
     router.push('/Integrations');
