@@ -1,4 +1,4 @@
-import { reactive, readonly, watch } from 'vue';
+import { reactive, readonly, ref, watch } from 'vue';
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document' | 'secretary';
 
@@ -25,6 +25,7 @@ export interface ClosedTab {
 
 const STORAGE_KEY = 'sulla:browser-tabs';
 const HISTORY_KEY = 'sulla:closed-tabs';
+const ORDER_KEY   = 'sulla:tab-order';
 const MAX_HISTORY = 25;
 
 function loadPersistedTabs(): BrowserTab[] {
@@ -85,6 +86,31 @@ const closedTabs = reactive<ClosedTab[]>(loadClosedTabs());
 
 watch(closedTabs, (current) => {
   persistClosedTabs([...current]);
+}, { deep: true });
+
+// ── Tab order persistence ──
+
+function loadTabOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(ORDER_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistTabOrder(order: string[]): void {
+  try {
+    localStorage.setItem(ORDER_KEY, JSON.stringify(order));
+  } catch { /* best-effort */ }
+}
+
+const tabOrder = ref<string[]>(loadTabOrder());
+
+watch(tabOrder, (current) => {
+  persistTabOrder([...current]);
 }, { deep: true });
 
 function generateId(): string {
@@ -189,9 +215,18 @@ export function useBrowserTabs() {
     return tabs.find(t => t.id === id);
   }
 
+  function reorderTabs(fromIndex: number, toIndex: number): void {
+    const ids = [...tabOrder.value];
+    if (fromIndex < 0 || fromIndex >= ids.length || toIndex < 0 || toIndex >= ids.length) return;
+    const [moved] = ids.splice(fromIndex, 1);
+    ids.splice(toIndex, 0, moved);
+    tabOrder.value = ids;
+  }
+
   return {
     tabs:      readonly(tabs),
     closedTabs: readonly(closedTabs),
+    tabOrder,
     createTab,
     closeTab,
     updateTab,
@@ -199,6 +234,7 @@ export function useBrowserTabs() {
     ensureOneTab,
     restoreClosedTab,
     clearClosedTabs,
+    reorderTabs,
   };
 }
 

@@ -1,6 +1,6 @@
 <template>
   <header
-    class="app-titlebar relative flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-6 lg:pr-8 pt-3 lg:pt-1 pb-0 transition duration-500"
+    class="app-titlebar relative flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500"
     style="-webkit-app-region: drag; app-region: drag;"
   >
     <div class="relative flex shrink-0 items-center pb-2">
@@ -20,47 +20,75 @@
         >
       </a>
     </div>
-    <div class="flex items-end gap-0.5 self-stretch flex-1 min-w-0 ml-4 overflow-x-auto overflow-y-hidden lg:overflow-x-visible">
-      <router-link
-        v-for="(tab, index) in orderedTabs"
-        :key="tab.id"
-        :to="tab.route"
-        class="tab-item flex-shrink-0 text-sm md:text-base"
-        :class="{
-          'tab-native': tab.native,
-          'tab-active': tab.isActive && !tab.native,
-          'tab-active-native': tab.isActive && tab.native,
-          'tab-inactive': !tab.isActive,
-          'tab-dragging': dragIndex === index,
-          'tab-drag-over-left': dragOverIndex === index && dragDirection === 'left',
-          'tab-drag-over-right': dragOverIndex === index && dragDirection === 'right',
-        }"
-        draggable="true"
-        @dragstart="onDragStart($event, index)"
-        @dragover.prevent="onDragOver($event, index)"
-        @dragend="onDragEnd"
-        @drop.prevent="onDrop(index)"
-        @contextmenu.prevent="onTabContextMenu($event, tab, index)"
+    <!-- Phase 4: Scroll wrapper with chevrons -->
+    <div class="tab-scroll-wrapper">
+      <button
+        v-show="canScrollLeft"
+        class="tab-scroll-chevron tab-scroll-chevron-left"
+        type="button"
+        aria-label="Scroll tabs left"
+        @click="scrollTabsLeft"
       >
-        <img
-          v-if="tab.favicon"
-          :src="tab.favicon"
-          class="h-3 w-3 md:h-3.5 md:w-3.5 rounded-sm"
-          alt=""
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3 w-3">
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+      </button>
+      <!-- Phase 8: TransitionGroup as scroll container -->
+      <TransitionGroup
+        ref="tabScrollContainer"
+        tag="div"
+        name="tab-anim"
+        class="tab-scroll-container"
+        @wheel.prevent="onTabWheel"
+      >
+        <router-link
+          v-for="(tab, index) in orderedTabs"
+          :key="tab.id"
+          :to="tab.route"
+          class="tab-item text-sm md:text-base"
+          :class="{
+            'tab-native': tab.native,
+            'tab-active': tab.isActive && !tab.native,
+            'tab-active-native': tab.isActive && tab.native,
+            'tab-inactive': !tab.isActive,
+            'tab-pointer-dragging': dragState !== null && dragState.originIndex === index,
+          }"
+          @pointerdown="onPointerDown($event, index)"
+          @auxclick.prevent="onAuxClick($event, tab)"
+          @contextmenu.prevent="onTabContextMenu($event, tab, index)"
         >
-        <span :class="tab.closeable ? 'max-w-32 truncate' : ''">{{ tab.label }}</span>
-        <button
-          v-if="tab.closeable"
-          class="tab-close"
-          type="button"
-          aria-label="Close tab"
-          @click.prevent.stop="closeAnyTab(tab)"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-2.5 w-2.5 md:h-3 md:w-3">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
-      </router-link>
+          <img
+            v-if="tab.favicon"
+            :src="tab.favicon"
+            class="h-3 w-3 md:h-3.5 md:w-3.5 rounded-sm flex-shrink-0"
+            alt=""
+          >
+          <span class="tab-label">{{ tab.label }}</span>
+          <button
+            v-if="tab.closeable"
+            class="tab-close"
+            type="button"
+            aria-label="Close tab"
+            @click.prevent.stop="closeAnyTab(tab)"
+            @pointerdown.stop
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-2.5 w-2.5 md:h-3 md:w-3">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </router-link>
+      </TransitionGroup>
+      <button
+        v-show="canScrollRight"
+        class="tab-scroll-chevron tab-scroll-chevron-right"
+        type="button"
+        aria-label="Scroll tabs right"
+        @click="scrollTabsRight"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3 w-3">
+          <path d="M9 18l6-6-6-6" />
+        </svg>
+      </button>
       <button
         class="tab-new"
         type="button"
@@ -217,11 +245,11 @@
             aria-hidden="true"
             viewBox="0 0 24 24"
             fill="currentColor"
-            class="h-3.5 w-3.5 fill-sky-400"
+            class="h-4 w-4 fill-white"
           >
-            <circle cx="12" cy="5" r="1.5" />
-            <circle cx="12" cy="12" r="1.5" />
-            <circle cx="12" cy="19" r="1.5" />
+            <circle cx="12" cy="5" r="2.5" />
+            <circle cx="12" cy="12" r="2.5" />
+            <circle cx="12" cy="19" r="2.5" />
           </svg>
         </button>
         <Teleport to="body">
@@ -526,11 +554,10 @@
 </template>
 
 <script lang="ts">
-import { ref } from 'vue';
+import { ref as vueRef } from 'vue';
 
 // Module-level state: shared across all AgentHeader instances (one per keep-alive'd page)
-const tabOrder = ref<string[]>([]);
-const knownAssetIds = ref(new Set<string>());
+const knownAssetIds = vueRef(new Set<string>());
 </script>
 
 <script setup lang="ts">
@@ -542,7 +569,7 @@ import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowser
 
 const extensionService = getExtensionService();
 const router = useRouter();
-const { tabs: browserTabs, closedTabs, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, clearClosedTabs } = useBrowserTabs();
+const { tabs: browserTabs, closedTabs, tabOrder, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, clearClosedTabs, reorderTabs } = useBrowserTabs();
 
 // Active assets from the agent persona service
 const personaRegistry = getAgentPersonaRegistry();
@@ -597,9 +624,45 @@ function openModeTab(mode: BrowserTabMode) {
   router.push(`/Browser/${ tab.id }`);
 }
 
-// Global hotkey: Cmd+Shift+S → open Secretary Mode tab
-function handleSecretaryShortcut(e: KeyboardEvent): void {
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'S') {
+// ── Phase 7: Keyboard shortcuts ──
+
+function handleKeyboardShortcuts(e: KeyboardEvent): void {
+  const meta = e.metaKey || e.ctrlKey;
+
+  // Cmd+T: new tab
+  if (meta && !e.shiftKey && e.key === 't') {
+    e.preventDefault();
+    openNewBrowserTab();
+    return;
+  }
+
+  // Cmd+W: close current tab
+  if (meta && !e.shiftKey && e.key === 'w') {
+    e.preventDefault();
+    const activeTab = orderedTabs.value.find(t => t.isActive);
+    if (activeTab?.closeable) closeAnyTab(activeTab);
+    return;
+  }
+
+  // Cmd+Shift+T: reopen last closed tab
+  if (meta && e.shiftKey && (e.key === 'T' || e.key === 't')) {
+    e.preventDefault();
+    if (closedTabs.length > 0) onRestoreClosedTab(0);
+    return;
+  }
+
+  // Cmd+1 through Cmd+9: switch to nth tab (Cmd+9 = last tab)
+  if (meta && !e.shiftKey && e.key >= '1' && e.key <= '9') {
+    e.preventDefault();
+    const allTabs = orderedTabs.value;
+    const idx = e.key === '9' ? allTabs.length - 1 : parseInt(e.key) - 1;
+    const target = allTabs[idx];
+    if (target) router.push(target.route);
+    return;
+  }
+
+  // Cmd+Shift+S: secretary mode
+  if (meta && e.shiftKey && e.key === 'S') {
     e.preventDefault();
     openModeTab('secretary');
   }
@@ -612,13 +675,70 @@ function handleNavigateTab(event: Event) {
   }
 }
 
+// ── Phase 4: Scroll controls ──
+
+const tabScrollContainer = ref<InstanceType<typeof import('vue').TransitionGroup> | null>(null);
+const canScrollLeft = ref(false);
+const canScrollRight = ref(false);
+let scrollObserver: ResizeObserver | null = null;
+
+function getScrollEl(): HTMLElement | null {
+  return (tabScrollContainer.value as any)?.$el ?? null;
+}
+
+function updateScrollButtons() {
+  const el = getScrollEl();
+  if (!el) return;
+  canScrollLeft.value = el.scrollLeft > 1;
+  canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+}
+
+function scrollTabsLeft() {
+  const el = getScrollEl();
+  if (el) el.scrollBy({ left: -(el.clientWidth * 0.75), behavior: 'smooth' });
+}
+
+function scrollTabsRight() {
+  const el = getScrollEl();
+  if (el) el.scrollBy({ left: el.clientWidth * 0.75, behavior: 'smooth' });
+}
+
+function onTabWheel(e: WheelEvent) {
+  const el = getScrollEl();
+  if (el) {
+    el.scrollLeft += e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    updateScrollButtons();
+  }
+}
+
+// Update chevrons when tabs change
+watch(() => orderedTabs.value.length, () => {
+  nextTick(updateScrollButtons);
+});
+
 onMounted(() => {
-  window.addEventListener('keydown', handleSecretaryShortcut);
+  window.addEventListener('keydown', handleKeyboardShortcuts);
   window.addEventListener('sulla:navigate-tab', handleNavigateTab);
+
+  // Set up ResizeObserver for scroll chevron visibility
+  const el = getScrollEl();
+  if (el) {
+    scrollObserver = new ResizeObserver(() => updateScrollButtons());
+    scrollObserver.observe(el);
+    el.addEventListener('scroll', updateScrollButtons, { passive: true });
+    updateScrollButtons();
+  }
 });
 onUnmounted(() => {
-  window.removeEventListener('keydown', handleSecretaryShortcut);
+  window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
+
+  if (scrollObserver) {
+    scrollObserver.disconnect();
+    scrollObserver = null;
+  }
+  const el = getScrollEl();
+  if (el) el.removeEventListener('scroll', updateScrollButtons);
 });
 
 function onRestoreClosedTab(index: number) {
@@ -652,25 +772,6 @@ function openNewBrowserTab() {
   const tab = createTab('about:blank', { mode: 'chat' });
 
   router.push(`/Browser/${ tab.id }`);
-}
-
-function closeBrowserTab(id: string) {
-  const isActive = route.path === `/Browser/${ id }`;
-
-  closeTab(id);
-  if (isActive) {
-    // closeTab auto-creates a new tab if it was the last one,
-    // so there's always at least one tab to navigate to.
-    const next = browserTabs[browserTabs.length - 1];
-
-    router.push(`/Browser/${ next.id }`);
-  }
-}
-
-function closeAnyTab(tab: HeaderTab) {
-  if (tab.browserId) {
-    closeBrowserTab(tab.browserId);
-  }
 }
 
 // ── Data-driven tab list with drag-and-drop reordering ──
@@ -753,7 +854,7 @@ watch(
   (currentIds) => {
     const currentSet = new Set(currentIds);
     // Remove stale IDs
-    const filtered = tabOrder.value.filter(id => currentSet.has(id));
+    const filtered = tabOrder.value.filter((id: string) => currentSet.has(id));
     // Append new IDs
     const ordered = new Set(filtered);
 
@@ -766,6 +867,41 @@ watch(
   },
   { immediate: true },
 );
+
+// ── Adjacent tab on close (Chrome behavior) ──
+// Defined after orderedTabs to avoid temporal dead zone in immediate watchers
+
+function closeBrowserTab(id: string) {
+  const isActive = route.path === `/Browser/${ id }`;
+
+  // Snapshot visual position BEFORE closing so we can pick the adjacent tab
+  let nextTabRoute: string | null = null;
+  if (isActive) {
+    const visual = orderedTabs.value;
+    const visualIdx = visual.findIndex(t => t.browserId === id);
+    // Prefer the tab to the right, then left — Chrome behavior
+    const candidate = visual[visualIdx + 1] ?? visual[visualIdx - 1];
+    nextTabRoute = candidate?.route ?? null;
+  }
+
+  closeTab(id);
+
+  if (isActive) {
+    if (nextTabRoute) {
+      router.push(nextTabRoute);
+    } else {
+      // Fallback: closeTab auto-creates a welcome tab when list is empty
+      const next = browserTabs[browserTabs.length - 1];
+      router.push(`/Browser/${ next.id }`);
+    }
+  }
+}
+
+function closeAnyTab(tab: HeaderTab) {
+  if (tab.browserId) {
+    closeBrowserTab(tab.browserId);
+  }
+}
 
 // Auto-open a browser tab when the agent registers a new active asset
 
@@ -812,52 +948,111 @@ watch(
   { immediate: true },
 );
 
-// ── Drag-and-drop ──
+// ── Phase 5: Pointer-event drag-and-drop ──
 
-const dragIndex = ref<number | null>(null);
-const dragOverIndex = ref<number | null>(null);
-const dragDirection = ref<'left' | 'right' | null>(null);
-
-function onDragStart(event: DragEvent, index: number) {
-  dragIndex.value = index;
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', String(index));
-  }
+interface DragState {
+  active: boolean;
+  originIndex: number;
+  currentIndex: number;
+  startX: number;
+  pointerId: number;
+  tabEl: HTMLElement;
 }
 
-function onDragOver(_event: DragEvent, index: number) {
-  if (dragIndex.value === null || dragIndex.value === index) {
-    dragOverIndex.value = null;
-    dragDirection.value = null;
+const dragState = ref<DragState | null>(null);
+const DRAG_DEADZONE = 5;
 
-    return;
-  }
-  dragOverIndex.value = index;
-  dragDirection.value = index < dragIndex.value ? 'left' : 'right';
+function onPointerDown(e: PointerEvent, index: number) {
+  // Only primary button (left click)
+  if (e.button !== 0) return;
+  // Don't start drag from close button
+  if ((e.target as HTMLElement).closest('.tab-close')) return;
+
+  const tabEl = (e.currentTarget as HTMLElement);
+  tabEl.setPointerCapture(e.pointerId);
+
+  const state: DragState = {
+    active:       false,
+    originIndex:  index,
+    currentIndex: index,
+    startX:       e.clientX,
+    pointerId:    e.pointerId,
+    tabEl,
+  };
+
+  dragState.value = state;
+
+  const onMove = (me: PointerEvent) => {
+    if (!dragState.value) return;
+
+    const dx = me.clientX - dragState.value.startX;
+
+    // Deadzone: don't activate drag until threshold exceeded
+    if (!dragState.value.active) {
+      if (Math.abs(dx) < DRAG_DEADZONE) return;
+      dragState.value.active = true;
+      // Prevent the router-link navigation when dragging
+      tabEl.style.pointerEvents = 'none';
+    }
+
+    // Calculate which index the pointer is over based on sibling positions
+    const container = getScrollEl();
+    if (!container) return;
+
+    const children = Array.from(container.children) as HTMLElement[];
+    let targetIndex = dragState.value.currentIndex;
+
+    for (let i = 0; i < children.length; i++) {
+      const rect = children[i].getBoundingClientRect();
+      const center = rect.left + rect.width / 2;
+
+      if (me.clientX < center) {
+        targetIndex = i;
+        break;
+      }
+      targetIndex = i;
+    }
+
+    // Clamp to valid range
+    targetIndex = Math.max(0, Math.min(targetIndex, children.length - 1));
+
+    // Reorder in real-time if target changed
+    if (targetIndex !== dragState.value.currentIndex) {
+      reorderTabs(dragState.value.currentIndex, targetIndex);
+      dragState.value.currentIndex = targetIndex;
+    }
+  };
+
+  const onUp = () => {
+    tabEl.removeEventListener('pointermove', onMove);
+    tabEl.removeEventListener('pointerup', onUp);
+    tabEl.removeEventListener('pointercancel', onUp);
+
+    const wasDragging = dragState.value?.active ?? false;
+    dragState.value = null;
+    tabEl.style.pointerEvents = '';
+
+    // If we were dragging, prevent the click/navigation that follows pointerup
+    if (wasDragging) {
+      const preventClick = (ce: Event) => {
+        ce.preventDefault();
+        ce.stopImmediatePropagation();
+      };
+      tabEl.addEventListener('click', preventClick, { capture: true, once: true });
+    }
+  };
+
+  tabEl.addEventListener('pointermove', onMove);
+  tabEl.addEventListener('pointerup', onUp);
+  tabEl.addEventListener('pointercancel', onUp);
 }
 
-function onDrop(targetIndex: number) {
-  if (dragIndex.value === null || dragIndex.value === targetIndex) {
-    onDragEnd();
+// ── Phase 6: Middle-click to close ──
 
-    return;
+function onAuxClick(e: MouseEvent, tab: HeaderTab) {
+  if (e.button === 1 && tab.closeable) {
+    closeAnyTab(tab);
   }
-
-  // Reorder the tabOrder array
-  const ids = [...tabOrder.value];
-  const [moved] = ids.splice(dragIndex.value, 1);
-
-  ids.splice(targetIndex, 0, moved);
-  tabOrder.value = ids;
-
-  onDragEnd();
-}
-
-function onDragEnd() {
-  dragIndex.value = null;
-  dragOverIndex.value = null;
-  dragDirection.value = null;
 }
 
 // ── Tab context menu ──
@@ -1036,13 +1231,62 @@ async function ctxCopyUrl() {
 .app-titlebar button,
 .app-titlebar .tab-item,
 .app-titlebar input,
-.app-titlebar .overflow-x-auto {
+.app-titlebar .tab-scroll-wrapper {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
 </style>
 
 <style scoped>
+/* Phase 4: Scroll wrapper */
+.tab-scroll-wrapper {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  margin-left: 1rem;
+  position: relative;
+}
+
+.tab-scroll-container {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-behavior: smooth;
+  position: relative;
+}
+
+.tab-scroll-container::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-scroll-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 150ms, background-color 150ms;
+  border-radius: 4px;
+  z-index: 3;
+}
+
+.tab-scroll-chevron:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-surface-hover);
+}
+
+/* Phase 3: Adaptive tab widths */
 .tab-item {
   display: flex;
   align-items: center;
@@ -1051,13 +1295,29 @@ async function ctxCopyUrl() {
   font-size: 0.75rem;
   font-weight: 600;
   border-radius: 8px 8px 0 0;
-  border: none;
+  border: 1px solid transparent;
+  border-bottom: none;
   cursor: pointer;
-  transition: color 150ms, background-color 150ms;
+  transition: color 150ms, background-color 150ms, border-color 150ms;
   position: relative;
-  white-space: nowrap;
   text-decoration: none;
   z-index: 0;
+  /* Subtle inactive background — slightly lighter than the title bar */
+  background-color: color-mix(in srgb, var(--bg-surface) 25%, transparent);
+  /* Adaptive widths */
+  flex-shrink: 1;
+  flex-grow: 0;
+  flex-basis: 240px;
+  min-width: 60px;
+  max-width: 240px;
+}
+
+/* Phase 3: Tab label truncation */
+.tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* Native tabs (Chat, Calendar, Integrations, Extensions): pill style */
@@ -1066,6 +1326,7 @@ async function ctxCopyUrl() {
   color: var(--text-primary);
   z-index: 2;
   border-radius: 8px;
+  border-color: var(--border-default);
 }
 
 /* Dynamic tabs (extensions, browser): Chrome-style with bottom scoops */
@@ -1073,6 +1334,7 @@ async function ctxCopyUrl() {
   background-color: var(--bg-surface-alt);
   color: var(--text-primary);
   z-index: 2;
+  border-color: var(--border-default);
 }
 
 .tab-active::before,
@@ -1095,20 +1357,15 @@ async function ctxCopyUrl() {
   background: radial-gradient(circle at 100% 0, transparent 4.5px, var(--bg-surface-alt) 8px);
 }
 
-.tab-dragging {
-  opacity: 0.4;
-}
-
-.tab-drag-over-left {
-  box-shadow: inset 2px 0 0 0 var(--accent-primary);
-}
-
-.tab-drag-over-right {
-  box-shadow: inset -2px 0 0 0 var(--accent-primary);
+/* Phase 5: Pointer drag styling */
+.tab-pointer-dragging {
+  opacity: 0.7;
+  z-index: 10;
 }
 
 .tab-inactive {
   color: var(--text-secondary);
+  border-color: color-mix(in srgb, var(--border-default) 50%, transparent);
 }
 
 /* Chrome-style separator pipe between inactive tabs */
@@ -1139,6 +1396,7 @@ async function ctxCopyUrl() {
 .tab-inactive:hover {
   color: var(--text-primary);
   background-color: var(--bg-surface-hover);
+  border-color: var(--border-default);
 }
 
 /* Native tabs hover as pill */
@@ -1183,7 +1441,8 @@ async function ctxCopyUrl() {
   cursor: pointer;
   opacity: 0;
   transition: opacity 150ms, color 150ms, background-color 150ms;
-  margin-left: 0.25rem;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .tab-item:hover .tab-close,
@@ -1199,6 +1458,46 @@ async function ctxCopyUrl() {
 </style>
 
 <style>
+/* Phase 8: Tab animations — unscoped because TransitionGroup generates elements */
+.tab-anim-enter-from {
+  opacity: 0;
+  max-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  overflow: hidden;
+}
+
+.tab-anim-enter-active {
+  transition: opacity 200ms ease, max-width 200ms ease, padding 200ms ease;
+}
+
+.tab-anim-enter-to {
+  opacity: 1;
+  max-width: 240px;
+}
+
+.tab-anim-leave-from {
+  opacity: 1;
+  max-width: 240px;
+}
+
+.tab-anim-leave-active {
+  transition: opacity 150ms ease, max-width 150ms ease, padding 150ms ease;
+  position: absolute;
+}
+
+.tab-anim-leave-to {
+  opacity: 0;
+  max-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  overflow: hidden;
+}
+
+.tab-anim-move {
+  transition: transform 200ms ease;
+}
+
 /* Context menu — unscoped because it's teleported to body */
 @keyframes tabCtxFadeIn {
   from { opacity: 0; transform: scale(0.96); }
