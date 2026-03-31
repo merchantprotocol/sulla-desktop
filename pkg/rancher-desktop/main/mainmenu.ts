@@ -277,6 +277,10 @@ function getFileMenu(): MenuItem {
         label: 'Extensions',
         click: () => sendAgentCommand('open-tab', { mode: 'extensions' }),
       },
+      {
+        label: 'Vault',
+        click: () => sendAgentCommand('open-tab', { mode: 'vault' }),
+      },
       { type: 'separator' },
       {
         id:      'extensions-list',
