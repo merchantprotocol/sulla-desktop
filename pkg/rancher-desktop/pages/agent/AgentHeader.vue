@@ -711,11 +711,6 @@ function onTabWheel(e: WheelEvent) {
   }
 }
 
-// Update chevrons when tabs change
-watch(() => orderedTabs.value.length, () => {
-  nextTick(updateScrollButtons);
-});
-
 onMounted(() => {
   window.addEventListener('keydown', handleKeyboardShortcuts);
   window.addEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -867,6 +862,11 @@ watch(
   },
   { immediate: true },
 );
+
+// Update chevrons when tabs change
+watch(() => orderedTabs.value.length, () => {
+  nextTick(updateScrollButtons);
+});
 
 // ── Adjacent tab on close (Chrome behavior) ──
 // Defined after orderedTabs to avoid temporal dead zone in immediate watchers
