@@ -8,7 +8,6 @@ import { up as up_0011, down as down_0011 } from './0011_create_settings_table';
 import { up as up_0012, down as down_0012 } from './0012_add_cast_column_to_sulla_settings';
 import { up as up_0013, down as down_0013 } from './0013_create_integration_values_table';
 import { up as up_0014, down as down_0014 } from './0014_add_is_default_to_integration_values';
-import { up as up_0015, down as down_0015 } from './0015_add_disabled_to_workflow_history';
 import { up as up_0016, down as down_0016 } from './0016_create_oauth_tokens_table';
 import { up as up_0017, down as down_0017 } from './0017_create_workflow_checkpoints_table';
 import { up as up_0018, down as down_0018 } from './0018_create_workflow_pending_completions_table';
@@ -23,7 +22,6 @@ export const migrationsRegistry = [
   { name: '0012_add_cast_column_to_sulla_settings', up: up_0012, down: down_0012 },
   { name: '0013_create_integration_values_table', up: up_0013, down: down_0013 },
   { name: '0014_add_is_default_to_integration_values', up: up_0014, down: down_0014 },
-  { name: '0015_add_disabled_to_workflow_history', up: up_0015, down: down_0015 },
   { name: '0016_create_oauth_tokens_table', up: up_0016, down: down_0016 },
   { name: '0017_create_workflow_checkpoints_table', up: up_0017, down: down_0017 },
   { name: '0018_create_workflow_pending_completions_table', up: up_0018, down: down_0018 },
