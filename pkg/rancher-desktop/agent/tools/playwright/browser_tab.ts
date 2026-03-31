@@ -107,23 +107,26 @@ export class BrowserTabWorker extends BaseTool {
    * Wait for a pageContent or routeChanged dom event from the target assetId.
    * This fires when the GuestBridgePreload injects and emits sulla:pageContent.
    */
-  private waitForPageLoad(assetId: string): Promise<{ loaded: boolean }> {
+  private async waitForPageLoad(assetId: string): Promise<void> {
+    // Check if already loaded (bridge already injected from a previous load)
+    try {
+      const bridge = hostBridgeProxy.resolve(assetId);
+      if (await bridge.isInjected()) return; // already ready — no need to wait
+    } catch { /* not registered yet — wait for event */ }
+
+    // Not ready yet — wait for the injection event
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         unsub();
-        resolve({ loaded: false });
+        resolve(); // safety net — still try to read whatever is available
       }, PAGE_LOAD_TIMEOUT);
 
       const unsub = hostBridgeProxy.onDomEvent((event) => {
         if (event.assetId !== assetId) return;
-
-        // pageContent = full page content ready
-        // injected = bridge injected (page loaded, sullaBridge available)
-        // routeChanged = navigation happened (SPA)
         if (event.type === 'pageContent' || event.type === 'injected' || event.type === 'routeChanged') {
           clearTimeout(timeout);
           unsub();
-          resolve({ loaded: true });
+          resolve();
         }
       });
     });
