@@ -12,6 +12,26 @@
       />
 
       <div class="flex w-full flex-col">
+        <!-- Password Manager toggle bar (only when embedded in a tab) -->
+        <div
+          v-if="embedded"
+          class="flex items-center gap-1 px-4 py-2 bg-slate-900 border-b border-slate-700/50"
+        >
+          <button
+            type="button"
+            class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            @click="$emit('switch-to-vault')"
+          >
+            My Passwords
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 text-xs font-medium rounded-md bg-sky-500/15 text-sky-400"
+          >
+            Add New
+          </button>
+        </div>
+
         <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
           <div class="py-16 sm:px-2 lg:relative lg:px-0 lg:py-20">
             <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
@@ -369,6 +389,7 @@ import AgentHeader from './agent/AgentHeader.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+const emit = defineEmits<{ 'switch-to-vault': [] }>();
 import type { Integration } from '@pkg/agent/integrations/types';
 import { popularIntegrations } from '@pkg/agent/integrations/popular';
 import { integrations as fullCatalog } from '@pkg/agent/integrations/catalog';

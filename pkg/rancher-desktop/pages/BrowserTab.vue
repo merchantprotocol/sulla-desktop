@@ -162,7 +162,10 @@
 
     <template v-else-if="tabMode === 'integrations'">
       <div class="flex-1 min-h-0 overflow-auto">
-        <AgentIntegrations embedded />
+        <AgentIntegrations
+          embedded
+          @switch-to-vault="onSetMode('vault')"
+        />
       </div>
     </template>
 
@@ -177,6 +180,7 @@
         <AgentConnectedAccounts
           embedded
           @open-integration="onOpenIntegration"
+          @switch-to-integrations="onSetMode('integrations')"
         />
       </div>
     </template>
@@ -248,7 +252,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   extensions:   'Extensions',
   document:     'Document',
   secretary:    'Secretary',
-  vault:        'Vault',
+  vault:        'Password Manager',
 };
 
 const props = defineProps<{

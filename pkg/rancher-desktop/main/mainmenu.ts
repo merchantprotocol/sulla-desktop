@@ -265,22 +265,6 @@ function getFileMenu(): MenuItem {
         enabled: kubernetesState === State.STARTED,
       },
       { type: 'separator' },
-      {
-        label: 'Calendar',
-        click: () => sendAgentCommand('open-tab', { mode: 'calendar' }),
-      },
-      {
-        label: 'Integrations',
-        click: () => sendAgentCommand('open-tab', { mode: 'integrations' }),
-      },
-      {
-        label: 'Extensions',
-        click: () => sendAgentCommand('open-tab', { mode: 'extensions' }),
-      },
-      {
-        label: 'Vault',
-        click: () => sendAgentCommand('open-tab', { mode: 'vault' }),
-      },
       { type: 'separator' },
       {
         id:      'extensions-list',
@@ -505,8 +489,26 @@ function getMacApplicationMenu(): MenuItem[] {
     getViewMenu(),
     getGoMenu(),
     new MenuItem({
-      label: '&Window',
-      role:  'windowMenu',
+      label:   '&Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        {
+          label: 'Calendar',
+          click: () => sendAgentCommand('open-tab', { mode: 'calendar' }),
+        },
+        {
+          label: 'Password Manager',
+          click: () => sendAgentCommand('open-tab', { mode: 'vault' }),
+        },
+        {
+          label: 'Extensions',
+          click: () => sendAgentCommand('open-tab', { mode: 'extensions' }),
+        },
+        { type: 'separator' },
+        { role: 'front' },
+      ],
     }),
     getHelpMenu(true),
   ];

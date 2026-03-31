@@ -11,13 +11,30 @@
       />
 
       <div class="flex w-full flex-col">
+        <!-- Password Manager toggle bar -->
+        <div class="flex items-center gap-1 px-4 py-2 bg-slate-900 border-b border-slate-700/50">
+          <button
+            type="button"
+            class="px-3 py-1.5 text-xs font-medium rounded-md bg-teal-500/15 text-teal-400"
+          >
+            My Passwords
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            @click="$emit('switch-to-integrations')"
+          >
+            Add New
+          </button>
+        </div>
+
         <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
           <div class="py-16 sm:px-2 lg:relative lg:px-0 lg:py-20">
             <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
               <div class="relative z-10 md:text-center lg:text-left">
                 <div class="relative">
                   <p class="inline bg-linear-to-r from-emerald-200 via-teal-400 to-emerald-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
-                    Vault.
+                    Password Manager.
                   </p>
                   <p class="mt-3 text-2xl tracking-tight text-slate-400">
                     All your connected accounts and saved credentials in one place.
@@ -207,6 +224,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'open-integration': [integrationId: string, accountId: string];
+  'switch-to-integrations': [];
 }>();
 
 const router = useRouter();
