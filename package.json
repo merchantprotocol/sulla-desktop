@@ -91,7 +91,7 @@
     "@schedule-x/drag-and-drop": "3.7.3",
     "@schedule-x/events-service": "4.2.0",
     "@schedule-x/theme-default": "4.2.0",
-    "@schedule-x/vue": "4.0.0",
+    "@schedule-x/vue": "4.1.0",
     "@slack/bolt": "4.6.0",
     "@slack/types": "2.20.0",
     "@slack/web-api": "7.14.1",
