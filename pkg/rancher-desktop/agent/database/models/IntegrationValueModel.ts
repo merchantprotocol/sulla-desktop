@@ -124,8 +124,8 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
    * Safe to call multiple times — skips already-encrypted rows.
    */
   static async migrateToEncrypted(): Promise<number> {
-    const vault = getVaultKeyService();
-    if (!vault.isUnlocked()) {
+    const vault = getVaultDirect();
+    if (!vault?.isUnlocked()) {
       console.log('[IntegrationValueModel] Vault locked — skipping encryption migration');
       return 0;
     }
