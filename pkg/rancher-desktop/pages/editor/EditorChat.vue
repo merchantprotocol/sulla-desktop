@@ -56,10 +56,6 @@
           @click="$emit('switch-tab', tab.id)"
         >
           <span class="chat-tab-label">{{ tab.label }}</span>
-          <span
-            v-if="tab.messageCount > 0"
-            class="chat-tab-badge"
-          >{{ tab.messageCount }}</span>
           <button
             v-if="tabs.length > 1"
             class="chat-tab-close"
@@ -769,13 +765,29 @@ onMounted(() => {
   flex: 1;
 }
 
-.chat-messages.dark::-webkit-scrollbar {
-  width: 6px;
+/* Theme-aware scrollbar styling for chat-messages */
+.chat-messages::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+  background: var(--bg-surface);
+  border-radius: 4px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
-  background: var(--bg-surface-hover);
-  border-radius: 3px;
+  background: var(--border-default);
+  border-radius: 4px;
+  transition: background-color 150ms;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.chat-messages::-webkit-scrollbar-corner {
+  background: var(--bg-surface);
 }
 
 .chat-empty {
@@ -1420,6 +1432,13 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
   overflow-x: auto;
+  /* Hide scrollbar but keep scroll functionality */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chat-tabs-list::-webkit-scrollbar {
+  display: none;
 }
 
 .chat-tab {
@@ -1507,12 +1526,13 @@ onMounted(() => {
   color: var(--text-secondary);
 }
 
-.chat-tabs::-webkit-scrollbar {
-  height: 4px;
+/* Hide scrollbar on main tabs container too */
+.chat-tabs {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
-.chat-tabs::-webkit-scrollbar-thumb {
-  background: var(--bg-surface-hover);
-  border-radius: 2px;
+.chat-tabs::-webkit-scrollbar {
+  display: none;
 }
 </style>
