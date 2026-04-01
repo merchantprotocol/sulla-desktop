@@ -631,6 +631,23 @@ export class BrowserTabViewManager {
           if (!f || !f.hasLoginForm) return;
           if (f.usernameHandle) b.setValue(f.usernameHandle, ${ JSON.stringify(username) });
           if (f.passwordHandle) b.setValue(f.passwordHandle, ${ JSON.stringify(password) });
+          // Auto-submit the form after filling
+          setTimeout(function() {
+            var pwEl = f.passwordField;
+            var form = pwEl && pwEl.closest ? pwEl.closest('form') : null;
+            if (form) {
+              if (typeof form.requestSubmit === 'function') { form.requestSubmit(); }
+              else { form.submit(); }
+            } else {
+              // No form — try clicking a submit button near the password field
+              var container = pwEl ? pwEl.parentElement : document.body;
+              for (var d = 0; d < 5 && container; d++) {
+                var btn = container.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
+                if (btn) { btn.click(); break; }
+                container = container.parentElement;
+              }
+            }
+          }, 200);
         })();
       `;
       view.webContents.executeJavaScript(script, true).catch(() => {});

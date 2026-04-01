@@ -92,6 +92,22 @@ export class VaultAutofillWorker extends BaseTool {
               var uOk = false, pOk = false;
               if (f.usernameHandle) uOk = b.setValue(f.usernameHandle, ${ JSON.stringify(username) });
               if (f.passwordHandle) pOk = b.setValue(f.passwordHandle, ${ JSON.stringify(password) });
+              // Auto-submit after filling
+              setTimeout(function() {
+                var pwEl = f.passwordField;
+                var form = pwEl && pwEl.closest ? pwEl.closest('form') : null;
+                if (form) {
+                  if (typeof form.requestSubmit === 'function') { form.requestSubmit(); }
+                  else { form.submit(); }
+                } else {
+                  var container = pwEl ? pwEl.parentElement : document.body;
+                  for (var d = 0; d < 5 && container; d++) {
+                    var btn = container.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
+                    if (btn) { btn.click(); break; }
+                    container = container.parentElement;
+                  }
+                }
+              }, 200);
               return { success: uOk || pOk, usernameOk: uOk, passwordOk: pOk };
             })();
           `;

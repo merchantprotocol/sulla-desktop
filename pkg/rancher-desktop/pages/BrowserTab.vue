@@ -39,7 +39,7 @@
           :aria-label="loading ? 'Stop loading' : 'Reload'"
           @click="loading ? stop() : reload()"
         >
-          <svg v-if="loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+          <svg v-if="loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4 loading-x">
             <path d="M18 6L6 18M6 6l12 12" />
           </svg>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
@@ -51,7 +51,7 @@
         </button>
 
         <form
-          class="flex-1"
+          class="flex-1 relative"
           @submit.prevent="navigate"
         >
           <input
@@ -62,6 +62,11 @@
             placeholder="Search or enter URL"
             @focus="($event.target as HTMLInputElement).select()"
             @keydown.meta.l.prevent="focusAddressBar"
+          />
+          <!-- Loading progress bar inside address bar -->
+          <div
+            v-if="loading"
+            class="address-bar-progress"
           />
         </form>
       </div>
@@ -728,6 +733,34 @@ onUnmounted(() => {
 
 .address-bar::placeholder {
   color: var(--text-muted);
+}
+
+/* Loading progress bar — Chrome-style sliding bar under the address bar */
+.address-bar-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 30%;
+  background: var(--accent-primary);
+  border-radius: 0 1px 1px 0;
+  animation: address-bar-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes address-bar-slide {
+  0%   { left: 0; width: 30%; }
+  50%  { left: 50%; width: 40%; }
+  100% { left: 100%; width: 10%; }
+}
+
+/* Loading X icon pulse */
+.loading-x {
+  animation: loading-pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes loading-pulse {
+  from { opacity: 0.5; }
+  to   { opacity: 1; }
 }
 
 .browser-nav-btn {
