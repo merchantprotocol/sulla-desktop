@@ -8,6 +8,8 @@ import setupUpdate from '@pkg/main/update';
 import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openMain, openEditor, getWindow } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
+import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
+import type { ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 
 const console = Logging.mainmenu;
 
@@ -39,6 +41,11 @@ export default function buildApplicationMenu(): void {
     rebuildMenu();
   });
 
+  // Rebuild history menu when history changes
+  mainEvents.on('conversation-history:changed' as any, () => {
+    rebuildMenu();
+  });
+
   // Refresh extensions list for the menu.
   // Listen to the same event the tray uses — 'settings-update' fires reliably
   // whenever extensions change, whereas 'extensions/changed' may not fire.
@@ -48,10 +55,13 @@ export default function buildApplicationMenu(): void {
 }
 
 function rebuildMenu(): void {
-  const menuItems: MenuItem[] = getApplicationMenu();
-  const menu = Menu.buildFromTemplate(menuItems);
+  // Refresh history cache asynchronously, then rebuild the menu
+  refreshHistoryCache().finally(() => {
+    const menuItems: MenuItem[] = getApplicationMenu();
+    const menu = Menu.buildFromTemplate(menuItems);
 
-  Menu.setApplicationMenu(menu);
+    Menu.setApplicationMenu(menu);
+  });
 }
 
 function getApplicationMenu(): MenuItem[] {
@@ -473,6 +483,213 @@ function getHelpMenu(isMac: boolean): MenuItem {
   });
 }
 
+// ── History menu ──
+
+/** Cached history entries for the menu — refreshed on each build. */
+let cachedHistoryEntries: ConversationHistoryRecord[] = [];
+
+/**
+ * Refresh cached history entries from the database.
+ * Called before building the menu.
+ */
+async function refreshHistoryCache(): Promise<void> {
+  try {
+    cachedHistoryEntries = await ConversationHistoryModel.getRecent(100);
+  } catch {
+    cachedHistoryEntries = [];
+  }
+}
+
+/**
+ * Build a history entry menu item label with a type icon prefix.
+ */
+function historyEntryLabel(entry: ConversationHistoryRecord): string {
+  const icon = entry.type === 'chat' ? '\uD83D\uDCAC' : '\uD83C\uDF10'; // chat bubble or globe
+  const title = entry.title || entry.url || 'Untitled';
+  const maxLen = 50;
+  const truncated = title.length > maxLen ? title.slice(0, maxLen) + '...' : title;
+
+  return `${ icon } ${ truncated }`;
+}
+
+/**
+ * Build a click handler for a history entry that navigates/reopens in the renderer.
+ */
+function historyEntryClick(entry: ConversationHistoryRecord): () => void {
+  return () => {
+    const existing = getWindow('main-agent');
+
+    if (existing) {
+      sendWhenReady(existing, 'conversation-history:navigate', {
+        id:     entry.id,
+        type:   entry.type,
+        url:    entry.url,
+        title:  entry.title,
+        tab_id: entry.tab_id,
+      });
+    } else {
+      openMain();
+      const poll = setInterval(() => {
+        const window = getWindow('main-agent');
+
+        if (window) {
+          clearInterval(poll);
+          sendWhenReady(window, 'conversation-history:navigate', {
+            id:     entry.id,
+            type:   entry.type,
+            url:    entry.url,
+            title:  entry.title,
+            tab_id: entry.tab_id,
+          });
+        }
+      }, 50);
+      setTimeout(() => clearInterval(poll), 5000);
+    }
+  };
+}
+
+/**
+ * Filter history entries by date range.
+ */
+function filterByDate(entries: ConversationHistoryRecord[], startOfDay: Date, endOfDay: Date): ConversationHistoryRecord[] {
+  return entries.filter((e) => {
+    const d = new Date(e.last_active_at || e.created_at);
+
+    return d >= startOfDay && d < endOfDay;
+  });
+}
+
+function getHistoryMenu(): MenuItem {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayEnd = new Date(todayStart.getTime() + 86_400_000);
+  const yesterdayStart = new Date(todayStart.getTime() - 86_400_000);
+  const weekAgoStart = new Date(todayStart.getTime() - 7 * 86_400_000);
+
+  const todayEntries = filterByDate(cachedHistoryEntries, todayStart, todayEnd);
+  const yesterdayEntries = filterByDate(cachedHistoryEntries, yesterdayStart, todayStart);
+  const last7DaysEntries = filterByDate(cachedHistoryEntries, weekAgoStart, yesterdayStart);
+
+  const submenu: MenuItemConstructorOptions[] = [
+    {
+      label:       'Show All History',
+      accelerator: 'CmdOrCtrl+Y',
+      enabled:     userLoggedIn,
+      click:       () => {
+        const existing = getWindow('main-agent');
+
+        if (existing) {
+          sendWhenReady(existing, 'conversation-history:show-all', undefined);
+        } else {
+          openMain();
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label:       'Reopen Last Closed Tab',
+      accelerator: 'CmdOrCtrl+Shift+T',
+      enabled:     userLoggedIn,
+      click:       () => {
+        const existing = getWindow('main-agent');
+
+        if (existing) {
+          sendWhenReady(existing, 'conversation-history:restore-last-closed', undefined);
+        }
+      },
+    },
+    { type: 'separator' },
+  ];
+
+  // Today section
+  if (todayEntries.length > 0) {
+    submenu.push({ label: 'Today', enabled: false });
+    for (const entry of todayEntries.slice(0, 10)) {
+      submenu.push({
+        label: historyEntryLabel(entry),
+        click: historyEntryClick(entry),
+      });
+    }
+    submenu.push({ type: 'separator' });
+  }
+
+  // Yesterday section
+  if (yesterdayEntries.length > 0) {
+    submenu.push({ label: 'Yesterday', enabled: false });
+    for (const entry of yesterdayEntries.slice(0, 10)) {
+      submenu.push({
+        label: historyEntryLabel(entry),
+        click: historyEntryClick(entry),
+      });
+    }
+    submenu.push({ type: 'separator' });
+  }
+
+  // Last 7 days submenu
+  if (last7DaysEntries.length > 0) {
+    submenu.push({
+      label:   'Last 7 Days',
+      submenu: last7DaysEntries.slice(0, 20).map(entry => ({
+        label: historyEntryLabel(entry),
+        click: historyEntryClick(entry),
+      })),
+    });
+    submenu.push({ type: 'separator' });
+  }
+
+  // Clear History submenu
+  submenu.push({
+    label:   'Clear History...',
+    submenu: [
+      {
+        label:   'Clear Last Hour',
+        enabled: userLoggedIn,
+        click:   () => {
+          const cutoff = new Date(Date.now() - 3_600_000).toISOString();
+          const existing = getWindow('main-agent');
+
+          if (existing) {
+            sendWhenReady(existing, 'conversation-history:cleared', cutoff);
+          }
+          // Also trigger main-process clear
+          import('./conversationHistoryIpc').catch(() => {});
+          mainEvents.emit('conversation-history:clear-request' as any, cutoff);
+        },
+      },
+      {
+        label:   'Clear Today',
+        enabled: userLoggedIn,
+        click:   () => {
+          const cutoff = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+          const existing = getWindow('main-agent');
+
+          if (existing) {
+            sendWhenReady(existing, 'conversation-history:cleared', cutoff);
+          }
+          mainEvents.emit('conversation-history:clear-request' as any, cutoff);
+        },
+      },
+      {
+        label:   'Clear All History',
+        enabled: userLoggedIn,
+        click:   () => {
+          const existing = getWindow('main-agent');
+
+          if (existing) {
+            sendWhenReady(existing, 'conversation-history:cleared', undefined);
+          }
+          mainEvents.emit('conversation-history:clear-request' as any, undefined);
+        },
+      },
+    ],
+  });
+
+  return new MenuItem({
+    label: '&History',
+    submenu,
+  });
+}
+
 // ── Platform-specific menus ──
 
 function getMacApplicationMenu(): MenuItem[] {
@@ -513,6 +730,7 @@ function getMacApplicationMenu(): MenuItem[] {
     getEditMenu(true),
     getViewMenu(),
     getGoMenu(),
+    getHistoryMenu(),
     new MenuItem({
       label:   '&Window',
       submenu: [
@@ -647,6 +865,7 @@ function getWindowsApplicationMenu(): MenuItem[] {
     getEditMenu(false),
     getViewMenu(),
     getGoMenu(),
+    getHistoryMenu(),
     getHelpMenu(false),
   ];
 }

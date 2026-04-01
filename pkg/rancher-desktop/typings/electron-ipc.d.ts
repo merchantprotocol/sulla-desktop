@@ -133,6 +133,20 @@ export interface IpcMainEvents {
   // #region IPC Message Bus
   'message-bus:send': (channelId: string, message: any) => void;
   // #endregion
+
+  // #region Conversation History
+  'conversation-history:record': (entry: {
+    id:        string;
+    type:      'chat' | 'browser' | 'workflow' | 'graph';
+    title?:    string;
+    url?:      string;
+    favicon?:  string;
+    tab_id?:   string;
+    status?:   'active' | 'closed' | 'archived' | 'deleted';
+  }) => void;
+  'conversation-history:close': (id: string) => void;
+  'conversation-history:clear': (olderThan?: string) => void;
+  // #endregion
 }
 
 /**
@@ -363,6 +377,22 @@ export interface IpcMainInvokeEvents {
   'message-bus:connect': (channelId: string) => boolean;
   // #endregion
 
+  // #region Conversation History
+  'conversation-history:get-recent': (limit?: number, type?: 'chat' | 'browser' | 'workflow' | 'graph') => {
+    id: string; type: string; title?: string; url?: string; favicon?: string; status: string;
+    message_count: number; created_at: string; last_active_at: string; closed_at?: string;
+  }[];
+  'conversation-history:search': (query: string) => {
+    id: string; type: string; title?: string; url?: string; favicon?: string; status: string;
+    message_count: number; created_at: string; last_active_at: string;
+  }[];
+  'conversation-history:get-by-date-range': (from: string, to: string) => {
+    id: string; type: string; title?: string; url?: string; favicon?: string; status: string;
+    message_count: number; created_at: string; last_active_at: string;
+  }[];
+  'conversation-history:delete': (id: string) => void;
+  // #endregion
+
   // #region Debug & Monitoring
   'debug-heartbeat-status':    () => { initialized: boolean; isExecuting: boolean; lastTriggerMs: number; schedulerRunning: boolean; totalTriggers: number; totalErrors: number; totalSkips: number; uptimeMs: number };
   'debug-heartbeat-history':   (limit?: number) => { ts: number; type: string; message: string; durationMs?: number; error?: string; meta?: Record<string, unknown> }[];
@@ -537,5 +567,12 @@ export interface IpcRendererEvents {
 
   // #region Agent Configuration
   'model-changed': (payload: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string }) => void;
+  // #endregion
+
+  // #region Conversation History
+  'conversation-history:navigate': (entry: { id: string; type: string; url?: string; title?: string; tab_id?: string }) => void;
+  'conversation-history:show-all': () => void;
+  'conversation-history:restore-last-closed': () => void;
+  'conversation-history:cleared': (olderThan?: string) => void;
   // #endregion
 }

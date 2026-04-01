@@ -27,6 +27,7 @@ import util from 'node:util';
 
 import { resolveSullaLogsDir } from '../utils/sullaPaths';
 import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
+import { autoTitleAfterMessages, type TitleMessage } from './ConversationTitleService';
 
 // ── Types ──
 
@@ -330,6 +331,9 @@ class SullaLogger extends EventEmitter {
   private lastActivityUpdate = new Map<string, number>();
   private static readonly ACTIVITY_THROTTLE_MS = 30_000; // 30 seconds
 
+  // ── Message accumulator for auto-title generation ──
+  private messageBuffer = new Map<string, TitleMessage[]>();
+
   // ── Topic log cache (static, shared across all callers) ──
   private static topics = new Map<string, TopicLog>();
 
@@ -539,6 +543,21 @@ class SullaLogger extends EventEmitter {
       role,
       content,
     });
+
+    // Accumulate messages for auto-title generation
+    if (role === 'user' || role === 'assistant') {
+      let buffer = this.messageBuffer.get(conversationId);
+
+      if (!buffer) {
+        buffer = [];
+        this.messageBuffer.set(conversationId, buffer);
+      }
+      buffer.push({ role, content });
+
+      // Trigger auto-title after threshold (fire-and-forget)
+      autoTitleAfterMessages(conversationId, buffer)
+        .catch(err => globalThis.console.error('[SullaLogger] Auto-title failed:', err));
+    }
   }
 
   logToolCall(conversationId: string, toolName: string, args: unknown, result?: unknown): void {

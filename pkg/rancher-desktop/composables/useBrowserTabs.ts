@@ -1,4 +1,5 @@
 import { reactive, readonly, ref, watch } from 'vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document' | 'secretary' | 'vault' | 'account';
 
@@ -117,6 +118,37 @@ function generateId(): string {
   return `tab_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 8) }`;
 }
 
+// ── Conversation history IPC helpers ──
+
+function recordTabToHistory(tab: BrowserTab): void {
+  try {
+    const historyType = tab.mode === 'chat' ? 'chat' : 'browser';
+
+    // Skip welcome/blank tabs that aren't chat
+    if (tab.mode === 'welcome' || (tab.url === 'about:blank' && tab.mode !== 'chat')) return;
+
+    ipcRenderer.send('conversation-history:record', {
+      id:     tab.id,
+      type:   historyType,
+      title:  tab.title,
+      url:    tab.url,
+      favicon: tab.favicon,
+      tab_id: tab.id,
+      status: 'active',
+    });
+  } catch {
+    // IPC may not be available in non-Electron contexts
+  }
+}
+
+function closeTabInHistory(tabId: string): void {
+  try {
+    ipcRenderer.send('conversation-history:close', tabId);
+  } catch {
+    // Best-effort
+  }
+}
+
 export function useBrowserTabs() {
   const MODE_TITLES: Record<BrowserTabMode, string> = {
     welcome:      'New Tab',
@@ -144,6 +176,9 @@ export function useBrowserTabs() {
 
     tabs.push(tab);
 
+    // Record to conversation history
+    recordTabToHistory(tab);
+
     return tab;
   }
 
@@ -163,6 +198,8 @@ export function useBrowserTabs() {
     const idx = tabs.findIndex(t => t.id === id);
 
     if (idx !== -1) {
+      // Record closure in conversation history
+      closeTabInHistory(id);
       const removed = tabs[idx];
 
       // Save to closed-tab history (skip blank/welcome tabs)
@@ -221,6 +258,11 @@ export function useBrowserTabs() {
 
     if (tab) {
       Object.assign(tab, updates);
+
+      // Re-record when URL or title changes (navigation event)
+      if (updates.url || updates.title) {
+        recordTabToHistory(tab);
+      }
     }
   }
 
@@ -264,6 +306,9 @@ export function closeTabByAssetId(assetId: string): boolean {
 
   const idx = tabs.findIndex(t => t.id === tab.id);
   if (idx === -1) return false;
+
+  // Record closure in conversation history
+  closeTabInHistory(tab.id);
 
   // Save to closed-tab history
   if (tab.url !== 'about:blank' || tab.mode === 'chat') {
