@@ -41,6 +41,85 @@
       </button>
     </div>
 
+    <!-- Tab bar -->
+    <div
+      v-if="tabs && tabs.length > 0"
+      class="chat-tabs"
+      :class="{ dark: isDark }"
+    >
+      <div class="chat-tabs-list">
+        <div
+          v-for="tab in tabs"
+          :key="tab.id"
+          class="chat-tab"
+          :class="{ active: tab.id === activeTabId, dark: isDark }"
+          @click="$emit('switch-tab', tab.id)"
+        >
+          <span class="chat-tab-label">{{ tab.label }}</span>
+          <span
+            v-if="tab.messageCount > 0"
+            class="chat-tab-badge"
+          >{{ tab.messageCount }}</span>
+          <button
+            v-if="tabs.length > 1"
+            class="chat-tab-close"
+            :class="{ dark: isDark }"
+            @click.stop="$emit('close-tab', tab.id)"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line
+                x1="18"
+                y1="6"
+                x2="6"
+                y2="18"
+              />
+              <line
+                x1="6"
+                y1="6"
+                x2="18"
+                y2="18"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <button
+        class="chat-tab-add"
+        :class="{ dark: isDark }"
+        title="New chat"
+        @click="$emit('create-tab')"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <line
+            x1="12"
+            y1="5"
+            x2="12"
+            y2="19"
+          />
+          <line
+            x1="5"
+            y1="12"
+            x2="19"
+            y2="12"
+          />
+        </svg>
+      </button>
+    </div>
+
     <!-- Messages -->
     <div
       ref="messagesEl"
@@ -534,6 +613,9 @@ const props = defineProps<{
   queuedMessages?:    QueuedMessage[];
   hasQueuedMessages?: boolean;
   queuedMessageCount?: number;
+  // Tab system props
+  tabs?:              Array<{ id: string; label: string; messageCount: number; isActive: boolean }>;
+  activeTabId?:       string;
 }>();
 
 const showAgentMenu = ref(false);
@@ -559,6 +641,11 @@ const emit = defineEmits<{
   'clear-queue':  [];
   'move-up':      [messageId: string];
   'move-down':    [messageId: string];
+  // Tab system events
+  'create-tab':   [];
+  'switch-tab':   [tabId: string];
+  'close-tab':    [tabId: string];
+  'rename-tab':   [tabId: string, newLabel: string];
 }>();
 
 const tokenLabel = computed(() => {
@@ -1312,5 +1399,120 @@ onMounted(() => {
 .chat-queued-btn.remove:hover {
   background: var(--bg-error);
   color: var(--text-error);
+}
+
+/* ─── Chat Tabs ─── */
+.chat-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.chat-tabs-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.chat-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-default);
+  cursor: pointer;
+  font-size: var(--fs-body-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.chat-tab:hover {
+  background: var(--bg-hover);
+}
+
+.chat-tab.active {
+  background: var(--bg-info);
+  color: var(--text-info);
+  border-color: var(--accent-primary);
+}
+
+.chat-tab-label {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-tab-badge {
+  font-size: var(--fs-caption);
+  padding: 1px 5px;
+  border-radius: 10px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  min-width: 18px;
+  text-align: center;
+}
+
+.chat-tab.active .chat-tab-badge {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.chat-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.chat-tab-close:hover {
+  background: var(--bg-error);
+  color: var(--text-error);
+  opacity: 1;
+}
+
+.chat-tab-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.chat-tab-add:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.chat-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+
+.chat-tabs::-webkit-scrollbar-thumb {
+  background: var(--bg-surface-hover);
+  border-radius: 2px;
 }
 </style>

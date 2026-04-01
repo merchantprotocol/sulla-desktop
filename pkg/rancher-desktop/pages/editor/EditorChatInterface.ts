@@ -45,6 +45,7 @@ export class EditorChatInterface {
   private readonly persona:  AgentPersonaService;
   private readonly messageQueue: ChatMessageQueue;
   private readonly messagesStorageKey: string;
+  private readonly tabId: string;
 
   readonly query = ref('');
   readonly messages = ref<ChatMessage[]>([]);
@@ -73,19 +74,19 @@ export class EditorChatInterface {
     return this.persona.currentActivity.value;
   });
 
-  constructor() {
+  constructor(tabId?: string) {
+    // Use provided tabId or default to workbench channel
+    this.tabId = tabId || WORKBENCH_CHANNEL;
+    
     // Create a minimal registry just for the persona service's internal needs
     this.registry = new AgentPersonaRegistry();
-    this.persona = this.registry.getOrCreatePersonaService(WORKBENCH_CHANNEL);
+    this.persona = this.registry.getOrCreatePersonaService(WORKBENCH_CHANNEL, this.tabId);
 
     // Initialize message queue
     this.messageQueue = createMessageQueue();
 
-    // Set up storage key for persistence
-    this.messagesStorageKey = `chat_messages_${ WORKBENCH_CHANNEL }`;
-
-    // Restore threadId and messages from localStorage
-    this.persona.restoreThreadId();
+    // Set up storage key for persistence - scoped by tabId
+    this.messagesStorageKey = `chat_messages_${ this.tabId }`;
     if (!this.persona.getThreadId()) {
       this.persona.setThreadId(`thread_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`);
     }
