@@ -1022,15 +1022,7 @@ export async function afterBackgroundLoaded() {
  * @see sulla-desktop/background.ts
  */
 export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
-  mainEvents.on('sulla-first-run-complete', () => {
-    console.log('[FirstRun] sulla-first-run-complete event received — backend deploy done');
-    // Forward to renderer so FirstRunWaiting can show completion
-    const firstRunWindow = window.getWindow('first-run');
-    if (firstRunWindow && !firstRunWindow.isDestroyed()) {
-      console.log('[FirstRun] Forwarding sulla-deploy-ready to first-run renderer');
-      firstRunWindow.webContents.send('sulla-deploy-ready');
-    }
-  });
+  // Window close is now handled by FirstRunCoordinator in background.ts
 
   app.on('will-quit', async() => {
     console.log('[Shutdown] will-quit fired');

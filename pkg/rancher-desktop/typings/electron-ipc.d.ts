@@ -164,6 +164,7 @@ export interface IpcMainInvokeEvents {
 
   // #region Sulla
   'start-sulla-custom-env': () => void;
+  'first-run-wizard-step':  (step: number) => void;
   'sulla-restart-ollama':   () => void;
   'app-quit':               () => void;
 

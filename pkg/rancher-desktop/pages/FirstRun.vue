@@ -161,6 +161,7 @@ const next = async() => {
 
   currentStep.value += 1;
   console.log('[FirstRun] currentStep after:', currentStep.value);
+  ipcRenderer.invoke('first-run-wizard-step', currentStep.value);
   if (currentStep.value === 1) {
     console.log('[FirstRun] starting controller');
     startupController.start();
