@@ -71,6 +71,7 @@ export class ToolRegistry {
     pg:                 'PostgreSQL database queries and transactions.',
     rdctl:              'Sulla Desktop / rdctl management commands.',
     integrations:       'Tools for checking integration status and retrieving integration credentials.',
+    chrome:             'Browser extension-style APIs — browsing history search/modification, conversation history search, persistent key-value storage, cookie management, desktop notifications, background browsing, network monitoring, and scheduled alarms.',
     lima:               'Lima VM instance management.',
     playwright:         'Browser automation suite with two interaction modes: (1) DOM tools — click_element, set_field, browse_page for simple actions; (2) exec_in_page + window.__sulla helpers for multi-step workflows in one call. Also includes visual tools — take_screenshot with coordinate grid, click_at/type_at for pixel-precise interaction, get_page_snapshot(mode: "dehydrated") for compressed DOM overview. Load the web-research-playwright skill for full docs.',
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',

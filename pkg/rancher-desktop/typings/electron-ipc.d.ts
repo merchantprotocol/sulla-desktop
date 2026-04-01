@@ -145,7 +145,7 @@ export interface IpcMainEvents {
     status?:   'active' | 'closed' | 'archived' | 'deleted';
   }) => void;
   'conversation-history:close': (id: string) => void;
-  'conversation-history:clear': (olderThan?: string) => void;
+  'conversation-history:clear': (olderThan?: string, includeTrainingData?: boolean) => void;
   // #endregion
 }
 
@@ -390,7 +390,7 @@ export interface IpcMainInvokeEvents {
     id: string; type: string; title?: string; url?: string; favicon?: string; status: string;
     message_count: number; created_at: string; last_active_at: string;
   }[];
-  'conversation-history:delete': (id: string) => void;
+  'conversation-history:delete': (id: string, includeTrainingData?: boolean) => void;
   // #endregion
 
   // #region Debug & Monitoring

@@ -628,9 +628,15 @@ export class ChatCompletionsServer {
       // ── Build native tool endpoints by category (for merging with integrations or standalone) ──
       const { toolRegistry } = await import('@pkg/agent/tools/registry');
       const { ToolRegistry } = await import('@pkg/agent/tools/registry');
-      const INTERNAL_CATEGORIES = ['bridge', 'calendar', 'chrome', 'computer-use', 'docker', 'extensions', 'github', 'integrations', 'kubectl', 'lima', 'n8n', 'pg', 'playwright', 'rdctl', 'redis', 'slack'];
+      // All registered tool categories are exposed by default.
+      // Add categories here ONLY to explicitly exclude them from the API.
+      const EXCLUDED_CATEGORIES = new Set<string>([
+        'meta', // internal tool-discovery tools — not useful via the API
+      ]);
+      const INTERNAL_CATEGORIES = toolRegistry.getCategories().filter(cat => !EXCLUDED_CATEGORIES.has(cat));
 
-      // Individual stateless tools from mixed categories (where the rest of the category uses state)
+      // Individual stateless tools from mixed categories (where the rest of the category uses state).
+      // These are tools whose parent category is NOT fully internal — only specific tools are exposed.
       const INTERNAL_INDIVIDUAL_TOOLS = [
         { toolName: 'validate_sulla_workflow', slug: 'workflow' },
         { toolName: 'add_observational_memory', slug: 'memory' },

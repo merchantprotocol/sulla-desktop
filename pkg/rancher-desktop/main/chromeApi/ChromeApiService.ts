@@ -1109,6 +1109,13 @@ export class ChromeApiService implements ChromeApi {
       await this.ensureHistoryLoaded();
       this.historyItems = this.historyItems.filter((h) => h.url !== details.url);
       await this.persistHistory();
+
+      // Bridge: also remove from ConversationHistoryModel
+      try {
+        const { ConversationHistoryModel } = await import('@pkg/agent/database/models/ConversationHistoryModel');
+
+        await ConversationHistoryModel.deleteConversation(`chrome-hist-${ encodeURIComponent(details.url) }`);
+      } catch { /* best-effort */ }
     },
 
     deleteAll: async(): Promise<void> => {
@@ -1146,6 +1153,20 @@ export class ChromeApiService implements ChromeApi {
     }
 
     await this.persistHistory();
+
+    // Bridge: also record in ConversationHistoryModel for unified history
+    try {
+      const { ConversationHistoryModel } = await import('@pkg/agent/database/models/ConversationHistoryModel');
+
+      await ConversationHistoryModel.recordConversation({
+        id:    `chrome-hist-${ encodeURIComponent(url) }`,
+        type:  'browser',
+        title: title || url,
+        url,
+      });
+    } catch {
+      // ConversationHistoryModel may not be ready yet — best-effort
+    }
   }
 
   private async ensureHistoryLoaded(): Promise<void> {

@@ -150,6 +150,72 @@ export const chromeToolManifests: ToolManifest[] = [
   },
 
   {
+    name:        'modify_history',
+    description: 'Add, delete, or clear browsing history entries. Use to record researched URLs, remove sensitive entries, or clear history for privacy. Distinct from search_history (read-only) and search_conversations (chat/workflow history).',
+    category:    'chrome',
+    schemaDef:   {
+      action: {
+        type:        'enum',
+        enum:        ['add', 'delete', 'deleteAll'],
+        description: 'add: record a URL visit. delete: remove all entries for a URL. deleteAll: clear entire browsing history.',
+      },
+      url: {
+        type:        'string',
+        optional:    true,
+        description: 'The URL to add or delete. Required for add and delete actions.',
+      },
+      title: {
+        type:        'string',
+        optional:    true,
+        description: 'Page title for add action. Optional.',
+      },
+    },
+    operationTypes: ['create', 'delete'],
+    loader:         () => import('./modify_history'),
+  },
+
+  {
+    name:        'search_conversations',
+    description: 'Search past chat conversations, browser visits, and workflow executions. Find previous discussions by keyword, list recent activity, or retrieve details for a specific conversation by ID or thread ID. This searches the conversation history database — use search_history for browsing URL history.',
+    category:    'chrome',
+    schemaDef:   {
+      action: {
+        type:        'enum',
+        enum:        ['search', 'recent', 'get'],
+        description: 'search: full-text search by query. recent: list recent conversations. get: retrieve a specific conversation by id or threadId.',
+      },
+      query: {
+        type:        'string',
+        optional:    true,
+        description: 'Search text to match against conversation titles and summaries. Required for search action.',
+      },
+      limit: {
+        type:        'number',
+        optional:    true,
+        description: 'Max results for recent action. Default 20.',
+      },
+      type: {
+        type:        'enum',
+        enum:        ['chat', 'browser', 'workflow', 'graph'],
+        optional:    true,
+        description: 'Filter by conversation type. For recent action.',
+      },
+      id: {
+        type:        'string',
+        optional:    true,
+        description: 'Conversation ID. For get action.',
+      },
+      threadId: {
+        type:        'string',
+        optional:    true,
+        description: 'Thread ID. For get action (alternative to id).',
+      },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./search_conversations'),
+  },
+
+  {
     name:        'agent_storage',
     description: 'Persistent key-value store for agent state that survives across conversations. Store task progress, discovered user preferences, cached API responses, or any structured data. Backed by the database (Redis + PostgreSQL with file fallback).',
     category:    'chrome',

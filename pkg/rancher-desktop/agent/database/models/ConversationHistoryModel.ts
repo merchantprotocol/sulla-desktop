@@ -77,7 +77,7 @@ export class ConversationHistoryModel {
           last_active_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           closed_at       TIMESTAMP WITH TIME ZONE,
           log_file        TEXT,
-          training_file   TEXT,
+          training_file   TEXT,  -- reference only; NEVER auto-delete (used for local model training)
           last_summary    TEXT,
           pinned          BOOLEAN DEFAULT FALSE
         )
