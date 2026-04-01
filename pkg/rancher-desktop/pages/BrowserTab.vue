@@ -465,9 +465,15 @@ const bridgeId = () => {
 /**
  * Create a WebviewLike adapter that routes executeJavaScript through IPC
  * to the main process BrowserTabViewManager instead of an iframe.
+ *
+ * Supports both 'dom-ready' and 'ipc-message' events so the
+ * WebviewHostBridge state machine can transition properly when using
+ * WebContentsView-based tabs (where guest IPC goes through the main
+ * process rather than directly to the renderer via sendToHost).
  */
 function createViewBridgeAdapter() {
   const domReadyListeners: ((event: unknown) => void)[] = [];
+  const ipcMessageListeners: ((event: unknown) => void)[] = [];
 
   return {
     get src() { return addressBarUrl.value; },
@@ -482,11 +488,16 @@ function createViewBridgeAdapter() {
     },
     addEventListener(event: string, listener: (event: unknown) => void) {
       if (event === 'dom-ready') domReadyListeners.push(listener);
+      if (event === 'ipc-message') ipcMessageListeners.push(listener);
     },
     removeEventListener(event: string, listener: (event: unknown) => void) {
       if (event === 'dom-ready') {
         const idx = domReadyListeners.indexOf(listener);
         if (idx >= 0) domReadyListeners.splice(idx, 1);
+      }
+      if (event === 'ipc-message') {
+        const idx = ipcMessageListeners.indexOf(listener);
+        if (idx >= 0) ipcMessageListeners.splice(idx, 1);
       }
     },
     emitDomReady() {
@@ -494,10 +505,20 @@ function createViewBridgeAdapter() {
         try { fn({}) } catch { /* no-op */ }
       }
     },
+    emitIpcMessage(channel: string, ...args: unknown[]) {
+      const event = { channel, args };
+      for (const fn of ipcMessageListeners) {
+        try { fn(event) } catch { /* no-op */ }
+      }
+    },
   };
 }
 
 let bridgeAdapter: ReturnType<typeof createViewBridgeAdapter> | null = null;
+
+/** IPC listener refs for cleanup */
+let onBridgeEvent: ((_event: unknown, msg: { tabId: string; type: string; data: unknown }) => void) | null = null;
+let onDomReady: ((_event: unknown, msg: { tabId: string }) => void) | null = null;
 
 function setupBridge() {
   bridgeAdapter = createViewBridgeAdapter();
@@ -511,6 +532,23 @@ function setupBridge() {
     url:   addressBarUrl.value,
   });
   hostBridgeRegistry.setActiveBridge(id);
+
+  // Listen for bridge events forwarded from the main process.
+  // These are sulla:injected, sulla:routeChanged, etc. from the guest
+  // preload, routed through the main process because WebContentsView
+  // IPC doesn't go directly to the renderer like webview sendToHost.
+  onBridgeEvent = (_event: unknown, msg: { tabId: string; type: string; data: unknown }) => {
+    if (msg.tabId !== props.tabId || !bridgeAdapter) return;
+    bridgeAdapter.emitIpcMessage('sulla:guest:bridge', { type: msg.type, data: msg.data });
+  };
+  ipcRenderer.on('browser-tab-view:bridge-event' as any, onBridgeEvent);
+
+  // Listen for dom-ready forwarded from the main process.
+  onDomReady = (_event: unknown, msg: { tabId: string }) => {
+    if (msg.tabId !== props.tabId || !bridgeAdapter) return;
+    bridgeAdapter.emitDomReady();
+  };
+  ipcRenderer.on('browser-tab-view:dom-ready' as any, onDomReady);
 }
 
 const viewContainerRef = ref<HTMLDivElement | null>(null);
@@ -766,6 +804,10 @@ onUnmounted(() => {
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.removeListener('browser-context-menu:ai-action' as any, onContextMenuAIAction);
   ipcRenderer.removeListener('side-panel:state-changed' as any, onSidePanelStateChanged);
+  if (onBridgeEvent) ipcRenderer.removeListener('browser-tab-view:bridge-event' as any, onBridgeEvent);
+  if (onDomReady) ipcRenderer.removeListener('browser-tab-view:dom-ready' as any, onDomReady);
+  onBridgeEvent = null;
+  onDomReady = null;
 
   if (resizeObserver) {
     resizeObserver.disconnect();

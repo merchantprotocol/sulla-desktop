@@ -12,6 +12,7 @@
 /resources/host/
 /resources/linux/*
 !/resources/linux/rancher-desktop.desktop
+/resources/browserTabPreload.js*
 /resources/preload.js*
 /resources/rancher-dashboard/
 /resources/rdx-proxy.tar
@@ -27,3 +28,4 @@ justfile
 log/*
 llm/
 training/__pycache__/validate_training_data.cpython-313.pyc
+resources/browserTabPreload.js.map
