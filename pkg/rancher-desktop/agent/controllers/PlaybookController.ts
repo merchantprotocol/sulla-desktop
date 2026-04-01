@@ -403,7 +403,9 @@ export class PlaybookController<TState = any> {
       const escalationMsg = `[Workflow Node Failed: ${ failure.nodeLabel }]\n` +
         `The sub-agent "${ failure.nodeLabel }" failed.\n` +
         `Error: ${ failure.error }\n\n` +
-        `Tell the user what happened and ask what they'd like to do.`;
+        `If this failure is unrecoverable and the workflow cannot continue, you may abort it by responding with:\n` +
+        `<ABORT_WORKFLOW>Reason the workflow cannot continue</ABORT_WORKFLOW>\n\n` +
+        `Otherwise, tell the user what happened and ask what they'd like to do.`;
       this.injectWorkflowMessage(state, escalationMsg);
     }
 
@@ -428,7 +430,9 @@ export class PlaybookController<TState = any> {
           `<SUB_AGENT_ANSWER>Your answer here</SUB_AGENT_ANSWER>\n\n` +
           `If you CANNOT answer (needs human judgment, credentials, or info you don't have):\n` +
           `<SUB_AGENT_ESCALATE>Brief explanation of what the user needs to decide</SUB_AGENT_ESCALATE>\n\n` +
-          `Do NOT use send_channel_message — reply directly with one of the two XML blocks above.`;
+          `If the workflow is stuck and cannot continue (repeated failures, unrecoverable errors):\n` +
+          `<ABORT_WORKFLOW>Reason the workflow cannot continue</ABORT_WORKFLOW>\n\n` +
+          `Do NOT use send_channel_message — reply directly with one of the XML blocks above.`;
 
         this.injectWorkflowMessage(state, orchestratorPrompt);
         (state as any).metadata._muteWsChat = true;
@@ -437,6 +441,9 @@ export class PlaybookController<TState = any> {
 
         const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
         const response = lastAssistant?.content ? String(lastAssistant.content) : '';
+
+        const abortEscState = await this.handleAbortIfSignalled(state, response);
+        if (abortEscState) return abortEscState;
 
         const answerMatch = /<SUB_AGENT_ANSWER>([\s\S]*?)<\/SUB_AGENT_ANSWER>/i.exec(response);
         const escalateMatch = /<SUB_AGENT_ESCALATE>([\s\S]*?)<\/SUB_AGENT_ESCALATE>/i.exec(response);
@@ -531,7 +538,9 @@ export class PlaybookController<TState = any> {
 
       const statusBlock = `[Active Workflow Sub-Agents]\n${ lines.join('\n') }\n\n` +
         `These agents are working in the background as part of the active workflow.\n` +
-        `Do not duplicate their work. You can tell the user about their progress or help with other things.`;
+        `Do not duplicate their work. You can tell the user about their progress or help with other things.\n\n` +
+        `If the workflow is stuck in an unrecoverable state, you may abort it by responding with:\n` +
+        `<ABORT_WORKFLOW>Reason the workflow cannot continue</ABORT_WORKFLOW>`;
       this.injectWorkflowMessage(state, statusBlock, true);
     }
 
@@ -605,6 +614,9 @@ export class PlaybookController<TState = any> {
         const opText = Array.isArray(opResult)
           ? opResult.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
           : String(opResult).trim();
+
+        const abortState = await this.handleAbortIfSignalled(state, opText || String(opResult));
+        if (abortState) return abortState;
 
         if (isToolUseOnly || opText.length < 10) {
           playbookLog('orchestrator_prompt_retry', {
@@ -682,6 +694,9 @@ export class PlaybookController<TState = any> {
           const msgs = (state as any).messages;
           const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
           if (lastAssistant?.content) {
+            const abortAgentState = await this.handleAbortIfSignalled(state, String(lastAssistant.content));
+            if (abortAgentState) return abortAgentState;
+
             const resolvedNodeId = pendingPlaybook.pendingDecision?.nodeId;
             const resolved = resolveDecision(pendingPlaybook, String(lastAssistant.content));
             meta.activeWorkflow = resolved.updatedPlaybook;
@@ -801,6 +816,9 @@ export class PlaybookController<TState = any> {
 
           const lastMsg = (state as any).messages?.[(state as any).messages.length - 1];
           const orchestratorResponse = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
+
+          const abortFormState = await this.handleAbortIfSignalled(state, orchestratorResponse);
+          if (abortFormState) return abortFormState;
 
           const parsedPrompts = parsePromptTags(orchestratorResponse);
           const cleanedMessage = orchestratorResponse
@@ -1503,6 +1521,31 @@ export class PlaybookController<TState = any> {
     } catch (err) {
       console.warn(`[PlaybookController:Checkpoint] Failed to save checkpoint for "${ nodeLabel }":`, err);
     }
+  }
+
+  // ─── Abort Workflow Detection ───────────────────────────────────
+
+  private checkForAbortWorkflow(response: string): string | null {
+    const match = /<ABORT_WORKFLOW>([\s\S]*?)<\/ABORT_WORKFLOW>/i.exec(response);
+    return match ? match[1].trim() : null;
+  }
+
+  private async handleAbortIfSignalled(state: TState, response: string): Promise<TState | null> {
+    const reason = this.checkForAbortWorkflow(response);
+    if (!reason) return null;
+
+    const meta = (state as any).metadata;
+    const playbook: WorkflowPlaybookState | undefined = meta?.activeWorkflow;
+    if (!playbook) return null;
+
+    console.log(`[PlaybookController] Orchestrator aborted workflow: ${ reason }`);
+    playbookLog('orchestrator_abort', { reason, workflowId: playbook.workflowId });
+
+    this.emitPlaybookEvent(state, 'workflow_aborted', { reason });
+    this.pendingSubAgents.clear();
+
+    state = await this.releaseWorkflow(state, playbook, 'failed', `Aborted by orchestrator: ${ reason }`);
+    return state;
   }
 
   // ─── Release Workflow ───────────────────────────────────────────
