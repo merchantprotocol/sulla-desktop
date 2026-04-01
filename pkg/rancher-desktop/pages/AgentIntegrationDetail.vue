@@ -6,32 +6,63 @@
     <PostHogTracker page-name="AgentIntegrationDetail" />
     <div class="flex min-h-full flex-col">
       <AgentHeader
+        v-if="!embedded"
         :is-dark="isDark"
         :toggle-theme="toggleTheme"
       />
 
       <div class="flex-1 overflow-auto">
         <div class="mx-auto max-w-6xl px-4 py-8">
-          <!-- Back button -->
-          <button
-            class="mb-6 flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
-            @click="$router.push('/Integrations')"
-          >
-            <svg
-              class="h-4 w-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+          <!-- Navigation -->
+          <div class="mb-6 flex items-center gap-4">
+            <button
+              class="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              @click="embedded ? $emit('back') : $router.push('/Integrations')"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-            Back to Integrations
-          </button>
+              <svg
+                class="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+              Back to Integrations
+            </button>
+            <button
+              v-if="embedded"
+              class="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              @click="$emit('back-to-vault')"
+            >
+              <svg
+                class="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <rect
+                  x="3"
+                  y="11"
+                  width="18"
+                  height="11"
+                  rx="2"
+                  stroke-width="2"
+                />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M7 11V7a5 5 0 0110 0v4"
+                />
+              </svg>
+              Back to Vault
+            </button>
+          </div>
 
           <div
             v-if="integration"
@@ -239,99 +270,17 @@
                 </div>
               </div> -->
 
-              <!-- Connected Accounts List -->
-              <div
-                v-if="connectedAccounts.length > 0"
-                class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800"
-              >
-                <div class="flex items-center justify-between mb-4">
-                  <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
-                    Connected Accounts
-                  </h3>
-                  <button
-                    class="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
-                    @click="startAddAccount"
-                  >
-                    <svg
-                      class="h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    ><path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M12 4v16m8-8H4"
-                    /></svg>
-                    Add Another Account
-                  </button>
-                </div>
-
-                <div class="space-y-3">
-                  <div
-                    v-for="acct in connectedAccounts"
-                    :key="acct.account_id"
-                    class="flex items-center justify-between rounded-lg border p-4 transition-colors"
-                    :class="acct.active
-                      ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-900/20'
-                      : 'border-gray-200 bg-white dark:border-gray-700 dark:bg-slate-800'"
-                  >
-                    <div class="flex items-center gap-3">
-                      <div class="h-2.5 w-2.5 rounded-full bg-green-500" />
-                      <div>
-                        <div class="flex items-center gap-2">
-                          <span class="text-sm font-medium text-slate-900 dark:text-white">Connected to {{ acct.label }}</span>
-                          <span
-                            v-if="acct.active"
-                            class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-                          >ACTIVE</span>
-                        </div>
-                        <p
-                          v-if="acct.connected_at"
-                          class="text-xs text-slate-500 dark:text-slate-400 mt-0.5"
-                        >
-                          Since {{ new Date(acct.connected_at).toLocaleDateString() }}
-                        </p>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <button
-                        class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 transition-colors"
-                        @click="startEditAccount(acct.account_id)"
-                      >
-                        Edit Credentials
-                      </button>
-                      <button
-                        v-if="!acct.active"
-                        class="rounded-md px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
-                        @click="setAccountActive(acct.account_id)"
-                      >
-                        Set Active
-                      </button>
-                      <button
-                        class="rounded-md px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
-                        @click="disconnectAccount(acct.account_id)"
-                      >
-                        Disconnect
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Connect Card (first time or adding new account) -->
+              <!-- Connect Card — always shows as a fresh create form -->
               <div
                 v-if="showConnectionForm"
                 class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800"
               >
                 <div class="flex items-center justify-between mb-4">
                   <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
-                    {{ isEditingAccount
-                      ? `Edit Credentials${editingAccountLabel ? ` (${editingAccountLabel})` : ''}`
-                      : (connectedAccounts.length > 0 ? 'Add Another Account' : 'Connect Integration') }}
+                    Create New Connection
                   </h3>
                   <button
-                    v-if="isAddingAccount || isEditingAccount"
+                    v-if="false"
                     class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium"
                     @click="cancelAddAccount"
                   >
@@ -404,9 +353,8 @@
 
                 <!-- Credentials section (account label + properties + connect button) -->
                 <div v-if="integration.authType !== 'oauth' || isEditingAccount">
-                  <!-- Account Label (required only for new accounts) -->
+                  <!-- Account Label -->
                   <div
-                    v-if="connectedAccounts.length === 0 || isAddingAccount"
                     class="space-y-2 mb-4"
                   >
                     <label
@@ -520,7 +468,56 @@
                         </button>
                       </div>
 
-                      <!-- Standard input field -->
+                      <!-- Password field with visibility toggle -->
+                      <div
+                        v-else-if="property.type === 'password'"
+                        class="relative"
+                      >
+                        <input
+                          :id="property.key"
+                          v-model="formData[property.key]"
+                          :type="passwordVisible[property.key] ? 'text' : 'password'"
+                          :placeholder="property.placeholder"
+                          :required="property.required"
+                          class="w-full rounded-lg border border-gray-300 px-3 py-2 pr-10 text-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-slate-700 dark:text-white"
+                          :class="{ 'border-red-500': errors[property.key] }"
+                          @blur="onDependencyFieldBlur(property.key)"
+                        >
+                        <button
+                          type="button"
+                          class="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                          :title="passwordVisible[property.key] ? 'Hide password' : 'Show password'"
+                          @click="passwordVisible[property.key] = !passwordVisible[property.key]"
+                        >
+                          <!-- Eye open icon (password hidden) -->
+                          <svg
+                            v-if="!passwordVisible[property.key]"
+                            xmlns="http://www.w3.org/2000/svg"
+                            class="h-4 w-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          <!-- Eye closed icon (password visible) -->
+                          <svg
+                            v-else
+                            xmlns="http://www.w3.org/2000/svg"
+                            class="h-4 w-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <path d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      <!-- Standard input field (text, url, etc.) -->
                       <input
                         v-else
                         :id="property.key"
@@ -846,6 +843,17 @@ import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useTheme } from '@pkg/composables/useTheme';
 
+const pageProps = defineProps<{
+  /** When provided, use this instead of route.params.id */
+  integrationId?: string;
+  embedded?: boolean;
+}>();
+
+const emit = defineEmits<{
+  back: [];
+  saved: [accountId: string];
+}>();
+
 const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const route = useRoute();
 const router = useRouter();
@@ -875,6 +883,7 @@ const mergedIntegrations = ref<Record<string, Integration>>({});
 const currentImageIndex = ref(0);
 const formData = ref<Record<string, string>>({});
 const errors = ref<Record<string, string>>({});
+const passwordVisible = ref<Record<string, boolean>>({});
 const isLoading = ref(false);
 
 // Select box state
@@ -902,7 +911,7 @@ const editingAccountLabel = computed(() => {
 });
 
 /** Show the connection form when: no accounts connected yet, OR user clicked "Add Another Account" */
-const showConnectionForm = computed(() => connectedAccounts.value.length === 0 || isAddingAccount.value || isEditingAccount.value);
+const showConnectionForm = computed(() => true);
 
 // Carousel functions
 const nextImage = () => {
@@ -1099,14 +1108,11 @@ const validateForm = (): boolean => {
   errors.value = {};
   let isValid = true;
 
-  // Validate Account Label field separately for new accounts
-  const isCreatingAccount = connectedAccounts.value.length === 0 || isAddingAccount.value;
-  if (isCreatingAccount) {
-    const label = newAccountLabel.value.trim();
-    if (!label) {
-      errors.value['__account_label'] = 'Account label is required';
-      isValid = false;
-    }
+  // Validate Account Label field
+  const label = newAccountLabel.value.trim();
+  if (!label) {
+    errors.value['__account_label'] = 'Account label is required';
+    isValid = false;
   }
 
   // Validate credential fields (if any exist)
@@ -1188,21 +1194,16 @@ const handleConnect = async() => {
   // Validate all fields (including account label) through validateForm
   if (!validateForm()) return;
 
-  const isCreatingAccount = connectedAccounts.value.length === 0 || isAddingAccount.value;
+  // This page is always for creating new connections
   const label = newAccountLabel.value.trim();
-
-  const targetAccountId = isCreatingAccount
-    ? label.toLowerCase().replace(/[^a-z0-9]+/g, '_')
-    : (editingAccountId.value || selectedAccountId.value || activeAccountId.value);
+  const targetAccountId = label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
 
   isLoading.value = true;
   try {
-    if (isCreatingAccount) {
-      // Save label for new account
-      await integrationService.setAccountLabel(integration.value.id, targetAccountId, label);
-    }
+    // Save label for new account
+    await integrationService.setAccountLabel(integration.value.id, targetAccountId, label);
 
-    // Save credential fields for this account (new or existing)
+    // Save credential fields
     const formInputs = Object.entries(formData.value).map(([key, value]) => ({
       integration_id: integration.value!.id,
       account_id:     targetAccountId,
@@ -1211,20 +1212,22 @@ const handleConnect = async() => {
     }));
     await integrationService.setFormValues(formInputs);
 
-    if (isCreatingAccount) {
-      // Mark newly created account connected
-      await integrationService.setConnectionStatus(integration.value.id, true, targetAccountId);
-    }
+    // Mark newly created account connected
+    await integrationService.setConnectionStatus(integration.value.id, true, targetAccountId);
 
-    // If this is the first account, set it as active
-    if (isCreatingAccount && connectedAccounts.value.length === 0) {
+    // Set as active if it's the first account for this integration
+    const existingAccounts = await integrationService.getAccounts(integration.value.id);
+    if (existingAccounts.length <= 1) {
       await integrationService.setActiveAccount(integration.value.id, targetAccountId);
     }
 
-    // Reset form state
-    isAddingAccount.value = false;
-    isEditingAccount.value = false;
-    editingAccountId.value = null;
+    // When embedded in vault flow, return to vault list after save
+    if (pageProps.embedded) {
+      emit('saved', targetAccountId);
+      return;
+    }
+
+    // Reset form for another creation
     newAccountLabel.value = '';
     formData.value = {};
 
@@ -1251,28 +1254,50 @@ onMounted(async() => {
     mergedIntegrations.value[extInt.id] = extInt;
   }
 
-  // Load integration data based on route parameter
-  const integrationId = route.params.id as string;
+  // Load integration data — prefer prop over route param for embedded use
+  const integrationId = pageProps.integrationId || (route.params.id as string);
   integration.value = mergedIntegrations.value[integrationId] || null;
 
-  // If integration not found, redirect back to integrations list
+  // Inject llm_access property into all integrations so users can control AI access per account
+  if (integration.value && integration.value.properties) {
+    const hasLlmAccess = integration.value.properties.some(p => p.key === 'llm_access');
+    if (!hasLlmAccess) {
+      integration.value = {
+        ...integration.value,
+        properties: [
+          ...integration.value.properties,
+          {
+            key:         'llm_access',
+            title:       'AI Access Level',
+            hint:        'Controls what the AI agent can see and do with this credential',
+            type:        'select' as const,
+            required:    false,
+            placeholder: 'autofill',
+            selectBoxId: 'vault_llm_access',
+          },
+        ],
+      };
+    }
+  }
+
+  // If integration not found, go back
   if (!integration.value) {
-    router.push('/Integrations');
+    if (pageProps.embedded) {
+      emit('back');
+    } else {
+      router.push('/Integrations');
+    }
     return;
   }
 
-  // Load accounts and form data
+  // Start with a blank form for new account creation
+  // Fetch select options for any select fields
   try {
-    await refreshAccounts();
-    selectedAccountId.value = activeAccountId.value;
-
-    await loadFormDataForAccount(integrationId, selectedAccountId.value);
-
-    // Load connection status (check any account)
-    integration.value.connected = await integrationService.isAnyAccountConnected(integrationId);
-    mergedIntegrations.value[integrationId].connected = integration.value.connected;
+    formData.value = {};
+    newAccountLabel.value = '';
+    fetchAllSelectOptions();
   } catch (error) {
-    console.error('Failed to load integration data:', error);
+    console.error('Failed to initialize form:', error);
   }
 });
 </script>

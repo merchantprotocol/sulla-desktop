@@ -1,6 +1,20 @@
 import { Session } from 'electron';
+import { EventEmitter } from 'events';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+
+// ---------------------------------------------------------------------------
+// Typed webRequest event names emitted by SullaWebRequestFixer
+// ---------------------------------------------------------------------------
+
+export interface WebRequestEventMap {
+  'beforeRequest':      [details: any];
+  'beforeSendHeaders':  [details: any];
+  'headersReceived':    [details: any];
+  'sendHeaders':        [details: any];
+  'completed':          [details: any];
+  'errorOccurred':      [details: any];
+}
 
 export interface SullaWebRequestLogEvent {
   direction:     string;
@@ -22,7 +36,7 @@ function isLocalhost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0';
 }
 
-export class SullaWebRequestFixer {
+export class SullaWebRequestFixer extends EventEmitter {
   private cookieHeaderCacheByDomain: Record<string, string> = {};
   private writeEvent:                (event: SullaWebRequestLogEvent) => void;
   private static readonly LOGGING_ENABLED = true;
@@ -31,6 +45,7 @@ export class SullaWebRequestFixer {
   private static readonly COOKIE_PROPERTY_PREFIX = 'webRequestCookieHeader:';
 
   constructor(writeSullaWebRequestEvent: (event: SullaWebRequestLogEvent) => void) {
+    super();
     this.writeEvent = SullaWebRequestFixer.LOGGING_ENABLED ? writeSullaWebRequestEvent : () => {};
   }
 
@@ -55,6 +70,8 @@ export class SullaWebRequestFixer {
 
     // ==================== onHeadersReceived ====================
     session.webRequest.onHeadersReceived((details, callback) => {
+      this.emit('headersReceived', details);
+
       // Skip header rewriting for app:// and x-rd-extension:// protocol responses —
       // Electron.protocol.handle responses don't support header modification and
       // attempting it causes ERR_UNEXPECTED (breaks SVG/image loading).
@@ -120,6 +137,8 @@ export class SullaWebRequestFixer {
 
     // ==================== onBeforeSendHeaders ====================
     session.webRequest.onBeforeSendHeaders((details, callback) => {
+      this.emit('beforeSendHeaders', details);
+
       if (details.url.startsWith('app://') || details.url.startsWith('x-rd-extension://')) {
         callback({ requestHeaders: details.requestHeaders });
 
@@ -200,6 +219,7 @@ export class SullaWebRequestFixer {
 
     // ==================== onSendHeaders ====================
     session.webRequest.onSendHeaders((details) => {
+      this.emit('sendHeaders', details);
       if (this.shouldLogRequest(details.url)) {
         const hasCookie = !!details.requestHeaders['Cookie'] || !!details.requestHeaders['cookie'];
         const cookiePreview = hasCookie
@@ -218,6 +238,7 @@ export class SullaWebRequestFixer {
 
     // ==================== onCompleted ====================
     session.webRequest.onCompleted((details) => {
+      this.emit('completed', details);
       if (this.shouldLogRequest(details.url)) {
         this.writeEvent({
           direction:    'request_complete',
@@ -236,6 +257,7 @@ export class SullaWebRequestFixer {
 
     // ==================== onErrorOccurred ====================
     session.webRequest.onErrorOccurred((details) => {
+      this.emit('errorOccurred', details);
       if (this.shouldLogRequest(details.url)) {
         this.writeEvent({
           direction:    'request_error',

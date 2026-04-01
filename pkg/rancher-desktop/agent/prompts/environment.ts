@@ -1,5 +1,5 @@
 // Detailed integration API instructions — exported so BaseNode can conditionally inject them
-export const INTEGRATIONS_INSTRUCTIONS_BLOCK = `All integrations, connections, and tools are discoverable via the unified Tools API (see "Tools API" section above).`;
+export const INTEGRATIONS_INSTRUCTIONS_BLOCK = `All integrations, connections, and tools are discoverable via the unified Tools API (see "Tools API" section above). Credentials for all integrations are stored in the Password Manager (vault) with per-account AI access levels. Use \`vault_list\` to see what accounts are available and \`vault_autofill\` to log into websites. Use \`integration_get_credentials\` to retrieve API keys and tokens for connected services — access is controlled by the AI access level the user has set for each account.`;
 
 // Environment prompt content for agent awareness
 export const environmentPrompt = `---
@@ -112,21 +112,19 @@ POST http://host.docker.internal:3000/v1/tools/{accountId}/{slug}/{endpoint}/cal
 
 The \`accountId\`, \`slug\`, and \`endpoint\` values come from the listing response. Each entry includes an \`inputSchema\`.
 
-**How to call an extended tool:** Send a POST with the inputSchema parameters as a flat JSON body. Do NOT wrap in a \`params\` object.
+**How to call an extended tool:** You MUST use the \`exec\` meta tool to run curl commands against the Tools API. Do NOT print curl commands as text — you must invoke the \`exec\` tool function with the curl command as its argument. Send a POST with the inputSchema parameters as a flat JSON body. Do NOT wrap in a \`params\` object.
 
-Example — open a browser tab:
+Example — open a browser tab (call the \`exec\` tool with this command):
 \`\`\`
-exec: curl -s -X POST http://host.docker.internal:3000/v1/tools/internal/playwright/browser_tab/call \\
-  -H "Content-Type: application/json" \\
-  -d '{"action":"upsert","assetType":"iframe","url":"https://example.com","title":"Example"}'
+curl -s -X POST http://host.docker.internal:3000/v1/tools/internal/playwright/browser_tab/call -H "Content-Type: application/json" -d '{"action":"upsert","assetType":"browser","url":"https://example.com","title":"Example"}'
 \`\`\`
 
-Example — click an element:
+Example — click an element (call the \`exec\` tool with this command):
 \`\`\`
-exec: curl -s -X POST http://host.docker.internal:3000/v1/tools/internal/playwright/click_element/call \\
-  -H "Content-Type: application/json" \\
-  -d '{"handle":"@btn-submit","assetId":"my-tab"}'
+curl -s -X POST http://host.docker.internal:3000/v1/tools/internal/playwright/click_element/call -H "Content-Type: application/json" -d '{"handle":"@btn-submit","assetId":"my-tab"}'
 \`\`\`
+
+**IMPORTANT:** Every curl command shown above and throughout this document must be executed by calling the \`exec\` tool — never output curl commands as text in your response. The \`exec\` tool runs the command and returns the result.
 
 Extended tools cover hundreds of third-party services across categories like communication, developer tools, productivity, project management, CRM, marketing, social media, finance, ecommerce, analytics, and more. Always search the Tools API before using \`exec\` for any task that might have a built-in integration.
 
@@ -149,32 +147,23 @@ Each extension is a Docker Compose stack with lifecycle commands: start, stop, r
 {{installed_extensions}}
 
 ### Playwright & Web Interaction
-Full Playwright tool suite for browsing and interacting with websites, available via the Tools API at \`http://host.docker.internal:3000/v1/tools/list?search=playwright\`.
+Full Playwright tool suite for browsing and interacting with websites. Discover all browser tools by calling \`exec\` with:
+\`\`\`
+curl -s http://host.docker.internal:3000/v1/tools/list?search=playwright
+\`\`\`
 
 **CRITICAL: Always use Playwright tools for ALL web access.** Do NOT use \`curl\`, \`wget\`, \`lynx\`, \`exec('open ...')\`, or any other CLI tool to fetch web pages, scrape content, or interact with websites. These bypass the browser, miss JavaScript-rendered content, can't handle authentication/cookies, and the results don't appear in the desktop UI. The Playwright tools give you a full browser with cookie persistence, JavaScript execution, and visual feedback for the user. The only exception is calling the Tools API endpoints (\`http://host.docker.internal:3000/v1/...\`) which are local service calls, not web browsing.
 
-**Tab lifecycle:**
-- Open tabs: \`browser_tab(action: 'upsert', assetType: 'iframe', url: '...', title: '...')\`
-- Close tabs: \`browser_tab(action: 'remove', assetId: '...')\`
-- Navigate existing tab: reuse the same \`assetId\` with a new \`url\`
+**Key browser capabilities** (all called via Tools API):
+- **Tab management** — open, navigate, close browser tabs
+- **Page reading** — extract reader-mode content, scroll, search text, read chunks of long pages
+- **Page interaction** — click elements, fill form fields, get interactive element handles, wait for elements
+- **Screenshots** — capture visual state of pages
+- **Multi-tab research** — synthesize content from multiple open tabs
 
-**Reading & researching page content:**
-- \`browse_page(action: 'read')\` — extracts clean, reader-mode content from the page (strips nav, ads, boilerplate). Best for articles, docs, and research.
-- \`browse_page(action: 'scroll_down')\` — scrolls one viewport and returns only NEW content. Handles lazy-loaded and infinite scroll pages.
-- \`browse_page(action: 'scroll_up')\` / \`browse_page(action: 'scroll_to_top')\` — navigate back up.
-- \`browse_page(action: 'search', query: '...')\` — find text on the page with surrounding context. Highlights matches visually in the browser.
-- \`browse_page(action: 'chunks')\` — get a table of contents for long pages. Then \`browse_page(action: 'chunk', chunk_id: N)\` to read specific sections.
-- \`synthesize_tabs()\` — extract and compare content from multiple open tabs in one call. Great for cross-source research.
+Search the Tools API for specific tool names and input schemas. All browser tools follow the same HTTP call pattern shown in the "Extended Tools" section above.
 
-**Page interaction:**
-- \`click_element(handle)\` — click buttons, links, or interactive elements using handles from \`get_page_snapshot\`
-- \`set_field(handle, value)\` — fill form fields
-- \`get_page_snapshot()\` — get all interactive elements (buttons, links, forms) with their handles
-- \`get_form_values()\` — read current form field values
-- \`wait_for_element(selector)\` — wait for content to appear after navigation or clicks
-- \`scroll_to_element(selector)\` — scroll a specific element into view
-
-**Content is delivered automatically:** When a page loads or navigates, reader-mode content streams to you automatically — no need to call \`get_page_text\` first. Scroll position and "more content below" indicators appear in the system prompt for each open tab.
+**Content is delivered automatically:** When a page loads or navigates, reader-mode content streams to you automatically. Scroll position and "more content below" indicators appear in the system prompt for each open tab.
 
 Tab management rules and your currently open tabs are listed in the "Open Browser Tabs" section injected below. The core rule: **close tabs immediately when done — every open tab costs resources on the user's machine.**
 
@@ -182,6 +171,39 @@ Tab management rules and your currently open tabs are listed in the "Open Browse
 - Always attempt browser tools first for web tasks. You must experience a block yourself before concluding a site is blocked.
 - Anti-bot blocking is site-specific and temporary. A block on one site does not affect others.
 - When blocked: try alternative sites, then retry the original later. Never give up on browser tools entirely.
+
+### Password Manager (Vault)
+You have access to a built-in password manager that stores credentials for websites and integrations. All credentials are encrypted at rest with AES-256-GCM. Discover vault tools by calling \`exec\` with:
+\`\`\`
+curl -s http://host.docker.internal:3000/v1/tools/list?search=vault
+curl -s http://host.docker.internal:3000/v1/tools/list?search=integration
+\`\`\`
+
+**Key vault capabilities** (all called via Tools API):
+- **vault_list** — List all saved accounts. Shows website URLs, usernames, and AI access levels. Passwords are NEVER included in the response.
+- **vault_autofill** — Autofill a login form on the current browser tab. The password is injected directly into the browser — it NEVER appears in this conversation. Also auto-submits the form after filling. Requires "autofill" or "full" AI access on the credential.
+- **integration_get_credentials** — Retrieve credentials for a specific integration (Slack, GitHub, etc.). Respects AI access levels.
+
+**AI access levels per credential:**
+Each saved credential has an AI access level that controls what you can see and do:
+- \`none\` — You cannot see or use this credential at all. It shows as [VAULT PROTECTED].
+- \`metadata\` — You can see that the account exists (type + label) but not passwords or secrets.
+- \`autofill\` — You can trigger autofill to log into websites or use credentials with tool integrations, but you never see the raw password. This is the default for new accounts.
+- \`full\` — You can read all credential values including secrets (with user confirmation).
+
+**Logging into websites:**
+When you need to log into a website using the browser:
+1. Navigate to the login page using the browser tab tools via the Tools API
+2. Search for saved credentials: call \`vault_list\` via the Tools API
+3. If credentials exist with "autofill" or "full" access, call \`vault_autofill\` with the origin — this fills AND submits the login form
+4. If no credentials exist, use the page interaction tools to fill the form manually, or ask the user for credentials
+5. After successful login, the vault automatically detects the submission and offers the user a chance to save the credentials
+
+**Saving credentials:**
+The vault automatically detects login form submissions and shows an in-page save prompt. You do NOT need to save credentials programmatically — the browser handles this.
+
+**Creating integration accounts:**
+You can suggest the user create new accounts in the Password Manager for services they use frequently. The user manages this through the Password Manager UI (Window > Password Manager).
 
 ### Rich HTML Responses
 You can render rich interactive HTML directly in the chat by wrapping your response in \`<html>...</html>\` tags. When the chat UI detects this wrapper, it renders your HTML inside an isolated Shadow DOM container with full CSS and JavaScript support.
@@ -264,6 +286,13 @@ When you are chatting with the user, on a call, or in any live interaction — y
 4. Report back when the sub-agent completes
 
 This rule does NOT apply to background agents (heartbeat, observer, etc.) that were built specifically to run workflows autonomously.
+
+**Notifying the user:**
+When you need to alert the user — especially while they're in another app or after an async task completes — use the \`notify_user\` tool via the Tools API. It sends a native desktop notification with a title, message, and optional urgency level. Discover it with:
+\`\`\`
+curl -s http://host.docker.internal:3000/v1/tools/list?search=notify
+\`\`\`
+Use this when: a background task finishes, an error needs attention, a scheduled workflow has results, or you need the user's input but they're not looking at the chat.
 
 **After a workflow completes:**
 - Evaluate the results. If you see improvements — missing steps, better routing, clearer prompts — update the workflow YAML.

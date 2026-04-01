@@ -545,6 +545,477 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return tabViewManager.executeJavaScript(tabId, code);
   });
 
+  // ── Vault: key management IPC handlers (main-process only — safeStorage) ──
+  const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+  const vaultKey = getVaultKeyService();
+
+  ipcMainProxy.handle('vault:is-setup', async() => {
+    return vaultKey.isSetUp();
+  });
+
+  ipcMainProxy.handle('vault:is-unlocked', async() => {
+    return vaultKey.isUnlocked();
+  });
+
+  ipcMainProxy.handle('vault:initialize', async() => {
+    return vaultKey.initialize();
+  });
+
+  ipcMainProxy.handle('vault:setup', async(_event: Electron.IpcMainInvokeEvent, data: { masterPassword: string }) => {
+    const result = await vaultKey.setupFromMasterPassword(data.masterPassword);
+    const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+    setUserLoggedIn(true);
+    return { recoveryKey: result.recoveryKey };
+  });
+
+  ipcMainProxy.handle('vault:unlock-password', async(_event: Electron.IpcMainInvokeEvent, data: { password: string }) => {
+    const success = await vaultKey.recoverFromMasterPassword(data.password);
+    if (success) {
+      const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+      setUserLoggedIn(true);
+    }
+    return success;
+  });
+
+  ipcMainProxy.handle('vault:unlock-recovery', async(_event: Electron.IpcMainInvokeEvent, data: { recoveryKey: string }) => {
+    const success = await vaultKey.recoverFromRecoveryKey(data.recoveryKey);
+    if (success) {
+      const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+      setUserLoggedIn(true);
+    }
+    return success;
+  });
+
+  ipcMainProxy.handle('vault:logout', async() => {
+    // UI logout only — do NOT zero the VMK so the agent can keep working
+    const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+    setUserLoggedIn(false);
+    return true;
+  });
+
+  ipcMainProxy.handle('vault:lock-vault', async() => {
+    // Manual vault lock — zeros VMK, agent loses access to encrypted credentials
+    vaultKey.lock();
+    const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+    setUserLoggedIn(false);
+    return true;
+  });
+
+  // Sync decrypt/encrypt for renderer-side IntegrationValueModel
+  const { ipcMain } = await import('electron');
+  ipcMain.on('vault:decrypt-sync', (event, encrypted: string) => {
+    try {
+      if (vaultKey.isUnlocked() && vaultKey.isEncrypted(encrypted)) {
+        event.returnValue = vaultKey.decrypt(encrypted);
+      } else {
+        event.returnValue = encrypted;
+      }
+    } catch {
+      event.returnValue = encrypted;
+    }
+  });
+
+  ipcMain.on('vault:encrypt-sync', (event, plaintext: string) => {
+    try {
+      if (vaultKey.isUnlocked()) {
+        event.returnValue = vaultKey.encrypt(plaintext);
+      } else {
+        event.returnValue = plaintext;
+      }
+    } catch {
+      event.returnValue = plaintext;
+    }
+  });
+
+  // ── Vault: export & import ─────────────────────────────────────────────────
+  const { dialog } = await import('electron');
+  const fsPromises = await import('fs/promises');
+
+  ipcMainProxy.handle('vault:export', async(_event: Electron.IpcMainInvokeEvent, data: { encrypted: boolean }) => {
+    try {
+      const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIS();
+      await service.initialize();
+
+      const enabled = await service.getEnabledIntegrations();
+      const exportData: any[] = [];
+
+      for (const { integrationId, accounts } of enabled) {
+        for (const acct of accounts) {
+          const formValues = await service.getFormValues(integrationId, acct.account_id);
+          const values: Record<string, string> = {};
+          for (const fv of formValues) {
+            values[fv.property] = fv.value;
+          }
+          exportData.push({
+            integrationId,
+            accountId:  acct.account_id,
+            label:      acct.label,
+            connected:  acct.connected,
+            active:     acct.active,
+            values,
+          });
+        }
+      }
+
+      let content: string;
+      let defaultName: string;
+
+      if (data.encrypted) {
+        const vault = getVaultKeyService();
+        if (!vault.isUnlocked()) {
+          return { success: false, error: 'Vault is locked' };
+        }
+        content = vault.encrypt(JSON.stringify(exportData, null, 2));
+        defaultName = `sulla-vault-backup-${ new Date().toISOString().slice(0, 10) }.enc`;
+      } else {
+        content = JSON.stringify(exportData, null, 2);
+        defaultName = `sulla-vault-export-${ new Date().toISOString().slice(0, 10) }.json`;
+      }
+
+      const mainWindow = window.getWindow('main-agent');
+      const result = await dialog.showSaveDialog(mainWindow!, {
+        title:       data.encrypted ? 'Export Encrypted Vault Backup' : 'Export Vault (Plain Text)',
+        defaultPath: defaultName,
+        filters:     data.encrypted
+          ? [{ name: 'Encrypted Backup', extensions: ['enc'] }]
+          : [{ name: 'JSON', extensions: ['json'] }],
+      });
+
+      if (result.canceled || !result.filePath) {
+        return { success: false, canceled: true };
+      }
+
+      await fsPromises.writeFile(result.filePath, content, 'utf-8');
+      console.log(`[Vault] Exported ${ exportData.length } accounts to ${ result.filePath }`);
+      return { success: true, count: exportData.length, path: result.filePath };
+    } catch (err: any) {
+      console.error('[Vault] Export failed:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMainProxy.handle('vault:import', async() => {
+    try {
+      const mainWindow = window.getWindow('main-agent');
+      const result = await dialog.showOpenDialog(mainWindow!, {
+        title:      'Import Passwords',
+        filters:    [
+          { name: 'Password Files', extensions: ['json', 'csv', 'enc'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+        properties: ['openFile'],
+      });
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+
+      const filePath = result.filePaths[0];
+      let raw = await fsPromises.readFile(filePath, 'utf-8');
+
+      // Detect Sulla encrypted file
+      if (raw.startsWith('$VAULT$')) {
+        const vault = getVaultKeyService();
+        if (!vault.isUnlocked()) {
+          return { success: false, error: 'Vault is locked — cannot decrypt backup' };
+        }
+        try {
+          raw = vault.decrypt(raw);
+        } catch {
+          return { success: false, error: 'Failed to decrypt — wrong vault key or corrupted file' };
+        }
+      }
+
+      // ── Detect format and normalize to a common shape ──
+      interface ImportEntry { label: string; url: string; username: string; password: string; notes: string; totp: string; folder: string }
+      let entries: ImportEntry[] = [];
+      let format = 'unknown';
+
+      // Try JSON first (Sulla native or Bitwarden JSON)
+      try {
+        const parsed = JSON.parse(raw);
+
+        if (Array.isArray(parsed) && parsed[0]?.integrationId) {
+          // ── Sulla native format ──
+          format = 'sulla';
+          const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
+          const svc = getIS();
+          await svc.initialize();
+          let imported = 0;
+          for (const acct of parsed) {
+            if (!acct.integrationId || !acct.accountId || !acct.values) continue;
+            const inputs = Object.entries(acct.values as Record<string, string>).map(([key, value]) => ({
+              integration_id: acct.integrationId, account_id: acct.accountId, property: key, value,
+            }));
+            await svc.setFormValues(inputs);
+            if (acct.label) await svc.setAccountLabel(acct.integrationId, acct.accountId, acct.label);
+            if (acct.connected !== false) await svc.setConnectionStatus(acct.integrationId, true, acct.accountId);
+            imported++;
+          }
+          console.log(`[Vault] Imported ${ imported } accounts (Sulla format) from ${ filePath }`);
+          return { success: true, count: imported, format };
+        }
+
+        if (parsed.encrypted !== undefined && parsed.items) {
+          // ── Bitwarden JSON export ──
+          format = 'bitwarden-json';
+          for (const item of parsed.items) {
+            if (item.type !== 1) continue; // type 1 = login
+            entries.push({
+              label:    item.name || '',
+              url:      item.login?.uris?.[0]?.uri || '',
+              username: item.login?.username || '',
+              password: item.login?.password || '',
+              notes:    item.notes || '',
+              totp:     item.login?.totp || '',
+              folder:   '',
+            });
+          }
+        }
+      } catch {
+        // Not JSON — try CSV
+      }
+
+      // ── CSV parsing ──
+      if (entries.length === 0 && !raw.startsWith('{') && !raw.startsWith('[')) {
+        const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) {
+          return { success: false, error: 'File is empty or has no data rows' };
+        }
+
+        const headerLine = lines[0].toLowerCase();
+        const headers = parseCSVLine(headerLine);
+        const dataLines = lines.slice(1);
+
+        if (headers.includes('login_uri') || headers.includes('login_username')) {
+          // ── Bitwarden CSV ──
+          format = 'bitwarden-csv';
+          const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
+          for (const line of dataLines) {
+            const row = parseCSVLine(line);
+            if (col(row, 'type') !== 'login' && col(row, 'type') !== '') continue;
+            entries.push({
+              label:    col(row, 'name'),
+              url:      col(row, 'login_uri'),
+              username: col(row, 'login_username'),
+              password: col(row, 'login_password'),
+              notes:    col(row, 'notes'),
+              totp:     col(row, 'login_totp'),
+              folder:   col(row, 'folder'),
+            });
+          }
+        } else if (headers.includes('url') && headers.includes('username') && headers.includes('grouping')) {
+          // ── LastPass CSV ──
+          format = 'lastpass';
+          const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
+          for (const line of dataLines) {
+            const row = parseCSVLine(line);
+            entries.push({
+              label:    col(row, 'name'),
+              url:      col(row, 'url'),
+              username: col(row, 'username'),
+              password: col(row, 'password'),
+              notes:    col(row, 'extra'),
+              totp:     col(row, 'totp'),
+              folder:   col(row, 'grouping'),
+            });
+          }
+        } else if (headers.includes('title') || headers.includes('username')) {
+          // ── 1Password CSV or generic CSV ──
+          format = '1password';
+          const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
+          for (const line of dataLines) {
+            const row = parseCSVLine(line);
+            entries.push({
+              label:    col(row, 'title') || col(row, 'name'),
+              url:      col(row, 'url') || col(row, 'login_uri'),
+              username: col(row, 'username') || col(row, 'login_username'),
+              password: col(row, 'password') || col(row, 'login_password'),
+              notes:    col(row, 'notes') || col(row, 'extra'),
+              totp:     col(row, 'totp') || '',
+              folder:   col(row, 'folder') || col(row, 'grouping') || col(row, 'vault') || '',
+            });
+          }
+        } else {
+          return { success: false, error: `Unrecognized CSV format. Headers found: ${ headers.join(', ') }. Supported: Bitwarden, LastPass, 1Password, or Sulla JSON.` };
+        }
+      }
+
+      if (entries.length === 0 && format === 'unknown') {
+        return { success: false, error: 'No importable entries found in file' };
+      }
+
+      // ── Save entries as website integration accounts ──
+      const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIS();
+      await service.initialize();
+
+      let imported = 0;
+      for (const entry of entries) {
+        if (!entry.username && !entry.password) continue;
+
+        const accountId = ((entry.url || 'unknown') + '_' + (entry.username || 'unknown'))
+          .toLowerCase()
+          .replace(/^https?:\/\//, '')
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_|_$/g, '')
+          .slice(0, 200);
+
+        const values: { integration_id: string; account_id: string; property: string; value: string }[] = [
+          { integration_id: 'website', account_id: accountId, property: 'website_url', value: entry.url },
+          { integration_id: 'website', account_id: accountId, property: 'username', value: entry.username },
+          { integration_id: 'website', account_id: accountId, property: 'password', value: entry.password },
+          { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'autofill' },
+        ];
+        if (entry.notes) {
+          values.push({ integration_id: 'website', account_id: accountId, property: 'notes', value: entry.notes });
+        }
+        if (entry.totp) {
+          values.push({ integration_id: 'website', account_id: accountId, property: 'custom_totp', value: entry.totp });
+        }
+
+        await service.setFormValues(values);
+
+        const label = entry.label || (entry.url ? entry.url.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : 'Imported');
+        await service.setAccountLabel('website', accountId, `${ label } (${ entry.username })`);
+        await service.setConnectionStatus('website', true, accountId);
+        imported++;
+      }
+
+      console.log(`[Vault] Imported ${ imported } entries (${ format }) from ${ filePath }`);
+      return { success: true, count: imported, format };
+    } catch (err: any) {
+      console.error('[Vault] Import failed:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  /** Parse a CSV line respecting quoted fields */
+  function parseCSVLine(line: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  }
+
+  // ── Vault: credential save & autofill IPC handlers ────────────────────────
+  const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+
+  ipcMainProxy.handle('vault:save-credential', async(_event: Electron.IpcMainInvokeEvent, data: { origin: string; username: string; password: string }) => {
+    try {
+      const service = getIntegrationService();
+      await service.initialize();
+
+      // Generate account ID from origin + username
+      const accountId = (data.origin + '_' + data.username)
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 200);
+
+      // Save as a website integration account
+      await service.setFormValues([
+        { integration_id: 'website', account_id: accountId, property: 'website_url', value: data.origin },
+        { integration_id: 'website', account_id: accountId, property: 'username', value: data.username },
+        { integration_id: 'website', account_id: accountId, property: 'password', value: data.password },
+        { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'autofill' },
+      ]);
+
+      // Set account label and mark as connected
+      await service.setAccountLabel('website', accountId, `${ data.username } @ ${ data.origin.replace(/^https?:\/\//, '') }`);
+      await service.setConnectionStatus('website', true, accountId);
+
+      console.log(`[Vault] Saved credential for ${ data.origin } (${ data.username })`);
+      return { success: true, accountId };
+    } catch (err: any) {
+      console.error('[Vault] Failed to save credential:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMainProxy.handle('vault:autofill', async(_event: Electron.IpcMainInvokeEvent, data: { tabId?: string; accountId: string }) => {
+    try {
+      const service = getIntegrationService();
+      await service.initialize();
+
+      // Get the saved credentials for this account
+      const formValues = await service.getFormValues('website', data.accountId);
+      const storedValues: Record<string, string> = {};
+      for (const fv of formValues) {
+        storedValues[fv.property] = fv.value;
+      }
+
+      const username = storedValues['username'] || '';
+      const password = storedValues['password'] || '';
+
+      if (!username || !password) {
+        console.warn('[Vault] Autofill: missing username or password for account', data.accountId);
+        return { success: false, error: 'Missing credentials' };
+      }
+
+      // Find the active tab to autofill — if tabId provided use it,
+      // otherwise find the first visible browser tab with a matching origin
+      let targetTabId = data.tabId;
+
+      if (!targetTabId) {
+        // Try to find the tab from the main window's rendered browser tabs
+        // For now, we'll need the tabId passed from the renderer
+        console.warn('[Vault] Autofill: no tabId provided');
+        return { success: false, error: 'No target tab specified' };
+      }
+
+      // Execute autofill in the target tab — password goes directly to the
+      // browser tab via executeJavaScript, never enters the LLM context
+      const fillScript = `
+        (function() {
+          var bridge = window.sullaBridge;
+          if (!bridge) return { success: false, error: 'Bridge not available' };
+
+          var loginForm = bridge.detectLoginForm();
+          if (!loginForm || !loginForm.hasLoginForm) return { success: false, error: 'No login form found' };
+
+          var usernameOk = false;
+          var passwordOk = false;
+
+          if (loginForm.usernameHandle) {
+            usernameOk = bridge.setValue(loginForm.usernameHandle, ${ JSON.stringify(username) });
+          }
+          if (loginForm.passwordHandle) {
+            passwordOk = bridge.setValue(loginForm.passwordHandle, ${ JSON.stringify(password) });
+          }
+
+          return { success: usernameOk || passwordOk, usernameOk: usernameOk, passwordOk: passwordOk };
+        })();
+      `;
+
+      const result = await tabViewManager.executeJavaScript(targetTabId, fillScript);
+      console.log(`[Vault] Autofill result for ${ data.accountId }:`, result);
+      return { success: true, ...(result as any) };
+    } catch (err: any) {
+      console.error('[Vault] Autofill failed:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
 }
 
 /**
@@ -573,12 +1044,7 @@ export async function afterBackgroundLoaded() {
  * @see sulla-desktop/background.ts
  */
 export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
-  mainEvents.on('sulla-first-run-complete', () => {
-    const firstRunWindow = window.getWindow('first-run');
-    firstRunWindow?.setClosable(true);
-    firstRunWindow?.close();
-    window.openMain();
-  });
+  // Window close is now handled by FirstRunCoordinator in background.ts
 
   app.on('will-quit', async() => {
     console.log('[Shutdown] will-quit fired');

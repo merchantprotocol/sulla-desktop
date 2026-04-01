@@ -1,5 +1,43 @@
 import { BaseModel } from '../BaseModel';
 
+const VAULT_PREFIX = '$VAULT$';
+const isRenderer = typeof process !== 'undefined' && process.type === 'renderer';
+
+/**
+ * Get the VaultKeyService for encrypt/decrypt.
+ * In the main process: direct access.
+ * In the renderer: returns null (uses IPC fallback below).
+ */
+function getVaultDirect() {
+  if (isRenderer) return null;
+  try {
+    const { getVaultKeyService } = require('../../services/VaultKeyService');
+    return getVaultKeyService();
+  } catch { return null; }
+}
+
+/**
+ * Synchronous decrypt/encrypt via IPC (renderer only).
+ * Uses sendSync for synchronous model attribute access.
+ */
+function ipcDecrypt(value: string): string {
+  if (!isRenderer || !value.startsWith(VAULT_PREFIX)) return value;
+  try {
+    const { ipcRenderer } = require('electron');
+    const result = ipcRenderer.sendSync('vault:decrypt-sync', value);
+    return result || value;
+  } catch { return value; }
+}
+
+function ipcEncrypt(value: string): string {
+  if (!isRenderer) return value;
+  try {
+    const { ipcRenderer } = require('electron');
+    const result = ipcRenderer.sendSync('vault:encrypt-sync', value);
+    return result || value;
+  } catch { return value; }
+}
+
 interface IntegrationValueAttributes {
   value_id:       number;
   integration_id: string;
@@ -37,6 +75,84 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     this.original = { ...attributes };
   }
 
+  // ─── Vault encryption helpers ──────────────────────────────────────
+
+  /** Encrypt a value if the vault is available, otherwise return as-is */
+  private static encryptValue(value: string): string {
+    // Main process: direct
+    const vault = getVaultDirect();
+    if (vault?.isUnlocked()) {
+      try { return vault.encrypt(value); } catch { /* fall through */ }
+    }
+    // Renderer: IPC
+    if (isRenderer) {
+      try { return ipcEncrypt(value); } catch { /* fall through */ }
+    }
+    return value;
+  }
+
+  /** Decrypt a value if it's vault-encrypted, otherwise return as-is */
+  private static decryptValue(value: string): string {
+    if (!value?.startsWith(VAULT_PREFIX)) return value;
+    // Main process: direct
+    const vault = getVaultDirect();
+    if (vault) {
+      try { return vault.decrypt(value); } catch { /* fall through */ }
+    }
+    // Renderer: IPC
+    if (isRenderer) {
+      try { return ipcDecrypt(value); } catch { /* fall through */ }
+    }
+    return value;
+  }
+
+  /** Decrypt the value attribute on a model instance */
+  private static decryptModel(model: IntegrationValueModel): IntegrationValueModel {
+    if (model.attributes.value) {
+      model.attributes.value = this.decryptValue(model.attributes.value);
+    }
+    return model;
+  }
+
+  /** Decrypt value attributes on an array of models */
+  private static decryptModels(models: IntegrationValueModel[]): IntegrationValueModel[] {
+    return models.map(m => this.decryptModel(m));
+  }
+
+  /**
+   * Encrypt all unencrypted values in the database.
+   * Safe to call multiple times — skips already-encrypted rows.
+   */
+  static async migrateToEncrypted(): Promise<number> {
+    const vault = getVaultDirect();
+    if (!vault?.isUnlocked()) {
+      console.log('[IntegrationValueModel] Vault locked — skipping encryption migration');
+      return 0;
+    }
+
+    const allRows = await this.query(
+      `SELECT "value_id", "value" FROM "integration_values" WHERE "value" NOT LIKE '$VAULT$%'`,
+      [],
+    );
+
+    let count = 0;
+    for (const row of allRows) {
+      if (row.value && !vault.isEncrypted(row.value as string)) {
+        const encrypted = vault.encrypt(row.value as string);
+        await this.query(
+          `UPDATE "integration_values" SET "value" = $1, "updated_at" = CURRENT_TIMESTAMP WHERE "value_id" = $2`,
+          [encrypted, row.value_id],
+        );
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      console.log(`[IntegrationValueModel] Encrypted ${ count } plain-text values`);
+    }
+    return count;
+  }
+
   // ─── Static finders ────────────────────────────────────────────────
 
   /** Find a single value by composite key */
@@ -50,7 +166,8 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
       account_id:     accountId,
       property,
     });
-    return rows[0] || null;
+    const model = rows[0] || null;
+    return model ? this.decryptModel(model) : null;
   }
 
   /** Find all values for an integration + account */
@@ -58,17 +175,19 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     integrationId: string,
     accountId: string,
   ): Promise<IntegrationValueModel[]> {
-    return this.where({
+    const models = await this.where({
       integration_id: integrationId,
       account_id:     accountId,
     });
+    return this.decryptModels(models);
   }
 
   /** Find all values for an integration across all accounts */
   static async findByIntegration(
     integrationId: string,
   ): Promise<IntegrationValueModel[]> {
-    return this.where({ integration_id: integrationId });
+    const models = await this.where({ integration_id: integrationId });
+    return this.decryptModels(models);
   }
 
   /** Get all distinct integration_ids that have stored values */
@@ -89,31 +208,49 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     return rows.map(r => r.account_id as string);
   }
 
-  /** Check if any row matches integration + property value */
+  /** Check if any row matches integration + property value (handles encrypted values) */
   static async existsWithPropertyValue(
     integrationId: string,
     property: string,
     value: string,
   ): Promise<boolean> {
+    // First try exact match (works for unencrypted or if caller passes encrypted value)
     const rows = await this.query(
       `SELECT 1 FROM "integration_values" WHERE "integration_id" = $1 AND "property" = $2 AND "value" = $3 LIMIT 1`,
       [integrationId, property, value],
     );
-    return rows.length > 0;
+    if (rows.length > 0) return true;
+
+    // If values are encrypted, we need to decrypt and compare
+    const allRows = await this.query(
+      `SELECT "value" FROM "integration_values" WHERE "integration_id" = $1 AND "property" = $2`,
+      [integrationId, property],
+    );
+    return allRows.some(r => this.decryptValue(r.value as string) === value);
   }
 
-  /** Upsert a value: update if exists, insert if not. Returns the model + whether it was an update. */
+  /** Upsert a value: update if exists, insert if not. Encrypts at rest. Returns the model + whether it was an update. */
   static async upsert(
     integrationId: string,
     accountId: string,
     property: string,
     value: string,
   ): Promise<{ model: IntegrationValueModel; wasUpdate: boolean }> {
-    const existing = await this.findByKey(integrationId, accountId, property);
+    const encryptedValue = this.encryptValue(value);
+
+    // findByKey decrypts — we need the raw row to check existence without double-decrypt
+    const rawRows = await this.where({
+      integration_id: integrationId,
+      account_id:     accountId,
+      property,
+    });
+    const existing = rawRows[0] || null;
 
     if (existing) {
-      existing.attributes.value = value;
+      existing.attributes.value = encryptedValue;
       await existing.save();
+      // Return with decrypted value for callers
+      existing.attributes.value = value;
       return { model: existing, wasUpdate: true };
     }
 
@@ -121,8 +258,10 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
       integration_id: integrationId,
       account_id:     accountId,
       property,
-      value,
+      value:          encryptedValue,
     });
+    // Return with decrypted value for callers
+    model.attributes.value = value;
     return { model, wasUpdate: false };
   }
 

@@ -61,6 +61,7 @@ import * as window from '@pkg/window';
 import { closeDashboard, openDashboard } from '@pkg/window/dashboard';
 import { openPreferences, preferencesSetDirtyFlag } from '@pkg/window/preferences';
 
+import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
 import { SullaSettingsModel } from './pkg/rancher-desktop/agent/database/models/SullaSettingsModel';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
@@ -97,6 +98,7 @@ const SNAPSHOT_OPERATION = 'Snapshot operation in progress';
 const ipcMainProxy = getIpcMainProxy(console);
 const k8smanager = newK8sManager();
 const diagnostics: DiagnosticsManager = new DiagnosticsManager();
+const firstRunCoordinator = new FirstRunCoordinator();
 
 let cfg: settings.Settings;
 let firstRunDialogComplete = false;
@@ -234,6 +236,64 @@ Electron.protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { se
 // /////////////////////////////////////////////////////////////////////////////
 
 hookSullaEnd(Electron, mainEvents, window);
+
+// ── FirstRunCoordinator setup ───────────────────────────────────────────
+// Declare conditions and register steps for the first-run flow.
+// The coordinator ensures deploy and window-close only fire when all
+// required conditions are met, regardless of ordering.
+
+firstRunCoordinator.addCondition('backendBooted');
+firstRunCoordinator.addCondition('credentialsSet');
+firstRunCoordinator.addCondition('deployCompleted');
+firstRunCoordinator.addCondition('wizardFinished');
+
+firstRunCoordinator.registerStep(
+  'deploy',
+  ['backendBooted', 'credentialsSet'],
+  async() => {
+    if (!cfg.kubernetes.enabled) {
+      if ((k8smanager as any).sullaStepDockerEnvironment) {
+        console.log('[FirstRunCoordinator] Running Docker environment step...');
+        await (k8smanager as any).sullaStepDockerEnvironment();
+        console.log('[FirstRunCoordinator] Docker environment step completed');
+      }
+    } else {
+      if (k8smanager.kubeBackend.sullaStepCustomEnvironment) {
+        console.log('[FirstRunCoordinator] Running K8s custom environment step...');
+        await k8smanager.kubeBackend.sullaStepCustomEnvironment();
+        console.log('[FirstRunCoordinator] K8s custom environment step completed');
+      }
+    }
+    await firstRunCoordinator.setCondition('deployCompleted');
+  },
+);
+
+firstRunCoordinator.registerStep(
+  'closeFirstRunWindow',
+  ['deployCompleted', 'wizardFinished'],
+  () => {
+    console.log('[FirstRunCoordinator] Closing first-run window and opening main');
+    const firstRunWindow = window.getWindow('first-run');
+
+    if (firstRunWindow && !firstRunWindow.isDestroyed()) {
+      firstRunWindow.setClosable(true);
+      firstRunWindow.close();
+    }
+    window.openMain();
+  },
+);
+
+// Backend boot event from lima.ts
+mainEvents.on('first-run-backend-booted', async() => {
+  console.log('[FirstRunCoordinator] first-run-backend-booted event received');
+  // Check if credentials were already set before backend finished
+  const credentialsNeeded = await SullaSettingsModel.get('firstRunCredentialsNeeded', true);
+
+  if (credentialsNeeded === false) {
+    await firstRunCoordinator.setCondition('credentialsSet');
+  }
+  await firstRunCoordinator.setCondition('backendBooted');
+});
 
 /** Resolve the project root without relying on process.cwd() which throws
  *  ENOENT when the working directory has been removed (e.g. nightly reinstall). */
@@ -615,8 +675,16 @@ async function initUI() {
 
 async function doFirstRunDialog() {
   const firstRunCredentialsNeeded = await SullaSettingsModel.get('firstRunCredentialsNeeded', true);
-  if (!noModalDialogs && (settingsImpl.firstRunDialogNeeded() || firstRunCredentialsNeeded)) {
+  const needsFirstRun = !noModalDialogs && (settingsImpl.firstRunDialogNeeded() || firstRunCredentialsNeeded);
+
+  if (needsFirstRun) {
     await window.openFirstRunDialog();
+  } else {
+    // No wizard needed — auto-satisfy user-driven conditions so the
+    // coordinator can proceed as soon as the backend boots.
+    console.log('[FirstRunCoordinator] First-run wizard not needed — auto-satisfying wizard conditions');
+    await firstRunCoordinator.setCondition('credentialsSet');
+    await firstRunCoordinator.setCondition('wizardFinished');
   }
   firstRunDialogComplete = true;
 }
@@ -817,6 +885,14 @@ Electron.app.on('before-quit', async(event) => {
   }
   event.preventDefault();
   console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');
+
+  // Lock the vault — zero VMK from memory on quit
+  try {
+    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+    getVaultKeyService().lock();
+    console.log('[Shutdown] Vault locked — VMK zeroed');
+  } catch { /* vault not initialized */ }
+
   httpCommandServer?.closeServer();
   httpCredentialHelperServer.closeServer();
 
@@ -933,28 +1009,17 @@ ipcMainProxy.handle('error-report/invoke' as any, async(_event: any, report: any
   return await submitErrorReport(report);
 });
 
+// User submitted credentials in the first-run wizard
 ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
-  console.log('Starting Sulla custom environment...');
+  console.log('[FirstRunCoordinator] start-sulla-custom-env IPC received — setting credentialsSet');
+  await firstRunCoordinator.setCondition('credentialsSet');
+});
 
-  const firstKubernetesIsInstalled = await SullaSettingsModel.get('firstKubernetesIsInstalled', false);
-  if (firstKubernetesIsInstalled !== true) {
-    console.log('Sulla custom environment: Lima/Kubernetes not yet installed, skipping.');
-
-    return;
-  }
-
-  if (!cfg.kubernetes.enabled) {
-    // Docker mode — sullaStepDockerEnvironment lives on LimaBackend (the VM backend)
-    if ((k8smanager as any).sullaStepDockerEnvironment) {
-      console.log('Sulla custom environment: running Docker environment step...');
-      await (k8smanager as any).sullaStepDockerEnvironment();
-    }
-  } else {
-    // K8s mode
-    if (k8smanager.kubeBackend.sullaStepCustomEnvironment) {
-      console.log('Sulla custom environment: running K8s custom environment step...');
-      await k8smanager.kubeBackend.sullaStepCustomEnvironment();
-    }
+// User submitted the last user-driven step (Remote Model) in the first-run wizard
+ipcMainProxy.handle('first-run-wizard-step' as any, async(_event: any, step: any) => {
+  console.log('[FirstRunCoordinator] Wizard reached step:', step);
+  if (step >= 3) {
+    await firstRunCoordinator.setCondition('wizardFinished');
   }
 });
 

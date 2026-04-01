@@ -1,6 +1,6 @@
 import { reactive, readonly, ref, watch } from 'vue';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document' | 'secretary';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document' | 'secretary' | 'vault' | 'account';
 
 export interface BrowserTab {
   id:       string;
@@ -118,12 +118,25 @@ function generateId(): string {
 }
 
 export function useBrowserTabs() {
+  const MODE_TITLES: Record<BrowserTabMode, string> = {
+    welcome:      'New Tab',
+    browser:      'New Tab',
+    chat:         'New Chat',
+    calendar:     'Calendar',
+    integrations: 'Integrations',
+    extensions:   'Extensions',
+    document:     'Document',
+    secretary:    'Secretary',
+    vault:        'Password Manager',
+    account:      'My Account',
+  };
+
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:      generateId(),
       url,
-      title:   mode === 'chat' ? 'New Chat' : 'New Tab',
+      title:   MODE_TITLES[mode] || 'New Tab',
       favicon: '',
       loading: false,
       mode,

@@ -39,7 +39,7 @@
           :aria-label="loading ? 'Stop loading' : 'Reload'"
           @click="loading ? stop() : reload()"
         >
-          <svg v-if="loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+          <svg v-if="loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4 loading-x">
             <path d="M18 6L6 18M6 6l12 12" />
           </svg>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
@@ -51,7 +51,7 @@
         </button>
 
         <form
-          class="flex-1"
+          class="flex-1 relative"
           @submit.prevent="navigate"
         >
           <input
@@ -62,6 +62,11 @@
             placeholder="Search or enter URL"
             @focus="($event.target as HTMLInputElement).select()"
             @keydown.meta.l.prevent="focusAddressBar"
+          />
+          <!-- Loading progress bar inside address bar -->
+          <div
+            v-if="loading"
+            class="address-bar-progress"
           />
         </form>
       </div>
@@ -91,13 +96,65 @@
 
     <template v-else-if="tabMode === 'integrations'">
       <div class="flex-1 min-h-0 overflow-auto">
-        <AgentIntegrations embedded />
+        <AgentIntegrations
+          embedded
+          @switch-to-vault="onSetMode('vault')"
+        />
       </div>
     </template>
 
     <template v-else-if="tabMode === 'extensions'">
       <div class="flex-1 min-h-0 overflow-auto">
         <AgentExtensions embedded />
+      </div>
+    </template>
+
+    <template v-else-if="tabMode === 'vault'">
+      <div class="flex-1 min-h-0 overflow-auto">
+        <!-- Vault sub-navigation: list → picker → editor -->
+        <AgentConnectedAccounts
+          v-if="vaultScreen === 'list'"
+          embedded
+          @new-account="showIntegrationPicker"
+          @edit-account="showAccountEditor"
+          @generate-password="openGeneratorStandalone"
+        />
+        <AgentIntegrations
+          v-else-if="vaultScreen === 'picker'"
+          embedded
+          @back-to-vault="returnToVaultList"
+          @create-account="showNewAccountEditor"
+        />
+        <AgentIntegrationDetail
+          v-else-if="vaultScreen === 'detail'"
+          :integration-id="editorIntegrationId"
+          embedded
+          @back="showIntegrationPicker"
+          @saved="onAccountSaved"
+        />
+        <AccountEditor
+          v-else-if="vaultScreen === 'editor'"
+          :integration-id="editorIntegrationId"
+          :account-id="editorAccountId"
+          :prefill-password="generatedPasswordForEditor"
+          embedded
+          @back="goBackFromEditor"
+          @saved="onAccountSaved"
+          @deleted="onAccountDeleted"
+          @open-generator="openGeneratorFromEditor"
+        />
+        <PasswordGenerator
+          v-else-if="vaultScreen === 'generator'"
+          :show-use-button="!!generatorTargetField"
+          @back="goBackFromGenerator"
+          @use-password="onUseGeneratedPassword"
+        />
+      </div>
+    </template>
+
+    <template v-else-if="tabMode === 'account'">
+      <div class="flex-1 min-h-0 overflow-auto">
+        <MyAccount />
       </div>
     </template>
 
@@ -144,6 +201,11 @@ import NewTabWelcome from './NewTabWelcome.vue';
 import AgentCalendar from './AgentCalendar.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
+import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
+import AccountEditor from './AccountEditor.vue';
+import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
+import PasswordGenerator from './PasswordGenerator.vue';
+import MyAccount from './MyAccount.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
@@ -151,6 +213,7 @@ import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowser
 import { useTheme } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { useStartupProgress } from './agent/useStartupProgress';
+import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import {
   WebviewHostBridge,
   setActiveHostBridge,
@@ -166,6 +229,8 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   extensions:   'Extensions',
   document:     'Document',
   secretary:    'Secretary',
+  vault:        'Password Manager',
+  account:      'My Account',
 };
 
 const props = defineProps<{
@@ -182,6 +247,91 @@ const tabContent = computed(() => getTab(props.tabId)?.content || '');
 
 function onSetMode(mode: BrowserTabMode) {
   updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
+}
+
+// ── Vault sub-navigation state ──
+const vaultScreen = ref<'list' | 'picker' | 'detail' | 'editor' | 'generator'>('list');
+const editorIntegrationId = ref('');
+const editorAccountId = ref<string | undefined>(undefined);
+const generatorTargetField = ref<string | null>(null);
+const generatedPasswordForEditor = ref('');
+
+function setVaultTitle(title: string) {
+  updateTab(props.tabId, { title });
+}
+
+function returnToVaultList() {
+  vaultScreen.value = 'list';
+  setVaultTitle('Password Manager');
+}
+
+function showIntegrationPicker() {
+  vaultScreen.value = 'picker';
+  setVaultTitle('New Connection');
+}
+
+function showAccountEditor(data: { integrationId: string; accountId: string }) {
+  editorIntegrationId.value = data.integrationId;
+  editorAccountId.value = data.accountId;
+  vaultScreen.value = 'editor';
+  setVaultTitle('Edit Account');
+}
+
+function showNewAccountEditor(data: { integrationId: string }) {
+  editorIntegrationId.value = data.integrationId;
+  editorAccountId.value = undefined;
+  vaultScreen.value = 'detail';
+  setVaultTitle('Connect');
+}
+
+function goBackFromEditor() {
+  if (editorAccountId.value) {
+    returnToVaultList();
+  } else {
+    showIntegrationPicker();
+  }
+}
+
+function onAccountSaved() {
+  returnToVaultList();
+}
+
+function onAccountDeleted() {
+  returnToVaultList();
+}
+
+function openGeneratorFromEditor(fieldKey: string) {
+  generatorTargetField.value = fieldKey;
+  generatedPasswordForEditor.value = '';
+  vaultScreen.value = 'generator';
+  setVaultTitle('Generate Password');
+}
+
+function openGeneratorStandalone() {
+  generatorTargetField.value = null;
+  generatedPasswordForEditor.value = '';
+  vaultScreen.value = 'generator';
+  setVaultTitle('Generate Password');
+}
+
+function goBackFromGenerator() {
+  if (generatorTargetField.value) {
+    // Return to editor
+    vaultScreen.value = 'editor';
+    setVaultTitle(editorAccountId.value ? 'Edit Account' : 'New Account');
+  } else {
+    returnToVaultList();
+  }
+}
+
+function onUseGeneratedPassword(password: string) {
+  if (generatorTargetField.value) {
+    generatedPasswordForEditor.value = password;
+    vaultScreen.value = 'editor';
+    setVaultTitle(editorAccountId.value ? 'Edit Account' : 'New Account');
+  } else {
+    returnToVaultList();
+  }
 }
 
 function onNavigateUrl(input: string) {
@@ -318,6 +468,9 @@ const loading = ref(false);
 const canGoBack = ref(false);
 const canGoForward = ref(false);
 let viewCreated = false;
+
+// Vault save/autofill is now handled entirely in-page via GuestBridgePreload
+// (injected dropdown + save toast). No renderer-side banners needed.
 
 /** Returns true if the input looks like a URL the user wants to navigate to */
 function looksLikeUrl(input: string): boolean {
@@ -493,7 +646,8 @@ let resizeObserver: ResizeObserver | null = null;
 // We watch the isVisible prop to manage event listeners and view visibility.
 
 // Should the native view be visible right now?
-const shouldShowView = () => props.isVisible && !showOverlay.value && viewCreated && tabMode.value === 'browser';
+const { loggedIn } = useVaultUnlock();
+const shouldShowView = () => props.isVisible && !showOverlay.value && loggedIn.value && viewCreated && tabMode.value === 'browser';
 
 watch([() => props.isVisible, showOverlay], ([visible]) => {
   if (visible) {
@@ -592,6 +746,34 @@ onUnmounted(() => {
 
 .address-bar::placeholder {
   color: var(--text-muted);
+}
+
+/* Loading progress bar — Chrome-style sliding bar under the address bar */
+.address-bar-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 30%;
+  background: var(--accent-primary);
+  border-radius: 0 1px 1px 0;
+  animation: address-bar-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes address-bar-slide {
+  0%   { left: 0; width: 30%; }
+  50%  { left: 50%; width: 40%; }
+  100% { left: 100%; width: 10%; }
+}
+
+/* Loading X icon pulse */
+.loading-x {
+  animation: loading-pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes loading-pulse {
+  from { opacity: 0.5; }
+  to   { opacity: 1; }
 }
 
 .browser-nav-btn {

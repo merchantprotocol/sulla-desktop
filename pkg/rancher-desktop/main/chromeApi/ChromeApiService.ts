@@ -18,6 +18,7 @@ import Electron, { WebContentsView, session } from 'electron';
 import { EventEmitter } from 'events';
 
 import { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
+import type { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { hostBridgeProxy } from '@pkg/agent/scripts/injected/HostBridgeProxy';
 import Logging from '@pkg/utils/logging';
 
@@ -230,6 +231,83 @@ export class ChromeApiService implements ChromeApi {
 
   private constructor(tabViewManager: BrowserTabViewManager) {
     this.tabViewManager = tabViewManager;
+    this.bindWebRequestFixer();
+  }
+
+  /**
+   * Subscribe to SullaWebRequestFixer's EventEmitter events and forward them
+   * into the chrome.webRequest event system.  The fixer may not be initialised
+   * yet (it's lazy), so we poll until it's available.
+   */
+  private bindWebRequestFixer(): void {
+    const fixer = this.tabViewManager.getWebRequestFixer();
+
+    if (fixer) {
+      this.attachFixerListeners(fixer);
+    } else {
+      // Fixer is created lazily on first tab — poll until ready
+      const poll = setInterval(() => {
+        const f = this.tabViewManager.getWebRequestFixer();
+
+        if (f) {
+          clearInterval(poll);
+          this.attachFixerListeners(f);
+        }
+      }, 1_000);
+    }
+  }
+
+  private attachFixerListeners(fixer: SullaWebRequestFixer): void {
+    fixer.on('beforeSendHeaders', (details: any) => {
+      this.webReqBeforeSendHeaders.emit({
+        requestId:      String(details.id || ''),
+        url:            details.url || '',
+        method:         details.method || '',
+        type:           details.resourceType,
+        timeStamp:      Date.now(),
+        requestHeaders: Object.entries(details.requestHeaders || {}).map(
+          ([name, value]) => ({ name, value: String(value) }),
+        ),
+      });
+    });
+
+    fixer.on('headersReceived', (details: any) => {
+      this.webReqHeadersReceived.emit({
+        requestId:       String(details.id || ''),
+        url:             details.url || '',
+        method:          details.method || '',
+        statusCode:      details.statusCode || 0,
+        type:            details.resourceType,
+        timeStamp:       Date.now(),
+        responseHeaders: Object.entries(details.responseHeaders || {}).map(
+          ([name, value]) => ({ name, value: Array.isArray(value) ? value.join(', ') : String(value) }),
+        ),
+      });
+    });
+
+    fixer.on('completed', (details: any) => {
+      this.webReqCompleted.emit({
+        requestId:  String(details.id || ''),
+        url:        details.url || '',
+        method:     details.method || '',
+        statusCode: details.statusCode || 0,
+        type:       details.resourceType,
+        timeStamp:  Date.now(),
+      });
+    });
+
+    fixer.on('errorOccurred', (details: any) => {
+      this.webReqErrorOccurred.emit({
+        requestId: String(details.id || ''),
+        url:       details.url || '',
+        method:    details.method || '',
+        type:      details.resourceType,
+        timeStamp: Date.now(),
+        error:     details.error || '',
+      });
+    });
+
+    console.log('[ChromeApi] webRequest bridge attached to SullaWebRequestFixer');
   }
 
   static getInstance(tabViewManager?: BrowserTabViewManager): ChromeApiService {
@@ -659,92 +737,6 @@ export class ChromeApiService implements ChromeApi {
     onErrorOccurred:      this.webReqErrorOccurred       as ChromeEvent<[WebRequestDetails & { error: string }]>,
   };
 
-  /**
-   * Attach webRequest listeners to the shared browser session.
-   * Called once during initialization to bridge Electron's session.webRequest
-   * events into the chrome.webRequest event system.
-   */
-  initWebRequestBridge(): void {
-    const sess = session.fromPartition(SESSION_PARTITION);
-
-    sess.webRequest.onBeforeRequest((details) => {
-      if (this.webReqBeforeRequest.hasListeners()) {
-        this.webReqBeforeRequest.emit({
-          requestId: String(details.id),
-          url:       details.url,
-          method:    details.method,
-          type:      details.resourceType,
-          tabId:     undefined,
-          timeStamp: Date.now(),
-        });
-      }
-    });
-
-    sess.webRequest.onBeforeSendHeaders((details, callback) => {
-      if (this.webReqBeforeSendHeaders.hasListeners()) {
-        const headers = Object.entries(details.requestHeaders || {}).map(
-          ([name, value]) => ({ name, value: String(value) }),
-        );
-
-        this.webReqBeforeSendHeaders.emit({
-          requestId:      String(details.id),
-          url:            details.url,
-          method:         details.method,
-          type:           details.resourceType,
-          timeStamp:      Date.now(),
-          requestHeaders: headers,
-        });
-      }
-      callback({ cancel: false });
-    });
-
-    sess.webRequest.onHeadersReceived((details, callback) => {
-      if (this.webReqHeadersReceived.hasListeners()) {
-        const headers = Object.entries(details.responseHeaders || {}).map(
-          ([name, value]) => ({ name, value: Array.isArray(value) ? value.join(', ') : String(value) }),
-        );
-
-        this.webReqHeadersReceived.emit({
-          requestId:       String(details.id),
-          url:             details.url,
-          method:          details.method,
-          statusCode:      details.statusCode,
-          type:            details.resourceType,
-          timeStamp:       Date.now(),
-          responseHeaders: headers,
-        });
-      }
-      callback({ cancel: false });
-    });
-
-    sess.webRequest.onCompleted((details) => {
-      if (this.webReqCompleted.hasListeners()) {
-        this.webReqCompleted.emit({
-          requestId:  String(details.id),
-          url:        details.url,
-          method:     details.method,
-          statusCode: details.statusCode,
-          type:       details.resourceType,
-          timeStamp:  Date.now(),
-        });
-      }
-    });
-
-    sess.webRequest.onErrorOccurred((details) => {
-      if (this.webReqErrorOccurred.hasListeners()) {
-        this.webReqErrorOccurred.emit({
-          requestId: String(details.id),
-          url:       details.url,
-          method:    details.method,
-          type:      details.resourceType,
-          timeStamp: Date.now(),
-          error:     details.error,
-        });
-      }
-    });
-
-    console.log('[ChromeApi] webRequest bridge attached');
-  }
 
   // =========================================================================
   // chrome.contextMenus

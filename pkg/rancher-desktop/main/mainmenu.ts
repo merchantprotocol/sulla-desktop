@@ -13,6 +13,19 @@ const console = Logging.mainmenu;
 
 // State for dynamic menu updates
 let kubernetesState: State = State.STOPPED;
+let userLoggedIn = false;
+
+/** Called by vault IPC handlers when lock state changes */
+export function setUserLoggedIn(unlocked: boolean): void {
+  userLoggedIn = unlocked;
+  rebuildMenu();
+  // Also update the tray menu
+  try {
+    const { Tray } = require('./tray');
+    const tray = Tray.getInstanceIfExists();
+    if (tray) tray.setUserLoggedIn(unlocked);
+  } catch { /* tray not initialized yet */ }
+}
 
 export default function buildApplicationMenu(): void {
   const menuItems: MenuItem[] = getApplicationMenu();
@@ -26,9 +39,12 @@ export default function buildApplicationMenu(): void {
     rebuildMenu();
   });
 
-  // Refresh extensions list for the menu
+  // Refresh extensions list for the menu.
+  // Listen to the same event the tray uses — 'settings-update' fires reliably
+  // whenever extensions change, whereas 'extensions/changed' may not fire.
   refreshExtensions();
   mainEvents.on('extensions/changed' as any, () => refreshExtensions());
+  mainEvents.on('settings-update' as any, () => refreshExtensions());
 }
 
 function rebuildMenu(): void {
@@ -128,11 +144,16 @@ interface ExtensionData {
 
 let installedExtensions: Record<string, ExtensionData> = {};
 
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
 async function refreshExtensions(): Promise<void> {
   try {
     const credentials = await mainEvents.invoke('api-get-credentials');
 
     if (!credentials) {
+      // API server not ready yet — retry in a few seconds
+      scheduleRetry();
+
       return;
     }
 
@@ -142,14 +163,31 @@ async function refreshExtensions(): Promise<void> {
     });
 
     if (!response.ok) {
+      scheduleRetry();
+
       return;
     }
 
     installedExtensions = await response.json();
     rebuildMenu();
+
+    // Success — cancel any pending retry
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
   } catch {
-    // Extensions API may not be available yet
+    // Extensions API may not be available yet — retry
+    scheduleRetry();
   }
+}
+
+function scheduleRetry(): void {
+  if (refreshTimer) return; // already scheduled
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refreshExtensions();
+  }, 5_000);
 }
 
 function getExtensionsSubmenu(): MenuItemConstructorOptions[] {
@@ -212,11 +250,13 @@ function getFileMenu(): MenuItem {
       {
         label:       'New Chat Tab',
         accelerator: 'CmdOrCtrl+N',
+        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('new-chat-tab'),
       },
       {
         label:       'New Browser Tab',
         accelerator: 'CmdOrCtrl+T',
+        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('new-browser-tab'),
       },
       { type: 'separator' },
@@ -228,34 +268,25 @@ function getFileMenu(): MenuItem {
       {
         label:       'Open Agent Workbench',
         accelerator: 'CmdOrCtrl+Shift+E',
+        enabled:     userLoggedIn,
         click:       openEditor,
       },
       {
-        label: 'Open Docker Dashboard',
-        click: openDockerDashboard,
+        label:   'Open Docker Dashboard',
+        enabled: userLoggedIn,
+        click:   openDockerDashboard,
       },
       {
         label:   'Open Cluster Dashboard',
         click:   openDashboard,
-        enabled: kubernetesState === State.STARTED,
+        enabled: kubernetesState === State.STARTED && userLoggedIn,
       },
       { type: 'separator' },
-      {
-        label: 'Calendar',
-        click: () => sendAgentCommand('open-tab', { mode: 'calendar' }),
-      },
-      {
-        label: 'Integrations',
-        click: () => sendAgentCommand('open-tab', { mode: 'integrations' }),
-      },
-      {
-        label: 'Extensions',
-        click: () => sendAgentCommand('open-tab', { mode: 'extensions' }),
-      },
       { type: 'separator' },
       {
         id:      'extensions-list',
         label:   'Installed Extensions',
+        enabled: userLoggedIn,
         submenu: getExtensionsSubmenu(),
       },
       { type: 'separator' },
@@ -283,8 +314,6 @@ function getEditMenu(isMac: boolean): MenuItem {
 
 function getViewMenu(): MenuItem {
   const devToolsSubmenu: MenuItemConstructorOptions[] = [
-    { role: 'reload', label: '&Reload' },
-    { role: 'forceReload', label: '&Force Reload' },
     { role: 'toggleDevTools', label: 'Toggle &Developer Tools' },
   ];
 
@@ -334,47 +363,56 @@ function getGoMenu(): MenuItem {
       {
         label:       '&Agent',
         accelerator: 'CmdOrCtrl+1',
+        enabled:     userLoggedIn,
         click:       () => navigateAgent('/Chat'),
       },
       {
         label:       '&Calendar',
         accelerator: 'CmdOrCtrl+2',
+        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'calendar' }),
       },
       {
         label:       'A&utomations',
         accelerator: 'CmdOrCtrl+3',
+        enabled:     userLoggedIn,
         click:       () => navigateAgent('/Automations'),
       },
       {
         label:       '&Integrations',
         accelerator: 'CmdOrCtrl+4',
+        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'integrations' }),
       },
       {
         label:       'E&xtensions',
         accelerator: 'CmdOrCtrl+5',
+        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'extensions' }),
       },
       { type: 'separator' },
       {
         label:       '&Language Model Settings…',
         accelerator: 'CmdOrCtrl+L',
+        enabled:     userLoggedIn,
         click:       openLanguageModelSettings,
       },
       {
         label:       'A&udio Settings…',
         accelerator: 'CmdOrCtrl+Shift+U',
+        enabled:     userLoggedIn,
         click:       openAudioSettings,
       },
       { type: 'separator' },
       {
-        label: '&Diagnostics',
-        click: () => navigateDockerDashboard('/Diagnostics'),
+        label:   '&Diagnostics',
+        enabled: userLoggedIn,
+        click:   () => navigateDockerDashboard('/Diagnostics'),
       },
       {
-        label: '&Troubleshooting',
-        click: () => navigateDockerDashboard('/Troubleshooting'),
+        label:   '&Troubleshooting',
+        enabled: userLoggedIn,
+        click:   () => navigateDockerDashboard('/Troubleshooting'),
       },
     ],
   });
@@ -476,8 +514,59 @@ function getMacApplicationMenu(): MenuItem[] {
     getViewMenu(),
     getGoMenu(),
     new MenuItem({
-      label: '&Window',
-      role:  'windowMenu',
+      label:   '&Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        {
+          label:   'Calendar',
+          enabled: userLoggedIn,
+          click:   () => sendAgentCommand('open-tab', { mode: 'calendar' }),
+        },
+        {
+          label:   'Password Manager',
+          enabled: userLoggedIn,
+          click:   () => sendAgentCommand('open-tab', { mode: 'vault' }),
+        },
+        {
+          label:   'Extensions',
+          enabled: userLoggedIn,
+          click:   () => sendAgentCommand('open-tab', { mode: 'extensions' }),
+        },
+        { type: 'separator' },
+        { role: 'front' },
+        { type: 'separator' },
+        { role: 'reload', label: '&Reload' },
+        { role: 'forceReload', label: '&Force Reload' },
+      ],
+    }),
+    new MenuItem({
+      label:   'Profile',
+      submenu: [
+        {
+          label:   'My Account',
+          enabled: userLoggedIn,
+          click:   () => sendAgentCommand('open-tab', { mode: 'account' }),
+        },
+        { type: 'separator' },
+        {
+          label:       'Log Out',
+          accelerator: 'CmdOrCtrl+Shift+Q',
+          click:       async() => {
+            try {
+              // UI logout — lock menus and show lock screen, but keep VMK for agent
+              setUserLoggedIn(false);
+              const existing = getWindow('main-agent');
+              if (existing) {
+                sendWhenReady(existing, 'vault:logged-out', {});
+              }
+            } catch (err) {
+              console.error('[MainMenu] Logout failed:', err);
+            }
+          },
+        },
+      ],
     }),
     getHelpMenu(true),
   ];
