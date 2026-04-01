@@ -407,6 +407,113 @@ export class BrowserTabViewManager {
     }
   }
 
+  /**
+   * Send matching vault accounts to the guest page via executeJavaScript.
+   * The page's __sullaVaultSetAccounts() will receive them and show the dropdown.
+   */
+  private async sendVaultMatchesToPage(tabId: string, origin: string): Promise<void> {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      const accounts = await service.getAccounts('website');
+      const matches: { accountId: string; username: string; origin: string }[] = [];
+
+      for (const acct of accounts) {
+        const urlValue = await service.getIntegrationValue('website', 'website_url', acct.account_id);
+        if (!urlValue?.value) continue;
+        try {
+          const savedOrigin = new URL(urlValue.value).origin;
+          if (savedOrigin === origin) {
+            const usernameValue = await service.getIntegrationValue('website', 'username', acct.account_id);
+            matches.push({
+              accountId: acct.account_id,
+              username:  usernameValue?.value || acct.label,
+              origin:    savedOrigin,
+            });
+          }
+        } catch { /* invalid URL */ }
+      }
+
+      const view = this.views.get(tabId);
+      if (view && matches.length > 0) {
+        const script = `window.__sullaVaultSetAccounts(${ JSON.stringify(matches) });`;
+        view.webContents.executeJavaScript(script, true).catch(() => {});
+      }
+    } catch (err) {
+      console.error('[BrowserTabView] sendVaultMatchesToPage error:', err);
+    }
+  }
+
+  /**
+   * Save a captured credential to the vault as a website integration account.
+   */
+  private async saveVaultCredential(origin: string, username: string, password: string): Promise<void> {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      await service.initialize();
+
+      const accountId = (origin + '_' + username)
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 200);
+
+      await service.setFormValues([
+        { integration_id: 'website', account_id: accountId, property: 'website_url', value: origin },
+        { integration_id: 'website', account_id: accountId, property: 'username', value: username },
+        { integration_id: 'website', account_id: accountId, property: 'password', value: password },
+        { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'none' },
+      ]);
+      await service.setAccountLabel('website', accountId, `${ username } @ ${ origin.replace(/^https?:\/\//, '') }`);
+      await service.setConnectionStatus('website', true, accountId);
+      console.log(`[BrowserTabView] Vault credential saved: ${ username } @ ${ origin }`);
+    } catch (err) {
+      console.error('[BrowserTabView] saveVaultCredential error:', err);
+    }
+  }
+
+  /**
+   * Autofill a login form by decrypting vault credentials and injecting directly.
+   * Password goes from main process → tab JS, never enters LLM context.
+   */
+  private async autofillVaultCredential(tabId: string, accountId: string): Promise<void> {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      await service.initialize();
+
+      const formValues = await service.getFormValues('website', accountId);
+      const stored: Record<string, string> = {};
+      for (const fv of formValues) {
+        stored[fv.property] = fv.value;
+      }
+
+      const username = stored['username'] || '';
+      const password = stored['password'] || '';
+      if (!username && !password) return;
+
+      const view = this.views.get(tabId);
+      if (!view) return;
+
+      const script = `
+        (function() {
+          var b = window.sullaBridge;
+          if (!b) return;
+          var f = b.detectLoginForm();
+          if (!f || !f.hasLoginForm) return;
+          if (f.usernameHandle) b.setValue(f.usernameHandle, ${ JSON.stringify(username) });
+          if (f.passwordHandle) b.setValue(f.passwordHandle, ${ JSON.stringify(password) });
+        })();
+      `;
+      view.webContents.executeJavaScript(script, true).catch(() => {});
+      console.log(`[BrowserTabView] Vault autofill executed for ${ accountId }`);
+    } catch (err) {
+      console.error('[BrowserTabView] autofillVaultCredential error:', err);
+    }
+  }
+
   private attachListeners(tabId: string, view: WebContentsView, mainWindow: Electron.BrowserWindow): void {
     const wc = view.webContents;
 
@@ -586,19 +693,24 @@ export class BrowserTabViewManager {
 
       const { type, data } = msg;
 
+      if (type === 'sulla:vault:getMatches') {
+        // Query vault for matching accounts and send them back to the page
+        this.sendVaultMatchesToPage(tabId, data.origin);
+      }
+
       if (type === 'sulla:vault:credentialsCaptured') {
-        if (!mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('vault:credentials-captured', {
-            tabId,
-            origin:   data.origin,
-            username: data.username,
-            password: data.password,
-          });
-        }
+        // User clicked "Save" on the in-page toast — save the credential
+        this.saveVaultCredential(data.origin, data.username, data.password);
+      }
+
+      if (type === 'sulla:vault:autofillRequest') {
+        // User clicked an account in the dropdown — autofill the form
+        this.autofillVaultCredential(tabId, data.accountId);
       }
 
       if (type === 'sulla:vault:loginFormDetected') {
-        this.checkVaultForAutofill(tabId, data.origin, mainWindow);
+        // Login form appeared — send matching accounts to page
+        this.sendVaultMatchesToPage(tabId, data.origin);
       }
     });
 
