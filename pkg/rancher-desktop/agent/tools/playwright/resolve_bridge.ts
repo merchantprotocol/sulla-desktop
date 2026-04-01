@@ -78,7 +78,7 @@ export async function resolveBridge(assetId?: string): Promise<BridgeResolution 
   if (allAssets.length === 0) {
     return {
       successBoolean: false,
-      responseString: 'No browser tabs open. Open one first with browser_tab(action: "upsert", assetType: "iframe", url: "...").',
+      responseString: 'No browser tabs open. Open one first with browser_tab(action: "upsert", assetType: "browser", url: "...").',
     };
   }
 

@@ -2196,30 +2196,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     });
 
     await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
+    console.log('[FirstRunCoordinator] Backend boot complete — emitting first-run-backend-booted');
 
-    // Load firstRunCredentialsNeeded from SullaSettingsModel
-    const firstRunCredentialsNeeded = await SullaSettingsModel.get('firstRunCredentialsNeeded', true);
-
-    if (config.kubernetes.enabled) {
-      this.progressTracker.numeric('Starting Sulla on Kubernetes', 99, 100);
-
-      // if we get here the user has entered their credentials and k8s has booted. we can install sulla.
-      if (firstRunCredentialsNeeded === false && this.kubeBackend.sullaStepCustomEnvironment) {
-        const t = Date.now();
-
-        await this.kubeBackend.sullaStepCustomEnvironment();
-        console.log(`[startup-perf] sullaStepCustomEnvironment (k8s): ${ Date.now() - t }ms`);
-      }
-    } else {
-      this.progressTracker.numeric('Docker mode enabled, deploying Sulla via Docker Compose', 99, 100);
-
-      if (firstRunCredentialsNeeded === false && this.sullaStepDockerEnvironment) {
-        const t = Date.now();
-
-        await this.sullaStepDockerEnvironment();
-        console.log(`[startup-perf] sullaStepDockerEnvironment: ${ Date.now() - t }ms`);
-      }
-    }
+    // Notify the FirstRunCoordinator that the backend has booted.
+    // The coordinator will fire the deploy step when credentials are also set.
+    mainEvents.emit('first-run-backend-booted');
   }
 
   /**
@@ -2240,7 +2221,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       this.progressTracker.numeric('Sulla services already running', 100, 100);
       markSullaDockerServicesStarted();
       instantiateSullaStart();
-      mainEvents.emit('sulla-first-run-complete');
       this.progressTracker.numeric('Sulla deployment completed', 100, 100);
 
       return;
@@ -2279,7 +2259,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     markSullaDockerServicesStarted();
     instantiateSullaStart();
     console.log(`[startup-perf] instantiateSullaStart: ${ Date.now() - t }ms`);
-    mainEvents.emit('sulla-first-run-complete');
 
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
     console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
@@ -2463,7 +2442,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * Waits for all Sulla Docker services to be healthy by checking their container status.
    */
   private async waitForSullaDockerServices(): Promise<void> {
-    const services = ['sulla_postgres', 'sulla_redis', 'sulla_ws_server'];
+    const services = ['sulla_postgres', 'sulla_redis'];
 
     for (const service of services) {
       await this.waitForDockerServiceHealthy(service);

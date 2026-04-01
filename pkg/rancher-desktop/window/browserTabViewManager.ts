@@ -29,6 +29,8 @@ export class BrowserTabViewManager {
   private failedUrls = new Map<string, string>(); // tabId → original URL that failed
   private retryTimers = new Map<string, ReturnType<typeof setInterval>>();
   private acceptedCertHosts = new Set<string>(); // hosts where user clicked "Proceed"
+  /** Credentials captured but not yet saved — keyed by tabId, auto-expires after 90s */
+  private pendingCredentials = new Map<string, { origin: string; username: string; password: string; timer: ReturnType<typeof setTimeout>; pageTitle?: string; existingAccountId?: string }>();
   private sessionInitialised = false;
   private webRequestFixer: SullaWebRequestFixer | null = null;
 
@@ -177,6 +179,7 @@ export class BrowserTabViewManager {
     (view.webContents as any).close?.();
     this.views.delete(tabId);
     this.failedUrls.delete(tabId);
+    this.clearPendingCredentials(tabId);
     console.log(`[BrowserTabView] Destroyed view tabId=${ tabId }`);
   }
 
@@ -368,6 +371,292 @@ export class BrowserTabViewManager {
    * Attach webContents event listeners that forward navigation/loading state
    * back to the renderer process via the MAIN window's webContents.
    */
+  /**
+   * Check if the vault has saved credentials for the given origin.
+   * If so, send an autofill offer to the renderer.
+   */
+  private async checkVaultForAutofill(tabId: string, origin: string, mainWindow: Electron.BrowserWindow): Promise<void> {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      const accounts = await service.getAccounts('website');
+      const matches: { accountId: string; username: string }[] = [];
+
+      for (const acct of accounts) {
+        const urlValue = await service.getIntegrationValue('website', 'website_url', acct.account_id);
+        if (!urlValue?.value) continue;
+
+        try {
+          const savedOrigin = new URL(urlValue.value).origin;
+          if (savedOrigin === origin) {
+            const usernameValue = await service.getIntegrationValue('website', 'username', acct.account_id);
+            matches.push({
+              accountId: acct.account_id,
+              username:  usernameValue?.value || acct.label,
+            });
+          }
+        } catch { /* invalid saved URL */ }
+      }
+
+      if (matches.length > 0 && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('vault:autofill-offer', {
+          tabId,
+          origin,
+          accounts: matches,
+        });
+      }
+    } catch (err) {
+      console.error('[BrowserTabView] checkVaultForAutofill error:', err);
+    }
+  }
+
+  /**
+   * Send matching vault accounts to the guest page via executeJavaScript.
+   * The page's __sullaVaultSetAccounts() will receive them and show the dropdown.
+   */
+  private async sendVaultMatchesToPage(tabId: string, origin: string): Promise<void> {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      const accounts = await service.getAccounts('website');
+      const matches: { accountId: string; username: string; origin: string }[] = [];
+
+      for (const acct of accounts) {
+        const urlValue = await service.getIntegrationValue('website', 'website_url', acct.account_id);
+        if (!urlValue?.value) continue;
+        try {
+          const savedOrigin = new URL(urlValue.value).origin;
+          if (savedOrigin === origin) {
+            const usernameValue = await service.getIntegrationValue('website', 'username', acct.account_id);
+            matches.push({
+              accountId: acct.account_id,
+              username:  usernameValue?.value || acct.label,
+              origin:    savedOrigin,
+            });
+          }
+        } catch { /* invalid URL */ }
+      }
+
+      const view = this.views.get(tabId);
+      if (view && matches.length > 0) {
+        const script = `window.__sullaVaultSetAccounts(${ JSON.stringify(matches) });`;
+        view.webContents.executeJavaScript(script, true).catch(() => {});
+      }
+    } catch (err) {
+      console.error('[BrowserTabView] sendVaultMatchesToPage error:', err);
+    }
+  }
+
+  /**
+   * Save a captured credential to the vault as a website integration account.
+   */
+  private async saveVaultCredential(origin: string, username: string, password: string, pageTitle?: string): Promise<void> {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      await service.initialize();
+
+      const accountId = (origin + '_' + username)
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 200);
+
+      // Derive a nice label: use page title if available, otherwise domain
+      const domain = origin.replace(/^https?:\/\//, '').replace(/^www\./, '');
+      let label = domain;
+      if (pageTitle) {
+        // Clean up common suffixes like " - Login", " | Sign In", " - Log In"
+        const cleanTitle = pageTitle
+          .replace(/\s*[-|–—]\s*(log\s*in|sign\s*in|login|signin|account).*$/i, '')
+          .replace(/\s*[-|–—]\s*$/, '')
+          .trim();
+        if (cleanTitle && cleanTitle.length > 1 && cleanTitle.length < 60) {
+          label = cleanTitle;
+        }
+      }
+
+      await service.setFormValues([
+        { integration_id: 'website', account_id: accountId, property: 'website_url', value: origin },
+        { integration_id: 'website', account_id: accountId, property: 'username', value: username },
+        { integration_id: 'website', account_id: accountId, property: 'password', value: password },
+        { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'autofill' },
+      ]);
+      await service.setAccountLabel('website', accountId, `${ label } (${ username })`);
+      await service.setConnectionStatus('website', true, accountId);
+      console.log(`[BrowserTabView] Vault credential saved: ${ label } (${ username })`);
+    } catch (err) {
+      console.error('[BrowserTabView] saveVaultCredential error:', err);
+    }
+  }
+
+  /**
+   * Update only the password for an existing vault account.
+   */
+  private async updateVaultPassword(accountId: string, password: string): Promise<void> {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      await service.initialize();
+
+      await service.setIntegrationValue({
+        integration_id: 'website',
+        account_id:     accountId,
+        property:       'password',
+        value:          password,
+      });
+      console.log(`[BrowserTabView] Vault password updated for account: ${ accountId }`);
+    } catch (err) {
+      console.error('[BrowserTabView] updateVaultPassword error:', err);
+    }
+  }
+
+  /**
+   * Autofill a login form by decrypting vault credentials and injecting directly.
+   * Password goes from main process → tab JS, never enters LLM context.
+   */
+  /**
+   * Check existing vault accounts and decide whether to show a save/update toast.
+   * - Same username + same password → skip (already saved)
+   * - Same username + different password → show "Update password?" toast
+   * - New username → show "Save new account?" toast
+   */
+  private async setPendingCredentials(tabId: string, origin: string, username: string, password: string, pageTitle?: string): Promise<void> {
+    this.clearPendingCredentials(tabId);
+
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      const accounts = await service.getAccounts('website');
+
+      // Check if we already have this exact credential
+      for (const acct of accounts) {
+        const urlValue = await service.getIntegrationValue('website', 'website_url', acct.account_id);
+        if (!urlValue?.value) continue;
+
+        try {
+          const savedOrigin = new URL(urlValue.value).origin;
+          if (savedOrigin !== origin) continue;
+        } catch { continue; }
+
+        const savedUsername = await service.getIntegrationValue('website', 'username', acct.account_id);
+        if (savedUsername?.value !== username) continue;
+
+        // Username matches — check password
+        const savedPassword = await service.getIntegrationValue('website', 'password', acct.account_id);
+        if (savedPassword?.value === password) {
+          // Exact match — already saved, don't show toast
+          console.log(`[BrowserTabView] Credential already saved for ${ username } @ ${ origin }`);
+          return;
+        }
+
+        // Username matches but password changed — show update toast
+        const timer = setTimeout(() => this.clearPendingCredentials(tabId), 90_000);
+        this.pendingCredentials.set(tabId, {
+          origin, username, password, timer, pageTitle,
+          existingAccountId: acct.account_id,
+        });
+        this.pushSaveToastToPage(tabId, true);
+        return;
+      }
+
+      // No matching username — show save-new toast
+      const timer = setTimeout(() => this.clearPendingCredentials(tabId), 90_000);
+      this.pendingCredentials.set(tabId, {
+        origin, username, password, timer, pageTitle,
+      });
+      this.pushSaveToastToPage(tabId, false);
+    } catch (err) {
+      console.error('[BrowserTabView] setPendingCredentials check failed:', err);
+      // Fallback: show save toast anyway
+      const timer = setTimeout(() => this.clearPendingCredentials(tabId), 90_000);
+      this.pendingCredentials.set(tabId, {
+        origin, username, password, timer, pageTitle,
+      });
+      this.pushSaveToastToPage(tabId, false);
+    }
+  }
+
+  private clearPendingCredentials(tabId: string): void {
+    const pending = this.pendingCredentials.get(tabId);
+
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.pendingCredentials.delete(tabId);
+    }
+  }
+
+  private pushSaveToastToPage(tabId: string, isUpdate: boolean): void {
+    const pending = this.pendingCredentials.get(tabId);
+
+    if (!pending) {
+      return;
+    }
+    const view = this.views.get(tabId);
+
+    if (!view) {
+      return;
+    }
+    const action = isUpdate ? 'Update' : 'Save';
+    const script = `window.__sullaVaultShowPendingSaveToast(${ JSON.stringify(pending.origin) }, ${ JSON.stringify(pending.username) }, ${ JSON.stringify(action) });`;
+
+    view.webContents.executeJavaScript(script, true).catch(() => {});
+  }
+
+  private async autofillVaultCredential(tabId: string, accountId: string): Promise<void> {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIntegrationService();
+      await service.initialize();
+
+      const formValues = await service.getFormValues('website', accountId);
+      const stored: Record<string, string> = {};
+      for (const fv of formValues) {
+        stored[fv.property] = fv.value;
+      }
+
+      const username = stored['username'] || '';
+      const password = stored['password'] || '';
+      if (!username && !password) return;
+
+      const view = this.views.get(tabId);
+      if (!view) return;
+
+      const script = `
+        (function() {
+          var b = window.sullaBridge;
+          if (!b) return;
+          var f = b.detectLoginForm();
+          if (!f || !f.hasLoginForm) return;
+          if (f.usernameHandle) b.setValue(f.usernameHandle, ${ JSON.stringify(username) });
+          if (f.passwordHandle) b.setValue(f.passwordHandle, ${ JSON.stringify(password) });
+          // Auto-submit the form after filling
+          setTimeout(function() {
+            var pwEl = f.passwordField;
+            var form = pwEl && pwEl.closest ? pwEl.closest('form') : null;
+            if (form) {
+              if (typeof form.requestSubmit === 'function') { form.requestSubmit(); }
+              else { form.submit(); }
+            } else {
+              // No form — try clicking a submit button near the password field
+              var container = pwEl ? pwEl.parentElement : document.body;
+              for (var d = 0; d < 5 && container; d++) {
+                var btn = container.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
+                if (btn) { btn.click(); break; }
+                container = container.parentElement;
+              }
+            }
+          }, 200);
+        })();
+      `;
+      view.webContents.executeJavaScript(script, true).catch(() => {});
+      console.log(`[BrowserTabView] Vault autofill executed for ${ accountId }`);
+    } catch (err) {
+      console.error('[BrowserTabView] autofillVaultCredential error:', err);
+    }
+  }
+
   private attachListeners(tabId: string, view: WebContentsView, mainWindow: Electron.BrowserWindow): void {
     const wc = view.webContents;
 
@@ -536,6 +825,71 @@ export class BrowserTabViewManager {
         this.failedUrls.delete(tabId);
         this.stopRetry(tabId);
       }
+    });
+
+    // ── Vault: handle bridge events from guest pages ──
+    // Route vault-related events from the guest bridge to the renderer.
+    // Uses wc.ipc.on() which receives the payload as { type, data } directly,
+    // matching the preload's ipcRenderer.send('browser-tab-view:bridge-event', { type, data }).
+    wc.ipc.on('browser-tab-view:bridge-event', (_event: Electron.IpcMainEvent, msg: { type: string; data: any }) => {
+      if (!msg?.type?.startsWith('sulla:vault:')) return;
+
+      const { type, data } = msg;
+
+      if (type === 'sulla:vault:getMatches') {
+        // Query vault for matching accounts and send them back to the page
+        this.sendVaultMatchesToPage(tabId, data.origin);
+      }
+
+      if (type === 'sulla:vault:credentialsPending') {
+        this.setPendingCredentials(tabId, data.origin, data.username, data.password, data.title);
+      }
+
+      if (type === 'sulla:vault:credentialsCaptured') {
+        // User clicked "Save" or "Update" — retrieve password from pending store
+        const pending = this.pendingCredentials.get(tabId);
+
+        if (pending) {
+          if (pending.existingAccountId) {
+            // Update existing account's password
+            this.updateVaultPassword(pending.existingAccountId, pending.password);
+          } else {
+            // Save as new account
+            this.saveVaultCredential(pending.origin, pending.username, pending.password, pending.pageTitle);
+          }
+          this.clearPendingCredentials(tabId);
+        }
+      }
+
+      if (type === 'sulla:vault:credentialsDismissed') {
+        this.clearPendingCredentials(tabId);
+      }
+
+      if (type === 'sulla:vault:autofillRequest') {
+        // User clicked an account in the dropdown — autofill the form
+        this.autofillVaultCredential(tabId, data.accountId);
+      }
+
+      if (type === 'sulla:vault:loginFormDetected') {
+        // Login form appeared — send matching accounts to page
+        this.sendVaultMatchesToPage(tabId, data.origin);
+      }
+    });
+
+    // Also check vault on successful navigation (for pages where the login
+    // form is already rendered in the initial HTML, not SPA-injected)
+    wc.on('did-stop-loading', () => {
+      const url = wc.getURL();
+      if (url.startsWith('data:') || url === 'about:blank') return;
+      try {
+        const origin = new URL(url).origin;
+        this.checkVaultForAutofill(tabId, origin, mainWindow);
+        // Re-show save toast if there are pending credentials for this tab
+        const pending = this.pendingCredentials.get(tabId);
+        if (pending) {
+          this.pushSaveToastToPage(tabId, !!pending.existingAccountId);
+        }
+      } catch { /* invalid URL */ }
     });
 
     // Show a Chrome-style error page when a site can't be reached,

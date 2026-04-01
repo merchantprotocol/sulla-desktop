@@ -837,6 +837,387 @@ export function buildGuestBridgeScript(): string {
     return { matches: matches, total: total, query: query };
   };
 
+  /* ------------------------------------------------------------------ */
+  /*  Vault: in-page login detection, dropdown, save toast              */
+  /*  Injected directly into the guest DOM like Bitwarden/1Password.    */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * detectLoginForm()
+   * Scans the page for login forms containing password fields.
+   */
+  bridge.detectLoginForm = function () {
+    var passwordFields = document.querySelectorAll('input[type="password"]');
+    if (passwordFields.length === 0) return null;
+
+    for (var pi = 0; pi < passwordFields.length; pi++) {
+      var pwField = passwordFields[pi];
+      if (!isVisible(pwField)) continue;
+      var autocomplete = (pwField.getAttribute('autocomplete') || '').toLowerCase();
+      if (autocomplete.indexOf('cc-') === 0) continue;
+
+      var form = pwField.closest ? pwField.closest('form') : null;
+      var searchRoot = form || (pwField.parentElement ? pwField.parentElement.parentElement : document.body) || document.body;
+
+      var usernameField = null;
+      var candidates = searchRoot.querySelectorAll('input[type="email"], input[type="text"], input[type="tel"]');
+      for (var ci = 0; ci < candidates.length; ci++) {
+        var c = candidates[ci];
+        if (!isVisible(c)) continue;
+        var cName = ((c.name || '') + ' ' + (c.id || '') + ' ' + (c.getAttribute('autocomplete') || '') + ' ' + (c.placeholder || '')).toLowerCase();
+        if (cName.match(/user|email|login|account|phone|ident/)) { usernameField = c; break; }
+      }
+      if (!usernameField) {
+        var allInputs = searchRoot.querySelectorAll('input[type="email"], input[type="text"]');
+        for (var ai = 0; ai < allInputs.length; ai++) {
+          if (isVisible(allInputs[ai])) { usernameField = allInputs[ai]; break; }
+        }
+      }
+
+      if (usernameField && !usernameField.getAttribute('data-sulla-handle')) stampHandle(usernameField, '@vault-username');
+      if (!pwField.getAttribute('data-sulla-handle')) stampHandle(pwField, '@vault-password');
+
+      return {
+        hasLoginForm: true,
+        usernameField: usernameField,
+        passwordField: pwField,
+        usernameHandle: usernameField ? (usernameField.getAttribute('data-sulla-handle') || '@vault-username') : null,
+        passwordHandle: pwField.getAttribute('data-sulla-handle') || '@vault-password',
+        origin: location.origin,
+      };
+    }
+    return null;
+  };
+
+  /**
+   * autofillFromVault(accountId)
+   * Requests the host to fill credentials. Password bypasses bridge.
+   */
+  bridge.autofillFromVault = function (accountId) {
+    emitToHost('sulla:vault:autofillRequest', {
+      accountId: accountId,
+      origin: location.origin,
+      timestamp: Date.now(),
+    });
+    return true;
+  };
+
+  // ── In-page vault dropdown (like Bitwarden) ──
+  (function initVaultUI() {
+    var DROPDOWN_ID = 'sulla-vault-dropdown';
+    var TOAST_ID = 'sulla-vault-toast';
+    var currentLoginForm = null;
+    var vaultAccounts = []; // populated by host via __sullaVaultAccounts
+    var dropdownTarget = null; // the input field the dropdown is anchored to
+
+    // Styles injected once
+    var styleInjected = false;
+    function injectStyles() {
+      if (styleInjected) return;
+      styleInjected = true;
+      var style = document.createElement('style');
+      style.textContent = [
+        '#' + DROPDOWN_ID + ' {',
+        '  position: absolute; z-index: 2147483647;',
+        '  background: #1e1e2e; border: 1px solid #45475a; border-radius: 8px;',
+        '  box-shadow: 0 8px 32px rgba(0,0,0,0.5); min-width: 260px; max-width: 340px;',
+        '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;',
+        '  font-size: 13px; color: #cdd6f4; overflow: hidden;',
+        '}',
+        '#' + DROPDOWN_ID + ' .sulla-vault-header {',
+        '  display: flex; align-items: center; gap: 6px; padding: 8px 12px;',
+        '  border-bottom: 1px solid #313244; font-size: 11px; color: #a6adc8;',
+        '}',
+        '#' + DROPDOWN_ID + ' .sulla-vault-header svg { width: 14px; height: 14px; }',
+        '#' + DROPDOWN_ID + ' .sulla-vault-item {',
+        '  display: flex; flex-direction: column; gap: 1px; padding: 8px 12px;',
+        '  cursor: pointer; border: none; background: none; width: 100%;',
+        '  text-align: left; color: #cdd6f4; transition: background 0.15s;',
+        '}',
+        '#' + DROPDOWN_ID + ' .sulla-vault-item:hover { background: #313244; }',
+        '#' + DROPDOWN_ID + ' .sulla-vault-item-user { font-size: 13px; font-weight: 500; }',
+        '#' + DROPDOWN_ID + ' .sulla-vault-item-origin { font-size: 11px; color: #6c7086; }',
+        '#' + DROPDOWN_ID + ' .sulla-vault-empty {',
+        '  padding: 12px; text-align: center; color: #6c7086; font-size: 12px;',
+        '}',
+        '#' + TOAST_ID + ' {',
+        '  position: fixed; bottom: 20px; right: 20px; z-index: 2147483647;',
+        '  background: #1e1e2e; border: 1px solid #45475a; border-radius: 10px;',
+        '  box-shadow: 0 8px 32px rgba(0,0,0,0.5); padding: 12px 16px;',
+        '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;',
+        '  font-size: 13px; color: #cdd6f4; display: flex; align-items: center; gap: 12px;',
+        '  animation: sullaToastIn 0.3s ease-out;',
+        '}',
+        '#' + TOAST_ID + ' .sulla-toast-text { flex: 1; }',
+        '#' + TOAST_ID + ' .sulla-toast-text strong { color: #89b4fa; }',
+        '#' + TOAST_ID + ' button {',
+        '  padding: 4px 12px; border-radius: 6px; border: none; cursor: pointer;',
+        '  font-size: 12px; font-weight: 600; transition: background 0.15s;',
+        '}',
+        '#' + TOAST_ID + ' .sulla-toast-save { background: #89b4fa; color: #1e1e2e; }',
+        '#' + TOAST_ID + ' .sulla-toast-save:hover { background: #b4d0fb; }',
+        '#' + TOAST_ID + ' .sulla-toast-dismiss { background: #313244; color: #a6adc8; }',
+        '#' + TOAST_ID + ' .sulla-toast-dismiss:hover { background: #45475a; }',
+        '@keyframes sullaToastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }',
+      ].join('\\n');
+      document.head.appendChild(style);
+    }
+
+    // ── Dropdown ──
+
+    function showDropdown(anchorEl) {
+      removeDropdown();
+      if (vaultAccounts.length === 0) return;
+      injectStyles();
+
+      dropdownTarget = anchorEl;
+      var rect = anchorEl.getBoundingClientRect();
+      var dropdown = document.createElement('div');
+      dropdown.id = DROPDOWN_ID;
+
+      // Header
+      var header = document.createElement('div');
+      header.className = 'sulla-vault-header';
+      header.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> Sulla Vault';
+      dropdown.appendChild(header);
+
+      // Account items
+      for (var i = 0; i < vaultAccounts.length; i++) {
+        (function(acct) {
+          var item = document.createElement('button');
+          item.className = 'sulla-vault-item';
+          item.type = 'button';
+          item.innerHTML = '<span class="sulla-vault-item-user">' + escapeHtml(acct.username) + '</span>' +
+                           '<span class="sulla-vault-item-origin">' + escapeHtml(acct.origin || location.origin) + '</span>';
+          item.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            bridge.autofillFromVault(acct.accountId);
+            removeDropdown();
+          });
+          dropdown.appendChild(item);
+        })(vaultAccounts[i]);
+      }
+
+      // Position below the input field
+      dropdown.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+      dropdown.style.left = (rect.left + window.scrollX) + 'px';
+      dropdown.style.width = Math.max(rect.width, 260) + 'px';
+      document.body.appendChild(dropdown);
+
+      // Close on outside click
+      setTimeout(function() {
+        document.addEventListener('click', onOutsideClick, true);
+        document.addEventListener('keydown', onEscapeKey, true);
+      }, 0);
+    }
+
+    function removeDropdown() {
+      var existing = document.getElementById(DROPDOWN_ID);
+      if (existing) existing.remove();
+      dropdownTarget = null;
+      document.removeEventListener('click', onOutsideClick, true);
+      document.removeEventListener('keydown', onEscapeKey, true);
+    }
+
+    function onOutsideClick(e) {
+      var dropdown = document.getElementById(DROPDOWN_ID);
+      if (dropdown && !dropdown.contains(e.target) && e.target !== dropdownTarget) {
+        removeDropdown();
+      }
+    }
+
+    function onEscapeKey(e) {
+      if (e.key === 'Escape') removeDropdown();
+    }
+
+    function escapeHtml(str) {
+      var div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // ── Save toast (after form submit) ──
+
+    function showSaveToast(origin, username, action) {
+      removeSaveToast();
+      injectStyles();
+      action = action || 'Save';
+
+      var toast = document.createElement('div');
+      toast.id = TOAST_ID;
+      toast.innerHTML =
+        '<div class="sulla-toast-text">' + action + ' password for <strong>' + escapeHtml(username) + '</strong> on ' + escapeHtml(origin.replace(/^https?:\\/\\//, '')) + '?</div>' +
+        '<button class="sulla-toast-save" type="button">' + action + '</button>' +
+        '<button class="sulla-toast-dismiss" type="button">Dismiss</button>';
+
+      toast.querySelector('.sulla-toast-save').addEventListener('click', function() {
+        emitToHost('sulla:vault:credentialsCaptured', {
+          origin: origin, url: location.href,
+          username: username,
+          title: document.title, timestamp: Date.now(),
+        });
+        removeSaveToast();
+      });
+      toast.querySelector('.sulla-toast-dismiss').addEventListener('click', function() {
+        emitToHost('sulla:vault:credentialsDismissed', { timestamp: Date.now() });
+        removeSaveToast();
+      });
+      document.body.appendChild(toast);
+      // No auto-dismiss — main process manages the 90s lifetime
+    }
+
+    function removeSaveToast() {
+      var existing = document.getElementById(TOAST_ID);
+      if (existing) existing.remove();
+    }
+
+    // ── Host communication ──
+
+    // The host populates this array via executeJavaScript when it finds matches
+    window.__sullaVaultAccounts = [];
+    window.__sullaVaultShowPendingSaveToast = function(origin, username, action) {
+      showSaveToast(origin, username, action);
+    };
+
+    window.__sullaVaultSetAccounts = function(accounts) {
+      vaultAccounts = accounts || [];
+      window.__sullaVaultAccounts = vaultAccounts;
+      console.log('[SULLA_VAULT] Received', vaultAccounts.length, 'vault accounts for', location.origin);
+      // If a login form field is focused and we have accounts, show dropdown
+      if (vaultAccounts.length > 0) {
+        var active = document.activeElement;
+        if (active && (active.tagName === 'INPUT') && currentLoginForm) {
+          if (active === currentLoginForm.usernameField || active === currentLoginForm.passwordField) {
+            showDropdown(active);
+          }
+        }
+      }
+    };
+
+    // ── Focus listeners on login fields ──
+
+    function attachFieldListeners(loginForm) {
+      var fields = [loginForm.usernameField, loginForm.passwordField].filter(Boolean);
+      for (var i = 0; i < fields.length; i++) {
+        (function(field) {
+          if (field.__sullaVaultBound) return;
+          field.__sullaVaultBound = true;
+          field.addEventListener('focus', function() {
+            if (vaultAccounts.length > 0) {
+              showDropdown(field);
+            } else {
+              // Ask the host for matches
+              emitToHost('sulla:vault:getMatches', { origin: location.origin, timestamp: Date.now() });
+            }
+          });
+          field.addEventListener('blur', function() {
+            // Delay removal so click on dropdown item can fire first
+            setTimeout(function() {
+              if (document.activeElement && document.getElementById(DROPDOWN_ID) &&
+                  document.getElementById(DROPDOWN_ID).contains(document.activeElement)) return;
+              removeDropdown();
+            }, 200);
+          });
+        })(fields[i]);
+      }
+    }
+
+    // ── Form submission interception ──
+
+    var captured = false;
+    function captureCredentials() {
+      if (captured || !currentLoginForm) return;
+      var usernameEl = currentLoginForm.usernameField;
+      var passwordEl = currentLoginForm.passwordField;
+      var username = usernameEl ? (usernameEl.value || '').trim() : '';
+      var password = passwordEl ? (passwordEl.value || '') : '';
+      if (!username || !password) return;
+
+      captured = true;
+      // Send credentials to main process for persistent storage across navigations.
+      // The main process will push back the save toast (and re-push on navigation).
+      emitToHost('sulla:vault:credentialsPending', {
+        origin: location.origin, url: location.href,
+        username: username, password: password,
+        title: document.title, timestamp: Date.now(),
+      });
+      setTimeout(function() { captured = false; }, 5000);
+    }
+
+    document.addEventListener('submit', function(e) {
+      var form = e.target;
+      if (form && form.querySelector && form.querySelector('input[type="password"]')) {
+        captureCredentials();
+      }
+    }, true);
+
+    document.addEventListener('click', function(e) {
+      var target = e.target;
+      if (!target || !target.closest) return;
+      var btn = target.closest('button[type="submit"], input[type="submit"], button:not([type])');
+      if (!btn) return;
+      var form = btn.closest('form');
+      if (form && form.querySelector('input[type="password"]')) {
+        setTimeout(captureCredentials, 50);
+      }
+    }, true);
+
+    // ── Login form detection + MutationObserver ──
+
+    function checkForLoginForm() {
+      var result = bridge.detectLoginForm();
+      if (result && result.hasLoginForm) {
+        currentLoginForm = result;
+        attachFieldListeners(result);
+        // Request vault matches from host
+        emitToHost('sulla:vault:loginFormDetected', {
+          origin: location.origin, url: location.href, timestamp: Date.now(),
+        });
+        emitToHost('sulla:vault:getMatches', {
+          origin: location.origin, timestamp: Date.now(),
+        });
+      }
+    }
+
+    // Check on load
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      setTimeout(checkForLoginForm, 500);
+    } else {
+      document.addEventListener('DOMContentLoaded', function() { setTimeout(checkForLoginForm, 500); });
+    }
+
+    // Watch for SPA-rendered login forms
+    var loginObserver = new MutationObserver(function(mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var added = mutations[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          var node = added[j];
+          if (node.nodeType !== 1) continue;
+          if ((node.tagName === 'INPUT' && node.type === 'password') ||
+              (node.querySelector && node.querySelector('input[type="password"]'))) {
+            setTimeout(checkForLoginForm, 100);
+            return;
+          }
+        }
+      }
+    });
+    loginObserver.observe(document.documentElement, { childList: true, subtree: true });
+
+    // Reset on SPA navigation
+    var lastVaultUrl = location.href;
+    setInterval(function() {
+      if (location.href !== lastVaultUrl) {
+        lastVaultUrl = location.href;
+        currentLoginForm = null;
+        vaultAccounts = [];
+        removeDropdown();
+        // Do NOT removeSaveToast — main process manages toast lifetime across navigations
+        setTimeout(checkForLoginForm, 1000);
+      }
+    }, 500);
+  })();
+
   // Expose globally
   window[GLOBAL] = bridge;
 

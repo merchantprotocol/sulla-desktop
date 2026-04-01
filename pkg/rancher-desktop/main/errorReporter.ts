@@ -10,7 +10,7 @@ import os from 'os';
 
 import Electron from 'electron';
 
-const ERROR_REPORT_URL = 'https://error-reports.merchantprotocol.workers.dev';
+const ERROR_REPORT_URL = 'https://error-reports.merchantprotocol.com';
 
 export interface ErrorReportPayload {
   error_type:    string;

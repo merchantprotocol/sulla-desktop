@@ -55,7 +55,7 @@ export interface AgentPersonaState {
   totalCost:       number;
 }
 
-export type PersonaAssetType = 'iframe' | 'document';
+export type PersonaAssetType = 'browser' | 'document';
 
 export interface PersonaSidebarAsset {
   id:         string;
@@ -173,7 +173,7 @@ export class AgentPersonaService {
 
     this.upsertAsset({
       id:        input.id,
-      type:      'iframe',
+      type:      'browser',
       title:     input.title,
       active:    input.active ?? true,
       skillSlug: input.skillSlug,
@@ -190,7 +190,7 @@ export class AgentPersonaService {
       return false;
     }
 
-    if (asset?.type === 'iframe') {
+    if (asset?.type === 'browser') {
       const rawSlug = asset.skillSlug ?? asset.selected_skill_slug ?? data?.selected_skill_slug;
       const skillSlug = typeof rawSlug === 'string' ? rawSlug.trim().toLowerCase() : '';
       const requestedId = String(asset.id || `iframe_${ Date.now() }`);

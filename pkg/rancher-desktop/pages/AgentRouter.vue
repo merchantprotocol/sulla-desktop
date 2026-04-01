@@ -1,5 +1,10 @@
 <template>
   <div class="agent-router-root">
+    <!-- Master password unlock — renders ABOVE everything including startup overlay and native views -->
+    <VaultUnlockScreen
+      v-if="!loggedIn && vaultSetUp"
+    />
+
     <div class="agent-router-content flex flex-col">
       <!--
         Non-browser routes use keep-alive normally.
@@ -112,13 +117,16 @@ import { useRoute, useRouter } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
+import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 
 const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, createTab } = useBrowserTabs();
+const { loggedIn, vaultSetUp, tryAutoLogin } = useVaultUnlock();
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
 
@@ -237,7 +245,10 @@ function onAgentCommand(_event: any, args: any) {
 
 const presenceTracker = getHumanPresenceTracker();
 
-onMounted(() => {
+onMounted(async() => {
+  // Attempt vault auto-unlock via safeStorage before anything else
+  await tryAutoLogin();
+
   // Start human presence tracker — top-level shell ensures presence is tracked
   // whenever the app is open, regardless of which tab/pane is active
   presenceTracker.setCurrentView('Sulla Desktop');
@@ -251,6 +262,7 @@ onMounted(() => {
   ipcRenderer.on('agent-command' as any, onAgentCommand);
   ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
   ipcRenderer.on('k8s-progress' as any, onK8sProgress);
+  ipcRenderer.on('vault:logged-out' as any, () => { loggedIn.value = false; });
   ipcRenderer.invoke('k8s-progress').then((p: any) => {
     if (p?.description) backendProgressDesc.value = p.description;
   }).catch(() => {});

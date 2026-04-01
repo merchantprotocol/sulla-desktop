@@ -1,0 +1,61 @@
+import type { Integration } from '../types';
+
+export const nativeSecurityIntegrations: Record<string, Integration> = {
+  website: {
+    id:          'website',
+    sort:        1,
+    paid:        false,
+    beta:        true,
+    comingSoon:  false,
+    name:        'Website',
+    description: 'Save and autofill website login credentials. Each saved website becomes a separate account.',
+    category:    'Security',
+    connected:   false,
+    version:     '1.0.0',
+    lastUpdated: '2026-03-31',
+    developer:   'Sulla',
+    properties:  [
+      {
+        key:         'website_url',
+        title:       'Website URL',
+        hint:        'The login page URL for this website',
+        type:        'url',
+        required:    true,
+        placeholder: 'https://example.com/login',
+      },
+      {
+        key:         'username',
+        title:       'Username / Email',
+        hint:        'Your login username or email address',
+        type:        'text',
+        required:    true,
+        placeholder: 'user@example.com',
+      },
+      {
+        key:         'password',
+        title:       'Password',
+        hint:        'Your login password',
+        type:        'password',
+        required:    true,
+        placeholder: '',
+      },
+      {
+        key:         'notes',
+        title:       'Notes',
+        hint:        'Optional notes about this credential',
+        type:        'text',
+        required:    false,
+        placeholder: 'e.g. 2FA enabled, recovery codes in safe',
+      },
+      {
+        key:         'llm_access',
+        title:       'AI Access Level',
+        hint:        'Controls what the AI agent can do with this credential: none (default), metadata, autofill, or full',
+        type:        'select',
+        required:    false,
+        placeholder: 'none',
+        selectBoxId: 'vault_llm_access',
+      },
+    ],
+  },
+};

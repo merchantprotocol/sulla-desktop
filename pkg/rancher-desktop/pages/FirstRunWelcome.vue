@@ -1,6 +1,10 @@
 <template>
   <div class="max-w-lg mx-0 p-6">
-    <form @submit.prevent="handleNextWelcome">
+    <!-- Step 1: Account setup -->
+    <form
+      v-if="step === 'account'"
+      @submit.prevent="handleAccountSubmit"
+    >
       <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
         Create Your Account
       </h2>
@@ -49,20 +53,43 @@
           <label
             for="password"
             class="block text-sm font-medium mb-1 label-text"
-          >Password:</label>
+          >Master Password:</label>
+          <p class="text-xs mb-2 secondary-text">
+            This password protects your vault — all saved credentials and API keys are encrypted with it.
+          </p>
           <input
             id="password"
             v-model="sullaPassword"
             type="password"
             class="w-full p-2 border rounded-md form-input"
             :class="{ 'input-error': !!passwordError }"
-            placeholder="Enter password"
+            placeholder="Enter master password"
           >
           <p
             v-if="passwordError"
             class="text-sm mt-1 error-text"
           >
             {{ passwordError }}
+          </p>
+        </div>
+        <div class="mb-4">
+          <label
+            for="passwordConfirm"
+            class="block text-sm font-medium mb-1 label-text"
+          >Confirm Master Password:</label>
+          <input
+            id="passwordConfirm"
+            v-model="sullaPasswordConfirm"
+            type="password"
+            class="w-full p-2 border rounded-md form-input"
+            :class="{ 'input-error': !!passwordConfirmError }"
+            placeholder="Re-enter master password"
+          >
+          <p
+            v-if="passwordConfirmError"
+            class="text-sm mt-1 error-text"
+          >
+            {{ passwordConfirmError }}
           </p>
         </div>
       </rd-fieldset>
@@ -99,6 +126,46 @@
         </button>
       </div>
     </form>
+
+    <!-- Step 2: Recovery key display -->
+    <div v-if="step === 'recovery'">
+      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
+        Your Recovery Key
+      </h2>
+      <p class="mb-4 secondary-text">
+        Write this recovery key down and store it somewhere safe. You will need it to restore your vault if you move to a new machine or reinstall your operating system.
+      </p>
+      <p class="mb-6 text-xs secondary-text">
+        This key is shown only once and cannot be retrieved later.
+      </p>
+
+      <div class="recovery-key-box mb-6">
+        <code class="text-lg font-mono tracking-wider">{{ recoveryKey }}</code>
+      </div>
+
+      <div class="mb-6">
+        <label class="flex items-start">
+          <input
+            v-model="recoveryKeyAcknowledged"
+            type="checkbox"
+            class="mr-2 mt-1"
+          >
+          <span class="text-sm label-text">I have written down my recovery key and stored it in a safe place</span>
+        </label>
+      </div>
+
+      <div class="flex justify-end mt-5">
+        <button
+          type="button"
+          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary"
+          :class="{ 'opacity-50 cursor-not-allowed': !recoveryKeyAcknowledged }"
+          :disabled="!recoveryKeyAcknowledged"
+          @click="handleRecoveryAcknowledged"
+        >
+          Continue
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -117,15 +184,24 @@ const props = defineProps<{
   showBack?: boolean;
 }>();
 
-// Reactive data for sullaEmail
+// Step tracking: 'account' → 'recovery'
+const step = ref<'account' | 'recovery'>('account');
+
+// Reactive data
 const sullaEmail = ref('');
 const sullaPassword = ref('');
+const sullaPasswordConfirm = ref('');
 const primaryUserName = ref('');
 const sullaSubscribeToUpdates = ref(true);
+
+// Recovery key state
+const recoveryKey = ref('');
+const recoveryKeyAcknowledged = ref(false);
 
 // Reactive error states
 const emailError = ref('');
 const passwordError = ref('');
+const passwordConfirmError = ref('');
 
 // Email validation regex
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -151,37 +227,47 @@ const validateEmail = () => {
 
 const validatePassword = () => {
   if (!sullaPassword.value?.trim()) {
-    passwordError.value = 'Password is required.';
+    passwordError.value = 'Master password is required.';
+    return false;
+  }
+  if (sullaPassword.value.length < 8) {
+    passwordError.value = 'Master password must be at least 8 characters.';
     return false;
   }
   passwordError.value = '';
   return true;
 };
 
+const validatePasswordConfirm = () => {
+  if (sullaPasswordConfirm.value !== sullaPassword.value) {
+    passwordConfirmError.value = 'Passwords do not match.';
+    return false;
+  }
+  passwordConfirmError.value = '';
+  return true;
+};
+
 // Load settings on mount
 onMounted(async() => {
-  // Load sullaEmail from SullaSettingsModel
   const loadedEmail = await SullaSettingsModel.get('sullaEmail');
   sullaEmail.value = loadedEmail || '';
 
-  // Load sullaPassword from SullaSettingsModel
   const loadedPassword = await SullaSettingsModel.get('sullaPassword');
   sullaPassword.value = loadedPassword || '';
 
-  // Load sullaSubscribeToUpdates from SullaSettingsModel
   const loadedSubscribe = await SullaSettingsModel.get('sullaSubscribeToUpdates');
   sullaSubscribeToUpdates.value = loadedSubscribe !== null ? loadedSubscribe : true;
 
-  // Load primaryUserName from SullaSettingsModel
   const loadedPrimaryUserName = await SullaSettingsModel.get('primaryUserName');
   primaryUserName.value = loadedPrimaryUserName || '';
 });
 
-const handleNextWelcome = async() => {
+const handleAccountSubmit = async() => {
   const emailValid = validateEmail();
   const passwordValid = validatePassword();
+  const confirmValid = validatePasswordConfirm();
 
-  if (!emailValid || !passwordValid) {
+  if (!emailValid || !passwordValid || !confirmValid) {
     return;
   }
 
@@ -210,14 +296,36 @@ const handleNextWelcome = async() => {
   }
 
   // Save to SullaSettingsModel
+  // Note: the master password is NOT stored in settings — it's only used to derive the vault key.
+  // We store a flag so the system knows first-run credentials were set.
   await SullaSettingsModel.set('primaryUserName', primaryUserName.value, 'string');
   await SullaSettingsModel.set('sullaEmail', sullaEmail.value, 'string');
-  await SullaSettingsModel.set('sullaPassword', sullaPassword.value, 'string');
+  await SullaSettingsModel.set('sullaPassword', 'vault-protected', 'string');
   await SullaSettingsModel.set('sullaSubscribeToUpdates', sullaSubscribeToUpdates.value, 'boolean');
   await SullaSettingsModel.set('firstRunCredentialsNeeded', false, 'boolean');
 
   console.log('[FirstRunWelcome] Settings committed successfully');
 
+  // Set up the vault with the master password via IPC (main process handles safeStorage)
+  try {
+    const result = await ipcRenderer.invoke('vault:setup', { masterPassword: sullaPassword.value });
+    recoveryKey.value = result.recoveryKey;
+    console.log('[FirstRunWelcome] Vault setup complete');
+
+    // Show recovery key step
+    step.value = 'recovery';
+  } catch (err) {
+    console.error('[FirstRunWelcome] Vault setup failed:', err);
+    // Continue anyway — vault can be set up later
+    await finishSetup();
+  }
+};
+
+const handleRecoveryAcknowledged = async() => {
+  await finishSetup();
+};
+
+const finishSetup = async() => {
   // Submit email subscription to worker if opted in
   if (sullaSubscribeToUpdates.value && sullaEmail.value?.trim()) {
     fetch('https://email-submission.jonathon-44b.workers.dev/', {
@@ -291,6 +399,21 @@ const handleNextWelcome = async() => {
 
 .input-error {
   border-color: var(--border-error);
+}
+
+/* Recovery key display */
+.recovery-key-box {
+  padding: 1rem 1.5rem;
+  border: 2px dashed var(--border-strong);
+  border-radius: 0.5rem;
+  background-color: var(--bg-surface-alt);
+  text-align: center;
+  user-select: all;
+
+  code {
+    color: var(--accent-primary);
+    letter-spacing: 0.15em;
+  }
 }
 
 /* Button styles */

@@ -128,7 +128,7 @@ export const playwrightToolManifests: ToolManifest[] = [
     description: 'Extract and combine reader-mode content from multiple open browser tabs into a single response with source attribution. Useful for cross-page research: comparing information, aggregating data from multiple sources, or building summaries from several references. Omit assetIds to synthesize all open tabs.',
     category:    'playwright',
     schemaDef:   {
-      assetIds:  { type: 'string', optional: true, description: 'Comma-separated asset IDs to synthesize (omit for all open tabs)' },
+      assetIds:  { type: 'string', optional: true, description: 'Comma-separated list of asset IDs to synthesize, e.g. "tab1,tab2,tab3" (omit for all open tabs)' },
       max_chars: { type: 'number', optional: true, description: 'Max characters per tab (default 4000)' },
     },
     operationTypes: ['read'],
