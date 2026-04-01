@@ -72,7 +72,21 @@
 
         <div class="flex-1 overflow-auto">
           <div class="mx-auto max-w-7xl px-4 py-6">
-            <!-- Export / Import bar -->
+            <!-- Vault status + Export / Import bar -->
+            <div class="flex items-center gap-2 mb-4">
+              <div
+                v-if="vaultSecure"
+                class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+                style="background: rgba(56, 189, 248, 0.08); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.15);"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3">
+                  <rect x="3" y="11" width="18" height="11" rx="2" />
+                  <path d="M7 11V7a5 5 0 0110 0v4" />
+                </svg>
+                AES-256 Encrypted
+              </div>
+              <div class="flex-1" />
+            </div>
             <div class="flex items-center justify-end gap-2 mb-4">
               <button
                 type="button"
@@ -270,6 +284,7 @@ interface FlatAccount {
 }
 
 const loading = ref(true);
+const vaultSecure = ref(false);
 const search = ref('');
 const activeFilter = ref<string | null>(null);
 const flatAccounts = ref<FlatAccount[]>([]);
@@ -415,7 +430,14 @@ async function importVault() {
   }
 }
 
-onMounted(() => {
+onMounted(async() => {
+  // Check if vault encryption is active
+  try {
+    const isSetUp = await ipcRenderer.invoke('vault:is-setup');
+    const isUnlocked = await ipcRenderer.invoke('vault:is-unlocked');
+    vaultSecure.value = isSetUp && isUnlocked;
+  } catch { /* vault IPC not available */ }
+
   loadAccounts();
 });
 </script>
