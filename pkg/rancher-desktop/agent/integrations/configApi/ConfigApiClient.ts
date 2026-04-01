@@ -7,6 +7,27 @@ import type {
 
 const LOG = '[ConfigApiClient]';
 
+/**
+ * Error thrown when an upstream integration API returns a non-OK response.
+ * Preserves the structured error body so callers can inspect status, method, and details.
+ */
+export class IntegrationApiError extends Error {
+  public readonly statusCode: number;
+  public readonly method: string;
+  public readonly path: string;
+  public readonly upstreamError: any;
+
+  constructor(statusCode: number, method: string, path: string, upstreamError: any) {
+    const summary = typeof upstreamError === 'string' ? upstreamError : JSON.stringify(upstreamError);
+    super(`${ LOG } ${ method } ${ path } returned ${ statusCode }: ${ summary }`);
+    this.name = 'IntegrationApiError';
+    this.statusCode = statusCode;
+    this.method = method;
+    this.path = path;
+    this.upstreamError = upstreamError;
+  }
+}
+
 export interface CallOptions {
   pageToken?: string;
   /** Return raw JSON instead of extracting items */
@@ -147,8 +168,12 @@ export class ConfigApiClient {
     const res = await fetch(url.toString(), fetchInit);
 
     if (!res.ok) {
-      const errBody = await res.text().catch(() => 'Unknown error');
-      throw new Error(`${ LOG } ${ ep.method } ${ ep.path } returned ${ res.status }: ${ errBody }`);
+      const errText = await res.text().catch(() => 'Unknown error');
+      let parsed: any = errText;
+      try {
+        parsed = JSON.parse(errText);
+      } catch { /* keep as string */ }
+      throw new IntegrationApiError(res.status, ep.method, ep.path, parsed);
     }
 
     const data = await res.json();

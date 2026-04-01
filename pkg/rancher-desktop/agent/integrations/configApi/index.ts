@@ -1,4 +1,4 @@
-export { ConfigApiClient } from './ConfigApiClient';
+export { ConfigApiClient, IntegrationApiError } from './ConfigApiClient';
 export type { CallOptions, PaginatedResult } from './ConfigApiClient';
 export { IntegrationConfigLoader, getIntegrationConfigLoader } from './IntegrationConfigLoader';
 export type {
