@@ -261,7 +261,26 @@ export class BrowserTabViewManager {
       return undefined;
     }
 
-    return wc.executeJavaScript(code, true);
+    try {
+      return await wc.executeJavaScript(code, true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+
+      console.error(`[BrowserTabViewManager] executeJavaScript failed for tab ${ tabId }: ${ message }`);
+
+      return {
+        error:      message,
+        errorStack: err instanceof Error ? err.stack : undefined,
+        result:     undefined,
+        logs:       [],
+        sullaLog:   [],
+        timing:     0,
+        mutations:  0,
+        navigated:  false,
+        url:        '',
+        title:      '',
+      };
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -824,6 +843,28 @@ export class BrowserTabViewManager {
       if (!url.startsWith('data:')) {
         this.failedUrls.delete(tabId);
         this.stopRetry(tabId);
+      }
+    });
+
+    // ── Bridge events: forward sulla:* events to renderer for WebviewHostBridge ──
+    // The guest preload sends events via ipcRenderer.send('browser-tab-view:bridge-event').
+    // Forward bridge lifecycle events (sulla:injected, sulla:routeChanged, sulla:domChange,
+    // sulla:click, sulla:dialog, sulla:pageContent, sulla:contentAdded) to the renderer
+    // so the WebviewHostBridge state machine can transition properly.
+    wc.ipc.on('browser-tab-view:bridge-event', (_event: Electron.IpcMainEvent, msg: { type: string; data: any }) => {
+      if (!msg?.type?.startsWith('sulla:')) return;
+      // Skip vault and context-menu events — they're handled by dedicated handlers below.
+      if (msg.type.startsWith('sulla:vault:') || msg.type === 'context-menu-action') return;
+
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('browser-tab-view:bridge-event', { tabId, ...msg });
+      }
+    });
+
+    // Forward dom-ready to the renderer so the bridge adapter can notify WebviewHostBridge.
+    wc.on('dom-ready', () => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('browser-tab-view:dom-ready', { tabId });
       }
     });
 
