@@ -608,8 +608,6 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
 
     instantiateSullaStart();
-
-    mainEvents.emit('sulla-first-run-complete');
   }
 
   // #region Events

@@ -1,5 +1,10 @@
 <template>
   <div class="agent-router-root">
+    <!-- Master password unlock — renders ABOVE everything including startup overlay and native views -->
+    <VaultUnlockScreen
+      v-if="!loggedIn && vaultSetUp"
+    />
+
     <div class="agent-router-content flex flex-col">
       <!--
         Non-browser routes use keep-alive normally.
@@ -108,16 +113,20 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, onMounted, onUnmounted } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
+import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 
 const route = useRoute();
-const { tabs: browserTabs } = useBrowserTabs();
+const router = useRouter();
+const { tabs: browserTabs, createTab } = useBrowserTabs();
+const { loggedIn, vaultSetUp, tryAutoLogin } = useVaultUnlock();
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
 
@@ -203,9 +212,43 @@ async function refreshFooterStats() {
   } catch { /* ignore */ }
 }
 
+function onRoute(_event: any, args: any) {
+  if (args?.path) {
+    router.push(args.path);
+  }
+}
+
+function onAgentCommand(_event: any, args: any) {
+  if (!args?.command) return;
+
+  switch (args.command) {
+  case 'new-chat-tab': {
+    const tab = createTab('about:blank', { mode: 'chat' });
+
+    router.push(`/Browser/${ tab.id }`);
+    break;
+  }
+  case 'new-browser-tab': {
+    const tab = createTab('about:blank');
+
+    router.push(`/Browser/${ tab.id }`);
+    break;
+  }
+  case 'open-tab': {
+    const tab = createTab('about:blank', { mode: args.mode || 'welcome' });
+
+    router.push(`/Browser/${ tab.id }`);
+    break;
+  }
+  }
+}
+
 const presenceTracker = getHumanPresenceTracker();
 
-onMounted(() => {
+onMounted(async() => {
+  // Attempt vault auto-unlock via safeStorage before anything else
+  await tryAutoLogin();
+
   // Start human presence tracker — top-level shell ensures presence is tracked
   // whenever the app is open, regardless of which tab/pane is active
   presenceTracker.setCurrentView('Sulla Desktop');
@@ -215,8 +258,11 @@ onMounted(() => {
   refreshFooterStats();
   footerStatsTimer = setInterval(refreshFooterStats, 30_000);
 
+  ipcRenderer.on('route' as any, onRoute);
+  ipcRenderer.on('agent-command' as any, onAgentCommand);
   ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
   ipcRenderer.on('k8s-progress' as any, onK8sProgress);
+  ipcRenderer.on('vault:logged-out' as any, () => { loggedIn.value = false; });
   ipcRenderer.invoke('k8s-progress').then((p: any) => {
     if (p?.description) backendProgressDesc.value = p.description;
   }).catch(() => {});
@@ -227,6 +273,8 @@ onUnmounted(() => {
   if (footerStatsTimer) {
     clearInterval(footerStatsTimer);
   }
+  ipcRenderer.removeListener('route' as any, onRoute);
+  ipcRenderer.removeListener('agent-command' as any, onAgentCommand);
   ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);
   ipcRenderer.removeListener('k8s-progress' as any, onK8sProgress);
 });

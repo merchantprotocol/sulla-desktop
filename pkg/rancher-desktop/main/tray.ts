@@ -34,6 +34,7 @@ export class Tray {
   protected trayMenu:              Electron.Tray;
   protected backendIsLocked = '';
   protected kubernetesState = State.STOPPED;
+  protected userLoggedIn = false;
   private settings:                Settings;
   private currentNetworkStatus:    networkStatus = networkStatus.CHECKING;
   private static instance:         Tray;
@@ -79,7 +80,7 @@ export class Tray {
     },
     {
       id:      'dashboard',
-      label:   'Kubernetes Dashboard',
+      label:   'Cluster Dashboard',
       icon:    path.join(paths.resources, 'icons', 'kubernetes-icon-color.png'),
       type:    'normal',
       enabled: false,
@@ -312,6 +313,17 @@ export class Tray {
     return Tray.instance;
   }
 
+  /** Update vault lock state and rebuild tray menu */
+  public setUserLoggedIn(unlocked: boolean): void {
+    this.userLoggedIn = unlocked;
+    this.updateMenu();
+  }
+
+  /** Get the singleton without requiring settings (for vault state updates) */
+  public static getInstanceIfExists(): Tray | null {
+    return Tray.instance || null;
+  }
+
   /**
    * Hide the tray menu.
    */
@@ -442,6 +454,16 @@ export class Tray {
       .forEach((item) => {
         item.enabled = !this.backendIsLocked;
       });
+
+    // Lock all items except quit and help when vault is locked (user logged out)
+    if (!this.userLoggedIn) {
+      const alwaysEnabled = new Set(['quit', 'help']);
+      this.contextMenuItems.forEach((item) => {
+        if (item.id && !alwaysEnabled.has(item.id)) {
+          item.enabled = false;
+        }
+      });
+    }
 
     const contextMenu = Electron.Menu.buildFromTemplate(this.contextMenuItems);
 

@@ -796,7 +796,7 @@ const allTabsById = computed(() => {
   }
 
   // Browser tabs — non-browser modes (calendar, integrations, extensions) get pill style
-  const pillModes = new Set(['chat', 'calendar', 'integrations', 'extensions']);
+  const pillModes = new Set(['chat', 'calendar', 'integrations', 'extensions', 'vault', 'account']);
 
   for (const bt of browserTabs) {
     const id = `browser-${ bt.id }`;

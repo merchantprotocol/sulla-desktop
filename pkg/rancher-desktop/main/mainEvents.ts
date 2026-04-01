@@ -167,9 +167,10 @@ interface MainEventNames {
   'dialog-info'(args: Record<string, string>): void;
 
   /**
-   * Emitted when the Sulla first-run setup is complete.
+   * Emitted when the backend (Lima/K8s/Docker) has finished booting.
+   * The FirstRunCoordinator uses this to gate Sulla service deployment.
    */
-  'sulla-first-run-complete'(): void;
+  'first-run-backend-booted'(): void;
 
   /**
    * Quit the application.

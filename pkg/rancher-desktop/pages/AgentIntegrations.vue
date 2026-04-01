@@ -12,6 +12,23 @@
       />
 
       <div class="flex w-full flex-col">
+        <!-- Back to Vault button (only when embedded in vault flow) -->
+        <div
+          v-if="embedded"
+          class="flex items-center px-4 py-2 bg-slate-900 border-b border-slate-700/50"
+        >
+          <button
+            type="button"
+            class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+            @click="$emit('back-to-vault')"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3.5 w-3.5">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+            Back to Vault
+          </button>
+        </div>
+
         <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
           <div class="py-16 sm:px-2 lg:relative lg:px-0 lg:py-20">
             <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
@@ -213,17 +230,16 @@
                             </div>
 
                             <div class="flex items-center justify-between mt-3">
-                              <router-link
-                                :to="`/Integrations/${integration.id}`"
+                              <button
+                                type="button"
                                 class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
                                 :class="integration.comingSoon
                                   ? 'bg-gray-500 text-white hover:bg-gray-600'
-                                  : integration.connected
-                                    ? 'bg-red-600 text-white hover:bg-red-700'
-                                    : 'bg-blue-600 text-white hover:bg-blue-700'"
+                                  : 'bg-blue-600 text-white hover:bg-blue-700'"
+                                @click="onIntegrationCardClick(integration)"
                               >
-                                {{ integration.comingSoon ? 'Read more' : (integration.connected ? 'Manage' : 'Connect now') }}
-                              </router-link>
+                                {{ integration.comingSoon ? 'Read more' : 'Connect Now' }}
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -339,17 +355,16 @@
                         </div>
 
                         <div class="flex items-center justify-between mt-3">
-                          <router-link
-                            :to="`/Integrations/${integration.id}`"
+                          <button
+                            type="button"
                             class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
                             :class="integration.comingSoon
                               ? 'bg-gray-500 text-white hover:bg-gray-600'
-                              : integration.connected
-                                ? 'bg-red-600 text-white hover:bg-red-700'
-                                : 'bg-blue-600 text-white hover:bg-blue-700'"
+                              : 'bg-blue-600 text-white hover:bg-blue-700'"
+                            @click="onIntegrationCardClick(integration)"
                           >
-                            {{ integration.comingSoon ? 'Read more' : (integration.connected ? 'Manage' : 'Connect now') }}
-                          </router-link>
+                            {{ integration.comingSoon ? 'Read more' : 'Connect Now' }}
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -369,6 +384,7 @@ import AgentHeader from './agent/AgentHeader.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+const emit = defineEmits<{ 'back-to-vault': []; 'create-account': [data: { integrationId: string }] }>();
 import type { Integration } from '@pkg/agent/integrations/types';
 import { popularIntegrations } from '@pkg/agent/integrations/popular';
 import { integrations as fullCatalog } from '@pkg/agent/integrations/catalog';
@@ -378,9 +394,21 @@ import { formatFuzzyTime } from '@pkg/utils/dateFormat';
 import { useTheme } from '@pkg/composables/useTheme';
 
 import { computed, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 
+const router = useRouter();
 const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const integrationService = getIntegrationService();
+
+/** Handle integration card click — emit when embedded, router push when standalone */
+function onIntegrationCardClick(integration: Integration) {
+  if (integration.comingSoon) return;
+  if (props.embedded) {
+    emit('create-account', { integrationId: integration.id });
+  } else {
+    router.push(`/Integrations/${ integration.id }`);
+  }
+}
 
 /** Safely resolve an integration icon path — returns null if the asset doesn't exist */
 function safeIconSrc(icon: string): string | null {

@@ -58,21 +58,6 @@
       </button>
     </div>
 
-    <!-- Editorial action cards -->
-    <div class="vb-grid">
-      <button
-        v-for="card in cards"
-        :key="card.id"
-        class="vb-card"
-        @click="$emit('pick', card.mode)"
-      >
-        <div class="vb-card-accent" />
-        <div class="vb-card-content">
-          <span class="vb-card-title">{{ card.title }}</span>
-        </div>
-        <span class="vb-card-arrow">&rarr;</span>
-      </button>
-    </div>
   </div>
 </template>
 
@@ -109,12 +94,6 @@ const localQuery = computed({
   set: (v: string) => emit('update:query', v),
 });
 
-const cards = [
-  { id: 'calendar', title: 'Calendar', mode: 'calendar' },
-  { id: 'integrations', title: 'Integrations', mode: 'integrations' },
-  { id: 'extensions', title: 'Extensions', mode: 'extensions' },
-  { id: 'browser', title: 'Browser', mode: 'browser' },
-];
 </script>
 
 <style scoped>
