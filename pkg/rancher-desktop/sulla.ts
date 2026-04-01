@@ -579,6 +579,152 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return true;
   });
 
+  // ── Vault: export & import ─────────────────────────────────────────────────
+  const { dialog } = await import('electron');
+  const fsPromises = await import('fs/promises');
+
+  ipcMainProxy.handle('vault:export', async(_event: Electron.IpcMainInvokeEvent, data: { encrypted: boolean }) => {
+    try {
+      const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIS();
+      await service.initialize();
+
+      const enabled = await service.getEnabledIntegrations();
+      const exportData: any[] = [];
+
+      for (const { integrationId, accounts } of enabled) {
+        for (const acct of accounts) {
+          const formValues = await service.getFormValues(integrationId, acct.account_id);
+          const values: Record<string, string> = {};
+          for (const fv of formValues) {
+            values[fv.property] = fv.value;
+          }
+          exportData.push({
+            integrationId,
+            accountId:  acct.account_id,
+            label:      acct.label,
+            connected:  acct.connected,
+            active:     acct.active,
+            values,
+          });
+        }
+      }
+
+      let content: string;
+      let defaultName: string;
+
+      if (data.encrypted) {
+        const vault = getVaultKeyService();
+        if (!vault.isUnlocked()) {
+          return { success: false, error: 'Vault is locked' };
+        }
+        content = vault.encrypt(JSON.stringify(exportData, null, 2));
+        defaultName = `sulla-vault-backup-${ new Date().toISOString().slice(0, 10) }.enc`;
+      } else {
+        content = JSON.stringify(exportData, null, 2);
+        defaultName = `sulla-vault-export-${ new Date().toISOString().slice(0, 10) }.json`;
+      }
+
+      const mainWindow = getWindow('main-agent');
+      const result = await dialog.showSaveDialog(mainWindow!, {
+        title:       data.encrypted ? 'Export Encrypted Vault Backup' : 'Export Vault (Plain Text)',
+        defaultPath: defaultName,
+        filters:     data.encrypted
+          ? [{ name: 'Encrypted Backup', extensions: ['enc'] }]
+          : [{ name: 'JSON', extensions: ['json'] }],
+      });
+
+      if (result.canceled || !result.filePath) {
+        return { success: false, canceled: true };
+      }
+
+      await fsPromises.writeFile(result.filePath, content, 'utf-8');
+      console.log(`[Vault] Exported ${ exportData.length } accounts to ${ result.filePath }`);
+      return { success: true, count: exportData.length, path: result.filePath };
+    } catch (err: any) {
+      console.error('[Vault] Export failed:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMainProxy.handle('vault:import', async() => {
+    try {
+      const mainWindow = getWindow('main-agent');
+      const result = await dialog.showOpenDialog(mainWindow!, {
+        title:      'Import Vault Backup',
+        filters:    [
+          { name: 'Vault Files', extensions: ['json', 'enc'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+        properties: ['openFile'],
+      });
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+
+      const filePath = result.filePaths[0];
+      let raw = await fsPromises.readFile(filePath, 'utf-8');
+
+      // Detect encrypted file
+      if (raw.startsWith('$VAULT$')) {
+        const vault = getVaultKeyService();
+        if (!vault.isUnlocked()) {
+          return { success: false, error: 'Vault is locked — cannot decrypt backup' };
+        }
+        try {
+          raw = vault.decrypt(raw);
+        } catch {
+          return { success: false, error: 'Failed to decrypt — wrong vault key or corrupted file' };
+        }
+      }
+
+      let accounts: any[];
+      try {
+        accounts = JSON.parse(raw);
+      } catch {
+        return { success: false, error: 'Invalid file format — expected JSON' };
+      }
+
+      if (!Array.isArray(accounts)) {
+        return { success: false, error: 'Invalid file format — expected an array of accounts' };
+      }
+
+      const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
+      const service = getIS();
+      await service.initialize();
+
+      let imported = 0;
+      for (const acct of accounts) {
+        if (!acct.integrationId || !acct.accountId || !acct.values) continue;
+
+        // Save all values
+        const inputs = Object.entries(acct.values as Record<string, string>).map(([key, value]) => ({
+          integration_id: acct.integrationId,
+          account_id:     acct.accountId,
+          property:       key,
+          value,
+        }));
+        await service.setFormValues(inputs);
+
+        // Set label and connection status
+        if (acct.label) {
+          await service.setAccountLabel(acct.integrationId, acct.accountId, acct.label);
+        }
+        if (acct.connected !== false) {
+          await service.setConnectionStatus(acct.integrationId, true, acct.accountId);
+        }
+        imported++;
+      }
+
+      console.log(`[Vault] Imported ${ imported } accounts from ${ filePath }`);
+      return { success: true, count: imported };
+    } catch (err: any) {
+      console.error('[Vault] Import failed:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
   // ── Vault: credential save & autofill IPC handlers ────────────────────────
   const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
 

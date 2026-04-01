@@ -72,6 +72,30 @@
 
         <div class="flex-1 overflow-auto">
           <div class="mx-auto max-w-7xl px-4 py-6">
+            <!-- Export / Import bar -->
+            <div class="flex items-center justify-end gap-2 mb-4">
+              <button
+                type="button"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 transition-colors"
+                @click="exportVault(false)"
+              >
+                Export (JSON)
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 transition-colors"
+                @click="exportVault(true)"
+              >
+                Export (Encrypted)
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 transition-colors"
+                @click="importVault"
+              >
+                Import
+              </button>
+            </div>
             <div class="flex gap-6">
               <!-- Filter Sidebar -->
               <nav class="hidden md:block w-48 shrink-0">
@@ -221,6 +245,7 @@ import AgentHeader from './agent/AgentHeader.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { integrations as integrationCatalog } from '@pkg/agent/integrations/catalog';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
   embedded?: boolean;
@@ -362,6 +387,33 @@ const loadAccounts = async() => {
     loading.value = false;
   }
 };
+
+async function exportVault(encrypted: boolean) {
+  try {
+    const result = await ipcRenderer.invoke('vault:export', { encrypted });
+    if (result.success) {
+      console.log(`[Vault] Exported ${ result.count } accounts to ${ result.path }`);
+    } else if (!result.canceled) {
+      console.error('[Vault] Export failed:', result.error);
+    }
+  } catch (err) {
+    console.error('[Vault] Export error:', err);
+  }
+}
+
+async function importVault() {
+  try {
+    const result = await ipcRenderer.invoke('vault:import');
+    if (result.success) {
+      console.log(`[Vault] Imported ${ result.count } accounts`);
+      await loadAccounts(); // Refresh the list
+    } else if (!result.canceled) {
+      console.error('[Vault] Import failed:', result.error);
+    }
+  } catch (err) {
+    console.error('[Vault] Import error:', err);
+  }
+}
 
 onMounted(() => {
   loadAccounts();
