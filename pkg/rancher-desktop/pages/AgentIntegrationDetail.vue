@@ -239,99 +239,17 @@
                 </div>
               </div> -->
 
-              <!-- Connected Accounts List -->
-              <div
-                v-if="connectedAccounts.length > 0"
-                class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800"
-              >
-                <div class="flex items-center justify-between mb-4">
-                  <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
-                    Connected Accounts
-                  </h3>
-                  <button
-                    class="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
-                    @click="startAddAccount"
-                  >
-                    <svg
-                      class="h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    ><path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M12 4v16m8-8H4"
-                    /></svg>
-                    Add Another Account
-                  </button>
-                </div>
-
-                <div class="space-y-3">
-                  <div
-                    v-for="acct in connectedAccounts"
-                    :key="acct.account_id"
-                    class="flex items-center justify-between rounded-lg border p-4 transition-colors"
-                    :class="acct.active
-                      ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-900/20'
-                      : 'border-gray-200 bg-white dark:border-gray-700 dark:bg-slate-800'"
-                  >
-                    <div class="flex items-center gap-3">
-                      <div class="h-2.5 w-2.5 rounded-full bg-green-500" />
-                      <div>
-                        <div class="flex items-center gap-2">
-                          <span class="text-sm font-medium text-slate-900 dark:text-white">Connected to {{ acct.label }}</span>
-                          <span
-                            v-if="acct.active"
-                            class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-                          >ACTIVE</span>
-                        </div>
-                        <p
-                          v-if="acct.connected_at"
-                          class="text-xs text-slate-500 dark:text-slate-400 mt-0.5"
-                        >
-                          Since {{ new Date(acct.connected_at).toLocaleDateString() }}
-                        </p>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <button
-                        class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 transition-colors"
-                        @click="startEditAccount(acct.account_id)"
-                      >
-                        Edit Credentials
-                      </button>
-                      <button
-                        v-if="!acct.active"
-                        class="rounded-md px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
-                        @click="setAccountActive(acct.account_id)"
-                      >
-                        Set Active
-                      </button>
-                      <button
-                        class="rounded-md px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
-                        @click="disconnectAccount(acct.account_id)"
-                      >
-                        Disconnect
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Connect Card (first time or adding new account) -->
+              <!-- Connect Card — always shows as a fresh create form -->
               <div
                 v-if="showConnectionForm"
                 class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800"
               >
                 <div class="flex items-center justify-between mb-4">
                   <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
-                    {{ isEditingAccount
-                      ? `Edit Credentials${editingAccountLabel ? ` (${editingAccountLabel})` : ''}`
-                      : (connectedAccounts.length > 0 ? 'Add Another Account' : 'Connect Integration') }}
+                    Create New Connection
                   </h3>
                   <button
-                    v-if="isAddingAccount || isEditingAccount"
+                    v-if="false"
                     class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium"
                     @click="cancelAddAccount"
                   >
@@ -404,9 +322,8 @@
 
                 <!-- Credentials section (account label + properties + connect button) -->
                 <div v-if="integration.authType !== 'oauth' || isEditingAccount">
-                  <!-- Account Label (required only for new accounts) -->
+                  <!-- Account Label -->
                   <div
-                    v-if="connectedAccounts.length === 0 || isAddingAccount"
                     class="space-y-2 mb-4"
                   >
                     <label
@@ -952,7 +869,7 @@ const editingAccountLabel = computed(() => {
 });
 
 /** Show the connection form when: no accounts connected yet, OR user clicked "Add Another Account" */
-const showConnectionForm = computed(() => connectedAccounts.value.length === 0 || isAddingAccount.value || isEditingAccount.value);
+const showConnectionForm = computed(() => true);
 
 // Carousel functions
 const nextImage = () => {
@@ -1149,14 +1066,11 @@ const validateForm = (): boolean => {
   errors.value = {};
   let isValid = true;
 
-  // Validate Account Label field separately for new accounts
-  const isCreatingAccount = connectedAccounts.value.length === 0 || isAddingAccount.value;
-  if (isCreatingAccount) {
-    const label = newAccountLabel.value.trim();
-    if (!label) {
-      errors.value['__account_label'] = 'Account label is required';
-      isValid = false;
-    }
+  // Validate Account Label field
+  const label = newAccountLabel.value.trim();
+  if (!label) {
+    errors.value['__account_label'] = 'Account label is required';
+    isValid = false;
   }
 
   // Validate credential fields (if any exist)
@@ -1238,21 +1152,16 @@ const handleConnect = async() => {
   // Validate all fields (including account label) through validateForm
   if (!validateForm()) return;
 
-  const isCreatingAccount = connectedAccounts.value.length === 0 || isAddingAccount.value;
+  // This page is always for creating new connections
   const label = newAccountLabel.value.trim();
-
-  const targetAccountId = isCreatingAccount
-    ? label.toLowerCase().replace(/[^a-z0-9]+/g, '_')
-    : (editingAccountId.value || selectedAccountId.value || activeAccountId.value);
+  const targetAccountId = label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
 
   isLoading.value = true;
   try {
-    if (isCreatingAccount) {
-      // Save label for new account
-      await integrationService.setAccountLabel(integration.value.id, targetAccountId, label);
-    }
+    // Save label for new account
+    await integrationService.setAccountLabel(integration.value.id, targetAccountId, label);
 
-    // Save credential fields for this account (new or existing)
+    // Save credential fields
     const formInputs = Object.entries(formData.value).map(([key, value]) => ({
       integration_id: integration.value!.id,
       account_id:     targetAccountId,
@@ -1261,20 +1170,16 @@ const handleConnect = async() => {
     }));
     await integrationService.setFormValues(formInputs);
 
-    if (isCreatingAccount) {
-      // Mark newly created account connected
-      await integrationService.setConnectionStatus(integration.value.id, true, targetAccountId);
-    }
+    // Mark newly created account connected
+    await integrationService.setConnectionStatus(integration.value.id, true, targetAccountId);
 
-    // If this is the first account, set it as active
-    if (isCreatingAccount && connectedAccounts.value.length === 0) {
+    // Set as active if it's the first account for this integration
+    const existingAccounts = await integrationService.getAccounts(integration.value.id);
+    if (existingAccounts.length <= 1) {
       await integrationService.setActiveAccount(integration.value.id, targetAccountId);
     }
 
-    // Reset form state
-    isAddingAccount.value = false;
-    isEditingAccount.value = false;
-    editingAccountId.value = null;
+    // Reset form for another creation
     newAccountLabel.value = '';
     formData.value = {};
 
@@ -1333,18 +1238,14 @@ onMounted(async() => {
     return;
   }
 
-  // Load accounts and form data
+  // Start with a blank form for new account creation
+  // Fetch select options for any select fields
   try {
-    await refreshAccounts();
-    selectedAccountId.value = activeAccountId.value;
-
-    await loadFormDataForAccount(integrationId, selectedAccountId.value);
-
-    // Load connection status (check any account)
-    integration.value.connected = await integrationService.isAnyAccountConnected(integrationId);
-    mergedIntegrations.value[integrationId].connected = integration.value.connected;
+    formData.value = {};
+    newAccountLabel.value = '';
+    fetchAllSelectOptions();
   } catch (error) {
-    console.error('Failed to load integration data:', error);
+    console.error('Failed to initialize form:', error);
   }
 });
 </script>
