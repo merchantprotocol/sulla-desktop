@@ -5,13 +5,24 @@ import { EditorChatInterface } from './EditorChatInterface';
 import type { WorkflowExecutionEventHandler } from './EditorChatInterface';
 
 const TABS_STORAGE_KEY = 'chat_tabs_workbench';
+const CHAT_HISTORY_KEY = 'chat_history_workbench';
 const MAX_TABS = 10;
+const MAX_HISTORY_ITEMS = 50;
 
 export interface ChatTabInfo {
   id: string;
   label: string;
   messageCount: number;
   isActive: boolean;
+}
+
+export interface ChatHistoryItem {
+  id: string;
+  title: string;
+  preview: string;
+  messageCount: number;
+  lastMessageAt: number;
+  createdAt: number;
 }
 
 interface TabData {
@@ -25,6 +36,10 @@ interface StoredTabsState {
   activeTabId: string;
 }
 
+interface StoredHistoryState {
+  items: ChatHistoryItem[];
+}
+
 export class EditorChatTabsInterface {
   // Tab metadata (reactive)
   private tabData = ref<TabData[]>([]);
@@ -32,6 +47,9 @@ export class EditorChatTabsInterface {
   
   // Track which tabs have been auto-named to avoid overwriting manual renames
   private autoNamedTabs = new Set<string>();
+  
+  // Chat history (reactive)
+  private chatHistory = ref<ChatHistoryItem[]>([]);
   
   // Interface instances (not reactive - stored in a Map)
   private interfaces = new Map<string, EditorChatInterface>();
@@ -48,6 +66,9 @@ export class EditorChatTabsInterface {
   );
 
   readonly hasTabs = computed(() => this.tabData.value.length > 0);
+  
+  // Expose chat history as readonly computed
+  readonly history = computed<ChatHistoryItem[]>(() => this.chatHistory.value);
   
   /**
    * Generate a short title from the first user message
@@ -120,11 +141,19 @@ export class EditorChatTabsInterface {
 
   constructor() {
     this.restoreTabs();
+    this.restoreHistory();
 
     // Watch for changes and persist tab metadata
     watch(
       () => this.tabData.value.map(t => ({ id: t.id, label: t.label })),
       () => this.persistTabs(),
+      { deep: true }
+    );
+
+    // Watch for changes and persist history
+    watch(
+      () => this.chatHistory.value,
+      () => this.persistHistory(),
       { deep: true }
     );
   }
@@ -308,6 +337,220 @@ export class EditorChatTabsInterface {
       localStorage.removeItem(`chat_messages_${tabId}`);
       localStorage.removeItem(`chat_thread_${tabId}`);
     } catch { /* ignore */ }
+  }
+
+  /**
+   * Persist chat history to localStorage
+   */
+  private persistHistory(): void {
+    try {
+      const state: StoredHistoryState = {
+        items: this.chatHistory.value,
+      };
+      localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(state));
+    } catch { /* ignore storage errors */ }
+  }
+
+  /**
+   * Restore chat history from localStorage
+   */
+  private restoreHistory(): void {
+    try {
+      const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+      if (!raw) return;
+      
+      const parsed: StoredHistoryState = JSON.parse(raw);
+      const savedItems: ChatHistoryItem[] = parsed.items || [];
+      
+      // Sort by last message date (newest first)
+      savedItems.sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+      
+      this.chatHistory.value = savedItems.slice(0, MAX_HISTORY_ITEMS);
+      console.log(`[EditorChatTabsInterface] Restored ${this.chatHistory.value.length} history items`);
+    } catch (err) {
+      console.error('[EditorChatTabsInterface] Failed to restore history:', err);
+    }
+  }
+
+  /**
+   * Add current tab to history when closing or archiving
+   */
+  addToHistory(tabId: string): boolean {
+    const tab = this.tabData.value.find(t => t.id === tabId);
+    const chatInterface = this.interfaces.get(tabId);
+    if (!tab || !chatInterface) return false;
+
+    const messages = chatInterface.messages.value;
+    if (messages.length === 0) return false; // Don't save empty chats
+
+    // Get first user message for preview
+    const firstUserMessage = messages.find(m => m.role === 'user');
+    const lastMessage = messages[messages.length - 1];
+
+    const historyItem: ChatHistoryItem = {
+      id: tabId,
+      title: tab.label,
+      preview: firstUserMessage?.content?.slice(0, 100) || 'Chat session',
+      messageCount: messages.length,
+      lastMessageAt: Date.now(),
+      createdAt: tab.createdAt,
+    };
+
+    // Remove existing item with same ID if present
+    const existingIndex = this.chatHistory.value.findIndex(h => h.id === tabId);
+    if (existingIndex !== -1) {
+      this.chatHistory.value.splice(existingIndex, 1);
+    }
+
+    // Add to beginning (newest first)
+    this.chatHistory.value.unshift(historyItem);
+
+    // Keep only max items
+    if (this.chatHistory.value.length > MAX_HISTORY_ITEMS) {
+      this.chatHistory.value = this.chatHistory.value.slice(0, MAX_HISTORY_ITEMS);
+    }
+
+    // Copy messages to history-specific storage so they survive tab close
+    this.persistHistoryMessages(tabId, messages);
+
+    console.log(`[EditorChatTabsInterface] Added tab ${tabId} to history`);
+    return true;
+  }
+
+  /**
+   * Persist messages to history-specific storage key
+   */
+  private persistHistoryMessages(tabId: string, messages: ChatMessage[]): void {
+    try {
+      const MAX_PERSISTED_MESSAGES = 200;
+      // Strip image dataUrls and truncate large HTML to avoid blowing localStorage limits
+      const toStore = messages.slice(-MAX_PERSISTED_MESSAGES).map((m) => {
+        if (m.image) {
+          return { ...m, image: { ...m.image, dataUrl: '' } };
+        }
+        if (m.kind === 'html' && m.content.length > 50_000) {
+          return { ...m, content: '[HTML content too large to persist]' };
+        }
+        return m;
+      });
+      localStorage.setItem(`chat_history_messages_${tabId}`, JSON.stringify(toStore));
+    } catch { /* storage full — silently degrade */ }
+  }
+
+  /**
+   * Restore messages from history-specific storage key
+   */
+  private restoreHistoryMessages(tabId: string): ChatMessage[] | null {
+    try {
+      const raw = localStorage.getItem(`chat_history_messages_${tabId}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as ChatMessage[];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Mark any stale running tool cards as failed
+        for (const m of parsed) {
+          if (m.toolCard && m.toolCard.status === 'running') {
+            m.toolCard.status = 'failed';
+            m.toolCard.error = 'Interrupted';
+          }
+        }
+        return parsed;
+      }
+    } catch { /* corrupt data */ }
+    return null;
+  }
+
+  /**
+   * Load a history item into a new tab
+   */
+  loadHistoryIntoTab(historyId: string): EditorChatInterface | null {
+    const historyItem = this.chatHistory.value.find(h => h.id === historyId);
+    if (!historyItem) return null;
+
+    // Check if tab already exists (restored from storage)
+    const existingInterface = this.interfaces.get(historyId);
+    if (existingInterface) {
+      // Switch to existing tab
+      this.switchTab(historyId);
+      return existingInterface;
+    }
+
+    // Create new tab with history ID to load its messages
+    if (this.tabData.value.length >= MAX_TABS) {
+      console.warn('[EditorChatTabsInterface] Max tabs reached, cannot load history');
+      return null;
+    }
+
+    // Create interface which will auto-restore messages from storage
+    const chatInterface = new EditorChatInterface(historyId);
+    
+    // Restore messages from history-specific storage if the regular storage was cleared
+    const historyMessages = this.restoreHistoryMessages(historyId);
+    if (historyMessages && historyMessages.length > 0 && chatInterface.messages.value.length === 0) {
+      // Need to access the persona's messages directly since they're protected
+      const persona = (chatInterface as any).persona;
+      if (persona && persona.messages.length === 0) {
+        persona.messages.push(...historyMessages);
+        console.log(`[EditorChatTabsInterface] Restored ${historyMessages.length} messages from history storage`);
+      }
+    }
+    
+    // Setup auto-naming
+    this.setupAutoNaming(historyId, chatInterface);
+    
+    // Store the interface
+    this.interfaces.set(historyId, chatInterface);
+    
+    // Store tab metadata
+    this.tabData.value.push({
+      id: historyId,
+      label: historyItem.title,
+      createdAt: historyItem.createdAt,
+    });
+    
+    this.activeTabId.value = historyId;
+    this.autoNamedTabs.add(historyId); // Mark as named
+    
+    console.log(`[EditorChatTabsInterface] Loaded history ${historyId} into new tab`);
+    this.persistTabs();
+    
+    return chatInterface;
+  }
+
+  /**
+   * Remove an item from history
+   */
+  removeFromHistory(historyId: string): boolean {
+    const index = this.chatHistory.value.findIndex(h => h.id === historyId);
+    if (index === -1) return false;
+    
+    this.chatHistory.value.splice(index, 1);
+    
+    // Also clear the message storage for this history item
+    try {
+      localStorage.removeItem(`chat_messages_${historyId}`);
+      localStorage.removeItem(`chat_thread_${historyId}`);
+      localStorage.removeItem(`chat_history_messages_${historyId}`); // History-specific storage
+    } catch { /* ignore */ }
+    
+    console.log(`[EditorChatTabsInterface] Removed history item ${historyId}`);
+    return true;
+  }
+
+  /**
+   * Clear all history
+   */
+  clearHistory(): void {
+    // Clear all message storage for history items
+    for (const item of this.chatHistory.value) {
+      try {
+        localStorage.removeItem(`chat_messages_${item.id}`);
+        localStorage.removeItem(`chat_thread_${item.id}`);
+        localStorage.removeItem(`chat_history_messages_${item.id}`); // History-specific storage
+      } catch { /* ignore */ }
+    }
+    
+    this.chatHistory.value = [];
+    console.log('[EditorChatTabsInterface] Cleared all history');
   }
 
   /**

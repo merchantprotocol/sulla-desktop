@@ -1134,6 +1134,7 @@
             :queued-message-count="chatQueuedMessageCount"
             :tabs="chatTabsList"
             :active-tab-id="activeChatTabId"
+            :chat-history="chatHistory"
             @update:query="chatUpdateQuery"
             @send="chatSend()"
             @stop="chatStop()"
@@ -1146,6 +1147,9 @@
             @switch-tab="onSwitchChatTab"
             @close-tab="onCloseChatTab"
             @rename-tab="onRenameChatTab"
+            @load-history="onLoadHistory"
+            @remove-history="onRemoveHistory"
+            @clear-history="onClearHistory"
           />
           <TrainingHelpPane
             v-show="rightPaneTab === 'help'"
@@ -1173,6 +1177,7 @@
           :queued-message-count="chatQueuedMessageCount"
           :tabs="chatTabsList"
           :active-tab-id="activeChatTabId"
+          :chat-history="chatHistory"
           @update:query="chatUpdateQuery"
           @send="chatSend()"
           @stop="chatStop()"
@@ -1185,6 +1190,9 @@
           @switch-tab="onSwitchChatTab"
           @close-tab="onCloseChatTab"
           @rename-tab="onRenameChatTab"
+          @load-history="onLoadHistory"
+          @remove-history="onRemoveHistory"
+          @clear-history="onClearHistory"
         />
       </div>
     </div>
@@ -1652,10 +1660,24 @@ export default defineComponent({
       chatTabs.switchTab(tabId);
     };
     const onCloseChatTab = (tabId: string) => {
+      // Add to history before closing (if has messages)
+      chatTabs.addToHistory(tabId);
       chatTabs.closeTab(tabId);
     };
     const onRenameChatTab = (tabId: string, newLabel: string) => {
       chatTabs.renameTab(tabId, newLabel);
+    };
+    
+    // Chat history
+    const chatHistory = chatTabs.history;
+    const onLoadHistory = (historyId: string) => {
+      chatTabs.loadHistoryIntoTab(historyId);
+    };
+    const onRemoveHistory = (historyId: string) => {
+      chatTabs.removeFromHistory(historyId);
+    };
+    const onClearHistory = () => {
+      chatTabs.clearHistory();
     };
 
     // ── Canvas-path event dispatcher ──────────────────────────────────
@@ -3138,10 +3160,14 @@ export default defineComponent({
       // Chat tabs
       chatTabsList,
       activeChatTabId,
+      chatHistory,
       onCreateChatTab,
       onSwitchChatTab,
       onCloseChatTab,
       onRenameChatTab,
+      onLoadHistory,
+      onRemoveHistory,
+      onClearHistory,
       modelSelector,
       agentRegistry,
       chatTotalTokensUsed,
