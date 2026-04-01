@@ -8,6 +8,7 @@ import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientSe
 import { ChatMessageQueue, createMessageQueue, type QueuedMessage } from '../agent/ChatMessageQueue';
 
 const WORKBENCH_CHANNEL = 'workbench';
+const MAX_PERSISTED_MESSAGES = 200;
 
 /**
  * Handler signature for workflow execution events forwarded to the canvas.
@@ -43,6 +44,7 @@ export class EditorChatInterface {
   private readonly registry: AgentPersonaRegistry;
   private readonly persona:  AgentPersonaService;
   private readonly messageQueue: ChatMessageQueue;
+  private readonly messagesStorageKey: string;
 
   readonly query = ref('');
   readonly messages = ref<ChatMessage[]>([]);
@@ -79,13 +81,26 @@ export class EditorChatInterface {
     // Initialize message queue
     this.messageQueue = createMessageQueue();
 
+    // Set up storage key for persistence
+    this.messagesStorageKey = `chat_messages_${ WORKBENCH_CHANNEL }`;
+
+    // Restore threadId and messages from localStorage
+    this.persona.restoreThreadId();
+    if (!this.persona.getThreadId()) {
+      this.persona.setThreadId(`thread_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`);
+    }
+    this.restoreMessages();
+
     // Watch the persona's messages and mirror into our ref.
     // We watch the full array (deep) so sub-agent activity updates
     // (thinkingLines.push, status change) also trigger a UI refresh,
     // not only new message additions.
     this.watcher = watch(
       () => this.persona.messages,
-      () => this.updateMessages(),
+      () => {
+        this.updateMessages();
+        this.persistMessages();
+      },
       { deep: true },
     );
 
@@ -145,6 +160,41 @@ export class EditorChatInterface {
    */
   onWorkflowEvent(handler: WorkflowExecutionEventHandler): void {
     this.workflowEventHandler = handler;
+  }
+
+  private persistMessages(): void {
+    try {
+      // Strip image dataUrls and truncate large HTML to avoid blowing localStorage limits
+      const toStore = this.persona.messages.slice(-MAX_PERSISTED_MESSAGES).map((m) => {
+        if (m.image) {
+          return { ...m, image: { ...m.image, dataUrl: '' } };
+        }
+        if (m.kind === 'html' && m.content.length > 50_000) {
+          return { ...m, content: '[HTML content too large to persist]' };
+        }
+        return m;
+      });
+      localStorage.setItem(this.messagesStorageKey, JSON.stringify(toStore));
+    } catch { /* storage full — silently degrade */ }
+  }
+
+  private restoreMessages(): void {
+    try {
+      const raw = localStorage.getItem(this.messagesStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as ChatMessage[];
+      if (Array.isArray(parsed) && parsed.length > 0 && this.persona.messages.length === 0) {
+        // Mark any stale running tool cards as failed
+        for (const m of parsed) {
+          if (m.toolCard && m.toolCard.status === 'running') {
+            m.toolCard.status = 'failed';
+            m.toolCard.error = 'Interrupted by page reload';
+          }
+        }
+        this.persona.messages.push(...parsed);
+        console.log(`[EditorChatInterface] Restored ${ parsed.length } messages from localStorage`);
+      }
+    } catch { /* corrupt data — start fresh */ }
   }
 
   private updateMessages(): void {
@@ -239,6 +289,10 @@ export class EditorChatInterface {
     this.persona.clearThreadId();
     // Clear message queue
     this.messageQueue.clear();
+    // Clear persisted messages
+    try {
+      localStorage.removeItem(this.messagesStorageKey);
+    } catch { /* ignore */ }
 
     // Tell the backend to discard the old thread
     if (oldThreadId) {

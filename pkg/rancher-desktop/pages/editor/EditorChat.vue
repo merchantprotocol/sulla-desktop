@@ -507,7 +507,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue';
+import { ref, watch, nextTick, computed, onMounted } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import type { ChatMessage } from '@pkg/agent';
@@ -614,6 +614,13 @@ function onSend() {
 
 // Auto-scroll on new messages
 watch(() => props.messages.length, () => scrollToBottom());
+
+// Scroll to bottom on mount if there are existing messages (e.g., after page refresh)
+onMounted(() => {
+  if (props.messages.length > 0) {
+    scrollToBottom();
+  }
+});
 </script>
 
 <style scoped>
