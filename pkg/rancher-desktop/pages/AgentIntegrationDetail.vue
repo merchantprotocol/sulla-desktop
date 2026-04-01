@@ -15,7 +15,7 @@
           <!-- Back button -->
           <button
             class="mb-6 flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
-            @click="$router.push('/Integrations')"
+            @click="embedded ? $emit('back') : $router.push('/Integrations')"
           >
             <svg
               class="h-4 w-4"
@@ -812,6 +812,17 @@ import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useTheme } from '@pkg/composables/useTheme';
 
+const pageProps = defineProps<{
+  /** When provided, use this instead of route.params.id */
+  integrationId?: string;
+  embedded?: boolean;
+}>();
+
+const emit = defineEmits<{
+  back: [];
+  saved: [accountId: string];
+}>();
+
 const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const route = useRoute();
 const router = useRouter();
@@ -1179,6 +1190,12 @@ const handleConnect = async() => {
       await integrationService.setActiveAccount(integration.value.id, targetAccountId);
     }
 
+    // When embedded in vault flow, return to vault list after save
+    if (pageProps.embedded) {
+      emit('saved', targetAccountId);
+      return;
+    }
+
     // Reset form for another creation
     newAccountLabel.value = '';
     formData.value = {};
@@ -1206,8 +1223,8 @@ onMounted(async() => {
     mergedIntegrations.value[extInt.id] = extInt;
   }
 
-  // Load integration data based on route parameter
-  const integrationId = route.params.id as string;
+  // Load integration data — prefer prop over route param for embedded use
+  const integrationId = pageProps.integrationId || (route.params.id as string);
   integration.value = mergedIntegrations.value[integrationId] || null;
 
   // Inject llm_access property into all integrations so users can control AI access per account
@@ -1232,9 +1249,13 @@ onMounted(async() => {
     }
   }
 
-  // If integration not found, redirect back to integrations list
+  // If integration not found, go back
   if (!integration.value) {
-    router.push('/Integrations');
+    if (pageProps.embedded) {
+      emit('back');
+    } else {
+      router.push('/Integrations');
+    }
     return;
   }
 

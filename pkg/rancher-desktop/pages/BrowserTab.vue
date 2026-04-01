@@ -120,6 +120,13 @@
           @back-to-vault="returnToVaultList"
           @create-account="showNewAccountEditor"
         />
+        <AgentIntegrationDetail
+          v-else-if="vaultScreen === 'detail'"
+          :integration-id="editorIntegrationId"
+          embedded
+          @back="showIntegrationPicker"
+          @saved="onAccountSaved"
+        />
         <AccountEditor
           v-else-if="vaultScreen === 'editor'"
           :integration-id="editorIntegrationId"
@@ -185,6 +192,7 @@ import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
 import AccountEditor from './AccountEditor.vue';
+import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import PasswordGenerator from './PasswordGenerator.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import SecretaryMode from './SecretaryMode.vue';
@@ -229,7 +237,7 @@ function onSetMode(mode: BrowserTabMode) {
 }
 
 // ── Vault sub-navigation state ──
-const vaultScreen = ref<'list' | 'picker' | 'editor' | 'generator'>('list');
+const vaultScreen = ref<'list' | 'picker' | 'detail' | 'editor' | 'generator'>('list');
 const editorIntegrationId = ref('');
 const editorAccountId = ref<string | undefined>(undefined);
 const generatorTargetField = ref<string | null>(null);
@@ -259,8 +267,8 @@ function showAccountEditor(data: { integrationId: string; accountId: string }) {
 function showNewAccountEditor(data: { integrationId: string }) {
   editorIntegrationId.value = data.integrationId;
   editorAccountId.value = undefined;
-  vaultScreen.value = 'editor';
-  setVaultTitle('New Account');
+  vaultScreen.value = 'detail';
+  setVaultTitle('Connect');
 }
 
 function goBackFromEditor() {
