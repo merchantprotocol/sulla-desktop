@@ -74,26 +74,14 @@ export function getActiveHolders(): ReadonlySet<string> {
 // ── Wake scheduling (pmset) ──
 
 /**
- * Schedule a macOS wake event via `pmset schedule wake`.
- * Schedules the wake 2 minutes before `targetDate` so the system is ready.
- * Requires admin privileges — fails silently if not available.
+ * Schedule a macOS wake event.
+ * `pmset schedule wake` requires root privileges which we don't have.
+ * caffeinate -i -s already prevents sleep while active, which is sufficient
+ * for keeping the agent running. If the machine sleeps between heartbeats,
+ * it will wake on its own schedule (user activity, Power Nap, etc.).
+ *
+ * This is a no-op — kept for API compatibility with callers.
  */
-export function scheduleWake(targetDate: Date): void {
-  if (process.platform !== 'darwin') return;
-  try {
-    const wake = new Date(targetDate.getTime());
-    // Wake 2 minutes early so the system is ready
-    wake.setMinutes(wake.getMinutes() - 2);
-
-    if (wake <= new Date()) return; // already in the past
-
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const dateStr = `${ pad(wake.getMonth() + 1) }/${ pad(wake.getDate()) }/${ wake.getFullYear() } ${ pad(wake.getHours()) }:${ pad(wake.getMinutes()) }:00`;
-
-    const { execSync } = require('child_process') as typeof import('child_process');
-    execSync(`pmset schedule wake "${ dateStr }"`, { stdio: 'pipe' });
-    console.log(`[SleepPrevention] Scheduled macOS wake for ${ dateStr }`);
-  } catch (err) {
-    console.log(`[SleepPrevention] Could not schedule wake (pmset may need sudo): ${ err }`);
-  }
+export function scheduleWake(_targetDate: Date): void {
+  // No-op — pmset requires root, caffeinate handles sleep prevention
 }
