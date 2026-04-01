@@ -89,7 +89,7 @@
     "@rancher/components": "0.3.0-alpha.1",
     "@schedule-x/calendar": "4.2.0",
     "@schedule-x/drag-and-drop": "3.7.3",
-    "@schedule-x/events-service": "4.2.0",
+    "@schedule-x/events-service": "4.3.1",
     "@schedule-x/theme-default": "4.2.0",
     "@schedule-x/vue": "4.0.0",
     "@slack/bolt": "4.6.0",
