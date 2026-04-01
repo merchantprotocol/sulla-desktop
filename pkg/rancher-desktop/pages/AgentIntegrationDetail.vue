@@ -6,32 +6,63 @@
     <PostHogTracker page-name="AgentIntegrationDetail" />
     <div class="flex min-h-full flex-col">
       <AgentHeader
+        v-if="!embedded"
         :is-dark="isDark"
         :toggle-theme="toggleTheme"
       />
 
       <div class="flex-1 overflow-auto">
         <div class="mx-auto max-w-6xl px-4 py-8">
-          <!-- Back button -->
-          <button
-            class="mb-6 flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
-            @click="embedded ? $emit('back') : $router.push('/Integrations')"
-          >
-            <svg
-              class="h-4 w-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+          <!-- Navigation -->
+          <div class="mb-6 flex items-center gap-4">
+            <button
+              class="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              @click="embedded ? $emit('back') : $router.push('/Integrations')"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-            Back to Integrations
-          </button>
+              <svg
+                class="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+              Back to Integrations
+            </button>
+            <button
+              v-if="embedded"
+              class="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              @click="$emit('back-to-vault')"
+            >
+              <svg
+                class="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <rect
+                  x="3"
+                  y="11"
+                  width="18"
+                  height="11"
+                  rx="2"
+                  stroke-width="2"
+                />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M7 11V7a5 5 0 0110 0v4"
+                />
+              </svg>
+              Back to Vault
+            </button>
+          </div>
 
           <div
             v-if="integration"
