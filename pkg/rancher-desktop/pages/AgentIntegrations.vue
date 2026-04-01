@@ -238,7 +238,7 @@
                                   : 'bg-blue-600 text-white hover:bg-blue-700'"
                                 @click="onIntegrationCardClick(integration)"
                               >
-                                {{ integration.comingSoon ? 'Read more' : 'Create New' }}
+                                {{ integration.comingSoon ? 'Read more' : 'Connect Now' }}
                               </button>
                             </div>
                           </div>
@@ -363,7 +363,7 @@
                               : 'bg-blue-600 text-white hover:bg-blue-700'"
                             @click="onIntegrationCardClick(integration)"
                           >
-                            {{ integration.comingSoon ? 'Read more' : 'Create New' }}
+                            {{ integration.comingSoon ? 'Read more' : 'Connect Now' }}
                           </button>
                         </div>
                       </div>
