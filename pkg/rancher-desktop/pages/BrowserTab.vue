@@ -635,8 +635,8 @@ let resizeObserver: ResizeObserver | null = null;
 // We watch the isVisible prop to manage event listeners and view visibility.
 
 // Should the native view be visible right now?
-const { uiUnlocked } = useVaultUnlock();
-const shouldShowView = () => props.isVisible && !showOverlay.value && uiUnlocked.value && viewCreated && tabMode.value === 'browser';
+const { loggedIn } = useVaultUnlock();
+const shouldShowView = () => props.isVisible && !showOverlay.value && loggedIn.value && viewCreated && tabMode.value === 'browser';
 
 watch([() => props.isVisible, showOverlay], ([visible]) => {
   if (visible) {

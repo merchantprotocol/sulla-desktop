@@ -885,6 +885,14 @@ Electron.app.on('before-quit', async(event) => {
   }
   event.preventDefault();
   console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');
+
+  // Lock the vault — zero VMK from memory on quit
+  try {
+    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+    getVaultKeyService().lock();
+    console.log('[Shutdown] Vault locked — VMK zeroed');
+  } catch { /* vault not initialized */ }
+
   httpCommandServer?.closeServer();
   httpCredentialHelperServer.closeServer();
 

@@ -2,7 +2,7 @@
   <div class="agent-router-root">
     <!-- Master password unlock — renders ABOVE everything including startup overlay and native views -->
     <VaultUnlockScreen
-      v-if="!uiUnlocked && vaultSetUp"
+      v-if="!loggedIn && vaultSetUp"
     />
 
     <div class="agent-router-content flex flex-col">
@@ -126,7 +126,7 @@ import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracke
 const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, createTab } = useBrowserTabs();
-const { uiUnlocked, vaultSetUp, tryAutoUnlock } = useVaultUnlock();
+const { loggedIn, vaultSetUp, tryAutoLogin } = useVaultUnlock();
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
 
@@ -247,7 +247,7 @@ const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
   // Attempt vault auto-unlock via safeStorage before anything else
-  await tryAutoUnlock();
+  await tryAutoLogin();
 
   // Start human presence tracker — top-level shell ensures presence is tracked
   // whenever the app is open, regardless of which tab/pane is active
@@ -262,7 +262,7 @@ onMounted(async() => {
   ipcRenderer.on('agent-command' as any, onAgentCommand);
   ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
   ipcRenderer.on('k8s-progress' as any, onK8sProgress);
-  ipcRenderer.on('vault:locked' as any, () => { uiUnlocked.value = false; });
+  ipcRenderer.on('vault:logged-out' as any, () => { loggedIn.value = false; });
   ipcRenderer.invoke('k8s-progress').then((p: any) => {
     if (p?.description) backendProgressDesc.value = p.description;
   }).catch(() => {});

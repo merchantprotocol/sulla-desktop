@@ -563,19 +563,41 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   ipcMainProxy.handle('vault:setup', async(_event: Electron.IpcMainInvokeEvent, data: { masterPassword: string }) => {
     const result = await vaultKey.setupFromMasterPassword(data.masterPassword);
+    const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+    setUserLoggedIn(true);
     return { recoveryKey: result.recoveryKey };
   });
 
   ipcMainProxy.handle('vault:unlock-password', async(_event: Electron.IpcMainInvokeEvent, data: { password: string }) => {
-    return vaultKey.recoverFromMasterPassword(data.password);
+    const success = await vaultKey.recoverFromMasterPassword(data.password);
+    if (success) {
+      const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+      setUserLoggedIn(true);
+    }
+    return success;
   });
 
   ipcMainProxy.handle('vault:unlock-recovery', async(_event: Electron.IpcMainInvokeEvent, data: { recoveryKey: string }) => {
-    return vaultKey.recoverFromRecoveryKey(data.recoveryKey);
+    const success = await vaultKey.recoverFromRecoveryKey(data.recoveryKey);
+    if (success) {
+      const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+      setUserLoggedIn(true);
+    }
+    return success;
   });
 
-  ipcMainProxy.handle('vault:lock', async() => {
+  ipcMainProxy.handle('vault:logout', async() => {
+    // UI logout only — do NOT zero the VMK so the agent can keep working
+    const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+    setUserLoggedIn(false);
+    return true;
+  });
+
+  ipcMainProxy.handle('vault:lock-vault', async() => {
+    // Manual vault lock — zeros VMK, agent loses access to encrypted credentials
     vaultKey.lock();
+    const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+    setUserLoggedIn(false);
     return true;
   });
 

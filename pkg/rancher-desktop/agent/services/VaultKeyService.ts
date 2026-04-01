@@ -68,16 +68,17 @@ export class VaultKeyService {
     this.ensureSullaDir();
 
     if (this.vmk) {
-      console.log('[VaultKeyService] Already initialized');
+      console.log('[VaultKeyService] Already unlocked');
       return true;
     }
 
-    // Try to load from safeStorage
     if (!fs.existsSync(this.keyEncPath)) {
       console.log('[VaultKeyService] No vault key file found — first-time setup needed');
       return false;
     }
 
+    // Auto-unlock vault from safeStorage so the agent can work immediately.
+    // The UI login screen is a separate gate — it doesn't depend on vault state.
     try {
       const safeStorage = this.getSafeStorage();
       if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
@@ -95,7 +96,7 @@ export class VaultKeyService {
         return false;
       }
 
-      console.log('[VaultKeyService] VMK loaded from safeStorage');
+      console.log('[VaultKeyService] Vault auto-unlocked from safeStorage');
       return true;
     } catch (err) {
       console.error('[VaultKeyService] Failed to load VMK from safeStorage:', err);
@@ -245,6 +246,7 @@ export class VaultKeyService {
         decipher.final(),
       ]);
 
+
       // Re-store in safeStorage
       this.storeVmkViaSafeStorage();
 
@@ -303,8 +305,8 @@ export class VaultKeyService {
     if (this.vmk) {
       this.vmk.fill(0);
       this.vmk = null;
-      console.log('[VaultKeyService] Vault locked — VMK zeroed');
     }
+    console.log('[VaultKeyService] Vault locked by user — requires password to unlock');
   }
 
   // ─── Internals ───────────────────────────────────────────────────

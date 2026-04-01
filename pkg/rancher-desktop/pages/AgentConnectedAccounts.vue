@@ -86,6 +86,20 @@
                 AES-256 Encrypted
               </div>
               <div class="flex-1" />
+              <button
+                v-if="vaultSecure"
+                type="button"
+                class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors"
+                style="color: #f85149; border: 1px solid rgba(248, 81, 73, 0.2);"
+                title="Lock the vault — zeroes encryption keys from memory. The AI will lose access to credentials until you unlock."
+                @click="lockVault"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3">
+                  <rect x="3" y="11" width="18" height="11" rx="2" />
+                  <path d="M7 11V7a5 5 0 0110 0v4" />
+                </svg>
+                Lock Vault
+              </button>
             </div>
             <div class="flex items-center justify-end gap-2 mb-4">
               <button
@@ -402,6 +416,17 @@ const loadAccounts = async() => {
     loading.value = false;
   }
 };
+
+async function lockVault() {
+  try {
+    await ipcRenderer.invoke('vault:lock-vault');
+    // Also update local UI state to show login screen
+    const { useVaultUnlock } = await import('@pkg/composables/useVaultUnlock');
+    useVaultUnlock().loggedIn.value = false;
+  } catch (err) {
+    console.error('[Vault] Lock failed:', err);
+  }
+}
 
 async function exportVault(encrypted: boolean) {
   try {

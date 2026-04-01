@@ -69,19 +69,6 @@ export class IpcMessageBus {
 
     this.logMessage(connectionId, 'out', fullMsg);
     this.dispatch(connectionId, fullMsg);
-
-    // Forward to all renderer windows so IpcMessageBusRenderer receives the message.
-    // This bridges main-process tool calls (browser_tab, etc.) to the renderer's
-    // AgentPersonaModel which handles tab creation, asset registration, etc.
-    try {
-      const { BrowserWindow } = require('electron');
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) {
-          win.webContents.send('message-bus:message', connectionId, fullMsg);
-        }
-      }
-    } catch { /* electron not available — running in non-electron context */ }
-
     return true;
   }
 

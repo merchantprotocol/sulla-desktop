@@ -2,75 +2,73 @@ import { ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 // Shared reactive state — same instance across all components
-const uiUnlocked = ref(false);
+const loggedIn = ref(false);
 const vaultSetUp = ref(true);
 const unlockError = ref('');
 const unlockMode = ref<'password' | 'recovery'>('password');
 
 /**
- * Try to auto-unlock on app start.
- * All vault key operations go through IPC to the main process
- * (safeStorage and fs are main-process only).
+ * Check login state on app start.
+ * The vault auto-unlocks from safeStorage (agent can work immediately).
+ * But the UI always requires the user to enter their password to log in.
  */
-async function tryAutoUnlock(): Promise<void> {
+async function tryAutoLogin(): Promise<void> {
   try {
     const isSetUp = await ipcRenderer.invoke('vault:is-setup');
 
     if (!isSetUp) {
-      console.log('[useVaultUnlock] Vault not set up — skipping lock screen (first run)');
+      console.log('[useVaultUnlock] Vault not set up — skipping login screen (first run)');
       vaultSetUp.value = false;
-      uiUnlocked.value = true;
+      loggedIn.value = true;
       return;
     }
 
-    const success = await ipcRenderer.invoke('vault:initialize');
-    if (success) {
-      console.log('[useVaultUnlock] Auto-unlocked via safeStorage');
-      uiUnlocked.value = true;
-    } else {
-      console.log('[useVaultUnlock] safeStorage unavailable — showing lock screen');
-      uiUnlocked.value = false;
-    }
+    // Auto-unlock the vault so the agent can work in the background
+    await ipcRenderer.invoke('vault:initialize');
+
+    // UI always starts locked — user must enter password
+    console.log('[useVaultUnlock] Login screen required');
+    loggedIn.value = false;
   } catch (err) {
-    console.error('[useVaultUnlock] Auto-unlock failed:', err);
-    uiUnlocked.value = false;
+    console.error('[useVaultUnlock] Login check failed:', err);
+    loggedIn.value = false;
   }
 }
 
 /**
- * Unlock with the user's master password.
+ * Log in with master password.
  */
-async function unlockWithPassword(password: string): Promise<boolean> {
+async function login(password: string): Promise<boolean> {
   unlockError.value = '';
 
   try {
     const success = await ipcRenderer.invoke('vault:unlock-password', { password });
 
     if (success) {
-      uiUnlocked.value = true;
+      loggedIn.value = true;
       return true;
     }
 
     unlockError.value = 'Incorrect password. Please try again.';
     return false;
   } catch (err) {
-    unlockError.value = 'Unlock failed. Please try again.';
-    console.error('[useVaultUnlock] Password unlock failed:', err);
+    unlockError.value = 'Login failed. Please try again.';
+    console.error('[useVaultUnlock] Login failed:', err);
     return false;
   }
 }
 
 /**
- * Unlock with a recovery key.
+ * Log in with recovery key.
  */
-async function unlockWithRecoveryKey(recoveryKey: string): Promise<boolean> {
+async function loginWithRecoveryKey(recoveryKey: string): Promise<boolean> {
   unlockError.value = '';
 
   try {
     const success = await ipcRenderer.invoke('vault:unlock-recovery', { recoveryKey });
 
     if (success) {
-      uiUnlocked.value = true;
+      loggedIn.value = true;
       return true;
     }
 
@@ -78,30 +76,30 @@ async function unlockWithRecoveryKey(recoveryKey: string): Promise<boolean> {
     return false;
   } catch (err) {
     unlockError.value = 'Recovery failed. Please try again.';
-    console.error('[useVaultUnlock] Recovery key unlock failed:', err);
+    console.error('[useVaultUnlock] Recovery login failed:', err);
     return false;
   }
 }
 
 /**
- * Lock the vault UI and zero the VMK in memory.
+ * Log out — UI gate only. The vault key stays in memory so the agent can keep working.
  */
-async function lockVault(): Promise<void> {
+async function logout(): Promise<void> {
   try {
-    await ipcRenderer.invoke('vault:lock');
+    await ipcRenderer.invoke('vault:logout');
   } catch { /* ok */ }
-  uiUnlocked.value = false;
+  loggedIn.value = false;
 }
 
 export function useVaultUnlock() {
   return {
-    uiUnlocked,
+    loggedIn,
     vaultSetUp,
     unlockError,
     unlockMode,
-    tryAutoUnlock,
-    unlockWithPassword,
-    unlockWithRecoveryKey,
-    lockVault,
+    tryAutoLogin,
+    login,
+    loginWithRecoveryKey,
+    logout,
   };
 }

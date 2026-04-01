@@ -97,8 +97,8 @@ const emit = defineEmits<{
 const {
   unlockError,
   unlockMode,
-  unlockWithPassword,
-  unlockWithRecoveryKey,
+  login,
+  loginWithRecoveryKey,
 } = useVaultUnlock();
 
 const password = ref('');
@@ -119,14 +119,14 @@ async function handleSubmit() {
       submitting.value = false;
       return;
     }
-    success = await unlockWithPassword(password.value);
+    success = await login(password.value);
   } else {
     if (!recoveryKey.value.trim()) {
       unlockError.value = 'Please enter your recovery key.';
       submitting.value = false;
       return;
     }
-    success = await unlockWithRecoveryKey(recoveryKey.value.trim());
+    success = await loginWithRecoveryKey(recoveryKey.value.trim());
   }
 
   submitting.value = false;
