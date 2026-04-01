@@ -306,7 +306,6 @@ onMounted(loadProfile);
 <style scoped>
 .account-page {
   height: 100%;
-  background: var(--bg-surface, #0d1117);
   color: var(--text-primary, #e6edf3);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
