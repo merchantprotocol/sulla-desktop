@@ -110,13 +110,13 @@
         <AgentConnectedAccounts
           v-if="vaultScreen === 'list'"
           embedded
-          @new-account="vaultScreen = 'picker'"
+          @new-account="showIntegrationPicker"
           @edit-account="showAccountEditor"
         />
         <AgentIntegrations
           v-else-if="vaultScreen === 'picker'"
           embedded
-          @back-to-vault="vaultScreen = 'list'"
+          @back-to-vault="returnToVaultList"
           @create-account="showNewAccountEditor"
         />
         <AccountEditor
@@ -223,28 +223,48 @@ const vaultScreen = ref<'list' | 'picker' | 'editor'>('list');
 const editorIntegrationId = ref('');
 const editorAccountId = ref<string | undefined>(undefined);
 
+function setVaultTitle(title: string) {
+  updateTab(props.tabId, { title });
+}
+
+function returnToVaultList() {
+  vaultScreen.value = 'list';
+  setVaultTitle('Password Manager');
+}
+
+function showIntegrationPicker() {
+  vaultScreen.value = 'picker';
+  setVaultTitle('New Connection');
+}
+
 function showAccountEditor(data: { integrationId: string; accountId: string }) {
   editorIntegrationId.value = data.integrationId;
   editorAccountId.value = data.accountId;
   vaultScreen.value = 'editor';
+  setVaultTitle('Edit Account');
 }
 
 function showNewAccountEditor(data: { integrationId: string }) {
   editorIntegrationId.value = data.integrationId;
   editorAccountId.value = undefined;
   vaultScreen.value = 'editor';
+  setVaultTitle('New Account');
 }
 
 function goBackFromEditor() {
-  vaultScreen.value = editorAccountId.value ? 'list' : 'picker';
+  if (editorAccountId.value) {
+    returnToVaultList();
+  } else {
+    showIntegrationPicker();
+  }
 }
 
 function onAccountSaved() {
-  vaultScreen.value = 'list';
+  returnToVaultList();
 }
 
 function onAccountDeleted() {
-  vaultScreen.value = 'list';
+  returnToVaultList();
 }
 
 function onNavigateUrl(input: string) {
