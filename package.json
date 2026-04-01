@@ -115,7 +115,7 @@
     "dayjs": "1.11.19",
     "ddgs": "1.0.4",
     "dirty-json": "0.9.2",
-    "dompurify": "3.3.1",
+    "dompurify": "3.3.3",
     "electron-updater": "6.7.3",
     "express": "5.2.1",
     "floating-vue": "5.2.2",
