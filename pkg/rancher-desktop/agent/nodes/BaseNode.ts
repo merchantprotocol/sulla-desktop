@@ -667,18 +667,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     if (options.includeEnvironment !== false) {
       parts.push(AwarenessMessage);
-
-      /// //////////////////////////////////////////////////////////////
-      // adds active website assets state to the environment context
-      // Lazy import to avoid pulling injected scripts into the background build
-      /// //////////////////////////////////////////////////////////////
-      try {
-        const { hostBridgeProxy } = await import('../scripts/injected/HostBridgeProxy');
-        const activePagesContext = await hostBridgeProxy.getSystemPromptContext();
-        if (activePagesContext) {
-          parts.push(activePagesContext);
-        }
-      } catch { /* proxy not available in this context */ }
     }
 
     /// //////////////////////////////////////////////////////////////
