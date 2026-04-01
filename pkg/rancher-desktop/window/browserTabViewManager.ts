@@ -464,7 +464,7 @@ export class BrowserTabViewManager {
         { integration_id: 'website', account_id: accountId, property: 'website_url', value: origin },
         { integration_id: 'website', account_id: accountId, property: 'username', value: username },
         { integration_id: 'website', account_id: accountId, property: 'password', value: password },
-        { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'none' },
+        { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'autofill' },
       ]);
       await service.setAccountLabel('website', accountId, `${ username } @ ${ origin.replace(/^https?:\/\//, '') }`);
       await service.setConnectionStatus('website', true, accountId);

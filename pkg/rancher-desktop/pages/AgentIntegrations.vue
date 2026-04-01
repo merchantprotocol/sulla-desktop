@@ -238,7 +238,7 @@
                                   : 'bg-blue-600 text-white hover:bg-blue-700'"
                                 @click="onIntegrationCardClick(integration)"
                               >
-                                {{ integration.comingSoon ? 'Read more' : 'Select' }}
+                                {{ integration.comingSoon ? 'Read more' : 'Create New' }}
                               </button>
                             </div>
                           </div>
@@ -355,17 +355,16 @@
                         </div>
 
                         <div class="flex items-center justify-between mt-3">
-                          <router-link
-                            :to="`/Integrations/${integration.id}`"
+                          <button
+                            type="button"
                             class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
                             :class="integration.comingSoon
                               ? 'bg-gray-500 text-white hover:bg-gray-600'
-                              : integration.connected
-                                ? 'bg-red-600 text-white hover:bg-red-700'
-                                : 'bg-blue-600 text-white hover:bg-blue-700'"
+                              : 'bg-blue-600 text-white hover:bg-blue-700'"
+                            @click="onIntegrationCardClick(integration)"
                           >
-                            {{ integration.comingSoon ? 'Read more' : (integration.connected ? 'Manage' : 'Connect now') }}
-                          </router-link>
+                            {{ integration.comingSoon ? 'Read more' : 'Create New' }}
+                          </button>
                         </div>
                       </div>
                     </div>

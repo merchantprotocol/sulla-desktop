@@ -16,7 +16,7 @@
             <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
               <div class="relative z-10 md:text-center lg:text-left">
                 <div class="relative">
-                  <p class="inline bg-linear-to-r from-emerald-200 via-teal-400 to-emerald-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
+                  <p class="inline bg-linear-to-r from-indigo-200 via-sky-400 to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
                     Password Manager.
                   </p>
                   <p class="mt-3 text-2xl tracking-tight text-slate-400">
@@ -40,12 +40,12 @@
                       v-model="search"
                       type="text"
                       placeholder="Search accounts..."
-                      class="h-11 w-full rounded-lg bg-white/95 pr-4 pl-12 text-sm text-slate-900 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-300/50 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-white/5 dark:ring-inset"
+                      class="h-11 w-full rounded-lg bg-white/95 pr-4 pl-12 text-sm text-slate-900 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300/50 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-white/5 dark:ring-inset"
                     >
                   </div>
                   <button
                     type="button"
-                    class="h-11 px-4 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium transition-colors flex items-center gap-2"
+                    class="h-11 px-4 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors flex items-center gap-2"
                     @click="$emit('new-account')"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
@@ -74,14 +74,14 @@
                         type="button"
                         class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
                         :class="activeFilter === null
-                          ? 'bg-teal-500/10 text-teal-600 font-medium dark:bg-teal-400/10 dark:text-teal-400'
+                          ? 'bg-sky-500/10 text-sky-600 font-medium dark:bg-sky-400/10 dark:text-sky-400'
                           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'"
                         @click="activeFilter = null"
                       >
                         <span>All</span>
                         <span
                           class="text-xs tabular-nums"
-                          :class="activeFilter === null ? 'text-teal-500 dark:text-teal-400' : 'text-slate-400 dark:text-slate-500'"
+                          :class="activeFilter === null ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
                         >{{ flatAccounts.length }}</span>
                       </button>
                     </li>
@@ -93,14 +93,14 @@
                         type="button"
                         class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
                         :class="activeFilter === type
-                          ? 'bg-teal-500/10 text-teal-600 font-medium dark:bg-teal-400/10 dark:text-teal-400'
+                          ? 'bg-sky-500/10 text-sky-600 font-medium dark:bg-sky-400/10 dark:text-sky-400'
                           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'"
                         @click="activeFilter = type"
                       >
                         <span>{{ integrationName(type) }}</span>
                         <span
                           class="text-xs tabular-nums"
-                          :class="activeFilter === type ? 'text-teal-500 dark:text-teal-400' : 'text-slate-400 dark:text-slate-500'"
+                          :class="activeFilter === type ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
                         >{{ countByType(type) }}</span>
                       </button>
                     </li>
@@ -275,7 +275,7 @@ const typeBadgeLabel = (id: string): string => {
 };
 
 const typeBadgeClass = (id: string): string => {
-  if (id === 'website') return 'bg-amber-500/20 text-amber-600 dark:text-amber-400';
+  if (id === 'website') return 'bg-sky-500/20 text-sky-600 dark:text-sky-400';
   const catalog = integrationCatalog[id];
   if (!catalog) return 'bg-slate-500/20 text-slate-500';
 
@@ -283,7 +283,7 @@ const typeBadgeClass = (id: string): string => {
   if (category.includes('ai')) return 'bg-purple-500/20 text-purple-600 dark:text-purple-400';
   if (category.includes('communication')) return 'bg-blue-500/20 text-blue-600 dark:text-blue-400';
   if (category.includes('developer')) return 'bg-gray-500/20 text-gray-600 dark:text-gray-400';
-  return 'bg-teal-500/20 text-teal-600 dark:text-teal-400';
+  return 'bg-sky-500/20 text-sky-600 dark:text-sky-400';
 };
 
 const llmAccessBadgeClass = (level: string): string => {

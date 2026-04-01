@@ -22,7 +22,7 @@ export class VaultLlmAccess extends SelectBoxProvider {
       {
         value:       'autofill',
         label:       'Autofill',
-        description: 'AI can fill login forms but never sees the password directly',
+        description: 'AI can use credentials for login forms and tool integrations but never sees passwords directly',
       },
       {
         value:       'full',

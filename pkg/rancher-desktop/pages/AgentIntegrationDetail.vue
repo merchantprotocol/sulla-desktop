@@ -1319,7 +1319,7 @@ onMounted(async() => {
             hint:        'Controls what the AI agent can see and do with this credential',
             type:        'select' as const,
             required:    false,
-            placeholder: 'full',
+            placeholder: 'autofill',
             selectBoxId: 'vault_llm_access',
           },
         ],

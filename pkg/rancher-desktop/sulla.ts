@@ -566,7 +566,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         { integration_id: 'website', account_id: accountId, property: 'website_url', value: data.origin },
         { integration_id: 'website', account_id: accountId, property: 'username', value: data.username },
         { integration_id: 'website', account_id: accountId, property: 'password', value: data.password },
-        { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'none' },
+        { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'autofill' },
       ]);
 
       // Set account label and mark as connected

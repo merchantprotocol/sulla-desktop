@@ -69,7 +69,7 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
         }
 
         // Check LLM access level for this account
-        const llmAccess = storedValues['llm_access'] || (integration_slug === 'website' ? 'none' : 'full');
+        const llmAccess = storedValues['llm_access'] || 'autofill';
 
         // If access is 'none', skip this account entirely
         if (llmAccess === 'none') {

@@ -369,7 +369,7 @@ async function loadIntegration() {
             {
               key: 'llm_access', title: 'AI Access Level',
               hint: 'Controls what the AI agent can see and do with this credential',
-              type: 'select' as const, required: false, placeholder: 'full',
+              type: 'select' as const, required: false, placeholder: 'autofill',
               selectBoxId: 'vault_llm_access',
             },
           ],

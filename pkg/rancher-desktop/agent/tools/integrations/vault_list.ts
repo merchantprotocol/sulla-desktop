@@ -31,7 +31,7 @@ export class VaultListWorker extends BaseTool {
           storedValues[fv.property] = fv.value;
         }
 
-        const llmAccess = storedValues['llm_access'] || 'none';
+        const llmAccess = storedValues['llm_access'] || 'autofill';
 
         if (llmAccess === 'none') {
           responseString += `- ${ acct.label } (${ acct.account_id }): [VAULT PROTECTED]\n`;
