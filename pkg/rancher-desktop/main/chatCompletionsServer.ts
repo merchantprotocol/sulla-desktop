@@ -955,15 +955,35 @@ export class ChatCompletionsServer {
 
       const { params = {}, body, raw } = req.body || {};
 
-      const result = await client.call(endpoint, params, {
+      // Auto-promote flat params to body for POST/PUT/PATCH when no explicit body provided
+      const method = epConfig.endpoint.method;
+      const effectiveBody = body ?? (['POST', 'PUT', 'PATCH'].includes(method) && Object.keys(params).length > 0 ? params : undefined);
+
+      const result = await client.call(endpoint, body ? params : {}, {
         accountId,
-        body,
-        raw: !!raw,
+        body: effectiveBody,
+        raw:  !!raw,
       });
 
       res.json({ success: true, result: JSON.parse(JSON.stringify(result)) });
     } catch (error: any) {
       console.error(`[ChatCompletionsAPI] Integration call failed (${ slug }/${ endpoint }):`, error);
+
+      // Return structured upstream errors so the model can debug effectively
+      const { IntegrationApiError } = await import('@pkg/agent/integrations/configApi');
+      if (error instanceof IntegrationApiError) {
+        return res.status(error.statusCode).json({
+          success:  false,
+          error:    error.message,
+          upstream: {
+            statusCode: error.statusCode,
+            method:     error.method,
+            path:       error.path,
+            error:      error.upstreamError,
+          },
+        });
+      }
+
       res.status(500).json({ success: false, error: error.message || 'Integration call failed' });
     }
   }
