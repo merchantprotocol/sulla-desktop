@@ -263,6 +263,18 @@ export function initChromeApiIpc(): void {
     return chrome.sidePanel.getOptions();
   });
 
+  ipcMain.handle('chrome-api:sidePanel:sendPrompt', async(_event, prompt: string) => {
+    return chrome.sidePanel.sendPrompt(prompt);
+  });
+
+  ipcMain.handle('chrome-api:sidePanel:switchTab', async(_event, tabId: string) => {
+    return chrome.sidePanel.switchTab(tabId);
+  });
+
+  ipcMain.handle('chrome-api:sidePanel:setBounds', async(_event, bounds: any) => {
+    return chrome.sidePanel.setBounds(bounds);
+  });
+
   // ── chrome.runtime ───────────────────────────────────────────────────────
 
   ipcMain.handle('chrome-api:runtime:sendMessage', async(_event, message: any) => {

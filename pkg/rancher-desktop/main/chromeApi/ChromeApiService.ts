@@ -63,6 +63,7 @@ import type {
   HistoryItem,
   HistoryQuery,
   SidePanelOptions,
+  SidePanelPromptPayload,
   RuntimeMessage,
   ChromeEvent,
   EventListener,
@@ -216,8 +217,9 @@ export class ChromeApiService implements ChromeApi {
   private historyLoaded = false;
   private historyCounter = 0;
 
-  // Side panel
-  private sidePanelView: WebContentsView | null = null;
+  // Side panel — per-tab views so each tab gets its own sidebar
+  private sidePanelViews = new Map<string, WebContentsView>();
+  private sidePanelActiveTabId: string | null = null;
   private sidePanelOptions: SidePanelOptions = { path: '', enabled: false };
 
   // Action state
@@ -1185,60 +1187,164 @@ export class ChromeApiService implements ChromeApi {
   // chrome.sidePanel (Tier 2)
   // =========================================================================
 
+  /** Notify the main renderer that side panel state changed so browser tabs can adjust bounds. */
+  private notifySidePanelState(open: boolean, width: number, tabId?: string): void {
+    const mainWindow = require('@pkg/window').getWindow('main-agent');
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('side-panel:state-changed', { open, width, tabId });
+    }
+  }
+
+  /** Hide the currently visible side panel (detach from window) without destroying it. */
+  private hideSidePanel(): void {
+    if (!this.sidePanelActiveTabId) return;
+    const view = this.sidePanelViews.get(this.sidePanelActiveTabId);
+    const mainWindow = require('@pkg/window').getWindow('main-agent');
+
+    if (view && mainWindow) {
+      try { mainWindow.contentView.removeChildView(view); } catch { /* already detached */ }
+    }
+    this.notifySidePanelState(false, 0);
+    this.sidePanelActiveTabId = null;
+  }
+
+  /** Show an existing side panel view for a tab (attach to window). */
+  private showSidePanelForTab(tabId: string): void {
+    const view = this.sidePanelViews.get(tabId);
+    const mainWindow = require('@pkg/window').getWindow('main-agent');
+
+    if (!view || !mainWindow) return;
+
+    mainWindow.contentView.addChildView(view);
+    this.sidePanelActiveTabId = tabId;
+    // Notify renderer — it will position the panel via setBounds
+    this.notifySidePanelState(true, 0, tabId);
+  }
+
   sidePanel = {
-    open: async(_options: { tabId?: string }): Promise<void> => {
-      if (!this.sidePanelOptions.path) {
-        console.warn('[ChromeApi] sidePanel.open: no path set');
-
-        return;
-      }
-
-      if (this.sidePanelView) return; // already open
+    open: async(options: { tabId?: string }): Promise<void> => {
+      const tabId = options.tabId || '__global__';
 
       const mainWindow = require('@pkg/window').getWindow('main-agent');
 
       if (!mainWindow) return;
 
-      const sess = session.fromPartition(SESSION_PARTITION);
+      // If a different tab's panel is currently visible, hide it first
+      if (this.sidePanelActiveTabId && this.sidePanelActiveTabId !== tabId) {
+        this.hideSidePanel();
+      }
+
+      // If this tab already has a panel, just show it
+      if (this.sidePanelViews.has(tabId)) {
+        if (this.sidePanelActiveTabId !== tabId) {
+          this.showSidePanelForTab(tabId);
+        }
+
+        return;
+      }
+
+      // Create a new side panel view for this tab
+      const { webRoot } = require('@pkg/window');
+      const sidePanelUrl = `${ webRoot }/side-panel.html#tabId=${ encodeURIComponent(tabId) }`;
+
       const view = new WebContentsView({
         webPreferences: {
           webSecurity:      false,
           contextIsolation: false,
-          nodeIntegration:  false,
-          partition:        SESSION_PARTITION,
+          nodeIntegration:  true,
+          webviewTag:       false,
         },
       });
 
-      const bounds = mainWindow.getBounds();
+      this.sidePanelViews.set(tabId, view);
 
-      view.setBounds({
-        x:      Math.floor(bounds.width * 0.7),
-        y:      0,
-        width:  Math.floor(bounds.width * 0.3),
-        height: bounds.height,
-      });
+      // Start with a temporary 1x1 bounds — the renderer will set real bounds
+      // via setBounds() after it calculates the tab area split.
+      view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
 
       mainWindow.contentView.addChildView(view);
-      view.webContents.loadURL(this.sidePanelOptions.path).catch((err: Error) => {
+
+      // Capture console output from the side panel renderer for debugging
+      view.webContents.on('console-message', (_event, level, message, line) => {
+        const method = level === 2 ? 'warn' : level === 3 ? 'error' : 'log';
+
+        console[method](`[SidePanel:${ tabId }@${ line }] ${ message }`);
+      });
+
+      console.log(`[ChromeApi] sidePanel.open: loading ${ sidePanelUrl } for tab ${ tabId }`);
+      view.webContents.loadURL(sidePanelUrl).catch((err: Error) => {
         console.error('[ChromeApi] sidePanel load failed:', err);
       });
 
-      this.sidePanelView = view;
+      this.sidePanelActiveTabId = tabId;
+
+      // Notify renderer so it recalculates bounds (splits tab area)
+      this.notifySidePanelState(true, 0, tabId);
     },
 
-    close: async(_options: { tabId?: string }): Promise<void> => {
-      if (!this.sidePanelView) return;
+    close: async(options: { tabId?: string; all?: boolean }): Promise<void> => {
+      const tabId = options.tabId || this.sidePanelActiveTabId;
 
-      const mainWindow = require('@pkg/window').getWindow('main-agent');
+      if (!options.all && tabId) {
+        // Close a specific tab's panel (or the active one)
+        const view = this.sidePanelViews.get(tabId);
 
-      if (mainWindow) {
-        try {
-          mainWindow.contentView.removeChildView(this.sidePanelView);
-        } catch { /* may already be detached */ }
+        if (!view) return;
+
+        const mainWindow = require('@pkg/window').getWindow('main-agent');
+
+        if (mainWindow) {
+          try { mainWindow.contentView.removeChildView(view); } catch { /* already detached */ }
+        }
+
+        (view.webContents as any).close?.();
+        this.sidePanelViews.delete(tabId);
+
+        if (this.sidePanelActiveTabId === tabId) {
+          this.sidePanelActiveTabId = null;
+          this.notifySidePanelState(false, 0);
+        }
+      } else {
+        // Close all panels (e.g. overlay guard)
+        const mainWindow = require('@pkg/window').getWindow('main-agent');
+
+        for (const [, view] of this.sidePanelViews) {
+          if (mainWindow) {
+            try { mainWindow.contentView.removeChildView(view); } catch { /* */ }
+          }
+          (view.webContents as any).close?.();
+        }
+
+        this.sidePanelViews.clear();
+        this.sidePanelActiveTabId = null;
+
+        this.notifySidePanelState(false, 0);
+      }
+    },
+
+    /**
+     * Called when the user switches tabs — hides/shows the correct panel.
+     */
+    switchTab: async(tabId: string): Promise<void> => {
+      console.log(`[ChromeApi] sidePanel.switchTab: tabId=${ tabId }, activeTab=${ this.sidePanelActiveTabId }, hasView=${ this.sidePanelViews.has(tabId) }`);
+      // Hide current panel if visible
+      if (this.sidePanelActiveTabId) {
+        const currentView = this.sidePanelViews.get(this.sidePanelActiveTabId);
+        const mainWindow = require('@pkg/window').getWindow('main-agent');
+
+        if (currentView && mainWindow) {
+          try { mainWindow.contentView.removeChildView(currentView); } catch { /* */ }
+        }
+        this.sidePanelActiveTabId = null;
       }
 
-      (this.sidePanelView.webContents as any).close?.();
-      this.sidePanelView = null;
+      // Show this tab's panel if it has one
+      if (this.sidePanelViews.has(tabId)) {
+        this.showSidePanelForTab(tabId);
+      } else {
+        this.notifySidePanelState(false, 0);
+      }
     },
 
     setOptions: async(options: SidePanelOptions): Promise<void> => {
@@ -1247,6 +1353,61 @@ export class ChromeApiService implements ChromeApi {
 
     getOptions: async(): Promise<SidePanelOptions> => {
       return { ...this.sidePanelOptions };
+    },
+
+    /** Set the bounds of the active side panel view (called from renderer). */
+    setBounds: async(bounds: Electron.Rectangle): Promise<void> => {
+      if (!this.sidePanelActiveTabId) return;
+      const view = this.sidePanelViews.get(this.sidePanelActiveTabId);
+
+      if (view) {
+        view.setBounds(bounds);
+      }
+    },
+
+    /**
+     * Send a prompt (with optional tab context and attachments) to the active side panel.
+     * @param payload  String prompt for backwards compat, or a rich context object.
+     */
+    sendPrompt: async(payload: string | SidePanelPromptPayload): Promise<void> => {
+      console.log(`[ChromeApi] sidePanel.sendPrompt: activeTab=${ this.sidePanelActiveTabId }, viewCount=${ this.sidePanelViews.size }`);
+      if (!this.sidePanelActiveTabId) {
+        console.warn('[ChromeApi] sidePanel.sendPrompt: no active tab');
+
+        return;
+      }
+      const view = this.sidePanelViews.get(this.sidePanelActiveTabId);
+
+      if (!view) {
+        console.warn(`[ChromeApi] sidePanel.sendPrompt: no view for tab ${ this.sidePanelActiveTabId }`);
+
+        return;
+      }
+
+      const wc = view.webContents;
+
+      // Wait for the Vue app to be ready. The page may still be loading
+      // (isLoading) or may not have started navigation yet (URL is about:blank).
+      const currentUrl = wc.getURL();
+
+      console.log(`[ChromeApi] sidePanel.sendPrompt: url=${ currentUrl }, isLoading=${ wc.isLoading() }`);
+
+      if (wc.isLoading() || !currentUrl || currentUrl === 'about:blank' || currentUrl === '') {
+        console.log('[ChromeApi] sidePanel.sendPrompt: waiting for did-finish-load...');
+        await new Promise<void>((resolve) => {
+          wc.once('did-finish-load', () => resolve());
+        });
+        // Give the Vue app a tick to mount and register its IPC listeners
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        console.log('[ChromeApi] sidePanel.sendPrompt: page loaded, sending prompt');
+      }
+
+      // Normalize string payloads into the rich format
+      const data: SidePanelPromptPayload = typeof payload === 'string'
+        ? { prompt: payload }
+        : payload;
+
+      wc.send('side-panel:set-prompt', data);
     },
   };
 

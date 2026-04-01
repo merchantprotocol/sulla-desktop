@@ -357,6 +357,20 @@ export interface SidePanelOptions {
   enabled?: boolean;
 }
 
+/** Payload sent from the renderer to the side panel chat via sendPrompt(). */
+export interface SidePanelPromptPayload {
+  prompt:       string;
+  /** Tab context — URL and title of the page the action was triggered from. */
+  tab?: {
+    url:   string;
+    title: string;
+  };
+  /** Selected text from the page (for "Ask Sulla", "Summarize", etc.). */
+  selectionText?: string;
+  /** Image attachments (e.g. screenshots) as base64-encoded data. */
+  attachments?: Array<{ mediaType: string; base64: string }>;
+}
+
 // ---------------------------------------------------------------------------
 // chrome.runtime
 // ---------------------------------------------------------------------------
@@ -486,9 +500,12 @@ export interface ChromeApi {
 
   sidePanel: {
     open(options: { tabId?: string }): Promise<void>;
-    close(options: { tabId?: string }): Promise<void>;
+    close(options: { tabId?: string; all?: boolean }): Promise<void>;
+    switchTab(tabId: string): Promise<void>;
     setOptions(options: SidePanelOptions): Promise<void>;
     getOptions(): Promise<SidePanelOptions>;
+    sendPrompt(payload: string | SidePanelPromptPayload): Promise<void>;
+    setBounds(bounds: Electron.Rectangle): Promise<void>;
   };
 
   runtime: {

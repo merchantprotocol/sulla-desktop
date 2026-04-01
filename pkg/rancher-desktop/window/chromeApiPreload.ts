@@ -147,6 +147,7 @@ const chromeApi = {
     close:      (options?: any) => ipcRenderer.invoke('chrome-api:sidePanel:close', options || {}),
     setOptions: (options: any) => ipcRenderer.invoke('chrome-api:sidePanel:setOptions', options),
     getOptions: () => ipcRenderer.invoke('chrome-api:sidePanel:getOptions'),
+    sendPrompt: (prompt: string) => ipcRenderer.invoke('chrome-api:sidePanel:sendPrompt', prompt),
   },
 
   runtime: {

@@ -2,7 +2,7 @@
 // Registers ipcMain handlers so renderer windows can send/receive messages
 // through the main-process IpcMessageBus.
 
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, webContents } from 'electron';
 import Logging from '@pkg/utils/logging';
 import { IpcMessageBus } from '@pkg/agent/services/IpcMessageBus';
 
@@ -12,21 +12,24 @@ const console = Logging.background;
 const subscriptions = new Map<number, Set<string>>();
 
 /**
- * Broadcast a message to all renderer windows subscribed to the given channel,
+ * Broadcast a message to all renderer contexts subscribed to the given channel,
  * optionally excluding one sender (to avoid echo).
+ *
+ * Uses webContents.getAllWebContents() so that WebContentsView instances
+ * (e.g. the side panel) receive messages — not just BrowserWindows.
  */
 function broadcastToRenderers(channelId: string, message: unknown, excludeWebContentsId?: number): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    const wcId = win.webContents.id;
+  for (const wc of webContents.getAllWebContents()) {
+    const wcId = wc.id;
     if (wcId === excludeWebContentsId) continue;
     const channels = subscriptions.get(wcId);
     if (channels && channels.has(channelId)) {
       try {
-        if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-          win.webContents.send('message-bus:message', channelId, message);
+        if (!wc.isDestroyed()) {
+          wc.send('message-bus:message', channelId, message);
         }
       } catch {
-        // Window was destroyed between check and send
+        // webContents was destroyed between check and send
       }
     }
   }

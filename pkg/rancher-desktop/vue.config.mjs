@@ -192,5 +192,10 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'first-run.html'),
       filename: 'first-run.html',
     },
+    'side-panel': {
+      entry:    path.join(import.meta.dirname, 'entry', 'side-panel.ts'),
+      template: path.join(import.meta.dirname, 'public', 'side-panel.html'),
+      filename: 'side-panel.html',
+    },
   },
 };

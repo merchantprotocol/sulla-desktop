@@ -346,10 +346,25 @@ function onStartChat(_chatQuery: string) {
 
 // ── Context menu AI actions (forwarded from main process) ──
 
-function openAIChatTab(prompt: string) {
-  const tab = createTab('about:blank', { mode: 'chat' });
+/** Build the tab context object for the side panel. */
+function getTabContext() {
+  const tab = getTab(props.tabId);
 
-  updateTab(tab.id, { title: 'New Chat', content: prompt });
+  return {
+    url:   addressBarUrl.value || '',
+    title: tab?.title || '',
+  };
+}
+
+/** Open the side panel for this tab and send a rich prompt payload to it. */
+async function openSidePanelChat(payload: { prompt: string; selectionText?: string; attachments?: Array<{ mediaType: string; base64: string }> }) {
+  await ipcRenderer.invoke('chrome-api:sidePanel:open' as any, { tabId: props.tabId });
+  await ipcRenderer.invoke('chrome-api:sidePanel:sendPrompt' as any, {
+    prompt:        payload.prompt,
+    tab:           getTabContext(),
+    selectionText: payload.selectionText,
+    attachments:   payload.attachments,
+  });
 }
 
 function onContextMenuAIAction(_event: unknown, payload: { tabId: string; action: string; text?: string; lang?: string; url?: string }) {
@@ -363,33 +378,63 @@ function onContextMenuAIAction(_event: unknown, payload: { tabId: string; action
     return;
   }
 
+  // Explain page — fetch page text then open side panel
+  if (action === 'ai-explain-page') {
+    ipcRenderer.invoke('browser-tab-view:exec-js', props.tabId, 'document.body.innerText').then((pageText) => {
+      const pageContent = pageText ? (pageText as string).slice(0, 8000) : '';
+      const prompt = pageContent
+        ? `Explain this web page (${ addressBarUrl.value }):\n\n${ pageContent }`
+        : `Explain the web page I'm currently viewing at ${ addressBarUrl.value }`;
+
+      openSidePanelChat({ prompt, selectionText: pageContent });
+    }).catch(() => {
+      openSidePanelChat({ prompt: `Explain the web page I'm currently viewing at ${ addressBarUrl.value }` });
+    });
+
+    return;
+  }
+
+  // Screenshot — capture the page image and attach it
+  if (action === 'ai-screenshot') {
+    ipcRenderer.invoke('browser-tab:capture-screenshot', { format: 'jpeg', quality: 80 }, props.tabId).then((result: { base64: string; mediaType: string } | null) => {
+      if (result) {
+        openSidePanelChat({
+          prompt:      `Analyze this screenshot of the page I'm viewing at ${ addressBarUrl.value }`,
+          attachments: [{ mediaType: result.mediaType, base64: result.base64 }],
+        });
+      } else {
+        openSidePanelChat({ prompt: 'I tried to take a screenshot but it failed. Can you help me analyze the page another way?' });
+      }
+    }).catch(() => {
+      openSidePanelChat({ prompt: 'Screenshot capture failed.' });
+    });
+
+    return;
+  }
+
+  // Text-based actions
   const AI_PROMPTS: Record<string, () => string> = {
-    'ai-ask':          () => `Explain this:\n\n${ text }`,
-    'ai-summarize':    () => `Summarize the following:\n\n${ text }`,
-    'ai-translate':    () => `Translate the following to ${ lang }:\n\n${ text }`,
-    'ai-explain-page': () => `Explain the web page I'm currently viewing at ${ addressBarUrl.value }`,
-    'ai-screenshot':   () => 'Analyze the screenshot of the page I\'m currently viewing',
+    'ai-ask':       () => `Explain this:\n\n${ text }`,
+    'ai-summarize': () => `Summarize the following:\n\n${ text }`,
+    'ai-translate': () => `Translate the following to ${ lang }:\n\n${ text }`,
   };
 
   const promptBuilder = AI_PROMPTS[action];
 
   if (!promptBuilder) return;
 
-  if (action === 'ai-explain-page') {
-    ipcRenderer.invoke('browser-tab-view:exec-js', props.tabId, 'document.body.innerText').then((pageText) => {
-      const prompt = pageText
-        ? `Explain this web page (${ addressBarUrl.value }):\n\n${ (pageText as string).slice(0, 8000) }`
-        : promptBuilder();
+  openSidePanelChat({ prompt: promptBuilder(), selectionText: text });
+}
 
-      openAIChatTab(prompt);
-    }).catch(() => {
-      openAIChatTab(promptBuilder());
-    });
+// ── Side panel state: adjust browser view bounds when panel opens/closes ──
 
-    return;
-  }
+const sidePanelOpen = ref(false);
 
-  openAIChatTab(promptBuilder());
+function onSidePanelStateChanged(_event: unknown, state: { open: boolean; width: number; tabId?: string }) {
+  // Only respond to side panel state for this tab (or global broadcasts with no tabId)
+  if (state.tabId && state.tabId !== props.tabId) return;
+  sidePanelOpen.value = state.open;
+  nextTick(() => sendBounds());
 }
 
 // Bridge registration — lets agent tools see this tab as open
@@ -499,13 +544,28 @@ function sendBounds() {
   // setBounds() uses logical/CSS pixels, not physical pixels.
   // Subtract footer height (22px) so the view doesn't cover it.
   const FOOTER_HEIGHT = 22;
-  const remainingHeight = window.innerHeight - rect.y - FOOTER_HEIGHT;
-  ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, {
-    x:      Math.round(rect.x),
-    y:      Math.round(rect.y),
-    width:  Math.round(rect.width),
-    height: Math.round(remainingHeight),
-  });
+  const fullWidth = Math.round(rect.width);
+  const fullHeight = Math.round(window.innerHeight - rect.y - FOOTER_HEIGHT);
+  const x = Math.round(rect.x);
+  const y = Math.round(rect.y);
+
+  if (sidePanelOpen.value) {
+    // Split the tab area: browser view gets 70%, side panel gets 30%
+    const panelWidth = Math.floor(fullWidth * 0.3);
+    const browserWidth = fullWidth - panelWidth;
+
+    ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, {
+      x, y, width: Math.max(browserWidth, 200), height: fullHeight,
+    });
+    // Position the side panel in the remaining space, inside the tab area
+    ipcRenderer.invoke('chrome-api:sidePanel:setBounds' as any, {
+      x: x + browserWidth, y, width: panelWidth, height: fullHeight,
+    });
+  } else {
+    ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, {
+      x, y, width: fullWidth, height: fullHeight,
+    });
+  }
 }
 
 /**
@@ -652,6 +712,8 @@ watch([() => props.isVisible, showOverlay], ([visible]) => {
       hostBridgeRegistry.setActiveBridge(bridgeId());
       setActiveHostBridge(hostBridge);
     }
+    // Show this tab's side panel (if it has one) when tab becomes visible
+    ipcRenderer.invoke('chrome-api:sidePanel:switchTab' as any, props.tabId);
   } else if (viewCreated) {
     ipcRenderer.invoke('browser-tab-view:hide', props.tabId);
   }
@@ -665,6 +727,7 @@ onMounted(() => {
   // Listen for state updates from the main process
   ipcRenderer.on('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.on('browser-context-menu:ai-action' as any, onContextMenuAIAction);
+  ipcRenderer.on('side-panel:state-changed' as any, onSidePanelStateChanged);
 
   // Read initial URL from the shared tab state
   const tab = getTab(props.tabId);
@@ -686,6 +749,7 @@ onUnmounted(() => {
 
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.removeListener('browser-context-menu:ai-action' as any, onContextMenuAIAction);
+  ipcRenderer.removeListener('side-panel:state-changed' as any, onSidePanelStateChanged);
 
   if (resizeObserver) {
     resizeObserver.disconnect();
