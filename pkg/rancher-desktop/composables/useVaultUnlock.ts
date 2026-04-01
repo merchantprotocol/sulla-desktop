@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { getVaultKeyService } from '@pkg/agent/services/VaultKeyService';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 // Shared reactive state — same instance across all components
 const uiUnlocked = ref(false);
@@ -9,22 +9,21 @@ const unlockMode = ref<'password' | 'recovery'>('password');
 
 /**
  * Try to auto-unlock on app start.
- * - If vault is not set up (first run): skip lock screen entirely
- * - If safeStorage has the VMK: auto-unlock, no prompt needed
- * - If safeStorage fails: keep locked, user must enter password
+ * All vault key operations go through IPC to the main process
+ * (safeStorage and fs are main-process only).
  */
 async function tryAutoUnlock(): Promise<void> {
   try {
-    const vault = getVaultKeyService();
+    const isSetUp = await ipcRenderer.invoke('vault:is-setup');
 
-    if (!vault.isSetUp()) {
+    if (!isSetUp) {
       console.log('[useVaultUnlock] Vault not set up — skipping lock screen (first run)');
       vaultSetUp.value = false;
       uiUnlocked.value = true;
       return;
     }
 
-    const success = await vault.initialize();
+    const success = await ipcRenderer.invoke('vault:initialize');
     if (success) {
       console.log('[useVaultUnlock] Auto-unlocked via safeStorage');
       uiUnlocked.value = true;
@@ -40,14 +39,12 @@ async function tryAutoUnlock(): Promise<void> {
 
 /**
  * Unlock with the user's master password.
- * Re-derives VMK from password + stored salt.
  */
 async function unlockWithPassword(password: string): Promise<boolean> {
   unlockError.value = '';
 
   try {
-    const vault = getVaultKeyService();
-    const success = await vault.recoverFromMasterPassword(password);
+    const success = await ipcRenderer.invoke('vault:unlock-password', { password });
 
     if (success) {
       uiUnlocked.value = true;
@@ -65,14 +62,12 @@ async function unlockWithPassword(password: string): Promise<boolean> {
 
 /**
  * Unlock with a recovery key.
- * Decrypts the backup file and restores the VMK.
  */
 async function unlockWithRecoveryKey(recoveryKey: string): Promise<boolean> {
   unlockError.value = '';
 
   try {
-    const vault = getVaultKeyService();
-    const success = await vault.recoverFromRecoveryKey(recoveryKey);
+    const success = await ipcRenderer.invoke('vault:unlock-recovery', { recoveryKey });
 
     if (success) {
       uiUnlocked.value = true;
@@ -88,6 +83,16 @@ async function unlockWithRecoveryKey(recoveryKey: string): Promise<boolean> {
   }
 }
 
+/**
+ * Lock the vault UI and zero the VMK in memory.
+ */
+async function lockVault(): Promise<void> {
+  try {
+    await ipcRenderer.invoke('vault:lock');
+  } catch { /* ok */ }
+  uiUnlocked.value = false;
+}
+
 export function useVaultUnlock() {
   return {
     uiUnlocked,
@@ -97,5 +102,6 @@ export function useVaultUnlock() {
     tryAutoUnlock,
     unlockWithPassword,
     unlockWithRecoveryKey,
+    lockVault,
   };
 }

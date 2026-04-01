@@ -296,8 +296,6 @@ function getEditMenu(isMac: boolean): MenuItem {
 
 function getViewMenu(): MenuItem {
   const devToolsSubmenu: MenuItemConstructorOptions[] = [
-    { role: 'reload', label: '&Reload' },
-    { role: 'forceReload', label: '&Force Reload' },
     { role: 'toggleDevTools', label: 'Toggle &Developer Tools' },
   ];
 
@@ -508,6 +506,51 @@ function getMacApplicationMenu(): MenuItem[] {
         },
         { type: 'separator' },
         { role: 'front' },
+        { type: 'separator' },
+        { role: 'reload', label: '&Reload' },
+        { role: 'forceReload', label: '&Force Reload' },
+      ],
+    }),
+    new MenuItem({
+      label:   'Profile',
+      submenu: [
+        {
+          label: 'My Account',
+          click: () => sendAgentCommand('open-tab', { mode: 'vault' }),
+        },
+        { type: 'separator' },
+        {
+          label: 'Lock Vault',
+          click: async() => {
+            try {
+              const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+              getVaultKeyService().lock();
+              // Notify the renderer to show lock screen
+              const existing = getWindow('main-agent');
+              if (existing) {
+                sendWhenReady(existing, 'vault:locked', {});
+              }
+            } catch (err) {
+              console.error('[MainMenu] Lock vault failed:', err);
+            }
+          },
+        },
+        {
+          label:       'Log Out',
+          accelerator: 'CmdOrCtrl+Shift+Q',
+          click:       async() => {
+            try {
+              const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+              getVaultKeyService().lock();
+              const existing = getWindow('main-agent');
+              if (existing) {
+                sendWhenReady(existing, 'vault:locked', {});
+              }
+            } catch (err) {
+              console.error('[MainMenu] Logout failed:', err);
+            }
+          },
+        },
       ],
     }),
     getHelpMenu(true),

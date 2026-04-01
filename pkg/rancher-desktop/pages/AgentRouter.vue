@@ -262,6 +262,7 @@ onMounted(async() => {
   ipcRenderer.on('agent-command' as any, onAgentCommand);
   ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
   ipcRenderer.on('k8s-progress' as any, onK8sProgress);
+  ipcRenderer.on('vault:locked' as any, () => { uiUnlocked.value = false; });
   ipcRenderer.invoke('k8s-progress').then((p: any) => {
     if (p?.description) backendProgressDesc.value = p.description;
   }).catch(() => {});

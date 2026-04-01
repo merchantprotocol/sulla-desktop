@@ -174,7 +174,6 @@ import { ref, onMounted, computed } from 'vue';
 import RdFieldset from '@pkg/components/form/RdFieldset.vue';
 import { ipcRenderer } from 'electron';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import { getVaultKeyService } from '@pkg/agent/services/VaultKeyService';
 
 const emit = defineEmits<{
   next: [];
@@ -307,10 +306,9 @@ const handleAccountSubmit = async() => {
 
   console.log('[FirstRunWelcome] Settings committed successfully');
 
-  // Set up the vault with the master password
+  // Set up the vault with the master password via IPC (main process handles safeStorage)
   try {
-    const vaultService = getVaultKeyService();
-    const result = await vaultService.setupFromMasterPassword(sullaPassword.value);
+    const result = await ipcRenderer.invoke('vault:setup', { masterPassword: sullaPassword.value });
     recoveryKey.value = result.recoveryKey;
     console.log('[FirstRunWelcome] Vault setup complete');
 

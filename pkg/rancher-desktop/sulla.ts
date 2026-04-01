@@ -545,6 +545,40 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return tabViewManager.executeJavaScript(tabId, code);
   });
 
+  // ── Vault: key management IPC handlers (main-process only — safeStorage) ──
+  const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+  const vaultKey = getVaultKeyService();
+
+  ipcMainProxy.handle('vault:is-setup', async() => {
+    return vaultKey.isSetUp();
+  });
+
+  ipcMainProxy.handle('vault:is-unlocked', async() => {
+    return vaultKey.isUnlocked();
+  });
+
+  ipcMainProxy.handle('vault:initialize', async() => {
+    return vaultKey.initialize();
+  });
+
+  ipcMainProxy.handle('vault:setup', async(_event: Electron.IpcMainInvokeEvent, data: { masterPassword: string }) => {
+    const result = await vaultKey.setupFromMasterPassword(data.masterPassword);
+    return { recoveryKey: result.recoveryKey };
+  });
+
+  ipcMainProxy.handle('vault:unlock-password', async(_event: Electron.IpcMainInvokeEvent, data: { password: string }) => {
+    return vaultKey.recoverFromMasterPassword(data.password);
+  });
+
+  ipcMainProxy.handle('vault:unlock-recovery', async(_event: Electron.IpcMainInvokeEvent, data: { recoveryKey: string }) => {
+    return vaultKey.recoverFromRecoveryKey(data.recoveryKey);
+  });
+
+  ipcMainProxy.handle('vault:lock', async() => {
+    vaultKey.lock();
+    return true;
+  });
+
   // ── Vault: credential save & autofill IPC handlers ────────────────────────
   const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
 
