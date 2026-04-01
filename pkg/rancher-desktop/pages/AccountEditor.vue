@@ -101,13 +101,13 @@
             </h2>
           </div>
 
-          <!-- Account label (new accounts only) -->
-          <div
-            v-if="!isEditing"
-            class="editor-field"
-          >
+          <!-- Account label (always editable) -->
+          <div class="editor-field">
             <label class="editor-label">
-              Account Name <span class="editor-required">*</span>
+              Account Name <span
+                v-if="!isEditing"
+                class="editor-required"
+              >*</span>
             </label>
             <input
               v-model="accountLabel"
@@ -230,6 +230,17 @@
               </button>
             </div>
 
+            <!-- Notes field as textarea -->
+            <textarea
+              v-else-if="property.key === 'notes'"
+              :id="'field-' + property.key"
+              v-model="formData[property.key]"
+              :placeholder="property.placeholder"
+              rows="3"
+              class="editor-input editor-textarea"
+              :class="{ 'editor-input-error': errors[property.key] }"
+            />
+
             <!-- Standard input -->
             <input
               v-else
@@ -255,6 +266,105 @@
               {{ errors[property.key] }}
             </p>
           </div>
+        </div>
+
+        <!-- Extra URLs card -->
+        <div class="editor-card">
+          <div class="editor-card-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="editor-card-header-icon">
+              <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+            </svg>
+            <h2 class="editor-card-title">
+              Additional URLs
+            </h2>
+          </div>
+          <p class="editor-hint mb-3">
+            Add alternate login pages or related URLs for this account.
+          </p>
+          <div
+            v-for="(url, idx) in extraUrls"
+            :key="'url-' + idx"
+            class="editor-field"
+          >
+            <div class="editor-inline-row">
+              <input
+                v-model="extraUrls[idx]"
+                type="url"
+                placeholder="https://example.com/alternate-login"
+                class="editor-input"
+              >
+              <button
+                type="button"
+                class="editor-inline-remove"
+                title="Remove"
+                @click="extraUrls.splice(idx, 1)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="editor-add-btn"
+            @click="extraUrls.push('')"
+          >
+            + Add URL
+          </button>
+        </div>
+
+        <!-- Custom Properties card -->
+        <div class="editor-card">
+          <div class="editor-card-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="editor-card-header-icon">
+              <path d="M12 3v18M3 12h18" />
+            </svg>
+            <h2 class="editor-card-title">
+              Custom Fields
+            </h2>
+          </div>
+          <p class="editor-hint mb-3">
+            Add additional information like security questions, PINs, or recovery codes.
+          </p>
+          <div
+            v-for="(cp, idx) in customProperties"
+            :key="'cp-' + idx"
+            class="editor-field"
+          >
+            <div class="editor-inline-row editor-custom-row">
+              <input
+                v-model="customProperties[idx].key"
+                type="text"
+                placeholder="Field name"
+                class="editor-input editor-custom-key"
+              >
+              <input
+                v-model="customProperties[idx].value"
+                type="text"
+                placeholder="Value"
+                class="editor-input editor-custom-value"
+              >
+              <button
+                type="button"
+                class="editor-inline-remove"
+                title="Remove"
+                @click="customProperties.splice(idx, 1)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="editor-add-btn"
+            @click="customProperties.push({ key: '', value: '' })"
+          >
+            + Add Field
+          </button>
         </div>
 
         <!-- Actions card -->
@@ -391,6 +501,12 @@ const oauthError = ref('');
 const selectOptions = ref<Record<string, { value: string; label: string; description?: string }[]>>({});
 const selectOptionsLoading = ref<Record<string, boolean>>({});
 
+// Extra URLs (beyond the primary website_url)
+const extraUrls = ref<string[]>([]);
+
+// Custom properties (user-defined key-value pairs)
+const customProperties = ref<{ key: string; value: string }[]>([]);
+
 const visibleProperties = computed(() => {
   if (!integration.value?.properties) return [];
   return integration.value.properties;
@@ -439,10 +555,27 @@ async function loadIntegration() {
     if (props.accountId && integration.value) {
       const formValues = await integrationService.getFormValues(props.integrationId, props.accountId);
       const data: Record<string, string> = {};
+      const loadedExtraUrls: string[] = [];
+      const loadedCustomProps: { key: string; value: string }[] = [];
+
       for (const fv of formValues) {
-        data[fv.property] = fv.value;
+        // Extra URLs (website_url_2, website_url_3, ...)
+        if (fv.property.startsWith('website_url_')) {
+          loadedExtraUrls.push(fv.value);
+        // Custom properties (custom_*)
+        } else if (fv.property.startsWith('custom_')) {
+          loadedCustomProps.push({
+            key:   fv.property.replace('custom_', '').replace(/_/g, ' '),
+            value: fv.value,
+          });
+        } else {
+          data[fv.property] = fv.value;
+        }
       }
+
       formData.value = data;
+      extraUrls.value = loadedExtraUrls;
+      customProperties.value = loadedCustomProps;
       const label = await integrationService.getAccountLabel(props.integrationId, props.accountId);
       accountLabel.value = label;
     }
@@ -532,15 +665,41 @@ async function handleSave() {
     const targetAccountId = isEditing.value
       ? props.accountId!
       : accountLabel.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
-    if (!isEditing.value) {
+    // Always save the label (editable in both create and edit mode)
+    if (accountLabel.value.trim()) {
       await integrationService.setAccountLabel(props.integrationId, targetAccountId, accountLabel.value.trim());
     }
-    const inputs = Object.entries(formData.value).map(([key, value]) => ({
-      integration_id: props.integrationId,
-      account_id:     targetAccountId,
-      property:       key,
-      value,
-    }));
+
+    // Save custom properties
+    const customInputs = customProperties.value
+      .filter(cp => cp.key.trim() && cp.value.trim())
+      .map(cp => ({
+        integration_id: props.integrationId,
+        account_id:     targetAccountId,
+        property:       'custom_' + cp.key.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+        value:          cp.value,
+      }));
+
+    // Save extra URLs
+    const urlInputs = extraUrls.value
+      .filter(u => u.trim())
+      .map((u, i) => ({
+        integration_id: props.integrationId,
+        account_id:     targetAccountId,
+        property:       'website_url_' + (i + 2),
+        value:          u,
+      }));
+
+    const inputs = [
+      ...Object.entries(formData.value).map(([key, value]) => ({
+        integration_id: props.integrationId,
+        account_id:     targetAccountId,
+        property:       key,
+        value,
+      })),
+      ...customInputs,
+      ...urlInputs,
+    ];
     await integrationService.setFormValues(inputs);
     if (!isEditing.value) {
       await integrationService.setConnectionStatus(props.integrationId, true, targetAccountId);
@@ -865,6 +1024,78 @@ watch(() => [props.integrationId, props.accountId], () => {
   font-size: 12px;
   color: #f85149;
   margin-top: 4px;
+}
+
+/* ── Textarea ── */
+.editor-textarea {
+  resize: vertical;
+  min-height: 72px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+/* ── Inline rows (URLs, custom fields) ── */
+.editor-inline-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.editor-inline-remove {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #484f58);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.editor-inline-remove:hover {
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.editor-custom-row {
+  gap: 8px;
+}
+
+.editor-custom-key {
+  flex: 0 0 35%;
+}
+
+.editor-custom-value {
+  flex: 1;
+}
+
+.editor-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-primary, #38bdf8);
+  background: none;
+  border: 1px dashed var(--border-default, #21262d);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  margin-top: 8px;
+}
+
+.editor-add-btn:hover {
+  border-color: var(--accent-primary, #38bdf8);
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.mb-3 {
+  margin-bottom: 12px;
 }
 
 /* ── Password field ── */
