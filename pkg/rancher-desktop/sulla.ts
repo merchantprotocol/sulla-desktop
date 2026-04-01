@@ -651,9 +651,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     try {
       const mainWindow = window.getWindow('main-agent');
       const result = await dialog.showOpenDialog(mainWindow!, {
-        title:      'Import Vault Backup',
+        title:      'Import Passwords',
         filters:    [
-          { name: 'Vault Files', extensions: ['json', 'enc'] },
+          { name: 'Password Files', extensions: ['json', 'csv', 'enc'] },
           { name: 'All Files', extensions: ['*'] },
         ],
         properties: ['openFile'],
@@ -666,7 +666,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       const filePath = result.filePaths[0];
       let raw = await fsPromises.readFile(filePath, 'utf-8');
 
-      // Detect encrypted file
+      // Detect Sulla encrypted file
       if (raw.startsWith('$VAULT$')) {
         const vault = getVaultKeyService();
         if (!vault.isUnlocked()) {
@@ -679,51 +679,194 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         }
       }
 
-      let accounts: any[];
+      // ── Detect format and normalize to a common shape ──
+      interface ImportEntry { label: string; url: string; username: string; password: string; notes: string; totp: string; folder: string }
+      let entries: ImportEntry[] = [];
+      let format = 'unknown';
+
+      // Try JSON first (Sulla native or Bitwarden JSON)
       try {
-        accounts = JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+
+        if (Array.isArray(parsed) && parsed[0]?.integrationId) {
+          // ── Sulla native format ──
+          format = 'sulla';
+          const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
+          const svc = getIS();
+          await svc.initialize();
+          let imported = 0;
+          for (const acct of parsed) {
+            if (!acct.integrationId || !acct.accountId || !acct.values) continue;
+            const inputs = Object.entries(acct.values as Record<string, string>).map(([key, value]) => ({
+              integration_id: acct.integrationId, account_id: acct.accountId, property: key, value,
+            }));
+            await svc.setFormValues(inputs);
+            if (acct.label) await svc.setAccountLabel(acct.integrationId, acct.accountId, acct.label);
+            if (acct.connected !== false) await svc.setConnectionStatus(acct.integrationId, true, acct.accountId);
+            imported++;
+          }
+          console.log(`[Vault] Imported ${ imported } accounts (Sulla format) from ${ filePath }`);
+          return { success: true, count: imported, format };
+        }
+
+        if (parsed.encrypted !== undefined && parsed.items) {
+          // ── Bitwarden JSON export ──
+          format = 'bitwarden-json';
+          for (const item of parsed.items) {
+            if (item.type !== 1) continue; // type 1 = login
+            entries.push({
+              label:    item.name || '',
+              url:      item.login?.uris?.[0]?.uri || '',
+              username: item.login?.username || '',
+              password: item.login?.password || '',
+              notes:    item.notes || '',
+              totp:     item.login?.totp || '',
+              folder:   '',
+            });
+          }
+        }
       } catch {
-        return { success: false, error: 'Invalid file format — expected JSON' };
+        // Not JSON — try CSV
       }
 
-      if (!Array.isArray(accounts)) {
-        return { success: false, error: 'Invalid file format — expected an array of accounts' };
+      // ── CSV parsing ──
+      if (entries.length === 0 && !raw.startsWith('{') && !raw.startsWith('[')) {
+        const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) {
+          return { success: false, error: 'File is empty or has no data rows' };
+        }
+
+        const headerLine = lines[0].toLowerCase();
+        const headers = parseCSVLine(headerLine);
+        const dataLines = lines.slice(1);
+
+        if (headers.includes('login_uri') || headers.includes('login_username')) {
+          // ── Bitwarden CSV ──
+          format = 'bitwarden-csv';
+          const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
+          for (const line of dataLines) {
+            const row = parseCSVLine(line);
+            if (col(row, 'type') !== 'login' && col(row, 'type') !== '') continue;
+            entries.push({
+              label:    col(row, 'name'),
+              url:      col(row, 'login_uri'),
+              username: col(row, 'login_username'),
+              password: col(row, 'login_password'),
+              notes:    col(row, 'notes'),
+              totp:     col(row, 'login_totp'),
+              folder:   col(row, 'folder'),
+            });
+          }
+        } else if (headers.includes('url') && headers.includes('username') && headers.includes('grouping')) {
+          // ── LastPass CSV ──
+          format = 'lastpass';
+          const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
+          for (const line of dataLines) {
+            const row = parseCSVLine(line);
+            entries.push({
+              label:    col(row, 'name'),
+              url:      col(row, 'url'),
+              username: col(row, 'username'),
+              password: col(row, 'password'),
+              notes:    col(row, 'extra'),
+              totp:     col(row, 'totp'),
+              folder:   col(row, 'grouping'),
+            });
+          }
+        } else if (headers.includes('title') || headers.includes('username')) {
+          // ── 1Password CSV or generic CSV ──
+          format = '1password';
+          const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
+          for (const line of dataLines) {
+            const row = parseCSVLine(line);
+            entries.push({
+              label:    col(row, 'title') || col(row, 'name'),
+              url:      col(row, 'url') || col(row, 'login_uri'),
+              username: col(row, 'username') || col(row, 'login_username'),
+              password: col(row, 'password') || col(row, 'login_password'),
+              notes:    col(row, 'notes') || col(row, 'extra'),
+              totp:     col(row, 'totp') || '',
+              folder:   col(row, 'folder') || col(row, 'grouping') || col(row, 'vault') || '',
+            });
+          }
+        } else {
+          return { success: false, error: `Unrecognized CSV format. Headers found: ${ headers.join(', ') }. Supported: Bitwarden, LastPass, 1Password, or Sulla JSON.` };
+        }
       }
 
+      if (entries.length === 0 && format === 'unknown') {
+        return { success: false, error: 'No importable entries found in file' };
+      }
+
+      // ── Save entries as website integration accounts ──
       const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
       const service = getIS();
       await service.initialize();
 
       let imported = 0;
-      for (const acct of accounts) {
-        if (!acct.integrationId || !acct.accountId || !acct.values) continue;
+      for (const entry of entries) {
+        if (!entry.username && !entry.password) continue;
 
-        // Save all values
-        const inputs = Object.entries(acct.values as Record<string, string>).map(([key, value]) => ({
-          integration_id: acct.integrationId,
-          account_id:     acct.accountId,
-          property:       key,
-          value,
-        }));
-        await service.setFormValues(inputs);
+        const accountId = ((entry.url || 'unknown') + '_' + (entry.username || 'unknown'))
+          .toLowerCase()
+          .replace(/^https?:\/\//, '')
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_|_$/g, '')
+          .slice(0, 200);
 
-        // Set label and connection status
-        if (acct.label) {
-          await service.setAccountLabel(acct.integrationId, acct.accountId, acct.label);
+        const values: { integration_id: string; account_id: string; property: string; value: string }[] = [
+          { integration_id: 'website', account_id: accountId, property: 'website_url', value: entry.url },
+          { integration_id: 'website', account_id: accountId, property: 'username', value: entry.username },
+          { integration_id: 'website', account_id: accountId, property: 'password', value: entry.password },
+          { integration_id: 'website', account_id: accountId, property: 'llm_access', value: 'autofill' },
+        ];
+        if (entry.notes) {
+          values.push({ integration_id: 'website', account_id: accountId, property: 'notes', value: entry.notes });
         }
-        if (acct.connected !== false) {
-          await service.setConnectionStatus(acct.integrationId, true, acct.accountId);
+        if (entry.totp) {
+          values.push({ integration_id: 'website', account_id: accountId, property: 'custom_totp', value: entry.totp });
         }
+
+        await service.setFormValues(values);
+
+        const label = entry.label || (entry.url ? entry.url.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : 'Imported');
+        await service.setAccountLabel('website', accountId, `${ label } (${ entry.username })`);
+        await service.setConnectionStatus('website', true, accountId);
         imported++;
       }
 
-      console.log(`[Vault] Imported ${ imported } accounts from ${ filePath }`);
-      return { success: true, count: imported };
+      console.log(`[Vault] Imported ${ imported } entries (${ format }) from ${ filePath }`);
+      return { success: true, count: imported, format };
     } catch (err: any) {
       console.error('[Vault] Import failed:', err);
       return { success: false, error: err.message };
     }
   });
+
+  /** Parse a CSV line respecting quoted fields */
+  function parseCSVLine(line: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  }
 
   // ── Vault: credential save & autofill IPC handlers ────────────────────────
   const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
