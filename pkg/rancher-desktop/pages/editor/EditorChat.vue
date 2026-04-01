@@ -1157,6 +1157,13 @@ onMounted(() => {
   min-height: 28px;
   max-height: 120px;
   overflow-y: auto;
+  /* Hide scrollbar */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chat-input::-webkit-scrollbar {
+  display: none;
 }
 
 .chat-input::placeholder {
