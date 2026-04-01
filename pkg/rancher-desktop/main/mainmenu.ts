@@ -55,12 +55,20 @@ export default function buildApplicationMenu(): void {
 }
 
 function rebuildMenu(): void {
-  // Refresh history cache asynchronously, then rebuild the menu
-  refreshHistoryCache().finally(() => {
-    const menuItems: MenuItem[] = getApplicationMenu();
-    const menu = Menu.buildFromTemplate(menuItems);
+  // Rebuild immediately with whatever we have cached
+  const menuItems: MenuItem[] = getApplicationMenu();
+  const menu = Menu.buildFromTemplate(menuItems);
 
-    Menu.setApplicationMenu(menu);
+  Menu.setApplicationMenu(menu);
+
+  // Then refresh history cache and rebuild again if it changed
+  refreshHistoryCache().then(() => {
+    const updated: MenuItem[] = getApplicationMenu();
+    const updatedMenu = Menu.buildFromTemplate(updated);
+
+    Menu.setApplicationMenu(updatedMenu);
+  }).catch(() => {
+    // DB not ready — menu already built with stale/empty cache, that's fine
   });
 }
 
