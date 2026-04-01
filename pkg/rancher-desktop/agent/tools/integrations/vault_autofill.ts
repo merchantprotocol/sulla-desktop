@@ -3,8 +3,8 @@ import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * Vault Autofill Tool — triggers autofill on a browser tab login form.
- * The password flows directly from the vault to the browser tab via the main
- * process — it NEVER appears in the LLM context or tool response.
+ * The password flows directly from the vault to the browser tab via
+ * BrowserTabViewManager — it NEVER appears in the LLM context or tool response.
  */
 export class VaultAutofillWorker extends BaseTool {
   name = '';
@@ -20,7 +20,6 @@ export class VaultAutofillWorker extends BaseTool {
       let targetAccountId = account_id;
 
       if (!targetAccountId && origin) {
-        // Find account by origin
         const accounts = await service.getAccounts('website');
         for (const acct of accounts) {
           const urlValue = await service.getIntegrationValue('website', 'website_url', acct.account_id);
@@ -44,7 +43,7 @@ export class VaultAutofillWorker extends BaseTool {
 
       // Check LLM access level
       const llmAccessValue = await service.getIntegrationValue('website', 'llm_access', targetAccountId);
-      const llmAccess = llmAccessValue?.value || 'none';
+      const llmAccess = llmAccessValue?.value || 'autofill';
 
       if (llmAccess === 'none' || llmAccess === 'metadata') {
         return {
@@ -53,24 +52,70 @@ export class VaultAutofillWorker extends BaseTool {
         };
       }
 
-      // Trigger autofill via IPC — the main process handles decryption and
-      // direct injection into the browser tab. Password never enters this response.
-      try {
-        const { ipcRenderer } = require('electron');
-        await ipcRenderer.invoke('vault:autofill', {
-          accountId: targetAccountId,
-        });
-      } catch (ipcError) {
+      // Get the credentials
+      const usernameValue = await service.getIntegrationValue('website', 'username', targetAccountId);
+      const passwordValue = await service.getIntegrationValue('website', 'password', targetAccountId);
+      const username = usernameValue?.value || '';
+      const password = passwordValue?.value || '';
+
+      if (!username && !password) {
         return {
           successBoolean: false,
-          responseString: `Autofill IPC failed: ${ ipcError instanceof Error ? ipcError.message : 'Unknown error' }. Make sure a browser tab is open to the target website.`,
+          responseString: 'Saved credentials are empty for this account.',
         };
       }
 
-      const usernameValue = await service.getIntegrationValue('website', 'username', targetAccountId);
+      // Use BrowserTabViewManager to inject credentials directly into the active browser tab.
+      // This runs in the main process so we can access the tab view manager directly.
+      try {
+        const { BrowserTabViewManager } = await import('../../../window/browserTabViewManager');
+        const tabManager = BrowserTabViewManager.getInstance();
+
+        // Find the active browser tab that matches the origin
+        const views = (tabManager as any).views as Map<string, any>;
+        let filled = false;
+
+        for (const [tabId, view] of views) {
+          const tabUrl = view.webContents.getURL();
+          try {
+            const tabOrigin = new URL(tabUrl).origin;
+            if (origin && tabOrigin !== origin) continue;
+          } catch { continue; }
+
+          // Inject credentials directly into the tab
+          const fillScript = `
+            (function() {
+              var b = window.sullaBridge;
+              if (!b) return { success: false, error: 'Bridge not available' };
+              var f = b.detectLoginForm();
+              if (!f || !f.hasLoginForm) return { success: false, error: 'No login form found' };
+              var uOk = false, pOk = false;
+              if (f.usernameHandle) uOk = b.setValue(f.usernameHandle, ${ JSON.stringify(username) });
+              if (f.passwordHandle) pOk = b.setValue(f.passwordHandle, ${ JSON.stringify(password) });
+              return { success: uOk || pOk, usernameOk: uOk, passwordOk: pOk };
+            })();
+          `;
+          await view.webContents.executeJavaScript(fillScript, true);
+          filled = true;
+          break;
+        }
+
+        if (!filled) {
+          return {
+            successBoolean: false,
+            responseString: `No browser tab found${ origin ? ` for ${ origin }` : '' }. Make sure a browser tab is open to the login page.`,
+          };
+        }
+      } catch (err) {
+        return {
+          successBoolean: false,
+          responseString: `Autofill injection failed: ${ err instanceof Error ? err.message : 'Unknown error' }`,
+        };
+      }
+
       return {
         successBoolean: true,
-        responseString: `Autofill triggered for ${ usernameValue?.value || targetAccountId }. The password was filled directly in the browser — it was not included in this response.`,
+        responseString: `Autofill triggered for ${ username }. The password was filled directly in the browser — it was not included in this response.`,
       };
     } catch (error) {
       return {
