@@ -18,6 +18,16 @@
       </button>
     </div>
 
+    <!-- Tab context banner -->
+    <div v-if="tabContext" class="flex items-center gap-2 border-b border-edge px-3 py-1.5 bg-surface-alt/50">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="flex-shrink-0 text-content-muted">
+        <circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
+      </svg>
+      <div class="min-w-0 flex-1 truncate text-xs text-content-muted" :title="tabContext.url">
+        {{ tabContext.title || tabContext.url }}
+      </div>
+    </div>
+
     <!-- Chat messages -->
     <div
       v-if="hasMessages"
@@ -141,8 +151,11 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const { isDark } = useTheme();
 
-// Side panel uses a dedicated ChatInterface keyed to 'side-panel'
-const chatController = new ChatInterface('sulla-desktop', 'side-panel');
+// Read tab ID from URL hash (e.g. #tabId=abc123) so each tab's panel has its own chat thread
+const hashParams = new URLSearchParams(window.location.hash.slice(1));
+const panelTabId = hashParams.get('tabId') || 'side-panel';
+
+const chatController = new ChatInterface('sulla-desktop', `side-panel-${ panelTabId }`);
 
 if (!chatController.threadId.value) {
   chatController.newChat();
@@ -221,20 +234,46 @@ watch(
   },
 );
 
-// Listen for initial prompt from main process
-onMounted(() => {
-  ipcRenderer.on('side-panel:set-prompt', (_event: unknown, prompt: string) => {
-    if (prompt && prompt.trim()) {
-      // Start a fresh thread for each new context menu action
-      chatController.newChat();
-      query.value = prompt;
-      nextTick(() => send());
-    }
-  });
+// Tab context from the most recent prompt
+const tabContext = ref<{ url: string; title: string } | null>(null);
+
+// Listen for prompts from main process (rich payload or legacy string).
+// Register BEFORE any async work so the listener is ready when sendPrompt fires.
+console.log('[SidePanelChat] Registering side-panel:set-prompt listener');
+
+ipcRenderer.on('side-panel:set-prompt' as any, (_event: unknown, payload: string | { prompt: string; tab?: { url: string; title: string }; selectionText?: string; attachments?: Array<{ mediaType: string; base64: string }> }) => {
+  console.log('[SidePanelChat] Received prompt payload:', typeof payload, typeof payload === 'string' ? payload.slice(0, 80) : JSON.stringify(payload).slice(0, 200));
+  const data = typeof payload === 'string' ? { prompt: payload } : payload;
+
+  if (!data.prompt?.trim()) return;
+
+  // Start a fresh thread for each new context menu action
+  chatController.newChat();
+
+  // Store tab context for display
+  if (data.tab) {
+    tabContext.value = data.tab;
+  }
+
+  query.value = data.prompt;
+
+  // Send with attachments if present (e.g. screenshots)
+  if (data.attachments?.length) {
+    nextTick(() => {
+      chatController.send(undefined, data.attachments);
+    });
+  } else {
+    nextTick(() => send());
+  }
+});
+
+onMounted(async () => {
+  await modelSelector.start();
 });
 
 onUnmounted(() => {
   ipcRenderer.removeAllListeners('side-panel:set-prompt');
+  modelSelector.dispose();
 });
 </script>
 
@@ -270,7 +309,7 @@ onUnmounted(() => {
   width: 24px;
   height: 24px;
   border-radius: 6px;
-  background: linear-gradient(135deg, #238636, #3fb950);
+  background: linear-gradient(135deg, #3a6d8c, #6b9dc2);
   color: #fff;
   font-weight: 700;
   font-size: 11px;

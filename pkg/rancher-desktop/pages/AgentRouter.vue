@@ -112,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted, onUnmounted } from 'vue';
+import { computed, reactive, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
@@ -120,6 +120,7 @@ import StartupOverlay from './agent/StartupOverlay.vue';
 import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
+import { useStartupProgress } from './agent/useStartupProgress';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 
@@ -127,6 +128,15 @@ const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, createTab } = useBrowserTabs();
 const { loggedIn, vaultSetUp, tryAutoLogin } = useVaultUnlock();
+const { showOverlay: startupOverlayVisible } = useStartupProgress();
+
+// Close the side panel when a full-screen overlay is active (vault lock or startup)
+const sidePanelBlocked = computed(() => (!loggedIn.value && vaultSetUp.value) || startupOverlayVisible.value);
+watch(sidePanelBlocked, (blocked) => {
+  if (blocked) {
+    ipcRenderer.invoke('chrome-api:sidePanel:close' as any, { all: true });
+  }
+});
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
 
