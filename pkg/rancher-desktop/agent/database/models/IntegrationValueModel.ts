@@ -1,5 +1,42 @@
 import { BaseModel } from '../BaseModel';
-import { getVaultKeyService } from '../../services/VaultKeyService';
+
+const VAULT_PREFIX = '$VAULT$';
+const isRenderer = typeof process !== 'undefined' && process.type === 'renderer';
+
+/**
+ * Get the VaultKeyService for encrypt/decrypt.
+ * In the main process: direct access.
+ * In the renderer: returns null (uses IPC fallback below).
+ */
+function getVaultDirect() {
+  if (isRenderer) return null;
+  try {
+    const { getVaultKeyService } = require('../../services/VaultKeyService');
+    return getVaultKeyService();
+  } catch { return null; }
+}
+
+/**
+ * Synchronous decrypt/encrypt via IPC (renderer only).
+ * Uses sendSync for synchronous model attribute access.
+ */
+function ipcDecrypt(value: string): string {
+  if (!isRenderer || !value.startsWith(VAULT_PREFIX)) return value;
+  try {
+    const { ipcRenderer } = require('electron');
+    const result = ipcRenderer.sendSync('vault:decrypt-sync', value);
+    return result || value;
+  } catch { return value; }
+}
+
+function ipcEncrypt(value: string): string {
+  if (!isRenderer) return value;
+  try {
+    const { ipcRenderer } = require('electron');
+    const result = ipcRenderer.sendSync('vault:encrypt-sync', value);
+    return result || value;
+  } catch { return value; }
+}
 
 interface IntegrationValueAttributes {
   value_id:       number;
@@ -40,25 +77,32 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
 
   // ─── Vault encryption helpers ──────────────────────────────────────
 
-  /** Encrypt a value if the vault is unlocked, otherwise return as-is */
+  /** Encrypt a value if the vault is available, otherwise return as-is */
   private static encryptValue(value: string): string {
-    try {
-      const vault = getVaultKeyService();
-      if (vault.isUnlocked()) {
-        return vault.encrypt(value);
-      }
-    } catch { /* vault not available yet */ }
+    // Main process: direct
+    const vault = getVaultDirect();
+    if (vault?.isUnlocked()) {
+      try { return vault.encrypt(value); } catch { /* fall through */ }
+    }
+    // Renderer: IPC
+    if (isRenderer) {
+      try { return ipcEncrypt(value); } catch { /* fall through */ }
+    }
     return value;
   }
 
   /** Decrypt a value if it's vault-encrypted, otherwise return as-is */
   private static decryptValue(value: string): string {
-    try {
-      const vault = getVaultKeyService();
-      if (vault.isEncrypted(value)) {
-        return vault.decrypt(value);
-      }
-    } catch { /* vault not available or decryption failed */ }
+    if (!value?.startsWith(VAULT_PREFIX)) return value;
+    // Main process: direct
+    const vault = getVaultDirect();
+    if (vault) {
+      try { return vault.decrypt(value); } catch { /* fall through */ }
+    }
+    // Renderer: IPC
+    if (isRenderer) {
+      try { return ipcDecrypt(value); } catch { /* fall through */ }
+    }
     return value;
   }
 

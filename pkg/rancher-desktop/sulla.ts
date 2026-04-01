@@ -579,6 +579,32 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return true;
   });
 
+  // Sync decrypt/encrypt for renderer-side IntegrationValueModel
+  const { ipcMain } = await import('electron');
+  ipcMain.on('vault:decrypt-sync', (event, encrypted: string) => {
+    try {
+      if (vaultKey.isUnlocked() && vaultKey.isEncrypted(encrypted)) {
+        event.returnValue = vaultKey.decrypt(encrypted);
+      } else {
+        event.returnValue = encrypted;
+      }
+    } catch {
+      event.returnValue = encrypted;
+    }
+  });
+
+  ipcMain.on('vault:encrypt-sync', (event, plaintext: string) => {
+    try {
+      if (vaultKey.isUnlocked()) {
+        event.returnValue = vaultKey.encrypt(plaintext);
+      } else {
+        event.returnValue = plaintext;
+      }
+    } catch {
+      event.returnValue = plaintext;
+    }
+  });
+
   // ── Vault: export & import ─────────────────────────────────────────────────
   const { dialog } = await import('electron');
   const fsPromises = await import('fs/promises');
@@ -997,10 +1023,13 @@ export async function afterBackgroundLoaded() {
  */
 export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
   mainEvents.on('sulla-first-run-complete', () => {
+    console.log('[FirstRun] sulla-first-run-complete event received — backend deploy done');
+    // Forward to renderer so FirstRunWaiting can show completion
     const firstRunWindow = window.getWindow('first-run');
-    firstRunWindow?.setClosable(true);
-    firstRunWindow?.close();
-    window.openMain();
+    if (firstRunWindow && !firstRunWindow.isDestroyed()) {
+      console.log('[FirstRun] Forwarding sulla-deploy-ready to first-run renderer');
+      firstRunWindow.webContents.send('sulla-deploy-ready');
+    }
   });
 
   app.on('will-quit', async() => {
