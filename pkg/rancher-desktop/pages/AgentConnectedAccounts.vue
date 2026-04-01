@@ -53,6 +53,17 @@
                     </svg>
                     New Account
                   </button>
+                  <button
+                    type="button"
+                    class="h-11 px-4 rounded-lg border border-slate-600 hover:border-slate-500 text-slate-300 hover:text-white text-sm font-medium transition-colors flex items-center gap-2"
+                    @click="$emit('generate-password')"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                      <rect x="2" y="4" width="20" height="16" rx="2" />
+                      <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h8" />
+                    </svg>
+                    Generate Password
+                  </button>
                 </div>
               </div>
             </div>
@@ -218,6 +229,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'new-account': [];
   'edit-account': [data: { integrationId: string; accountId: string }];
+  'generate-password': [];
 }>();
 
 const router = useRouter();

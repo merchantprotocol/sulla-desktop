@@ -183,7 +183,7 @@
               </button>
             </div>
 
-            <!-- Password field with eye toggle -->
+            <!-- Password field with eye toggle + generate button -->
             <div
               v-else-if="property.type === 'password'"
               class="editor-password-wrap"
@@ -197,6 +197,17 @@
                 :class="{ 'editor-input-error': errors[property.key] }"
                 @blur="onDependencyFieldBlur(property.key)"
               >
+              <button
+                type="button"
+                class="editor-gen-btn"
+                title="Generate password"
+                @click="$emit('open-generator', property.key)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3.5 w-3.5">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h8" />
+                </svg>
+              </button>
               <button
                 type="button"
                 class="editor-eye-btn"
@@ -352,12 +363,14 @@ const props = defineProps<{
   integrationId: string;
   accountId?: string;
   embedded?: boolean;
+  prefillPassword?: string;
 }>();
 
 const emit = defineEmits<{
   back: [];
   saved: [accountId: string];
   deleted: [];
+  'open-generator': [fieldKey: string];
 }>();
 
 const integrationService = getIntegrationService();
@@ -591,6 +604,17 @@ async function handleDelete() {
 }
 
 onMounted(() => loadIntegration());
+
+// Prefill password when returning from the generator
+watch(() => props.prefillPassword, (pw) => {
+  if (pw) {
+    // Find the first password property and fill it
+    const pwProp = integration.value?.properties?.find(p => p.type === 'password');
+    if (pwProp) {
+      formData.value[pwProp.key] = pw;
+    }
+  }
+});
 
 watch(() => [props.integrationId, props.accountId], () => {
   formData.value = {};
@@ -849,9 +873,29 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 .editor-input-password {
-  padding-right: 44px;
+  padding-right: 76px;
   font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
   letter-spacing: 0.1em;
+}
+
+.editor-gen-btn {
+  position: absolute;
+  right: 36px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  color: var(--accent-primary, #38bdf8);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s;
+  opacity: 0.7;
+}
+
+.editor-gen-btn:hover {
+  opacity: 1;
 }
 
 .editor-eye-btn {

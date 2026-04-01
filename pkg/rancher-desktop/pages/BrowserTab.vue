@@ -112,6 +112,7 @@
           embedded
           @new-account="showIntegrationPicker"
           @edit-account="showAccountEditor"
+          @generate-password="openGeneratorStandalone"
         />
         <AgentIntegrations
           v-else-if="vaultScreen === 'picker'"
@@ -123,10 +124,18 @@
           v-else-if="vaultScreen === 'editor'"
           :integration-id="editorIntegrationId"
           :account-id="editorAccountId"
+          :prefill-password="generatedPasswordForEditor"
           embedded
           @back="goBackFromEditor"
           @saved="onAccountSaved"
           @deleted="onAccountDeleted"
+          @open-generator="openGeneratorFromEditor"
+        />
+        <PasswordGenerator
+          v-else-if="vaultScreen === 'generator'"
+          :show-use-button="!!generatorTargetField"
+          @back="goBackFromGenerator"
+          @use-password="onUseGeneratedPassword"
         />
       </div>
     </template>
@@ -176,6 +185,7 @@ import AgentIntegrations from './AgentIntegrations.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
 import AccountEditor from './AccountEditor.vue';
+import PasswordGenerator from './PasswordGenerator.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
@@ -219,9 +229,11 @@ function onSetMode(mode: BrowserTabMode) {
 }
 
 // ── Vault sub-navigation state ──
-const vaultScreen = ref<'list' | 'picker' | 'editor'>('list');
+const vaultScreen = ref<'list' | 'picker' | 'editor' | 'generator'>('list');
 const editorIntegrationId = ref('');
 const editorAccountId = ref<string | undefined>(undefined);
+const generatorTargetField = ref<string | null>(null);
+const generatedPasswordForEditor = ref('');
 
 function setVaultTitle(title: string) {
   updateTab(props.tabId, { title });
@@ -265,6 +277,40 @@ function onAccountSaved() {
 
 function onAccountDeleted() {
   returnToVaultList();
+}
+
+function openGeneratorFromEditor(fieldKey: string) {
+  generatorTargetField.value = fieldKey;
+  generatedPasswordForEditor.value = '';
+  vaultScreen.value = 'generator';
+  setVaultTitle('Generate Password');
+}
+
+function openGeneratorStandalone() {
+  generatorTargetField.value = null;
+  generatedPasswordForEditor.value = '';
+  vaultScreen.value = 'generator';
+  setVaultTitle('Generate Password');
+}
+
+function goBackFromGenerator() {
+  if (generatorTargetField.value) {
+    // Return to editor
+    vaultScreen.value = 'editor';
+    setVaultTitle(editorAccountId.value ? 'Edit Account' : 'New Account');
+  } else {
+    returnToVaultList();
+  }
+}
+
+function onUseGeneratedPassword(password: string) {
+  if (generatorTargetField.value) {
+    generatedPasswordForEditor.value = password;
+    vaultScreen.value = 'editor';
+    setVaultTitle(editorAccountId.value ? 'Edit Account' : 'New Account');
+  } else {
+    returnToVaultList();
+  }
 }
 
 function onNavigateUrl(input: string) {
