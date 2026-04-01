@@ -625,7 +625,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         defaultName = `sulla-vault-export-${ new Date().toISOString().slice(0, 10) }.json`;
       }
 
-      const mainWindow = getWindow('main-agent');
+      const mainWindow = window.getWindow('main-agent');
       const result = await dialog.showSaveDialog(mainWindow!, {
         title:       data.encrypted ? 'Export Encrypted Vault Backup' : 'Export Vault (Plain Text)',
         defaultPath: defaultName,
@@ -649,7 +649,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   ipcMainProxy.handle('vault:import', async() => {
     try {
-      const mainWindow = getWindow('main-agent');
+      const mainWindow = window.getWindow('main-agent');
       const result = await dialog.showOpenDialog(mainWindow!, {
         title:      'Import Vault Backup',
         filters:    [
