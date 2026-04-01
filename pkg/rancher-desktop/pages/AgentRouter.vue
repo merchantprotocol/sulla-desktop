@@ -126,7 +126,7 @@ import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracke
 
 const route = useRoute();
 const router = useRouter();
-const { tabs: browserTabs, createTab } = useBrowserTabs();
+const { tabs: browserTabs, createTab, restoreClosedTab } = useBrowserTabs();
 const { loggedIn, vaultSetUp, tryAutoLogin } = useVaultUnlock();
 const { showOverlay: startupOverlayVisible } = useStartupProgress();
 
@@ -253,6 +253,36 @@ function onAgentCommand(_event: any, args: any) {
   }
 }
 
+// ── Conversation history IPC handlers ──
+
+function onHistoryShowAll() {
+  const tab = createTab('about:blank', { mode: 'history' as any });
+
+  router.push(`/Browser/${ tab.id }`);
+}
+
+function onHistoryRestoreLastClosed() {
+  const restored = restoreClosedTab(0);
+
+  if (restored) {
+    router.push(`/Browser/${ restored.id }`);
+  }
+}
+
+function onHistoryNavigate(_event: any, ...args: any[]) {
+  const entry = args[0] as { id: string; type: string; url?: string; title?: string; tab_id?: string };
+  if (!entry) return;
+  if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
+    const tab = createTab(entry.url);
+
+    router.push(`/Browser/${ tab.id }`);
+  } else {
+    const tab = createTab('about:blank', { mode: 'chat' as any });
+
+    router.push(`/Browser/${ tab.id }`);
+  }
+}
+
 const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
@@ -272,6 +302,9 @@ onMounted(async() => {
   ipcRenderer.on('agent-command' as any, onAgentCommand);
   ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
   ipcRenderer.on('k8s-progress' as any, onK8sProgress);
+  ipcRenderer.on('conversation-history:show-all' as any, onHistoryShowAll);
+  ipcRenderer.on('conversation-history:restore-last-closed' as any, onHistoryRestoreLastClosed);
+  ipcRenderer.on('conversation-history:navigate' as any, onHistoryNavigate);
   ipcRenderer.on('vault:logged-out' as any, () => { loggedIn.value = false; });
   ipcRenderer.invoke('k8s-progress').then((p: any) => {
     if (p?.description) backendProgressDesc.value = p.description;
@@ -287,6 +320,9 @@ onUnmounted(() => {
   ipcRenderer.removeListener('agent-command' as any, onAgentCommand);
   ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);
   ipcRenderer.removeListener('k8s-progress' as any, onK8sProgress);
+  ipcRenderer.removeListener('conversation-history:show-all' as any, onHistoryShowAll);
+  ipcRenderer.removeListener('conversation-history:restore-last-closed' as any, onHistoryRestoreLastClosed);
+  ipcRenderer.removeListener('conversation-history:navigate' as any, onHistoryNavigate);
 });
 </script>
 

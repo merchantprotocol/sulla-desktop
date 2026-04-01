@@ -10,6 +10,7 @@ import Logging from '@pkg/utils/logging';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
 import { initSullaDebugEvents } from './sullaDebugEvents';
 import { initMessageBusIpc } from './messageBusIpc';
+import { initConversationHistoryIpc } from './conversationHistoryIpc';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -38,6 +39,7 @@ function assertInsideSullaHome(targetPath: string): string {
  */
 export function initSullaEvents(): void {
   initMessageBusIpc();
+  initConversationHistoryIpc();
 
   // ─────────────────────────────────────────────────────────────
   // Settings handlers

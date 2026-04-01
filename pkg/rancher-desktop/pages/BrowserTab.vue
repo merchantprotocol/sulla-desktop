@@ -184,6 +184,13 @@
       </div>
     </template>
 
+    <!-- History mode: browsable conversation history -->
+    <template v-else-if="tabMode === 'history'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <HistoryTab @navigate-entry="onHistoryNavigate" />
+      </div>
+    </template>
+
     <!-- Secretary mode: continuous transcription with wake word -->
     <template v-else-if="tabMode === 'secretary'">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -208,6 +215,7 @@ import PasswordGenerator from './PasswordGenerator.vue';
 import MyAccount from './MyAccount.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import SecretaryMode from './SecretaryMode.vue';
+import HistoryTab from './HistoryTab.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
@@ -231,6 +239,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   secretary:    'Secretary',
   vault:        'Password Manager',
   account:      'My Account',
+  history:      'History',
 };
 
 const props = defineProps<{
@@ -331,6 +340,13 @@ function onUseGeneratedPassword(password: string) {
     setVaultTitle(editorAccountId.value ? 'Edit Account' : 'New Account');
   } else {
     returnToVaultList();
+  }
+}
+
+function onHistoryNavigate(entry: { id: string; type: string; url?: string }) {
+  if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
+    addressBarUrl.value = normalizeUrl(entry.url);
+    navigate();
   }
 }
 

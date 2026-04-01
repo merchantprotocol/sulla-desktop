@@ -313,34 +313,28 @@
             </button>
             <div class="more-menu-separator" />
             <div
-              v-if="closedTabs.length === 0"
+              v-if="historyEntries.length === 0"
               class="more-menu-empty"
             >
-              No closed tabs
+              No history
             </div>
             <button
-              v-for="(entry, idx) in closedTabs"
-              :key="idx"
+              v-for="entry in historyEntries"
+              :key="entry.id"
               class="more-menu-item more-menu-history-item"
-              :title="entry.url"
-              @click="onRestoreClosedTab(idx)"
+              :title="entry.url || entry.title"
+              @click="onOpenHistoryEntry(entry)"
             >
-              <img
-                v-if="entry.favicon"
-                :src="entry.favicon"
-                class="more-menu-favicon"
-                alt=""
-              >
-              <span class="more-menu-history-label">{{ entry.title || entry.url }}</span>
-              <span class="more-menu-history-time">{{ formatTimeAgo(entry.closedAt) }}</span>
+              <span class="more-menu-history-label">{{ entry.type === 'chat' ? '💬' : '🌐' }} {{ entry.title || entry.url || 'Untitled' }}</span>
+              <span class="more-menu-history-time">{{ formatTimeAgo(new Date(entry.last_active_at || entry.created_at).getTime()) }}</span>
             </button>
-            <template v-if="closedTabs.length > 0">
+            <template v-if="historyEntries.length > 0">
               <div class="more-menu-separator" />
               <button
-                class="more-menu-item more-menu-clear"
-                @click="clearClosedTabs(); isHistorySubmenuOpen = false; isMoreMenuOpen = false"
+                class="more-menu-item"
+                @click="onOpenHistoryTab()"
               >
-                Clear History
+                Show All History
               </button>
             </template>
           </div>
@@ -566,10 +560,22 @@ import { useRoute, useRouter } from 'vue-router';
 import { getExtensionService } from '@pkg/agent';
 import { getAgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+interface HistoryRecord {
+  id:             string;
+  type:           string;
+  title:          string;
+  url?:           string;
+  tab_id?:        string;
+  status:         string;
+  created_at:     string;
+  last_active_at: string;
+}
 
 const extensionService = getExtensionService();
 const router = useRouter();
-const { tabs: browserTabs, closedTabs, tabOrder, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, clearClosedTabs, reorderTabs } = useBrowserTabs();
+const { tabs: browserTabs, closedTabs, tabOrder, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, reorderTabs } = useBrowserTabs();
 
 // Active assets from the agent persona service
 const personaRegistry = getAgentPersonaRegistry();
@@ -592,10 +598,21 @@ const route = useRoute();
 const isMobileMenuOpen = ref(false);
 const isMoreMenuOpen = ref(false);
 const isHistorySubmenuOpen = ref(false);
+const historyEntries = ref<HistoryRecord[]>([]);
 
-// Reset submenu when main menu closes
+// Reset submenu when main menu closes; load history when submenu opens
 watch(isMoreMenuOpen, (open) => {
   if (!open) isHistorySubmenuOpen.value = false;
+});
+
+watch(isHistorySubmenuOpen, async(open) => {
+  if (open) {
+    try {
+      historyEntries.value = await ipcRenderer.invoke('conversation-history:get-recent' as any, 25);
+    } catch {
+      historyEntries.value = [];
+    }
+  }
 });
 const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();
 const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark-nobg.png', import.meta.url).toString();
@@ -743,6 +760,26 @@ function onRestoreClosedTab(index: number) {
   if (tab) {
     router.push(`/Browser/${ tab.id }`);
   }
+}
+
+function onOpenHistoryEntry(entry: HistoryRecord) {
+  isMoreMenuOpen.value = false;
+  let tab;
+
+  if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
+    tab = createTab(entry.url);
+  } else {
+    tab = createTab('about:blank', { mode: 'chat' as BrowserTabMode });
+  }
+
+  router.push(`/Browser/${ tab.id }`);
+}
+
+function onOpenHistoryTab() {
+  isMoreMenuOpen.value = false;
+  const tab = createTab('about:blank', { mode: 'history' as BrowserTabMode });
+
+  router.push(`/Browser/${ tab.id }`);
 }
 
 function formatTimeAgo(ts: number): string {
