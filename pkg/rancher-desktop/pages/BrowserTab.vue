@@ -147,6 +147,12 @@
       </div>
     </template>
 
+    <template v-else-if="tabMode === 'account'">
+      <div class="flex-1 min-h-0 overflow-auto">
+        <MyAccount />
+      </div>
+    </template>
+
     <!-- Document mode: raw HTML rendered in Shadow DOM -->
     <template v-else-if="tabMode === 'document'">
       <div class="flex-1 min-h-0 overflow-auto bg-[#0d1117]">
@@ -194,6 +200,7 @@ import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
 import AccountEditor from './AccountEditor.vue';
 import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import PasswordGenerator from './PasswordGenerator.vue';
+import MyAccount from './MyAccount.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
@@ -218,6 +225,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   document:     'Document',
   secretary:    'Secretary',
   vault:        'Password Manager',
+  account:      'My Account',
 };
 
 const props = defineProps<{

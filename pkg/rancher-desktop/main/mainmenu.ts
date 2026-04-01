@@ -516,7 +516,7 @@ function getMacApplicationMenu(): MenuItem[] {
       submenu: [
         {
           label: 'My Account',
-          click: () => sendAgentCommand('open-tab', { mode: 'vault' }),
+          click: () => sendAgentCommand('open-tab', { mode: 'account' }),
         },
         { type: 'separator' },
         {
