@@ -457,7 +457,7 @@ export class Tray {
 
     // Lock all items except quit and help when vault is locked (user logged out)
     if (!this.userLoggedIn) {
-      const alwaysEnabled = new Set(['quit', 'help']);
+      const alwaysEnabled = new Set(['quit', 'help', 'main']);
       this.contextMenuItems.forEach((item) => {
         if (item.id && !alwaysEnabled.has(item.id)) {
           item.enabled = false;
