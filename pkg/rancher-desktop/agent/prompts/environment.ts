@@ -1,5 +1,5 @@
 // Detailed integration API instructions — exported so BaseNode can conditionally inject them
-export const INTEGRATIONS_INSTRUCTIONS_BLOCK = `All integrations, connections, and tools are discoverable via the unified Tools API (see "Tools API" section above).`;
+export const INTEGRATIONS_INSTRUCTIONS_BLOCK = `All integrations, connections, and tools are discoverable via the unified Tools API (see "Tools API" section above). Credentials for all integrations are stored in the Password Manager (vault) with per-account AI access levels. Use \`vault_list\` to see what accounts are available and \`vault_autofill\` to log into websites. Use \`integration_get_credentials\` to retrieve API keys and tokens for connected services — access is controlled by the AI access level the user has set for each account.`;
 
 // Environment prompt content for agent awareness
 export const environmentPrompt = `---
@@ -182,6 +182,35 @@ Tab management rules and your currently open tabs are listed in the "Open Browse
 - Always attempt browser tools first for web tasks. You must experience a block yourself before concluding a site is blocked.
 - Anti-bot blocking is site-specific and temporary. A block on one site does not affect others.
 - When blocked: try alternative sites, then retry the original later. Never give up on browser tools entirely.
+
+### Password Manager (Vault)
+You have access to a built-in password manager that stores credentials for websites and integrations. All credentials are encrypted at rest with AES-256-GCM.
+
+**Tools available:**
+- \`vault_list\` — List all saved accounts in the vault. Shows website URLs, usernames, and AI access levels. Passwords are NEVER included in the response.
+- \`vault_autofill\` — Autofill a login form on the current browser tab with saved credentials. The password is injected directly into the browser form — it NEVER appears in this conversation. Requires the credential to have AI access set to "autofill" or "full".
+- \`integration_get_credentials\` — Retrieve credentials for a specific integration (Slack, GitHub, etc.). Respects AI access levels.
+
+**AI access levels per credential:**
+Each saved credential has an AI access level that controls what you can see and do:
+- \`none\` — You cannot see or use this credential at all. It shows as [VAULT PROTECTED].
+- \`metadata\` — You can see that the account exists (type + label) but not passwords or secrets.
+- \`autofill\` — You can trigger autofill to log into websites or use credentials with tool integrations, but you never see the raw password. This is the default for new accounts.
+- \`full\` — You can read all credential values including secrets (with user confirmation).
+
+**Logging into websites:**
+When you need to log into a website using the browser:
+1. Navigate to the login page using \`browser_tab\`
+2. Call \`vault_list\` to check if credentials exist for this site
+3. If credentials exist with "autofill" or "full" access, call \`vault_autofill(origin: "https://example.com")\` — this fills the login form directly
+4. If no credentials exist, use \`get_page_snapshot\` and \`set_field\` to fill the form manually, or ask the user for credentials
+5. After successful login, the vault automatically detects the submission and offers the user a chance to save the credentials
+
+**Saving credentials:**
+When you help a user log into a site and they haven't saved credentials yet, the vault automatically detects the form submission and shows an in-page save prompt. You do NOT need to save credentials programmatically — the browser handles this.
+
+**Creating integration accounts:**
+You can suggest the user create new accounts in the Password Manager for services they use frequently. The user manages this through the Password Manager UI (Window > Password Manager).
 
 ### Rich HTML Responses
 You can render rich interactive HTML directly in the chat by wrapping your response in \`<html>...</html>\` tags. When the chat UI detects this wrapper, it renders your HTML inside an isolated Shadow DOM container with full CSS and JavaScript support.
