@@ -606,8 +606,9 @@ function getHistoryMenu(): MenuItem {
     submenu.push({ label: 'Today', enabled: false });
     for (const entry of todayEntries.slice(0, 10)) {
       submenu.push({
-        label: historyEntryLabel(entry),
-        click: historyEntryClick(entry),
+        label:   historyEntryLabel(entry),
+        enabled: userLoggedIn,
+        click:   historyEntryClick(entry),
       });
     }
     submenu.push({ type: 'separator' });
@@ -618,8 +619,9 @@ function getHistoryMenu(): MenuItem {
     submenu.push({ label: 'Yesterday', enabled: false });
     for (const entry of yesterdayEntries.slice(0, 10)) {
       submenu.push({
-        label: historyEntryLabel(entry),
-        click: historyEntryClick(entry),
+        label:   historyEntryLabel(entry),
+        enabled: userLoggedIn,
+        click:   historyEntryClick(entry),
       });
     }
     submenu.push({ type: 'separator' });
@@ -629,9 +631,11 @@ function getHistoryMenu(): MenuItem {
   if (last7DaysEntries.length > 0) {
     submenu.push({
       label:   'Last 7 Days',
+      enabled: userLoggedIn,
       submenu: last7DaysEntries.slice(0, 20).map(entry => ({
-        label: historyEntryLabel(entry),
-        click: historyEntryClick(entry),
+        label:   historyEntryLabel(entry),
+        enabled: userLoggedIn,
+        click:   historyEntryClick(entry),
       })),
     });
     submenu.push({ type: 'separator' });
@@ -640,6 +644,7 @@ function getHistoryMenu(): MenuItem {
   // Clear History submenu
   submenu.push({
     label:   'Clear History...',
+    enabled: userLoggedIn,
     submenu: [
       {
         label:   'Clear Last Hour',
