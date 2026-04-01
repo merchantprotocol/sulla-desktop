@@ -1039,29 +1039,32 @@ export function buildGuestBridgeScript(): string {
 
     // ── Save toast (after form submit) ──
 
-    function showSaveToast(origin, username, password) {
+    function showSaveToast(origin, username, action) {
       removeSaveToast();
       injectStyles();
+      action = action || 'Save';
 
       var toast = document.createElement('div');
       toast.id = TOAST_ID;
       toast.innerHTML =
-        '<div class="sulla-toast-text">Save password for <strong>' + escapeHtml(username) + '</strong> on ' + escapeHtml(origin.replace(/^https?:\\/\\//, '')) + '?</div>' +
-        '<button class="sulla-toast-save" type="button">Save</button>' +
+        '<div class="sulla-toast-text">' + action + ' password for <strong>' + escapeHtml(username) + '</strong> on ' + escapeHtml(origin.replace(/^https?:\\/\\//, '')) + '?</div>' +
+        '<button class="sulla-toast-save" type="button">' + action + '</button>' +
         '<button class="sulla-toast-dismiss" type="button">Dismiss</button>';
 
       toast.querySelector('.sulla-toast-save').addEventListener('click', function() {
         emitToHost('sulla:vault:credentialsCaptured', {
           origin: origin, url: location.href,
-          username: username, password: password,
+          username: username,
           title: document.title, timestamp: Date.now(),
         });
         removeSaveToast();
       });
-      toast.querySelector('.sulla-toast-dismiss').addEventListener('click', removeSaveToast);
+      toast.querySelector('.sulla-toast-dismiss').addEventListener('click', function() {
+        emitToHost('sulla:vault:credentialsDismissed', { timestamp: Date.now() });
+        removeSaveToast();
+      });
       document.body.appendChild(toast);
-      // Auto-dismiss after 15s
-      setTimeout(removeSaveToast, 15000);
+      // No auto-dismiss — main process manages the 90s lifetime
     }
 
     function removeSaveToast() {
@@ -1073,6 +1076,10 @@ export function buildGuestBridgeScript(): string {
 
     // The host populates this array via executeJavaScript when it finds matches
     window.__sullaVaultAccounts = [];
+    window.__sullaVaultShowPendingSaveToast = function(origin, username, action) {
+      showSaveToast(origin, username, action);
+    };
+
     window.__sullaVaultSetAccounts = function(accounts) {
       vaultAccounts = accounts || [];
       window.__sullaVaultAccounts = vaultAccounts;
@@ -1128,7 +1135,13 @@ export function buildGuestBridgeScript(): string {
       if (!username || !password) return;
 
       captured = true;
-      showSaveToast(location.origin, username, password);
+      // Send credentials to main process for persistent storage across navigations.
+      // The main process will push back the save toast (and re-push on navigation).
+      emitToHost('sulla:vault:credentialsPending', {
+        origin: location.origin, url: location.href,
+        username: username, password: password,
+        title: document.title, timestamp: Date.now(),
+      });
       setTimeout(function() { captured = false; }, 5000);
     }
 
@@ -1199,7 +1212,7 @@ export function buildGuestBridgeScript(): string {
         currentLoginForm = null;
         vaultAccounts = [];
         removeDropdown();
-        removeSaveToast();
+        // Do NOT removeSaveToast — main process manages toast lifetime across navigations
         setTimeout(checkForLoginForm, 1000);
       }
     }, 500);
