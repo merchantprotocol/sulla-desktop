@@ -16,67 +16,132 @@ SOCKET="/tmp/sulla-tools.sock"
 FIRST="$1"
 BODY="$2"
 
-if [ -z "$FIRST" ]; then
-  echo 'Usage:' >&2
-  echo '  sulla <account_id>/<slug> '"'"'<json>'"'"'        # proxy call' >&2
-  echo '  sulla <category>/<tool> '"'"'<json>'"'"'           # tool call' >&2
-  echo '  sulla <account>/mcp/<tool> '"'"'<json>'"'"'        # MCP tool' >&2
-  echo '  sulla <tool_name> '"'"'<json>'"'"'                 # bare tool' >&2
-  exit 2
-fi
-
-if [ -z "$BODY" ]; then
-  BODY='{}'
-fi
-
 # Known internal tool categories
 TOOL_CATEGORIES="meta|docker|github|playwright|chrome|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|skills|workflow|computer-use"
 
-case "$FIRST" in
-  */mcp/*)
-    # MCP tool: account_id/mcp/tool_name
-    ACCOUNT="${FIRST%%/mcp/*}"
-    TOOL="${FIRST##*/mcp/}"
-    URL="/v1/tools/${ACCOUNT}/mcp/${TOOL}/call"
-    ;;
-  */*)
-    # Has a slash — check if it's a tool category or a proxy call
-    PART1="${FIRST%%/*}"
-    PART2="${FIRST#*/}"
-    if echo "$PART1" | grep -qE "^($TOOL_CATEGORIES)$"; then
-      # Tool call: category/tool_name
-      URL="/v1/tools/internal/${PART1}/${PART2}/call"
-    else
-      # Proxy call: account_id/slug
-      URL="/v1/proxy/${PART1}/${PART2}"
-    fi
-    ;;
-  *)
-    # Bare tool name — route as internal with integrations as default slug
-    URL="/v1/tools/internal/integrations/${FIRST}/call"
-    ;;
-esac
+# ── Help & discovery ─────────────────────────────────────────────
+# sulla --help | sulla -h | sulla help | sulla (no args)
+if [ -z "$FIRST" ] || [ "$FIRST" = "--help" ] || [ "$FIRST" = "-h" ] || [ "$FIRST" = "help" ]; then
+  cat <<'HELP'
+sulla — unified CLI for Sulla Desktop
 
-if [ -S "$SOCKET" ]; then
-  if [ -n "$SULLA_API_TOKEN" ]; then
-    exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $SULLA_API_TOKEN" \
-      -d "$BODY"
+Usage:
+  sulla <category>/<tool> '<json>'           # tool call
+  sulla <account_id>/<slug> '<json>'         # proxy call
+  sulla <account>/mcp/<tool> '<json>'        # MCP tool
+  sulla <tool_name> '<json>'                 # bare tool
+
+Flags:
+  --help, -h    Show this help or category-specific help
+
+Categories:
+  meta              Tools for browsing available tools, installing skills, and meta management
+  bridge            Bidirectional communication bridge between heartbeat and frontend
+  browser           Web search tools (Brave, DuckDuckGo)
+  calendar          Calendar event management
+  chrome            Browser extension-style APIs — history, notifications, storage, cookies
+  computer-use      Visual computer use — screenshot-based interaction
+  docker            Docker container management
+  extensions        Extension marketplace — browse, install, uninstall Docker Compose stacks
+  fs                File system operations
+  github            GitHub repository management
+  kubectl           Kubernetes cluster management
+  lima              Lima VM instance management
+  pg                PostgreSQL database queries
+  playwright        Browser automation suite — DOM tools, visual tools, exec_in_page
+  rdctl             Sulla Desktop / rdctl management commands
+  redis             Redis key/value store operations
+  skills            Search, load, and create reusable skill files
+  slack             Slack messaging and reactions
+  vault             Credential vault — list accounts, read/set secrets
+  workspace         Workspace folder management
+
+Run "sulla <category> --help" to see tools in a category.
+Run "sulla vault/list_accounts '{}'" to discover proxy accounts.
+HELP
+  exit 0
+# sulla <category> --help  (e.g. sulla bridge --help)
+elif [ "$BODY" = "--help" ] || [ "$BODY" = "-h" ]; then
+  METHOD="GET"
+  URL="/v1/tools/help/${FIRST}"
+  BODY=""
+else
+  METHOD="POST"
+
+  if [ -z "$BODY" ]; then
+    BODY='{}'
+  fi
+
+  case "$FIRST" in
+    */mcp/*)
+      # MCP tool: account_id/mcp/tool_name
+      ACCOUNT="${FIRST%%/mcp/*}"
+      TOOL="${FIRST##*/mcp/}"
+      URL="/v1/tools/${ACCOUNT}/mcp/${TOOL}/call"
+      ;;
+    */*)
+      # Has a slash — check if it's a tool category or a proxy call
+      PART1="${FIRST%%/*}"
+      PART2="${FIRST#*/}"
+      if echo "$PART1" | grep -qE "^($TOOL_CATEGORIES)$"; then
+        # Tool call: category/tool_name
+        URL="/v1/tools/internal/${PART1}/${PART2}/call"
+      else
+        # Proxy call: account_id/slug
+        URL="/v1/proxy/${PART1}/${PART2}"
+      fi
+      ;;
+    *)
+      # Bare name with no slash — check if it's a category (→ help) or a bare tool
+      if echo "$FIRST" | grep -qE "^($TOOL_CATEGORIES)$"; then
+        METHOD="GET"
+        URL="/v1/tools/help/${FIRST}"
+        BODY=""
+      else
+        # Bare tool name — route as internal with integrations as default slug
+        URL="/v1/tools/internal/integrations/${FIRST}/call"
+      fi
+      ;;
+  esac
+fi
+
+# ── Execute ──────────────────────────────────────────────────────
+if [ "$METHOD" = "GET" ]; then
+  if [ -S "$SOCKET" ]; then
+    if [ -n "$SULLA_API_TOKEN" ]; then
+      exec curl -s --unix-socket "$SOCKET" -H "Authorization: Bearer $SULLA_API_TOKEN" "http://localhost${URL}"
+    else
+      exec curl -s --unix-socket "$SOCKET" "http://localhost${URL}"
+    fi
   else
-    exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
-      -H "Content-Type: application/json" \
-      -d "$BODY"
+    if [ -n "$SULLA_API_TOKEN" ]; then
+      exec curl -s -H "Authorization: Bearer $SULLA_API_TOKEN" "http://host.docker.internal:3000${URL}"
+    else
+      exec curl -s "http://host.docker.internal:3000${URL}"
+    fi
   fi
 else
-  if [ -n "$SULLA_API_TOKEN" ]; then
-    exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $SULLA_API_TOKEN" \
-      -d "$BODY"
+  if [ -S "$SOCKET" ]; then
+    if [ -n "$SULLA_API_TOKEN" ]; then
+      exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $SULLA_API_TOKEN" \
+        -d "$BODY"
+    else
+      exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
+        -H "Content-Type: application/json" \
+        -d "$BODY"
+    fi
   else
-    exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
-      -H "Content-Type: application/json" \
-      -d "$BODY"
+    if [ -n "$SULLA_API_TOKEN" ]; then
+      exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $SULLA_API_TOKEN" \
+        -d "$BODY"
+    else
+      exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
+        -H "Content-Type: application/json" \
+        -d "$BODY"
+    fi
   fi
 fi
