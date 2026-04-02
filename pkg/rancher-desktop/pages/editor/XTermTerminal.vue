@@ -205,4 +205,8 @@ export default defineComponent({
   background-color: var(--bg-surface) !important;
   color: #f1f5f9;
 }
+
+.terminal-wrapper :deep(.xterm-scrollable-element .xterm-rows) {
+  color: #b2bcb6;
+}
 </style>

@@ -153,8 +153,15 @@ export class SubconsciousAgentNode extends BaseNode {
     }
 
     // Close thinking bubble before tool cards so thinking appears between them.
-    // file_search and read_file render as thinking (not cards), so skip those.
-    const THINKING_TOOLS = new Set(['file_search', 'read_file']);
+    // file_search, read_file, and memory tools render as thinking (not cards), so skip those.
+    const THINKING_TOOLS = new Set([
+      'file_search', 'read_file',
+      'add_observational_memory', 'remove_observational_memory',
+      'vault_list', 'search_conversations',
+      'search_history', 'github_read_file', 'get_human_presence', 'list_tabs',
+      'check_agent_jobs', 'github_get_issue', 'github_get_issues',
+      'github_list_branches', 'git_log',
+    ]);
     const hasCardToolCalls = (reply.metadata.tool_calls || []).some((tc: any) => !THINKING_TOOLS.has(tc.name));
     if (hasCardToolCalls) {
       await this.emitThinkingComplete(state);

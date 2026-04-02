@@ -43,7 +43,7 @@ export class VaultListWorker extends BaseTool {
         responseString += `- ${ acct.label } (${ acct.account_id }): ${ url } — ${ username } [AI access: ${ llmAccess }]\n`;
       }
 
-      responseString += `\nUse vault_autofill to fill login forms on websites where AI access is "autofill" or "full".`;
+      responseString += `\nUse vault/autofill to fill login forms on websites where AI access is "autofill" or "full".`;
 
       return {
         successBoolean: true,

@@ -11,12 +11,12 @@ export class IntegrationSetCredentialWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { integration_slug, property, value, account_id } = input;
+    const { account_type, property, value, account_id } = input;
 
-    if (!integration_slug || !property || value == null) {
+    if (!account_type || !property || value == null) {
       return {
         successBoolean: false,
-        responseString: 'integration_slug, property, and value are all required.',
+        responseString: 'account_type, property, and value are all required.',
       };
     }
 
@@ -25,7 +25,7 @@ export class IntegrationSetCredentialWorker extends BaseTool {
       await service.initialize();
 
       await service.setIntegrationValue({
-        integration_id: integration_slug,
+        integration_id: account_type,
         account_id:     account_id || undefined,
         property,
         value:          String(value),
@@ -34,12 +34,12 @@ export class IntegrationSetCredentialWorker extends BaseTool {
       // Mark the integration as connected if we're setting a credential
       const credentialProperties = ['bearer_token', 'api_key', 'access_token', 'password'];
       if (credentialProperties.includes(property)) {
-        await service.setConnectionStatus(integration_slug, true, account_id || undefined);
+        await service.setConnectionStatus(account_type, true, account_id || undefined);
       }
 
       return {
         successBoolean: true,
-        responseString: `Credential "${ property }" saved for integration "${ integration_slug }"${ account_id ? ` (account: ${ account_id })` : '' }. The value is now encrypted in the vault.`,
+        responseString: `Credential "${ property }" saved for integration "${ account_type }"${ account_id ? ` (account: ${ account_id })` : '' }. The value is now encrypted in the vault.`,
       };
     } catch (error) {
       return {

@@ -467,17 +467,20 @@ const formatters: Record<string, Formatter> = {
   integration_list() {
     return { label: 'Integrations', summary: 'Listing integrations' };
   },
-  integration_is_enabled(args) {
-    return { label: 'Integrations', summary: `Checking ${ str(args.integration_slug) }` };
+  vault_is_enabled(args) {
+    return { label: 'Vault', summary: `Checking ${ str(args.account_type) }` };
   },
-  integration_get_credentials(args) {
-    return { label: 'Integrations', summary: `Getting credentials for ${ str(args.integration_slug) }` };
+  vault_read_secrets(args) {
+    return { label: 'Vault', summary: `Reading credentials for ${ str(args.account_type) }` };
   },
-  list_integration_accounts(args) {
-    return { label: 'Integrations', summary: `Listing accounts for ${ str(args.integration_slug) }` };
+  vault_list_accounts(args) {
+    return { label: 'Vault', summary: `Listing accounts for ${ str(args.account_type) }` };
   },
-  set_active_integration_account(args) {
-    return { label: 'Integrations', summary: `Setting active account for ${ str(args.integration_slug) }` };
+  vault_set_active_account(args) {
+    return { label: 'Vault', summary: `Setting active account for ${ str(args.account_type) }` };
+  },
+  vault_set_credential(args) {
+    return { label: 'Vault', summary: `Saving credential for ${ str(args.account_type) }` };
   },
 
   // ── Kubectl ──────────────────────────────────────────────────────────────

@@ -44,14 +44,39 @@
                 :is-dark="isDark"
               />
 
+              <!-- ── Compact Inline Thinking (DNA Helix) ── -->
               <div
                 v-else-if="m.kind === 'thinking'"
-                class="thinking-bubble max-w-[min(760px,92%)]"
-                :class="{ 'thinking-expanded': expandedThinking.has(m.id), 'thinking-completed': !!(m as any)._completed }"
+                class="thinking-inline"
+                :class="{
+                  completed: !!(m as any)._completed && !expandedThinking.has(m.id),
+                  expanded:  !!(m as any)._completed && expandedThinking.has(m.id),
+                }"
                 @click="toggleThinking(m.id)"
               >
-                <div class="thinking-bubble-inner" :ref="el => scrollThinkingToBottom(el)">
-                  <div class="thinking-bubble-content text-xs text-content-muted italic" v-html="renderMarkdown(m.content)" />
+                <div v-if="!(m as any)._completed" class="ti-helix-col">
+                  <div class="helix-container">
+                    <div class="helix-dot t1" /><div class="helix-dot t2" /><div class="helix-dot t3" /><div class="helix-dot t4" /><div class="helix-dot t5" />
+                    <div class="helix-dot b1" /><div class="helix-dot b2" /><div class="helix-dot b3" /><div class="helix-dot b4" /><div class="helix-dot b5" />
+                    <div class="helix-rung" /><div class="helix-rung" /><div class="helix-rung" /><div class="helix-rung" /><div class="helix-rung" />
+                  </div>
+                  <div class="ti-stem" />
+                  <div class="ti-elapsed">{{ thinkingElapsed(m) }}</div>
+                </div>
+                <div class="ti-content">
+                  <div class="ti-label">{{ (m as any)._completed ? `Synthesized in ${ thinkingElapsed(m) }` : 'Synthesizing' }}</div>
+                  <div class="ti-stream">
+                    <div class="ti-stream-inner" :ref="el => scrollThinkingToBottom(el)">
+                      <div
+                        v-for="(line, idx) in splitThinkingLines(m.content)"
+                        :key="idx"
+                        class="ti-thought"
+                      >
+                        <span class="ti-thought-num">{{ String(idx + 1).padStart(2, '0') }}</span>
+                        <span v-html="renderMarkdown(line)" />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -469,6 +494,52 @@ const displayMessages = computed(() => {
 });
 
 const expandedThinking = ref(new Set<string>());
+const thinkingStartTimes = new Map<string, number>();
+const thinkingFinalTimes = new Map<string, string>();
+const thinkingTick = ref(0);
+
+/** Reactive tick that drives the live elapsed counter — fires every 100ms */
+let _thinkingTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureThinkingTimer() {
+  if (!_thinkingTimer) {
+    _thinkingTimer = setInterval(() => { thinkingTick.value++; }, 100);
+  }
+}
+
+/** Split thinking content into individual lines for card rendering */
+const splitThinkingLines = (content: string): string[] => {
+  if (!content) return [];
+  return content
+    .split(/\n+/)
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+};
+
+const thinkingElapsed = (m: any): string => {
+  if (!thinkingStartTimes.has(m.id)) {
+    thinkingStartTimes.set(m.id, Date.now());
+    ensureThinkingTimer();
+  }
+  // Once completed, freeze the final time
+  if (m._completed) {
+    if (!thinkingFinalTimes.has(m.id)) {
+      const elapsed = ((Date.now() - thinkingStartTimes.get(m.id)!) / 1000).toFixed(1);
+      thinkingFinalTimes.set(m.id, `${ elapsed }s`);
+    }
+    return thinkingFinalTimes.get(m.id)!;
+  }
+  // Live counter — thinkingTick dependency makes this reactive
+  void thinkingTick.value;
+  return `${ ((Date.now() - thinkingStartTimes.get(m.id)!) / 1000).toFixed(1) }s`;
+};
+
+onUnmounted(() => {
+  if (_thinkingTimer) {
+    clearInterval(_thinkingTimer);
+    _thinkingTimer = null;
+  }
+});
 
 const toggleThinking = (id: string) => {
   const next = new Set(expandedThinking.value);
@@ -705,64 +776,210 @@ onUnmounted(() => {
   50% { opacity: 0; }
 }
 
-/* ── Thinking bubble ── */
-.thinking-bubble {
+/* ── DNA Helix ── */
+.helix-container {
+  width: 40px;
+  height: 28px;
   position: relative;
-  max-height: 60px;
-  overflow: hidden;
-  transition: max-height 0.3s ease;
+  flex-shrink: 0;
+}
+
+.helix-dot {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-primary, #5096b3);
+}
+
+.helix-dot.t1 { animation: helixTop 1.6s ease-in-out infinite 0s; left: 2px; }
+.helix-dot.t2 { animation: helixTop 1.6s ease-in-out infinite 0.2s; left: 10px; }
+.helix-dot.t3 { animation: helixTop 1.6s ease-in-out infinite 0.4s; left: 18px; }
+.helix-dot.t4 { animation: helixTop 1.6s ease-in-out infinite 0.6s; left: 26px; }
+.helix-dot.t5 { animation: helixTop 1.6s ease-in-out infinite 0.8s; left: 34px; }
+
+.helix-dot.b1 { animation: helixBot 1.6s ease-in-out infinite 0s; left: 2px; }
+.helix-dot.b2 { animation: helixBot 1.6s ease-in-out infinite 0.2s; left: 10px; }
+.helix-dot.b3 { animation: helixBot 1.6s ease-in-out infinite 0.4s; left: 18px; }
+.helix-dot.b4 { animation: helixBot 1.6s ease-in-out infinite 0.6s; left: 26px; }
+.helix-dot.b5 { animation: helixBot 1.6s ease-in-out infinite 0.8s; left: 34px; }
+
+@keyframes helixTop {
+  0%, 100% { top: 2px;  opacity: 1;   transform: scale(1); }
+  50%      { top: 20px; opacity: 0.3; transform: scale(0.6); }
+}
+
+@keyframes helixBot {
+  0%, 100% { top: 20px; opacity: 0.3; transform: scale(0.6); }
+  50%      { top: 2px;  opacity: 1;   transform: scale(1); }
+}
+
+.helix-rung {
+  position: absolute;
+  width: 1px;
+  background: rgba(80, 150, 179, 0.15);
+  top: 6px;
+  height: 16px;
+  animation: rungPulse 1.6s ease-in-out infinite;
+}
+.helix-rung:nth-child(11) { left: 4px;  animation-delay: 0s; }
+.helix-rung:nth-child(12) { left: 12px; animation-delay: 0.2s; }
+.helix-rung:nth-child(13) { left: 20px; animation-delay: 0.4s; }
+.helix-rung:nth-child(14) { left: 28px; animation-delay: 0.6s; }
+.helix-rung:nth-child(15) { left: 36px; animation-delay: 0.8s; }
+
+@keyframes rungPulse {
+  0%, 100% { opacity: 0.15; }
+  25%, 75% { opacity: 0.4; }
+  50%      { opacity: 0.15; }
+}
+
+/* ── Compact Inline Thinking ── */
+.thinking-inline {
+  display: flex;
+  gap: 14px;
+  padding: 0;
+  align-items: flex-start;
   cursor: pointer;
 }
 
-.thinking-bubble.thinking-expanded {
-  max-height: none;
+.ti-helix-col {
+  padding-top: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
 }
 
-.thinking-bubble.thinking-completed:not(.thinking-expanded) {
-  max-height: 32px;
-  opacity: 0.6;
+.ti-stem {
+  width: 1px;
+  flex: 1;
+  min-height: 20px;
+  background: rgba(80, 150, 179, 0.1);
+  animation: stemPulse 2s ease-in-out infinite;
 }
 
-.thinking-bubble-inner {
+@keyframes stemPulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 0.8; }
+}
+
+.ti-elapsed {
+  font-size: 9px;
+  color: rgba(80, 150, 179, 0.35);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ti-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.ti-label {
+  font-size: 12px;
+  color: var(--accent-primary, #5096b3);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+/* Scrolling thought stream */
+.ti-stream {
+  position: relative;
+  max-height: 110px;
+  overflow: hidden;
+}
+
+.ti-stream::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  background: linear-gradient(to bottom, var(--bg-page, #0d1117), transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.ti-stream::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 24px;
+  background: linear-gradient(to top, var(--bg-page, #0d1117), transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.ti-stream-inner {
   max-height: inherit;
   overflow-y: auto;
   scrollbar-width: none;
 }
 
-.thinking-bubble-inner::-webkit-scrollbar {
+.ti-stream-inner::-webkit-scrollbar {
   display: none;
 }
 
-.thinking-bubble:not(.thinking-expanded)::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 24px;
-  pointer-events: none;
-  z-index: 1;
-  background: linear-gradient(to top, color-mix(in srgb, var(--bg-page) 95%, transparent), transparent);
+.ti-thought {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, rgba(230, 237, 243, 0.35));
+  font-style: italic;
+  border-left: 2px solid rgba(80, 150, 179, 0.12);
+  border-radius: 0 4px 4px 0;
+  background: rgba(80, 150, 179, 0.03);
 }
 
-.thinking-toggle {
-  display: block;
+.ti-thought-num {
+  color: rgba(80, 150, 179, 0.3);
   font-size: 10px;
-  color: var(--text-dim, #666);
-  cursor: pointer;
-  border: none;
-  background: none;
-  padding: 2px 0;
-  opacity: 0.7;
+  font-style: normal;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
-.thinking-toggle:hover {
-  opacity: 1;
-}
-
-.thinking-bubble-content :deep(p) {
+.ti-thought :deep(p) {
   margin: 0;
+  display: inline;
 }
+
+/* ── Completed (collapsed) ── */
+.thinking-inline.completed {
+  align-items: center;
+  transition: opacity 0.3s;
+}
+
+.thinking-inline.completed .ti-stream { display: none; }
+.thinking-inline.completed .ti-stem { display: none; }
+.thinking-inline.completed .ti-elapsed { display: none; }
+.thinking-inline.completed .ti-label {
+  color: rgba(80, 150, 179, 0.4);
+  margin-bottom: 0;
+}
+.thinking-inline.completed:hover .ti-label { color: rgba(80, 150, 179, 0.55); }
+
+/* ── Expanded (completed + clicked open) ── */
+.thinking-inline.expanded {
+  align-items: flex-start;
+}
+
+.thinking-inline.expanded .ti-stream {
+  max-height: none;
+}
+.thinking-inline.expanded .ti-stream::before,
+.thinking-inline.expanded .ti-stream::after { display: none; }
+.thinking-inline.expanded .ti-thought { color: var(--text-muted, rgba(230, 237, 243, 0.45)); }
+.thinking-inline.expanded .ti-stem { animation: none; opacity: 0.2; }
+.thinking-inline.expanded .ti-label { color: rgba(80, 150, 179, 0.4); }
 
 /* Tool card styles are in ChatToolCard.vue */
 

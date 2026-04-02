@@ -12,7 +12,7 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
   name = '';
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { integration_slug, include_secrets } = input;
+    const { account_type, include_secrets } = input;
 
     try {
       const service = getIntegrationService();
@@ -27,22 +27,22 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
         mergedIntegrations[extInt.id] = extInt;
       }
 
-      const catalogEntry = mergedIntegrations[integration_slug];
+      const catalogEntry = mergedIntegrations[account_type];
       if (!catalogEntry) {
         return {
           successBoolean: false,
-          responseString: `Integration "${ integration_slug }" not found in the catalog. Available integrations: ${ Object.keys(mergedIntegrations).join(', ') }`,
+          responseString: `Integration "${ account_type }" not found in the catalog. Available integrations: ${ Object.keys(mergedIntegrations).join(', ') }`,
         };
       }
 
       await service.initialize();
 
       // List all accounts for this integration
-      const accounts = await service.getAccounts(integration_slug);
+      const accounts = await service.getAccounts(account_type);
       const catalogProperties = catalogEntry.properties ?? [];
       const secretKeys = new Set(catalogProperties.filter(p => p.type === 'password').map(p => p.key));
 
-      let responseString = `Integration: ${ integration_slug } (${ catalogEntry.name })\n`;
+      let responseString = `Integration: ${ account_type } (${ catalogEntry.name })\n`;
 
       if (accounts.length === 0) {
         responseString += `No accounts configured.\n\nExpected credentials:\n`;
@@ -59,8 +59,8 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
       responseString += `Accounts: ${ accounts.length }\n\n`;
 
       for (const acct of accounts) {
-        const status = await service.getConnectionStatus(integration_slug, acct.account_id);
-        const formValues = await service.getFormValues(integration_slug, acct.account_id);
+        const status = await service.getConnectionStatus(account_type, acct.account_id);
+        const formValues = await service.getFormValues(account_type, acct.account_id);
 
         // Build a map of property key -> stored value
         const storedValues: Record<string, string> = {};
@@ -107,7 +107,7 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
             } else if (llmAccess === 'autofill') {
               // Autofill: same as metadata — agent can trigger autofill but not see passwords
               if (secretKeys.has(prop.key)) {
-                displayValue = '[VAULT PROTECTED — use vault_autofill tool to fill this]';
+                displayValue = '[VAULT PROTECTED — use vault/autofill tool to fill this]';
               } else {
                 displayValue = raw;
               }
@@ -124,7 +124,7 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
         responseString += `\n`;
       }
 
-      responseString += `Use set_active_integration_account to change which account is the default.`;
+      responseString += `Use vault/set_active_account to change which account is the default.`;
 
       return {
         successBoolean: true,

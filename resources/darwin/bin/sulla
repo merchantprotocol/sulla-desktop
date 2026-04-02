@@ -1,29 +1,46 @@
 #!/bin/sh
-# sulla — fast CLI for the Sulla proxy
-# Connects to the local daemon socket or falls back to direct TCP
+# sulla — unified CLI for Sulla Desktop
+#
+# Proxy call:    sulla <account_id>/<slug> '<json>'     (has / in first arg, not internal)
+# Tool call:     sulla <category>/<tool> '<json>'        (category is a known tool category)
+# Tool call:     sulla <tool_name> '<json>'              (bare name, searches all categories)
 
 SOCKET="/tmp/sulla-tools.sock"
-ACCOUNT_SLUG="$1"
+FIRST="$1"
 BODY="$2"
 
-if [ -z "$ACCOUNT_SLUG" ]; then
-  echo 'Usage: sulla <account_id>/<slug> '"'"'<json_body>'"'"'' >&2
+if [ -z "$FIRST" ]; then
+  echo 'Usage:' >&2
+  echo '  sulla <account_id>/<slug> '"'"'<json>'"'"'   # proxy call' >&2
+  echo '  sulla <tool_name> '"'"'<json>'"'"'            # tool call' >&2
   exit 2
 fi
-
-ACCOUNT_ID="${ACCOUNT_SLUG%%/*}"
-SLUG="${ACCOUNT_SLUG#*/}"
-
-if [ -z "$SLUG" ] || [ "$SLUG" = "$ACCOUNT_ID" ]; then
-  echo "Error: Expected <account_id>/<slug> format, got \"$ACCOUNT_SLUG\"" >&2
-  exit 2
-fi
-
-URL="/v1/proxy/${ACCOUNT_ID}/${SLUG}"
 
 if [ -z "$BODY" ]; then
   BODY='{}'
 fi
+
+# Known internal tool categories
+TOOL_CATEGORIES="meta|docker|github|playwright|chrome|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|skills|workflow|computer-use"
+
+case "$FIRST" in
+  */*)
+    # Has a slash — check if it's a tool category or a proxy call
+    PART1="${FIRST%%/*}"
+    PART2="${FIRST#*/}"
+    if echo "$PART1" | grep -qE "^($TOOL_CATEGORIES)$"; then
+      # Tool call: category/tool_name
+      URL="/v1/tools/internal/${PART1}/${PART2}/call"
+    else
+      # Proxy call: account_id/slug
+      URL="/v1/proxy/${PART1}/${PART2}"
+    fi
+    ;;
+  *)
+    # Bare tool name — route as internal with integrations as default slug
+    URL="/v1/tools/internal/integrations/${FIRST}/call"
+    ;;
+esac
 
 if [ -S "$SOCKET" ]; then
   exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \

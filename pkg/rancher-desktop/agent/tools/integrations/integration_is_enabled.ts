@@ -10,7 +10,7 @@ export class IntegrationIsEnabledWorker extends BaseTool {
   name = '';
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { integration_slug } = input;
+    const { account_type } = input;
 
     try {
       const service = getIntegrationService();
@@ -25,22 +25,22 @@ export class IntegrationIsEnabledWorker extends BaseTool {
         mergedIntegrations[extInt.id] = extInt;
       }
 
-      const catalogEntry = mergedIntegrations[integration_slug];
+      const catalogEntry = mergedIntegrations[account_type];
       if (!catalogEntry) {
         return {
           successBoolean: false,
-          responseString: `Integration "${ integration_slug }" not found in the catalog. Available integrations: ${ Object.keys(mergedIntegrations).join(', ') }`,
+          responseString: `Integration "${ account_type }" not found in the catalog. Available integrations: ${ Object.keys(mergedIntegrations).join(', ') }`,
         };
       }
 
       await service.initialize();
 
-      const anyConnected = await service.isAnyAccountConnected(integration_slug);
-      const accounts = await service.getAccounts(integration_slug);
-      const activeAccountId = await service.getActiveAccountId(integration_slug);
-      const status = await service.getConnectionStatus(integration_slug, activeAccountId);
+      const anyConnected = await service.isAnyAccountConnected(account_type);
+      const accounts = await service.getAccounts(account_type);
+      const activeAccountId = await service.getActiveAccountId(account_type);
+      const status = await service.getConnectionStatus(account_type, activeAccountId);
 
-      let responseString = `Integration: ${ integration_slug } (${ catalogEntry.name })
+      let responseString = `Integration: ${ account_type } (${ catalogEntry.name })
 Enabled: ${ anyConnected ? 'Yes' : 'No' }
 Active account: ${ activeAccountId }
 Connected at: ${ status.connected_at ? new Date(status.connected_at).toLocaleString() : 'Never' }

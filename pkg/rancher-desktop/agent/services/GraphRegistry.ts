@@ -27,11 +27,19 @@ const SUMMARIZER_TOOLS: string[] = [];
 
 /** Memory Recall: search files and read them to find relevant context */
 const MEMORY_RECALL_TOOLS: string[] = [
-  'file_search',        // Semantic search across ~/sulla/
-  'read_file',          // Read file contents with optional line range
-  'vault_list',
-  'search_history',
-  'search_conversations',
+  'file_search',           // Semantic search across ~/sulla/
+  'read_file',             // Read file contents with optional line range
+  'vault_list',            // List saved website credentials
+  'search_history',        // Search browsing history by query/time range
+  'search_conversations',  // Search past chats, workflows, graph executions
+  'github_read_file',      // Read files from GitHub repositories
+  'get_human_presence',    // Check if user is available
+  'list_tabs',             // See what browser tabs are open
+  'check_agent_jobs',      // Check status of spawned agent jobs
+  'github_get_issue',      // Get details of a specific issue
+  'github_get_issues',     // List/filter issues from a repo
+  'github_list_branches',  // List branches in a repo
+  'git_log',               // Recent commit history
 ];
 
 /** Observation Agent: manage observational memory and update identity files */
@@ -105,7 +113,7 @@ How to search:
 - **search_conversations** — Search past conversations by keyword (searches titles and summaries), list recent conversations (optionally filtered by type: chat/browser/workflow/graph), or retrieve full details for a specific conversation by ID or thread ID.
 
 **Key vault capabilities** (all called via Tools API):
-- **vault_list** — List all saved accounts. Shows website URLs, usernames, and AI access levels. Passwords are NEVER included in the response.
+- **vault/list** — List all saved accounts. Shows website URLs, usernames, and AI access levels. Passwords are NEVER included in the response.
 
 What to return (in AGENT_DONE):
 - Relevant skill instructions (paste key content from SKILL.md)
