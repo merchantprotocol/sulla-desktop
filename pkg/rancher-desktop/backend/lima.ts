@@ -1873,9 +1873,23 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         await this.execCommand({ root: true }, 'chmod', '755', `/usr/local/bin/${ name }`);
       }
 
+      // Write the API bearer token into the VM so the CLI can authenticate
+      let sullaApiToken = '';
+      try {
+        const tokenFile = path.join(paths.appHome, 'chat-api-token.json');
+        const raw = await fs.promises.readFile(tokenFile, 'utf-8');
+        sullaApiToken = JSON.parse(raw).token || '';
+      } catch {
+        // Token file not yet written — try DB fallback
+        sullaApiToken = await SullaSettingsModel.get('sullaApiToken') || '';
+      }
+      if (sullaApiToken) {
+        await this.writeFile('/etc/sulla-env', `SULLA_API_TOKEN=${ sullaApiToken }\n`, 0o600);
+      }
+
       // Kill any existing daemon, then start fresh in the background
       await this.execCommand({ root: false }, 'sh', '-c', 'pkill -f sulla-daemon || true');
-      await this.execCommand({ root: false }, 'sh', '-c', 'nohup sulla-daemon > /tmp/sulla-daemon.log 2>&1 &');
+      await this.execCommand({ root: false }, 'sh', '-c', '. /etc/sulla-env 2>/dev/null; export SULLA_API_TOKEN; nohup sulla-daemon > /tmp/sulla-daemon.log 2>&1 &');
       console.log('[Lima] sulla CLI and daemon installed and started');
     } catch (error) {
       console.warn('[Lima] Failed to install sulla CLI into VM:', error);

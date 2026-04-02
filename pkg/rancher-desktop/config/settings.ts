@@ -173,6 +173,8 @@ export const defaultSettings = {
     sullaServicePassword:      '',
     /** Generated N8N encryption key */
     sullaN8nEncryptionKey:     '',
+    /** Bearer token for chat completions API authentication */
+    sullaApiToken:             '',
     /** Service account user ID created during seeding */
     sullaServiceAccountUserId: '',
     /** Subscribe to updates and newsletters */

@@ -6,6 +6,12 @@
 # MCP call:      sulla <account_id>/mcp/<tool> '<json>'
 # Bare tool:     sulla <tool_name> '<json>'
 
+# Load API token from environment file if not already set
+if [ -z "$SULLA_API_TOKEN" ] && [ -f /etc/sulla-env ]; then
+  . /etc/sulla-env
+  export SULLA_API_TOKEN
+fi
+
 SOCKET="/tmp/sulla-tools.sock"
 FIRST="$1"
 BODY="$2"
@@ -52,11 +58,25 @@ case "$FIRST" in
 esac
 
 if [ -S "$SOCKET" ]; then
-  exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
-    -H "Content-Type: application/json" \
-    -d "$BODY"
+  if [ -n "$SULLA_API_TOKEN" ]; then
+    exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $SULLA_API_TOKEN" \
+      -d "$BODY"
+  else
+    exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
+      -H "Content-Type: application/json" \
+      -d "$BODY"
+  fi
 else
-  exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
-    -H "Content-Type: application/json" \
-    -d "$BODY"
+  if [ -n "$SULLA_API_TOKEN" ]; then
+    exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $SULLA_API_TOKEN" \
+      -d "$BODY"
+  else
+    exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
+      -H "Content-Type: application/json" \
+      -d "$BODY"
+  fi
 fi

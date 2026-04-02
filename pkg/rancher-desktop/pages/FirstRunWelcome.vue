@@ -295,6 +295,14 @@ const handleAccountSubmit = async() => {
     console.log('[FirstRunWelcome] Generated sullaN8nApiKey');
   }
 
+  // Generate API bearer token for the chat completions API
+  const sullaApiToken = await SullaSettingsModel.get('sullaApiToken');
+  if (!sullaApiToken) {
+    const generatedToken = SullaSettingsModel.generateEncryptionKey(48);
+    await SullaSettingsModel.set('sullaApiToken', generatedToken, 'string');
+    console.log('[FirstRunWelcome] Generated sullaApiToken');
+  }
+
   // Save to SullaSettingsModel
   // Note: the master password is NOT stored in settings — it's only used to derive the vault key.
   // We store a flag so the system knows first-run credentials were set.
