@@ -20,7 +20,7 @@ import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send, openEditor, openDockerDashboard } from '@pkg/window';
+import { openMain, send, openEditor, openDockerDashboard, getWindow } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -69,9 +69,7 @@ export class Tray {
       type:  'normal',
       click() {
         openMain();
-        // Give the window a moment to load if it's new, then send the command
-        const agentWindow = Electron.BrowserWindow.getAllWindows()
-          .find(w => !w.isDestroyed() && w.getTitle() === 'Sulla Agent');
+        const agentWindow = getWindow('main-agent');
 
         if (agentWindow) {
           const sendCommand = () => agentWindow.webContents.send('agent-command', { command: 'new-secretary-tab' });
