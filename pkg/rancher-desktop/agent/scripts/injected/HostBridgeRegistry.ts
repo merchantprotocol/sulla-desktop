@@ -28,7 +28,7 @@ export interface BridgeEntry {
 
 export interface RegistryDomEvent {
   assetId:   string;
-  type:      'domChange' | 'dialog' | 'routeChanged' | 'click' | 'pageContent' | 'contentAdded' | 'injected';
+  type:      'dialog' | 'routeChanged' | 'click' | 'pageContent' | 'contentAdded' | 'injected';
   message:   string;
   timestamp: number;
 }
@@ -53,15 +53,6 @@ class HostBridgeRegistryImpl {
     const unsubs: (() => void)[] = [];
 
     // Auto-subscribe to bridge events and forward as RegistryDomEvents
-    unsubs.push(bridge.on('domChange', (payload) => {
-      this.emitRegistryEvent({
-        assetId,
-        type:      'domChange',
-        message:   `[DOM ${ assetId }] ${ payload.summary }`,
-        timestamp: payload.timestamp,
-      });
-    }));
-
     unsubs.push(bridge.on('dialog', (payload) => {
       const extra = payload.defaultValue ? ` (default: "${ payload.defaultValue }")` : '';
       this.emitRegistryEvent({

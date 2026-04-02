@@ -64,15 +64,6 @@ export function initHostBridgeIpc(): void {
     });
   });
 
-  // ── Push DOM events to main ──
-  hostBridgeRegistry.onDomEvent((event) => {
-    wsService.send(WS_CHANNEL, {
-      type:      'bridge:dom-event',
-      data:      event,
-      timestamp: Date.now(),
-    });
-  });
-
   console.log('[HostBridgeIpcRenderer] initialized on channel', WS_CHANNEL);
 }
 

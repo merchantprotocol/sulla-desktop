@@ -437,10 +437,6 @@ const formatters: Record<string, Formatter> = {
       output:  output || undefined,
     };
   },
-  dom_observer() {
-    return { label: 'Browser', summary: 'Watching DOM changes' };
-  },
-
   // ── Workspace ────────────────────────────────────────────────────────────
   create_workspace(args) {
     return { label: 'Workspace', summary: `Creating workspace ${ str(args.name) }` };

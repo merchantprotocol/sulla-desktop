@@ -27,16 +27,6 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./exec'),
   },
   {
-    name:        'dom_observer',
-    description: 'Passive tool — do NOT call this directly. The system automatically delivers DOM change events from open browser tabs as dom_observer tool results. You receive these because you have browser tabs open. To stop receiving events for a tab, close it with browser_tab(action=\'remove\', assetId=\'...\').',
-    category:    'meta',
-    schemaDef:   {
-      assetIds: { type: 'array', optional: true, description: 'Asset IDs of the tabs that emitted events.', items: { type: 'string' } },
-    },
-    operationTypes: ['read'],
-    loader:         () => import('./dom_observer'),
-  },
-  {
     name:        'remove_observational_memory',
     description: 'Remove a specific observational memory by its ID to delete it from long-term memory.',
     category:    'meta',

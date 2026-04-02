@@ -48,12 +48,6 @@ export interface HostBridgeEventMap {
     disabled:   boolean;
     timestamp:  number;
   };
-  domChange: {
-    summary:   string;
-    url:       string;
-    title:     string;
-    timestamp: number;
-  };
   dialog: {
     dialogType:    'alert' | 'confirm' | 'prompt';
     message:       string;
@@ -534,16 +528,6 @@ export class WebviewHostBridge {
         dataTestId: String(rec.dataTestId || ''),
         disabled:   rec.disabled === true,
         timestamp:  this.asTimestamp(rec.timestamp),
-      });
-      return;
-    }
-
-    if (type === 'sulla:domChange') {
-      this.emit('domChange', {
-        summary:   String(rec.summary || ''),
-        url:       String(rec.url || ''),
-        title:     String(rec.title || ''),
-        timestamp: this.asTimestamp(rec.timestamp),
       });
       return;
     }

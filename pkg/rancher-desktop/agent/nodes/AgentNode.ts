@@ -170,11 +170,7 @@ export class AgentNode extends BaseNode {
     // ----------------------------------------------------------------
     // 2. EXECUTE — LLM reads conversation, calls tools, responds
     // ----------------------------------------------------------------
-    const disposeLiveDomStream = await this.startLiveDomStream(state);
-    const agentResult = await this.executeAgent(enrichedPrompt, state)
-      .finally(() => {
-        disposeLiveDomStream();
-      });
+    const agentResult = await this.executeAgent(enrichedPrompt, state);
 
     // If aborted while the LLM was responding, stop immediately —
     // don't process the result or let the graph loop back.
@@ -293,9 +289,6 @@ export class AgentNode extends BaseNode {
         persistAssistantToGraph: true,
       };
 
-      // Flush any buffered DOM events as a single tool pair before the LLM call
-      this.flushDomEventBuffer(state);
-
       // Find the last assistant message BEFORE the LLM call (for dedup).
       // Content may be a string OR a native content array (when tool_use blocks are present).
       let lastAssistantText: string | null = null;
@@ -378,124 +371,6 @@ export class AgentNode extends BaseNode {
 
       return userMessage;
     }
-  }
-
-  // ======================================================================
-  // LIVE DOM STREAM
-  // ======================================================================
-
-  /** Buffered DOM events waiting to be flushed as a single tool pair. */
-  private domEventBuffer: { content: string; event: { assetId: string; type: string; timestamp: number } }[] = [];
-
-  private async startLiveDomStream(state: BaseThreadState): Promise<() => void> {
-    try {
-      const { hostBridgeProxy } = await import('../scripts/injected/HostBridgeProxy');
-
-      const size = await hostBridgeProxy.size();
-      if (size === 0) {
-        return () => {};
-      }
-
-      this.domEventBuffer = [];
-
-      const unsub = hostBridgeProxy.onDomEvent((event) => {
-        const content = event.message;
-        if (!content) return;
-
-        if (this.shouldBufferDomEvent(state, content)) {
-          this.domEventBuffer.push({ content, event });
-        }
-
-        console.log('[AgentNode] DOM event buffered:', {
-          assetId: event.assetId,
-          type:    event.type,
-          message: content.slice(0, 120),
-        });
-      });
-
-      console.log('[AgentNode] Live DOM stream started for all assets');
-      return () => {
-        unsub();
-        // Flush any remaining events on dispose
-        this.flushDomEventBuffer(state);
-      };
-    } catch (error) {
-      console.warn('[AgentNode] Unable to start live DOM stream:', error);
-      return () => {};
-    }
-  }
-
-  private shouldBufferDomEvent(state: BaseThreadState, content: string): boolean {
-    const metadataAny = state.metadata as any;
-    const liveMeta = metadataAny.__domLiveEvent || {};
-    const now = Date.now();
-
-    // Dedup: same content within 500ms
-    if (liveMeta.lastContent === content && now - Number(liveMeta.lastAt || 0) < 500) {
-      return false;
-    }
-
-    metadataAny.__domLiveEvent = {
-      lastContent: content,
-      lastAt:      now,
-    };
-
-    return true;
-  }
-
-  /**
-   * Flush all buffered DOM events into state.messages as a single
-   * dom_observer tool_use / tool_result pair.
-   */
-  flushDomEventBuffer(state: BaseThreadState): void {
-    if (this.domEventBuffer.length === 0) return;
-
-    const buffered = this.domEventBuffer.splice(0);
-    const toolCallId = `dom_observer_${ Date.now() }_${ Math.random().toString(36).slice(2, 11) }`;
-
-    // Collect unique assetIds for the tool_use input
-    const assetIds = [...new Set(buffered.map(b => b.event.assetId))];
-
-    // Build a single result body from all buffered events
-    const resultLines = buffered.map(b => b.content);
-    const resultContent = `tool: dom_observer\nresult:\n${ resultLines.join('\n') }`;
-
-    const eventMeta = {
-      nodeId:    this.id,
-      nodeName:  this.name,
-      kind:      'agent_live_dom_event',
-      source:    'dom_event_stream',
-      transport: 'ipc',
-      timestamp: Date.now(),
-    };
-
-    // Assistant message: synthetic tool_use block
-    state.messages.push({
-      role:    'assistant',
-      content: [{
-        type:  'tool_use',
-        id:    toolCallId,
-        name:  'dom_observer',
-        input: { assetIds },
-      }],
-      metadata: eventMeta,
-    } as any);
-
-    // User message: matching tool_result
-    state.messages.push({
-      role:    'user',
-      content: [{
-        type:        'tool_result',
-        tool_use_id: toolCallId,
-        content:     resultContent,
-      }],
-      metadata: {
-        ...eventMeta,
-        kind: 'tool_result',
-      },
-    } as any);
-
-    this.bumpStateVersion(state);
   }
 
   // ======================================================================

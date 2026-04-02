@@ -747,7 +747,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         // Block browser/playwright tools when caller has no visible browser
         if ((state.metadata as any).userVisibleBrowser === false) {
           const browserTools = new Set([
-            'browser_tab', 'dom_observer', 'click_element', 'get_form_values',
+            'browser_tab', 'click_element', 'get_form_values',
             'get_page_snapshot', 'get_page_text', 'scroll_to_element',
             'set_field', 'wait_for_element', 'browse_page', 'synthesize_tabs',
           ]);
