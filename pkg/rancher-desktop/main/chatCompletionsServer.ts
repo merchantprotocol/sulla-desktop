@@ -160,6 +160,14 @@ export class ChatCompletionsServer {
 
     // ── Tools API endpoints ──────────────────────────────────────────
 
+    // CLI help: list all categories or tools within a category
+    this.app.get('/v1/tools/help', async(req: Request, res: Response) => {
+      await this.handleHelp(req, res);
+    });
+    this.app.get('/v1/tools/help/:category', async(req: Request, res: Response) => {
+      await this.handleHelp(req, res);
+    });
+
     // List all tools (integrations + MCP)
     this.app.get('/v1/tools/list', async(req: Request, res: Response) => {
       await this.handleListIntegrations(req, res);
@@ -893,6 +901,92 @@ export class ChatCompletionsServer {
     } catch (error: any) {
       console.error('[ChatCompletionsAPI] Error listing integrations:', error);
       res.status(500).json({ success: false, error: error.message || 'Failed to list integrations' });
+    }
+  }
+
+  // ── CLI help handler ─────────────────────────────────────────────
+
+  private async handleHelp(req: Request, res: Response) {
+    try {
+      const { toolRegistry } = await import('@pkg/agent/tools/registry');
+      const category = req.params.category as string | undefined;
+
+      if (category) {
+        // Category-specific help: list tools with descriptions and parameters
+        const toolNames = toolRegistry.getToolNamesForCategory(category);
+        if (toolNames.length === 0) {
+          return res.status(404).json({ success: false, error: `Unknown category "${ category }"` });
+        }
+        const catDescs = toolRegistry.getCategoriesWithDescriptions();
+        const catDesc = catDescs.find(c => c.category === category)?.description || '';
+
+        const tools = toolNames.map(name => {
+          const schemaDef = toolRegistry.getSchemaDef(name) || {};
+          const params = Object.entries(schemaDef).map(([key, spec]: [string, any]) => ({
+            name:        key,
+            type:        spec.type || 'string',
+            required:    !spec.optional,
+            description: spec.description || '',
+            ...(spec.enum ? { enum: spec.enum } : {}),
+            ...(spec.default !== undefined ? { default: spec.default } : {}),
+          }));
+
+          return {
+            name,
+            description: toolRegistry.getToolDescription(name),
+            usage:       `sulla ${ category }/${ name } '<json>'`,
+            parameters:  params,
+          };
+        });
+
+        // Build plain-text output for terminal display
+        let text = `\n${ category } — ${ catDesc }\n`;
+        text += `${ '─'.repeat(60) }\n\n`;
+        for (const tool of tools) {
+          text += `  ${ tool.usage }\n`;
+          text += `    ${ tool.description }\n`;
+          if (tool.parameters.length > 0) {
+            text += '    Parameters:\n';
+            for (const p of tool.parameters) {
+              const req_flag = p.required ? ' (required)' : '';
+              const enumStr = p.enum ? ` [${p.enum.join('|')}]` : '';
+              const defaultStr = p.default !== undefined ? ` default: ${p.default}` : '';
+              text += `      ${ p.name } : ${ p.type }${ enumStr }${ req_flag }${ defaultStr } — ${ p.description }\n`;
+            }
+          }
+          text += '\n';
+        }
+
+        res.type('text/plain').send(text);
+      } else {
+        // Global help: list all categories with descriptions
+        const categories = toolRegistry.getCategoriesWithDescriptions();
+
+        let text = '\nsulla — unified CLI for Sulla Desktop\n';
+        text += `${ '═'.repeat(60) }\n\n`;
+        text += 'Usage:\n';
+        text += '  sulla <category>/<tool> \'<json>\'           # tool call\n';
+        text += '  sulla <account_id>/<slug> \'<json>\'          # proxy call\n';
+        text += '  sulla <account>/mcp/<tool> \'<json>\'         # MCP tool\n';
+        text += '  sulla <tool_name> \'<json>\'                  # bare tool\n\n';
+        text += 'Flags:\n';
+        text += '  --help, -h    Show this help or category help\n\n';
+        text += 'Categories:\n';
+        text += `${ '─'.repeat(60) }\n`;
+
+        for (const { category: cat, description } of categories) {
+          const toolCount = toolRegistry.getToolNamesForCategory(cat).length;
+          text += `  ${ cat.padEnd(22) } (${ toolCount } tools) ${ description.slice(0, 80) }\n`;
+        }
+
+        text += `\nRun "sulla <category> --help" to see tools in a category.\n`;
+        text += `Run "sulla vault/list_accounts '{}'" to discover proxy accounts.\n\n`;
+
+        res.type('text/plain').send(text);
+      }
+    } catch (error: any) {
+      console.error('[ChatCompletionsAPI] Help error:', error);
+      res.status(500).json({ success: false, error: error.message || 'Help failed' });
     }
   }
 
