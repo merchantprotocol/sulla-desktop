@@ -926,7 +926,9 @@ export class ChatCompletionsServer {
       if (slug === 'mcp') {
         const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
         const bridge = MCPBridge.getInstance();
-        const { params = {} } = req.body || {};
+        // Accept both { params: { ... } } and flat { call_id: "..." } formats
+        const mcpBody = req.body || {};
+        const params = mcpBody.params && typeof mcpBody.params === 'object' ? mcpBody.params : mcpBody;
 
         // Lazy init: if no client exists for this account, initialize on demand
         if (bridge.getToolsForAccount(accountId).length === 0) {
@@ -1063,11 +1065,11 @@ export class ChatCompletionsServer {
             }
           } catch { /* no oauth configured */ }
 
-          // Try API key (stored as api_key, injected as header or query param)
+          // Try API key (stored as api_key, injected as query param "key")
           if (!headers.Authorization) {
             const apiKeyValue = await svc.getIntegrationValue(slug, 'api_key', accountId);
             if (apiKeyValue?.value) {
-              headers.Authorization = `Bearer ${ apiKeyValue.value }`;
+              url.searchParams.set('key', apiKeyValue.value);
             }
           }
         }

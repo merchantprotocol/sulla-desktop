@@ -1,9 +1,10 @@
 #!/bin/sh
 # sulla — unified CLI for Sulla Desktop
 #
-# Proxy call:    sulla <account_id>/<slug> '<json>'     (has / in first arg, not internal)
-# Tool call:     sulla <category>/<tool> '<json>'        (category is a known tool category)
-# Tool call:     sulla <tool_name> '<json>'              (bare name, searches all categories)
+# Proxy call:    sulla <account_id>/<slug> '<json>'
+# Tool call:     sulla <category>/<tool> '<json>'
+# MCP call:      sulla <account_id>/mcp/<tool> '<json>'
+# Bare tool:     sulla <tool_name> '<json>'
 
 SOCKET="/tmp/sulla-tools.sock"
 FIRST="$1"
@@ -11,8 +12,10 @@ BODY="$2"
 
 if [ -z "$FIRST" ]; then
   echo 'Usage:' >&2
-  echo '  sulla <account_id>/<slug> '"'"'<json>'"'"'   # proxy call' >&2
-  echo '  sulla <tool_name> '"'"'<json>'"'"'            # tool call' >&2
+  echo '  sulla <account_id>/<slug> '"'"'<json>'"'"'        # proxy call' >&2
+  echo '  sulla <category>/<tool> '"'"'<json>'"'"'           # tool call' >&2
+  echo '  sulla <account>/mcp/<tool> '"'"'<json>'"'"'        # MCP tool' >&2
+  echo '  sulla <tool_name> '"'"'<json>'"'"'                 # bare tool' >&2
   exit 2
 fi
 
@@ -24,6 +27,12 @@ fi
 TOOL_CATEGORIES="meta|docker|github|playwright|chrome|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|skills|workflow|computer-use"
 
 case "$FIRST" in
+  */mcp/*)
+    # MCP tool: account_id/mcp/tool_name
+    ACCOUNT="${FIRST%%/mcp/*}"
+    TOOL="${FIRST##*/mcp/}"
+    URL="/v1/tools/${ACCOUNT}/mcp/${TOOL}/call"
+    ;;
   */*)
     # Has a slash — check if it's a tool category or a proxy call
     PART1="${FIRST%%/*}"
