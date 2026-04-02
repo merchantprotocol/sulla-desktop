@@ -1376,8 +1376,8 @@ export class ChatCompletionsServer {
     await this.loadApiToken();
     return new Promise((resolve, reject) => {
       try {
-        this.server = this.app.listen(port, '127.0.0.1', () => {
-          console.log(`[ChatCompletionsAPI] Server listening on http://127.0.0.1:${ port }`);
+        this.server = this.app.listen(port, '0.0.0.0', () => {
+          console.log(`[ChatCompletionsAPI] Server listening on http://0.0.0.0:${ port }`);
           console.log(`[ChatCompletionsAPI] Health check: http://localhost:${ port }/health`);
           console.log(`[ChatCompletionsAPI] Chat completions: http://localhost:${ port }/chat/completions`);
           resolve();
