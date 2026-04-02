@@ -44,8 +44,13 @@
                 :is-dark="isDark"
               />
 
-              <div v-else-if="m.kind === 'thinking'" class="thinking-bubble max-w-[min(760px,92%)]">
-                <div class="thinking-bubble-inner">
+              <div
+                v-else-if="m.kind === 'thinking'"
+                class="thinking-bubble max-w-[min(760px,92%)]"
+                :class="{ 'thinking-expanded': expandedThinking.has(m.id), 'thinking-completed': !!(m as any)._completed }"
+                @click="toggleThinking(m.id)"
+              >
+                <div class="thinking-bubble-inner" :ref="el => scrollThinkingToBottom(el)">
                   <div class="thinking-bubble-content text-xs text-content-muted italic" v-html="renderMarkdown(m.content)" />
                 </div>
               </div>
@@ -463,6 +468,24 @@ const displayMessages = computed(() => {
   });
 });
 
+const expandedThinking = ref(new Set<string>());
+
+const toggleThinking = (id: string) => {
+  const next = new Set(expandedThinking.value);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  expandedThinking.value = next;
+};
+
+const scrollThinkingToBottom = (el: any) => {
+  if (el instanceof HTMLElement) {
+    nextTick(() => { el.scrollTop = el.scrollHeight; });
+  }
+};
+
 const renderMarkdown = (markdown: string): string => {
   const raw = typeof markdown === 'string' ? markdown : String(markdown || '');
   const html = (marked(raw) as string) || '';
@@ -685,12 +708,23 @@ onUnmounted(() => {
 /* ── Thinking bubble ── */
 .thinking-bubble {
   position: relative;
-  max-height: 100px;
+  max-height: 60px;
   overflow: hidden;
+  transition: max-height 0.3s ease;
+  cursor: pointer;
+}
+
+.thinking-bubble.thinking-expanded {
+  max-height: none;
+}
+
+.thinking-bubble.thinking-completed:not(.thinking-expanded) {
+  max-height: 32px;
+  opacity: 0.6;
 }
 
 .thinking-bubble-inner {
-  max-height: 100px;
+  max-height: inherit;
   overflow-y: auto;
   scrollbar-width: none;
 }
@@ -699,25 +733,31 @@ onUnmounted(() => {
   display: none;
 }
 
-.thinking-bubble::before,
-.thinking-bubble::after {
+.thinking-bubble:not(.thinking-expanded)::after {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
-  height: 16px;
+  bottom: 0;
+  height: 24px;
   pointer-events: none;
   z-index: 1;
+  background: linear-gradient(to top, color-mix(in srgb, var(--bg-page) 95%, transparent), transparent);
 }
 
-.thinking-bubble::before {
-  top: 0;
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg-page) 90%, transparent), transparent);
+.thinking-toggle {
+  display: block;
+  font-size: 10px;
+  color: var(--text-dim, #666);
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 2px 0;
+  opacity: 0.7;
 }
 
-.thinking-bubble::after {
-  bottom: 0;
-  background: linear-gradient(to top, color-mix(in srgb, var(--bg-page) 90%, transparent), transparent);
+.thinking-toggle:hover {
+  opacity: 1;
 }
 
 .thinking-bubble-content :deep(p) {

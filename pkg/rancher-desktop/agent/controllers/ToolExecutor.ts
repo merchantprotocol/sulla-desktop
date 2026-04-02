@@ -329,7 +329,7 @@ export class ToolExecutor {
     kind?: string,
   ): Promise<boolean> {
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
-    return await this.dispatchToWebSocket(connectionId, {
+    const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'progress',
       data: {
         phase:     'tool_call',
@@ -341,6 +341,26 @@ export class ToolExecutor {
       },
       timestamp: Date.now(),
     });
+
+    // Mirror to parent channel so subconscious tool calls appear in the UI
+    const parentChannel = (state.metadata as any).parentWsChannel;
+    if (parentChannel) {
+      const parentThreadId = (state.metadata as any).parentConversationId || state.metadata.threadId;
+      await this.dispatchToWebSocket(parentChannel, {
+        type: 'progress',
+        data: {
+          phase:     'tool_call',
+          toolRunId,
+          toolName,
+          args,
+          kind,
+          thread_id: parentThreadId,
+        },
+        timestamp: Date.now(),
+      });
+    }
+
+    return sent;
   }
 
   async emitToolResultEvent(
@@ -351,7 +371,7 @@ export class ToolExecutor {
     result?: any,
   ): Promise<boolean> {
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
-    return await this.dispatchToWebSocket(connectionId, {
+    const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'progress',
       data: {
         phase:     'tool_result',
@@ -363,6 +383,26 @@ export class ToolExecutor {
       },
       timestamp: Date.now(),
     });
+
+    // Mirror to parent channel so subconscious tool results appear in the UI
+    const parentChannel = (state.metadata as any).parentWsChannel;
+    if (parentChannel) {
+      const parentThreadId = (state.metadata as any).parentConversationId || state.metadata.threadId;
+      await this.dispatchToWebSocket(parentChannel, {
+        type: 'progress',
+        data: {
+          phase:     'tool_result',
+          toolRunId,
+          success,
+          error,
+          result,
+          thread_id: parentThreadId,
+        },
+        timestamp: Date.now(),
+      });
+    }
+
+    return sent;
   }
 
   // --------------------------------------------------------------------------

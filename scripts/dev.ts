@@ -78,6 +78,7 @@ class DevRunner extends events.EventEmitter {
       const argv = process.argv.slice(2);
 
       await buildUtils.buildMain();
+      await buildUtils.buildCli();
 
       this.#mainProcess = this.spawn(
         'Main process',

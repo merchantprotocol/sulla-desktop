@@ -45,6 +45,19 @@ export const integrationsToolManifests: ToolManifest[] = [
     loader:         () => import('./set_active_integration_account'),
   },
   {
+    name:        'integration_set_credential',
+    description: 'Store or update a credential for an integration account. The value is encrypted in the vault and never appears in conversation after this call. Use this to save API keys, bearer tokens, base URLs, or other credentials.',
+    category:    'integrations',
+    schemaDef:   {
+      integration_slug: { type: 'string', description: "The slug identifier of the integration (e.g. 'twenty', 'slack', 'github')" },
+      property:         { type: 'string', description: "The credential property name (e.g. 'bearer_token', 'api_key', 'base_url')" },
+      value:            { type: 'string', description: 'The credential value to store. Will be encrypted in the vault.' },
+      account_id:       { type: 'string', optional: true, description: 'Optional account ID. Defaults to the active account.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./integration_set_credential'),
+  },
+  {
     name:        'vault_list',
     description: 'List all saved website credentials in the vault. Shows website URLs and usernames for accounts where AI access is permitted. Passwords are never included in the response.',
     category:    'integrations',

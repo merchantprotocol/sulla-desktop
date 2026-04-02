@@ -247,6 +247,32 @@ export default {
   },
 
   /**
+   * WebPack configuration for the sulla-tool CLI.
+   */
+  get webpackCliConfig(): webpack.Configuration {
+    const overrides: webpack.Configuration = {
+      target: 'node',
+      entry:  { 'sulla-tool': path.resolve(this.rootDir, 'pkg', 'rancher-desktop', 'agent', 'cli', 'sulla-tool.ts') },
+      output: {
+        filename: '[name].js',
+        library:  { type: 'commonjs2' },
+        path:     path.join(this.rootDir, 'resources', process.platform, 'bin'),
+      },
+      experiments: { outputModule: false },
+      plugins:     [
+        new webpack.EnvironmentPlugin({ NODE_ENV: this.isDevelopment ? 'development' : 'production' }),
+        new webpack.BannerPlugin({ banner: '#!/usr/bin/env node', raw: true }),
+      ],
+    };
+
+    const result = Object.assign({}, this.webpackConfig, overrides);
+
+    result.externals = ['pg-native'];
+
+    return result;
+  },
+
+  /**
    * Build the main process JavaScript code.
    */
   buildJavaScript(config: webpack.Configuration): Promise<void> {
@@ -273,6 +299,17 @@ export default {
    */
   async buildPreload(): Promise<void> {
     await this.buildJavaScript(this.webpackPreloadConfig);
+  },
+
+  /**
+   * Build the sulla-tool CLI.
+   */
+  async buildCli(): Promise<void> {
+    await this.buildJavaScript(this.webpackCliConfig);
+    const outputPath = path.join(this.rootDir, 'resources', process.platform, 'bin', 'sulla-tool.js');
+    try {
+      fs.chmodSync(outputPath, 0o755);
+    } catch { /* best effort */ }
   },
 
   /**

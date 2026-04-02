@@ -3,3 +3,4 @@
 export { BaseNode } from './BaseNode';
 export { InputHandlerNode } from './InputHandlerNode';
 export { AgentNode } from './AgentNode';
+export { SubconsciousAgentNode } from './SubconsciousAgentNode';

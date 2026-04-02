@@ -60,6 +60,30 @@ const formatters: Record<string, Formatter> = {
   bash:         execFormatter,
   run_command:  execFormatter,
 
+  // ── File Search ─────────────────────────────────────────────────────────
+  file_search(args) {
+    const query = str(args.query);
+    const dirPath = str(args.dirPath) || '~';
+    const shortDir = dirPath.replace(/^\/Users\/[^/]+/, '~');
+    return {
+      label:   'Search',
+      summary: `Searching for "${ truncate(query, 60) }" in ${ shortDir }`,
+    };
+  },
+
+  // ── Read File ──────────────────────────────────────────────────────────
+  read_file(args) {
+    const filePath = str(args.path || args.filePath);
+    const shortPath = filePath.replace(/^\/Users\/[^/]+/, '~');
+    const startLine = args.startLine as number | undefined;
+    const endLine = args.endLine as number | undefined;
+    const range = startLine ? ` (lines ${ startLine }${ endLine ? `-${ endLine }` : '+' })` : '';
+    return {
+      label:   'File',
+      summary: `Opening ${ truncate(shortPath, 60) }${ range }`,
+    };
+  },
+
   // ── Browser Tab ──────────────────────────────────────────────────────────
   browser_tab(args) {
     const action = str(args.action);

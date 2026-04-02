@@ -13,6 +13,7 @@ export class ChatCompletionsServer {
   private app = express();
   private server:            any = null;
   private readonly wsService = getWebSocketClientService();
+  private udsServer: any = null;
   private taskerUnsubscribe: (() => void) | null = null;
 
   constructor() {
@@ -169,6 +170,11 @@ export class ChatCompletionsServer {
     // Call a tool endpoint with specific account credentials
     this.app.post('/v1/tools/:accountId/:slug/:endpoint/call', async(req: Request, res: Response) => {
       await this.handleIntegrationCall(req, res);
+    });
+
+    // Proxy pass-through: inject credentials and forward to upstream API
+    this.app.post('/v1/proxy/:accountId/:slug', async(req: Request, res: Response) => {
+      await this.handleProxyCall(req, res);
     });
 
     // ── MCP Config Generation endpoints ─────────────────────────────
@@ -988,6 +994,122 @@ export class ChatCompletionsServer {
     }
   }
 
+  // ── Proxy pass-through handler ─────────────────────────────────
+
+  /**
+   * Transparent proxy: resolves credentials from the vault for the given
+   * accountId + integration slug, injects auth headers, forwards the request
+   * to the upstream API, and returns the raw response.
+   *
+   * Body: { method, path, body?, query?, headers? }
+   *
+   * The model never sees credentials — they are injected at this layer.
+   */
+  private async handleProxyCall(req: Request, res: Response) {
+    const accountId = String(req.params.accountId);
+    const slug = String(req.params.slug);
+
+    const {
+      method = 'GET',
+      path: reqPath,
+      body,
+      query,
+      headers: extraHeaders,
+    } = req.body || {};
+
+    if (!reqPath) {
+      return res.status(400).json({ success: false, error: 'Missing required field "path" (e.g. "/rest/companies", "/graphql")' });
+    }
+
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const svc = getIntegrationService();
+      await svc.initialize();
+
+      // Resolve base_url from the integration's stored credentials
+      const baseUrlValue = await svc.getIntegrationValue(slug, 'base_url', accountId);
+      if (!baseUrlValue?.value) {
+        return res.status(400).json({
+          success: false,
+          error:   `No base_url configured for integration "${ slug }" account "${ accountId }". Set it via Settings → Integrations.`,
+        });
+      }
+      const baseUrl = baseUrlValue.value.replace(/\/+$/, '');
+
+      // Build the target URL
+      const url = new URL(baseUrl + reqPath);
+      if (query && typeof query === 'object') {
+        for (const [k, v] of Object.entries(query)) {
+          if (v != null) url.searchParams.set(k, String(v));
+        }
+      }
+
+      // Build headers — inject auth credentials without exposing them
+      const headers: Record<string, string> = {
+        'Content-Type':  'application/json',
+        Accept:          'application/json',
+        ...extraHeaders,
+      };
+
+      // Resolve auth — skip if caller already provided an Authorization header
+      if (!headers.Authorization) {
+        const bearerValue = await svc.getIntegrationValue(slug, 'bearer_token', accountId);
+        if (bearerValue?.value) {
+          headers.Authorization = `Bearer ${ bearerValue.value }`;
+        } else {
+          // Try OAuth access token
+          try {
+            const oauthToken = await svc.getOAuthAccessToken(slug, accountId);
+            if (oauthToken) {
+              headers.Authorization = `Bearer ${ oauthToken }`;
+            }
+          } catch { /* no oauth configured */ }
+
+          // Try API key (stored as api_key, injected as header or query param)
+          if (!headers.Authorization) {
+            const apiKeyValue = await svc.getIntegrationValue(slug, 'api_key', accountId);
+            if (apiKeyValue?.value) {
+              headers.Authorization = `Bearer ${ apiKeyValue.value }`;
+            }
+          }
+        }
+      }
+
+      console.log(`[Proxy] ${ method } ${ url.toString() }`);
+
+      // Forward the request
+      const fetchInit: RequestInit = {
+        method: method.toUpperCase(),
+        headers,
+      };
+
+      if (body && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
+        fetchInit.body = JSON.stringify(body);
+      }
+
+      const upstream = await fetch(url.toString(), fetchInit);
+      const responseText = await upstream.text();
+
+      // Parse response if JSON, otherwise return as text
+      let responseData: any;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch {
+        responseData = responseText;
+      }
+
+      // Return the raw upstream response — let the model see exactly what came back
+      res.status(upstream.status).json({
+        success:    upstream.ok,
+        status:     upstream.status,
+        result:     responseData,
+      });
+    } catch (error: any) {
+      console.error(`[Proxy] ${ slug } failed:`, error);
+      res.status(500).json({ success: false, error: error.message || 'Proxy call failed' });
+    }
+  }
+
   // ── MCP Config Generation handlers ─────────────────────────────
 
   private async handleMCPRegister(req: Request, res: Response) {
@@ -1180,6 +1302,7 @@ export class ChatCompletionsServer {
           console.log(`[ChatCompletionsAPI] Server listening on http://0.0.0.0:${ port }`);
           console.log(`[ChatCompletionsAPI] Health check: http://localhost:${ port }/health`);
           console.log(`[ChatCompletionsAPI] Chat completions: http://localhost:${ port }/chat/completions`);
+          this.startUnixSocket();
           resolve();
         });
 
@@ -1194,10 +1317,56 @@ export class ChatCompletionsServer {
     });
   }
 
+  private startUnixSocket(): void {
+    const socketPath = '/tmp/sulla-tools.sock';
+
+    // Clean up stale socket file from previous runs
+    try {
+      fs.unlinkSync(socketPath);
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        console.error(`[ChatCompletionsAPI] Failed to clean up stale socket: ${ err.message }`);
+      }
+    }
+
+    // Separate Express app scoped to tool routes only
+    const toolApp = express();
+    toolApp.use(express.json({ limit: '10mb' }));
+
+    toolApp.get('/v1/tools/list', async(req: Request, res: Response) => {
+      await this.handleListIntegrations(req, res);
+    });
+    toolApp.post('/v1/tools/:accountId/:slug/:endpoint/call', async(req: Request, res: Response) => {
+      await this.handleIntegrationCall(req, res);
+    });
+    toolApp.use((_req: Request, res: Response) => {
+      res.status(404).json({ error: 'Only tool routes are available on this socket' });
+    });
+
+    this.udsServer = toolApp.listen(socketPath, () => {
+      try {
+        fs.chmodSync(socketPath, 0o666);
+      } catch { /* best effort */ }
+      console.log(`[ChatCompletionsAPI] Unix socket listening on ${ socketPath } (tools only)`);
+    });
+
+    this.udsServer.on('error', (error: any) => {
+      console.error('[ChatCompletionsAPI] Unix socket error:', error);
+    });
+  }
+
   stop(): void {
     if (this.taskerUnsubscribe) {
       this.taskerUnsubscribe();
       this.taskerUnsubscribe = null;
+    }
+
+    if (this.udsServer) {
+      this.udsServer.close();
+      this.udsServer = null;
+      try {
+        fs.unlinkSync('/tmp/sulla-tools.sock');
+      } catch { /* ignore */ }
     }
 
     if (this.server) {

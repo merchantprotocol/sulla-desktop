@@ -4,6 +4,7 @@ import type { BaseThreadState, NodeResult } from './Graph';
 import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 // Voice mode prompts are now handled by ChatController extractors (SpeakExtractor, SecretaryExtractor, etc.)
 
 // ============================================================================
@@ -13,16 +14,7 @@ import { stripProtocolTags } from '../utils/stripProtocolTags';
 // Works directly with the user message thread and tools.
 // ============================================================================
 
-const AGENT_PROMPT_BASE = `# You are an independent Agent working directly with the user.
-
-Execution is cheap. Thinking and planning is what makes execution valuable. Without planning, execution is worthless.
-
-When the user gives you a directive:
-1. **Think first** — Is this a one-off task, or could it become something bigger? Does it align with the goals? Would repeating it regularly move us closer to our goals?
-2. **If it's repeatable and goal-aligned** — Create a project (for tracking) and a scheduled workflow (for recurring execution). This is how the agentic system produces compounding value day after day, not just a few seconds of one-time work.
-3. **If it's a one-off** — Plan the approach, confirm with the user, then execute in small verified steps.
-
-You are resourceful and creative. When something doesn't work, you think outside the box and find another way. You don't give up — but you also don't barrel forward without a plan.`;
+const AGENT_PROMPT_BASE = ``;
 
 async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
   try {
@@ -35,23 +27,12 @@ async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
   }
 }
 
-const AGENT_PROMPT_DIRECTIVE = `## Progress Communication Rules (strict)
+const AGENT_PROMPT_DIRECTIVE = `## Tool Result Narration
 
-- While working, you MUST communicate your progress in clear, deterministic language.
-- After every major step you MUST explicitly state:
-  • What you have just done
-  • What you plan to do next
-  • Any blockers or decisions
-- Use short, direct sentences.
-
-## Tool Result Narration (critical for memory)
-
-**After every tool call, you MUST summarize the key findings in your own words as part of your response.** This is the ONLY way to retain context across cycles. For example:
-- After reading a file: "Found the config at /path/file.ts — the database host is set to localhost:5432 and uses pool size 10."
-- After searching: "file_search returned 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
-- After executing a command: "git_status shows 3 modified files on branch feature/xyz: src/a.ts, src/b.ts, src/c.ts."
-
-Always narrate what you learned so your future self can read the conversation history and know what happened.
+After every tool call, briefly say what you found in your own words. This is how context survives across conversation cycles — your future self reads this to know what happened. For example:
+- "Found the config at /path/file.ts — db host is localhost:5432, pool size 10."
+- "file_search turned up 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
+- "3 modified files on feature/xyz: src/a.ts, src/b.ts, src/c.ts."
 
 ## Completion Wrappers
 
@@ -125,11 +106,6 @@ export class AgentNode extends BaseNode {
     const startTime = Date.now();
 
     // ----------------------------------------------------------------
-    // 0. MESSAGE BUDGET — trim before each cycle to prevent bloat
-    // ----------------------------------------------------------------
-    await this.ensureMessageBudget(state);
-
-    // ----------------------------------------------------------------
     // 1. BUILD SYSTEM PROMPT
     // ----------------------------------------------------------------
     const wsChannel = String(state.metadata.wsChannel || 'sulla-desktop');
@@ -152,12 +128,29 @@ export class AgentNode extends BaseNode {
     const ctx = controller.buildContext(state);
     const systemPrompt = controller.enrichPrompt(baseSystemPrompt, ctx);
 
-    const enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
+    // Enrich with soul/identity and trust level only — environment and
+    // observations are now handled by the subconscious middleware.
+    let enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
       includeSoul:        true,
-      includeAwareness:   true,
-      includeEnvironment: true,
+      includeAwareness:   false,
+      includeEnvironment: false,
       includeMemory:      false,
     });
+
+    // Run subconscious middleware: parallel agents for summarization,
+    // memory recall, and observation management.
+    // Recall context is written to state.metadata.recallContext and
+    // appended to the system prompt below.
+    const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
+    await runSubconsciousMiddleware(state, {
+      includeObservations: shouldInjectObservations,
+    });
+
+    // Append recall context to system prompt if present
+    const recallContext = (state.metadata as any).recallContext;
+    if (recallContext) {
+      enrichedPrompt += `\n\n## Relevant Context\n\n${ recallContext }`;
+    }
 
     // Training data: capture the full assembled system prompt (once per session)
     const trainingConvId = (state.metadata as any).conversationId;

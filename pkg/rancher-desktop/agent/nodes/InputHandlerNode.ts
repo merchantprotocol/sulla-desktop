@@ -176,12 +176,6 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
     };
 
     // ----------------------------------------------------------------
-    // 0. CONVERSATION TRIMMING MAINTENANCE
-    // ----------------------------------------------------------------
-    // Trigger maintenance asynchronously so downstream execution is non-blocking.
-    this.triggerBackgroundStateMaintenance(state);
-
-    // ----------------------------------------------------------------
     // 1. INPUT SANITIZATION
     // ----------------------------------------------------------------
     const latestUserMsg = this.findLatestUserMessage(state.messages);

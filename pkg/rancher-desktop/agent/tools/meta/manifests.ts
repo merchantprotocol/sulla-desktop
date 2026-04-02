@@ -59,4 +59,16 @@ export const metaToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./meta_search'),
   },
+  {
+    name:        'read_file',
+    description: 'Read the contents of a file with optional line range. Returns line-numbered content and the total line count. Can also list directory contents.',
+    category:    'meta',
+    schemaDef:   {
+      path:      { type: 'string', description: 'Path to the file to read. Supports ~ for home directory.' },
+      startLine: { type: 'number', optional: true, description: 'First line to read (1-indexed). Defaults to 1.' },
+      endLine:   { type: 'number', optional: true, description: 'Last line to read (1-indexed). Defaults to end of file.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./read_file'),
+  },
 ];

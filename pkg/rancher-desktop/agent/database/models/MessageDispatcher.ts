@@ -199,6 +199,40 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  // ── Thinking complete: close current bubble so next thinking starts fresh ──
+  if (kind === 'thinking_complete') {
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
+    }
+    return;
+  }
+
+  // ── Thinking: accumulate into a single growing bubble ──
+  if (kind === 'thinking' && role === 'assistant') {
+    let existingIdx = -1;
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        existingIdx = i;
+        break;
+      }
+    }
+    if (existingIdx !== -1) {
+      const existing = ctx.messages[existingIdx];
+      ctx.messages[existingIdx] = { ...existing, content: existing.content + '\n\n' + finalContent };
+    } else {
+      ctx.messages.push({
+        id: `${ Date.now() }_ws_thinking`, channelId: agentId,
+        threadId: msgThreadId, role, kind: 'thinking', content: finalContent,
+      });
+    }
+    return;
+  }
+
   // ── Non-streaming: remove prior streaming bubble ──
   if (role === 'assistant') {
     let streamIdx = -1;
@@ -210,6 +244,15 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     }
     if (streamIdx !== -1) {
       ctx.messages.splice(streamIdx, 1);
+    }
+
+    // Mark any open thinking bubble as completed
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
     }
   }
 
@@ -293,7 +336,42 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
 
     // Skip chat-only tools
     if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image'
-      || toolName === 'load_skill' || toolName === 'file_search') {
+      || toolName === 'load_skill') {
+      return;
+    }
+
+    // Render file_search and read_file as thinking text, not tool cards
+    if (toolName === 'file_search' || toolName === 'read_file') {
+      let thinkingText = '';
+      if (toolName === 'file_search') {
+        const query = typeof args.query === 'string' ? args.query : '';
+        const dir = (typeof args.dirPath === 'string' ? args.dirPath : '~').replace(/^\/Users\/[^/]+/, '~');
+        thinkingText = `Searching for "${ query }" in ${ dir }`;
+      } else {
+        const filePath = (typeof args.path === 'string' ? args.path : typeof args.filePath === 'string' ? args.filePath : '').replace(/^\/Users\/[^/]+/, '~');
+        const start = args.startLine;
+        const end = args.endLine;
+        const range = start ? ` (lines ${ start }${ end ? `-${ end }` : '+' })` : '';
+        thinkingText = `Opening ${ filePath }${ range }`;
+      }
+      // Push as thinking — find or create thinking bubble
+      let existingIdx = -1;
+      for (let i = ctx.messages.length - 1; i >= 0; i--) {
+        const m = ctx.messages[i];
+        if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+          existingIdx = i;
+          break;
+        }
+      }
+      if (existingIdx !== -1) {
+        const existing = ctx.messages[existingIdx];
+        ctx.messages[existingIdx] = { ...existing, content: existing.content + '\n\n' + thinkingText };
+      } else {
+        ctx.messages.push({
+          id: `${ Date.now() }_ws_thinking`, channelId: agentId,
+          threadId: msgThreadId, role: 'assistant', kind: 'thinking', content: thinkingText,
+        });
+      }
       return;
     }
 
