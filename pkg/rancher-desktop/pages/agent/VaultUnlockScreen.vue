@@ -156,7 +156,7 @@ function toggleMode() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-surface, #0d1117);
+  background: var(--bg-page, #0d1117);
   /* Allow window drag on the background */
   -webkit-app-region: drag;
 }
@@ -179,8 +179,8 @@ function toggleMode() {
   width: 64px;
   height: 64px;
   border-radius: 1rem;
-  background: color-mix(in srgb, var(--accent-primary, #38bdf8) 12%, transparent);
-  color: var(--accent-primary, #38bdf8);
+  background: color-mix(in srgb, var(--accent-primary, #5096b3) 12%, transparent);
+  color: var(--accent-primary, #5096b3);
   margin-bottom: 1.5rem;
 }
 
@@ -221,8 +221,8 @@ function toggleMode() {
 }
 
 .vault-unlock-input:focus {
-  border-color: var(--accent-primary, #38bdf8);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary, #38bdf8) 20%, transparent);
+  border-color: var(--accent-primary, #5096b3);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary, #5096b3) 20%, transparent);
 }
 
 .vault-unlock-input-error {
@@ -246,7 +246,7 @@ function toggleMode() {
   padding: 0.625rem;
   font-size: 0.875rem;
   font-weight: 600;
-  background: var(--accent-primary, #38bdf8);
+  background: var(--accent-primary, #5096b3);
   color: var(--text-on-accent, #0d1117);
   border: none;
   border-radius: 0.5rem;
@@ -255,7 +255,7 @@ function toggleMode() {
 }
 
 .vault-unlock-btn:hover:not(:disabled) {
-  background: var(--accent-primary-hover, #7dd3fc);
+  background: var(--accent-primary-hover, #6ab0cc);
 }
 
 .vault-unlock-btn:disabled {

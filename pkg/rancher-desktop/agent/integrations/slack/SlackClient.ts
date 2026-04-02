@@ -282,37 +282,15 @@ ${ incomingMessage }`.trim();
     if (this.eventsRegistered || !this.app) return;
     this.eventsRegistered = true;
 
-    this.app.event(/.*/, async(args) => {
-      console.log('[SlackClient] Event received:', args.event.type, args.event);
-
+    // Only handle app_mention events — ignore all other event noise
+    this.app.event('app_mention', async(args) => {
       const event: any = args.event;
-      if (event?.type === 'app_mention') {
-        try {
-          await this.handleAppMention(event);
-        } catch (error) {
-          console.error('[SlackClient] Failed processing app_mention directly', error);
-        }
-        return;
+      console.log('[SlackClient] App mention received:', event.text);
+      try {
+        await this.handleAppMention(event);
+      } catch (error) {
+        console.error('[SlackClient] Failed processing app_mention', error);
       }
-
-      const slackEventForwardId = generateUUID();
-      console.log('[SlackClient] Forwarding slack_event to tasker channel', {
-        channel:   SLACK_GRAPH_CHANNEL,
-        messageId: slackEventForwardId,
-        eventType: args.event.type || 'unknown',
-      });
-
-      WS_SERVICE.send(SLACK_GRAPH_CHANNEL, {
-        type: 'slack_event',
-        data: {
-          type:    args.event.type || 'unknown',
-          event:   args.event,
-          context: args.context,
-        },
-        id:        slackEventForwardId,
-        timestamp: Date.now(),
-        channel:   SLACK_GRAPH_CHANNEL,
-      });
     });
 
     this.app.message(async(args) => {
@@ -324,12 +302,20 @@ ${ incomingMessage }`.trim();
       const factsText = facts.map(fact => `- ${ fact }`).join('\n');
       const fullMessage = `${ factsText }\n\n${ incomingMessage }`;
 
-      WS_SERVICE.send(SLACK_GRAPH_CHANNEL, {
+      WS_SERVICE.send('tasker', {
         type:      'user_message',
-        data:      { content: fullMessage },
+        data:      {
+          content:  fullMessage,
+          metadata: {
+            origin:   'slack',
+            channel:  event.channel,
+            threadTs: event.thread_ts || event.ts,
+            user:     event.user,
+          },
+        },
         id:        generateUUID(),
         timestamp: Date.now(),
-        channel:   SLACK_GRAPH_CHANNEL,
+        channel:   'tasker',
       });
     });
 

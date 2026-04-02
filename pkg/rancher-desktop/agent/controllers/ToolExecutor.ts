@@ -103,6 +103,23 @@ export class ToolExecutor {
       const toolName = call.name;
       const args = call.args;
 
+      // --- Repeated tool call loop detection ---
+      const dedupeKey = this.buildToolRunDedupeKey(toolName, args);
+      const metadataAny = state.metadata as any;
+      const toolRunIndex = metadataAny.__toolRunIndex || {};
+      const priorRun = toolRunIndex[dedupeKey];
+      if (priorRun) {
+        const loopMsg = `Loop detected: this exact tool call ("${ toolName }" with the same arguments) was already executed. Use the previous result instead of calling it again.`;
+        await this.emitToolCallEvent(state, toolRunId, toolName, args);
+        await this.emitToolResultEvent(state, toolRunId, false, loopMsg);
+        await this.appendToolResultMessage(state, toolName, {
+          toolName, success: false, error: loopMsg, toolCallId: toolRunId,
+        });
+        results.push({ toolName, success: false, error: loopMsg });
+        this.pushToTranscript(toolName, false, loopMsg);
+        continue;
+      }
+
       // --- Policy block check ---
       const policyBlockReason = await this.getToolPolicyBlockReason(state, toolName);
       if (policyBlockReason) {
@@ -329,7 +346,7 @@ export class ToolExecutor {
     kind?: string,
   ): Promise<boolean> {
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
-    return await this.dispatchToWebSocket(connectionId, {
+    const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'progress',
       data: {
         phase:     'tool_call',
@@ -341,6 +358,26 @@ export class ToolExecutor {
       },
       timestamp: Date.now(),
     });
+
+    // Mirror to parent channel so subconscious tool calls appear in the UI
+    const parentChannel = (state.metadata as any).parentWsChannel;
+    if (parentChannel) {
+      const parentThreadId = (state.metadata as any).parentConversationId || state.metadata.threadId;
+      await this.dispatchToWebSocket(parentChannel, {
+        type: 'progress',
+        data: {
+          phase:     'tool_call',
+          toolRunId,
+          toolName,
+          args,
+          kind,
+          thread_id: parentThreadId,
+        },
+        timestamp: Date.now(),
+      });
+    }
+
+    return sent;
   }
 
   async emitToolResultEvent(
@@ -351,7 +388,7 @@ export class ToolExecutor {
     result?: any,
   ): Promise<boolean> {
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
-    return await this.dispatchToWebSocket(connectionId, {
+    const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'progress',
       data: {
         phase:     'tool_result',
@@ -363,6 +400,26 @@ export class ToolExecutor {
       },
       timestamp: Date.now(),
     });
+
+    // Mirror to parent channel so subconscious tool results appear in the UI
+    const parentChannel = (state.metadata as any).parentWsChannel;
+    if (parentChannel) {
+      const parentThreadId = (state.metadata as any).parentConversationId || state.metadata.threadId;
+      await this.dispatchToWebSocket(parentChannel, {
+        type: 'progress',
+        data: {
+          phase:     'tool_result',
+          toolRunId,
+          success,
+          error,
+          result,
+          thread_id: parentThreadId,
+        },
+        timestamp: Date.now(),
+      });
+    }
+
+    return sent;
   }
 
   // --------------------------------------------------------------------------

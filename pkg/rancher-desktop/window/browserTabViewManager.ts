@@ -848,7 +848,7 @@ export class BrowserTabViewManager {
 
     // ── Bridge events: forward sulla:* events to renderer for WebviewHostBridge ──
     // The guest preload sends events via ipcRenderer.send('browser-tab-view:bridge-event').
-    // Forward bridge lifecycle events (sulla:injected, sulla:routeChanged, sulla:domChange,
+    // Forward bridge lifecycle events (sulla:injected, sulla:routeChanged,
     // sulla:click, sulla:dialog, sulla:pageContent, sulla:contentAdded) to the renderer
     // so the WebviewHostBridge state machine can transition properly.
     wc.ipc.on('browser-tab-view:bridge-event', (_event: Electron.IpcMainEvent, msg: { type: string; data: any }) => {

@@ -10,6 +10,7 @@ import { getConversationLogger } from '../services/ConversationLogger';
 import { getTrainingDataLogger } from '../services/TrainingDataLogger';
 import { InputHandlerNode } from './InputHandlerNode';
 import { AgentNode } from './AgentNode';
+import { SubconsciousAgentNode } from './SubconsciousAgentNode';
 import { HeartbeatNode, type HeartbeatThreadState } from './HeartbeatNode';
 import type { WorkflowPlaybookState } from '../workflow/types';
 import { PlaybookController } from '../controllers/PlaybookController';
@@ -806,6 +807,36 @@ export function createAgentGraph(): Graph<AgentGraphState> {
 
   graph.setEntryPoint('input_handler');
   graph.setEndPoints('agent');
+
+  return graph;
+}
+
+/**
+ * Subconscious Graph — minimal multi-turn tool-calling loop.
+ *
+ * Single node (SubconsciousAgentNode), no InputHandler.
+ * Loops on tool calls or explicit AGENT_CONTINUE, exits on AGENT_DONE
+ * or when the LLM stops calling tools.
+ */
+export function createSubconsciousGraph(): Graph<BaseThreadState> {
+  const graph = new Graph<BaseThreadState>();
+
+  graph.addNode(new SubconsciousAgentNode());  // id: 'subconscious'
+
+  graph.addConditionalEdge('subconscious', (state) => {
+    const agentMeta = (state.metadata as any).agent || {};
+    const agentStatus = String(agentMeta.status || '').trim().toLowerCase();
+
+    if (agentStatus === 'done') return 'end';
+    if (agentStatus === 'continue') return 'subconscious';
+    if (agentStatus === 'in_progress' && state.metadata.hadToolCalls) return 'subconscious';
+
+    // Default: done
+    return 'end';
+  });
+
+  graph.setEntryPoint('subconscious');
+  graph.setEndPoints('subconscious');
 
   return graph;
 }

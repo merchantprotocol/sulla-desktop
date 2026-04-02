@@ -199,6 +199,40 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  // ── Thinking complete: close current bubble so next thinking starts fresh ──
+  if (kind === 'thinking_complete') {
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
+    }
+    return;
+  }
+
+  // ── Thinking: accumulate into a single growing bubble ──
+  if (kind === 'thinking' && role === 'assistant') {
+    let existingIdx = -1;
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        existingIdx = i;
+        break;
+      }
+    }
+    if (existingIdx !== -1) {
+      const existing = ctx.messages[existingIdx];
+      ctx.messages[existingIdx] = { ...existing, content: existing.content + '\n\n' + finalContent };
+    } else {
+      ctx.messages.push({
+        id: `${ Date.now() }_ws_thinking`, channelId: agentId,
+        threadId: msgThreadId, role, kind: 'thinking', content: finalContent,
+      });
+    }
+    return;
+  }
+
   // ── Non-streaming: remove prior streaming bubble ──
   if (role === 'assistant') {
     let streamIdx = -1;
@@ -210,6 +244,15 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     }
     if (streamIdx !== -1) {
       ctx.messages.splice(streamIdx, 1);
+    }
+
+    // Mark any open thinking bubble as completed
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
     }
   }
 
@@ -293,7 +336,107 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
 
     // Skip chat-only tools
     if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image'
-      || toolName === 'load_skill' || toolName === 'file_search') {
+      || toolName === 'load_skill') {
+      return;
+    }
+
+    // Render lightweight tools as thinking text, not tool cards
+    const THINKING_TOOL_NAMES = new Set([
+      'file_search', 'read_file',
+      'add_observational_memory', 'remove_observational_memory',
+      'vault_list', 'search_conversations',
+      'search_history', 'github_read_file', 'get_human_presence', 'list_tabs',
+      'check_agent_jobs', 'github_get_issue', 'github_get_issues',
+      'github_list_branches', 'git_log',
+    ]);
+    if (THINKING_TOOL_NAMES.has(toolName)) {
+      let thinkingText = '';
+      if (toolName === 'file_search') {
+        const query = typeof args.query === 'string' ? args.query : '';
+        const dir = (typeof args.dirPath === 'string' ? args.dirPath : '~').replace(/^\/Users\/[^/]+/, '~');
+        thinkingText = `Searching for "${ query }" in ${ dir }`;
+      } else if (toolName === 'add_observational_memory') {
+        const content = typeof args.content === 'string' ? args.content : '';
+        const truncated = content.length > 80 ? content.slice(0, 80) + '...' : content;
+        thinkingText = `Remembering: "${ truncated }"`;
+      } else if (toolName === 'remove_observational_memory') {
+        const id = typeof args.id === 'string' ? args.id : '';
+        thinkingText = `Forgetting observation ${ id }`;
+      } else if (toolName === 'vault_list') {
+        thinkingText = 'Checking saved credentials in vault';
+      } else if (toolName === 'search_conversations') {
+        const action = typeof args.action === 'string' ? args.action : 'search';
+        const query = typeof args.query === 'string' ? args.query : '';
+        const type = typeof args.type === 'string' ? ` (${ args.type })` : '';
+        if (action === 'search' && query) {
+          thinkingText = `Searching conversations for "${ query }"${ type }`;
+        } else if (action === 'recent') {
+          thinkingText = `Loading recent conversations${ type }`;
+        } else if (action === 'get') {
+          const id = typeof args.id === 'string' ? args.id : typeof args.threadId === 'string' ? args.threadId : '';
+          thinkingText = `Retrieving conversation ${ id }`;
+        } else {
+          thinkingText = `Searching conversations${ query ? ` for "${ query }"` : '' }`;
+        }
+      } else if (toolName === 'search_history') {
+        const query = typeof args.query === 'string' ? args.query : '';
+        thinkingText = query ? `Searching browsing history for "${ query }"` : 'Browsing recent history';
+      } else if (toolName === 'github_read_file') {
+        const owner = typeof args.owner === 'string' ? args.owner : '';
+        const repo = typeof args.repo === 'string' ? args.repo : '';
+        const path = typeof args.path === 'string' ? args.path : '';
+        const ref = typeof args.ref === 'string' ? ` @ ${ args.ref }` : '';
+        thinkingText = `Reading ${ owner }/${ repo }/${ path }${ ref }`;
+      } else if (toolName === 'get_human_presence') {
+        thinkingText = 'Checking if user is available';
+      } else if (toolName === 'list_tabs') {
+        thinkingText = 'Checking open browser tabs';
+      } else if (toolName === 'check_agent_jobs') {
+        const jobId = typeof args.jobId === 'string' ? args.jobId : '';
+        thinkingText = jobId ? `Checking agent job ${ jobId }` : 'Checking all agent jobs';
+      } else if (toolName === 'github_get_issue') {
+        const owner = typeof args.owner === 'string' ? args.owner : '';
+        const repo = typeof args.repo === 'string' ? args.repo : '';
+        const num = typeof args.issue_number === 'number' ? args.issue_number : '';
+        thinkingText = `Reading issue ${ owner }/${ repo }#${ num }`;
+      } else if (toolName === 'github_get_issues') {
+        const owner = typeof args.owner === 'string' ? args.owner : '';
+        const repo = typeof args.repo === 'string' ? args.repo : '';
+        const state = typeof args.state === 'string' ? args.state : 'open';
+        thinkingText = `Listing ${ state } issues on ${ owner }/${ repo }`;
+      } else if (toolName === 'github_list_branches') {
+        const owner = typeof args.owner === 'string' ? args.owner : '';
+        const repo = typeof args.repo === 'string' ? args.repo : '';
+        thinkingText = `Listing branches on ${ owner }/${ repo }`;
+      } else if (toolName === 'git_log') {
+        const dir = (typeof args.absolutePath === 'string' ? args.absolutePath : '').replace(/^\/Users\/[^/]+/, '~');
+        const limit = typeof args.limit === 'number' ? args.limit : 20;
+        thinkingText = `Reviewing last ${ limit } commits in ${ dir }`;
+      } else {
+        const filePath = (typeof args.path === 'string' ? args.path : typeof args.filePath === 'string' ? args.filePath : '').replace(/^\/Users\/[^/]+/, '~');
+        const start = args.startLine;
+        const end = args.endLine;
+        const range = start ? ` (lines ${ start }${ end ? `-${ end }` : '+' })` : '';
+        thinkingText = `Opening ${ filePath }${ range }`;
+      }
+      // Push as thinking — find or create thinking bubble
+      let existingIdx = -1;
+      for (let i = ctx.messages.length - 1; i >= 0; i--) {
+        const m = ctx.messages[i];
+        if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+          existingIdx = i;
+          break;
+        }
+      }
+      if (existingIdx !== -1) {
+        const existing = ctx.messages[existingIdx];
+        ctx.messages[existingIdx] = { ...existing, content: existing.content + '\n\n' + thinkingText };
+      } else {
+        ctx.messages.push({
+          id: `${ Date.now() }_ws_thinking`, channelId: agentId,
+          threadId: msgThreadId, role: 'assistant', kind: 'thinking', content: thinkingText,
+        });
+      }
       return;
     }
 

@@ -27,16 +27,6 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./exec'),
   },
   {
-    name:        'dom_observer',
-    description: 'Passive tool — do NOT call this directly. The system automatically delivers DOM change events from open browser tabs as dom_observer tool results. You receive these because you have browser tabs open. To stop receiving events for a tab, close it with browser_tab(action=\'remove\', assetId=\'...\').',
-    category:    'meta',
-    schemaDef:   {
-      assetIds: { type: 'array', optional: true, description: 'Asset IDs of the tabs that emitted events.', items: { type: 'string' } },
-    },
-    operationTypes: ['read'],
-    loader:         () => import('./dom_observer'),
-  },
-  {
     name:        'remove_observational_memory',
     description: 'Remove a specific observational memory by its ID to delete it from long-term memory.',
     category:    'meta',
@@ -58,5 +48,17 @@ export const metaToolManifests: ToolManifest[] = [
     },
     operationTypes: ['read'],
     loader:         () => import('./meta_search'),
+  },
+  {
+    name:        'read_file',
+    description: 'Read the contents of a file with optional line range. Returns line-numbered content and the total line count. Can also list directory contents.',
+    category:    'meta',
+    schemaDef:   {
+      path:      { type: 'string', description: 'Path to the file to read. Supports ~ for home directory.' },
+      startLine: { type: 'number', optional: true, description: 'First line to read (1-indexed). Defaults to 1.' },
+      endLine:   { type: 'number', optional: true, description: 'Last line to read (1-indexed). Defaults to end of file.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./read_file'),
   },
 ];

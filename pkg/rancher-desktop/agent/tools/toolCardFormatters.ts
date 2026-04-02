@@ -60,6 +60,30 @@ const formatters: Record<string, Formatter> = {
   bash:         execFormatter,
   run_command:  execFormatter,
 
+  // ── File Search ─────────────────────────────────────────────────────────
+  file_search(args) {
+    const query = str(args.query);
+    const dirPath = str(args.dirPath) || '~';
+    const shortDir = dirPath.replace(/^\/Users\/[^/]+/, '~');
+    return {
+      label:   'Search',
+      summary: `Searching for "${ truncate(query, 60) }" in ${ shortDir }`,
+    };
+  },
+
+  // ── Read File ──────────────────────────────────────────────────────────
+  read_file(args) {
+    const filePath = str(args.path || args.filePath);
+    const shortPath = filePath.replace(/^\/Users\/[^/]+/, '~');
+    const startLine = args.startLine as number | undefined;
+    const endLine = args.endLine as number | undefined;
+    const range = startLine ? ` (lines ${ startLine }${ endLine ? `-${ endLine }` : '+' })` : '';
+    return {
+      label:   'File',
+      summary: `Opening ${ truncate(shortPath, 60) }${ range }`,
+    };
+  },
+
   // ── Browser Tab ──────────────────────────────────────────────────────────
   browser_tab(args) {
     const action = str(args.action);
@@ -393,16 +417,26 @@ const formatters: Record<string, Formatter> = {
   },
 
   // ── Memory / Meta ────────────────────────────────────────────────────────
-  add_observational_memory() {
-    return { label: 'Memory', summary: 'Remembering observation' };
+  add_observational_memory(args, result) {
+    const content = str(args.content);
+    const output = extractOutput(result);
+    return {
+      label:   'Memory',
+      summary: content ? `Remembering: "${ truncate(content, 60) }"` : 'Remembering observation',
+      output:  output || undefined,
+    };
   },
-  remove_observational_memory() {
-    return { label: 'Memory', summary: 'Forgetting observation' };
+  remove_observational_memory(args, result) {
+    const id = str(args.id);
+    const output = extractOutput(result);
+    // The result contains the content of what was forgotten
+    const content = output?.match(/Forgetting:\s*"(.+?)"/)?.[1];
+    return {
+      label:   'Memory',
+      summary: content ? `Forgetting: "${ truncate(content, 60) }"` : `Forgetting observation ${ id }`,
+      output:  output || undefined,
+    };
   },
-  dom_observer() {
-    return { label: 'Browser', summary: 'Watching DOM changes' };
-  },
-
   // ── Workspace ────────────────────────────────────────────────────────────
   create_workspace(args) {
     return { label: 'Workspace', summary: `Creating workspace ${ str(args.name) }` };
@@ -429,17 +463,20 @@ const formatters: Record<string, Formatter> = {
   integration_list() {
     return { label: 'Integrations', summary: 'Listing integrations' };
   },
-  integration_is_enabled(args) {
-    return { label: 'Integrations', summary: `Checking ${ str(args.integration_slug) }` };
+  vault_is_enabled(args) {
+    return { label: 'Vault', summary: `Checking ${ str(args.account_type) }` };
   },
-  integration_get_credentials(args) {
-    return { label: 'Integrations', summary: `Getting credentials for ${ str(args.integration_slug) }` };
+  vault_read_secrets(args) {
+    return { label: 'Vault', summary: `Reading credentials for ${ str(args.account_type) }` };
   },
-  list_integration_accounts(args) {
-    return { label: 'Integrations', summary: `Listing accounts for ${ str(args.integration_slug) }` };
+  vault_list_accounts(args) {
+    return { label: 'Vault', summary: `Listing accounts for ${ str(args.account_type) }` };
   },
-  set_active_integration_account(args) {
-    return { label: 'Integrations', summary: `Setting active account for ${ str(args.integration_slug) }` };
+  vault_set_active_account(args) {
+    return { label: 'Vault', summary: `Setting active account for ${ str(args.account_type) }` };
+  },
+  vault_set_credential(args) {
+    return { label: 'Vault', summary: `Saving credential for ${ str(args.account_type) }` };
   },
 
   // ── Kubectl ──────────────────────────────────────────────────────────────

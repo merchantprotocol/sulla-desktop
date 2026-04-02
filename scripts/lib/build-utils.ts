@@ -247,6 +247,11 @@ export default {
   },
 
   /**
+   * sulla CLI and daemon are plain shell scripts in resources/{platform}/bin/.
+   * No webpack compilation needed — just ensure they are executable.
+   */
+
+  /**
    * Build the main process JavaScript code.
    */
   buildJavaScript(config: webpack.Configuration): Promise<void> {
@@ -273,6 +278,19 @@ export default {
    */
   async buildPreload(): Promise<void> {
     await this.buildJavaScript(this.webpackPreloadConfig);
+  },
+
+  /**
+   * Ensure sulla CLI and daemon shell scripts are executable.
+   * The scripts live in resources/{platform}/bin/ and are tracked in git.
+   */
+  async buildCli(): Promise<void> {
+    const binDir = path.join(this.rootDir, 'resources', process.platform, 'bin');
+    for (const name of ['sulla', 'sulla-daemon']) {
+      try {
+        fs.chmodSync(path.join(binDir, name), 0o755);
+      } catch { /* best effort */ }
+    }
   },
 
   /**

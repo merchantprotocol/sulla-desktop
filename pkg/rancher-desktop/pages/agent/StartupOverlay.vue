@@ -2,15 +2,15 @@
   <!-- Loading overlay while system boots -->
   <div
     v-if="showOverlay"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-slate-100/80 backdrop-blur-md dark:bg-slate-950/80"
+    class="sulla-startup-overlay"
   >
-    <div class="sulla-startup-card w-full max-w-md overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-8 shadow-2xl shadow-sky-500/5 dark:border-slate-700/60 dark:bg-slate-800 dark:shadow-sky-400/5">
+    <div class="sulla-startup-card">
       <!-- Decorative top accent bar -->
-      <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-500" />
+      <div class="sulla-startup-accent" />
 
       <!-- Icon + Title -->
-      <div class="flex items-center gap-3 mb-4">
-        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 dark:bg-sky-500/10">
+      <div class="sulla-startup-header">
+        <div class="sulla-startup-icon">
           <svg
             xmlns="http://www.w3.org/2000/svg"
             width="20"
@@ -21,7 +21,6 @@
             stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
-            class="text-sky-500 dark:text-sky-400"
           >
             <path d="M12 8V4" /><path d="M8 4h8" /><rect
               x="6"
@@ -33,10 +32,10 @@
           </svg>
         </div>
         <div>
-          <h2 class="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+          <h2 class="sulla-startup-title">
             Starting Sulla
           </h2>
-          <p class="text-sm text-slate-500 dark:text-slate-400">
+          <p class="sulla-startup-subtitle">
             {{ progressDescription || 'Initializing system...' }}
           </p>
         </div>
@@ -45,12 +44,12 @@
       <!-- Model download progress -->
       <div
         v-if="modelDownloading"
-        class="mt-4 rounded-xl border border-sky-200/60 bg-sky-50/80 p-4 dark:border-sky-500/20 dark:bg-sky-500/5"
+        class="sulla-startup-download"
       >
-        <p class="text-sm font-medium text-slate-700 dark:text-slate-200">
-          Downloading: <strong class="text-sky-600 dark:text-sky-400">{{ modelName }}</strong>
+        <p class="sulla-startup-download-label">
+          Downloading: <strong class="sulla-startup-download-name">{{ modelName }}</strong>
         </p>
-        <p class="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+        <p class="sulla-startup-download-status">
           {{ modelDownloadStatus }}
         </p>
       </div>
@@ -58,24 +57,24 @@
       <!-- K8s progress bar -->
       <div
         v-if="progressMax > 0"
-        class="mt-5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700"
+        class="sulla-startup-track"
       >
         <div
-          class="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-500 ease-out"
+          class="sulla-startup-fill"
           :style="{ width: (progressCurrent / progressMax * 100) + '%' }"
         />
       </div>
       <div
         v-else
-        class="mt-5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700"
+        class="sulla-startup-track"
       >
-        <div class="sulla-progress-indeterminate h-full w-2/5 rounded-full bg-gradient-to-r from-sky-400 to-blue-500" />
+        <div class="sulla-startup-fill sulla-progress-indeterminate" />
       </div>
 
       <!-- Percentage label -->
       <div
         v-if="progressMax > 0"
-        class="mt-2 text-right text-xs font-medium tabular-nums text-slate-400 dark:text-slate-500"
+        class="sulla-startup-percent"
       >
         {{ Math.round(progressCurrent / progressMax * 100) }}%
       </div>
@@ -112,17 +111,122 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.sulla-startup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 17, 23, 0.85);
+  backdrop-filter: blur(12px);
+}
+
 .sulla-startup-card {
   position: relative;
+  width: 100%;
+  max-width: 28rem;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--border-default, #30363d);
+  background: var(--bg-surface, #161b22);
+  padding: 2rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 30px rgba(80, 150, 179, 0.05);
+}
+
+.sulla-startup-accent {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent-primary, #5096b3), rgba(80, 150, 179, 0.3));
+}
+
+.sulla-startup-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.sulla-startup-icon {
+  display: flex;
+  height: 2.5rem;
+  width: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  background: rgba(80, 150, 179, 0.1);
+  color: var(--accent-primary, #5096b3);
+}
+
+.sulla-startup-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary, #e6edf3);
+  margin: 0;
+}
+
+.sulla-startup-subtitle {
+  font-size: 0.875rem;
+  color: var(--text-muted, #8b949e);
+  margin: 0;
+}
+
+.sulla-startup-download {
+  margin-top: 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(80, 150, 179, 0.15);
+  background: rgba(80, 150, 179, 0.05);
+  padding: 1rem;
+}
+
+.sulla-startup-download-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary, #b1bac4);
+  margin: 0;
+}
+
+.sulla-startup-download-name {
+  color: var(--accent-primary, #5096b3);
+}
+
+.sulla-startup-download-status {
+  font-size: 0.75rem;
+  color: var(--text-muted, #8b949e);
+  margin: 0.375rem 0 0;
+}
+
+.sulla-startup-track {
+  margin-top: 1.25rem;
+  height: 4px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-surface-hover, #21262d);
+}
+
+.sulla-startup-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent-primary, #5096b3);
+  transition: width 500ms ease-out;
+  width: 40%;
+}
+
+.sulla-startup-percent {
+  margin-top: 0.5rem;
+  text-align: right;
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim, #6e7681);
 }
 
 @keyframes sulla-indeterminate {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(250%);
-  }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
 }
 
 .sulla-progress-indeterminate {

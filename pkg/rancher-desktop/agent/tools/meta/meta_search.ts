@@ -13,7 +13,13 @@ export class MetaSearchWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { query, limit, reindex } = input;
-    const dirPath = input.dirPath || os.homedir();
+    let dirPath = input.dirPath || os.homedir();
+    // Expand ~ to home directory — path.resolve doesn't handle tilde
+    if (dirPath.startsWith('~/')) {
+      dirPath = dirPath.replace('~', os.homedir());
+    } else if (dirPath === '~') {
+      dirPath = os.homedir();
+    }
 
     if (!query) {
       return {

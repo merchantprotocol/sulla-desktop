@@ -1,0 +1,51 @@
+#!/bin/sh
+# sulla-daemon — keep-alive relay inside the Lima VM
+# Maintains a persistent socat tunnel between a local UDS and the host TCP port.
+# sulla CLI connects to the socket; socat reuses the TCP connection.
+
+SOCKET="/tmp/sulla-tools.sock"
+HOST="host.docker.internal"
+PORT="${SULLA_PORT:-3000}"
+PIDFILE="/tmp/sulla-daemon.pid"
+
+case "${1:-start}" in
+  start)
+    # Clean up stale socket
+    rm -f "$SOCKET"
+
+    # Check if socat is available
+    if ! command -v socat >/dev/null 2>&1; then
+      echo "[sulla-daemon] socat not found, falling back to no daemon (sulla will use direct TCP)" >&2
+      exit 0
+    fi
+
+    # Start socat as a forking listener
+    socat UNIX-LISTEN:"$SOCKET",fork,reuseaddr TCP:"$HOST":"$PORT" &
+    echo $! > "$PIDFILE"
+    chmod 666 "$SOCKET" 2>/dev/null
+    echo "[sulla-daemon] Relay listening on $SOCKET → $HOST:$PORT (pid $(cat $PIDFILE))"
+    ;;
+
+  stop)
+    if [ -f "$PIDFILE" ]; then
+      kill "$(cat "$PIDFILE")" 2>/dev/null
+      rm -f "$PIDFILE" "$SOCKET"
+      echo "[sulla-daemon] Stopped"
+    else
+      echo "[sulla-daemon] Not running"
+    fi
+    ;;
+
+  status)
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      echo "[sulla-daemon] Running (pid $(cat $PIDFILE))"
+    else
+      echo "[sulla-daemon] Not running"
+    fi
+    ;;
+
+  *)
+    echo "Usage: sulla-daemon {start|stop|status}" >&2
+    exit 2
+    ;;
+esac

@@ -218,7 +218,7 @@ async function handleIndex({ dirPath, glob }) {
   const collections = await getCollectionsModule();
   collections.addCollection(colName, resolvedDir, glob || TEXT_FILE_GLOB);
   const fastGlob = await getFastGlob();
-  const excludeDirs = ['node_modules', '.git', '.cache', 'vendor', 'dist', 'build'];
+  const excludeDirs = ['node_modules', '.git', '.cache', 'vendor', 'dist', 'build', '.Trash', '.Trashes', 'Library', '.local', '.npm', '.nvm', '.docker', '.kube'];
   const allFiles = await fastGlob.default(glob || TEXT_FILE_GLOB, {
     cwd: resolvedDir, onlyFiles: true, followSymbolicLinks: false, dot: false,
     ignore: excludeDirs.map(d => '**/' + d + '/**'),

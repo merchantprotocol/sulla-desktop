@@ -64,7 +64,7 @@ export class AddObservationalMemoryWorker extends BaseTool {
       await SullaSettingsModel.set('observationalMemory', JSON.stringify(memoryArray));
       return {
         successBoolean: true,
-        responseString: `Updated existing observation: ${ content }`,
+        responseString: `Remembering (updated): "${ content }" (id: ${ memoryArray[duplicateIndex].id }, priority: ${ priority })`,
       };
     }
 
@@ -99,7 +99,7 @@ export class AddObservationalMemoryWorker extends BaseTool {
 
     return {
       successBoolean: true,
-      responseString: Object.values(newMemory).join(' '),
+      responseString: `Remembering: "${ content }" (id: ${ newMemory.id }, priority: ${ priority })`,
     };
   }
 }

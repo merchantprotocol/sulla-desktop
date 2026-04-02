@@ -33,15 +33,6 @@ const pendingRequests = new Map<string, {
   timer:   ReturnType<typeof setTimeout>;
 }>();
 
-type DomEventHandler = (event: {
-  assetId:   string;
-  type:      string;
-  message:   string;
-  timestamp: number;
-}) => void;
-
-const domEventHandlers = new Set<DomEventHandler>();
-
 let requestCounter = 0;
 
 function ensureInit(): void {
@@ -68,10 +59,6 @@ function ensureInit(): void {
         } else {
           pending.resolve(result);
         }
-      }
-    } else if (msg.type === 'bridge:dom-event') {
-      for (const handler of domEventHandlers) {
-        try { handler(msg.data as any) } catch { /* no-op */ }
       }
     }
   });
@@ -299,10 +286,4 @@ export const hostBridgeProxy = {
     return ((await callRenderer('closeTabByAssetId', [assetId])) as boolean) || false;
   },
 
-  onDomEvent(handler: DomEventHandler): () => void {
-    ensureInit();
-    domEventHandlers.add(handler);
-
-    return () => { domEventHandlers.delete(handler) };
-  },
 };

@@ -49,7 +49,7 @@ That means:
 - Update the project PRD with what you did
 - Stop when you've shipped something real OR hit a genuine blocker
 
-## Decision Framework — How to Pick Your Focus
+## What to Work On
 
 Use this priority order:
 

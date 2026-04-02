@@ -1,7 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import fs from 'node:fs';
-import path from 'node:path';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { resolveSullaAgentsDir } from '@pkg/agent/utils/sullaPaths';
@@ -169,6 +168,11 @@ export class ChatCompletionsServer {
     // Call a tool endpoint with specific account credentials
     this.app.post('/v1/tools/:accountId/:slug/:endpoint/call', async(req: Request, res: Response) => {
       await this.handleIntegrationCall(req, res);
+    });
+
+    // Proxy pass-through: inject credentials and forward to upstream API
+    this.app.post('/v1/proxy/:accountId/:slug', async(req: Request, res: Response) => {
+      await this.handleProxyCall(req, res);
     });
 
     // ── MCP Config Generation endpoints ─────────────────────────────
@@ -922,7 +926,9 @@ export class ChatCompletionsServer {
       if (slug === 'mcp') {
         const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
         const bridge = MCPBridge.getInstance();
-        const { params = {} } = req.body || {};
+        // Accept both { params: { ... } } and flat { call_id: "..." } formats
+        const mcpBody = req.body || {};
+        const params = mcpBody.params && typeof mcpBody.params === 'object' ? mcpBody.params : mcpBody;
 
         // Lazy init: if no client exists for this account, initialize on demand
         if (bridge.getToolsForAccount(accountId).length === 0) {
@@ -985,6 +991,122 @@ export class ChatCompletionsServer {
       }
 
       res.status(500).json({ success: false, error: error.message || 'Integration call failed' });
+    }
+  }
+
+  // ── Proxy pass-through handler ─────────────────────────────────
+
+  /**
+   * Transparent proxy: resolves credentials from the vault for the given
+   * accountId + integration slug, injects auth headers, forwards the request
+   * to the upstream API, and returns the raw response.
+   *
+   * Body: { method, path, body?, query?, headers? }
+   *
+   * The model never sees credentials — they are injected at this layer.
+   */
+  private async handleProxyCall(req: Request, res: Response) {
+    const accountId = String(req.params.accountId);
+    const slug = String(req.params.slug);
+
+    const {
+      method = 'GET',
+      path: reqPath,
+      body,
+      query,
+      headers: extraHeaders,
+    } = req.body || {};
+
+    if (!reqPath) {
+      return res.status(400).json({ success: false, error: 'Missing required field "path" (e.g. "/rest/companies", "/graphql")' });
+    }
+
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const svc = getIntegrationService();
+      await svc.initialize();
+
+      // Resolve base_url from the integration's stored credentials
+      const baseUrlValue = await svc.getIntegrationValue(slug, 'base_url', accountId);
+      if (!baseUrlValue?.value) {
+        return res.status(400).json({
+          success: false,
+          error:   `No base_url configured for integration "${ slug }" account "${ accountId }". Set it via Settings → Integrations.`,
+        });
+      }
+      const baseUrl = baseUrlValue.value.replace(/\/+$/, '');
+
+      // Build the target URL
+      const url = new URL(baseUrl + reqPath);
+      if (query && typeof query === 'object') {
+        for (const [k, v] of Object.entries(query)) {
+          if (v != null) url.searchParams.set(k, String(v));
+        }
+      }
+
+      // Build headers — inject auth credentials without exposing them
+      const headers: Record<string, string> = {
+        'Content-Type':  'application/json',
+        Accept:          'application/json',
+        ...extraHeaders,
+      };
+
+      // Resolve auth — skip if caller already provided an Authorization header
+      if (!headers.Authorization) {
+        const bearerValue = await svc.getIntegrationValue(slug, 'bearer_token', accountId);
+        if (bearerValue?.value) {
+          headers.Authorization = `Bearer ${ bearerValue.value }`;
+        } else {
+          // Try OAuth access token
+          try {
+            const oauthToken = await svc.getOAuthAccessToken(slug, accountId);
+            if (oauthToken) {
+              headers.Authorization = `Bearer ${ oauthToken }`;
+            }
+          } catch { /* no oauth configured */ }
+
+          // Try API key (stored as api_key, injected as query param "key")
+          if (!headers.Authorization) {
+            const apiKeyValue = await svc.getIntegrationValue(slug, 'api_key', accountId);
+            if (apiKeyValue?.value) {
+              url.searchParams.set('key', apiKeyValue.value);
+            }
+          }
+        }
+      }
+
+      console.log(`[Proxy] ${ method } ${ url.toString() }`);
+
+      // Forward the request
+      const fetchInit: RequestInit = {
+        method: method.toUpperCase(),
+        headers,
+      };
+
+      if (body && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
+        fetchInit.body = JSON.stringify(body);
+      }
+
+      const upstream = await fetch(url.toString(), fetchInit);
+      const responseText = await upstream.text();
+
+      // Parse response if JSON, otherwise return as text
+      let responseData: any;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch {
+        responseData = responseText;
+      }
+
+      // Return the raw upstream response — let the model see exactly what came back
+      res.status(upstream.status).json({
+        success:    upstream.ok,
+        status:     upstream.status,
+        result:     responseData,
+      });
+    } catch (error: any) {
+      console.error(`[Proxy] ${ slug } failed:`, error);
+      res.status(500).json({ success: false, error: error.message || 'Proxy call failed' });
     }
   }
 

@@ -69,6 +69,7 @@ class Builder {
     await this.buildRenderer();
     await buildUtils.buildPreload();
     await buildUtils.buildMain();
+    await buildUtils.buildCli();
   }
 
   async run() {

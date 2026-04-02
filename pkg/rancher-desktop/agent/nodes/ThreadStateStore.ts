@@ -9,16 +9,35 @@ import { ConversationHistoryModel } from '../database/models/ConversationHistory
 // Redis client for thread state persistence
 let redis: Redis | null = null;
 
+const REDIS_URL = 'redis://127.0.0.1:30117';
+
 // Initialize Redis connection
 function getRedisClient(): Redis {
   if (!redis) {
-    redis = new Redis({
-      host:                 process.env.REDIS_HOST || 'localhost',
-      port:                 parseInt(process.env.REDIS_PORT || '6379'),
-      password:             process.env.REDIS_PASSWORD,
-      db:                   parseInt(process.env.REDIS_DB || '0'),
+    redis = new Redis(REDIS_URL, {
       keyPrefix:            'sulla:threadstate:',
       maxRetriesPerRequest: 3,
+      lazyConnect:          true,
+      enableReadyCheck:     true,
+      retryStrategy:        (times: number) => {
+        const delay = Math.min(times * 200, 10_000);
+
+        if (times % 30 === 0) {
+          console.log(`[ThreadStateStore] Still reconnecting (attempt ${ times }, next retry in ${ delay }ms)`);
+        }
+
+        return delay;
+      },
+    });
+
+    // Attach error handler to prevent unhandled error events
+    redis.on('error', (err: any) => {
+      if (err.code === 'ECONNREFUSED' || err.code === 'EPIPE' || err.code === 'ECONNRESET') {
+        // Reduce log noise for expected startup errors
+        console.log(`[ThreadStateStore] Redis connection error (${ err.code }): server not available yet`);
+      } else {
+        console.error('[ThreadStateStore] Redis error:', err);
+      }
     });
   }
   return redis;

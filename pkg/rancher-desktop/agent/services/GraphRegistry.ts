@@ -1,8 +1,9 @@
-import { Graph, createHeartbeatGraph, createAgentGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
+import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
 import type { HeartbeatThreadState } from '../nodes/HeartbeatNode';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel, getCurrentMode } from '../languagemodels';
 import { resolveSullaAgentsDir } from '../utils/sullaPaths';
+import { toolRegistry } from '../tools/registry';
 import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -16,6 +17,214 @@ const registry = new Map<string, {
   graph: Graph<any>;
   state: BaseThreadState;
 }>();
+
+// ============================================================================
+// SUBCONSCIOUS MIDDLEWARE — TOOL ASSIGNMENTS
+// ============================================================================
+
+/** Summarizer: no tools — pure text analysis and XML output */
+const SUMMARIZER_TOOLS: string[] = [];
+
+/** Memory Recall: search files and read them to find relevant context */
+const MEMORY_RECALL_TOOLS: string[] = [
+  'file_search',           // Semantic search across ~/sulla/
+  'read_file',             // Read file contents with optional line range
+  'vault_list',            // List saved website credentials
+  'search_history',        // Search browsing history by query/time range
+  'search_conversations',  // Search past chats, workflows, graph executions
+  'github_read_file',      // Read files from GitHub repositories
+  'get_human_presence',    // Check if user is available
+  'list_tabs',             // See what browser tabs are open
+  'check_agent_jobs',      // Check status of spawned agent jobs
+  'github_get_issue',      // Get details of a specific issue
+  'github_get_issues',     // List/filter issues from a repo
+  'github_list_branches',  // List branches in a repo
+  'git_log',               // Recent commit history
+];
+
+/** Observation Agent: manage observational memory and update identity files */
+const OBSERVATION_AGENT_TOOLS: string[] = [
+  'add_observational_memory',     // Store new observations
+  'remove_observational_memory',  // Clean up stale observations
+  'file_search',                  // Search identity/observation files
+  'exec',                         // Read/write identity files
+];
+
+// ============================================================================
+// SUBCONSCIOUS MIDDLEWARE PROMPTS
+// ============================================================================
+
+const MEMORY_RECALL_PROMPT = `You are a READ-ONLY memory recall process supporting a primary agent.
+
+CRITICAL: You do NOT execute tasks. You do NOT call APIs, run commands, browse
+websites, or interact with any service. You ONLY search files and return what
+you find. Your sole tool is file_search.
+
+Your job: search ~/sulla/ for skills, integrations, workflows, and project
+context that are relevant to the current conversation. Return what you find
+so the primary agent can use it.
+
+### Long-term Memory (Sulla Home Directory)
+Your permanent knowledge base is the filesystem at \`~/sulla\`. Skills, workflows, agent configs, projects, identity files, daily logs, and integrations — all readable/writable files. This IS your memory. Search and read it for context. Write to it when you learn something worth keeping.
+
+### Sulla Home Directory
+\`\`\`
+~/sulla/
+├── agents/                              # Agent persona configs (agentId = folder name)
+├── skills/                              # Skill library (one folder per skill, each has SKILL.md)
+├── workflows/                           # Sulla Workflow YAML files (slug = filename without .yaml)
+├── projects/                            # Project workspaces (each has PROJECT.md)
+├── integrations/                        # YAML configs for third-party API integrations
+├── daily-logs/                          # Daily pipeline outputs
+│   └── YYYY-MM-DD/
+│       ├── {domain}/observations/       # Observer outputs (one .md per topic)
+│       └── {domain}/thinking/           # Thinker analysis outputs
+└── identity/                            # Persistent identity & goals
+    ├── human/
+    │   ├── identity.md                  # Who the human is
+    │   └── goals.md                     # Human goals (daily → 2-year)
+    ├── business/
+    │   ├── identity.md                  # Business identity
+    │   └── goals.md                     # Business goals
+    ├── world/
+    │   ├── identity.md                  # World context
+    │   └── goals.md                     # World forecasts
+    └── agent/
+        ├── identity.md                  # Agent self-identity
+        └── goals.md                     # Agent goals
+\`\`\`
+Domains: \`human\`, \`business\`, \`world\`, \`agent\`
+Use \`file_search\` to locate any agent, skill, workflow, project, or integration config by keyword.
+
+### Codebase
+Your source code lives locally at \`~/.sulla-desktop\` — this is a working git repository linked to https://github.com/merchantprotocol/sulla-desktop. You can read, modify, and push changes to this repo as pull requests. Architecture and system docs live in the \`/doc\` folder.
+
+How to search:
+- Use file_search with dirPath="~/sulla" or a subdirectory
+- Describe what you're looking for as a natural language phrase
+- Read the results and determine what's relevant
+
+### History & Conversations
+
+**Browsing History** (URLs visited in browser tabs):
+- **search_history** — Search visited URLs by text query and/or time range. Returns page titles, URLs, visit counts, and timestamps.
+
+**Conversation History** (chat sessions, workflows, and graph executions):
+- **search_conversations** — Search past conversations by keyword (searches titles and summaries), list recent conversations (optionally filtered by type: chat/browser/workflow/graph), or retrieve full details for a specific conversation by ID or thread ID.
+
+**Key vault capabilities** (all called via Tools API):
+- **vault/list** — List all saved accounts. Shows website URLs, usernames, and AI access levels. Passwords are NEVER included in the response.
+
+What to return (in AGENT_DONE):
+- Relevant skill instructions (paste key content from SKILL.md)
+- Relevant integration endpoints and examples (paste from INTEGRATION.md)
+- Relevant workflow definitions
+- Relevant project or identity context
+- Always cite your sources
+
+If nothing relevant is found, finish immediately with an empty AGENT_DONE.
+Do not keep searching if the first few searches return nothing relevant.`;
+
+const OBSERVATION_AGENT_PROMPT = `You are the observation process for an AI agent.
+
+CRITICAL: You are NOT the primary agent. You do NOT execute tasks, answer
+questions, browse websites, call APIs, create files, or do anything the user
+asked for. Another agent handles that. You ONLY manage observational memory.
+
+Your ONLY jobs:
+1. Review the conversation for important facts, decisions, preferences, or
+   commitments that should be remembered long-term for all conversations. Save them with
+   add_observational_memory.
+2. Review current observations for anything stale or old that no longer needs remembering for all conversations. 
+   Remove them with remove_observational_memory.
+3. If something important should update an identity file at ~/sulla/identity/,
+   read and update that specific file with exec. Nothing else.
+
+when saving new observations, include why certain decisions were made (not just what). Like:
+
+"Google Maps loaded with roofers — scrolled 3x, collected 5 results"
+"Twenty account ID: local_merchant_protocol — verified working 2m ago"
+
+If nothing needs to change, finish immediately.
+
+Do NOT:
+- Try to complete the user's task
+- Search for tools, APIs, or integrations
+- Run curl commands or interact with services
+- Do anything beyond managing observations and identity files
+
+Priority levels:
+- 🔴 Critical: identity, strong preferences/goals, promises, deal-breakers
+- 🟡 Valuable: decisions, patterns, progress markers
+- ⚪ Low: minor/transient items (use sparingly)
+
+Current observational memories:
+{observations}`;
+
+const SUMMARIZER_PROMPT = `You are the memory compression process for an AI agent. Talk through
+what you're doing — which messages look irrelevant, which have useful facts
+worth keeping, and what you're compressing. Then provide your decisions as XML.
+
+Each message below has a unique message_id in its metadata. Your job is to
+remove information that is completely irrelevant to accomplishing the current
+goal. Either remove irrelevant messages or summarize them down to the
+important contextual facts.
+
+For each message, decide:
+- DELETE: if the message is completely irrelevant to the current goal
+- SUMMARIZE: if the message has some relevant facts but is too verbose — compress it
+- KEEP: if the message is important as-is (do nothing, don't list it)
+
+Return your decisions as XML. Reference messages by their unique message_id (NOT by index
+position — positions change between loops).
+
+<DELETE>
+  <MESSAGE id="msg_1743500000000_1" />
+  <MESSAGE id="msg_1743500000000_4" />
+</DELETE>
+<SUMMARIZE>
+  <MESSAGE id="msg_1743500000000_2">The compressed essential facts from this message.</MESSAGE>
+  <MESSAGE id="msg_1743500000000_5">Key decision: user chose option B for the auth flow.</MESSAGE>
+</SUMMARIZE>
+
+Rules:
+- Only delete or summarize — never add new messages.
+- Preserve the most recent messages (last 5-10) as they contain active context.
+- Focus compression on older messages in the conversation.
+- If nothing needs to change, return empty tags: <DELETE></DELETE><SUMMARIZE></SUMMARIZE>
+- System messages should never be deleted or summarized.
+- Always use the message_id attribute, never reference messages by position.`;
+
+// XML parsing for summarizer response handler — uses message IDs (strings)
+const DELETE_BLOCK_REGEX = /<DELETE>([\s\S]*?)<\/DELETE>/i;
+const SUMMARIZE_BLOCK_REGEX = /<SUMMARIZE>([\s\S]*?)<\/SUMMARIZE>/i;
+const DELETE_MESSAGE_REGEX = /<MESSAGE\s+id="([^"]+)"\s*\/>/gi;
+const SUMMARIZE_MESSAGE_REGEX = /<MESSAGE\s+id="([^"]+)">([\s\S]*?)<\/MESSAGE>/gi;
+
+function parseSummarizerXML(text: string): { deletions: Set<string>; summaries: Map<string, string> } {
+  const deletions = new Set<string>();
+  const summaries = new Map<string, string>();
+
+  const deleteBlock = DELETE_BLOCK_REGEX.exec(text);
+  if (deleteBlock) {
+    let match;
+    DELETE_MESSAGE_REGEX.lastIndex = 0;
+    while ((match = DELETE_MESSAGE_REGEX.exec(deleteBlock[1])) !== null) {
+      deletions.add(match[1]);
+    }
+  }
+
+  const summarizeBlock = SUMMARIZE_BLOCK_REGEX.exec(text);
+  if (summarizeBlock) {
+    let match;
+    SUMMARIZE_MESSAGE_REGEX.lastIndex = 0;
+    while ((match = SUMMARIZE_MESSAGE_REGEX.exec(summarizeBlock[1])) !== null) {
+      summaries.set(match[1], match[2].trim());
+    }
+  }
+
+  return { deletions, summaries };
+}
 
 export const GraphRegistry = {
   /**
@@ -108,6 +317,154 @@ export const GraphRegistry = {
 
   getOrCreateGeneralGraph: async function(wsChannel: string, threadId: string, options?: { isTrustedUser?: 'trusted' | 'untrusted' | 'verify'; userVisibleBrowser?: boolean }) {
     return this.getOrCreate(wsChannel, threadId, options);
+  },
+
+  /**
+   * Create a Subconscious graph — minimal multi-turn tool-calling loop.
+   * Does not cache in registry (each invocation is ephemeral).
+   */
+  createSubconscious: async function(opts: {
+    systemPrompt: string;
+    tools: string[];
+    userMessage: string;
+    messages?: any[];
+    maxIterations?: number;
+    temperature?: number;
+    format?: 'json';
+    maxTokens?: number;
+    responseHandler?: (response: string, state: BaseThreadState) => void;
+    parentAbortSignal?: any;
+    agentLabel?: string;
+    parentConversationId?: string;
+    parentWsChannel?: string;
+  }): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState(opts);
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create a Summarizer graph — single-pass conversation compression.
+   * Uses a responseHandler to parse XML delete/summarize instructions
+   * and apply them to the original messages stored on metadata.
+   */
+  createSummarizer: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    // Ensure every message has a unique ID for stable referencing across loops.
+    // Store the ID on the ChatMessage.id field AND inject it visibly into the
+    // content so the LLM can see and reference it in its XML response.
+    const originalMessages = parentState.messages.map((msg: any) => {
+      const id = msg.id || nextMessageId();
+      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      return {
+        ...msg,
+        id,
+        content:  `[message_id: ${ id }]\n${ content }`,
+        metadata: { ...(msg.metadata || {}), message_id: id },
+      };
+    });
+
+    return this.createSubconscious({
+      systemPrompt:           SUMMARIZER_PROMPT,
+      tools:                  SUMMARIZER_TOOLS,
+      userMessage:            'Review the conversation above and determine which messages to delete or summarize.',
+      messages:               originalMessages,
+      agentLabel:             'summarizer',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentAbortSignal: (parentState.metadata as any).options?.abort,
+      responseHandler(response: string, state: BaseThreadState) {
+        let actions: { deletions: Set<string>; summaries: Map<string, string> };
+        try {
+          actions = parseSummarizerXML(response);
+        } catch (err) {
+          console.warn('[Summarizer] Failed to parse XML response:', err instanceof Error ? err.message : err);
+          return;
+        }
+        if (actions.deletions.size === 0 && actions.summaries.size === 0) return;
+
+        // Rebuild from the original parent messages (clean content, no
+        // injected [message_id:] prefixes). originalMessages and
+        // parentState.messages are 1:1 — use the tagged ID with the
+        // clean parent message.
+        const parentMessages = parentState.messages;
+        const result: any[] = [];
+        for (let i = 0; i < originalMessages.length; i++) {
+          const msgId = originalMessages[i].id;
+          const cleanMsg = parentMessages[i] || originalMessages[i];
+          if (cleanMsg.role === 'system') { result.push({ ...cleanMsg, id: msgId }); continue; }
+          if (actions.deletions.has(msgId)) continue;
+          if (actions.summaries.has(msgId)) {
+            result.push({
+              ...cleanMsg,
+              id:       msgId,
+              content:  actions.summaries.get(msgId),
+              metadata: { ...(cleanMsg.metadata || {}), message_id: msgId, _summarized: true, timestamp: Date.now() },
+            });
+            continue;
+          }
+          result.push({ ...cleanMsg, id: msgId });
+        }
+
+        (state.metadata as any).compressedMessages = result;
+        (state.metadata as any).deletedCount = actions.deletions.size;
+        (state.metadata as any).summarizedCount = actions.summaries.size;
+        console.log(`[Summarizer] Compressed: deleted ${ actions.deletions.size }, summarized ${ actions.summaries.size }, kept ${ result.length } of ${ originalMessages.length }`);
+      },
+    });
+  },
+
+  /**
+   * Create a Memory Recall graph — searches internal systems for relevant
+   * skills, tools, resources, projects, and context.
+   */
+  createMemoryRecall: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           MEMORY_RECALL_PROMPT,
+      tools:                  MEMORY_RECALL_TOOLS,
+      userMessage:            'Determine if there are skills, tools, resources, projects, or anything in our internal system that would be relevant to this conversation and help it be completed more efficiently. Search the file structure and available resources. Return ONLY what is directly relevant.',
+      messages:               [...parentState.messages],
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'memory-recall',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create an Observation Agent graph — reviews conversation for important
+   * facts to save to observational memory and cleans up stale observations.
+   */
+  createObservationAgent: async function(parentState: BaseThreadState, currentObservations: string): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           OBSERVATION_AGENT_PROMPT.replace('{observations}', currentObservations),
+      tools:                  OBSERVATION_AGENT_TOOLS,
+      userMessage:            'Review this conversation. Save any important facts, decisions, or preferences to observational memory. Remove any stale or irrelevant observations. Update identity files if warranted.',
+      messages:               [...parentState.messages],
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'observation',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
   },
 
   delete(threadId: string): void {
@@ -428,4 +785,83 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
     console.error(`[GraphRegistry] Failed to load agent config for ${ agentId }:`, err);
     return undefined;
   }
+}
+
+async function buildSubconsciousState(opts: {
+  systemPrompt: string;
+  tools: string[];
+  userMessage: string;
+  messages?: any[];
+  maxIterations?: number;
+  temperature?: number;
+  format?: 'json';
+  maxTokens?: number;
+  responseHandler?: (response: string, state: BaseThreadState) => void;
+  parentAbortSignal?: any;
+  /** Label for logging — identifies which subconscious agent this is */
+  agentLabel?: string;
+  /** Parent conversation ID for log tracing */
+  parentConversationId?: string;
+  /** Parent's WebSocket channel — subconscious agents push thinking messages here */
+  parentWsChannel?: string;
+}): Promise<BaseThreadState> {
+  const threadId = `subconscious_${ Date.now() }_${ ++threadCounter }`;
+
+  const mode = await SullaSettingsModel.get('modelMode', 'local');
+  const llmModel = mode === 'remote'
+    ? await SullaSettingsModel.get('remoteModel', '')
+    : await SullaSettingsModel.get('sullaModel', '');
+  const llmLocal = mode === 'local';
+
+  // Pre-resolve tool schemas for the LLM
+  const llmTools = await Promise.all(
+    opts.tools.map(name => toolRegistry.convertToolToLLM(name)),
+  );
+
+  // Build messages: use provided messages array + append user message, or just user message
+  const messages: any[] = opts.messages
+    ? [...opts.messages, { role: 'user', content: opts.userMessage, metadata: { source: 'subconscious' } }]
+    : [{ role: 'user', content: opts.userMessage, metadata: { source: 'subconscious' } }];
+
+  return {
+    messages,
+    // llmTools must be on the top-level state object — normalizedChat()
+    // reads (state as any).llmTools, NOT state.metadata.llmTools
+    llmTools,
+    metadata: {
+      action:               'use_tools',
+      threadId,
+      conversationId:       threadId,
+      parentConversationId: opts.parentConversationId,
+      parentWsChannel:      opts.parentWsChannel,
+      agentLabel:           opts.agentLabel,
+      wsChannel:            opts.agentLabel ? `subconscious:${ opts.agentLabel }` : 'subconscious',
+      cycleComplete:        false,
+      waitingForUser:       false,
+      isSubAgent:           true,
+      subAgentDepth:        0,
+      llmModel,
+      llmLocal,
+      options:              { abort: opts.parentAbortSignal },
+      currentNodeId:        'subconscious',
+      consecutiveSameNode:  0,
+      iterations:           0,
+      revisionCount:        0,
+      maxIterationsReached: false,
+      memory:               { knowledgeBaseContext: '', chatSummariesContext: '' },
+      subGraph:             { state: 'completed', name: '', prompt: '', response: '' },
+      finalSummary:         '',
+      finalState:           'running',
+      n8nLiveEventsEnabled: false,
+      returnTo:             null,
+
+      // Subconscious-specific fields
+      systemPrompt:     opts.systemPrompt,
+      allowedToolNames: opts.tools,
+      temperature:      opts.temperature,
+      format:           opts.format,
+      maxTokens:        opts.maxTokens,
+      responseHandler:  opts.responseHandler,
+    },
+  } as any;
 }

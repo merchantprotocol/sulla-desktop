@@ -63,11 +63,6 @@ controller::run() {
   build::run
   log BOOT "Build phase complete"
 
-  # ── Phase 4.5: Audio Driver ─────────────────────────────────────────
-  log BOOT "=== Phase 4.5: Audio Driver ==="
-  audio_driver::run
-  log BOOT "Audio driver phase complete"
-
   # ── Phase 5: Finalize ────────────────────────────────────────────────
   log BOOT "=== Phase 5: Finalize ==="
   section "Finalize"

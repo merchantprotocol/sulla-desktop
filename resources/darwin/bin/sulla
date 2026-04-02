@@ -1,0 +1,62 @@
+#!/bin/sh
+# sulla — unified CLI for Sulla Desktop
+#
+# Proxy call:    sulla <account_id>/<slug> '<json>'
+# Tool call:     sulla <category>/<tool> '<json>'
+# MCP call:      sulla <account_id>/mcp/<tool> '<json>'
+# Bare tool:     sulla <tool_name> '<json>'
+
+SOCKET="/tmp/sulla-tools.sock"
+FIRST="$1"
+BODY="$2"
+
+if [ -z "$FIRST" ]; then
+  echo 'Usage:' >&2
+  echo '  sulla <account_id>/<slug> '"'"'<json>'"'"'        # proxy call' >&2
+  echo '  sulla <category>/<tool> '"'"'<json>'"'"'           # tool call' >&2
+  echo '  sulla <account>/mcp/<tool> '"'"'<json>'"'"'        # MCP tool' >&2
+  echo '  sulla <tool_name> '"'"'<json>'"'"'                 # bare tool' >&2
+  exit 2
+fi
+
+if [ -z "$BODY" ]; then
+  BODY='{}'
+fi
+
+# Known internal tool categories
+TOOL_CATEGORIES="meta|docker|github|playwright|chrome|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|skills|workflow|computer-use"
+
+case "$FIRST" in
+  */mcp/*)
+    # MCP tool: account_id/mcp/tool_name
+    ACCOUNT="${FIRST%%/mcp/*}"
+    TOOL="${FIRST##*/mcp/}"
+    URL="/v1/tools/${ACCOUNT}/mcp/${TOOL}/call"
+    ;;
+  */*)
+    # Has a slash — check if it's a tool category or a proxy call
+    PART1="${FIRST%%/*}"
+    PART2="${FIRST#*/}"
+    if echo "$PART1" | grep -qE "^($TOOL_CATEGORIES)$"; then
+      # Tool call: category/tool_name
+      URL="/v1/tools/internal/${PART1}/${PART2}/call"
+    else
+      # Proxy call: account_id/slug
+      URL="/v1/proxy/${PART1}/${PART2}"
+    fi
+    ;;
+  *)
+    # Bare tool name — route as internal with integrations as default slug
+    URL="/v1/tools/internal/integrations/${FIRST}/call"
+    ;;
+esac
+
+if [ -S "$SOCKET" ]; then
+  exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
+    -H "Content-Type: application/json" \
+    -d "$BODY"
+else
+  exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
+    -H "Content-Type: application/json" \
+    -d "$BODY"
+fi

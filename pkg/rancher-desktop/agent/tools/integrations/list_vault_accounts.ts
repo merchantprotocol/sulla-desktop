@@ -4,19 +4,19 @@ import { getIntegrationService } from '../../services/IntegrationService';
 /**
  * List Integration Accounts Tool
  * Lists all accounts for a given integration, showing which one is active.
- * The LLM can then use set_active_integration_account to switch accounts.
+ * The LLM can then use vault/set_active_account to switch accounts.
  */
 export class ListIntegrationAccountsWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { integration_slug } = input;
+    const { account_type } = input;
 
-    if (!integration_slug) {
+    if (!account_type) {
       return {
         successBoolean: false,
-        responseString: 'integration_slug is required.',
+        responseString: 'account_type is required.',
       };
     }
 
@@ -24,23 +24,23 @@ export class ListIntegrationAccountsWorker extends BaseTool {
       const service = getIntegrationService();
       await service.initialize();
 
-      const accounts = await service.getAccounts(integration_slug);
+      const accounts = await service.getAccounts(account_type);
 
       if (accounts.length === 0) {
         return {
           successBoolean: true,
-          responseString: `No accounts configured for integration "${ integration_slug }".`,
+          responseString: `No accounts configured for integration "${ account_type }".`,
         };
       }
 
-      let responseString = `Accounts for "${ integration_slug }" (${ accounts.length }):\n`;
+      let responseString = `Accounts for "${ account_type }" (${ accounts.length }):\n`;
       for (const acct of accounts) {
         const activeMarker = acct.active ? ' ★ ACTIVE' : '';
         const connStatus = acct.connected ? 'Connected' : 'Disconnected';
         responseString += `- ${ acct.label } (account_id: "${ acct.account_id }") | ${ connStatus }${ activeMarker }\n`;
       }
 
-      responseString += `\nTo switch accounts, use set_active_integration_account with integration_slug and account_id.`;
+      responseString += `\nTo switch accounts, use vault/set_active_account with account_type and account_id.`;
 
       return {
         successBoolean: true,

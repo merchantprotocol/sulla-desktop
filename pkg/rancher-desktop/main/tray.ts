@@ -455,12 +455,20 @@ export class Tray {
         item.enabled = !this.backendIsLocked;
       });
 
-    // Lock all items except quit and help when vault is locked (user logged out)
+    // Lock/unlock items based on vault login state
     if (!this.userLoggedIn) {
       const alwaysEnabled = new Set(['quit', 'help', 'main']);
       this.contextMenuItems.forEach((item) => {
         if (item.id && !alwaysEnabled.has(item.id)) {
           item.enabled = false;
+        }
+      });
+    } else {
+      // Re-enable items that were disabled when logged out
+      const loginControlled = new Set(['editor', 'docker-dashboard', 'extensions']);
+      this.contextMenuItems.forEach((item) => {
+        if (item.id && loginControlled.has(item.id)) {
+          item.enabled = true;
         }
       });
     }

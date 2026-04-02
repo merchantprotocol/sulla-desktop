@@ -64,7 +64,7 @@ export class RemoveObservationalMemoryWorker extends BaseTool {
 
     return {
       successBoolean: true,
-      responseString: `Memory removed: "${ removedMemory.content }"`,
+      responseString: `Forgetting: "${ removedMemory.content }" (id: ${ removedMemory.id })`,
     };
   }
 }

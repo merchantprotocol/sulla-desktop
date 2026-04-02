@@ -4,6 +4,7 @@ import type { BaseThreadState, NodeResult } from './Graph';
 import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 // Voice mode prompts are now handled by ChatController extractors (SpeakExtractor, SecretaryExtractor, etc.)
 
 // ============================================================================
@@ -13,16 +14,7 @@ import { stripProtocolTags } from '../utils/stripProtocolTags';
 // Works directly with the user message thread and tools.
 // ============================================================================
 
-const AGENT_PROMPT_BASE = `# You are an independent Agent working directly with the user.
-
-Execution is cheap. Thinking and planning is what makes execution valuable. Without planning, execution is worthless.
-
-When the user gives you a directive:
-1. **Think first** — Is this a one-off task, or could it become something bigger? Does it align with the goals? Would repeating it regularly move us closer to our goals?
-2. **If it's repeatable and goal-aligned** — Create a project (for tracking) and a scheduled workflow (for recurring execution). This is how the agentic system produces compounding value day after day, not just a few seconds of one-time work.
-3. **If it's a one-off** — Plan the approach, confirm with the user, then execute in small verified steps.
-
-You are resourceful and creative. When something doesn't work, you think outside the box and find another way. You don't give up — but you also don't barrel forward without a plan.`;
+const AGENT_PROMPT_BASE = ``;
 
 async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
   try {
@@ -35,23 +27,12 @@ async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
   }
 }
 
-const AGENT_PROMPT_DIRECTIVE = `## Progress Communication Rules (strict)
+const AGENT_PROMPT_DIRECTIVE = `## Tool Result Narration
 
-- While working, you MUST communicate your progress in clear, deterministic language.
-- After every major step you MUST explicitly state:
-  • What you have just done
-  • What you plan to do next
-  • Any blockers or decisions
-- Use short, direct sentences.
-
-## Tool Result Narration (critical for memory)
-
-**After every tool call, you MUST summarize the key findings in your own words as part of your response.** This is the ONLY way to retain context across cycles. For example:
-- After reading a file: "Found the config at /path/file.ts — the database host is set to localhost:5432 and uses pool size 10."
-- After searching: "file_search returned 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
-- After executing a command: "git_status shows 3 modified files on branch feature/xyz: src/a.ts, src/b.ts, src/c.ts."
-
-Always narrate what you learned so your future self can read the conversation history and know what happened.
+After every tool call, briefly say what you found in your own words. This is how context survives across conversation cycles — your future self reads this to know what happened. For example:
+- "Found the config at /path/file.ts — db host is localhost:5432, pool size 10."
+- "file_search turned up 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
+- "3 modified files on feature/xyz: src/a.ts, src/b.ts, src/c.ts."
 
 ## Completion Wrappers
 
@@ -125,11 +106,6 @@ export class AgentNode extends BaseNode {
     const startTime = Date.now();
 
     // ----------------------------------------------------------------
-    // 0. MESSAGE BUDGET — trim before each cycle to prevent bloat
-    // ----------------------------------------------------------------
-    await this.ensureMessageBudget(state);
-
-    // ----------------------------------------------------------------
     // 1. BUILD SYSTEM PROMPT
     // ----------------------------------------------------------------
     const wsChannel = String(state.metadata.wsChannel || 'sulla-desktop');
@@ -152,12 +128,29 @@ export class AgentNode extends BaseNode {
     const ctx = controller.buildContext(state);
     const systemPrompt = controller.enrichPrompt(baseSystemPrompt, ctx);
 
-    const enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
+    // Enrich with soul/identity and trust level only — environment and
+    // observations are now handled by the subconscious middleware.
+    let enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
       includeSoul:        true,
-      includeAwareness:   true,
-      includeEnvironment: true,
+      includeAwareness:   false,
+      includeEnvironment: false,
       includeMemory:      false,
     });
+
+    // Run subconscious middleware: parallel agents for summarization,
+    // memory recall, and observation management.
+    // Recall context is written to state.metadata.recallContext and
+    // appended to the system prompt below.
+    const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
+    await runSubconsciousMiddleware(state, {
+      includeObservations: shouldInjectObservations,
+    });
+
+    // Append recall context to system prompt if present
+    const recallContext = (state.metadata as any).recallContext;
+    if (recallContext) {
+      enrichedPrompt += `\n\n## Relevant Context\n\n${ recallContext }`;
+    }
 
     // Training data: capture the full assembled system prompt (once per session)
     const trainingConvId = (state.metadata as any).conversationId;
@@ -177,11 +170,7 @@ export class AgentNode extends BaseNode {
     // ----------------------------------------------------------------
     // 2. EXECUTE — LLM reads conversation, calls tools, responds
     // ----------------------------------------------------------------
-    const disposeLiveDomStream = await this.startLiveDomStream(state);
-    const agentResult = await this.executeAgent(enrichedPrompt, state)
-      .finally(() => {
-        disposeLiveDomStream();
-      });
+    const agentResult = await this.executeAgent(enrichedPrompt, state);
 
     // If aborted while the LLM was responding, stop immediately —
     // don't process the result or let the graph loop back.
@@ -300,9 +289,6 @@ export class AgentNode extends BaseNode {
         persistAssistantToGraph: true,
       };
 
-      // Flush any buffered DOM events as a single tool pair before the LLM call
-      this.flushDomEventBuffer(state);
-
       // Find the last assistant message BEFORE the LLM call (for dedup).
       // Content may be a string OR a native content array (when tool_use blocks are present).
       let lastAssistantText: string | null = null;
@@ -385,124 +371,6 @@ export class AgentNode extends BaseNode {
 
       return userMessage;
     }
-  }
-
-  // ======================================================================
-  // LIVE DOM STREAM
-  // ======================================================================
-
-  /** Buffered DOM events waiting to be flushed as a single tool pair. */
-  private domEventBuffer: { content: string; event: { assetId: string; type: string; timestamp: number } }[] = [];
-
-  private async startLiveDomStream(state: BaseThreadState): Promise<() => void> {
-    try {
-      const { hostBridgeProxy } = await import('../scripts/injected/HostBridgeProxy');
-
-      const size = await hostBridgeProxy.size();
-      if (size === 0) {
-        return () => {};
-      }
-
-      this.domEventBuffer = [];
-
-      const unsub = hostBridgeProxy.onDomEvent((event) => {
-        const content = event.message;
-        if (!content) return;
-
-        if (this.shouldBufferDomEvent(state, content)) {
-          this.domEventBuffer.push({ content, event });
-        }
-
-        console.log('[AgentNode] DOM event buffered:', {
-          assetId: event.assetId,
-          type:    event.type,
-          message: content.slice(0, 120),
-        });
-      });
-
-      console.log('[AgentNode] Live DOM stream started for all assets');
-      return () => {
-        unsub();
-        // Flush any remaining events on dispose
-        this.flushDomEventBuffer(state);
-      };
-    } catch (error) {
-      console.warn('[AgentNode] Unable to start live DOM stream:', error);
-      return () => {};
-    }
-  }
-
-  private shouldBufferDomEvent(state: BaseThreadState, content: string): boolean {
-    const metadataAny = state.metadata as any;
-    const liveMeta = metadataAny.__domLiveEvent || {};
-    const now = Date.now();
-
-    // Dedup: same content within 500ms
-    if (liveMeta.lastContent === content && now - Number(liveMeta.lastAt || 0) < 500) {
-      return false;
-    }
-
-    metadataAny.__domLiveEvent = {
-      lastContent: content,
-      lastAt:      now,
-    };
-
-    return true;
-  }
-
-  /**
-   * Flush all buffered DOM events into state.messages as a single
-   * dom_observer tool_use / tool_result pair.
-   */
-  flushDomEventBuffer(state: BaseThreadState): void {
-    if (this.domEventBuffer.length === 0) return;
-
-    const buffered = this.domEventBuffer.splice(0);
-    const toolCallId = `dom_observer_${ Date.now() }_${ Math.random().toString(36).slice(2, 11) }`;
-
-    // Collect unique assetIds for the tool_use input
-    const assetIds = [...new Set(buffered.map(b => b.event.assetId))];
-
-    // Build a single result body from all buffered events
-    const resultLines = buffered.map(b => b.content);
-    const resultContent = `tool: dom_observer\nresult:\n${ resultLines.join('\n') }`;
-
-    const eventMeta = {
-      nodeId:    this.id,
-      nodeName:  this.name,
-      kind:      'agent_live_dom_event',
-      source:    'dom_event_stream',
-      transport: 'ipc',
-      timestamp: Date.now(),
-    };
-
-    // Assistant message: synthetic tool_use block
-    state.messages.push({
-      role:    'assistant',
-      content: [{
-        type:  'tool_use',
-        id:    toolCallId,
-        name:  'dom_observer',
-        input: { assetIds },
-      }],
-      metadata: eventMeta,
-    } as any);
-
-    // User message: matching tool_result
-    state.messages.push({
-      role:    'user',
-      content: [{
-        type:        'tool_result',
-        tool_use_id: toolCallId,
-        content:     resultContent,
-      }],
-      metadata: {
-        ...eventMeta,
-        kind: 'tool_result',
-      },
-    } as any);
-
-    this.bumpStateVersion(state);
   }
 
   // ======================================================================

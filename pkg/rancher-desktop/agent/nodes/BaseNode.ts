@@ -9,10 +9,8 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { throwIfAborted } from '../services/AbortService';
 import { toolRegistry } from '../tools/registry';
-import { ConversationSummaryService } from '../services/ConversationSummaryService';
-import { ObservationalSummaryService } from '../services/ObservationalSummaryService';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir } from '../utils/sullaPaths';
-import { environmentPrompt, INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
+import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
 import { ToolExecutor } from '../controllers/ToolExecutor';
@@ -33,30 +31,6 @@ export const TOOLS_RESPONSE_JSON = `  "tools": [
     ["emit_chat_message", "Respond to the users inquiry"]
   ],`;
 
-export const OBSERVATIONAL_MEMORY_SOP = `### SOP: add_observational_memory
-
-Call **immediately** when **any** of these triggers fire:
-
-Must-call triggers:
-1. User expresses/changes preference, goal, constraint, hard no, identity signal, desired name/nickname
-2. User commits (deadline, budget, deliverable, strategy, "from now on", "always/never again")
-3. Recurring pattern confirmed in user requests/behavior
-4. Breakthrough, major insight, painful lesson (yours or user's)
-5. You create/edit/delete/rename/configure anything persistent (article, memory, event, setting, container, agent, workflow, prompt, tool, integration)
-6. Important new/confirmed info about tools, environment, APIs, limits, capabilities
-7. High-value tool result that will shape future reasoning
-
-Priority (pick exactly one):
-🔴 Critical   = identity, strong prefs/goals, promises, deal-breakers, core constraints
-🟡 Valuable   = decisions, patterns, reusable tool outcomes, progress markers
-⚪ Low        = transient/minor (almost never use)
-
-Content rules – enforced:
-- Exactly one concise sentence
-- Third-person/neutral voice only ("Human prefers…", "User committed to…")
-- No "I" or "you"
-- Always include specifics when they exist: dates, numbers, names, versions, exact phrases, URLs
-- Maximize signal per character – never vague`;
 
 // ============================================================================
 // INTERFACES AND TYPES
@@ -394,7 +368,6 @@ async function loadAgentPromptFiles(agentId: string): Promise<string | null> {
   }
 }
 
-export const ENVIRONMENT_PROMPT = environmentPrompt;
 
 // ============================================================================
 // Primary Classes
@@ -459,28 +432,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   protected bumpStateVersion(_state: BaseThreadState): void {
     // Version tracking removed: state mutations are applied on live references.
-  }
-
-  protected insertAssistantContextBeforeLatestUser(state: BaseThreadState, message: ChatMessage): void {
-    const target = Array.isArray(state.messages) ? state.messages : [];
-    if (!Array.isArray(state.messages)) {
-      state.messages = target;
-    }
-
-    let latestUserIndex = -1;
-    for (let i = target.length - 1; i >= 0; i--) {
-      if (target[i]?.role === 'user') {
-        latestUserIndex = i;
-        break;
-      }
-    }
-
-    if (latestUserIndex >= 0) {
-      target.splice(latestUserIndex, 0, message);
-      return;
-    }
-
-    target.push(message);
   }
 
   /**
@@ -579,149 +530,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       );
     }
 
-    // Build environment awareness with template variable substitution
-    const vars = await getTemplateVariables();
-
-    // Filter {{tool_categories}} for agent allowlist (if not already done above)
-    if (agentMeta?.tools?.length) {
-      const allowSet = new Set(agentMeta.tools);
-      const filteredCategories = toolRegistry.getCategoriesWithDescriptions()
-        .filter(({ category }: { category: string }) => {
-          const toolsInCat = toolRegistry.getToolNamesForCategory(category);
-          return category === 'meta' || toolsInCat.some((name: string) => allowSet.has(name));
-        });
-      vars['{{tool_categories}}'] = filteredCategories
-        .map(({ category, description }: { category: string; description: string }) => `- ${ category }: ${ description }`)
-        .join('\n');
-    }
-
-    // Filter n8n from {{tool_categories}} when n8n integration is not connected
-    const n8nEnabled = await this.isN8nEnabled();
-    if (!n8nEnabled) {
-      const currentCategories = vars['{{tool_categories}}'] || '';
-      vars['{{tool_categories}}'] = currentCategories
-        .split('\n')
-        .filter((line: string) => !line.startsWith('- n8n:'))
-        .join('\n');
-    }
-
-    // Populate {{available_workflows}} based on trigger type and optional scope
-    vars['{{available_workflows}}'] = await this.buildWorkflowIndex(state);
-
-    // Populate {{integrations_index}} filtered by agent's allowed integrations
-    vars['{{integrations_index}}'] = await buildIntegrationsIndex(agentMeta?.integrations);
-
-    // Conditionally include integration API instructions only when integrations exist
-    const envIntIndex = vars['{{integrations_index}}'];
-    if (envIntIndex.includes('No integrations configured') || envIntIndex.includes('No matching integrations')) {
-      vars['{{integrations_instructions}}'] = '';
-    } else {
-      vars['{{integrations_instructions}}'] = INTEGRATIONS_INSTRUCTIONS_BLOCK;
-    }
-
-    let AwarenessMessage = applyTemplateVars(ENVIRONMENT_PROMPT, vars);
-
-    // Strip browser/playwright instructions when the caller has no visible browser
-    if ((state.metadata as any).userVisibleBrowser === false) {
-      AwarenessMessage = AwarenessMessage.replace(/### Playwright & Web Interaction[\s\S]*?(?=\n#|$)/g, '');
-      AwarenessMessage = AwarenessMessage.replace(/\n{3,}/g, '\n\n');
-    }
-
-    // Strip n8n sections when n8n integration is not connected
-    if (!n8nEnabled) {
-      AwarenessMessage = AwarenessMessage.replace(/### N8n-Workflows \(Automation Engine\)[\s\S]*?(?=\n###|\n#[^#]|$)/g, '');
-      AwarenessMessage = AwarenessMessage.replace(/\n{3,}/g, '\n\n');
-    }
-
-    /// //////////////////////////////////////////////////////////////
-    // Check if this agent's config.yaml opts out of observation injection.
-    // Planning pipeline agents (observer, thinker, forecaster,
-    // goal-setter, prompt-engineer) must not collect or receive
-    // observations — they analyze historical data objectively.
-    /// //////////////////////////////////////////////////////////////
-    let shouldInjectObservations = true;
-    if (agentId) {
-      try {
-        const agentDir = path.join(resolveSullaAgentsDir(), agentId);
-        const configPath = path.join(agentDir, 'config.yaml');
-        if (fs.existsSync(configPath)) {
-          const yaml = await import('yaml');
-          const agentCfg = yaml.parse(fs.readFileSync(configPath, 'utf-8'));
-          if (agentCfg?.injectObservations === false) {
-            shouldInjectObservations = false;
-          }
-        }
-      } catch { /* ignore config read errors — default to injecting */ }
-    }
-
-    // Strip observation collection instructions from environment prompt
-    // when the agent opts out — they should not be writing observations
-    // while analyzing historical data.
-    if (!shouldInjectObservations) {
-      AwarenessMessage = AwarenessMessage.replace(
-        /\*\*You MUST actively collect observations during every conversation\.\*\*[\s\S]*?The planning pipeline depends on what you capture today\.\n*/g,
-        '',
-      );
-      AwarenessMessage = AwarenessMessage.replace(/\n{3,}/g, '\n\n');
-    }
-
-    if (options.includeEnvironment !== false) {
-      parts.push(AwarenessMessage);
-
-      /// //////////////////////////////////////////////////////////////
-      // adds active website assets state to the environment context
-      // Lazy import to avoid pulling injected scripts into the background build
-      /// //////////////////////////////////////////////////////////////
-      try {
-        const { hostBridgeProxy } = await import('../scripts/injected/HostBridgeProxy');
-        const activePagesContext = await hostBridgeProxy.getSystemPromptContext();
-        if (activePagesContext) {
-          parts.push(activePagesContext);
-        }
-      } catch { /* proxy not available in this context */ }
-    }
-
-    /// //////////////////////////////////////////////////////////////
-    // adds observational memories to the message thread
-    /// //////////////////////////////////////////////////////////////
-    if (options.includeAwareness) {
-
-      if (shouldInjectObservations && state.metadata.awarenessIncluded !== true) {
-        const observationalMemory = await SullaSettingsModel.get('observationalMemory', {});
-        let memoryObj: any;
-        let memoryText = '';
-
-        try {
-          memoryObj = parseJson(observationalMemory);
-        } catch (e) {
-          console.error('Failed to parse observational memory:', e);
-          memoryObj = {};
-        }
-
-        // Format observational memory into readable text
-        if (Array.isArray(memoryObj)) {
-          memoryText = memoryObj.map((entry: any) =>
-            `${ entry.priority } ${ entry.timestamp } ${ entry.content }`,
-          ).join('\n');
-        }
-
-        this.insertAssistantContextBeforeLatestUser(state, {
-          role:     'assistant',
-          content:  `\nYour Observational Memory Storage:\n${ memoryText }`,
-          metadata: {
-            nodeId:    this.id,
-            timestamp: Date.now(),
-          },
-        });
-        this.bumpStateVersion(state);
-        state.metadata.awarenessIncluded = true;
-      }
-
-      if (shouldInjectObservations) {
-        parts.push(OBSERVATIONAL_MEMORY_SOP);
-      }
-    }
-
     // Always preserve the caller's base prompt and enrich around it.
     // Keep this after soul + environment context so node-specific directives
     // are anchored by runtime constraints and active asset state.
@@ -730,67 +538,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     return parts.join('\n\n');
-  }
-
-  /**
-     * Build a human-readable index of available workflows for the agent's prompt.
-     * Respects scopedWorkflowId (testing a single workflow) and wsChannel (trigger filtering).
-     */
-  private async buildWorkflowIndex(state: ThreadState): Promise<string> {
-    try {
-      const scopedWorkflowId = (state.metadata as any)?.scopedWorkflowId as string | undefined;
-
-      // When scoped (testing a workflow from the editor), load that specific
-      // workflow directly — skip trigger filtering since the workflow's trigger
-      // type won't match the editor's 'workbench' channel.
-      if (scopedWorkflowId) {
-        return await this.buildScopedWorkflowIndex(scopedWorkflowId);
-      }
-
-      const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
-      const registry = getWorkflowRegistry();
-      const wsChannel = state.metadata?.wsChannel || '';
-
-      // Map wsChannel to a valid trigger type
-      const validTriggers = ['calendar', 'chat-app', 'heartbeat', 'sulla-desktop', 'workbench', 'chat-completions'];
-      const triggerType = validTriggers.includes(wsChannel) ? wsChannel : 'sulla-desktop';
-
-      const candidates = registry.findCandidates(triggerType as any);
-
-      if (candidates.length === 0) {
-        return '_No workflows available for your current trigger type._';
-      }
-
-      const lines = candidates.map(c => {
-        const desc = c.triggerDescription || c.definition.description || '';
-        const slug = (c.definition as any)._slug || (c.definition as any).slug || c.definition.name.toLowerCase().replace(/\s+/g, '-');
-        return `- **${ c.definition.name }** (\`${ slug }\`)${ desc ? `: ${ desc }` : '' }`;
-      });
-
-      return lines.join('\n');
-    } catch (err) {
-      console.warn('[BaseNode] Failed to build workflow index:', err);
-      return '_Could not load workflow index._';
-    }
-  }
-
-  /**
-     * Load a single workflow by ID for the scoped/testing case.
-     * Bypasses trigger filtering — reads the file directly.
-     */
-  private async buildScopedWorkflowIndex(workflowId: string): Promise<string> {
-    try {
-      const { getWorkflowRegistry } = await import('../workflow/WorkflowRegistry');
-      const registry = getWorkflowRegistry();
-      const definition: any = registry.loadWorkflow(workflowId);
-
-      const desc = definition.description || '';
-      const slug = definition._slug || definition.slug || definition.name.toLowerCase().replace(/\s+/g, '-');
-      return `- **${ definition.name }** (\`${ slug }\`)${ desc ? `: ${ desc }` : '' }\n\n_You are testing this workflow. When the user asks you to run it, use \`execute_workflow\` with workflowId \`${ slug }\`._`;
-    } catch (err) {
-      console.warn('[BaseNode] Failed to load scoped workflow:', err);
-      return `_Could not load workflow \`${ workflowId }\`._`;
-    }
   }
 
   /**
@@ -819,22 +566,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     return reply.content;
   }
 
-  protected triggerBackgroundStateMaintenance(state: BaseThreadState): void {
-    ConversationSummaryService.triggerBackgroundSummarization(state);
-    ObservationalSummaryService.triggerBackgroundTrimming(state);
-  }
-
-  /**
-     * Deterministic message maintenance: awaits chat summary condensation and
-     * observational awareness trimming before continuing. Use this at the top
-     * of any node's execute() that runs in a loop (AgentNode) to
-     * prevent unbounded message growth between cycles.
-     *
-     * Fast-path: if messages are below the threshold, returns immediately.
-     * Slow-path: calls ConversationSummaryService.summarizeNow() which batches
-     * the oldest messages into observational memory, then trims observations.
-     */
-
   /**
    * Check if n8n integration is connected via IntegrationService.
    * Returns false if the service is unavailable or no account is connected.
@@ -848,187 +579,27 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
   }
 
-  protected async ensureMessageBudget(state: BaseThreadState): Promise<void> {
-    // Resolve current LLM to get its context window — adapts if model changes mid-conversation
-    const llm = await getPrimaryService();
-    const contextWindowTokens = llm.getContextWindow();
-
-    // Reserve 20% for response, 10% safety margin => 70% for input
-    const inputBudgetTokens = Math.floor(contextWindowTokens * 0.70);
-    // Convert tokens to chars (4 chars/token heuristic)
-    const HARD_CHAR_BUDGET = inputBudgetTokens * 4;
-    // Scale soft threshold: small models need earlier summarization
-    // At 4K ctx -> ~5 msgs, at 128K -> 20 msgs, at 200K -> ~31 msgs (capped at 25)
-    const SOFT_MESSAGE_THRESHOLD = Math.max(45, Math.floor(contextWindowTokens / 4500));
-
-    const messageCount = state.messages.length;
-    const charWeight = state.messages.reduce((sum, m) => {
-      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-      return sum + content.length;
-    }, 0);
-
-    if (messageCount <= SOFT_MESSAGE_THRESHOLD && charWeight <= HARD_CHAR_BUDGET) {
-      return;
-    }
-
-    // Strip image content blocks from older tool results to reduce context size.
-    // Keep only the most recent 5 screenshots — older ones are replaced with
-    // "[screenshot omitted]" text placeholders.
-    {
-      const MAX_RECENT_SCREENSHOTS = 5;
-      let screenshotCount = 0;
-      // Walk backwards from newest to oldest
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        const msg = state.messages[i];
-        if (!Array.isArray(msg.content)) continue;
-        let modified = false;
-        msg.content = (msg.content as any[]).map((block: any) => {
-          if (block?.type === 'tool_result' && Array.isArray(block.content)) {
-            const hasImage = block.content.some((b: any) => b?.type === 'image');
-            if (hasImage) {
-              screenshotCount++;
-              if (screenshotCount > MAX_RECENT_SCREENSHOTS) {
-                modified = true;
-                return {
-                  ...block,
-                  content: block.content
-                    .filter((b: any) => b?.type !== 'image')
-                    .concat([{ type: 'text', text: '[screenshot omitted]' }]),
-                };
-              }
-            }
-          }
-          // Also strip standalone image blocks in user messages
-          if (block?.type === 'image') {
-            screenshotCount++;
-            if (screenshotCount > MAX_RECENT_SCREENSHOTS) {
-              modified = true;
-              return { type: 'text', text: '[screenshot omitted]' };
-            }
-          }
-          return block;
-        });
-        if (modified) {
-          this.bumpStateVersion(state);
-        }
-      }
-    }
-
-    // If over hard char budget, do a fast synchronous trim first (no LLM)
-    if (charWeight > HARD_CHAR_BUDGET) {
-      console.log(`[${ this.name }] ensureMessageBudget: ctx=${ contextWindowTokens } tokens, budget=${ Math.round(HARD_CHAR_BUDGET / 1000) }k chars, actual=${ Math.round(charWeight / 1000) }k chars — fast trimming`);
-      this.fastTrimByWeight(state, HARD_CHAR_BUDGET);
-    }
-
-    // Then run the LLM-backed summarization to compress further
-    if (state.messages.length > SOFT_MESSAGE_THRESHOLD) {
-      console.log(`[${ this.name }] ensureMessageBudget: ${ messageCount } messages (threshold=${ SOFT_MESSAGE_THRESHOLD }), ctx=${ contextWindowTokens } tokens — running summarization`);
-      await ConversationSummaryService.summarizeNow(state);
-      ObservationalSummaryService.triggerBackgroundTrimming(state);
-    }
-  }
-
   /**
-     * Build a map of paired tool_use/tool_result message indices.
-     * Returns a Map where each index in a pair maps to the other index.
-     * This ensures both halves are always kept or dropped together.
-     */
-  private static buildToolPairMap(messages: ChatMessage[]): Map<number, number> {
-    const pairs = new Map<number, number>();
-    for (let i = 0; i < messages.length - 1; i++) {
-      const msg = messages[i];
-      const next = messages[i + 1];
+   * Check if the current agent opts into observation injection.
+   * Planning pipeline agents (observer, thinker, etc.) opt out via config.yaml.
+   */
+  protected async shouldInjectObservationsForAgent(state: BaseThreadState): Promise<boolean> {
+    const agentId = String(state.metadata.wsChannel || '').trim();
+    if (!agentId) return true;
 
-      // assistant with native tool_use content array
-      if (msg.role === 'assistant' && Array.isArray(msg.content) &&
-                msg.content.some((b: any) => b?.type === 'tool_use')) {
-        // next must be user with tool_result content array
-        if (next.role === 'user' && Array.isArray(next.content) &&
-                    next.content.some((b: any) => b?.type === 'tool_result')) {
-          pairs.set(i, i + 1);
-          pairs.set(i + 1, i);
+    try {
+      const agentDir = path.join(resolveSullaAgentsDir(), agentId);
+      const configPath = path.join(agentDir, 'config.yaml');
+      if (fs.existsSync(configPath)) {
+        const yaml = await import('yaml');
+        const agentCfg = yaml.parse(fs.readFileSync(configPath, 'utf-8'));
+        if (agentCfg?.injectObservations === false) {
+          return false;
         }
       }
-    }
-    return pairs;
-  }
+    } catch { /* ignore config read errors — default to injecting */ }
 
-  /**
-     * Fast synchronous trim: evicts oldest non-protected messages by character
-     * weight until under budget. No LLM call. Protects system messages, the
-     * latest user message, and tool_use/tool_result pairs (always kept or
-     * dropped together).
-     */
-  private fastTrimByWeight(state: BaseThreadState, charBudget: number): void {
-    const messages = state.messages;
-    if (messages.length === 0) return;
-
-    const toolPairs = BaseNode.buildToolPairMap(messages);
-
-    // Find latest user message
-    let latestUserIdx = -1;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') { latestUserIdx = i; break }
-    }
-
-    // Calculate total chars of protected messages
-    const protectedChars = messages.reduce((sum, m, i) => {
-      if (m.role === 'system' || i === latestUserIdx) {
-        const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-        return sum + c.length;
-      }
-      return sum;
-    }, 0);
-
-    const budgetForRest = charBudget - protectedChars;
-    if (budgetForRest <= 0) return;
-
-    // Walk from newest to oldest, keep until budget exhausted.
-    // Tool pairs are kept/dropped atomically.
-    const kept = new Set<number>();
-    const visited = new Set<number>();
-    let usedBudget = 0;
-
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (visited.has(i)) continue;
-      const m = messages[i];
-      if (m.role === 'system' || i === latestUserIdx) {
-        kept.add(i);
-        visited.add(i);
-        continue;
-      }
-
-      // If this message is part of a tool pair, measure both together
-      const pairedIdx = toolPairs.get(i);
-      if (pairedIdx !== undefined && !visited.has(pairedIdx)) {
-        const c1 = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-        const p = messages[pairedIdx];
-        const c2 = typeof p.content === 'string' ? p.content : JSON.stringify(p.content);
-        const pairSize = c1.length + c2.length;
-        if (usedBudget + pairSize <= budgetForRest) {
-          kept.add(i);
-          kept.add(pairedIdx);
-          usedBudget += pairSize;
-        }
-        visited.add(i);
-        visited.add(pairedIdx);
-      } else {
-        const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-        if (usedBudget + content.length <= budgetForRest) {
-          kept.add(i);
-          usedBudget += content.length;
-        }
-        visited.add(i);
-      }
-    }
-
-    const before = messages.length;
-    state.messages = messages.filter((_, i) => kept.has(i));
-    const after = state.messages.length;
-
-    if (before !== after) {
-      console.log(`[${ this.name }] fastTrimByWeight: ${ before } → ${ after } messages`);
-    }
+    return true;
   }
 
   /**
@@ -1122,78 +693,75 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Check for abort before making LLM calls
     throwIfAborted(state, 'Chat operation aborted');
 
-    // Build dynamic LLM tools: meta category tools
-    // Skip tool loading if tools are explicitly disabled
+    // Build LLM tools
+    // When allowedToolNames is set, use ONLY the pre-resolved tools — no
+    // discovery, no fallbacks, no extra injection. The agent gets exactly
+    // the tools it was given and nothing else.
     let llmTools: any[] = [];
     if (!options.disableTools) {
-      llmTools = (state as any).llmTools;
-      if (!llmTools && state.foundTools?.length) {
-        // Fallback: convert foundTools to LLM format if llmTools wasn't set
-        const metaLLMTools = await toolRegistry.getLLMToolsFor(await toolRegistry.getToolsByCategory('meta'));
-        const foundLLMTools = await Promise.all(state.foundTools.map((tool: any) => toolRegistry.convertToolToLLM(tool.name)));
-        llmTools = [...metaLLMTools, ...foundLLMTools];
-      }
-      if (!llmTools) {
-        // Default: meta tools (includes execute_workflow)
-        llmTools = await toolRegistry.getLLMToolsFor(await toolRegistry.getToolsByCategory('meta'));
-      }
+      if (options.allowedToolNames?.length && (state as any).llmTools) {
+        // Strict mode: use only pre-resolved tools, already filtered by name
+        llmTools = (state as any).llmTools;
+      } else {
+        // Dynamic discovery mode (primary agent)
+        llmTools = (state as any).llmTools;
+        if (!llmTools && state.foundTools?.length) {
+          const metaLLMTools = await toolRegistry.getLLMToolsFor(await toolRegistry.getToolsByCategory('meta'));
+          const foundLLMTools = await Promise.all(state.foundTools.map((tool: any) => toolRegistry.convertToolToLLM(tool.name)));
+          llmTools = [...metaLLMTools, ...foundLLMTools];
+        }
+        if (!llmTools) {
+          llmTools = await toolRegistry.getLLMToolsFor(await toolRegistry.getToolsByCategory('meta'));
+        }
 
-      const filtered = await this.filterLLMToolsByAccessPolicy(llmTools, options);
-      llmTools = filtered.tools;
+        const filtered = await this.filterLLMToolsByAccessPolicy(llmTools, options);
+        llmTools = filtered.tools;
 
-      // Apply agent tool allowlist from agent config
-      const agentToolAllowlist = (state.metadata as any).agent?.tools;
-      if (Array.isArray(agentToolAllowlist) && agentToolAllowlist.length > 0) {
-        const allowSet = new Set(agentToolAllowlist);
-        // Always allow meta tools
-        const metaNames = toolRegistry.getToolNamesForCategory('meta');
-        metaNames.forEach(n => allowSet.add(n));
-        llmTools = llmTools.filter((t: any) => {
-          const name = t?.function?.name;
-          return name && allowSet.has(name);
-        });
-      }
+        // Apply agent tool allowlist from agent config
+        const agentToolAllowlist = (state.metadata as any).agent?.tools;
+        if (Array.isArray(agentToolAllowlist) && agentToolAllowlist.length > 0) {
+          const allowSet = new Set(agentToolAllowlist);
+          const metaNames = toolRegistry.getToolNamesForCategory('meta');
+          metaNames.forEach(n => allowSet.add(n));
+          llmTools = llmTools.filter((t: any) => {
+            const name = t?.function?.name;
+            return name && allowSet.has(name);
+          });
+        }
 
-      // Block dangerous/recursive tools for sub-agents (workflow workers)
-      if ((state.metadata as any).isSubAgent) {
-        const subAgentBlockedTools = new Set([
-          // Workflow/orchestration — prevents recursive workflow triggers
-          'execute_workflow', 'restart_from_checkpoint',
-          'spawn_agent', 'check_agent_jobs',
-          // Infrastructure — too destructive for unattended workers
-          'rdctl_reset', 'rdctl_shutdown', 'rdctl_set', 'rdctl_start',
-          'lima_create', 'lima_delete', 'lima_stop',
-          'docker_rm', 'docker_stop',
-          'kubectl_delete', 'kubectl_apply',
-          // Extension lifecycle — user-initiated only
-          'install_extension', 'uninstall_extension',
-          // Destructive git — sub-agents can read/commit but not push or discard
-          'git_push', 'git_stash', 'git_checkout',
-        ]);
-        llmTools = llmTools.filter((t: any) => !subAgentBlockedTools.has(t?.function?.name));
-      }
+        // Block dangerous/recursive tools for sub-agents (workflow workers)
+        if ((state.metadata as any).isSubAgent) {
+          const subAgentBlockedTools = new Set([
+            'execute_workflow', 'restart_from_checkpoint',
+            'spawn_agent', 'check_agent_jobs',
+            'rdctl_reset', 'rdctl_shutdown', 'rdctl_set', 'rdctl_start',
+            'lima_create', 'lima_delete', 'lima_stop',
+            'docker_rm', 'docker_stop',
+            'kubectl_delete', 'kubectl_apply',
+            'install_extension', 'uninstall_extension',
+            'git_push', 'git_stash', 'git_checkout',
+          ]);
+          llmTools = llmTools.filter((t: any) => !subAgentBlockedTools.has(t?.function?.name));
+        }
 
-      // Block browser/playwright tools when caller has no visible browser
-      if ((state.metadata as any).userVisibleBrowser === false) {
-        const browserTools = new Set([
-          'browser_tab', 'dom_observer', 'click_element', 'get_form_values',
-          'get_page_snapshot', 'get_page_text', 'scroll_to_element',
-          'set_field', 'wait_for_element', 'browse_page', 'synthesize_tabs',
-        ]);
-        llmTools = llmTools.filter((t: any) => !browserTools.has(t?.function?.name));
-      }
+        // Block browser/playwright tools when caller has no visible browser
+        if ((state.metadata as any).userVisibleBrowser === false) {
+          const browserTools = new Set([
+            'browser_tab', 'click_element', 'get_form_values',
+            'get_page_snapshot', 'get_page_text', 'scroll_to_element',
+            'set_field', 'wait_for_element', 'browse_page', 'synthesize_tabs',
+          ]);
+          llmTools = llmTools.filter((t: any) => !browserTools.has(t?.function?.name));
+        }
 
-      // Block n8n tools when n8n integration is not connected
-      if (!await this.isN8nEnabled()) {
-        const n8nToolNames = new Set(toolRegistry.getToolNamesForCategory('n8n'));
-        llmTools = llmTools.filter((t: any) => !n8nToolNames.has(t?.function?.name));
-      }
+        // Block n8n tools when n8n integration is not connected
+        if (!await this.isN8nEnabled()) {
+          const n8nToolNames = new Set(toolRegistry.getToolNamesForCategory('n8n'));
+          llmTools = llmTools.filter((t: any) => !n8nToolNames.has(t?.function?.name));
+        }
 
-      // Inject Anthropic-native computer use tools when:
-      // 1. Provider is Anthropic (supports computer_20250124)
-      // 2. Browser tabs are open
-      // 3. Not blocked by userVisibleBrowser flag
-      if ((state.metadata as any).userVisibleBrowser !== false) {
+        // Inject Anthropic-native computer use tools (only in dynamic mode)
+        if ((state.metadata as any).userVisibleBrowser !== false) {
         const providerName = (state.metadata as any).providerName
           || (state.metadata as any).provider
           || '';
@@ -1207,6 +775,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             llmTools.push(def);
           }
         }
+      }
       }
     }
 
@@ -1285,8 +854,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Training data: capture LLM turn (user message + assistant response + reasoning)
       this.logTrainingTurn(state, nodeRunContext, reply);
 
-      this.triggerBackgroundStateMaintenance(state);
-
       return reply;
     } catch (err) {
       if ((err as any)?.name === 'AbortError') throw err;
@@ -1312,7 +879,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           });
           if (reply) {
             this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
-            this.triggerBackgroundStateMaintenance(state);
             return reply;
           }
         } else {
@@ -1735,7 +1301,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           timestamp: Date.now(),
         });
       } catch (e) { console.warn(`[BaseNode:wsChatMessage] node_thinking emit failed:`, e); }
-    } else if ((state.metadata as any).isSubAgent) {
+    } else if ((state.metadata as any).isSubAgent && !(state.metadata as any).parentWsChannel) {
       console.warn(`[BaseNode:wsChatMessage] Sub-agent "${ this.name }" missing workflow metadata — workflowNodeId=${ workflowNodeId }, workflowParentChannel=${ workflowParentChannel }`);
     }
 

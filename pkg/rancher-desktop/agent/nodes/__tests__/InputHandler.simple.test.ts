@@ -17,18 +17,6 @@ jest.mock('../../database/models/SullaSettingsModel', () => ({
   },
 }));
 
-jest.mock('../../services/ConversationSummaryService', () => ({
-  ConversationSummaryService: {
-    triggerBackgroundSummarization: jest.fn(),
-  },
-}));
-
-jest.mock('../../services/ObservationalSummaryService', () => ({
-  ObservationalSummaryService: {
-    triggerBackgroundTrimming: jest.fn(),
-  },
-}));
-
 // Mock BaseNode to avoid LLM service dependencies
 jest.mock('../BaseNode', () => ({
   BaseNode: class MockBaseNode {
@@ -440,9 +428,6 @@ describe('InputHandlerNode Simple Test', () => {
     expect(metadata.inputHandler.tokensBefore).toBeGreaterThan(0);
     expect(metadata.inputHandler.tokensAfter).toBeGreaterThan(0);
 
-    // Verify the ConversationSummaryService was called
-    const { ConversationSummaryService } = require('../../services/ConversationSummaryService');
-    expect(ConversationSummaryService.triggerBackgroundSummarization).toHaveBeenCalledWith(state);
   });
 
   test('should enforce token budget when user pastes massive content', async() => {

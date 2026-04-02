@@ -12,12 +12,12 @@ export class SetActiveIntegrationAccountWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { integration_slug, account_id } = input;
+    const { account_type, account_id } = input;
 
-    if (!integration_slug || !account_id) {
+    if (!account_type || !account_id) {
       return {
         successBoolean: false,
-        responseString: 'Both integration_slug and account_id are required.',
+        responseString: 'Both account_type and account_id are required.',
       };
     }
 
@@ -26,22 +26,22 @@ export class SetActiveIntegrationAccountWorker extends BaseTool {
       await service.initialize();
 
       // Verify the account exists
-      const accounts = await service.getAccounts(integration_slug);
+      const accounts = await service.getAccounts(account_type);
       const account = accounts.find(a => a.account_id === account_id);
 
       if (!account) {
         const available = accounts.map(a => `${ a.account_id } (${ a.label })`).join(', ');
         return {
           successBoolean: false,
-          responseString: `Account "${ account_id }" not found for integration "${ integration_slug }". Available accounts: ${ available || 'none' }`,
+          responseString: `Account "${ account_id }" not found for integration "${ account_type }". Available accounts: ${ available || 'none' }`,
         };
       }
 
-      await service.setActiveAccount(integration_slug, account_id);
+      await service.setActiveAccount(account_type, account_id);
 
       return {
         successBoolean: true,
-        responseString: `Active account for "${ integration_slug }" set to "${ account.label }" (${ account_id }). All subsequent tool calls for this integration will use this account's credentials.`,
+        responseString: `Active account for "${ account_type }" set to "${ account.label }" (${ account_id }). All subsequent tool calls for this integration will use this account's credentials.`,
       };
     } catch (error) {
       return {
