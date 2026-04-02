@@ -17,7 +17,7 @@
 </div>
 
 <div align="center">
-  <img src="./preview.gif" alt="Sulla preview" width="600" />
+  <img src="./docs/sulla-desktop-screen.png" alt="Sulla Desktop" width="600" />
 </div>
 
 Designed for people who live in n8n, love building workflows, code by feel, or simply have too many high-value tasks and not enough hours. No subscriptions. No cloud lock-in.
@@ -41,9 +41,13 @@ You’ll Be Able To:
 
 ## Core Specs
 
+- Chrome-like browser with WebContentsView tabs, side panel chat, and AI context menus
+- Encrypted password vault with autofill, import/export, and Bitwarden-style generator
 - Node-graph workflow editor with parallel execution, loops, and checkpoints
-- Multi-agent system with per-agent integrations and orchestrator escalation
+- Multi-agent system with per-agent integrations, orchestrator escalation, and conversation history
+- Sulla CLI with daemon relay and integration tooling
 - Integrated terminal, Monaco code editor, and Git pane
+- Login/logout system with vault auto-unlock and menu locking
 - Training system — capture conversations and fine-tune models
 - Calendar engine with auto-wake events
 - Docker workspaces with container management and shell access
