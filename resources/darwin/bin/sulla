@@ -1,0 +1,36 @@
+#!/bin/sh
+# sulla — fast CLI for the Sulla proxy
+# Connects to the local daemon socket or falls back to direct TCP
+
+SOCKET="/tmp/sulla-tools.sock"
+ACCOUNT_SLUG="$1"
+BODY="$2"
+
+if [ -z "$ACCOUNT_SLUG" ]; then
+  echo 'Usage: sulla <account_id>/<slug> '"'"'<json_body>'"'"'' >&2
+  exit 2
+fi
+
+ACCOUNT_ID="${ACCOUNT_SLUG%%/*}"
+SLUG="${ACCOUNT_SLUG#*/}"
+
+if [ -z "$SLUG" ] || [ "$SLUG" = "$ACCOUNT_ID" ]; then
+  echo "Error: Expected <account_id>/<slug> format, got \"$ACCOUNT_SLUG\"" >&2
+  exit 2
+fi
+
+URL="/v1/proxy/${ACCOUNT_ID}/${SLUG}"
+
+if [ -z "$BODY" ]; then
+  BODY='{}'
+fi
+
+if [ -S "$SOCKET" ]; then
+  exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
+    -H "Content-Type: application/json" \
+    -d "$BODY"
+else
+  exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
+    -H "Content-Type: application/json" \
+    -d "$BODY"
+fi

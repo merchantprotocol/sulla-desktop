@@ -417,11 +417,25 @@ const formatters: Record<string, Formatter> = {
   },
 
   // ── Memory / Meta ────────────────────────────────────────────────────────
-  add_observational_memory() {
-    return { label: 'Memory', summary: 'Remembering observation' };
+  add_observational_memory(args, result) {
+    const content = str(args.content);
+    const output = extractOutput(result);
+    return {
+      label:   'Memory',
+      summary: content ? `Remembering: "${ truncate(content, 60) }"` : 'Remembering observation',
+      output:  output || undefined,
+    };
   },
-  remove_observational_memory() {
-    return { label: 'Memory', summary: 'Forgetting observation' };
+  remove_observational_memory(args, result) {
+    const id = str(args.id);
+    const output = extractOutput(result);
+    // The result contains the content of what was forgotten
+    const content = output?.match(/Forgetting:\s*"(.+?)"/)?.[1];
+    return {
+      label:   'Memory',
+      summary: content ? `Forgetting: "${ truncate(content, 60) }"` : `Forgetting observation ${ id }`,
+      output:  output || undefined,
+    };
   },
   dom_observer() {
     return { label: 'Browser', summary: 'Watching DOM changes' };

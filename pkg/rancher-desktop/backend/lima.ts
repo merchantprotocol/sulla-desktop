@@ -1861,6 +1861,27 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     await this.execCommand({ root: true }, 'mv', './trivy', '/usr/local/bin/trivy');
   }
 
+  protected async installSullaCli() {
+    // sulla CLI + daemon are Node.js scripts — platform-independent
+    const binDir = path.join(paths.resources, process.platform, 'bin');
+
+    try {
+      for (const name of ['sulla', 'sulla-daemon']) {
+        const src = path.join(binDir, name);
+        await this.lima('copy', src, `${ MACHINE_NAME }:./${ name }`);
+        await this.execCommand({ root: true }, 'mv', `./${ name }`, `/usr/local/bin/${ name }`);
+        await this.execCommand({ root: true }, 'chmod', '755', `/usr/local/bin/${ name }`);
+      }
+
+      // Kill any existing daemon, then start fresh in the background
+      await this.execCommand({ root: false }, 'sh', '-c', 'pkill -f sulla-daemon || true');
+      await this.execCommand({ root: false }, 'sh', '-c', 'nohup sulla-daemon > /tmp/sulla-daemon.log 2>&1 &');
+      console.log('[Lima] sulla CLI and daemon installed and started');
+    } catch (error) {
+      console.warn('[Lima] Failed to install sulla CLI into VM:', error);
+    }
+  }
+
   /**
    * Start the VM.  If the machine is already started, this does nothing.
    * Note that this does not start k3s.
@@ -2107,6 +2128,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           this.progressTracker.action('Installing Buildkit', 50, this.writeBuildkitScripts()),
           this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
           this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
+          this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli()),
         ];
         if (kubernetesVersion) {
           tasks.push(this.kubeBackend.install(config, kubernetesVersion, this.#adminAccess));

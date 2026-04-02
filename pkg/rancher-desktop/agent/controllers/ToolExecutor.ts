@@ -103,6 +103,23 @@ export class ToolExecutor {
       const toolName = call.name;
       const args = call.args;
 
+      // --- Repeated tool call loop detection ---
+      const dedupeKey = this.buildToolRunDedupeKey(toolName, args);
+      const metadataAny = state.metadata as any;
+      const toolRunIndex = metadataAny.__toolRunIndex || {};
+      const priorRun = toolRunIndex[dedupeKey];
+      if (priorRun) {
+        const loopMsg = `Loop detected: this exact tool call ("${ toolName }" with the same arguments) was already executed. Use the previous result instead of calling it again.`;
+        await this.emitToolCallEvent(state, toolRunId, toolName, args);
+        await this.emitToolResultEvent(state, toolRunId, false, loopMsg);
+        await this.appendToolResultMessage(state, toolName, {
+          toolName, success: false, error: loopMsg, toolCallId: toolRunId,
+        });
+        results.push({ toolName, success: false, error: loopMsg });
+        this.pushToTranscript(toolName, false, loopMsg);
+        continue;
+      }
+
       // --- Policy block check ---
       const policyBlockReason = await this.getToolPolicyBlockReason(state, toolName);
       if (policyBlockReason) {

@@ -247,30 +247,9 @@ export default {
   },
 
   /**
-   * WebPack configuration for the sulla-tool CLI.
+   * sulla CLI and daemon are plain shell scripts in resources/{platform}/bin/.
+   * No webpack compilation needed — just ensure they are executable.
    */
-  get webpackCliConfig(): webpack.Configuration {
-    const overrides: webpack.Configuration = {
-      target: 'node',
-      entry:  { 'sulla-tool': path.resolve(this.rootDir, 'pkg', 'rancher-desktop', 'agent', 'cli', 'sulla-tool.ts') },
-      output: {
-        filename: '[name].js',
-        library:  { type: 'commonjs2' },
-        path:     path.join(this.rootDir, 'resources', process.platform, 'bin'),
-      },
-      experiments: { outputModule: false },
-      plugins:     [
-        new webpack.EnvironmentPlugin({ NODE_ENV: this.isDevelopment ? 'development' : 'production' }),
-        new webpack.BannerPlugin({ banner: '#!/usr/bin/env node', raw: true }),
-      ],
-    };
-
-    const result = Object.assign({}, this.webpackConfig, overrides);
-
-    result.externals = ['pg-native'];
-
-    return result;
-  },
 
   /**
    * Build the main process JavaScript code.
@@ -302,14 +281,16 @@ export default {
   },
 
   /**
-   * Build the sulla-tool CLI.
+   * Ensure sulla CLI and daemon shell scripts are executable.
+   * The scripts live in resources/{platform}/bin/ and are tracked in git.
    */
   async buildCli(): Promise<void> {
-    await this.buildJavaScript(this.webpackCliConfig);
-    const outputPath = path.join(this.rootDir, 'resources', process.platform, 'bin', 'sulla-tool.js');
-    try {
-      fs.chmodSync(outputPath, 0o755);
-    } catch { /* best effort */ }
+    const binDir = path.join(this.rootDir, 'resources', process.platform, 'bin');
+    for (const name of ['sulla', 'sulla-daemon']) {
+      try {
+        fs.chmodSync(path.join(binDir, name), 0o755);
+      } catch { /* best effort */ }
+    }
   },
 
   /**

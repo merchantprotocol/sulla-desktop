@@ -1,7 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import fs from 'node:fs';
-import path from 'node:path';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { resolveSullaAgentsDir } from '@pkg/agent/utils/sullaPaths';
@@ -13,7 +12,6 @@ export class ChatCompletionsServer {
   private app = express();
   private server:            any = null;
   private readonly wsService = getWebSocketClientService();
-  private udsServer: any = null;
   private taskerUnsubscribe: (() => void) | null = null;
 
   constructor() {
@@ -1302,7 +1300,6 @@ export class ChatCompletionsServer {
           console.log(`[ChatCompletionsAPI] Server listening on http://0.0.0.0:${ port }`);
           console.log(`[ChatCompletionsAPI] Health check: http://localhost:${ port }/health`);
           console.log(`[ChatCompletionsAPI] Chat completions: http://localhost:${ port }/chat/completions`);
-          this.startUnixSocket();
           resolve();
         });
 
@@ -1317,56 +1314,10 @@ export class ChatCompletionsServer {
     });
   }
 
-  private startUnixSocket(): void {
-    const socketPath = '/tmp/sulla-tools.sock';
-
-    // Clean up stale socket file from previous runs
-    try {
-      fs.unlinkSync(socketPath);
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
-        console.error(`[ChatCompletionsAPI] Failed to clean up stale socket: ${ err.message }`);
-      }
-    }
-
-    // Separate Express app scoped to tool routes only
-    const toolApp = express();
-    toolApp.use(express.json({ limit: '10mb' }));
-
-    toolApp.get('/v1/tools/list', async(req: Request, res: Response) => {
-      await this.handleListIntegrations(req, res);
-    });
-    toolApp.post('/v1/tools/:accountId/:slug/:endpoint/call', async(req: Request, res: Response) => {
-      await this.handleIntegrationCall(req, res);
-    });
-    toolApp.use((_req: Request, res: Response) => {
-      res.status(404).json({ error: 'Only tool routes are available on this socket' });
-    });
-
-    this.udsServer = toolApp.listen(socketPath, () => {
-      try {
-        fs.chmodSync(socketPath, 0o666);
-      } catch { /* best effort */ }
-      console.log(`[ChatCompletionsAPI] Unix socket listening on ${ socketPath } (tools only)`);
-    });
-
-    this.udsServer.on('error', (error: any) => {
-      console.error('[ChatCompletionsAPI] Unix socket error:', error);
-    });
-  }
-
   stop(): void {
     if (this.taskerUnsubscribe) {
       this.taskerUnsubscribe();
       this.taskerUnsubscribe = null;
-    }
-
-    if (this.udsServer) {
-      this.udsServer.close();
-      this.udsServer = null;
-      try {
-        fs.unlinkSync('/tmp/sulla-tools.sock');
-      } catch { /* ignore */ }
     }
 
     if (this.server) {
