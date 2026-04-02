@@ -27,7 +27,7 @@
 
 ---
 
-Designed for automation enthusiasts, vibe coders, business owners, agency owners, and operators who want more output without more hours or headcount. No subscriptions. No cloud lock-in. **Runs 100% locally** with Ollama and open-source models — or connect any remote API. Your choice.
+Designed for automation enthusiasts, vibe coders, business owners, agency owners, and operators who want more output without more hours or headcount. No subscriptions. No cloud lock-in. **Runs 100% locally** with llama.cpp and open-source models — or connect any remote API. Your choice.
 
 ## The Subconscious Agent System
 
@@ -372,7 +372,7 @@ Sulla doesn't just use models — it **trains them**.
 
 Every night, a scheduled workflow collects the day's conversations, your documents, and interaction logs, then fine-tunes your local model on that data. The agent literally becomes more like you over time — learning your writing style, your preferences, your decision patterns — through actual model training, not just prompt context.
 
-This runs entirely on your machine with **100% local models** via Ollama. No data leaves your computer. No third-party training APIs. The model that runs tomorrow is better than the one that ran today, and it's yours.
+This runs entirely on your machine with **100% local models** via llama.cpp. No data leaves your computer. No third-party training APIs. The model that runs tomorrow is better than the one that ran today, and it's yours.
 
 You can also trigger training manually, review training logs, and manage training datasets from the workbench.
 
@@ -384,7 +384,7 @@ You can also trigger training manually, review training logs, and manage trainin
 │  │ Collect  │──►│ Build    │──►│ Fine-tune│    │
 │  │ convos,  │   │ training │   │ local    │    │
 │  │ docs,    │   │ dataset  │   │ model    │    │
-│  │ logs     │   │ (JSONL)  │   │ (Ollama) │    │
+│  │ logs     │   │ (JSONL)  │   │ (llama.cpp) │    │
 │  └──────────┘   └──────────┘   └─────┬────┘    │
 │                                       │         │
 │                                  ┌────▼─────┐   │
@@ -446,7 +446,7 @@ npx electron .
 
 ### After install
 
-Step 1 — Connect any LLM (local Ollama or remote API)  
+Step 1 — Connect any LLM (local llama.cpp or remote API)  
 Step 2 — Start delegating
 
 ## Your No-Hassle Ownership Promise
@@ -463,7 +463,7 @@ Install it, run it, modify it — it’s yours.
 Workflow velocity and delegation confidence build in 7–30 days of consistent use. Results scale with your task volume.
 
 **Is it fully local?**  
-Core agent, memory, tools, and execution run 100% on your machine. LLM inference can be local (Ollama) or remote (your choice for speed/privacy balance).
+Core agent, memory, tools, and execution run 100% on your machine. LLM inference can be local (llama.cpp) or remote (your choice for speed/privacy balance).
 
 **How do I extend it?**
 Build custom workflow nodes, add tool integrations, or create new agent configurations. Everything is modular and documented.
