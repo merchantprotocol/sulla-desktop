@@ -4,8 +4,13 @@ import fs from 'node:fs';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { resolveSullaAgentsDir } from '@pkg/agent/utils/sullaPaths';
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import crypto from 'node:crypto';
+import path from 'node:path';
+import paths from '@pkg/utils/paths';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
+const API_TOKEN_FILE = 'chat-api-token.json';
 const WS_CHANNEL = 'tasker';
 
 export class ChatCompletionsServer {
@@ -13,6 +18,7 @@ export class ChatCompletionsServer {
   private server:            any = null;
   private readonly wsService = getWebSocketClientService();
   private taskerUnsubscribe: (() => void) | null = null;
+  private apiToken: string | null = null;
 
   constructor() {
     this.initializeTaskerWebSocketListener();
@@ -104,6 +110,53 @@ export class ChatCompletionsServer {
     }
   }
 
+  private async loadApiToken(): Promise<void> {
+    const tokenPath = path.join(paths.appHome, API_TOKEN_FILE);
+
+    // 1. Try reading from the token file (source of truth)
+    try {
+      const raw = await fs.promises.readFile(tokenPath, 'utf-8');
+      const data = JSON.parse(raw);
+      if (data.token) {
+        this.apiToken = data.token;
+        console.log('[ChatCompletionsAPI] Bearer token loaded from file');
+        return;
+      }
+    } catch {
+      // File doesn't exist yet — fall through to generate
+    }
+
+    // 2. Try reading from DB (migration from older version)
+    const dbToken = await SullaSettingsModel.get('sullaApiToken');
+    if (dbToken) {
+      this.apiToken = dbToken;
+    } else {
+      // 3. Generate a new token
+      this.apiToken = crypto.randomBytes(48).toString('base64url');
+      console.log('[ChatCompletionsAPI] Generated new API token');
+    }
+
+    // Persist to file (always accessible, no DB dependency)
+    await fs.promises.mkdir(paths.appHome, { recursive: true });
+    await fs.promises.writeFile(tokenPath, JSON.stringify({
+      token: this.apiToken,
+      port:  CHAT_COMPLETIONS_PORT,
+      pid:   process.pid,
+    }, null, 2), { mode: 0o600 });
+    console.log(`[ChatCompletionsAPI] Bearer token written to ${ tokenPath }`);
+
+    // Best-effort persist to DB as well
+    try {
+      await SullaSettingsModel.set('sullaApiToken', this.apiToken, 'string');
+    } catch {
+      // DB may not be ready yet — that's fine, file is the primary store
+    }
+  }
+
+  getApiToken(): string | null {
+    return this.apiToken;
+  }
+
   /**
    * Setup the middleware for the chat completions server.
    */
@@ -120,6 +173,30 @@ export class ChatCompletionsServer {
     // Add request logging
     this.app.use((req: Request, res: Response, next: NextFunction) => {
       console.log(`[ChatCompletionsAPI] ${ req.method } ${ req.path }`);
+      next();
+    });
+
+    // Bearer token authentication
+    this.app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.path === '/health') {
+        return next();
+      }
+
+      const authHeader = req.headers.authorization ?? '';
+      const match = authHeader.match(/^Bearer\s+(.+)$/i);
+      const token = match?.[1];
+
+      if (!token || token !== this.apiToken) {
+        res.status(401).json({
+          error: {
+            message: 'Invalid or missing bearer token. Set Authorization: Bearer <token> header.',
+            type:    'authentication_error',
+            code:    'invalid_api_key',
+          },
+        });
+        return;
+      }
+
       next();
     });
   }
@@ -1390,6 +1467,7 @@ export class ChatCompletionsServer {
   }
 
   async start(port: number = CHAT_COMPLETIONS_PORT): Promise<void> {
+    await this.loadApiToken();
     return new Promise((resolve, reject) => {
       try {
         this.server = this.app.listen(port, '0.0.0.0', () => {

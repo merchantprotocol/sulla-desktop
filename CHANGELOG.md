@@ -2,6 +2,96 @@
 
 All notable changes to Sulla Desktop will be documented in this file.
 
+## [1.2.0] - 2026-04-02
+
+### New Features
+
+- **Password vault** — encrypted credential storage with master password unlock, browser autofill, in-page dropdown UI, save toast after submit, and smart duplicate detection
+- **Vault import/export** — import from Bitwarden, LastPass, 1Password, and generic CSV; export as plain text JSON or encrypted backup
+- **Vault security badge** — shows AES-256 Encrypted status when active
+- **Bitwarden-style password generator** with strength meter
+- **WebContentsView browser tabs** — replaced iframe-based tabs with native Electron WebContentsView for full Chrome-like browsing
+- **Side panel chat** — per-tab side panels with rich context, overlay guard, and layout fixes; wired up for right-click AI actions
+- **Conversation history system** — centralized ConversationHistoryService with UI, agent tools, Chrome API bridge, auto-expose tools, browser tab tracking, and auto-titles
+- **Sulla CLI** — proxy, daemon relay, and integration tooling via `sulla-tool` CLI
+- **Subconscious middleware** — background processing layer for agent system
+- **Chrome API layer** — `chrome.*` API surface for AI agents and future extension support, with CDP trusted keyboard events and multi-tab bridge isolation
+- **Login/logout system** — vault auto-unlock, menu locking, tray item state management, and profile menu with logout
+- **My Account page** — profile editing, password change, and vault stats
+- **Browser context menu** — Shadow DOM context menu with standard and AI actions
+- **Application menu restructure** — reorganized for clarity and discoverability; History menu with browser tab tracking
+- **Enhanced AccountEditor** — editable labels, textarea notes, multi-URL support, custom fields, LastPass-quality UI
+- **URL detection** in chat composer and Chrome-style certificate warnings
+- **`__sulla` runtime library** — enhanced `exec_in_page` with dehydrate mode for browser automation
+- **Visual browser tools** — screenshot, click-at, CDP interaction, state machine bridge
+- **Playwright browser tools overhaul** — `press_key`, `submit`, `aria-label` support, navigation fixes
+- **Gateway audio streaming** — WebSocket streaming for secretary mode with reliable reconnect
+- **Secretary mode** — instant mute, agent audio playback, transcript UI overhaul
+- **GatewayListenerService** — MCP bridge, voice recorder, and chat completions integration
+- **Orchestrator abort** — allows orchestrator to abort stuck workflows via `ABORT_WORKFLOW` tag
+
+### Improvements
+
+- Expose chrome and computer-use tools to chat completions endpoint
+- Inject `llm_access` property into all integrations and add password visibility toggle
+- Unify integrations and vault under Password Manager with restructured menus
+- Unify logging into SullaLogger with file-based topic and conversation logging
+- Replace WebSocket hub with IPC MessageBus
+- All page-changing tools return dehydrated DOM; removed `wait_for_navigation`
+- Simplified audio settings: removed secretary transcription mode, conditionally show options
+- Removed redundant provider dropdown; hide model unless ElevenLabs selected
+- Removed 11 orphaned components replaced by agent router and browser tab interface
+- Cleaned up dead WebSocket hub code
+- Browser tab prompt instructions updated for `exec_in_page` and `__sulla`
+- Agent prompt teaches interaction patterns in `browser_tab` response
+
+### Bug Fixes
+
+- Fixed Slack inbound routing, MCP flat body, API key query param
+- Fixed bridge event forwarding from WebContentsView guest to renderer
+- Fixed IpcMessageBus forwarding messages to renderer for browser tab creation
+- Fixed `browser_tab` to return dehydrated DOM instead of full snapshot
+- Fixed `browser_tab` waiting for bridge injection event
+- Fixed screenshot capturing correct tab by `assetId`, not just active tab
+- Fixed smart credential save: skip duplicates, offer update, better labels
+- Fixed vault autofill using BrowserTabViewManager directly
+- Fixed vault theme colors, integration picker, `llm_access` defaults
+- Fixed vault account click staying in current tab instead of using router
+- Fixed tab title updates on vault screen transitions
+- Fixed `getVaultKeyService` reference in `migrateToEncrypted`
+- Fixed TDZ crash in AgentHeader `orderedTabs` watch
+- Fixed 'Open Sulla' tray item staying enabled when logged out
+- Fixed menu rebuild on login with async history refresh
+- Fixed History menu items disabled when user is logged out
+- Fixed dark mode on window
+- Fixed integration detail page always creating new connections
+- Fixed 'Connect Now' opening full integration detail page
+- Fixed AgentHeader hidden in integration detail when embedded in vault tab
+- Fixed integration YAML configs loading before listing endpoints
+- Fixed tab navigation to fallback tab when last tab closed via API
+- Fixed `function.arguments` validation for Alibaba DashScope API
+- Fixed unbound variable error when installer runs without arguments
+- Fixed `window.getWindow()` usage in `sulla.ts`
+- Fixed `pmset` schedule wake (requires root; caffeinate is sufficient)
+- Fixed various theme color issues across ocean, dark mode, scrollbars, headers, modals, tabs, and chat UI
+
+### Refactoring
+
+- Environment prompt rewritten with MVC structure
+- Removed `dom_observer` passive DOM observation pipeline
+- Renamed integration tools to `vault/` category
+- Audio driver removed from installer (moved to post-build step)
+
+### Infrastructure & Security
+
+- Pinned all dependencies to exact versions to prevent supply chain attacks
+- Pinned `@types/node@22.19.15` and `@types/jest@29.5.14`
+- Bumped `actions/download-artifact` from 7.0.0 to 8.0.1
+- Bumped `actions/setup-go` from 6.2.0 to 6.3.0
+- Bumped `actions/create-github-app-token`
+- Fixed HTTPS repository URL for Windows MSI build
+- Pre-built installer added with renamed dev scripts and release job in CI
+
 ## [1.0.0] - 2026-03-14
 
 First major release of Sulla Desktop — a complete re-architecture from the Rancher Desktop fork into a standalone AI executive assistant.

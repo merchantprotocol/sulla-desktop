@@ -62,6 +62,28 @@ export class Tray {
         openEditor();
       },
     },
+    {
+      id:    'secretary-mode',
+      label: 'Secretary Mode',
+      icon:  path.join(paths.resources, 'icons', 'automation-play.png'),
+      type:  'normal',
+      click() {
+        openMain();
+        // Give the window a moment to load if it's new, then send the command
+        const agentWindow = Electron.BrowserWindow.getAllWindows()
+          .find(w => !w.isDestroyed() && w.getTitle() === 'Sulla Agent');
+
+        if (agentWindow) {
+          const sendCommand = () => agentWindow.webContents.send('agent-command', { command: 'new-secretary-tab' });
+
+          if (agentWindow.webContents.isLoading()) {
+            agentWindow.webContents.once('did-finish-load', sendCommand);
+          } else {
+            sendCommand();
+          }
+        }
+      },
+    },
     { type: 'separator' },
     {
       id:      'extensions',
@@ -465,7 +487,7 @@ export class Tray {
       });
     } else {
       // Re-enable items that were disabled when logged out
-      const loginControlled = new Set(['editor', 'docker-dashboard', 'extensions']);
+      const loginControlled = new Set(['editor', 'docker-dashboard', 'extensions', 'secretary-mode']);
       this.contextMenuItems.forEach((item) => {
         if (item.id && loginControlled.has(item.id)) {
           item.enabled = true;

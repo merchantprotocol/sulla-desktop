@@ -1865,6 +1865,28 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // sulla CLI + daemon are Node.js scripts — platform-independent
     const binDir = path.join(paths.resources, process.platform, 'bin');
 
+    // --- Ensure the host-side API token file exists (independent of VM state) ---
+    const crypto = await import('node:crypto');
+    const tokenFile = path.join(paths.appHome, 'chat-api-token.json');
+    let sullaApiToken = '';
+    try {
+      const raw = await fs.promises.readFile(tokenFile, 'utf-8');
+      sullaApiToken = JSON.parse(raw).token || '';
+    } catch {
+      sullaApiToken = await SullaSettingsModel.get('sullaApiToken') || '';
+    }
+    if (!sullaApiToken) {
+      sullaApiToken = crypto.randomBytes(48).toString('base64url');
+      console.log('[Lima] Generated new API token during CLI install');
+    }
+    await fs.promises.mkdir(paths.appHome, { recursive: true });
+    await fs.promises.writeFile(tokenFile, JSON.stringify({
+      token: sullaApiToken,
+      port:  3000,
+      pid:   process.pid,
+    }, null, 2), { mode: 0o600 });
+
+    // --- Install CLI + inject token into VM ---
     try {
       for (const name of ['sulla', 'sulla-daemon']) {
         const src = path.join(binDir, name);
@@ -1873,9 +1895,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         await this.execCommand({ root: true }, 'chmod', '755', `/usr/local/bin/${ name }`);
       }
 
+      await this.writeFile('/etc/sulla-env', `SULLA_API_TOKEN=${ sullaApiToken }\n`, 0o644);
+
       // Kill any existing daemon, then start fresh in the background
       await this.execCommand({ root: false }, 'sh', '-c', 'pkill -f sulla-daemon || true');
-      await this.execCommand({ root: false }, 'sh', '-c', 'nohup sulla-daemon > /tmp/sulla-daemon.log 2>&1 &');
+      await this.execCommand({ root: false }, 'sh', '-c', '. /etc/sulla-env 2>/dev/null; export SULLA_API_TOKEN; nohup sulla-daemon > /tmp/sulla-daemon.log 2>&1 &');
       console.log('[Lima] sulla CLI and daemon installed and started');
     } catch (error) {
       console.warn('[Lima] Failed to install sulla CLI into VM:', error);

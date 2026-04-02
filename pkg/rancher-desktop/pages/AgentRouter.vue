@@ -244,6 +244,12 @@ function onAgentCommand(_event: any, args: any) {
     router.push(`/Browser/${ tab.id }`);
     break;
   }
+  case 'new-secretary-tab': {
+    const tab = createTab('about:blank', { mode: 'secretary' });
+
+    router.push(`/Browser/${ tab.id }`);
+    break;
+  }
   case 'open-tab': {
     const tab = createTab('about:blank', { mode: args.mode || 'welcome' });
 
