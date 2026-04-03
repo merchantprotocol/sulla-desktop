@@ -1,4 +1,4 @@
-import { ipcRenderer } from 'electron';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { TransientSettings } from '@pkg/config/transientSettings';
 

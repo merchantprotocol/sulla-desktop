@@ -242,9 +242,11 @@ export function openUrlInApp(url: string): void {
 }
 
 // Allow renderer processes to open URLs inside the app via IPC.
-ipcMain.on('open-url-in-app', (_event: Electron.IpcMainEvent, url: string) => {
-  openUrlInApp(url);
-});
+if (process.type === 'browser') {
+  ipcMain.on('open-url-in-app', (_event: Electron.IpcMainEvent, url: string) => {
+    openUrlInApp(url);
+  });
+}
 
 /**
  * Open the Docker Dashboard window; if it is already open, focus it.

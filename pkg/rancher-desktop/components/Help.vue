@@ -1,6 +1,6 @@
 <script lang="ts">
 
-import { ipcRenderer } from 'electron';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { defineComponent } from 'vue';
 
 export default defineComponent({
