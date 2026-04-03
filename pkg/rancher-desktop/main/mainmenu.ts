@@ -5,7 +5,7 @@ import { State } from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
 import Logging from '@pkg/utils/logging';
 import setupUpdate from '@pkg/main/update';
-import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openMain, openEditor, getWindow } from '@pkg/window';
+import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openMain, openEditor, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
@@ -228,7 +228,7 @@ function getExtensionsSubmenu(): MenuItemConstructorOptions[] {
       submenu: urls.map(link => ({
         label: link.label,
         click: () => {
-          void shell.openExternal(link.url);
+          openUrlInApp(link.url);
         },
       })),
     };
@@ -453,33 +453,33 @@ function getHelpMenu(isMac: boolean): MenuItem {
     {
       label: '&Documentation',
       click() {
-        shell.openExternal('https://docs.sulladesktop.com');
+        openUrlInApp('https://docs.sulladesktop.com');
       },
     },
     {
       label: '&Release Notes',
       click() {
-        shell.openExternal('https://sulladesktop.com/release-notes');
+        openUrlInApp('https://sulladesktop.com/release-notes');
       },
     },
     { type: 'separator' },
     {
       label: 'Report an &Issue…',
       click() {
-        shell.openExternal('https://sulladesktop.com/support');
+        openUrlInApp('https://sulladesktop.com/support');
       },
     },
     {
       label: '&Premium Support',
       click() {
-        shell.openExternal('https://www.skool.com/book-more-appointments-8103');
+        openUrlInApp('https://www.skool.com/book-more-appointments-8103');
       },
     },
     { type: 'separator' },
     {
       label: 'P&roject Page',
       click() {
-        shell.openExternal('https://sulladesktop.com');
+        openUrlInApp('https://sulladesktop.com');
       },
     },
   ];

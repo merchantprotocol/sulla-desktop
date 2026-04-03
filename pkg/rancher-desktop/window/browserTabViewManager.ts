@@ -6,7 +6,7 @@ import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 import paths from '@pkg/utils/paths';
 import Logging from '@pkg/utils/logging';
-import { getWindow } from '@pkg/window';
+import { getWindow, openUrlInApp } from '@pkg/window';
 
 const console = Logging.sulla;
 
@@ -678,6 +678,14 @@ export class BrowserTabViewManager {
 
   private attachListeners(tabId: string, view: WebContentsView, mainWindow: Electron.BrowserWindow): void {
     const wc = view.webContents;
+
+    // Intercept target="_blank" links and window.open() calls so they open
+    // in a new Sulla browser tab instead of spawning an external window.
+    wc.setWindowOpenHandler((details) => {
+      openUrlInApp(details.url);
+
+      return { action: 'deny' };
+    });
 
     const sendState = () => {
       if (mainWindow.isDestroyed()) {

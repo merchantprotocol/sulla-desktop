@@ -272,6 +272,7 @@
 </template>
 
 <script setup lang="ts">
+import { ipcRenderer } from 'electron';
 import AgentHeader from './agent/AgentHeader.vue';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { useTheme } from '@pkg/composables/useTheme';
@@ -279,16 +280,9 @@ import { useTheme } from '@pkg/composables/useTheme';
 const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 
 const openN8N = () => {
-  // Open N8N in external browser
   const n8nUrl = 'http://127.0.0.1:30119';
 
-  // Use Electron's shell to open external URL
-  if (window.require) {
-    const { shell } = window.require('electron');
-    shell.openExternal(n8nUrl);
-  } else {
-    window.open(n8nUrl, '_blank');
-  }
+  ipcRenderer.send('open-url-in-app', n8nUrl);
 };
 </script>
 

@@ -87,14 +87,14 @@ export function createWindow(name: string, url: string, options: Electron.Browse
     if (isInternalURL(input)) {
       return;
     }
-    shell.openExternal(input);
+    openUrlInApp(input);
     event.preventDefault();
   });
   window.webContents.setWindowOpenHandler((details) => {
     if (isInternalURL(details.url)) {
       window?.webContents.loadURL(details.url);
     } else {
-      shell.openExternal(details.url);
+      openUrlInApp(details.url);
     }
 
     return { action: 'deny' };
@@ -204,6 +204,47 @@ export function openMain() {
 
   app.dock?.show();
 }
+
+/**
+ * Open a URL inside the app's browser tab instead of the system browser.
+ * Ensures the main agent window is open, then sends an IPC command to
+ * create a new browser tab navigating to the given URL.
+ */
+export function openUrlInApp(url: string): void {
+  openMain();
+  const existing = getWindow('main-agent');
+
+  const sendCommand = (window: Electron.BrowserWindow) => {
+    const send = () => {
+      window.webContents.send('agent-command', { command: 'open-url', url });
+    };
+
+    if (window.webContents.isLoading()) {
+      window.webContents.once('did-finish-load', send);
+    } else {
+      send();
+    }
+  };
+
+  if (existing) {
+    sendCommand(existing);
+  } else {
+    const poll = setInterval(() => {
+      const window = getWindow('main-agent');
+
+      if (window) {
+        clearInterval(poll);
+        sendCommand(window);
+      }
+    }, 50);
+    setTimeout(() => clearInterval(poll), 5000);
+  }
+}
+
+// Allow renderer processes to open URLs inside the app via IPC.
+ipcMain.on('open-url-in-app', (_event: Electron.IpcMainEvent, url: string) => {
+  openUrlInApp(url);
+});
 
 /**
  * Open the Docker Dashboard window; if it is already open, focus it.
@@ -457,6 +498,15 @@ function createView() {
     });
   }
   view = new WebContentsView({ webPreferences });
+
+  // Intercept target="_blank" links and window.open() in extensions so
+  // they open in a new Sulla browser tab instead of the system browser.
+  view.webContents.setWindowOpenHandler((details) => {
+    openUrlInApp(details.url);
+
+    return { action: 'deny' };
+  });
+
   mainWindow.contentView.addChildView(view);
   mainWindow.contentView.addListener('bounds-changed', () => {
     setImmediate(() => mainWindow.webContents.send('extensions/getContentArea'));

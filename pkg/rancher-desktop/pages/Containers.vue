@@ -136,7 +136,6 @@
 <script>
 import { BadgeState, Banner } from '@rancher/components';
 import dayjs from 'dayjs';
-import { shell } from 'electron';
 import merge from 'lodash/merge';
 import { defineComponent } from 'vue';
 import { mapGetters } from 'vuex';
@@ -506,9 +505,9 @@ export default defineComponent({
     },
     openUrl(hostPort) {
       if ([80, 443].includes(hostPort)) {
-        hostPort === 80 ? shell.openExternal(`http://localhost`) : shell.openExternal(`https://localhost`);
+        ipcRenderer.send('open-url-in-app', hostPort === 80 ? `http://localhost` : `https://localhost`);
       } else {
-        return shell.openExternal(`http://localhost:${ hostPort }`);
+        ipcRenderer.send('open-url-in-app', `http://localhost:${ hostPort }`);
       }
     },
 

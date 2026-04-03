@@ -20,7 +20,7 @@ import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send, openEditor, openDockerDashboard, getWindow } from '@pkg/window';
+import { openMain, send, openEditor, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -119,7 +119,7 @@ export class Tray {
           label: 'Premium Support',
           icon:  path.join(paths.resources, 'icons', 'star-16.png'),
           click() {
-            void Electron.shell.openExternal('https://www.skool.com/book-more-appointments-8103');
+            openUrlInApp('https://www.skool.com/book-more-appointments-8103');
           },
         },
         {
@@ -127,7 +127,7 @@ export class Tray {
           label: 'Documentation',
           icon:  path.join(paths.resources, 'icons', 'book-open-16.png'),
           click() {
-            void Electron.shell.openExternal('https://sulladesktop.com/docs');
+            openUrlInApp('https://sulladesktop.com/docs');
           },
         },
         {
@@ -135,7 +135,7 @@ export class Tray {
           label: 'Discussions',
           icon:  path.join(paths.resources, 'icons', 'messages-circle-16.png'),
           click() {
-            void Electron.shell.openExternal('https://sulladesktop.com/support');
+            openUrlInApp('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },
@@ -144,7 +144,7 @@ export class Tray {
           label: 'Issues',
           icon:  path.join(paths.resources, 'icons', 'issue-opened-16.png'),
           click() {
-            void Electron.shell.openExternal('https://sulladesktop.com/support');
+            openUrlInApp('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },
@@ -604,7 +604,7 @@ export class Tray {
             submenu: urls.map(link => ({
               label: link.label,
               click: () => {
-                void Electron.shell.openExternal(link.url);
+                openUrlInApp(link.url);
               },
             })),
           };
