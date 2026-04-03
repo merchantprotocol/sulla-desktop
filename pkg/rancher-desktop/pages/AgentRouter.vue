@@ -256,6 +256,13 @@ function onAgentCommand(_event: any, args: any) {
     router.push(`/Browser/${ tab.id }`);
     break;
   }
+  case 'open-url': {
+    const url = args.url || 'about:blank';
+    const tab = createTab(url);
+
+    router.push(`/Browser/${ tab.id }`);
+    break;
+  }
   }
 }
 

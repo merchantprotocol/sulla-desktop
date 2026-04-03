@@ -21,6 +21,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import type { IpcMainEvents, IpcMainInvokeEvents, IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import { parseImageReference } from '@pkg/utils/dockerUtils';
+import { openUrlInApp } from '@pkg/window';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { executable } from '@pkg/utils/resources';
@@ -152,7 +153,7 @@ export class ExtensionManagerImpl implements ExtensionManager {
 
     // Handle events from the renderer process.
     this.setMainListener('extensions/open-external', (...[, url]) => {
-      Electron.shell.openExternal(url);
+      openUrlInApp(url);
     });
 
     this.setMainListener('extensions/spawn/kill', (event, execId) => {
