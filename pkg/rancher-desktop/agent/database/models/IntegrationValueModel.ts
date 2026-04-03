@@ -97,12 +97,21 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     // Main process: direct
     const vault = getVaultDirect();
     if (vault) {
-      try { return vault.decrypt(value); } catch { /* fall through */ }
+      try {
+        return vault.decrypt(value);
+      } catch (err) {
+        console.error('[IntegrationValueModel] Vault decrypt failed (vault locked?):', err);
+      }
     }
     // Renderer: IPC
     if (isRenderer) {
-      try { return ipcDecrypt(value); } catch { /* fall through */ }
+      try {
+        return ipcDecrypt(value);
+      } catch (err) {
+        console.error('[IntegrationValueModel] IPC decrypt failed:', err);
+      }
     }
+    console.warn('[IntegrationValueModel] Returning encrypted value as-is — vault may be locked');
     return value;
   }
 

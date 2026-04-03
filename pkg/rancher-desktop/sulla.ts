@@ -189,6 +189,16 @@ export async function instantiateSullaStart(): Promise<void> {
       console.error('[Background] Failed to start chat completions API server:', error);
     }
 
+    // Unlock the vault before integrations attempt to decrypt credentials
+    try {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      const vault = getVaultKeyService();
+      const unlocked = await vault.initialize();
+      console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked (setup or password required)' }`);
+    } catch (err) {
+      console.error('[Background] Vault initialization failed:', err);
+    }
+
     SullaIntegrations();
 
     // Load YAML-defined API integrations from ~/sulla/integrations
