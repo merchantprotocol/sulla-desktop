@@ -1132,6 +1132,9 @@
             :queued-messages="chatQueueMessages"
             :has-queued-messages="chatHasQueuedMessages"
             :queued-message-count="chatQueuedMessageCount"
+            :tabs="chatTabsList"
+            :active-tab-id="activeChatTabId"
+            :chat-history="chatHistory"
             @update:query="chatUpdateQuery"
             @send="chatSend()"
             @stop="chatStop()"
@@ -1140,6 +1143,13 @@
             @clear-queue="chatClearQueue"
             @move-up="chatMoveQueuedMessageUp"
             @move-down="chatMoveQueuedMessageDown"
+            @create-tab="onCreateChatTab"
+            @switch-tab="onSwitchChatTab"
+            @close-tab="onCloseChatTab"
+            @rename-tab="onRenameChatTab"
+            @load-history="onLoadHistory"
+            @remove-history="onRemoveHistory"
+            @clear-history="onClearHistory"
           />
           <TrainingHelpPane
             v-show="rightPaneTab === 'help'"
@@ -1165,6 +1175,9 @@
           :queued-messages="chatQueueMessages"
           :has-queued-messages="chatHasQueuedMessages"
           :queued-message-count="chatQueuedMessageCount"
+          :tabs="chatTabsList"
+          :active-tab-id="activeChatTabId"
+          :chat-history="chatHistory"
           @update:query="chatUpdateQuery"
           @send="chatSend()"
           @stop="chatStop()"
@@ -1173,6 +1186,13 @@
           @clear-queue="chatClearQueue"
           @move-up="chatMoveQueuedMessageUp"
           @move-down="chatMoveQueuedMessageDown"
+          @create-tab="onCreateChatTab"
+          @switch-tab="onSwitchChatTab"
+          @close-tab="onCloseChatTab"
+          @rename-tab="onRenameChatTab"
+          @load-history="onLoadHistory"
+          @remove-history="onRemoveHistory"
+          @clear-history="onClearHistory"
         />
       </div>
     </div>
@@ -1338,7 +1358,7 @@ import WorkflowNodePanel from './editor/WorkflowNodePanel.vue';
 import WebViewTab from './editor/WebViewTab.vue';
 import TerminalTab from './editor/TerminalTab.vue';
 import EditorChat from './editor/EditorChat.vue';
-import { EditorChatInterface } from './editor/EditorChatInterface';
+import { EditorChatTabsInterface, createEditorChatTabsInterface } from './editor/EditorChatTabsInterface';
 import { FrontendGraphWebSocketService } from '@pkg/agent/services/FrontendGraphWebSocketService';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
 import { getAgentPersonaRegistry } from '@pkg/agent';
@@ -1596,35 +1616,69 @@ export default defineComponent({
     // Agent registry for agent selector
     const agentRegistry = getAgentPersonaRegistry();
 
-    // Editor chat (uses active agent from registry)
-    const editorCurrentThreadId = ref<string | null>(null);
-    // Don't connect to 'sulla-desktop' — BackendGraphWebSocketService handles that channel in the main process.
-    // The graph WS will be created lazily when the user switches to a non-default agent.
-    let editorGraphWs: FrontendGraphWebSocketService | null = null;
-    const editorChat = new EditorChatInterface();
-    const chatMessages = editorChat.messages;
-    const chatQuery = editorChat.query;
-    const chatLoading = editorChat.loading;
-    const chatGraphRunning = editorChat.graphRunning;
-    const chatWaitingForUser = editorChat.waitingForUser;
-    const chatCurrentActivity = editorChat.currentActivity;
+    // Editor chat tabs system
+    const chatTabs = createEditorChatTabsInterface();
+    const chatTabsList = chatTabs.allTabs;
+    const activeChatTabId = chatTabs.activeTabIdComputed;
+    
+    // Computed properties for active tab
+    const activeChatInterface = computed(() => chatTabs.activeInterface.value);
+    const chatMessages = computed(() => activeChatInterface.value?.messages.value ?? []);
+    const chatQuery = computed({
+      get: () => activeChatInterface.value?.query.value ?? '',
+      set: (val: string) => { if (activeChatInterface.value) activeChatInterface.value.query.value = val; }
+    });
+    const chatLoading = computed(() => activeChatInterface.value?.loading.value ?? false);
+    const chatGraphRunning = computed(() => activeChatInterface.value?.graphRunning.value ?? false);
+    const chatWaitingForUser = computed(() => activeChatInterface.value?.waitingForUser.value ?? false);
+    const chatCurrentActivity = computed(() => activeChatInterface.value?.currentActivity.value ?? '');
+
+    // Chat actions
     const chatSend = () => {
       presenceTracker.recordActivity();
       presenceTracker.setCurrentActivity('chatting with agent');
-      editorChat.send();
+      activeChatInterface.value?.send();
     };
-    const chatStop = () => editorChat.stop();
-    const chatUpdateQuery = (val: string) => { editorChat.query.value = val };
+    const chatStop = () => activeChatInterface.value?.stop();
+    const chatUpdateQuery = (val: string) => { chatQuery.value = val; };
 
-    // Queue management for EditorChat
-    const chatQueue = editorChat.getQueue();
-    const chatQueueMessages = chatQueue.pendingMessages;
-    const chatHasQueuedMessages = chatQueue.hasPendingMessages;
-    const chatQueuedMessageCount = chatQueue.queueLength;
-    const chatRemoveQueuedMessage = (messageId: string) => editorChat.removeQueuedMessage(messageId);
-    const chatClearQueue = () => editorChat.clearQueue();
-    const chatMoveQueuedMessageUp = (messageId: string) => editorChat.moveQueuedMessageUp(messageId);
-    const chatMoveQueuedMessageDown = (messageId: string) => editorChat.moveQueuedMessageDown(messageId);
+    // Queue management
+    const chatQueue = computed(() => activeChatInterface.value?.getQueue());
+    const chatQueueMessages = computed(() => chatQueue.value?.pendingMessages.value ?? []);
+    const chatHasQueuedMessages = computed(() => chatQueue.value?.hasPendingMessages.value ?? false);
+    const chatQueuedMessageCount = computed(() => chatQueue.value?.queueLength.value ?? 0);
+    const chatRemoveQueuedMessage = (messageId: string) => chatQueue.value?.dequeue(messageId);
+    const chatClearQueue = () => chatQueue.value?.clear();
+    const chatMoveQueuedMessageUp = (messageId: string) => chatQueue.value?.moveUp(messageId);
+    const chatMoveQueuedMessageDown = (messageId: string) => chatQueue.value?.moveDown(messageId);
+
+    // Tab management
+    const onCreateChatTab = () => {
+      chatTabs.createTab();
+    };
+    const onSwitchChatTab = (tabId: string) => {
+      chatTabs.switchTab(tabId);
+    };
+    const onCloseChatTab = (tabId: string) => {
+      // Add to history before closing (if has messages)
+      chatTabs.addToHistory(tabId);
+      chatTabs.closeTab(tabId);
+    };
+    const onRenameChatTab = (tabId: string, newLabel: string) => {
+      chatTabs.renameTab(tabId, newLabel);
+    };
+    
+    // Chat history
+    const chatHistory = chatTabs.history;
+    const onLoadHistory = (historyId: string) => {
+      chatTabs.loadHistoryIntoTab(historyId);
+    };
+    const onRemoveHistory = (historyId: string) => {
+      chatTabs.removeFromHistory(historyId);
+    };
+    const onClearHistory = () => {
+      chatTabs.clearHistory();
+    };
 
     // ── Canvas-path event dispatcher ──────────────────────────────────
     // Receives workflow execution events forwarded by EditorChatInterface and
@@ -1644,7 +1698,7 @@ export default defineComponent({
     //   workflow_completed → no-op (individual nodes already show final state)
     //   workflow_failed    → no-op
     //   workflow_aborted   → no-op
-    editorChat.onWorkflowEvent((event) => {
+    chatTabs.onWorkflowEvent((event) => {
       if (!workflowEditorRef.value) return;
 
       const nodeId = event.nodeId;
@@ -1710,11 +1764,11 @@ export default defineComponent({
 
     // When the active agent changes, reset the conversation and switch channels.
     watch(() => agentRegistry.state.activeAgentId, (newAgentId) => {
-      // Sync into EditorChatInterface so the backend uses this agent
-      editorChat.activeAgentId.value = newAgentId || null;
-
-      // Fresh conversation — clear old messages and threadId
-      editorChat.resetConversation();
+      // Sync into active chat interface so the backend uses this agent
+      if (activeChatInterface.value) {
+        activeChatInterface.value.activeAgentId.value = newAgentId || null;
+        activeChatInterface.value.resetConversation();
+      }
 
       if (BACKEND_CHANNELS.has(newAgentId)) {
         return;
@@ -1969,7 +2023,7 @@ export default defineComponent({
       }
       // Clear chat when leaving agent mode so stale agent messages don't persist
       if (agentMode.value) {
-        editorChat.resetConversation();
+        activeChatInterface.value?.resetConversation();
       }
       searchMode.value = false;
       gitMode.value = false;
@@ -2036,11 +2090,11 @@ export default defineComponent({
         leftPaneVisible.value = true;
         clearModes();
         agentMode.value = true;
-        editorChat.resetConversation();
+        activeChatInterface.value?.resetConversation();
       } else if (!agentMode.value) {
         clearModes();
         agentMode.value = true;
-        editorChat.resetConversation();
+        activeChatInterface.value?.resetConversation();
       } else {
         leftPaneVisible.value = false;
       }
@@ -2319,7 +2373,9 @@ export default defineComponent({
       saveWorkflowNow();
 
       // Scope the chat to this workflow so the agent only sees it
-      editorChat.activeWorkflowId.value = activeWorkflowData.value.id;
+      if (activeChatInterface.value) {
+        activeChatInterface.value.activeWorkflowId.value = activeWorkflowData.value.id;
+      }
 
       // Open the chat pane so the user can talk to the agent
       selectedWorkflowNode.value = null;
@@ -2332,9 +2388,11 @@ export default defineComponent({
       // Auto-send the first message to immediately kick off the workflow
       const workflowName = activeWorkflowData.value.name || 'this workflow';
 
-      editorChat.query.value = `Let's run ${ workflowName }`;
-      await nextTick();
-      editorChat.send();
+      if (activeChatInterface.value) {
+        activeChatInterface.value.query.value = `Let's run ${ workflowName }`;
+        await nextTick();
+        activeChatInterface.value.send();
+      }
     }
 
     async function onWorkflowActivated(workflowId: string) {
@@ -2367,7 +2425,9 @@ export default defineComponent({
       workflowSaveStatus.value = 'idle';
       rightPaneVisible.value = false;
       // Clear workflow scope so the agent goes back to normal
-      editorChat.activeWorkflowId.value = null;
+      if (activeChatInterface.value) {
+        activeChatInterface.value.activeWorkflowId.value = null;
+      }
     }
 
     async function onWorkflowCreated(workflowId: string, workflowName: string) {
@@ -3068,7 +3128,7 @@ export default defineComponent({
       window.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('mousedown', onEditorMenuOutsideClick);
       document.removeEventListener('click', onInjectMenuOutsideClick);
-      editorChat.dispose();
+      chatTabs.dispose();
       editorGraphWs?.dispose();
       modelSelector.dispose();
       if (footerStatsTimer) {
@@ -3097,6 +3157,17 @@ export default defineComponent({
       chatClearQueue,
       chatMoveQueuedMessageUp,
       chatMoveQueuedMessageDown,
+      // Chat tabs
+      chatTabsList,
+      activeChatTabId,
+      chatHistory,
+      onCreateChatTab,
+      onSwitchChatTab,
+      onCloseChatTab,
+      onRenameChatTab,
+      onLoadHistory,
+      onRemoveHistory,
+      onClearHistory,
       modelSelector,
       agentRegistry,
       chatTotalTokensUsed,

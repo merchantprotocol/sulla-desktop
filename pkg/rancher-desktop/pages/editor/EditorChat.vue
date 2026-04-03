@@ -9,11 +9,205 @@
       :class="{ dark: isDark }"
     >
       <span class="chat-header-title">Chat</span>
+      <div class="chat-header-actions">
+        <!-- History button -->
+        <div class="chat-history-wrap">
+          <button
+            class="chat-history-btn"
+            :class="{ dark: isDark, active: showHistory }"
+            title="Chat History"
+            @click="showHistory = !showHistory"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M3 3v5h5" />
+              <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
+              <path d="M12 7v5l4 2" />
+            </svg>
+          </button>
+          
+          <!-- Chat History Dropdown Popup -->
+          <div
+            v-if="showHistory"
+            class="chat-history-popup"
+            :class="{ dark: isDark }"
+          >
+            <!-- Search Header -->
+            <div
+              class="chat-history-search-header"
+              :class="{ dark: isDark }"
+            >
+              <div class="chat-history-search-box">
+                <svg
+                  class="chat-history-search-icon"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  v-model="historySearchQuery"
+                  type="text"
+                  class="chat-history-search-input"
+                  :class="{ dark: isDark }"
+                  placeholder="Search"
+                  @click.stop
+                />
+              </div>
+            </div>
+            
+            <!-- History List -->
+            <div class="chat-history-list">
+              <div
+                v-if="filteredHistory.length === 0"
+                class="chat-history-empty"
+              >
+                No chat history
+              </div>
+              <div
+                v-for="item in filteredHistory"
+                :key="item.id"
+                class="chat-history-item"
+                :class="{ dark: isDark }"
+                @click="loadHistoryItem(item.id)"
+              >
+                <svg
+                  class="chat-history-check"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <span class="chat-history-item-title">{{ item.title }}</span>
+                <span class="chat-history-item-time">{{ formatRelativeTime(item.lastMessageAt) }}</span>
+                <button
+                  class="chat-history-item-delete"
+                  :class="{ dark: isDark }"
+                  @click.stop="$emit('remove-history', item.id)"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button
+          class="chat-close-btn"
+          :class="{ dark: isDark }"
+          title="Close Panel"
+          @click="$emit('close')"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line
+              x1="18"
+              y1="6"
+              x2="6"
+              y2="18"
+            />
+            <line
+              x1="6"
+              y1="6"
+              x2="18"
+              y2="18"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Click outside to close history popup -->
+    <div
+      v-if="showHistory"
+      class="chat-history-backdrop"
+      @click="showHistory = false"
+    />
+
+    <!-- Tab bar -->
+    <div
+      v-if="tabs && tabs.length > 0"
+      class="chat-tabs"
+      :class="{ dark: isDark }"
+    >
+      <div class="chat-tabs-list">
+        <div
+          v-for="tab in tabs"
+          :key="tab.id"
+          class="chat-tab"
+          :class="{ active: tab.id === activeTabId, dark: isDark }"
+          @click="$emit('switch-tab', tab.id)"
+        >
+          <span class="chat-tab-label">{{ tab.label }}</span>
+          <button
+            v-if="tabs.length > 1"
+            class="chat-tab-close"
+            :class="{ dark: isDark }"
+            @click.stop="$emit('close-tab', tab.id)"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line
+                x1="18"
+                y1="6"
+                x2="6"
+                y2="18"
+              />
+              <line
+                x1="6"
+                y1="6"
+                x2="18"
+                y2="18"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
       <button
-        class="chat-close-btn"
+        class="chat-tab-add"
         :class="{ dark: isDark }"
-        title="Close Panel"
-        @click="$emit('close')"
+        title="New chat"
+        @click="$emit('create-tab')"
       >
         <svg
           width="14"
@@ -21,21 +215,19 @@
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+          stroke-width="2"
         >
           <line
-            x1="18"
-            y1="6"
-            x2="6"
-            y2="18"
+            x1="12"
+            y1="5"
+            x2="12"
+            y2="19"
           />
           <line
-            x1="6"
-            y1="6"
-            x2="18"
-            y2="18"
+            x1="5"
+            y1="12"
+            x2="19"
+            y2="12"
           />
         </svg>
       </button>
@@ -503,17 +695,19 @@
         >{{ tokenLabel }}</span>
       </div>
     </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue';
+import { ref, watch, nextTick, computed, onMounted } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import type { ChatMessage } from '@pkg/agent';
 import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
 import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import type { QueuedMessage } from '../agent/ChatMessageQueue';
+import type { ChatHistoryItem } from './EditorChatTabsInterface';
 import WorkflowNodeCard from './workflow/WorkflowNodeCard.vue';
 import SubAgentBubble from './workflow/SubAgentBubble.vue';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
@@ -534,9 +728,16 @@ const props = defineProps<{
   queuedMessages?:    QueuedMessage[];
   hasQueuedMessages?: boolean;
   queuedMessageCount?: number;
+  // Tab system props
+  tabs?:              Array<{ id: string; label: string; messageCount: number; isActive: boolean }>;
+  activeTabId?:       string;
+  // Chat history props
+  chatHistory?:       ChatHistoryItem[];
 }>();
 
 const showAgentMenu = ref(false);
+const showHistory = ref(false);
+const historySearchQuery = ref('');
 
 const activeAgentName = computed(() => props.agentRegistry?.activeAgent.value?.agentName || 'Agent');
 const visibleAgents = computed(() => props.agentRegistry?.visibleAgents.value || []);
@@ -559,6 +760,15 @@ const emit = defineEmits<{
   'clear-queue':  [];
   'move-up':      [messageId: string];
   'move-down':    [messageId: string];
+  // Tab system events
+  'create-tab':   [];
+  'switch-tab':   [tabId: string];
+  'close-tab':    [tabId: string];
+  'rename-tab':   [tabId: string, newLabel: string];
+  // Chat history events
+  'load-history': [historyId: string];
+  'remove-history': [historyId: string];
+  'clear-history': [];
 }>();
 
 const tokenLabel = computed(() => {
@@ -612,8 +822,65 @@ function onSend() {
   });
 }
 
+function loadHistoryItem(historyId: string) {
+  showHistory.value = false;
+  emit('load-history', historyId);
+}
+
+function formatDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  
+  if (isToday) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  
+  const isThisYear = date.getFullYear() === now.getFullYear();
+  if (isThisYear) {
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+  
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+  
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  if (hours < 24) return `${hours}h`;
+  if (days < 30) return `${days}d`;
+  
+  return `${Math.floor(days / 30)}mo`;
+}
+
+// Filtered history based on search
+const filteredHistory = computed(() => {
+  const history = props.chatHistory || [];
+  if (!historySearchQuery.value.trim()) return history;
+  
+  const query = historySearchQuery.value.toLowerCase();
+  return history.filter(item => 
+    item.title.toLowerCase().includes(query) ||
+    item.preview.toLowerCase().includes(query)
+  );
+});
+
 // Auto-scroll on new messages
 watch(() => props.messages.length, () => scrollToBottom());
+
+// Scroll to bottom on mount if there are existing messages (e.g., after page refresh)
+onMounted(() => {
+  if (props.messages.length > 0) {
+    scrollToBottom();
+  }
+});
 </script>
 
 <style scoped>
@@ -675,13 +942,29 @@ watch(() => props.messages.length, () => scrollToBottom());
   flex: 1;
 }
 
-.chat-messages.dark::-webkit-scrollbar {
-  width: 6px;
+/* Theme-aware scrollbar styling for chat-messages */
+.chat-messages::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+  background: var(--bg-surface);
+  border-radius: 4px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
-  background: var(--bg-surface-hover);
-  border-radius: 3px;
+  background: var(--border-default);
+  border-radius: 4px;
+  transition: background-color 150ms;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.chat-messages::-webkit-scrollbar-corner {
+  background: var(--bg-surface);
 }
 
 .chat-empty {
@@ -874,6 +1157,13 @@ watch(() => props.messages.length, () => scrollToBottom());
   min-height: 28px;
   max-height: 120px;
   overflow-y: auto;
+  /* Hide scrollbar */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chat-input::-webkit-scrollbar {
+  display: none;
 }
 
 .chat-input::placeholder {
@@ -1305,5 +1595,329 @@ watch(() => props.messages.length, () => scrollToBottom());
 .chat-queued-btn.remove:hover {
   background: var(--bg-error);
   color: var(--text-error);
+}
+
+/* ─── Chat Tabs ─── */
+.chat-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.chat-tabs-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  /* Scrollbar hidden by default, shows on hover */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+/* Firefox: show scrollbar on hover */
+.chat-tabs-list:hover {
+  scrollbar-color: var(--bg-surface-hover) transparent;
+}
+
+/* WebKit: custom scrollbar */
+.chat-tabs-list::-webkit-scrollbar {
+  height: 6px;
+}
+
+.chat-tabs-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Thumb hidden by default */
+.chat-tabs-list::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+}
+
+/* Show thumb on hover with theme colors */
+.chat-tabs-list:hover::-webkit-scrollbar-thumb {
+  background: var(--bg-surface-hover);
+  border-radius: 3px;
+}
+
+.chat-tabs-list:hover::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+.chat-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-default);
+  cursor: pointer;
+  font-size: var(--fs-body-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.chat-tab:hover {
+  background: var(--bg-hover);
+}
+
+.chat-tab.active {
+  background: var(--bg-info);
+  color: var(--text-info);
+  border-color: var(--accent-primary);
+}
+
+.chat-tab-label {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-tab-badge {
+  font-size: var(--fs-caption);
+  padding: 1px 5px;
+  border-radius: 10px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  min-width: 18px;
+  text-align: center;
+}
+
+.chat-tab.active .chat-tab-badge {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.chat-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.chat-tab-close:hover {
+  background: var(--bg-error);
+  color: var(--text-error);
+  opacity: 1;
+}
+
+.chat-tab-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.chat-tab-add:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* Hide scrollbar on main tabs container too */
+.chat-tabs {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chat-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─── Chat History Popup (Dropdown) ─── */
+.chat-history-wrap {
+  position: relative;
+}
+
+.chat-history-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9998;
+}
+
+.chat-history-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 320px;
+  max-height: 350px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 9999;
+}
+
+/* Search Header */
+.chat-history-search-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+.chat-history-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+}
+
+.chat-history-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.chat-history-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-body-sm);
+  outline: none;
+  min-width: 0;
+}
+
+.chat-history-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* History List */
+.chat-history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.chat-history-empty {
+  text-align: center;
+  padding: 30px 16px;
+  color: var(--text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+.chat-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.chat-history-item:hover {
+  background: var(--bg-hover);
+}
+
+.chat-history-check {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+.chat-history-item-title {
+  flex: 1;
+  font-size: var(--fs-body-sm);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.chat-history-item-time {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.chat-history-item-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.chat-history-item:hover .chat-history-item-delete {
+  opacity: 1;
+}
+
+.chat-history-item-delete:hover {
+  background: var(--bg-error);
+  color: var(--text-error);
+}
+
+/* History button active state */
+.chat-history-btn.active {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* Header actions container */
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* History button */
+.chat-history-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.chat-history-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 </style>
