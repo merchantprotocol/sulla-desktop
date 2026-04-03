@@ -3,7 +3,7 @@ import cors from 'cors';
 import fs from 'node:fs';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
-import { resolveSullaAgentsDir } from '@pkg/agent/utils/sullaPaths';
+import { resolveSullaAgentsDir, resolveAllAgentsDirs } from '@pkg/agent/utils/sullaPaths';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -470,17 +470,17 @@ export class ChatCompletionsServer {
    */
   public async handleModels(req: Request, res: Response) {
     try {
-      const agentsDir = resolveSullaAgentsDir();
-      let agentIds: string[] = [];
+      const agentIdSet = new Set<string>();
 
-      try {
-        const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
-        agentIds = entries
-          .filter(e => e.isDirectory())
-          .map(e => e.name);
-      } catch {
-        // agents dir may not exist yet
+      for (const agentsDir of resolveAllAgentsDirs()) {
+        try {
+          const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
+          entries.filter(e => e.isDirectory()).forEach(e => agentIdSet.add(e.name));
+        } catch {
+          // agents dir may not exist yet
+        }
       }
+      const agentIds = Array.from(agentIdSet);
 
       const response = {
         object: 'list',

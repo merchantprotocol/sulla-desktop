@@ -119,15 +119,17 @@ export class BackendGraphWebSocketService {
    */
   private async subscribeToAgentChannels(): Promise<void> {
     try {
-      const { resolveSullaAgentsDir } = await import('../utils/sullaPaths');
+      const { resolveAllAgentsDirs } = await import('../utils/sullaPaths');
       const fs = await import('fs');
-      const agentsRoot = resolveSullaAgentsDir();
-      if (!fs.existsSync(agentsRoot)) return;
 
-      const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-        this.subscribeToChannel(entry.name);
+      for (const agentsRoot of resolveAllAgentsDirs()) {
+        if (!fs.existsSync(agentsRoot)) continue;
+
+        const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+          this.subscribeToChannel(entry.name);
+        }
       }
     } catch (err) {
       console.error('[BackendGraphWS] Error scanning agent channels:', err);

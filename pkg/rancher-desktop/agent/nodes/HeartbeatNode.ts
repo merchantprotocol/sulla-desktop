@@ -176,40 +176,42 @@ export class HeartbeatNode extends BaseNode {
 
   private scanHeartbeatWorkflows(): Array<{ id: string; name: string; description: string }> {
     try {
-      const { resolveSullaWorkflowsProductionDir } = require('@pkg/agent/utils/sullaPaths');
-      const workflowsDir: string = resolveSullaWorkflowsProductionDir();
-
-      if (!fs.existsSync(workflowsDir)) {
-        console.log(`[HeartbeatNode] No workflows dir: ${ workflowsDir }`);
-        return [];
-      }
-
-      const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+      const { resolveAllWorkflowsProductionDirs } = require('@pkg/agent/utils/sullaPaths');
+      const workflowsDirs: string[] = resolveAllWorkflowsProductionDirs();
       const results: Array<{ id: string; name: string; description: string }> = [];
 
-      for (const entry of entries) {
-        if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+      for (const workflowsDir of workflowsDirs) {
+        if (!fs.existsSync(workflowsDir)) {
+          console.log(`[HeartbeatNode] No workflows dir: ${ workflowsDir }`);
+          continue;
+        }
 
-        try {
-          const filePath = path.join(workflowsDir, entry.name);
-          const raw = fs.readFileSync(filePath, 'utf-8');
-          const definition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+        const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
 
-          if (!definition.enabled) continue;
+        for (const entry of entries) {
+          if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
 
-          const hasHeartbeatTrigger = (definition.nodes || []).some(
-            (node: any) => node.data?.category === 'trigger' && node.data?.subtype === 'heartbeat',
-          );
+          try {
+            const filePath = path.join(workflowsDir, entry.name);
+            const raw = fs.readFileSync(filePath, 'utf-8');
+            const definition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-          if (hasHeartbeatTrigger) {
-            results.push({
-              id:          definition.id || entry.name.replace(/\.(yaml|json)$/, ''),
-              name:        definition.name || entry.name,
-              description: definition.description || '',
-            });
+            if (!definition.enabled) continue;
+
+            const hasHeartbeatTrigger = (definition.nodes || []).some(
+              (node: any) => node.data?.category === 'trigger' && node.data?.subtype === 'heartbeat',
+            );
+
+            if (hasHeartbeatTrigger) {
+              results.push({
+                id:          definition.id || entry.name.replace(/\.(yaml|json)$/, ''),
+                name:        definition.name || entry.name,
+                description: definition.description || '',
+              });
+            }
+          } catch (err) {
+            console.warn(`[HeartbeatNode] Failed to parse workflow ${ entry.name }:`, err);
           }
-        } catch (err) {
-          console.warn(`[HeartbeatNode] Failed to parse workflow ${ entry.name }:`, err);
         }
       }
 

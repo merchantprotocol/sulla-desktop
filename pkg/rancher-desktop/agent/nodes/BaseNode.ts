@@ -9,7 +9,7 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { throwIfAborted } from '../services/AbortService';
 import { toolRegistry } from '../tools/registry';
-import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir } from '../utils/sullaPaths';
+import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir } from '../utils/sullaPaths';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
@@ -303,8 +303,8 @@ async function loadAgentPromptFiles(agentId: string): Promise<string | null> {
     return cached.content;
   }
 
-  const agentDir = path.join(resolveSullaAgentsDir(), agentId);
-  if (!fs.existsSync(agentDir)) return null;
+  const agentDir = findAgentDir(agentId);
+  if (!agentDir) return null;
 
   try {
     const entries = fs.readdirSync(agentDir, { withFileTypes: true });
@@ -461,7 +461,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const promptVars = await getTemplateVariables();
       promptVars['{{agent_name}}'] = agentMeta.name || agentId;
       promptVars['{{agent_id}}'] = agentId;
-      promptVars['{{agent_dir}}'] = path.join(resolveSullaAgentsDir(), agentId);
+      promptVars['{{agent_dir}}'] = findAgentDir(agentId) || path.join(resolveSullaAgentsDir(), agentId);
 
       // Filter {{tool_categories}} to only show categories with allowed tools
       if (agentMeta.tools?.length) {
@@ -588,8 +588,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     if (!agentId) return true;
 
     try {
-      const agentDir = path.join(resolveSullaAgentsDir(), agentId);
-      const configPath = path.join(agentDir, 'config.yaml');
+      const agentDir = findAgentDir(agentId);
+      const configPath = agentDir ? path.join(agentDir, 'config.yaml') : '';
       if (fs.existsSync(configPath)) {
         const yaml = await import('yaml');
         const agentCfg = yaml.parse(fs.readFileSync(configPath, 'utf-8'));

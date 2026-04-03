@@ -48,10 +48,10 @@ interface WorkflowCandidate {
 // ── Registry ──
 
 export class WorkflowRegistry {
-  private workflowsDir: string;
+  private workflowsDirs: string[];
 
-  constructor(workflowsDir: string) {
-    this.workflowsDir = workflowsDir;
+  constructor(workflowsDirs: string | string[]) {
+    this.workflowsDirs = Array.isArray(workflowsDirs) ? workflowsDirs : [workflowsDirs];
   }
 
   /**
@@ -104,53 +104,61 @@ export class WorkflowRegistry {
    */
   findCandidates(triggerType: TriggerNodeSubtype): WorkflowCandidate[] {
     const candidates: WorkflowCandidate[] = [];
+    const seenIds = new Set<string>();
 
-    console.log(`[WorkflowRegistry] findCandidates() — looking for triggerType="${ triggerType }" in dir="${ this.workflowsDir }"`);
+    console.log(`[WorkflowRegistry] findCandidates() — looking for triggerType="${ triggerType }" in dirs=${ JSON.stringify(this.workflowsDirs) }`);
 
-    if (!fs.existsSync(this.workflowsDir)) {
-      console.log(`[WorkflowRegistry] Workflows dir does not exist: ${ this.workflowsDir }`);
-      return candidates;
-    }
+    for (const workflowsDir of this.workflowsDirs) {
+      if (!fs.existsSync(workflowsDir)) {
+        console.log(`[WorkflowRegistry] Workflows dir does not exist: ${ workflowsDir }`);
+        continue;
+      }
 
-    const entries = fs.readdirSync(this.workflowsDir, { withFileTypes: true });
-    console.log(`[WorkflowRegistry] Found ${ entries.length } entries in workflows dir`);
+      const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+      console.log(`[WorkflowRegistry] Found ${ entries.length } entries in ${ workflowsDir }`);
 
-    for (const entry of entries) {
-      if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+      for (const entry of entries) {
+        if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
 
-      try {
-        const filePath = path.join(this.workflowsDir, entry.name);
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        const definition: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+        try {
+          const filePath = path.join(workflowsDir, entry.name);
+          const raw = fs.readFileSync(filePath, 'utf-8');
+          const definition: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
 
-        // Attach slug derived from filename — this is what the LLM uses to reference workflows
-        const fileSlug = entry.name.replace(/\.(yaml|json)$/, '');
-        (definition as any)._slug = (definition as any).slug || fileSlug;
+          // Attach slug derived from filename — this is what the LLM uses to reference workflows
+          const fileSlug = entry.name.replace(/\.(yaml|json)$/, '');
+          (definition as any)._slug = (definition as any).slug || fileSlug;
 
-        console.log(`[WorkflowRegistry] Scanning "${ entry.name }": name="${ definition.name }", slug="${ (definition as any)._slug }"`);
+          // Skip duplicates — user workflows (later dirs) override native ones
+          const id = definition.id || fileSlug;
+          if (seenIds.has(id)) continue;
+          seenIds.add(id);
 
-        let matched = false;
-        for (const node of definition.nodes) {
-          if (node.data.category === 'trigger') {
-            console.log(`[WorkflowRegistry]   → Trigger node found: subtype="${ node.data.subtype }", looking for="${ triggerType }", match=${ node.data.subtype === triggerType }`);
+          console.log(`[WorkflowRegistry] Scanning "${ entry.name }": name="${ definition.name }", slug="${ (definition as any)._slug }"`);
+
+          let matched = false;
+          for (const node of definition.nodes) {
+            if (node.data.category === 'trigger') {
+              console.log(`[WorkflowRegistry]   → Trigger node found: subtype="${ node.data.subtype }", looking for="${ triggerType }", match=${ node.data.subtype === triggerType }`);
+            }
+            if (
+              node.data.category === 'trigger' &&
+              node.data.subtype === triggerType
+            ) {
+              candidates.push({
+                definition,
+                triggerDescription: (node.data.config?.triggerDescription as string) || definition.name || '',
+              });
+              matched = true;
+              break;
+            }
           }
-          if (
-            node.data.category === 'trigger' &&
-            node.data.subtype === triggerType
-          ) {
-            candidates.push({
-              definition,
-              triggerDescription: (node.data.config?.triggerDescription as string) || definition.name || '',
-            });
-            matched = true;
-            break;
+          if (!matched) {
+            console.log(`[WorkflowRegistry]   → No matching trigger for "${ triggerType }"`);
           }
+        } catch (err) {
+          console.warn(`[WorkflowRegistry] Failed to parse ${ entry.name }:`, err);
         }
-        if (!matched) {
-          console.log(`[WorkflowRegistry]   → No matching trigger for "${ triggerType }"`);
-        }
-      } catch (err) {
-        console.warn(`[WorkflowRegistry] Failed to parse ${ entry.name }:`, err);
       }
     }
 
@@ -162,32 +170,33 @@ export class WorkflowRegistry {
    * Load a specific workflow by ID (scans files since filenames are name-slugs, not IDs).
    */
   loadWorkflow(workflowId: string): WorkflowDefinition {
-    if (!fs.existsSync(this.workflowsDir)) {
-      throw new Error(`Workflow not found: ${ workflowId }`);
-    }
-
-    const entries = fs.readdirSync(this.workflowsDir, { withFileTypes: true });
     const needle = workflowId.toLowerCase();
 
-    for (const entry of entries) {
-      if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
-      try {
-        const filePath = path.join(this.workflowsDir, entry.name);
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        const parsed: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+    for (const workflowsDir of this.workflowsDirs) {
+      if (!fs.existsSync(workflowsDir)) continue;
 
-        // Match by slug or filename (without extension) — never expose raw IDs to the LLM
-        const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
-        (parsed as any)._slug = (parsed as any).slug || fileBaseName;
+      const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
 
-        if (
-          ((parsed as any).slug && (parsed as any).slug.toLowerCase() === needle) ||
-          fileBaseName.toLowerCase() === needle ||
-          parsed.id === workflowId
-        ) {
-          return parsed;
-        }
-      } catch { /* skip unparseable files */ }
+      for (const entry of entries) {
+        if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+        try {
+          const filePath = path.join(workflowsDir, entry.name);
+          const raw = fs.readFileSync(filePath, 'utf-8');
+          const parsed: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+
+          // Match by slug or filename (without extension) — never expose raw IDs to the LLM
+          const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
+          (parsed as any)._slug = (parsed as any).slug || fileBaseName;
+
+          if (
+            ((parsed as any).slug && (parsed as any).slug.toLowerCase() === needle) ||
+            fileBaseName.toLowerCase() === needle ||
+            parsed.id === workflowId
+          ) {
+            return parsed;
+          }
+        } catch { /* skip unparseable files */ }
+      }
     }
 
     throw new Error(`Workflow not found: ${ workflowId }`);
@@ -235,8 +244,8 @@ let instance: WorkflowRegistry | null = null;
 
 export function getWorkflowRegistry(): WorkflowRegistry {
   if (!instance) {
-    const { resolveSullaWorkflowsProductionDir } = require('@pkg/agent/utils/sullaPaths');
-    instance = new WorkflowRegistry(resolveSullaWorkflowsProductionDir());
+    const { resolveAllWorkflowsProductionDirs } = require('@pkg/agent/utils/sullaPaths');
+    instance = new WorkflowRegistry(resolveAllWorkflowsProductionDirs());
   }
   return instance;
 }

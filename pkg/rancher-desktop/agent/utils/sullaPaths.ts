@@ -14,6 +14,7 @@ const SULLA_AGENTS_DIR_ENV = 'SULLA_AGENTS_DIR';
 const SULLA_CONVERSATIONS_DIR_ENV = 'SULLA_CONVERSATIONS_DIR';
 const SULLA_WORKFLOWS_DIR_ENV = 'SULLA_WORKFLOWS_DIR';
 const SULLA_INTEGRATIONS_DIR_ENV = 'SULLA_INTEGRATIONS_DIR';
+const SULLA_RESOURCES_DIR_ENV = 'SULLA_RESOURCES_DIR';
 const SULLA_CODEBASE_DIR_ENV = 'SULLA_CODEBASE_DIR';
 
 export function resolveSullaHomeDir(): string {
@@ -23,6 +24,15 @@ export function resolveSullaHomeDir(): string {
   }
 
   return path.join(os.homedir(), 'sulla');
+}
+
+export function resolveSullaResourcesDir(): string {
+  const envPath = String(process.env[SULLA_RESOURCES_DIR_ENV] || '').trim();
+  if (envPath) {
+    return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
+  }
+
+  return path.join(resolveSullaHomeDir(), 'resources');
 }
 
 export function resolveSullaProjectsDir(): string {
@@ -40,7 +50,7 @@ export function resolveSullaSkillsDir(): string {
     return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
   }
 
-  return path.join(resolveSullaHomeDir(), 'skills');
+  return path.join(resolveSullaResourcesDir(), 'skills');
 }
 
 export function resolveSullaWorkspacesDir(): string {
@@ -58,7 +68,7 @@ export function resolveSullaAgentsDir(): string {
     return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
   }
 
-  return path.join(resolveSullaHomeDir(), 'agents');
+  return path.join(resolveSullaResourcesDir(), 'agents');
 }
 
 export function resolveSullaWorkflowsDir(): string {
@@ -67,7 +77,7 @@ export function resolveSullaWorkflowsDir(): string {
     return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
   }
 
-  return path.join(resolveSullaHomeDir(), 'workflows');
+  return path.join(resolveSullaResourcesDir(), 'workflows');
 }
 
 export function resolveSullaWorkflowsDraftDir(): string {
@@ -88,7 +98,67 @@ export function resolveSullaIntegrationsDir(): string {
     return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
   }
 
+  return path.join(resolveSullaResourcesDir(), 'integrations');
+}
+
+// ── User-level directories (~/sulla/{type}) for custom user content ──
+
+export function resolveSullaUserSkillsDir(): string {
+  return path.join(resolveSullaHomeDir(), 'skills');
+}
+
+export function resolveSullaUserAgentsDir(): string {
+  return path.join(resolveSullaHomeDir(), 'agents');
+}
+
+export function resolveSullaUserWorkflowsDir(): string {
+  return path.join(resolveSullaHomeDir(), 'workflows');
+}
+
+export function resolveSullaUserWorkflowsProductionDir(): string {
+  return path.join(resolveSullaUserWorkflowsDir(), 'production');
+}
+
+export function resolveSullaUserWorkflowsDraftDir(): string {
+  return path.join(resolveSullaUserWorkflowsDir(), 'draft');
+}
+
+export function resolveSullaUserWorkflowsArchiveDir(): string {
+  return path.join(resolveSullaUserWorkflowsDir(), 'archive');
+}
+
+export function resolveSullaUserIntegrationsDir(): string {
   return path.join(resolveSullaHomeDir(), 'integrations');
+}
+
+// ── Aggregate resolvers — return all directories for a resource type ──
+
+export function resolveAllSkillsDirs(): string[] {
+  return [resolveSullaSkillsDir(), resolveSullaUserSkillsDir()];
+}
+
+export function resolveAllAgentsDirs(): string[] {
+  return [resolveSullaAgentsDir(), resolveSullaUserAgentsDir()];
+}
+
+export function resolveAllWorkflowsProductionDirs(): string[] {
+  return [resolveSullaWorkflowsProductionDir(), resolveSullaUserWorkflowsProductionDir()];
+}
+
+export function resolveAllIntegrationsDirs(): string[] {
+  return [resolveSullaIntegrationsDir(), resolveSullaUserIntegrationsDir()];
+}
+
+/**
+ * Resolve an agent ID to its directory path, searching all agent directories.
+ * Returns the first match found (resources first, then user), or null.
+ */
+export function findAgentDir(agentId: string): string | null {
+  for (const root of resolveAllAgentsDirs()) {
+    const candidate = path.join(root, agentId);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 export function resolveSullaTrainingDir(): string {
@@ -118,10 +188,7 @@ export function resolveSullaConversationsDir(): string {
 }
 
 const BOOTSTRAP_REPOS: { dir: () => string; repo: string }[] = [
-  { dir: resolveSullaAgentsDir, repo: 'https://github.com/merchantprotocol/agents.git' },
-  { dir: resolveSullaSkillsDir, repo: 'https://github.com/merchantprotocol/skills.git' },
-  { dir: resolveSullaWorkflowsDir, repo: 'https://github.com/merchantprotocol/workflows.git' },
-  { dir: resolveSullaIntegrationsDir, repo: 'https://github.com/merchantprotocol/integrations.git' },
+  { dir: resolveSullaResourcesDir, repo: 'https://github.com/merchantprotocol/sulla-resources.git' },
 ];
 
 export async function bootstrapSullaHome(): Promise<void> {
@@ -156,4 +223,12 @@ export async function bootstrapSullaHome(): Promise<void> {
   fs.mkdirSync(resolveSullaWorkflowsDraftDir(), { recursive: true });
   fs.mkdirSync(resolveSullaWorkflowsProductionDir(), { recursive: true });
   fs.mkdirSync(resolveSullaWorkflowsArchiveDir(), { recursive: true });
+
+  // Ensure user-level directories exist for custom content
+  fs.mkdirSync(resolveSullaUserSkillsDir(), { recursive: true });
+  fs.mkdirSync(resolveSullaUserAgentsDir(), { recursive: true });
+  fs.mkdirSync(resolveSullaUserWorkflowsProductionDir(), { recursive: true });
+  fs.mkdirSync(resolveSullaUserWorkflowsDraftDir(), { recursive: true });
+  fs.mkdirSync(resolveSullaUserWorkflowsArchiveDir(), { recursive: true });
+  fs.mkdirSync(resolveSullaUserIntegrationsDir(), { recursive: true });
 }
