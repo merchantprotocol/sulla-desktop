@@ -9,6 +9,7 @@ import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGraphWebSocketService';
 import { SullaIntegrations } from './agent/integrations';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
+import { redisClient } from '@pkg/agent/database/RedisClient';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 
 import { createN8nService } from './agent/services/N8nService';
@@ -1081,6 +1082,13 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
     } catch { /* OAuthService may not have been initialized */ }
 
     try {
+      await redisClient.close();
+      console.log('[Shutdown] Redis closed');
+    } catch (err) {
+      console.warn('[Shutdown] Redis close failed:', err instanceof Error ? err.message : String(err));
+    }
+
+    try {
       await getDatabaseManager().stop();
       console.log('[Shutdown] Postgres closed');
     } catch (err) {
@@ -1096,17 +1104,22 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
   Electron.app.on('before-quit', async() => {
     console.log('[Shutdown] sulla.ts before-quit handler fired');
     try {
+      await redisClient.close();
+    } catch { }
+    try {
       await getDatabaseManager().stop();
     } catch { } // swallow any remaining errors
   });
 
   process.on('SIGTERM', async() => {
-    console.log('[Shutdown] SIGTERM received — closing postgres and quitting');
+    console.log('[Shutdown] SIGTERM received — closing redis, postgres and quitting');
+    await redisClient.close().catch(() => {});
     await postgresClient.end();
     app.quit();
   });
   process.on('SIGINT', async() => {
-    console.log('[Shutdown] SIGINT received — closing postgres and quitting');
+    console.log('[Shutdown] SIGINT received — closing redis, postgres and quitting');
+    await redisClient.close().catch(() => {});
     await postgresClient.end();
     app.quit();
   });

@@ -255,10 +255,18 @@ export class RedisClient {
 
   // Close connection (call on shutdown)
   async close(): Promise<void> {
-    if (this.connected) {
-      await this.client.quit();
-      this.connected = false;
+    try {
+      if (this.connected) {
+        await this.client.quit();
+      } else {
+        // Force-disconnect to stop the reconnection retry loop
+        this.client.disconnect();
+      }
+    } catch {
+      // If quit fails, force-disconnect
+      this.client.disconnect();
     }
+    this.connected = false;
     this.gaveUp = false;
     this.connectionAttempts = 0;
   }
