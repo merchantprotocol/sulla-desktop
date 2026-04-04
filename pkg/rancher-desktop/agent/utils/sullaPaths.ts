@@ -150,13 +150,33 @@ export function resolveAllIntegrationsDirs(): string[] {
 }
 
 /**
+ * Validate that an agent ID is a simple, safe identifier (not a path).
+ * Allows letters, digits, dot, underscore, and dash.
+ */
+function isValidAgentId(agentId: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(agentId);
+}
+
+/**
  * Resolve an agent ID to its directory path, searching all agent directories.
  * Returns the first match found (resources first, then user), or null.
  */
 export function findAgentDir(agentId: string): string | null {
+  if (!isValidAgentId(agentId)) {
+    return null;
+  }
+
   for (const root of resolveAllAgentsDirs()) {
     const candidate = path.join(root, agentId);
-    if (fs.existsSync(candidate)) return candidate;
+    const resolved = path.resolve(candidate);
+
+    // Ensure the resolved path is within the agents root directory
+    const rootWithSep = path.resolve(root) + path.sep;
+    if (!resolved.startsWith(rootWithSep)) {
+      continue;
+    }
+
+    if (fs.existsSync(resolved)) return resolved;
   }
   return null;
 }
