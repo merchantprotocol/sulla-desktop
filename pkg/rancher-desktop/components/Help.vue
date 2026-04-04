@@ -1,6 +1,6 @@
 <script lang="ts">
 
-import { shell } from 'electron';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { defineComponent } from 'vue';
 
 export default defineComponent({
@@ -23,7 +23,7 @@ export default defineComponent({
     openUrl() {
       if (!this.disabled) {
         if (this.url) {
-          shell.openExternal(this.url);
+          ipcRenderer.send('open-url-in-app', this.url);
         } else {
           this.$emit('open:url');
         }

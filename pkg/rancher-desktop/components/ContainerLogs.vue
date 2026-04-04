@@ -33,7 +33,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import { shell } from 'electron';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { defineComponent } from 'vue';
 
 import LoadingIndicator from '@pkg/components/LoadingIndicator.vue';
@@ -142,7 +142,7 @@ export default defineComponent({
 
         this.terminal.loadAddon(new WebLinksAddon((event, uri) => {
           event.preventDefault();
-          shell.openExternal(uri);
+          ipcRenderer.send('open-url-in-app', uri);
         }));
 
         this.terminal.open(this.$refs.terminalContainer);

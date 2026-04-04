@@ -87,7 +87,7 @@ build-mac:
 dev:
     NODE_NO_WARNINGS=1 yarn dev
 
-# Start after build
+# Start after build (detached, logs to ~/sulla/logs/)
 start:
     NODE_NO_WARNINGS=1 yarn start
 
@@ -121,15 +121,29 @@ test-watch:
 # Stop gracefully (SIGTERM → force if needed)
 stop:
     #!/usr/bin/env bash
-    PIDS=$(pgrep -f "sulla.*Electron|Electron.*sulla" 2>/dev/null || true)
-    [ -z "$PIDS" ] && echo "Not running." && exit 0
-    echo "Stopping $PIDS..."
-    pkill -TERM -f "sulla.*Electron|Electron.*sulla" 2>/dev/null || true
+    PID_FILE="$HOME/sulla/logs/sulla-desktop.pid"
+    if [ ! -f "$PID_FILE" ]; then
+        echo "No PID file found. Not running."
+        exit 0
+    fi
+    PID=$(cat "$PID_FILE")
+    if ! kill -0 "$PID" 2>/dev/null; then
+        echo "Process $PID not running. Cleaning up stale PID file."
+        rm -f "$PID_FILE"
+        exit 0
+    fi
+    echo "Stopping Sulla Desktop (PID $PID)..."
+    kill -TERM "$PID" 2>/dev/null || true
     for i in {1..15}; do
-        [ -z "$(pgrep -f 'sulla.*Electron|Electron.*sulla')" ] && echo "Stopped." && exit 0
+        if ! kill -0 "$PID" 2>/dev/null; then
+            echo "Stopped."
+            rm -f "$PID_FILE"
+            exit 0
+        fi
         sleep 1
     done
-    pkill -9 -f "sulla.*Electron|Electron.*sulla" 2>/dev/null
+    kill -9 "$PID" 2>/dev/null || true
+    rm -f "$PID_FILE"
     echo "Force stopped."
 
 # Restart the development server (use --hard to wipe VM and images)

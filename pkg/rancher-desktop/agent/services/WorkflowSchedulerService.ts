@@ -157,35 +157,37 @@ export class WorkflowSchedulerService {
   // ── Private ──
 
   private scanAndSchedule(): void {
-    const { resolveSullaWorkflowsProductionDir } = require('@pkg/agent/utils/sullaPaths');
-    const workflowsDir: string = resolveSullaWorkflowsProductionDir();
-
-    if (!fs.existsSync(workflowsDir)) {
-      console.log(`[WorkflowSchedulerService] No workflows dir: ${ workflowsDir }`);
-      return;
-    }
-
-    const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+    const { resolveAllWorkflowsProductionDirs } = require('@pkg/agent/utils/sullaPaths');
+    const workflowsDirs: string[] = resolveAllWorkflowsProductionDirs();
     let count = 0;
 
-    for (const entry of entries) {
-      if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+    for (const workflowsDir of workflowsDirs) {
+      if (!fs.existsSync(workflowsDir)) {
+        console.log(`[WorkflowSchedulerService] No workflows dir: ${ workflowsDir }`);
+        continue;
+      }
 
-      try {
-        const filePath = path.join(workflowsDir, entry.name);
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        const definition: WorkflowDefinition = entry.name.endsWith('.json')
-          ? JSON.parse(raw)
-          : yaml.parse(raw);
+      const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
 
-        for (const node of definition.nodes) {
-          if (node.data.category === 'trigger' && node.data.subtype === 'schedule') {
-            const scheduled = this.registerScheduleNode(definition, node);
-            if (scheduled) count++;
+      for (const entry of entries) {
+        if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+
+        try {
+          const filePath = path.join(workflowsDir, entry.name);
+          const raw = fs.readFileSync(filePath, 'utf-8');
+          const definition: WorkflowDefinition = entry.name.endsWith('.json')
+            ? JSON.parse(raw)
+            : yaml.parse(raw);
+
+          for (const node of definition.nodes) {
+            if (node.data.category === 'trigger' && node.data.subtype === 'schedule') {
+              const scheduled = this.registerScheduleNode(definition, node);
+              if (scheduled) count++;
+            }
           }
+        } catch (err) {
+          console.warn(`[WorkflowSchedulerService] Failed to parse ${ entry.name }:`, err);
         }
-      } catch (err) {
-        console.warn(`[WorkflowSchedulerService] Failed to parse ${ entry.name }:`, err);
       }
     }
 

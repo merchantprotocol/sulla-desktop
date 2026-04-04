@@ -173,7 +173,9 @@ export class HttpCredentialHelperServer {
     return output;
   }
 
-  closeServer() {
-    this.server.close();
+  closeServer(): Promise<void> {
+    return new Promise((resolve) => {
+      this.server.close(() => resolve());
+    });
   }
 }

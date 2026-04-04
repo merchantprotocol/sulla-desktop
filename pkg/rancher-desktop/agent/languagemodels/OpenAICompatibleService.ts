@@ -88,6 +88,16 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         lastError = err;
         console.log(`[${ this.constructor.name }] Error on attempt ${ attempt }:`, err);
 
+        // On 401, try refreshing credentials from DB and retry once
+        if (err instanceof Error && err.message.startsWith('HTTP 401:')) {
+          const refreshed = await this.refreshCredentials();
+          if (refreshed && attempt === 0) {
+            console.log(`[${ this.constructor.name }] Credentials refreshed after 401 — retrying`);
+            continue;
+          }
+          break;
+        }
+
         // Do not retry non-rate-limit 4xx client errors
         if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
           break;

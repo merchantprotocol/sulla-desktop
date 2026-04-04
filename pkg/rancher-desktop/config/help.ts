@@ -1,4 +1,4 @@
-import { shell } from 'electron';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { TransientSettings } from '@pkg/config/transientSettings';
 
@@ -44,7 +44,7 @@ class PreferencesHelp {
 
     const url = this.url.buildUrl(`${ current }${ tab }`, version);
 
-    shell.openExternal(url);
+    ipcRenderer.send('open-url-in-app', url);
   }
 }
 

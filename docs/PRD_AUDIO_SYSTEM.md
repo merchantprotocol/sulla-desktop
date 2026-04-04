@@ -100,6 +100,158 @@ LLM streaming response
 
 ---
 
+## 2.4 Gateway Audio Format Contract
+
+This section defines the exact audio format requirements for sending audio to the Enterprise Gateway. The gateway uses FFmpeg to normalize all incoming audio to PCM `s16le` 16kHz mono before forwarding to ElevenLabs. Getting the format wrong means FFmpeg produces garbage output and transcription fails silently.
+
+**Canonical reference:** See `enterprise-gateway/docs/audio-protocol.md` for the full gateway specification.
+
+### Gateway Target Format
+
+All audio is converted to this format before reaching ElevenLabs:
+
+| Property | Value |
+|----------|-------|
+| Encoding | PCM signed 16-bit little-endian (`s16le`) |
+| Sample rate | 16,000 Hz |
+| Channels | 1 (mono) |
+| Byte rate | 32,000 bytes/sec |
+
+### Channel 0 — Microphone (WebM/Opus)
+
+**What we send:**
+
+| Property | Value | Source |
+|----------|-------|--------|
+| Container | WebM | `MediaRecorder` default |
+| Codec | Opus | `audio/webm;codecs=opus` MIME type |
+| Sample rate | 48,000 Hz | Browser default |
+| Channels | 1 (mono) | Single mic input |
+| Chunk interval | 250ms | `MediaRecorder.start(250)` timeslice |
+| Wire format | Raw binary WebSocket frame | No channel prefix (channel 0 default) |
+
+**How the gateway processes it:**
+
+FFmpeg auto-detects WebM from the EBML magic bytes (`0x1A 0x45 0xDF 0xA3`) in the first chunk, demuxes the WebM container, decodes Opus, resamples 48kHz → 16kHz, and outputs PCM `s16le`.
+
+**Critical requirement — first chunk must contain the WebM header:**
+
+The first 250ms chunk from `MediaRecorder` contains the WebM EBML header, codec initialization data, and the first audio cluster. FFmpeg needs this header to initialize the demuxer. If the first chunk is dropped (e.g., due to WebSocket backpressure exceeding the 64KB threshold in `GatewayListenerService`), FFmpeg cannot decode any subsequent chunks because they are WebM cluster continuations without a container header.
+
+**No `audioFormat` metadata is sent for channel 0.** The gateway relies entirely on magic-byte detection. This is intentional — container formats like WebM are self-describing and FFmpeg can probe them without hints.
+
+**Source files:**
+- `composables/voice/VoiceRecorderService.ts` (lines 272-274: MIME type selection)
+- `composables/voice/VoiceRecorderService.ts` (line 677: `MediaRecorder.start(250)`)
+- `controllers/SecretaryModeController.ts` (lines 596-603: session creation with channel map)
+- `agent/services/GatewayListenerService.ts` (lines 408-429: WebSocket send with backpressure check)
+
+### Channel 1 — System Audio (Raw PCM)
+
+**What we send:**
+
+| Property | Value | Source |
+|----------|-------|--------|
+| Format | Raw PCM signed 16-bit little-endian (`s16le`) | Audio Driver daemon |
+| Sample rate | 16,000 Hz | Audio Driver output |
+| Channels | 1 (mono) | Audio Driver downmix |
+| Wire format | `[0x01][0x01][PCM bytes...]` | Channel-tagged binary frame |
+
+**How the gateway processes it:**
+
+FFmpeg receives raw PCM `s16le` at 16kHz mono — this already matches the target format, so conversion is a passthrough. The gateway uses the `audioFormat` metadata from the session creation payload to configure FFmpeg's input flags.
+
+**`audioFormat` metadata is required for channel 1** because raw PCM has no container header and FFmpeg cannot auto-detect it:
+
+```json
+{
+  "1": {
+    "label": "Caller",
+    "source": "system_audio",
+    "audioFormat": {
+      "inputFormat": "s16le",
+      "inputRate": 16000,
+      "inputChannels": 1
+    }
+  }
+}
+```
+
+**Source files:**
+- `agent/services/AudioDriverClient.ts` (lines 27-42: Unix socket chunk parsing)
+- `controllers/SecretaryModeController.ts` (lines 596-603: channel metadata)
+- `main/sullaEvents.ts`: `audio-driver-connect` handler forwards speaker chunks to gateway
+
+### Session Creation Payload
+
+When starting a secretary mode session, the full session creation request looks like:
+
+```json
+POST /api/desktop/sessions
+Authorization: Bearer {api_key}
+Content-Type: application/json
+
+{
+  "callerName": "Sulla Secretary",
+  "userId": "{user_id}",
+  "callId": "{unique_call_id}",
+  "meta": {
+    "audioSource": "desktop",
+    "mode": "listen-only",
+    "channels": {
+      "0": { "label": "User", "source": "mic" },
+      "1": {
+        "label": "Caller",
+        "source": "system_audio",
+        "audioFormat": { "inputFormat": "s16le", "inputRate": 16000, "inputChannels": 1 }
+      }
+    }
+  }
+}
+```
+
+**Response includes `sessionId`** which is used to open the audio WebSocket:
+
+```
+wss://{gateway}/ws/audio/{sessionId}
+```
+
+### Wire Protocol Summary
+
+```
+Desktop MediaRecorder (WebM/Opus, 48kHz, mono)
+  │  250ms chunks via ondataavailable
+  │  ArrayBuffer conversion
+  ▼
+IPC: gateway-audio-send { audio: ArrayBuffer, channel: 0 }
+  ▼
+GatewayListenerService.sendAudio(buffer, channel=0)
+  │  Backpressure check (skip if bufferedAmount > 64KB)
+  │  Channel 0: send raw binary frame
+  │  Channel 1+: prepend [0x01][channel] header
+  ▼
+WebSocket binary frame → wss://{gateway}/ws/audio/{sessionId}
+  ▼
+Gateway audioStreamHandler.js
+  │  Detect frame type (binary vs JSON)
+  │  Extract channel from 0x01 prefix if present
+  ▼
+Gateway AudioConverter (FFmpeg child process)
+  │  WebM/Opus → PCM s16le 16kHz mono
+  ▼
+ElevenLabs WebSocket: { "user_audio_chunk": "<base64 PCM>" }
+```
+
+### Backpressure & Reliability
+
+| Concern | Current Behavior | Risk |
+|---------|-----------------|------|
+| WebSocket backpressure | Chunks skipped when `bufferedAmount > 64KB` | First WebM chunk (with EBML header) could be dropped |
+| FFmpeg crash mid-session | Gateway detects and restarts FFmpeg | New FFmpeg process won't have the WebM header from the original first chunk |
+| Audio Driver disconnect | Desktop stops sending channel 1 | Channel 0 (mic) continues unaffected |
+
+---
+
 ## 3. Problems / Complexity Issues
 
 ### P1: TTS data flow crosses 6 boundaries

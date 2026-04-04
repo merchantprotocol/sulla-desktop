@@ -674,8 +674,10 @@ export class HttpCommandServer {
     return Promise.resolve();
   }
 
-  closeServer() {
-    this.server.close();
+  closeServer(): Promise<void> {
+    return new Promise((resolve) => {
+      this.server.close(() => resolve());
+    });
   }
 
   protected listTransientSettings(request: express.Request, response: express.Response, context: commandContext): Promise<void> {

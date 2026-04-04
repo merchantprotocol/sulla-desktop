@@ -103,16 +103,26 @@ export class ToolExecutor {
       const toolName = call.name;
       const args = call.args;
 
-      // --- Back-to-back loop detection ---
-      // Only block if the immediately previous tool run was the exact same call.
-      // This prevents infinite loops while still allowing the agent to re-invoke
-      // the same tool later in the conversation (e.g. polling, retries).
+      // --- Consecutive loop detection ---
+      // Block only after the same exact call has been made LOOP_THRESHOLD times
+      // in a row. A single retry is normal (e.g. transient failure, corrected
+      // context); only sustained repetition signals a real loop.
+      const LOOP_THRESHOLD = 7;
       const dedupeKey = this.buildToolRunDedupeKey(toolName, args);
       const metadataAny = state.metadata as any;
       const toolRuns = metadataAny.__toolRuns as { dedupeKey: string }[] | undefined;
-      const lastRun = toolRuns?.length ? toolRuns[toolRuns.length - 1] : null;
-      if (lastRun && lastRun.dedupeKey === dedupeKey) {
-        const loopMsg = `Loop detected: this exact tool call ("${ toolName }" with the same arguments) was just executed. Use the previous result instead of calling it again.`;
+      let consecutiveCount = 0;
+      if (toolRuns?.length) {
+        for (let i = toolRuns.length - 1; i >= 0; i--) {
+          if (toolRuns[i].dedupeKey === dedupeKey) {
+            consecutiveCount++;
+          } else {
+            break;
+          }
+        }
+      }
+      if (consecutiveCount >= LOOP_THRESHOLD) {
+        const loopMsg = `Loop detected: this exact tool call ("${ toolName }" with the same arguments) was executed ${ consecutiveCount } times consecutively. Use the previous result instead of calling it again.`;
         await this.emitToolCallEvent(state, toolRunId, toolName, args);
         await this.emitToolResultEvent(state, toolRunId, false, loopMsg);
         await this.appendToolResultMessage(state, toolName, {

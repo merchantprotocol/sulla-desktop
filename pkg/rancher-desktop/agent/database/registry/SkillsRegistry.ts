@@ -8,7 +8,7 @@ import {
   type SkillSummarySchema,
 } from '../../services/SkillService';
 import { grepSearchFilesDetailed } from '../../../utils/grepSearch';
-import { resolveSullaSkillsDir } from '../../utils/sullaPaths';
+import { resolveSullaSkillsDir, resolveSullaUserSkillsDir } from '../../utils/sullaPaths';
 
 export interface SkillRegistryInitOptions {
   filesystemSkillDirs?: string[];
@@ -246,7 +246,9 @@ export class SkillsRegistry {
       .map(value => value.trim())
       .filter(Boolean);
 
-    const all = [...extraDirs, ...fromEnv, userSkillsDir]
+    const userCustomDir = resolveSullaUserSkillsDir();
+
+    const all = [...extraDirs, ...fromEnv, userSkillsDir, userCustomDir]
       .map(dir => path.resolve(dir));
 
     return Array.from(new Set(all));

@@ -147,6 +147,10 @@ export interface IpcMainEvents {
   'conversation-history:close': (id: string) => void;
   'conversation-history:clear': (olderThan?: string, includeTrainingData?: boolean) => void;
   // #endregion
+
+  // #region In-app browser
+  'open-url-in-app': (url: string) => void;
+  // #endregion
 }
 
 /**

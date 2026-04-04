@@ -16,11 +16,12 @@ import { showErrorDialogWithReport } from '@pkg/main/errorReporter';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
+import { createTrayPanel, toggleTrayPanel, sendPanelState, destroyTrayPanel } from '@pkg/main/trayPanel';
 import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send, openEditor, openDockerDashboard, getWindow } from '@pkg/window';
+import { openMain, send, openEditor, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -119,7 +120,7 @@ export class Tray {
           label: 'Premium Support',
           icon:  path.join(paths.resources, 'icons', 'star-16.png'),
           click() {
-            void Electron.shell.openExternal('https://www.skool.com/book-more-appointments-8103');
+            openUrlInApp('https://www.skool.com/book-more-appointments-8103');
           },
         },
         {
@@ -127,7 +128,7 @@ export class Tray {
           label: 'Documentation',
           icon:  path.join(paths.resources, 'icons', 'book-open-16.png'),
           click() {
-            void Electron.shell.openExternal('https://sulladesktop.com/docs');
+            openUrlInApp('https://sulladesktop.com/docs');
           },
         },
         {
@@ -135,7 +136,7 @@ export class Tray {
           label: 'Discussions',
           icon:  path.join(paths.resources, 'icons', 'messages-circle-16.png'),
           click() {
-            void Electron.shell.openExternal('https://sulladesktop.com/support');
+            openUrlInApp('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },
@@ -144,7 +145,7 @@ export class Tray {
           label: 'Issues',
           icon:  path.join(paths.resources, 'icons', 'issue-opened-16.png'),
           click() {
-            void Electron.shell.openExternal('https://sulladesktop.com/support');
+            openUrlInApp('https://sulladesktop.com/support');
           },
         },
         { type: 'separator' },
@@ -260,10 +261,31 @@ export class Tray {
       );
     }
 
-    const contextMenu = Electron.Menu.buildFromTemplate(this.contextMenuItems);
+    // ── Custom panel popover (replaces native context menu on left-click) ──
+    createTrayPanel();
 
-    this.trayMenu.setContextMenu(contextMenu);
+    this.trayMenu.on('click', (_event, bounds) => {
+      toggleTrayPanel(bounds);
+    });
 
+    // Right-click still shows a minimal native fallback menu
+    const rightClickMenu = Electron.Menu.buildFromTemplate([
+      {
+        label: 'Show',
+        click: () => {
+          const bounds = this.trayMenu.getBounds();
+          toggleTrayPanel(bounds);
+        },
+      },
+      { type: 'separator' },
+      { label: 'Quit', role: 'quit' },
+    ]);
+    this.trayMenu.on('right-click', () => {
+      this.trayMenu.popUpContextMenu(rightClickMenu);
+    });
+
+    // No setContextMenu — it hijacks left-click on macOS.
+    // State-driven icon changes still work via updateMenu().
     this.buildFromConfig();
     this.watchForChanges();
 
@@ -348,6 +370,7 @@ export class Tray {
    * Hide the tray menu.
    */
   public hide() {
+    destroyTrayPanel();
     this.trayMenu.destroy();
     mainEvents.off('k8s-check-state', this.k8sStateChangedEvent);
     mainEvents.off('settings-update', this.settingsUpdateEvent);
@@ -386,9 +409,6 @@ export class Tray {
   protected buildFromConfig() {
     try {
       this.updateContexts();
-      const contextMenu = Electron.Menu.buildFromTemplate(this.contextMenuItems);
-
-      this.trayMenu.setContextMenu(contextMenu);
     } catch (err) {
       console.log(`Error trying to update context menu: ${ err }`);
     }
@@ -493,10 +513,13 @@ export class Tray {
       });
     }
 
-    const contextMenu = Electron.Menu.buildFromTemplate(this.contextMenuItems);
-
-    this.trayMenu.setContextMenu(contextMenu);
     this.trayMenu.setImage(logo);
+
+    // Forward state to the custom panel
+    sendPanelState({
+      docker: this.kubernetesState === State.STARTED ? 'STARTED' : 'STOPPED',
+      k8s:    State[this.kubernetesState] || 'STOPPED',
+    });
   }
 
   protected updateDashboardState = (enabled = true) => this.contextMenuItems
@@ -542,9 +565,6 @@ export class Tray {
   protected contextClick(menuItem: Electron.MenuItem) {
     kubeconfig.setCurrentContext(menuItem.label, () => {
       this.updateContexts();
-      const contextMenu = Electron.Menu.buildFromTemplate(this.contextMenuItems);
-
-      this.trayMenu.setContextMenu(contextMenu);
     });
   }
 
@@ -604,18 +624,26 @@ export class Tray {
             submenu: urls.map(link => ({
               label: link.label,
               click: () => {
-                void Electron.shell.openExternal(link.url);
+                openUrlInApp(link.url);
               },
             })),
           };
         });
       }
 
-      if (!this.trayMenu.isDestroyed()) {
-        const contextMenu = Electron.Menu.buildFromTemplate(this.contextMenuItems);
+      // Forward extensions to the custom panel
+      const panelExtensions = entries
+        .filter(([, ext]) => (ext.extraUrls ?? []).length > 0)
+        .flatMap(([id, ext]) => {
+          const title = ext.labels?.['org.opencontainers.image.title'] || id;
 
-        this.trayMenu.setContextMenu(contextMenu);
-      }
+          return (ext.extraUrls ?? []).map(link => ({
+            id,
+            label: `${ title } — ${ link.label }`,
+            url:   link.url,
+          }));
+        });
+      sendPanelState({ extensions: panelExtensions });
     } catch (ex) {
       console.debug(`Failed to refresh extensions tray menu: ${ ex }`);
     }

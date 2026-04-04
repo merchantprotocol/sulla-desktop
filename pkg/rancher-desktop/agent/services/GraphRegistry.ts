@@ -2,7 +2,7 @@ import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph,
 import type { HeartbeatThreadState } from '../nodes/HeartbeatNode';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel, getCurrentMode } from '../languagemodels';
-import { resolveSullaAgentsDir } from '../utils/sullaPaths';
+import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
 import { toolRegistry } from '../tools/registry';
 import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
 import * as fs from 'fs';
@@ -522,21 +522,21 @@ export async function getDefaultAgentId(): Promise<string> {
   }
 
   // If no setting yet, check if chat-controller exists
-  const agentDir = path.join(resolveSullaAgentsDir(), DEFAULT_AGENT_FALLBACK);
-  if (fs.existsSync(agentDir)) {
+  if (findAgentDir(DEFAULT_AGENT_FALLBACK)) {
     console.log(`[GraphRegistry] getDefaultAgentId() — no setting, using fallback dir: "${ DEFAULT_AGENT_FALLBACK }"`);
     return DEFAULT_AGENT_FALLBACK;
   }
 
   // Last resort: pick the first agent directory that exists
-  const agentsRoot = resolveSullaAgentsDir();
-  console.log(`[GraphRegistry] getDefaultAgentId() — scanning agents root: "${ agentsRoot }"`);
-  if (fs.existsSync(agentsRoot)) {
-    const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
-    const firstAgent = entries.find(e => e.isDirectory());
-    if (firstAgent) {
-      console.log(`[GraphRegistry] getDefaultAgentId() — picked first agent dir: "${ firstAgent.name }"`);
-      return firstAgent.name;
+  for (const agentsRoot of resolveAllAgentsDirs()) {
+    console.log(`[GraphRegistry] getDefaultAgentId() — scanning agents root: "${ agentsRoot }"`);
+    if (fs.existsSync(agentsRoot)) {
+      const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
+      const firstAgent = entries.find(e => e.isDirectory());
+      if (firstAgent) {
+        console.log(`[GraphRegistry] getDefaultAgentId() — picked first agent dir: "${ firstAgent.name }"`);
+        return firstAgent.name;
+      }
     }
   }
 
@@ -554,8 +554,8 @@ export async function getAgentIdForTrigger(triggerType: string): Promise<string>
   console.log(`[GraphRegistry] getAgentIdForTrigger() — triggerMap:`, JSON.stringify(triggerMap));
   const assigned = triggerMap[triggerType];
   if (assigned) {
-    const agentDir = path.join(resolveSullaAgentsDir(), assigned);
-    const exists = fs.existsSync(agentDir);
+    const agentDir = findAgentDir(assigned);
+    const exists = !!agentDir;
     console.log(`[GraphRegistry] getAgentIdForTrigger() — trigger "${ triggerType }" mapped to "${ assigned }", dir exists=${ exists }`);
     if (exists) return assigned;
     console.warn(`[GraphRegistry] getAgentIdForTrigger() — agent dir not found for "${ assigned }", falling back to default`);
@@ -737,9 +737,9 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
     return undefined;
   }
 
-  const agentDir = path.join(resolveSullaAgentsDir(), agentId);
-  if (!fs.existsSync(agentDir)) {
-    console.log(`[GraphRegistry] loadAgentConfig() — agent dir not found: ${ agentDir }`);
+  const agentDir = findAgentDir(agentId);
+  if (!agentDir) {
+    console.log(`[GraphRegistry] loadAgentConfig() — agent dir not found for: ${ agentId }`);
     return undefined;
   }
 

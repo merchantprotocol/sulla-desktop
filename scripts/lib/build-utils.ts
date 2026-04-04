@@ -296,8 +296,33 @@ export default {
   /**
    * Build the main process code.
    */
-  buildMain(): Promise<void> {
-    return this.wait(() => this.buildJavaScript(this.webpackConfig));
+  async buildMain(): Promise<void> {
+    await this.wait(() => this.buildJavaScript(this.webpackConfig));
+    this.copyTrayPanelAssets();
+  },
+
+  /**
+   * Copy tray panel static assets (HTML, CSS, JS) into dist/app/trayPanel/.
+   * These files are not bundled by webpack — they're loaded at runtime by
+   * the tray panel BrowserWindow.
+   */
+  copyTrayPanelAssets(): void {
+    const src = path.join(this.rootDir, 'pkg', 'rancher-desktop', 'main', 'trayPanel');
+    const dest = path.join(this.appDir, 'trayPanel');
+
+    if (!fs.existsSync(src)) {
+      return;
+    }
+
+    fs.mkdirSync(dest, { recursive: true });
+
+    for (const file of ['index.html', 'style.css', 'panel.js', 'sulla-icon.png']) {
+      const srcFile = path.join(src, file);
+      if (fs.existsSync(srcFile)) {
+        fs.copyFileSync(srcFile, path.join(dest, file));
+      }
+    }
+    console.log('[build-utils] Copied tray panel assets to dist/app/trayPanel/');
   },
 
 };
