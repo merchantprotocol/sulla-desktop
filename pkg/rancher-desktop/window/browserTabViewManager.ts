@@ -250,6 +250,18 @@ export class BrowserTabViewManager {
     } catch { /* may already be removed */ }
   }
 
+  /** Hide all browser tab views — used when the login screen needs to be on top */
+  hideAllViews(): void {
+    const mainWindow = getWindow('main-agent');
+    if (!mainWindow) return;
+
+    for (const [, view] of this.views) {
+      try {
+        mainWindow.contentView.removeChildView(view);
+      } catch { /* may already be removed */ }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Scripting
   // ---------------------------------------------------------------------------

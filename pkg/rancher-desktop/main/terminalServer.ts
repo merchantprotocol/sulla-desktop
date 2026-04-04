@@ -202,7 +202,7 @@ export class WebSocketTerminalServer {
     });
   }
 
-  stop(): void {
+  stop(): Promise<void> {
     for (const [, session] of this.sessions) {
       session.ptyProcess.kill();
       for (const client of session.clients) {
@@ -211,15 +211,27 @@ export class WebSocketTerminalServer {
     }
     this.sessions.clear();
 
-    if (this.wss) {
-      this.wss.close();
-      this.wss = null;
-    }
-    if (this.server) {
-      this.server.close();
-      this.server = null;
-    }
-    console.log('[TerminalServer] Stopped');
+    const wssClose = new Promise<void>((resolve) => {
+      if (this.wss) {
+        this.wss.close(() => resolve());
+        this.wss = null;
+      } else {
+        resolve();
+      }
+    });
+
+    const serverClose = new Promise<void>((resolve) => {
+      if (this.server) {
+        this.server.close(() => resolve());
+        this.server = null;
+      } else {
+        resolve();
+      }
+    });
+
+    return Promise.all([wssClose, serverClose]).then(() => {
+      console.log('[TerminalServer] Stopped');
+    });
   }
 }
 

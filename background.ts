@@ -893,8 +893,8 @@ Electron.app.on('before-quit', async(event) => {
     console.log('[Shutdown] Vault locked — VMK zeroed');
   } catch { /* vault not initialized */ }
 
-  httpCommandServer?.closeServer();
-  httpCredentialHelperServer.closeServer();
+  await httpCommandServer?.closeServer();
+  await httpCredentialHelperServer.closeServer();
 
   /// /////////////////////////////////////////////////////////////////////////////
   // SULLA DESKTOP - START

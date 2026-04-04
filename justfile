@@ -89,18 +89,7 @@ dev:
 
 # Start after build (detached, logs to ~/sulla/logs/)
 start:
-    #!/usr/bin/env bash
-    PID_FILE="$HOME/sulla/logs/sulla-desktop.pid"
-    LOG_FILE="$HOME/sulla/logs/sulla-desktop.log"
-    mkdir -p "$HOME/sulla/logs"
-    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        echo "Already running (PID $(cat "$PID_FILE")). Use 'just stop' first."
-        exit 1
-    fi
-    echo "[$(date)] Starting Sulla Desktop (detached)..." >> "$LOG_FILE"
-    nohup env NODE_NO_WARNINGS=1 yarn start >> "$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
-    echo "Sulla Desktop started (PID $!) — logs at $LOG_FILE"
+    NODE_NO_WARNINGS=1 yarn start
 
 # ============================================================================
 # DEVELOPMENT & BUILD COMMANDS

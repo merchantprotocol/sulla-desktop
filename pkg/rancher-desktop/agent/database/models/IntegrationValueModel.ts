@@ -162,6 +162,43 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     return count;
   }
 
+  /**
+   * Re-encrypt all vault-encrypted values from an old key to the current key.
+   * Called during password change to migrate credentials to the new VMK.
+   */
+  static async reEncryptAll(oldDecrypt: (v: string) => string): Promise<number> {
+    const vault = getVaultDirect();
+    if (!vault?.isUnlocked()) {
+      console.error('[IntegrationValueModel] New vault not unlocked — cannot re-encrypt');
+      return 0;
+    }
+
+    const allRows = await this.query(
+      `SELECT "value_id", "value" FROM "integration_values" WHERE "value" LIKE '$VAULT$%'`,
+      [],
+    );
+
+    let count = 0;
+    let failed = 0;
+    for (const row of allRows) {
+      try {
+        const plaintext = oldDecrypt(row.value as string);
+        const reEncrypted = vault.encrypt(plaintext);
+        await this.query(
+          `UPDATE "integration_values" SET "value" = $1, "updated_at" = CURRENT_TIMESTAMP WHERE "value_id" = $2`,
+          [reEncrypted, row.value_id],
+        );
+        count++;
+      } catch (err) {
+        failed++;
+        console.error(`[IntegrationValueModel] Failed to re-encrypt value_id=${ row.value_id }:`, err);
+      }
+    }
+
+    console.log(`[IntegrationValueModel] Re-encrypted ${ count } values (${ failed } failed)`);
+    return count;
+  }
+
   // ─── Static finders ────────────────────────────────────────────────
 
   /** Find a single value by composite key */

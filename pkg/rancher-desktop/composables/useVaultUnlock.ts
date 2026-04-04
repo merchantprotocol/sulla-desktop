@@ -26,6 +26,14 @@ async function tryAutoLogin(): Promise<void> {
     // Auto-unlock the vault so the agent can work in the background
     await ipcRenderer.invoke('vault:initialize');
 
+    // If we can't verify passwords (no canary yet), skip the login screen
+    const canVerify = await ipcRenderer.invoke('vault:can-verify');
+    if (!canVerify) {
+      console.log('[useVaultUnlock] No password verification available — auto-login');
+      loggedIn.value = true;
+      return;
+    }
+
     // UI always starts locked — user must enter password
     console.log('[useVaultUnlock] Login screen required');
     loggedIn.value = false;

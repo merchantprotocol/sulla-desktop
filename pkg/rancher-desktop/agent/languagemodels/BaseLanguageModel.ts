@@ -157,6 +157,7 @@ export abstract class BaseLanguageModel {
   protected model:   string;
   protected baseUrl: string;
   protected apiKey?: string;
+  protected providerId?: string;
   protected isInitialized = false;
   protected isHealthy = false;
 
@@ -175,7 +176,34 @@ export abstract class BaseLanguageModel {
         ? config.baseUrl.slice(0, -1)
         : config.baseUrl;
       this.apiKey = config.apiKey;
+      this.providerId = config.id;
     }
+  }
+
+  /**
+   * Re-read the API key from the database.
+   * Called automatically on 401 so credential changes take effect
+   * without requiring an app restart.
+   */
+  async refreshCredentials(): Promise<boolean> {
+    if (!this.providerId) return false;
+    try {
+      const { getIntegrationService } = await import('../services/IntegrationService');
+      const svc = getIntegrationService();
+      const values = await svc.getFormValues(this.providerId);
+      const valMap: Record<string, string> = {};
+      for (const v of values) valMap[v.property] = v.value;
+
+      const freshKey = valMap.api_key || '';
+      if (freshKey && freshKey !== this.apiKey) {
+        this.apiKey = freshKey;
+        console.log(`[BaseLanguageModel] Refreshed API key for ${ this.providerId }`);
+        return true;
+      }
+    } catch (err) {
+      console.error(`[BaseLanguageModel] Failed to refresh credentials for ${ this.providerId }:`, err);
+    }
+    return false;
   }
 
   // ─────────────────────────────────────────────────────────────

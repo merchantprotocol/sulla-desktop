@@ -563,6 +563,10 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return vaultKey.isSetUp();
   });
 
+  ipcMainProxy.handle('vault:can-verify', async() => {
+    return vaultKey.canVerifyPassword();
+  });
+
   ipcMainProxy.handle('vault:is-unlocked', async() => {
     return vaultKey.isUnlocked();
   });
@@ -576,6 +580,13 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(true);
     return { recoveryKey: result.recoveryKey };
+  });
+
+  ipcMainProxy.handle('vault:change-password', async(_event: Electron.IpcMainInvokeEvent, data: { newPassword: string }) => {
+    const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
+    const { recoveryKey, oldDecrypt } = await vaultKey.changePassword(data.newPassword);
+    await IntegrationValueModel.reEncryptAll(oldDecrypt);
+    return { recoveryKey };
   });
 
   ipcMainProxy.handle('vault:unlock-password', async(_event: Electron.IpcMainInvokeEvent, data: { password: string }) => {
@@ -600,6 +611,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     // UI logout only — do NOT zero the VMK so the agent can keep working
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(false);
+    // Hide native browser tab views so the login screen is visible
+    tabViewManager.hideAllViews();
     return true;
   });
 
@@ -608,6 +621,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     vaultKey.lock();
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(false);
+    // Hide native browser tab views so the login screen is visible
+    tabViewManager.hideAllViews();
     return true;
   });
 
@@ -1104,14 +1119,14 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
 export async function sullaEnd(event: any) {
   try {
     const chatServer = getChatCompletionsServer();
-    chatServer.stop();
+    await chatServer.stop();
   } catch (error) {
     console.error('[Background] Error stopping chat completions server:', error);
   }
 
   try {
     const { getTerminalServer } = await import('@pkg/main/terminalServer');
-    getTerminalServer().stop();
+    await getTerminalServer().stop();
   } catch (error) {
     console.error('[Background] Error stopping terminal server:', error);
   }

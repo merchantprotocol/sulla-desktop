@@ -58,6 +58,10 @@ export class VaultKeyService {
     return path.join(this.sullaDir, 'vault-recovery-hash');
   }
 
+  private get verifyPath(): string {
+    return path.join(this.sullaDir, 'vault-verify');
+  }
+
   // ─── Initialization ──────────────────────────────────────────────
 
   /**
@@ -68,6 +72,10 @@ export class VaultKeyService {
     this.ensureSullaDir();
 
     if (this.vmk) {
+      // Still ensure canary exists even if already unlocked
+      if (!fs.existsSync(this.verifyPath)) {
+        this.writeVerifyCanary();
+      }
       console.log('[VaultKeyService] Already unlocked');
       return true;
     }
@@ -94,6 +102,11 @@ export class VaultKeyService {
         console.error('[VaultKeyService] Decrypted VMK has unexpected length');
         this.vmk = null;
         return false;
+      }
+
+      // Ensure canary exists for existing vaults that predate this check
+      if (!fs.existsSync(this.verifyPath)) {
+        this.writeVerifyCanary();
       }
 
       console.log('[VaultKeyService] Vault auto-unlocked from safeStorage');
@@ -135,8 +148,43 @@ export class VaultKeyService {
     // Create encrypted backup of VMK using recovery key
     this.createRecoveryBackup(recoveryKey);
 
+    // Store an encrypted canary so we can verify the password on future logins
+    this.writeVerifyCanary();
+
     console.log('[VaultKeyService] Vault setup complete');
     return { recoveryKey };
+  }
+
+  /**
+   * Change the master password, re-keying the vault.
+   * Returns a decrypt function bound to the OLD VMK so callers can
+   * re-encrypt existing data with the new key.
+   */
+  async changePassword(newPassword: string): Promise<{
+    recoveryKey: string;
+    oldDecrypt: (encrypted: string) => string;
+  }> {
+    if (!this.vmk) {
+      throw new Error('[VaultKeyService] Vault must be unlocked to change password');
+    }
+
+    // Capture the old VMK for re-encryption
+    const oldVmk = Buffer.from(this.vmk);
+    const oldDecrypt = (encrypted: string): string => {
+      if (!encrypted.startsWith(VAULT_PREFIX)) return encrypted;
+      const packed = Buffer.from(encrypted.slice(VAULT_PREFIX.length), 'base64');
+      const iv = packed.subarray(0, GCM_IV_LENGTH);
+      const authTag = packed.subarray(GCM_IV_LENGTH, GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH);
+      const ciphertext = packed.subarray(GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', oldVmk, iv);
+      decipher.setAuthTag(authTag);
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+    };
+
+    // Now set up the new key (replaces salt, VMK, safeStorage, recovery)
+    const result = await this.setupFromMasterPassword(newPassword);
+
+    return { recoveryKey: result.recoveryKey, oldDecrypt };
   }
 
   // ─── Encrypt / Decrypt ───────────────────────────────────────────
@@ -250,6 +298,9 @@ export class VaultKeyService {
       // Re-store in safeStorage
       this.storeVmkViaSafeStorage();
 
+      // Ensure canary exists for future password verification
+      this.writeVerifyCanary();
+
       console.log('[VaultKeyService] VMK recovered from recovery key');
       return true;
     } catch (err) {
@@ -271,7 +322,15 @@ export class VaultKeyService {
       }
 
       const salt = fs.readFileSync(this.saltPath);
-      this.vmk = crypto.pbkdf2Sync(masterPassword, salt, PBKDF2_ITERATIONS, VMK_LENGTH, PBKDF2_DIGEST);
+      const candidateVmk = crypto.pbkdf2Sync(masterPassword, salt, PBKDF2_ITERATIONS, VMK_LENGTH, PBKDF2_DIGEST);
+
+      // Verify the derived key is correct before accepting it
+      if (!this.verifyCanary(candidateVmk)) {
+        console.error('[VaultKeyService] Password verification failed — wrong master password');
+        return false;
+      }
+
+      this.vmk = candidateVmk;
 
       // Re-store in safeStorage for next startup
       this.storeVmkViaSafeStorage();
@@ -283,6 +342,11 @@ export class VaultKeyService {
       this.vmk = null;
       return false;
     }
+  }
+
+  /** Check if the canary file exists so passwords can be verified */
+  canVerifyPassword(): boolean {
+    return fs.existsSync(this.verifyPath);
   }
 
   /** Check if the vault is unlocked (VMK in memory) */
@@ -310,6 +374,50 @@ export class VaultKeyService {
   }
 
   // ─── Internals ───────────────────────────────────────────────────
+
+  /**
+   * Write an encrypted canary value that can be used to verify the VMK later.
+   * AES-256-GCM will fail to decrypt with the wrong key (auth tag mismatch),
+   * so we can detect an incorrect master password.
+   */
+  private writeVerifyCanary(): void {
+    if (!this.vmk) return;
+    try {
+      const canary = this.encrypt('sulla-vault-canary');
+      fs.writeFileSync(this.verifyPath, canary, 'utf-8');
+    } catch (err) {
+      console.warn('[VaultKeyService] Failed to write verify canary:', err);
+    }
+  }
+
+  /**
+   * Verify a candidate VMK by attempting to decrypt the canary file.
+   * Returns true if no canary exists (legacy vaults before this check).
+   */
+  private verifyCanary(candidateVmk: Buffer): boolean {
+    if (!fs.existsSync(this.verifyPath)) {
+      // No canary file — legacy vault, accept the key (can't verify)
+      return true;
+    }
+    try {
+      const encrypted = fs.readFileSync(this.verifyPath, 'utf-8');
+      if (!encrypted.startsWith(VAULT_PREFIX)) return true;
+
+      const packed = Buffer.from(encrypted.slice(VAULT_PREFIX.length), 'base64');
+      const iv = packed.subarray(0, GCM_IV_LENGTH);
+      const authTag = packed.subarray(GCM_IV_LENGTH, GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH);
+      const ciphertext = packed.subarray(GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH);
+
+      const decipher = crypto.createDecipheriv('aes-256-gcm', candidateVmk, iv);
+      decipher.setAuthTag(authTag);
+      const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+
+      return decrypted.toString('utf8') === 'sulla-vault-canary';
+    } catch {
+      // GCM auth tag mismatch = wrong key
+      return false;
+    }
+  }
 
   /** Generate a 128-bit recovery key formatted as XXXX-XXXX-XXXX-XXXX-XXXX-XXXX */
   generateRecoveryKey(): string {

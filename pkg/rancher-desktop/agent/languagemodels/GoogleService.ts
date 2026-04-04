@@ -92,6 +92,15 @@ export class GoogleService extends BaseLanguageModel {
         lastError = err;
         console.log(`[GoogleService] Error on attempt ${ attempt }:`, err);
 
+        if (err instanceof Error && err.message.startsWith('HTTP 401:')) {
+          const refreshed = await this.refreshCredentials();
+          if (refreshed && attempt === 0) {
+            console.log(`[GoogleService] Credentials refreshed after 401 — retrying`);
+            continue;
+          }
+          break;
+        }
+
         if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
           break;
         }

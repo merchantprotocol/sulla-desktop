@@ -285,8 +285,8 @@ async function changePassword() {
       return;
     }
 
-    // Set up new vault with new password
-    await ipcRenderer.invoke('vault:setup', { masterPassword: newPassword.value });
+    // Change password and re-encrypt all credentials with the new key
+    await ipcRenderer.invoke('vault:change-password', { newPassword: newPassword.value });
     passwordSuccess.value = 'Master password updated successfully.';
     currentPassword.value = '';
     newPassword.value = '';

@@ -1488,7 +1488,7 @@ export class ChatCompletionsServer {
     });
   }
 
-  stop(): void {
+  stop(): Promise<void> {
     if (this.taskerUnsubscribe) {
       this.taskerUnsubscribe();
       this.taskerUnsubscribe = null;
@@ -1496,11 +1496,18 @@ export class ChatCompletionsServer {
 
     if (this.server) {
       console.log('[ChatCompletionsAPI] Stopping server...');
-      this.server.close(() => {
-        console.log('[ChatCompletionsAPI] Server stopped');
-      });
+      const server = this.server;
       this.server = null;
+
+      return new Promise((resolve) => {
+        server.close(() => {
+          console.log('[ChatCompletionsAPI] Server stopped');
+          resolve();
+        });
+      });
     }
+
+    return Promise.resolve();
   }
 }
 
