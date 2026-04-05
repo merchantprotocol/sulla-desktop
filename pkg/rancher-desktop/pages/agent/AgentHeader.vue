@@ -1458,6 +1458,7 @@ async function ctxCopyUrl() {
   border: none;
   flex-shrink: 0;
   padding: .6rem 1rem;
+  margin-left: 2px;
 }
 
 .tab-new:hover {

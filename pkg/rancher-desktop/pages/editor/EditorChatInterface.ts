@@ -70,6 +70,11 @@ export class EditorChatInterface {
 
   readonly loading = ref(false);
 
+  /** Set loading state from parent component (e.g., during IPC model initialization) */
+  setLoading(value: boolean): void {
+    this.loading.value = value;
+  }
+
   readonly currentActivity = computed(() => {
     return this.persona.currentActivity.value;
   });
@@ -107,10 +112,21 @@ export class EditorChatInterface {
 
     this.updateMessages();
 
-    // Watch graphRunning to process next queued message when current one completes
+    // Watch graphRunning AND loading to process next queued message when ready
     watch(() => this.persona.graphRunning.value, (isRunning) => {
-      if (!isRunning && this.messageQueue.hasPendingMessages.value) {
+      if (isRunning) {
+        // Graph is now running - clear the loading state since graphRunning will handle the busy state
+        this.loading.value = false;
+      } else if (!this.loading.value && this.messageQueue.hasPendingMessages.value) {
         console.log('[EditorChatInterface] Graph finished, processing next queued message');
+        this.processNextQueuedMessage();
+      }
+    });
+
+    // Also watch loading state - when model finishes initializing, process queue
+    watch(() => this.loading.value, (isLoading) => {
+      if (!isLoading && !this.persona.graphRunning.value && this.messageQueue.hasPendingMessages.value) {
+        console.log('[EditorChatInterface] Model ready, processing next queued message');
         this.processNextQueuedMessage();
       }
     });
@@ -235,16 +251,16 @@ export class EditorChatInterface {
   }
 
   /**
-   * Send a message. If the graph is currently running, the message will be
-   * queued and sent automatically when the current processing completes.
+   * Send a message. If the graph is currently running or model is loading,
+   * the message will be queued and sent automatically when ready.
    */
   async send(): Promise<void> {
     const text = this.query.value.trim();
     if (!text) return;
 
-    // If graph is running, queue the message
-    if (this.persona.graphRunning.value) {
-      console.log(`[EditorChatInterface:send] Graph running, queuing message: ${ text.slice(0, 50) }...`);
+    // If graph is running OR model is still loading/initializing, queue the message
+    if (this.persona.graphRunning.value || this.loading.value) {
+      console.log(`[EditorChatInterface:send] Busy (graphRunning=${this.persona.graphRunning.value}, loading=${this.loading.value}), queuing message: ${ text.slice(0, 50) }...`);
       this.messageQueue.enqueue(text, [], {
         workflowId: this.activeWorkflowId.value || undefined,
         agentId:    this.activeAgentId.value || undefined,
@@ -252,6 +268,9 @@ export class EditorChatInterface {
       this.query.value = '';
       return;
     }
+
+    // Set loading immediately to prevent race conditions with subsequent messages
+    this.loading.value = true;
 
     // Send immediately
     await this.sendMessageInternal(text);

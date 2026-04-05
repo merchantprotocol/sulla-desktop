@@ -367,7 +367,7 @@
               </svg>
             </button>
             <button
-              v-if="idx < queuedMessages.length - 1"
+              v-if="idx < (queuedMessages?.length ?? 0) - 1"
               type="button"
               class="chat-queued-btn"
               :class="{ dark: isDark }"
@@ -395,11 +395,11 @@
 
       <!-- Activity status indicator -->
       <div
-        v-if="loading || graphRunning"
+        v-if="showActivity"
         class="chat-activity-status"
       >
         <span class="activity-dot" />
-        <span class="activity-text">{{ currentActivity || 'Thinking' }}..<span class="blink-dot">.</span></span>
+        <span class="activity-text">{{ currentActivity || (props.modelLoading ? 'Initializing model' : 'Thinking') }}..<span class="blink-dot">.</span></span>
       </div>
 
       <!-- Waiting for user indicator -->
@@ -429,9 +429,9 @@
           @input="onInput"
           @keydown.enter.exact.prevent="onSend"
         />
-        <!-- Stop button when graph is running -->
+        <!-- Stop button when busy (running or initializing) -->
         <button
-          v-if="graphRunning"
+          v-if="isBusy"
           class="chat-stop-btn"
           :class="{ dark: isDark }"
           @click="$emit('stop')"
@@ -719,6 +719,7 @@ const props = defineProps<{
   query:              string;
   loading:            boolean;
   graphRunning:       boolean;
+  modelLoading?:      boolean;  // New: model initializing state
   waitingForUser?:    boolean;
   currentActivity?:   string;
   modelSelector?:     AgentModelSelectorController;
@@ -738,6 +739,12 @@ const props = defineProps<{
 const showAgentMenu = ref(false);
 const showHistory = ref(false);
 const historySearchQuery = ref('');
+
+// Computed property for any busy state (loading, running, or initializing)
+const isBusy = computed(() => props.loading || props.graphRunning || props.modelLoading);
+
+// Computed property for showing activity (includes queued messages as indicator of processing)
+const showActivity = computed(() => isBusy.value || props.hasQueuedMessages);
 
 const activeAgentName = computed(() => props.agentRegistry?.activeAgent.value?.agentName || 'Agent');
 const visibleAgents = computed(() => props.agentRegistry?.visibleAgents.value || []);
