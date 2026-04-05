@@ -314,14 +314,21 @@ export default {
       return;
     }
 
-    fs.mkdirSync(dest, { recursive: true });
-
-    for (const file of ['index.html', 'style.css', 'panel.js', 'sulla-icon.png']) {
-      const srcFile = path.join(src, file);
-      if (fs.existsSync(srcFile)) {
-        fs.copyFileSync(srcFile, path.join(dest, file));
+    // Recursively copy entire trayPanel directory (HTML, CSS, JS, renderer/)
+    const copyDir = (srcDir: string, destDir: string) => {
+      fs.mkdirSync(destDir, { recursive: true });
+      for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+        const srcPath = path.join(srcDir, entry.name);
+        const destPath = path.join(destDir, entry.name);
+        if (entry.isDirectory()) {
+          copyDir(srcPath, destPath);
+        } else {
+          fs.copyFileSync(srcPath, destPath);
+        }
       }
-    }
+    };
+
+    copyDir(src, dest);
     console.log('[build-utils] Copied tray panel assets to dist/app/trayPanel/');
   },
 

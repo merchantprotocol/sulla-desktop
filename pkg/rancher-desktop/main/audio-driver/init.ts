@@ -2,7 +2,9 @@
  * Audio Driver initialization for Sulla Desktop.
  *
  * Bridges the audio-driver lifecycle, IPC handlers, and gateway service
- * into sulla-desktop's main process.
+ * into sulla-desktop's main process. All communication uses IPC between
+ * the main process and renderer windows (tray panel, main window, etc.)
+ * via BrowserWindow.getAllWindows() — no specific window reference needed.
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
@@ -15,25 +17,32 @@ import { log, createLogger } from './model/logger';
 
 const rendererLog = createLogger('renderer');
 
-let mainWindow: BrowserWindow | null = null;
-let speakerLevelInterval: ReturnType<typeof setInterval> | null = null;
-let lastSpeakerData: any = { rms: 0, peak: 0, zcr: 0, variance: 0 };
 
-// ── Broadcast to all windows ──────────────────────────────────────
+// ── Broadcast to all renderer windows ─────────────────────────────
 
-function broadcastState(state: { running: boolean; message: string }): void {
+function broadcast(channel: string, data: any): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
-      win.webContents.send('tray-panel:audio-state', state);
-      win.webContents.send('audio-driver:state', state);
+      win.webContents.send(channel, data);
     }
   }
 }
 
+function broadcastState(state: { running: boolean; message: string }): void {
+  broadcast('tray-panel:audio-state', state);
+  broadcast('audio-driver:state', state);
+}
+
 // ── Public API ────────────────────────────────────────────────────
 
-export function initialize(win: BrowserWindow): void {
-  mainWindow = win;
+let initialized = false;
+
+export function initialize(): void {
+  if (initialized) {
+    log.warn('Init', 'Already initialized — skipping');
+    return;
+  }
+  initialized = true;
   log.info('Init', 'Audio driver initializing within Sulla Desktop');
 
   micSocket.start((chunk: Buffer) => {
@@ -43,15 +52,11 @@ export function initialize(win: BrowserWindow): void {
   });
 
   gateway.onTranscriptEvent((msg: any) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('gateway-transcript', msg);
-    }
+    broadcast('gateway-transcript', msg);
   });
 
   gateway.onStatus((status: any) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('gateway-status', status);
-    }
+    broadcast('gateway-status', status);
   });
 
   registerIpcHandlers();
@@ -61,10 +66,6 @@ export function initialize(win: BrowserWindow): void {
 
 export async function shutdown(): Promise<void> {
   log.info('Init', 'Shutting down audio driver');
-  if (speakerLevelInterval) {
-    clearInterval(speakerLevelInterval);
-    speakerLevelInterval = null;
-  }
   await lifecycle.deactivate({ removeDriver: true });
   micSocket.stop();
   log.info('Init', 'Audio driver shut down');
@@ -82,7 +83,6 @@ function registerIpcHandlers(): void {
 
   ipcMain.on('audio-driver:toggle', async() => {
     log.info('IPC', 'audio-driver:toggle received');
-    console.log('[Audio Driver] Toggle (audio-driver:toggle) received');
     const state = audio.getState();
     if (state.running) {
       broadcastState({ running: true, message: 'Disabling...' });
@@ -95,7 +95,6 @@ function registerIpcHandlers(): void {
 
   ipcMain.on('tray-panel:audio-toggle', async(_event: Electron.IpcMainEvent, enabled: boolean) => {
     log.info('IPC', 'tray-panel:audio-toggle received', { enabled });
-    console.log('[Audio Driver] Toggle received:', enabled);
     if (enabled) {
       broadcastState({ running: false, message: 'Enabling...' });
       await startCapture();
@@ -119,16 +118,12 @@ function registerIpcHandlers(): void {
 
   ipcMain.on('tray-panel:audio-mic-mute', (_event: Electron.IpcMainEvent, muted: boolean) => {
     log.info('IPC', 'mic mute', { muted });
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('audio-driver:mic-mute', muted);
-    }
+    broadcast('audio-driver:mic-mute', muted);
   });
 
   ipcMain.on('tray-panel:audio-mic-volume', (_event: Electron.IpcMainEvent, vol: number) => {
     log.info('IPC', 'mic volume', { vol });
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('audio-driver:mic-volume', vol);
-    }
+    broadcast('audio-driver:mic-volume', vol);
   });
 
   ipcMain.on('tray-panel:audio-speaker-mute', async(_event: Electron.IpcMainEvent, _muted: boolean) => {
@@ -168,7 +163,7 @@ function registerIpcHandlers(): void {
     return { ok: true };
   });
 
-  ipcMain.handle('gateway-transcript-subscribe', () => ({ ok: true }));
+  // gateway-transcript-subscribe is already registered in sullaEvents.ts
 
   ipcMain.handle('audio-driver:get-mic-socket-path', () => micSocket.getPath());
 
@@ -178,9 +173,75 @@ function registerIpcHandlers(): void {
   ipcMain.handle('audio-driver:speaker-volume-get', () => lifecycle.speakerVolumeGet());
 
   lifecycle.setOnVolumeChanged((state: any) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('audio-driver:volume-changed', state);
-    }
+    broadcast('audio-driver:volume-changed', state);
+  });
+
+  // ── Handlers called by the renderer controller via bridge.js ──────
+
+  ipcMain.handle('audio-driver:start-capture', async() => {
+    log.info('IPC', 'start-capture');
+    return await startCapture();
+  });
+
+  ipcMain.handle('audio-driver:stop-capture', async() => {
+    log.info('IPC', 'stop-capture');
+    return await stopCapture();
+  });
+
+  ipcMain.handle('audio-driver:set-device-names', (_event: unknown, mic: string, speaker: string) => {
+    log.info('IPC', 'set-device-names', { mic, speaker });
+    audio.setDeviceNames(mic, speaker);
+  });
+
+  ipcMain.handle('audio-driver:set-system-output', async(_event: unknown, deviceName: string) => {
+    log.info('IPC', 'set-system-output', { deviceName });
+    const platform = await import('./platform');
+    return platform.devices.setOutput(deviceName);
+  });
+
+  ipcMain.handle('audio-driver:set-system-input', async(_event: unknown, deviceName: string) => {
+    log.info('IPC', 'set-system-input', { deviceName });
+    const platform = await import('./platform');
+    return platform.devices.setInput(deviceName);
+  });
+
+  ipcMain.handle('audio-driver:get-auto-launch', () => {
+    const { app } = require('electron') as typeof import('electron');
+    return app.getLoginItemSettings().openAtLogin;
+  });
+
+  ipcMain.handle('audio-driver:set-auto-launch', (_event: unknown, enabled: boolean) => {
+    const { app } = require('electron') as typeof import('electron');
+    app.setLoginItemSettings({ openAtLogin: enabled });
+    return enabled;
+  });
+
+  ipcMain.handle('audio-driver:get-session', () => {
+    // sulla-desktop handles auth — always return logged in
+    return { loggedIn: true, user: { name: 'User' }, teams: [], activeTeamId: null };
+  });
+
+  // Call notification / transcription stubs — full implementation in future phase
+  ipcMain.handle('audio-driver:show-call-notification', () => {
+    log.info('IPC', 'show-call-notification (stub)');
+    return { ok: true };
+  });
+
+  ipcMain.handle('audio-driver:open-transcription', (_event: unknown, _sessionId: string) => {
+    log.info('IPC', 'open-transcription (stub)');
+    return { ok: true };
+  });
+
+  ipcMain.handle('audio-driver:minimize-transcription', () => ({ ok: true }));
+  ipcMain.handle('audio-driver:restore-transcription', () => ({ ok: true }));
+
+  ipcMain.on('audio-driver:end-call-from-transcription', () => {
+    log.info('IPC', 'end-call-from-transcription');
+    broadcast('audio-driver:end-call', {});
+  });
+
+  ipcMain.on('audio-driver:update-call-state', (_event: Electron.IpcMainEvent, state: any) => {
+    broadcast('audio-driver:call-state', state);
   });
 
   ipcMain.on('audio-driver:log', (_event: Electron.IpcMainEvent, level: string, tag: string, msg: string, data: any) => {
@@ -194,24 +255,15 @@ async function startCapture(): Promise<any> {
   log.info('Init', 'Starting audio capture');
 
   const result = await lifecycle.activate({
-    onLevel: (data: any) => { lastSpeakerData = data; },
+    onLevel: (data: any) => {
+      // Send speaker data to renderers only when the capture helper produces new data.
+      // No polling interval — this callback fires at the Swift helper's native rate.
+      broadcast('audio-driver:speaker-level', data);
+    },
     onRebuild: ({ name }: { name: string }) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('audio-driver:speaker-device-changed', name);
-      }
+      broadcast('audio-driver:speaker-device-changed', name);
     },
   });
-
-  if (speakerLevelInterval) clearInterval(speakerLevelInterval);
-  speakerLevelInterval = setInterval(() => {
-    const rms = lastSpeakerData.rms || 0;
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send('tray-panel:audio-speaker-level', rms);
-        win.webContents.send('audio-driver:speaker-level', lastSpeakerData);
-      }
-    }
-  }, 33);
 
   const state = audio.start();
   broadcastState({ running: true, message: 'Capturing' });
@@ -222,11 +274,8 @@ async function startCapture(): Promise<any> {
 async function stopCapture(): Promise<any> {
   log.info('Init', 'Stopping audio capture');
 
-  lastSpeakerData = { rms: 0, peak: 0, zcr: 0, variance: 0 };
-  if (speakerLevelInterval) {
-    clearInterval(speakerLevelInterval);
-    speakerLevelInterval = null;
-  }
+  // Send zero levels so meters reset immediately
+  broadcast('audio-driver:speaker-level', { rms: 0, peak: 0, zcr: 0, variance: 0 });
 
   await lifecycle.deactivate({ removeDriver: false });
   const state = audio.stop();

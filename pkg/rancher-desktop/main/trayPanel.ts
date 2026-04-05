@@ -5,6 +5,7 @@
  * positioned below the tray icon, dismissed on blur.
  */
 
+import path from 'path';
 import { BrowserWindow, ipcMain, app } from 'electron';
 
 import Logging from '@pkg/utils/logging';
@@ -38,8 +39,21 @@ export function createTrayPanel(): BrowserWindow {
     },
   });
 
-  // Load panel via the app:// protocol (same as all other windows)
-  panelWindow.loadURL('app://./trayPanel/index.html');
+  // Load panel via filesystem path (not app:// protocol) so that
+  // require() in panel.js can resolve relative paths to renderer modules.
+  // This matches how the standalone audio-driver loads its renderer.
+  const appRoot = app.getAppPath();
+  const trayPanelDir = app.isPackaged
+    ? path.join(appRoot, 'trayPanel')
+    : path.join(appRoot, 'dist', 'app', 'trayPanel');
+  panelWindow.loadFile(path.join(trayPanelDir, 'index.html'));
+
+  // Open DevTools with Cmd+Shift+I (debug the tray panel renderer)
+  panelWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.meta && input.shift && input.key === 'i') {
+      panelWindow?.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
 
   // Hide on blur — click anywhere else to dismiss
   panelWindow.on('blur', () => {

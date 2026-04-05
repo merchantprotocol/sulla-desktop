@@ -25,200 +25,22 @@ sidebarBtns.forEach(btn => {
   });
 });
 
-// ── Audio panel — meters (ported from audio-driver/src/renderer/view/meters.js) ──
-
-const PEAK_DECAY = 0.02;
-
-function levelToPercent(level) {
-  return Math.min(100, Math.pow(level, 0.5) * 100);
+// ── Audio driver renderer layer ─────────────────────────────────────────
+// Sets up window.audioDriver IPC bridge, then loads the full renderer
+// controller (mic capture, VAD, device enumeration, meters, gateway streaming).
+try {
+  require('./renderer/bridge');
+  console.log('[panel.js] Bridge loaded');
+} catch (e) {
+  console.error('[panel.js] Failed to load bridge:', e);
 }
 
-function levelToDb(level) {
-  if (level <= 0.0001) return '-\u221E';
-  return (20 * Math.log10(level)).toFixed(0) + ' dB';
+try {
+  require('./renderer/controller/app');
+  console.log('[panel.js] Controller loaded');
+} catch (e) {
+  console.error('[panel.js] Failed to load controller:', e);
 }
-
-function createMeter(barId, peakId, dbId) {
-  const bar = document.getElementById(barId);
-  const peak = document.getElementById(peakId);
-  const dbLabel = document.getElementById(dbId);
-  const peakState = { val: 0 };
-
-  return {
-    update(level) {
-      const pct = levelToPercent(level);
-      bar.style.width = pct + '%';
-      dbLabel.textContent = levelToDb(level);
-
-      if (pct > peakState.val) {
-        peakState.val = pct;
-      } else {
-        peakState.val = Math.max(0, peakState.val - PEAK_DECAY * 100);
-      }
-      peak.style.left = peakState.val + '%';
-      peak.style.opacity = peakState.val > 1 ? '0.8' : '0';
-    },
-  };
-}
-
-// ── Audio panel — volume controls (ported from audio-driver/src/renderer/view/controls.js) ──
-
-const VOL_STEP = 10;
-
-function createControl(muteBtnId, volDownId, volUpId, labelId) {
-  const muteBtn = document.getElementById(muteBtnId);
-  const volDownBtn = document.getElementById(volDownId);
-  const volUpBtn = document.getElementById(volUpId);
-  const label = document.getElementById(labelId);
-
-  let muted = false;
-  let volume = 100;
-  let onMuteChange = null;
-  let onVolumeChange = null;
-
-  function render() {
-    muteBtn.classList.toggle('muted', muted);
-    label.textContent = muted ? '\u2014' : volume + '%';
-  }
-
-  muteBtn.addEventListener('click', () => {
-    muted = !muted;
-    render();
-    if (onMuteChange) onMuteChange(muted);
-  });
-
-  let onVolDown = null;
-  let onVolUp = null;
-
-  volDownBtn.addEventListener('click', () => {
-    volume = Math.max(0, volume - VOL_STEP);
-    if (muted) muted = false;
-    render();
-    if (onVolDown) onVolDown(volume / 100);
-    else if (onVolumeChange) onVolumeChange(volume / 100);
-  });
-
-  volUpBtn.addEventListener('click', () => {
-    volume = Math.min(100, volume + VOL_STEP);
-    if (muted) muted = false;
-    render();
-    if (onVolUp) onVolUp(volume / 100);
-    else if (onVolumeChange) onVolumeChange(volume / 100);
-  });
-
-  render();
-
-  return {
-    onMute(fn) { onMuteChange = fn; },
-    onVolume(fn) { onVolumeChange = fn; },
-    onVolumeDown(fn) { onVolDown = fn; },
-    onVolumeUp(fn) { onVolUp = fn; },
-    isMuted() { return muted; },
-    getVolume() { return volume / 100; },
-    setMuted(m) { muted = m; render(); },
-    setVolume(v) { volume = Math.round(v * 100); render(); },
-  };
-}
-
-// ── Audio panel — initialize meters & controls ──────────────────────────
-
-const micMeter = createMeter('mic-bar', 'mic-peak', 'mic-db');
-const speakerMeter = createMeter('speaker-bar', 'speaker-peak', 'speaker-db');
-const micControl = createControl('mic-mute-btn', 'mic-vol-down', 'mic-vol-up', 'mic-volume-label');
-const speakerControl = createControl('speaker-mute-btn', 'speaker-vol-down', 'speaker-vol-up', 'speaker-volume-label');
-
-// Forward control changes to main process
-micControl.onMute((muted) => ipcRenderer.send('tray-panel:audio-mic-mute', muted));
-micControl.onVolume((vol) => ipcRenderer.send('tray-panel:audio-mic-volume', vol));
-speakerControl.onMute((muted) => ipcRenderer.send('tray-panel:audio-speaker-mute', muted));
-speakerControl.onVolume((vol) => ipcRenderer.send('tray-panel:audio-speaker-volume', vol));
-
-// Toggle audio capture on/off
-document.getElementById('audio-enabled-toggle').addEventListener('change', (e) => {
-  ipcRenderer.send('tray-panel:audio-toggle', e.target.checked);
-});
-
-// Device selection changes
-document.getElementById('mic-device').addEventListener('change', (e) => {
-  ipcRenderer.send('tray-panel:audio-mic-device', e.target.value);
-});
-document.getElementById('speaker-device').addEventListener('change', (e) => {
-  ipcRenderer.send('tray-panel:audio-speaker-device', e.target.value);
-});
-
-// ── Audio panel — state updates from main process ───────────────────────
-
-function renderAudioState(state) {
-  const msg = state.message || (state.running ? 'Capturing' : 'Off');
-  const isTransitioning = msg === 'Enabling...' || msg === 'Disabling...';
-  const dotClass = isTransitioning ? 'transitioning' : (state.running ? 'running' : 'off');
-
-  document.getElementById('audio-status-dot').className = 'dot ' + dotClass;
-  document.getElementById('audio-status-text').textContent = msg;
-  document.getElementById('audio-enabled-toggle').checked = state.running || isTransitioning;
-  document.getElementById('audio-enabled-toggle').disabled = isTransitioning;
-
-  document.querySelectorAll('#panel-audio .meter-section').forEach((s) => {
-    s.classList.toggle('disabled', !state.running);
-  });
-}
-
-function populateDeviceSelect(selectId, devices, activeDeviceId) {
-  const select = document.getElementById(selectId);
-  const currentValue = select.value;
-  select.innerHTML = '';
-  devices.forEach((d) => {
-    const opt = document.createElement('option');
-    opt.value = d.deviceId;
-    opt.textContent = d.label;
-    if (d.deviceId === activeDeviceId || d.deviceId === currentValue) {
-      opt.selected = true;
-    }
-    select.appendChild(opt);
-  });
-}
-
-ipcRenderer.on('tray-panel:audio-state', (_event, state) => {
-  renderAudioState(state);
-});
-
-ipcRenderer.on('tray-panel:audio-mic-level', (_event, level) => {
-  micMeter.update(level);
-});
-
-ipcRenderer.on('tray-panel:audio-speaker-level', (_event, level) => {
-  speakerMeter.update(level);
-});
-
-ipcRenderer.on('tray-panel:audio-devices', (_event, { inputs, outputs, activeInput, activeOutput }) => {
-  populateDeviceSelect('mic-device', inputs, activeInput);
-  populateDeviceSelect('speaker-device', outputs, activeOutput);
-});
-
-ipcRenderer.on('tray-panel:audio-detection', (_event, { statusDotClass, statusText, noisePct, noiseLevel, noiseLabel, feedbackPct, feedbackLabel }) => {
-  // Update status dot
-  document.getElementById('audio-status-dot').className = 'dot ' + statusDotClass;
-  document.getElementById('audio-status-text').textContent = statusText;
-
-  // Show detection bars when capturing
-  const detectionEl = document.getElementById('detection-bar');
-  if (detectionEl) detectionEl.classList.remove('hidden');
-
-  // Noise meter
-  const noiseBar = document.getElementById('noise-bar');
-  if (noiseBar) {
-    noiseBar.style.width = noisePct + '%';
-    noiseBar.className = 'meter-fill noise-' + noiseLevel;
-  }
-  const noiseLabelEl = document.getElementById('noise-label');
-  if (noiseLabelEl) noiseLabelEl.textContent = noiseLabel;
-
-  // Feedback meter
-  const feedbackBar = document.getElementById('feedback-bar');
-  if (feedbackBar) feedbackBar.style.width = feedbackPct + '%';
-  const feedbackLabelEl = document.getElementById('feedback-label');
-  if (feedbackLabelEl) feedbackLabelEl.textContent = feedbackLabel;
-});
 
 // ── Button handlers ─────────────────────────────────────────────────────
 

@@ -669,11 +669,9 @@ async function initUI() {
   }
 
   // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming)
+  // Registers IPC handlers in the main process — no window reference needed.
   try {
-    const mainWindow = window.getWindow('main') || window.getWindow('main-agent');
-    if (mainWindow) {
-      audioDriver.initialize(mainWindow);
-    }
+    audioDriver.initialize();
     console.log('[Audio Driver] Initialized');
   } catch (err) {
     console.error('[Audio Driver] Failed to initialize:', err);
