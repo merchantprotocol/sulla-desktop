@@ -8,6 +8,8 @@ import Electron, { MessageBoxOptions } from 'electron';
 import _ from 'lodash';
 import semver from 'semver';
 
+import * as audioDriver from '@pkg/main/audio-driver/init';
+
 import { State } from '@pkg/backend/backend';
 import BackendHelper from '@pkg/backend/backendHelper';
 import K8sFactory from '@pkg/backend/factory';
@@ -666,6 +668,17 @@ async function initUI() {
     Tray.getInstance(cfg).show();
   }
 
+  // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming)
+  try {
+    const mainWindow = window.getWindow('main') || window.getWindow('main-agent');
+    if (mainWindow) {
+      audioDriver.initialize(mainWindow);
+    }
+    console.log('[Audio Driver] Initialized');
+  } catch (err) {
+    console.error('[Audio Driver] Failed to initialize:', err);
+  }
+
   if (!cfg.application.startInBackground) {
     window.openMain();
   } else if (Electron.app.dock) {
@@ -900,6 +913,14 @@ Electron.app.on('before-quit', async(event) => {
   // SULLA DESKTOP - START
   // Commands to shut down database connections
   /// /////////////////////////////////////////////////////////////////////////////
+
+  // Shut down audio-driver (restore audio output, release capture, remove driver)
+  try {
+    await audioDriver.shutdown();
+    console.log('[Shutdown] Audio driver shut down');
+  } catch (err) {
+    console.error('[Shutdown] Audio driver shutdown error:', err);
+  }
 
   console.log('[Shutdown] before-quit: calling sullaEnd()');
   await sullaEnd(event);

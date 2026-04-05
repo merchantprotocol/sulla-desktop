@@ -9,6 +9,8 @@ asarUnpack:
   - 'node_modules/puppeteer-extra-plugin/**'
   - 'node_modules/clone-deep/**'
   - 'node_modules/puppeteer/**'
+  # Audio-driver native assets (Swift scripts, compiled C binary)
+  - 'dist/app/audio-driver/platform/darwin/**'
 electronLanguages: [ en-US ]
 extraResources:
   - resources/

@@ -96,6 +96,61 @@ export function sendPanelState(state: {
 }
 
 /**
+ * Send audio capture state to the panel renderer.
+ */
+export function sendAudioState(state: { running: boolean; message?: string }): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-state', state);
+  }
+}
+
+/**
+ * Send audio level data to the panel renderer for meter display.
+ */
+export function sendAudioMicLevel(level: number): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-mic-level', level);
+  }
+}
+
+export function sendAudioSpeakerLevel(level: number): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-speaker-level', level);
+  }
+}
+
+/**
+ * Send available audio devices to the panel renderer.
+ */
+export function sendAudioDevices(data: {
+  inputs: Array<{ deviceId: string; label: string }>;
+  outputs: Array<{ deviceId: string; label: string }>;
+  activeInput?: string;
+  activeOutput?: string;
+}): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-devices', data);
+  }
+}
+
+/**
+ * Send audio detection state (VAD, noise, feedback) to the panel renderer.
+ */
+export function sendAudioDetection(data: {
+  statusDotClass: string;
+  statusText: string;
+  noisePct: number;
+  noiseLevel: string;
+  noiseLabel: string;
+  feedbackPct: number;
+  feedbackLabel: string;
+}): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-detection', data);
+  }
+}
+
+/**
  * Destroy the panel window (app quit).
  */
 export function destroyTrayPanel(): void {
@@ -163,4 +218,10 @@ function registerPanelIpc(): void {
   ipcMain.on('tray-panel:quit', () => {
     app.quit();
   });
+
+  // ── Audio panel IPC handlers ──────────────────────────────────────────
+  // These are handled by audio-driver/init.js which registers its own
+  // ipcMain.on('tray-panel:audio-*') handlers. The audio-driver init
+  // module is loaded in background.ts and registers all handlers there.
+  // No duplicate registration needed here.
 }

@@ -71,6 +71,24 @@
             </p>
           </div>
 
+          <!-- Audio Capture (audio-driver) -->
+          <div class="setting-section">
+            <h3>Audio Capture</h3>
+            <div class="status-row">
+              <span class="status-label">Loopback Driver:</span>
+              <span
+                class="status-badge"
+                :class="audioCaptureActive ? 'badge-success' : 'badge-warning'"
+              >
+                {{ audioCaptureActive ? 'Active' : 'Inactive' }}
+              </span>
+            </div>
+            <p class="description">
+              System audio capture uses a virtual loopback driver to record speaker output
+              alongside microphone input. Activate via the tray panel Audio tab or Secretary Mode.
+            </p>
+          </div>
+
           <!-- Audio Input Device -->
           <div class="setting-section">
             <h3>Microphone</h3>
@@ -420,6 +438,12 @@ const currentNav = ref('overview');
 // Settings state
 const apiKeyConnected = ref(false);
 const gatewayConnected = ref(false);
+const audioCaptureActive = ref(false);
+
+// Listen for audio-driver state updates
+ipcRenderer.on('audio-driver:state', (_event: any, state: { running: boolean }) => {
+  audioCaptureActive.value = state.running;
+});
 const transcriptionMode = ref('browser');
 const transcriptionProvider = ref('elevenlabs');
 const transcriptionModel = ref('scribe_v2');
