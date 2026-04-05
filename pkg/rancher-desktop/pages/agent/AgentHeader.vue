@@ -1,6 +1,6 @@
 <template>
   <header
-    class="app-titlebar relative flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500"
+    class="app-titlebar relative flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500 z-99"
     style="-webkit-app-region: drag; app-region: drag;"
   >
     <div class="relative flex shrink-0 items-center pb-2">
@@ -245,7 +245,7 @@
             aria-hidden="true"
             viewBox="0 0 24 24"
             fill="currentColor"
-            class="h-4 w-4 fill-white"
+            class="h-4 w-4 text-content"
           >
             <circle cx="12" cy="5" r="2.5" />
             <circle cx="12" cy="12" r="2.5" />
@@ -479,26 +479,7 @@
       class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
       @click="toggleMobileMenu"
     />
-    <div class="fixed top-8 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
-      <div class="flex justify-end px-4 py-2">
-        <button
-          type="button"
-          class="relative cursor-pointer"
-          aria-label="Close navigation"
-          @click="toggleMobileMenu"
-        >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke-width="2"
-            stroke-linecap="round"
-            class="h-5 w-5 stroke-slate-500"
-          >
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+    <div class="fixed top-10 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
       <nav class="px-4 pb-6 space-y-2">
         <router-link
           to="/Chat"
@@ -1331,7 +1312,7 @@ async function ctxCopyUrl() {
   padding: 0.5rem 1rem;
   font-size: 0.75rem;
   font-weight: 600;
-  border-radius: 8px 8px 0 0;
+  border-radius: 8px;
   border: 1px solid transparent;
   border-bottom: none;
   cursor: pointer;
@@ -1371,6 +1352,7 @@ async function ctxCopyUrl() {
   background-color: var(--bg-surface-alt);
   color: var(--text-primary);
   z-index: 2;
+  border-radius: 8px 8px 0 0;
   border-color: var(--border-default);
 }
 
