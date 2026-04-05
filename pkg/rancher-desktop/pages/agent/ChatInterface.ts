@@ -73,6 +73,14 @@ export class ChatInterface {
       }
     });
 
+    // Also watch loading state - when model finishes initializing, process queue
+    watch(() => this.loading.value, (isLoading) => {
+      if (!isLoading && !this.persona.graphRunning.value && this.messageQueue.hasPendingMessages.value) {
+        console.log('[ChatInterface] Model ready, processing next queued message');
+        this.processNextQueuedMessage();
+      }
+    });
+
     this.messages.value = [...this.persona.messages];
   }
 
@@ -202,9 +210,9 @@ export class ChatInterface {
 
     const text = this.query.value;
 
-    // If graph is running, queue the message
-    if (this.persona.graphRunning.value) {
-      console.log(`[ChatInterface:send] Graph running, queuing message: ${ text.slice(0, 50) }...`);
+    // If graph is running OR model is still loading/initializing, queue the message
+    if (this.persona.graphRunning.value || this.loading.value) {
+      console.log(`[ChatInterface:send] Busy (graphRunning=${this.persona.graphRunning.value}, loading=${this.loading.value}), queuing message: ${ text.slice(0, 50) }...`);
       this.messageQueue.enqueue(text, attachments as PendingAttachment[], metadata);
       this.query.value = '';
       return;
