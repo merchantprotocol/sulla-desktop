@@ -367,7 +367,7 @@
               </svg>
             </button>
             <button
-              v-if="idx < queuedMessages.length - 1"
+              v-if="idx < (queuedMessages?.length ?? 0) - 1"
               type="button"
               class="chat-queued-btn"
               :class="{ dark: isDark }"
@@ -395,11 +395,11 @@
 
       <!-- Activity status indicator -->
       <div
-        v-if="loading || graphRunning"
+        v-if="showActivity"
         class="chat-activity-status"
       >
         <span class="activity-dot" />
-        <span class="activity-text">{{ currentActivity || 'Thinking' }}..<span class="blink-dot">.</span></span>
+        <span class="activity-text">{{ currentActivity || (props.modelLoading ? 'Initializing model' : 'Thinking') }}..<span class="blink-dot">.</span></span>
       </div>
 
       <!-- Waiting for user indicator -->
@@ -429,43 +429,26 @@
           @input="onInput"
           @keydown.enter.exact.prevent="onSend"
         />
-        <!-- Stop button when graph is running -->
+        <!-- Stop button: only when busy AND no text typed -->
         <button
-          v-if="graphRunning"
+          v-if="isBusy && !query.trim()"
           class="chat-stop-btn"
           :class="{ dark: isDark }"
           @click="$emit('stop')"
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="currentColor"
-          >
-            <rect
-              x="3"
-              y="3"
-              width="10"
-              height="10"
-              rx="1"
-            />
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="3" y="3" width="10" height="10" rx="1"/>
           </svg>
         </button>
-        <!-- Send button -->
+        <!-- Send button: always when there's text (allows queuing when busy) -->
         <button
-          v-else
+          v-if="query.trim()"
           class="chat-send-btn"
           :class="{ dark: isDark }"
-          :disabled="!query.trim()"
           @click="onSend"
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="currentColor"
-          >
-            <path d="M1.724 1.053a.5.5 0 0 1 .54-.068l12 6a.5.5 0 0 1 0 .894l-12 6A.5.5 0 0 1 1.5 13.5v-4.9l7-1.1-7-1.1V1.5a.5.5 0 0 1 .224-.447Z" />
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M1.724 1.053a.5.5 0 0 1 .54-.068l12 6a.5.5 0 0 1 0 .894l-12 6A.5.5 0 0 1 1.5 13.5v-4.9l7-1.1-7-1.1V1.5a.5.5 0 0 1 .224-.447Z"/>
           </svg>
         </button>
       </div>
@@ -719,6 +702,7 @@ const props = defineProps<{
   query:              string;
   loading:            boolean;
   graphRunning:       boolean;
+  modelLoading?:      boolean;  // New: model initializing state
   waitingForUser?:    boolean;
   currentActivity?:   string;
   modelSelector?:     AgentModelSelectorController;
@@ -738,6 +722,12 @@ const props = defineProps<{
 const showAgentMenu = ref(false);
 const showHistory = ref(false);
 const historySearchQuery = ref('');
+
+// Computed property for any busy state (loading, running, or initializing)
+const isBusy = computed(() => props.loading || props.graphRunning || props.modelLoading);
+
+// Computed property for showing activity (includes queued messages as indicator of processing)
+const showActivity = computed(() => isBusy.value || props.hasQueuedMessages);
 
 const activeAgentName = computed(() => props.agentRegistry?.activeAgent.value?.agentName || 'Agent');
 const visibleAgents = computed(() => props.agentRegistry?.visibleAgents.value || []);
@@ -785,17 +775,42 @@ function toggleModelMenu() {
 const messagesEl = ref<HTMLElement>();
 const inputEl = ref<HTMLTextAreaElement>();
 
+// Auto-scroll state - only scroll if user is near bottom
+const autoScrollEnabled = ref(true);
+let isUserScrolling = false;
+let scrollTimeout: ReturnType<typeof setTimeout> | null = null;
+const SCROLL_THRESHOLD = 100; // pixels from bottom to trigger auto-scroll
+
+function attachScrollListeners(container: HTMLElement) {
+  const startScroll = () => { isUserScrolling = true; };
+  const endScroll = () => {
+    if (scrollTimeout) clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => { isUserScrolling = false; }, 150);
+  };
+  container.addEventListener('wheel', startScroll, { passive: true });
+  container.addEventListener('wheel', endScroll, { passive: true });
+  container.addEventListener('touchstart', startScroll, { passive: true });
+  container.addEventListener('touchend', endScroll, { passive: true });
+  container.addEventListener('scroll', () => {
+    if (!isUserScrolling) return;
+    const dist = container.scrollHeight - container.scrollTop - container.clientHeight;
+    autoScrollEnabled.value = dist <= SCROLL_THRESHOLD;
+  }, { passive: true });
+}
+
 function renderMarkdown(content: string): string {
   const raw = typeof content === 'string' ? content : String(content || '');
   const html = (marked(raw) as string) || '';
   return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 }
 
-function scrollToBottom() {
+function scrollToBottom(force = false) {
   nextTick(() => {
-    if (messagesEl.value) {
-      messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
-    }
+    const container = messagesEl.value;
+    if (!container) return;
+    // Only scroll if auto-scroll is enabled or forced
+    if (!autoScrollEnabled.value && !force) return;
+    container.scrollTop = container.scrollHeight;
   });
 }
 
@@ -872,13 +887,28 @@ const filteredHistory = computed(() => {
   );
 });
 
-// Auto-scroll on new messages
+// Auto-scroll on new messages - only if user is near bottom
 watch(() => props.messages.length, () => scrollToBottom());
+
+// Auto-scroll when a message is enqueued
+watch(() => props.queuedMessages?.length, () => scrollToBottom());
+
+// Auto-scroll during streaming or thinking (when last message content updates)
+watch(
+  () => {
+    const msgs = props.messages;
+    const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    return (last?.kind === 'streaming' || last?.kind === 'thinking') ? last.content : null;
+  },
+  () => scrollToBottom(),
+  { flush: 'post' }
+);
 
 // Scroll to bottom on mount if there are existing messages (e.g., after page refresh)
 onMounted(() => {
+  if (messagesEl.value) attachScrollListeners(messagesEl.value);
   if (props.messages.length > 0) {
-    scrollToBottom();
+    scrollToBottom(true); // Force scroll on mount
   }
 });
 </script>

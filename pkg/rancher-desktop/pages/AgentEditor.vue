@@ -1123,6 +1123,7 @@
             :query="chatQuery"
             :loading="chatLoading"
             :graph-running="chatGraphRunning"
+            :model-loading="editorModelLoading"
             :waiting-for-user="chatWaitingForUser"
             :current-activity="chatCurrentActivity"
             :model-selector="modelSelector"
@@ -1166,6 +1167,7 @@
           :query="chatQuery"
           :loading="chatLoading"
           :graph-running="chatGraphRunning"
+          :model-loading="editorModelLoading"
           :waiting-for-user="chatWaitingForUser"
           :current-activity="chatCurrentActivity"
           :model-selector="modelSelector"
@@ -1787,6 +1789,11 @@ export default defineComponent({
     const editorSystemReady = ref(true);
     const editorModelLoading = ref(false);
     const editorIsRunning = chatGraphRunning;
+
+    // Sync editorModelLoading to the active chat interface
+    watch(editorModelLoading, (isLoading) => {
+      activeChatInterface.value?.setLoading(isLoading);
+    });
 
     const modelSelector = new AgentModelSelectorController({
       systemReady: editorSystemReady,
