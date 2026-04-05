@@ -109,6 +109,38 @@ export class PostgresClient {
     }
   }
 
+  /**
+   * Wait until PostgreSQL is actually reachable from the host.
+   * Called by ServiceLifecycleManager before DatabaseManager starts.
+   */
+  async waitForReady(maxAttempts = 30, intervalMs = 1000): Promise<void> {
+    const password = await SullaSettingsModel.get('sullaServicePassword', 'sulla_dev_password');
+
+    for (let i = 1; i <= maxAttempts; i++) {
+      let probe: Pool | null = null;
+
+      try {
+        probe = new Pool({
+          host: '127.0.0.1', port: 30116, user: 'sulla',
+          password, database: 'sulla', max: 1,
+          connectionTimeoutMillis: 2000,
+        });
+        await probe.query('SELECT 1');
+        console.log(`[PostgresClient] Host port 30116 reachable (attempt ${ i })`);
+
+        return;
+      } catch {
+        if (i === maxAttempts) {
+          throw new Error(`PostgreSQL not reachable after ${ maxAttempts } attempts`);
+        }
+        console.log(`[PostgresClient] waitForReady attempt ${ i }/${ maxAttempts } failed, retrying...`);
+        await new Promise(r => setTimeout(r, intervalMs));
+      } finally {
+        try { await probe?.end(); } catch { /* ignore */ }
+      }
+    }
+  }
+
   async end(): Promise<void> {
     if (!this.pool || !this.connected) return;
 

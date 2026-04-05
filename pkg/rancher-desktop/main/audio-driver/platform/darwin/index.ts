@@ -92,9 +92,12 @@ export const loopback = {
       log.info('Platform', 'BlackHole 2ch installed');
 
       try {
-        execSync('sudo killall coreaudiod 2>/dev/null', { timeout: 10000, stdio: 'pipe', env: CHILD_ENV });
+        execSync(
+          'osascript -e \'do shell script "killall coreaudiod 2>/dev/null" with administrator privileges\'',
+          { timeout: 15000, stdio: 'pipe', env: CHILD_ENV },
+        );
       } catch {
-        // May fail without sudo
+        // User cancelled or coreaudiod not running — it will recover on its own
       }
 
       for (let i = 0; i < 5; i++) {
@@ -127,20 +130,28 @@ export const loopback = {
       }
     }
 
+    // /Library/Audio/Plug-Ins/HAL/ is root-owned — use osascript for privilege elevation
     try {
       execSync(
-        'rm -rf /Library/Audio/Plug-Ins/HAL/AudioDriverLoopback2ch.driver /Library/Audio/Plug-Ins/HAL/SullaLoopback2ch.driver /Library/Audio/Plug-Ins/HAL/SullaLoopback2ch.driver.disabled',
-        { timeout: 10000, stdio: 'pipe', env: CHILD_ENV },
+        'osascript -e \'do shell script "rm -rf /Library/Audio/Plug-Ins/HAL/AudioDriverLoopback2ch.driver /Library/Audio/Plug-Ins/HAL/SullaLoopback2ch.driver /Library/Audio/Plug-Ins/HAL/SullaLoopback2ch.driver.disabled" with administrator privileges\'',
+        { timeout: 15000, stdio: 'pipe', env: CHILD_ENV },
       );
     } catch {
-      // Already gone
+      // User cancelled or already gone
     }
 
+    // Restart coreaudiod so macOS picks up the driver removal.
+    // This requires root — use osascript to show a native password dialog
+    // instead of blocking on a terminal Password: prompt the user never sees.
     try {
-      execSync('killall coreaudiod 2>/dev/null', { timeout: 10000, stdio: 'pipe', env: CHILD_ENV });
-      log.info('Platform', 'coreaudiod restarted');
+      execSync(
+        'osascript -e \'do shell script "killall coreaudiod 2>/dev/null" with administrator privileges\'',
+        { timeout: 15000, stdio: 'pipe', env: CHILD_ENV },
+      );
+      log.info('Platform', 'coreaudiod restarted (via admin prompt)');
     } catch {
-      // Best effort
+      // User cancelled or failed — best effort, coreaudiod will recover on reboot
+      log.warn('Platform', 'coreaudiod restart skipped (no admin privileges)');
     }
   },
 };

@@ -1,59 +1,28 @@
 // src/services/ThreadStateStore.ts
 import type { BaseThreadState } from '../nodes/Graph';
-import Redis from 'ioredis';
 import fs from 'node:fs';
 import readline from 'node:readline';
 
 import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
+import { redisClient } from '../database/RedisClient';
 
-// Redis client for thread state persistence
-let redis: Redis | null = null;
-
-const REDIS_URL = 'redis://127.0.0.1:30117';
-
-// Initialize Redis connection
-function getRedisClient(): Redis {
-  if (!redis) {
-    redis = new Redis(REDIS_URL, {
-      keyPrefix:            'sulla:threadstate:',
-      maxRetriesPerRequest: 3,
-      lazyConnect:          true,
-      enableReadyCheck:     true,
-      retryStrategy:        (times: number) => {
-        const delay = Math.min(times * 200, 10_000);
-
-        if (times % 30 === 0) {
-          console.log(`[ThreadStateStore] Still reconnecting (attempt ${ times }, next retry in ${ delay }ms)`);
-        }
-
-        return delay;
-      },
-    });
-
-    // Attach error handler to prevent unhandled error events
-    redis.on('error', (err: any) => {
-      if (err.code === 'ECONNREFUSED' || err.code === 'EPIPE' || err.code === 'ECONNRESET') {
-        // Reduce log noise for expected startup errors
-        console.log(`[ThreadStateStore] Redis connection error (${ err.code }): server not available yet`);
-      } else {
-        console.error('[ThreadStateStore] Redis error:', err);
-      }
-    });
-  }
-  return redis;
-}
+const KEY_PREFIX = 'sulla:threadstate:';
 
 // Fallback in-memory store for development/when Redis unavailable
 const threadStore = new Map<string, BaseThreadState>();
 
-// Check if Redis is available
+// Check if Redis is available via the shared singleton
 async function isRedisAvailable(): Promise<boolean> {
   try {
-    const client = getRedisClient();
+    const client = redisClient.getClient();
+
+    if (client.status !== 'ready') {
+      return false;
+    }
     await client.ping();
+
     return true;
-  } catch (err) {
-    console.warn('[ThreadStateStore] Redis unavailable, using in-memory storage');
+  } catch {
     return false;
   }
 }
@@ -68,8 +37,7 @@ export async function saveThreadState(state: BaseThreadState): Promise<void> {
 
   if (await isRedisAvailable()) {
     try {
-      const redis = getRedisClient();
-      await redis.setex(threadId, 3600, JSON.stringify(stateData)); // 1 hour TTL
+      await redisClient.getClient().setex(KEY_PREFIX + threadId, 3600, JSON.stringify(stateData)); // 1 hour TTL
       console.log(`[ThreadStateStore] Saved thread ${ threadId } to Redis`);
     } catch (err) {
       console.error('[ThreadStateStore] Redis save failed, using memory fallback:', err);
@@ -83,8 +51,7 @@ export async function saveThreadState(state: BaseThreadState): Promise<void> {
 export async function loadThreadState(threadId: string): Promise<BaseThreadState | null> {
   if (await isRedisAvailable()) {
     try {
-      const redis = getRedisClient();
-      const stateJson = await redis.get(threadId);
+      const stateJson = await redisClient.getClient().get(KEY_PREFIX + threadId);
 
       if (stateJson) {
         const parsed = JSON.parse(stateJson) as BaseThreadState;
@@ -238,8 +205,7 @@ async function restoreFromDisk(threadId: string): Promise<BaseThreadState | null
 export async function deleteThreadState(threadId: string): Promise<void> {
   if (await isRedisAvailable()) {
     try {
-      const redis = getRedisClient();
-      await redis.del(threadId);
+      await redisClient.getClient().del(KEY_PREFIX + threadId);
       console.log(`[ThreadStateStore] Deleted thread ${ threadId } from Redis`);
     } catch (err) {
       console.error('[ThreadStateStore] Redis delete failed:', err);
@@ -267,12 +233,12 @@ export class ProcessingCoordinator {
   static async acquireLock(serviceName: string, threadId: string): Promise<boolean> {
     if (await isRedisAvailable()) {
       try {
-        const redis = getRedisClient();
+        const client = redisClient.getClient();
         const lockKey = `${ ProcessingCoordinator.LOCK_PREFIX }${ serviceName }:${ threadId }`;
         const instanceId = `${ process.pid }-${ Date.now() }`;
 
         // Use SET with NX (only if not exists) and EX (expiration)
-        const result = await redis.set(lockKey, instanceId, 'EX', ProcessingCoordinator.LOCK_TTL, 'NX');
+        const result = await client.set(lockKey, instanceId, 'EX', ProcessingCoordinator.LOCK_TTL, 'NX');
 
         if (result === 'OK') {
           console.log(`[ProcessingCoordinator] Acquired lock for ${ serviceName }:${ threadId }`);
@@ -297,9 +263,9 @@ export class ProcessingCoordinator {
   static async releaseLock(serviceName: string, threadId: string): Promise<void> {
     if (await isRedisAvailable()) {
       try {
-        const redis = getRedisClient();
+        const client = redisClient.getClient();
         const lockKey = `${ ProcessingCoordinator.LOCK_PREFIX }${ serviceName }:${ threadId }`;
-        await redis.del(lockKey);
+        await client.del(lockKey);
         console.log(`[ProcessingCoordinator] Released lock for ${ serviceName }:${ threadId }`);
       } catch (err) {
         console.error('[ProcessingCoordinator] Redis lock release failed:', err);
@@ -313,9 +279,9 @@ export class ProcessingCoordinator {
   static async isLocked(serviceName: string, threadId: string): Promise<boolean> {
     if (await isRedisAvailable()) {
       try {
-        const redis = getRedisClient();
+        const client = redisClient.getClient();
         const lockKey = `${ ProcessingCoordinator.LOCK_PREFIX }${ serviceName }:${ threadId }`;
-        const exists = await redis.exists(lockKey);
+        const exists = await client.exists(lockKey);
         return exists === 1;
       } catch (err) {
         console.error('[ProcessingCoordinator] Redis lock check failed:', err);
@@ -333,9 +299,9 @@ export class ProcessingCoordinator {
   static async isThreadBeingProcessed(threadId: string): Promise<boolean> {
     if (await isRedisAvailable()) {
       try {
-        const redis = getRedisClient();
+        const client = redisClient.getClient();
         const pattern = `${ ProcessingCoordinator.LOCK_PREFIX }*:${ threadId }`;
-        const keys = await redis.keys(pattern);
+        const keys = await client.keys(pattern);
         return keys.length > 0;
       } catch (err) {
         console.error('[ProcessingCoordinator] Redis thread processing check failed:', err);
