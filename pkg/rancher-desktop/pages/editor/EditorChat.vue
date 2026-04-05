@@ -775,17 +775,42 @@ function toggleModelMenu() {
 const messagesEl = ref<HTMLElement>();
 const inputEl = ref<HTMLTextAreaElement>();
 
+// Auto-scroll state - only scroll if user is near bottom
+const autoScrollEnabled = ref(true);
+let isUserScrolling = false;
+let scrollTimeout: ReturnType<typeof setTimeout> | null = null;
+const SCROLL_THRESHOLD = 100; // pixels from bottom to trigger auto-scroll
+
+function attachScrollListeners(container: HTMLElement) {
+  const startScroll = () => { isUserScrolling = true; };
+  const endScroll = () => {
+    if (scrollTimeout) clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => { isUserScrolling = false; }, 150);
+  };
+  container.addEventListener('wheel', startScroll, { passive: true });
+  container.addEventListener('wheel', endScroll, { passive: true });
+  container.addEventListener('touchstart', startScroll, { passive: true });
+  container.addEventListener('touchend', endScroll, { passive: true });
+  container.addEventListener('scroll', () => {
+    if (!isUserScrolling) return;
+    const dist = container.scrollHeight - container.scrollTop - container.clientHeight;
+    autoScrollEnabled.value = dist <= SCROLL_THRESHOLD;
+  }, { passive: true });
+}
+
 function renderMarkdown(content: string): string {
   const raw = typeof content === 'string' ? content : String(content || '');
   const html = (marked(raw) as string) || '';
   return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 }
 
-function scrollToBottom() {
+function scrollToBottom(force = false) {
   nextTick(() => {
-    if (messagesEl.value) {
-      messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
-    }
+    const container = messagesEl.value;
+    if (!container) return;
+    // Only scroll if auto-scroll is enabled or forced
+    if (!autoScrollEnabled.value && !force) return;
+    container.scrollTop = container.scrollHeight;
   });
 }
 
@@ -862,13 +887,28 @@ const filteredHistory = computed(() => {
   );
 });
 
-// Auto-scroll on new messages
+// Auto-scroll on new messages - only if user is near bottom
 watch(() => props.messages.length, () => scrollToBottom());
+
+// Auto-scroll when a message is enqueued
+watch(() => props.queuedMessages?.length, () => scrollToBottom());
+
+// Auto-scroll during streaming or thinking (when last message content updates)
+watch(
+  () => {
+    const msgs = props.messages;
+    const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    return (last?.kind === 'streaming' || last?.kind === 'thinking') ? last.content : null;
+  },
+  () => scrollToBottom(),
+  { flush: 'post' }
+);
 
 // Scroll to bottom on mount if there are existing messages (e.g., after page refresh)
 onMounted(() => {
+  if (messagesEl.value) attachScrollListeners(messagesEl.value);
   if (props.messages.length > 0) {
-    scrollToBottom();
+    scrollToBottom(true); // Force scroll on mount
   }
 });
 </script>
