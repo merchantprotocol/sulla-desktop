@@ -429,43 +429,26 @@
           @input="onInput"
           @keydown.enter.exact.prevent="onSend"
         />
-        <!-- Stop button when busy (running or initializing) -->
+        <!-- Stop button: only when busy AND no text typed -->
         <button
-          v-if="isBusy"
+          v-if="isBusy && !query.trim()"
           class="chat-stop-btn"
           :class="{ dark: isDark }"
           @click="$emit('stop')"
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="currentColor"
-          >
-            <rect
-              x="3"
-              y="3"
-              width="10"
-              height="10"
-              rx="1"
-            />
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="3" y="3" width="10" height="10" rx="1"/>
           </svg>
         </button>
-        <!-- Send button -->
+        <!-- Send button: always when there's text (allows queuing when busy) -->
         <button
-          v-else
+          v-if="query.trim()"
           class="chat-send-btn"
           :class="{ dark: isDark }"
-          :disabled="!query.trim()"
           @click="onSend"
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="currentColor"
-          >
-            <path d="M1.724 1.053a.5.5 0 0 1 .54-.068l12 6a.5.5 0 0 1 0 .894l-12 6A.5.5 0 0 1 1.5 13.5v-4.9l7-1.1-7-1.1V1.5a.5.5 0 0 1 .224-.447Z" />
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M1.724 1.053a.5.5 0 0 1 .54-.068l12 6a.5.5 0 0 1 0 .894l-12 6A.5.5 0 0 1 1.5 13.5v-4.9l7-1.1-7-1.1V1.5a.5.5 0 0 1 .224-.447Z"/>
           </svg>
         </button>
       </div>
