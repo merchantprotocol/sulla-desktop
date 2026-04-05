@@ -70,7 +70,11 @@ export function initialize(): void {
 
 export async function shutdown(): Promise<void> {
   log.info('Init', 'Shutting down audio driver');
-  await lifecycle.deactivate({ removeDriver: true });
+  // Don't remove the loopback driver on shutdown — it lives in /Library/ and
+  // requires sudo to delete, which would prompt for a password the user never
+  // sees.  The driver stays installed between sessions; only the mirror and
+  // capture are torn down.
+  await lifecycle.deactivate({ removeDriver: false });
   micSocket.stop();
   log.info('Init', 'Audio driver shut down');
 }

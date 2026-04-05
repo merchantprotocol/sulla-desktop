@@ -15,6 +15,7 @@ export class RedisClient {
   private gaveUp = false;
   private gaveUpAt = 0;
   private cooldownMs = 30_000; // retry after 30s cooldown if we gave up
+  private shuttingDown = false;
 
   constructor() {
     this.client = this.createClient();
@@ -25,12 +26,16 @@ export class RedisClient {
    * Called on construction and when a dead client needs to be replaced.
    */
   private createClient(): Redis {
+    const self = this; // capture for retryStrategy closure
+
     const client = new Redis(REDIS_URL, {
-      // Never return null — always keep trying to reconnect.
-      // The Lima VM / Docker containers can restart at any time;
-      // a dead ioredis client cannot be revived, so we must keep retrying.
       retryStrategy: (times: number) => {
-        // Back off up to 10s between retries, indefinitely
+        // During shutdown, stop retrying immediately
+        if (self.shuttingDown) {
+          return null;
+        }
+
+        // Back off up to 10s between retries
         const delay = Math.min(times * 200, 10_000);
 
         if (times % 30 === 0) {
@@ -253,18 +258,44 @@ export class RedisClient {
     return this.client.publish(channel, message);
   }
 
+  /**
+   * Wait until Redis is actually reachable from the host.
+   * Called by ServiceLifecycleManager before any service that needs Redis.
+   */
+  async waitForReady(maxAttempts = 30, intervalMs = 1000): Promise<void> {
+    for (let i = 1; i <= maxAttempts; i++) {
+      try {
+        if (this.client.status === 'end') {
+          this.client = this.createClient();
+        }
+        if (this.client.status === 'wait') {
+          await this.client.connect();
+        }
+        await this.client.ping();
+        this.connected = true;
+        this.connectionAttempts = 0;
+        console.log(`[RedisClient] Host port 30117 reachable (attempt ${ i })`);
+
+        return;
+      } catch {
+        if (i === maxAttempts) {
+          throw new Error(`Redis not reachable after ${ maxAttempts } attempts`);
+        }
+        console.log(`[RedisClient] waitForReady attempt ${ i }/${ maxAttempts } failed, retrying...`);
+        await new Promise(r => setTimeout(r, intervalMs));
+      }
+    }
+  }
+
   // Close connection (call on shutdown)
   async close(): Promise<void> {
+    this.shuttingDown = true;
+
     try {
-      if (this.connected) {
-        await this.client.quit();
-      } else {
-        // Force-disconnect to stop the reconnection retry loop
-        this.client.disconnect();
-      }
-    } catch {
-      // If quit fails, force-disconnect
+      // Force-disconnect immediately to stop the retry loop
       this.client.disconnect();
+    } catch {
+      // already disconnected
     }
     this.connected = false;
     this.gaveUp = false;
