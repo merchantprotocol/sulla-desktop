@@ -115,6 +115,7 @@ const languageModelSettingsUrl = `${ webRoot }/lm-settings.html`;
 const audioSettingsUrl = `${ webRoot }/audio-settings.html`;
 const editorUrl = `${ webRoot }/editor.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
+const captureStudioUrl = `${ webRoot }/capture-studio.html`;
 
 console.log('[window/index] URLs configured:', { webRoot, mainUrl, dockerDashboardUrl });
 
@@ -396,6 +397,54 @@ export function openEditor() {
 
   window.on('closed', () => {
     delete windowMapping['editor'];
+  });
+
+  app.dock?.show();
+
+  return window;
+}
+
+/**
+ * Open the Capture Studio window; if it is already open, focus it.
+ */
+export function openCaptureStudio() {
+  console.log('[openCaptureStudio] Called.');
+
+  const fullSize = screen.getPrimaryDisplay().size;
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+
+  const defaultWidth = Math.trunc(fullSize.width * 0.9);
+  const defaultHeight = workArea.height;
+
+  const window = createWindow(
+    'capture-studio',
+    captureStudioUrl,
+    {
+      title:          'Sulla Desktop - Capture Studio',
+      x:              0,
+      y:              0,
+      width:          defaultWidth,
+      height:         defaultHeight,
+      resizable:      true,
+      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      backgroundColor: '#0d1117',
+      // macOS: hide native title bar, keep traffic lights overlaid on content
+      ...(os.platform() === 'darwin'
+        ? {
+          titleBarStyle:        'hiddenInset',
+          trafficLightPosition: { x: 16, y: 8 },
+        }
+        : {}),
+      webPreferences: {
+        devTools:         !app.isPackaged,
+        nodeIntegration:  true,
+        contextIsolation: false,
+        webSecurity:      false,
+      },
+    });
+
+  window.on('closed', () => {
+    delete windowMapping['capture-studio'];
   });
 
   app.dock?.show();

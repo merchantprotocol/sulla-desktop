@@ -21,7 +21,7 @@ import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send, openEditor, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
+import { openMain, send, openEditor, openCaptureStudio, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -81,6 +81,15 @@ export class Tray {
             sendCommand();
           }
         }
+      },
+    },
+    {
+      id:    'capture-studio',
+      label: 'Capture Studio',
+      icon:  path.join(paths.resources, 'icons', 'automation-play.png'),
+      type:  'normal',
+      click() {
+        openCaptureStudio();
       },
     },
     { type: 'separator' },
@@ -505,7 +514,7 @@ export class Tray {
       });
     } else {
       // Re-enable items that were disabled when logged out
-      const loginControlled = new Set(['editor', 'docker-dashboard', 'extensions', 'secretary-mode']);
+      const loginControlled = new Set(['editor', 'docker-dashboard', 'extensions', 'secretary-mode', 'capture-studio']);
       this.contextMenuItems.forEach((item) => {
         if (item.id && loginControlled.has(item.id)) {
           item.enabled = true;

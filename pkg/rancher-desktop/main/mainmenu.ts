@@ -5,7 +5,7 @@ import { State } from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
 import Logging from '@pkg/utils/logging';
 import setupUpdate from '@pkg/main/update';
-import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openMain, openEditor, getWindow, openUrlInApp } from '@pkg/window';
+import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openCaptureStudio, openMain, openEditor, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
@@ -290,6 +290,12 @@ function getFileMenu(): MenuItem {
         click:       openEditor,
       },
       {
+        label:       'Open Capture Studio',
+        accelerator: 'CmdOrCtrl+Shift+R',
+        enabled:     userLoggedIn,
+        click:       openCaptureStudio,
+      },
+      {
         label:   'Open Docker Dashboard',
         enabled: userLoggedIn,
         click:   openDockerDashboard,
@@ -420,6 +426,12 @@ function getGoMenu(): MenuItem {
         accelerator: 'CmdOrCtrl+Shift+U',
         enabled:     userLoggedIn,
         click:       openAudioSettings,
+      },
+      {
+        label:       'Capture &Studio…',
+        accelerator: 'CmdOrCtrl+Shift+R',
+        enabled:     userLoggedIn,
+        click:       openCaptureStudio,
       },
       { type: 'separator' },
       {

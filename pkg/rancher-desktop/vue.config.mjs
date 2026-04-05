@@ -197,5 +197,10 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'side-panel.html'),
       filename: 'side-panel.html',
     },
+    'capture-studio': {
+      entry:    path.join(import.meta.dirname, 'entry', 'capture-studio.ts'),
+      template: path.join(import.meta.dirname, 'public', 'capture-studio.html'),
+      filename: 'capture-studio.html',
+    },
   },
 };
