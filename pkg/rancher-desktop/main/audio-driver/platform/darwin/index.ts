@@ -13,14 +13,13 @@
 import { execFile, execSync, spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import path from 'path';
-import { app } from 'electron';
 import { log } from '../../model/logger';
+import paths from '@pkg/utils/paths';
 
-// Resolve the path to native Swift scripts and the create-mirror binary.
-// In dev: dist/app/audio-driver/platform/darwin/
-// In production: app.asar.unpacked/audio-driver/platform/darwin/ (via asarUnpack)
-const appDir = app.getAppPath().replace('app.asar', 'app.asar.unpacked');
-const scriptDir = path.join(appDir, 'audio-driver', 'platform', 'darwin');
+// Native Swift scripts and create-mirror binary live in resources/darwin/audio-driver/
+// Same pattern as all other platform binaries (rdctl, sulla-daemon, etc.)
+const scriptDir = path.join(paths.resources, 'darwin', 'audio-driver');
+log.info('Platform', 'Script directory', { scriptDir });
 
 const SCRIPTS = {
   detect:        path.join(scriptDir, 'detect-loopback.swift'),

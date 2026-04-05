@@ -299,7 +299,6 @@ export default {
   async buildMain(): Promise<void> {
     await this.wait(() => this.buildJavaScript(this.webpackConfig));
     this.copyTrayPanelAssets();
-    this.copyAudioDriverNativeAssets();
   },
 
   /**

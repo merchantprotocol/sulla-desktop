@@ -55,7 +55,8 @@ export function initialize(win: BrowserWindow): void {
   });
 
   registerIpcHandlers();
-  log.info('Init', 'Audio driver initialized');
+  log.info('Init', 'Audio driver initialized — IPC handlers registered');
+  console.log('[Audio Driver] IPC handlers registered');
 }
 
 export async function shutdown(): Promise<void> {
@@ -80,6 +81,8 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.on('audio-driver:toggle', async() => {
+    log.info('IPC', 'audio-driver:toggle received');
+    console.log('[Audio Driver] Toggle (audio-driver:toggle) received');
     const state = audio.getState();
     if (state.running) {
       broadcastState({ running: true, message: 'Disabling...' });
@@ -91,6 +94,8 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.on('tray-panel:audio-toggle', async(_event: Electron.IpcMainEvent, enabled: boolean) => {
+    log.info('IPC', 'tray-panel:audio-toggle received', { enabled });
+    console.log('[Audio Driver] Toggle received:', enabled);
     if (enabled) {
       broadcastState({ running: false, message: 'Enabling...' });
       await startCapture();
