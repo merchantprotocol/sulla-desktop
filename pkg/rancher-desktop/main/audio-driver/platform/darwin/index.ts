@@ -440,3 +440,121 @@ export const volume = {
     return volume.adjust(deviceUID, 'toggle-mute');
   },
 };
+
+// ─── Whisper.cpp (Local STT Engine) ───────────────────────────
+
+const WHISPER_MODELS_DIR = path.join(
+  process.env.HOME || '/tmp',
+  '.sulla', 'cache', 'whisper', 'models',
+);
+
+export const whisper = {
+  async detect(): Promise<any> {
+    try {
+      const stdout = execSync('which whisper-cpp 2>/dev/null || which whisper 2>/dev/null', {
+        timeout: 5000,
+        stdio:   'pipe',
+        env:     CHILD_ENV,
+      }).toString().trim();
+
+      if (!stdout) return { available: false };
+
+      const binaryPath = stdout.split('\n')[0];
+
+      // Get version
+      let version = 'unknown';
+      try {
+        const vOut = execSync(`"${ binaryPath }" --version 2>&1 || true`, {
+          timeout: 5000,
+          stdio:   'pipe',
+          env:     CHILD_ENV,
+        }).toString().trim();
+        const match = vOut.match(/whisper[.\s-]*(cpp)?\s*v?([\d.]+)/i);
+        if (match) version = match[2];
+      } catch { /* version check optional */ }
+
+      // Enumerate downloaded models
+      const models = whisper.listModels();
+
+      log.info('Platform', 'whisper.cpp detected', { binaryPath, version, models });
+      return { available: true, version, binaryPath, modelsPath: WHISPER_MODELS_DIR, models };
+    } catch {
+      return { available: false };
+    }
+  },
+
+  async install(): Promise<boolean> {
+    log.info('Platform', 'Installing whisper-cpp via Homebrew...');
+    try {
+      execSync('brew install whisper-cpp', { timeout: 180000, stdio: 'pipe', env: CHILD_ENV });
+      log.info('Platform', 'whisper-cpp installed');
+
+      // Verify
+      const recheck = await whisper.detect();
+      if (recheck.available) {
+        log.info('Platform', 'whisper-cpp confirmed after install');
+        return true;
+      }
+
+      log.error('Platform', 'whisper-cpp installed but binary not found in PATH');
+      return false;
+    } catch (e: any) {
+      log.error('Platform', 'Failed to install whisper-cpp', { error: e.message });
+      return false;
+    }
+  },
+
+  remove(): void {
+    try {
+      execSync('brew uninstall whisper-cpp 2>/dev/null', { timeout: 30000, stdio: 'pipe', env: CHILD_ENV });
+      log.info('Platform', 'whisper-cpp uninstalled via Homebrew');
+    } catch {
+      // Already gone
+    }
+  },
+
+  listModels(): string[] {
+    try {
+      const fs = require('fs') as typeof import('fs');
+      if (!fs.existsSync(WHISPER_MODELS_DIR)) return [];
+      return fs.readdirSync(WHISPER_MODELS_DIR)
+        .filter((f: string) => f.startsWith('ggml-') && f.endsWith('.bin'))
+        .map((f: string) => f.replace(/^ggml-/, '').replace(/\.bin$/, ''));
+    } catch {
+      return [];
+    }
+  },
+
+  async downloadModel(model: string): Promise<boolean> {
+    const fs = require('fs') as typeof import('fs');
+    log.info('Platform', 'Downloading whisper model', { model });
+
+    // Ensure models directory exists
+    if (!fs.existsSync(WHISPER_MODELS_DIR)) {
+      fs.mkdirSync(WHISPER_MODELS_DIR, { recursive: true });
+    }
+
+    const modelFile = path.join(WHISPER_MODELS_DIR, `ggml-${ model }.bin`);
+    if (fs.existsSync(modelFile)) {
+      log.info('Platform', 'Model already exists', { model, modelFile });
+      return true;
+    }
+
+    const baseUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
+    const url = `${ baseUrl }/ggml-${ model }.bin`;
+
+    try {
+      execSync(
+        `curl -L --progress-bar -o "${ modelFile }.tmp" "${ url }" && mv "${ modelFile }.tmp" "${ modelFile }"`,
+        { timeout: 600000, stdio: 'pipe', env: CHILD_ENV },
+      );
+      log.info('Platform', 'Model downloaded', { model, modelFile });
+      return true;
+    } catch (e: any) {
+      log.error('Platform', 'Failed to download model', { model, error: e.message });
+      // Clean up partial download
+      try { fs.unlinkSync(`${ modelFile }.tmp`); } catch { /* ignore */ }
+      return false;
+    }
+  },
+};

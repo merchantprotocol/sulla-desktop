@@ -111,13 +111,16 @@ export async function activate({ onLevel, onRebuild }: { onLevel?: (data: any) =
     if (onMirrorRebuilt) onMirrorRebuilt(event);
   });
 
-  // 7. Start speaker capture (with raw PCM callback for gateway streaming)
+  // 7. Start speaker capture (with raw PCM callback for gateway + local transcription)
   const gateway = await import('../service/gateway');
+  const whisperTranscribe = await import('../service/whisper-transcribe');
   speakerCapture.start((level: any) => {
     if (onSpeakerLevel) onSpeakerLevel(level);
   }, {
     onAudio: (pcmData: Buffer) => {
       gateway.sendAudio(pcmData, 1);
+      // Feed speaker audio to local whisper transcription (secretary mode)
+      whisperTranscribe.feedSpeaker(pcmData);
     },
   });
 

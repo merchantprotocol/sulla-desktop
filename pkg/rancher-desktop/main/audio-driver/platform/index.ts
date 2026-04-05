@@ -12,3 +12,4 @@ export const watcher = backend.watcher;
 export const capture = backend.capture;
 export const devices = backend.devices;
 export const volume = backend.volume;
+export const whisper = backend.whisper;

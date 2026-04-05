@@ -11,8 +11,10 @@ import { ipcMain, BrowserWindow } from 'electron';
 import * as lifecycle from './controller/lifecycle';
 import * as audio from './model/audio';
 import * as mirror from './model/mirror';
+import * as whisper from './model/whisper';
 import * as gateway from './service/gateway';
 import * as micSocket from './service/mic-socket';
+import * as whisperTranscribe from './service/whisper-transcribe';
 import { log, createLogger } from './model/logger';
 
 const rendererLog = createLogger('renderer');
@@ -48,6 +50,8 @@ export function initialize(): void {
   micSocket.start((chunk: Buffer) => {
     if (chunk.length > 0) {
       gateway.sendAudio(chunk, 0);
+      // Feed mic audio to local whisper transcription if active
+      whisperTranscribe.feedMic(chunk);
     }
   });
 
@@ -242,6 +246,95 @@ function registerIpcHandlers(): void {
 
   ipcMain.on('audio-driver:update-call-state', (_event: Electron.IpcMainEvent, state: any) => {
     broadcast('audio-driver:call-state', state);
+  });
+
+  // ── Whisper.cpp (local STT engine) ─────────────────────────────
+
+  ipcMain.handle('audio-driver:whisper-detect', async() => {
+    log.info('IPC', 'whisper-detect');
+    return await whisper.detect();
+  });
+
+  ipcMain.handle('audio-driver:whisper-install', async() => {
+    log.info('IPC', 'whisper-install');
+    broadcastState({ running: audio.getState().running, message: 'Installing whisper.cpp...' });
+    const ok = await whisper.install();
+    if (ok) {
+      const status = await whisper.detect();
+      broadcast('audio-driver:whisper-status', status);
+      broadcastState({ running: audio.getState().running, message: audio.getState().running ? 'Capturing' : 'Off' });
+    } else {
+      broadcastState({ running: audio.getState().running, message: 'whisper.cpp install failed' });
+    }
+    return { ok };
+  });
+
+  ipcMain.handle('audio-driver:whisper-remove', async() => {
+    log.info('IPC', 'whisper-remove');
+    await whisper.remove();
+    const status = await whisper.detect();
+    broadcast('audio-driver:whisper-status', status);
+    return { ok: true };
+  });
+
+  ipcMain.handle('audio-driver:whisper-get-status', () => {
+    return whisper.getStatus();
+  });
+
+  ipcMain.handle('audio-driver:whisper-download-model', async(_event: unknown, model: string) => {
+    log.info('IPC', 'whisper-download-model', { model });
+    broadcastState({ running: audio.getState().running, message: `Downloading model: ${ model }...` });
+    const ok = await whisper.downloadModel(model);
+    if (ok) {
+      const status = await whisper.detect();
+      broadcast('audio-driver:whisper-status', status);
+    }
+    broadcastState({ running: audio.getState().running, message: audio.getState().running ? 'Capturing' : 'Off' });
+    return { ok };
+  });
+
+  ipcMain.handle('audio-driver:whisper-list-models', () => {
+    return whisper.getModels();
+  });
+
+  // ── Local transcription (whisper.cpp powered) ─────────────────
+
+  ipcMain.handle('audio-driver:transcribe-start', async(_event: unknown, opts: {
+    mode: 'conversation' | 'secretary';
+    language?: string;
+    model?: string;
+  }) => {
+    log.info('IPC', 'transcribe-start', opts);
+
+    // Detect whisper if not yet cached
+    if (!whisper.isAvailable()) {
+      await whisper.detect();
+    }
+
+    const ok = whisperTranscribe.start({
+      mode:         opts.mode,
+      language:     opts.language,
+      model:        opts.model,
+      onTranscript: (event) => {
+        // Emit on the same channel the gateway uses so existing UI code works
+        broadcast('gateway-transcript', event);
+      },
+    });
+
+    return { ok };
+  });
+
+  ipcMain.handle('audio-driver:transcribe-stop', () => {
+    log.info('IPC', 'transcribe-stop');
+    whisperTranscribe.stop();
+    return { ok: true };
+  });
+
+  ipcMain.handle('audio-driver:transcribe-status', () => {
+    return {
+      active: whisperTranscribe.isActive(),
+      mode:   whisperTranscribe.getMode(),
+    };
   });
 
   ipcMain.on('audio-driver:log', (_event: Electron.IpcMainEvent, level: string, tag: string, msg: string, data: any) => {

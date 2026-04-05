@@ -499,3 +499,85 @@ export const volume = {
     return volume.adjust(deviceUID, 'toggle-mute');
   },
 };
+
+// ─── Whisper.cpp (Local STT Engine) ───────────────────────────
+
+import path from 'path';
+import fs from 'fs';
+
+const WHISPER_MODELS_DIR = path.join(
+  process.env.LOCALAPPDATA || process.env.USERPROFILE || 'C:\\Users\\Default',
+  '.sulla', 'cache', 'whisper', 'models',
+);
+
+export const whisper = {
+  async detect(): Promise<any> {
+    try {
+      const stdout = execSync('where whisper-cpp.exe 2>nul || where whisper.exe 2>nul', {
+        timeout: 5000, stdio: 'pipe',
+      }).toString().trim();
+
+      if (!stdout) return { available: false };
+
+      const binaryPath = stdout.split('\r\n')[0];
+      let version = 'unknown';
+      try {
+        const vOut = execSync(`"${ binaryPath }" --version 2>&1`, {
+          timeout: 5000, stdio: 'pipe',
+        }).toString().trim();
+        const match = vOut.match(/whisper[.\s-]*(cpp)?\s*v?([\d.]+)/i);
+        if (match) version = match[2];
+      } catch { /* version check optional */ }
+
+      const models = whisper.listModels();
+      log.info('Platform', 'whisper.cpp detected', { binaryPath, version, models });
+      return { available: true, version, binaryPath, modelsPath: WHISPER_MODELS_DIR, models };
+    } catch {
+      return { available: false };
+    }
+  },
+
+  async install(): Promise<boolean> {
+    log.info('Platform', 'whisper.cpp Windows install — manual download required');
+    // Windows: no brew equivalent; user must install manually or we download pre-built binary
+    // TODO: download pre-built release from GitHub
+    return false;
+  },
+
+  remove(): void {
+    log.info('Platform', 'whisper.cpp Windows uninstall — manual removal required');
+  },
+
+  listModels(): string[] {
+    try {
+      if (!fs.existsSync(WHISPER_MODELS_DIR)) return [];
+      return fs.readdirSync(WHISPER_MODELS_DIR)
+        .filter((f: string) => f.startsWith('ggml-') && f.endsWith('.bin'))
+        .map((f: string) => f.replace(/^ggml-/, '').replace(/\.bin$/, ''));
+    } catch {
+      return [];
+    }
+  },
+
+  async downloadModel(model: string): Promise<boolean> {
+    log.info('Platform', 'Downloading whisper model', { model });
+    if (!fs.existsSync(WHISPER_MODELS_DIR)) fs.mkdirSync(WHISPER_MODELS_DIR, { recursive: true });
+
+    const modelFile = path.join(WHISPER_MODELS_DIR, `ggml-${ model }.bin`);
+    if (fs.existsSync(modelFile)) return true;
+
+    const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${ model }.bin`;
+    try {
+      execSync(
+        `powershell -Command "Invoke-WebRequest -Uri '${ url }' -OutFile '${ modelFile }.tmp'; Move-Item -Force '${ modelFile }.tmp' '${ modelFile }'"`,
+        { timeout: 600000, stdio: 'pipe' },
+      );
+      log.info('Platform', 'Model downloaded', { model });
+      return true;
+    } catch (e: any) {
+      log.error('Platform', 'Failed to download model', { model, error: e.message });
+      try { fs.unlinkSync(`${ modelFile }.tmp`); } catch { /* ignore */ }
+      return false;
+    }
+  },
+};
