@@ -64,6 +64,10 @@ document.getElementById('btn-secretary-mode').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:secretary-mode');
 });
 
+document.getElementById('btn-capture-studio').addEventListener('click', () => {
+  ipcRenderer.send('tray-panel:open-capture-studio');
+});
+
 // Settings panel buttons
 document.getElementById('btn-premium-support').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:open-url', 'https://www.skool.com/book-more-appointments-8103');

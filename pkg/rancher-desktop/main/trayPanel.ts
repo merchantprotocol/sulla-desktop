@@ -9,7 +9,7 @@ import path from 'path';
 import { BrowserWindow, ipcMain, app } from 'electron';
 
 import Logging from '@pkg/utils/logging';
-import { openMain, openEditor, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
+import { openMain, openEditor, openCaptureStudio, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import setupUpdate from '@pkg/main/update';
 
@@ -200,6 +200,11 @@ function registerPanelIpc(): void {
 
   ipcMain.on('tray-panel:open-dashboard', () => {
     openDashboard();
+    panelWindow?.hide();
+  });
+
+  ipcMain.on('tray-panel:open-capture-studio', () => {
+    openCaptureStudio();
     panelWindow?.hide();
   });
 
