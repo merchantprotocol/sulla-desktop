@@ -7,7 +7,7 @@
       <!-- Screen preview -->
       <div class="screen-preview">
         <video
-          v-if="mediaSources.screenStream"
+          v-if="mediaSources.screenStream.value"
           ref="screenVideoEl"
           autoplay
           muted
@@ -148,7 +148,7 @@
           @dblclick="swapAssignments"
         >
           <video
-            v-if="mediaSources.cameraStream"
+            v-if="mediaSources.cameraStream.value"
             ref="camVideoEl"
             autoplay
             muted
@@ -609,11 +609,11 @@ async function toggleRecord() {
     // Gather active streams for recording
     const streams: Array<{ id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }> = [];
 
-    if (mediaSources.screenStream) {
-      streams.push({ id: 'screen', type: 'screen', stream: mediaSources.screenStream });
+    if (mediaSources.screenStream.value) {
+      streams.push({ id: 'screen', type: 'screen', stream: mediaSources.screenStream.value });
     }
-    if (mediaSources.cameraStream) {
-      streams.push({ id: 'cam', type: 'camera', stream: mediaSources.cameraStream });
+    if (mediaSources.cameraStream.value) {
+      streams.push({ id: 'cam', type: 'camera', stream: mediaSources.cameraStream.value });
     }
     for (const [id, mic] of Object.entries(micInstances)) {
       if (mic.stream.value && mic.active.value) {
@@ -621,8 +621,8 @@ async function toggleRecord() {
       }
     }
     // System audio comes from the screen stream's audio tracks
-    if (mediaSources.screenStream) {
-      const audioTracks = mediaSources.screenStream.getAudioTracks();
+    if (mediaSources.screenStream.value) {
+      const audioTracks = mediaSources.screenStream.value.getAudioTracks();
       if (audioTracks.length > 0) {
         const sysStream = new MediaStream(audioTracks);
         streams.push({ id: 'sys', type: 'system-audio', stream: sysStream });
@@ -1038,15 +1038,15 @@ const screenVideoEl = ref<HTMLVideoElement | null>(null);
 const camVideoEl = ref<HTMLVideoElement | null>(null);
 
 // Bind video streams to <video> elements
-watch(() => mediaSources.screenStream, (stream) => {
+watch(() => mediaSources.screenStream.value, (stream) => {
   if (screenVideoEl.value) {
-    screenVideoEl.value.srcObject = stream;
+    screenVideoEl.value.srcObject = stream || null;
   }
 });
 
-watch(() => mediaSources.cameraStream, (stream) => {
+watch(() => mediaSources.cameraStream.value, (stream) => {
   if (camVideoEl.value) {
-    camVideoEl.value.srcObject = stream;
+    camVideoEl.value.srcObject = stream || null;
   }
 });
 
