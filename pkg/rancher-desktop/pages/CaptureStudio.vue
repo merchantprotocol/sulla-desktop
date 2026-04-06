@@ -92,6 +92,32 @@
       @close="ctxMenu.visible = false"
     />
 
+    <!-- Permission denied modal -->
+    <div v-if="permissionDenied" class="add-popup-overlay open">
+      <div class="add-popup">
+        <div class="popup-header">
+          <h3>Permission Required</h3>
+          <button class="popup-close" @click="permissionDenied = ''">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div style="padding: 18px; font-size: 12px; color: var(--text-secondary); line-height: 1.6;">
+          <p>Screen recording permission is required to capture your screen.</p>
+          <p style="margin-top: 8px; color: var(--text-muted);">Open System Preferences and enable screen recording for Sulla Desktop.</p>
+        </div>
+        <div class="popup-actions" style="display: flex;">
+          <button class="popup-btn secondary" @click="permissionDenied = ''">Cancel</button>
+          <button class="popup-btn primary" @click="openSystemPreferences">Open System Preferences</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Disk space warning -->
+    <div v-if="diskSpace.isLow.value && recording" class="info-badge" style="position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 50; background: rgba(227, 179, 65, 0.15); border-color: var(--warning); color: var(--warning);">
+      <div class="dot" style="background: var(--warning);"></div>
+      Low disk space: {{ diskSpace.availableGB.value }} remaining
+    </div>
+
     <!-- Flash overlay -->
     <div class="flash-overlay" :class="{ flash: flashActive }"></div>
   </div>
@@ -104,6 +130,9 @@ import { createMicInstance, listAudioDevices, type MicInstance } from './capture
 import { useMediaSources } from './capture-studio/composables/useMediaSources';
 import { useRecorder } from './capture-studio/composables/useRecorder';
 import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-studio/composables/useWaveform';
+import { useSettings } from './capture-studio/composables/useSettings';
+import { useDiskSpace } from './capture-studio/composables/useDiskSpace';
+import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
 
 import ContextMenu from './capture-studio/ContextMenu.vue';
 import LayoutBar from './capture-studio/LayoutBar.vue';
@@ -114,10 +143,16 @@ import TeleprompterLayout from './capture-studio/TeleprompterLayout.vue';
 import AddSourceDialog from './capture-studio/AddSourceDialog.vue';
 import CaptureCanvas from './capture-studio/CaptureCanvas.vue';
 
+const { ipcRenderer } = require('electron');
+const { shell } = require('electron');
+
 // ─── Composables ───
 const audioDriver = useAudioDriver();
 const mediaSources = useMediaSources();
 const recorder = useRecorder();
+const settings = useSettings();
+const diskSpace = useDiskSpace();
+const speakerCapture = useSpeakerCapture();
 
 // Mic instances keyed by source id
 const micInstances = reactive<Record<string, MicInstance>>({});
@@ -242,6 +277,9 @@ async function toggleSrc(src: Source) {
   if (src.on) {
     try {
       if (src.type === 'screen') {
+        // Check macOS permission before attempting screen capture
+        const hasPermission = await checkScreenPermission();
+        if (!hasPermission) { src.on = false; return; }
         await mediaSources.acquireScreen();
       } else if (src.type === 'camera') {
         await mediaSources.acquireCamera();
@@ -305,6 +343,14 @@ function swapAssignments() {
 // ─── Record (wired to disk writer) ───
 async function toggleRecord() {
   if (!recording.value) {
+    // Check disk space before starting
+    const spaceCheck = diskSpace.checkBeforeRecording();
+    if (!spaceCheck.ok) {
+      console.warn('[CaptureStudio]', spaceCheck.message);
+      // TODO: show UI warning
+      return;
+    }
+
     // Gather active streams for recording
     const streams: Array<{ id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }> = [];
 
@@ -319,28 +365,39 @@ async function toggleRecord() {
         streams.push({ id, type: 'mic', stream: mic.stream.value });
       }
     }
-    // System audio comes from the screen stream's audio tracks
-    if (mediaSources.screenStream.value) {
-      const audioTracks = mediaSources.screenStream.value.getAudioTracks();
-      if (audioTracks.length > 0) {
-        const sysStream = new MediaStream(audioTracks);
-        streams.push({ id: 'sys', type: 'system-audio', stream: sysStream });
-      }
-    }
 
     if (streams.length === 0) {
       console.warn('[CaptureStudio] No active streams to record');
       return;
     }
 
-    recorder.startSession(streams);
+    const sessionId = recorder.startSession(streams);
+
+    // Start speaker capture to WAV if audio driver is running
+    if (audioDriver.speakerRunning.value && sessionId) {
+      const os = require('os');
+      const path = require('path');
+      const speakerPath = path.join(os.homedir(), 'sulla', 'captures', sessionId, 'system-audio.wav');
+      await speakerCapture.start(speakerPath);
+    }
+
     recording.value = true;
     seconds.value = 0;
     timerInterval = setInterval(() => { seconds.value++; }, 1000);
+
+    // Start disk space monitoring
+    diskSpace.startMonitoring(() => {
+      // Critical: auto-stop recording
+      console.warn('[CaptureStudio] Critical disk space — stopping recording');
+      toggleRecord(); // recursive call to stop
+    });
   } else {
+    // Stop speaker capture
+    speakerCapture.stop();
     await recorder.stopSession();
     recording.value = false;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    diskSpace.stopMonitoring();
   }
 }
 
@@ -598,7 +655,61 @@ function stopWaveformLoop() {
 }
 
 // ─── Lifecycle ───
+// ─── Keyboard shortcuts ───
+function onKeyDown(e: KeyboardEvent) {
+  const mod = e.metaKey || e.ctrlKey;
+
+  // Escape: close any open popup/overlay
+  if (e.key === 'Escape') {
+    if (addPopupOpen.value) { addPopupOpen.value = false; return; }
+    if (ctxMenu.visible) { ctxMenu.visible = false; return; }
+  }
+
+  // Cmd+Shift+R: toggle recording
+  if (mod && e.shiftKey && e.key.toLowerCase() === 'r') {
+    e.preventDefault();
+    toggleRecord();
+    return;
+  }
+
+  // Cmd+S: screenshot
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    doScreenshot();
+    return;
+  }
+
+  // 1-5: switch layout (only when no input focused)
+  if (!mod && !e.shiftKey && (e.target as HTMLElement).tagName !== 'INPUT' && (e.target as HTMLElement).tagName !== 'TEXTAREA') {
+    const layoutKeys: Record<string, string> = { '1': 'pip', '2': 'sidebyside', '3': 'screenonly', '4': 'camonly', '5': 'teleprompter' };
+    if (layoutKeys[e.key]) {
+      selectLayout(layoutKeys[e.key]);
+      return;
+    }
+  }
+}
+
+// ─── Permission check ───
+const permissionDenied = ref('');
+
+async function checkScreenPermission(): Promise<boolean> {
+  try {
+    const perms = await ipcRenderer.invoke('capture-studio:check-permissions');
+    if (perms.screen === 'denied' || perms.screen === 'restricted') {
+      permissionDenied.value = 'screen';
+      return false;
+    }
+  } catch {}
+  return true;
+}
+
+function openSystemPreferences() {
+  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+  permissionDenied.value = '';
+}
+
 onMounted(async () => {
+  document.addEventListener('keydown', onKeyDown);
   startWaveformLoop();
 
   // Populate device dropdowns with real devices
@@ -615,6 +726,17 @@ onMounted(async () => {
     console.warn('[CaptureStudio] Failed to enumerate devices:', e);
   }
 
+  // Apply saved settings once loaded
+  watch(() => settings.loaded.value, (loaded) => {
+    if (!loaded) return;
+    if (settings.layout.value) currentLayout.value = settings.layout.value;
+    if (settings.cameraShape.value) cameraShape.value = settings.cameraShape.value;
+  }, { immediate: true });
+
+  // Sync settings on change
+  watch(currentLayout, v => { settings.layout.value = v; });
+  watch(cameraShape, v => { settings.cameraShape.value = v; });
+
   // Auto-enable mic on open
   const micSrc = sources.find(s => s.id === 'mic');
   if (micSrc && !micSrc.on) {
@@ -623,13 +745,12 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  document.removeEventListener('keydown', onKeyDown);
   if (timerInterval) clearInterval(timerInterval);
   stopAudioMeter();
-
-  // Stop waveform animation
   stopWaveformLoop();
+  diskSpace.stopMonitoring();
 
-  // Stop all mic instances
   for (const mic of Object.values(micInstances)) {
     mic.stop();
   }

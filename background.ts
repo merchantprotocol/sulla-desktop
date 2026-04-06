@@ -1096,6 +1096,31 @@ ipcMainProxy.handle('capture-studio:get-sources', async() => {
   }));
 });
 
+ipcMainProxy.handle('capture-studio:check-permissions', () => {
+  const result: Record<string, string> = {
+    screen:     'granted',
+    camera:     'granted',
+    microphone: 'granted',
+  };
+  if (process.platform === 'darwin') {
+    const { systemPreferences } = Electron;
+    if (systemPreferences.getMediaAccessStatus) {
+      result.screen = systemPreferences.getMediaAccessStatus('screen');
+      result.camera = systemPreferences.getMediaAccessStatus('camera');
+      result.microphone = systemPreferences.getMediaAccessStatus('microphone');
+    }
+  }
+  return result;
+});
+
+ipcMainProxy.handle('sulla-settings:get', async(_event: any, key: string) => {
+  return SullaSettingsModel.get(key);
+});
+
+ipcMainProxy.handle('sulla-settings:set', async(_event: any, key: string, value: any, cast?: string) => {
+  return SullaSettingsModel.set(key, value, cast);
+});
+
 ipcMainProxy.handle('settings-write', (event, arg) => {
   try {
     writeSettings(arg);
