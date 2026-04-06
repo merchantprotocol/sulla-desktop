@@ -5,7 +5,7 @@
       :class="canvasClass"
     >
       <!-- Screen preview -->
-      <div class="screen-preview">
+      <div class="screen-preview" @contextmenu.prevent="showScreenContextMenu">
         <video
           v-if="mediaSources.screenStream.value"
           ref="screenVideoEl"
@@ -146,6 +146,7 @@
           :class="{ recording: recording, hidden: cameraShape === 'hidden' }"
           :style="{ borderRadius: bubbleRadius }"
           @dblclick="swapAssignments"
+          @contextmenu.prevent="showCameraContextMenu"
         >
           <video
             v-if="mediaSources.cameraStream.value"
@@ -354,6 +355,27 @@
         </div>
       </div>
     </div>
+
+    <!-- Context menu -->
+    <div
+      v-if="ctxMenu.visible"
+      class="ctx-menu"
+      :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+      @click="ctxMenu.visible = false"
+    >
+      <div class="ctx-menu-header">{{ ctxMenu.title }}</div>
+      <button
+        v-for="item in ctxMenu.items"
+        :key="item.id"
+        class="ctx-menu-item"
+        :class="{ active: item.active }"
+        @click="item.action()"
+      >
+        <img v-if="item.thumbnail" :src="item.thumbnail" class="ctx-menu-thumb" />
+        {{ item.label }}
+      </button>
+    </div>
+    <div v-if="ctxMenu.visible" class="ctx-menu-backdrop" @click="ctxMenu.visible = false"></div>
 
     <!-- Flash overlay -->
     <div class="flash-overlay" :class="{ flash: flashActive }"></div>
@@ -772,6 +794,80 @@ function stopAudioMeter() {
   }
 }
 
+// ─── Context menu for source switching ───
+interface CtxMenuItem {
+  id: string;
+  label: string;
+  thumbnail?: string;
+  active?: boolean;
+  action: () => void;
+}
+
+const ctxMenu = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  title: '',
+  items: [] as CtxMenuItem[],
+});
+
+async function showScreenContextMenu(e: MouseEvent) {
+  try {
+    const screenSources = await mediaSources.listScreenSources();
+    ctxMenu.items = screenSources.map(s => ({
+      id: s.id,
+      label: s.name,
+      thumbnail: s.thumbnailDataUrl,
+      active: false,
+      action: async () => {
+        try {
+          await mediaSources.switchScreen(s.id);
+          // Ensure screen source is marked on
+          const src = sources.find(ss => ss.id === 'screen');
+          if (src) {
+            src.on = true;
+            src.name = s.name;
+            src.status = 'Capturing';
+            autoAssign();
+          }
+        } catch (err) {
+          console.error('[CaptureStudio] Failed to switch screen:', err);
+        }
+      },
+    }));
+    ctxMenu.title = 'Switch Screen Source';
+    ctxMenu.x = e.clientX;
+    ctxMenu.y = e.clientY;
+    ctxMenu.visible = true;
+  } catch (err) {
+    console.error('[CaptureStudio] Failed to list screen sources:', err);
+  }
+}
+
+async function showCameraContextMenu(e: MouseEvent) {
+  try {
+    const cameras = await mediaSources.listVideoDevices();
+    ctxMenu.items = cameras.map(cam => ({
+      id: cam.deviceId,
+      label: cam.label,
+      active: cam.deviceId === mediaSources.activeCameraDeviceId.value,
+      action: async () => {
+        try {
+          await mediaSources.switchCamera(cam.deviceId);
+        } catch (err) {
+          console.error('[CaptureStudio] Failed to switch camera:', err);
+        }
+      },
+    }));
+    ctxMenu.title = 'Switch Camera';
+    ctxMenu.x = e.clientX;
+    ctxMenu.y = e.clientY;
+    ctxMenu.visible = true;
+  } catch (err) {
+    console.error('[CaptureStudio] Failed to list cameras:', err);
+  }
+}
+
 // ─── Drag bubble ───
 const camContainer = ref<HTMLElement | null>(null);
 let dragging = false;
@@ -1070,6 +1166,12 @@ onMounted(async () => {
     }
   } catch (e) {
     console.warn('[CaptureStudio] Failed to enumerate devices:', e);
+  }
+
+  // Auto-enable mic on open
+  const micSrc = sources.find(s => s.id === 'mic');
+  if (micSrc && !micSrc.on) {
+    await toggleSrc(micSrc);
   }
 });
 
@@ -1652,6 +1754,39 @@ html, body {
    ═══════════════════════════════════════════════ */
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 .rec-blink { animation: blink 1s ease-in-out infinite; }
+
+/* ═══════════════════════════════════════════════
+   CONTEXT MENU
+   ═══════════════════════════════════════════════ */
+.ctx-menu-backdrop {
+  position: fixed; inset: 0; z-index: 199;
+}
+
+.ctx-menu {
+  position: fixed; z-index: 200; min-width: 220px; max-width: 340px;
+  max-height: 400px; overflow-y: auto;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5); padding: 4px;
+}
+
+.ctx-menu-header {
+  padding: 6px 10px 4px; font-size: 10px; font-weight: 600; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+
+.ctx-menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 10px; border: none; background: none; color: var(--text-secondary);
+  font-family: var(--mono); font-size: 11px; text-align: left;
+  border-radius: 6px; cursor: pointer; transition: all 0.1s;
+}
+.ctx-menu-item:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.ctx-menu-item.active { color: var(--accent); }
+
+.ctx-menu-thumb {
+  width: 48px; height: 27px; border-radius: 3px; object-fit: cover;
+  border: 1px solid var(--border); flex-shrink: 0;
+}
 
 .flash-overlay {
   position: fixed; inset: 0; background: white; opacity: 0;

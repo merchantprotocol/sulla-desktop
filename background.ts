@@ -1082,6 +1082,20 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
   }
 }
 
+// ── Capture Studio IPC ──────────────────────────────────────────────────
+ipcMainProxy.handle('capture-studio:get-sources', async() => {
+  const sources = await Electron.desktopCapturer.getSources({
+    types:          ['screen', 'window'],
+    thumbnailSize:  { width: 320, height: 180 },
+    fetchWindowIcons: false,
+  });
+  return sources.map(s => ({
+    id:               s.id,
+    name:             s.name,
+    thumbnailDataUrl: s.thumbnail.toDataURL(),
+  }));
+});
+
 ipcMainProxy.handle('settings-write', (event, arg) => {
   try {
     writeSettings(arg);
