@@ -5,8 +5,8 @@
       :class="canvasClass"
     >
       <CaptureCanvas
-        :screenStream="mediaSources.screenStream.value"
-        :cameraStream="mediaSources.cameraStream.value"
+        :screenStream="mediaSources.screenStream?.value || null"
+        :cameraStream="mediaSources.cameraStream?.value || null"
         :currentLayout="currentLayout"
         :primarySource="primarySource"
         :pipSource="pipSource"
@@ -22,7 +22,7 @@
       />
 
       <CameraBubble
-        :cameraStream="mediaSources.cameraStream.value"
+        :cameraStream="mediaSources.cameraStream?.value || null"
         :recording="recording"
         :cameraShape="cameraShape"
         :currentLayout="currentLayout"
@@ -564,9 +564,10 @@ function startAudioMeter() {
       const bars = container.children;
 
       // Combine all active mic levels + speaker level
-      let combinedLevel = (speakerCapture.active.value ? speakerCapture.level.value : audioDriver.speakerLevel.value);
+      const spActive = speakerCapture && speakerCapture.active ? speakerCapture.active.value : false;
+      let combinedLevel = spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
       for (const mic of Object.values(micInstances)) {
-        if (mic.active.value) {
+        if (mic && mic.active && mic.active.value && mic.level) {
           combinedLevel = Math.max(combinedLevel, mic.level.value);
         }
       }
@@ -688,10 +689,10 @@ function startWaveformLoop() {
 
       if (src.type === 'mic') {
         const mic = micInstances[src.id];
-        if (mic?.analyser.value) {
-          const node = mic.analyser.value;
-          const data = new Uint8Array(node.frequencyBinCount);
-          node.getByteFrequencyData(data);
+        const analyserNode = mic && mic.analyser ? mic.analyser.value : null;
+        if (analyserNode) {
+          const data = new Uint8Array(analyserNode.frequencyBinCount);
+          analyserNode.getByteFrequencyData(data);
           const binSize = Math.max(1, Math.floor(data.length / 100));
           for (let i = 0; i < 100; i++) {
             let sum = 0;
@@ -699,13 +700,14 @@ function startWaveformLoop() {
             bars.push(Math.max(2, (sum / binSize / 255) * 18));
           }
         } else {
-          const lvl = mic?.level?.value || 0;
+          const lvl = (mic && mic.level) ? mic.level.value : 0;
           for (let i = 0; i < 100; i++) {
             bars.push(Math.max(2, lvl * 14 + 2));
           }
         }
       } else if (src.type === 'system') {
-        const rms = (speakerCapture.active.value ? speakerCapture.level.value : audioDriver.speakerLevel.value);
+        const spActive = speakerCapture && speakerCapture.active ? speakerCapture.active.value : false;
+        const rms = spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
         for (let i = 0; i < 100; i++) {
           if (rms > 0.001) {
             const center = 50;
