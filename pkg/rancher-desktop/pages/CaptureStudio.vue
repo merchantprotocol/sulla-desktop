@@ -142,19 +142,39 @@
     <!-- Status message toast -->
     <div v-if="statusMessage" class="status-toast">{{ statusMessage }}</div>
 
-    <!-- Playback bar (shown after recording stops) -->
-    <div v-if="lastSessionDir && !recording" class="playback-bar">
-      <span class="playback-label">Session saved</span>
-      <button class="playback-btn" @click="openLastSession">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        Play
-      </button>
-      <button class="playback-btn" @click="openSessionFolder">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        Open Folder
-      </button>
-      <button class="playback-btn dismiss" @click="lastSessionDir = ''">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    <!-- Recording saved toast (top-right) -->
+    <div v-if="lastSessionDir && !recording && !playbackFile" class="recording-toast">
+      <div class="recording-toast-content">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <div class="recording-toast-text">
+          <span class="recording-toast-title">Recording saved</span>
+          <span class="recording-toast-sub">{{ timerDisplay }} captured</span>
+        </div>
+        <button class="playback-btn" @click="startInlinePlayback">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Play
+        </button>
+        <button class="playback-btn" @click="openSessionFolder">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Folder
+        </button>
+        <button class="playback-btn dismiss" @click="lastSessionDir = ''">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Inline playback overlay -->
+    <div v-if="playbackFile" class="playback-overlay">
+      <video
+        ref="playbackVideoEl"
+        :src="'file://' + playbackFile"
+        controls
+        autoplay
+        style="width: 100%; height: 100%; object-fit: contain; background: #000;"
+      ></video>
+      <button class="playback-close-btn" @click="playbackFile = ''">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
 
@@ -211,6 +231,8 @@ const flashActive = ref(false);
 const addPopupOpen = ref(false);
 const statusMessage = ref('');
 const lastSessionDir = ref('');
+const playbackFile = ref('');
+const playbackVideoEl = ref<HTMLVideoElement | null>(null);
 let sourceCounter = 0;
 
 const assign = reactive({ primary: 'screen', pip: 'cam' });
@@ -440,18 +462,36 @@ async function toggleRecord() {
     // Gather active streams for recording — check stream.active not just existence
     const streams: Array<{ id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }> = [];
 
-    const screenVal = mediaSources.screenStream.value;
-    if (screenVal && screenVal.active) {
-      streams.push({ id: 'screen', type: 'screen', stream: screenVal });
-    }
-    const camVal = mediaSources.cameraStream.value;
-    if (camVal && camVal.active) {
-      streams.push({ id: 'cam', type: 'camera', stream: camVal });
-    }
+    // Collect active mic audio tracks for muxing into video streams
+    const micAudioTracks: MediaStreamTrack[] = [];
     for (const [id, mic] of Object.entries(micInstances)) {
       const micStream = mic.stream.value;
       if (micStream && micStream.active && mic.active.value) {
+        // Record mic as standalone audio file
         streams.push({ id, type: 'mic', stream: micStream });
+        // Also collect audio tracks for muxing into video
+        micAudioTracks.push(...micStream.getAudioTracks());
+      }
+    }
+
+    const screenVal = mediaSources.screenStream.value;
+    if (screenVal && screenVal.active) {
+      // Mux screen video + mic audio into one stream for playback with sound
+      if (micAudioTracks.length > 0) {
+        const muxed = new MediaStream([...screenVal.getVideoTracks(), ...micAudioTracks]);
+        streams.push({ id: 'screen', type: 'screen', stream: muxed });
+      } else {
+        streams.push({ id: 'screen', type: 'screen', stream: screenVal });
+      }
+    }
+    const camVal = mediaSources.cameraStream.value;
+    if (camVal && camVal.active) {
+      // Mux camera video + mic audio into one stream for playback with sound
+      if (micAudioTracks.length > 0) {
+        const muxed = new MediaStream([...camVal.getVideoTracks(), ...micAudioTracks]);
+        streams.push({ id: 'cam', type: 'camera', stream: muxed });
+      } else {
+        streams.push({ id: 'cam', type: 'camera', stream: camVal });
       }
     }
 
@@ -503,22 +543,22 @@ async function toggleRecord() {
 
 // ─── Screenshot ───
 // ─── Playback ───
-function openLastSession() {
+function startInlinePlayback() {
   if (!lastSessionDir.value) return;
   const fs = require('fs');
   const path = require('path');
 
-  // Find the first video file to play
   try {
     const files = fs.readdirSync(lastSessionDir.value);
     const videoFile = files.find((f: string) => f.endsWith('.webm') && (f.startsWith('screen') || f.startsWith('camera')));
     const audioFile = files.find((f: string) => f.endsWith('.webm') || f.endsWith('.wav'));
     const fileToPlay = videoFile || audioFile;
     if (fileToPlay) {
-      shell.openPath(path.join(lastSessionDir.value, fileToPlay));
+      playbackFile.value = path.join(lastSessionDir.value, fileToPlay);
+      console.log('[CaptureStudio] Inline playback:', playbackFile.value);
     }
   } catch (e: any) {
-    console.error('[CaptureStudio] Failed to open session:', e.message);
+    console.error('[CaptureStudio] Failed to find playback file:', e.message);
   }
 }
 
@@ -616,6 +656,7 @@ function startAudioMeter() {
       }
     }
 
+    let meterLogCount = 0;
     function animateMeter() {
       if (!container || currentLayout.value !== 'audioonly') {
         meterAnimId = null;
@@ -625,11 +666,20 @@ function startAudioMeter() {
 
       // Combine all active mic levels + speaker level
       const spActive = speakerCapture && speakerCapture.active ? speakerCapture.active.value : false;
-      let combinedLevel = spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
+      const speakerLvl = spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
+      let combinedLevel = speakerLvl;
       for (const mic of Object.values(micInstances)) {
         if (mic && mic.active && mic.active.value && mic.level) {
           combinedLevel = Math.max(combinedLevel, mic.level.value);
         }
+      }
+
+      // Log occasionally to debug
+      meterLogCount++;
+      if (meterLogCount <= 5 || meterLogCount % 300 === 0) {
+        const micKeys = Object.keys(micInstances);
+        const activeMics = micKeys.filter(k => micInstances[k]?.active?.value);
+        console.log('[AudioMeter]', { combinedLevel: combinedLevel.toFixed(3), speakerLvl: speakerLvl.toFixed(3), speakerRunning: audioDriver.speakerRunning.value, spActive, activeMics, bars: bars.length });
       }
 
       for (let i = 0; i < bars.length; i++) {
@@ -860,12 +910,15 @@ onMounted(async () => {
   loadingMessage.value = 'Starting audio driver...';
   try {
     const state = await audioDriver.getState();
+    console.log('[CaptureStudio] Audio driver state:', state);
     if (!state.running) {
-      await audioDriver.startCapture();
+      const result = await audioDriver.startCapture();
+      console.log('[CaptureStudio] Audio driver start result:', result);
+    } else {
+      console.log('[CaptureStudio] Audio driver already running');
     }
-    console.log('[CaptureStudio] Audio driver started');
-  } catch (e) {
-    console.warn('[CaptureStudio] Failed to auto-start audio driver:', e);
+  } catch (e: any) {
+    console.error('[CaptureStudio] Failed to auto-start audio driver:', e.message || e);
   }
 
   // 2. Enumerate devices
@@ -1610,24 +1663,50 @@ html, body {
 /* ═══════════════════════════════════════════════
    PLAYBACK BAR
    ═══════════════════════════════════════════════ */
-.playback-bar {
-  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
-  background: rgba(22,27,34,0.92); border: 1px solid var(--border); border-radius: 10px;
-  backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 55;
+/* ═══════════════════════════════════════════════
+   RECORDING TOAST (top-right)
+   ═══════════════════════════════════════════════ */
+.recording-toast {
+  position: fixed; top: 16px; right: 16px; z-index: 55;
+  animation: toast-in 0.3s ease;
 }
 
-.playback-label { font-size: 11px; color: var(--text-muted); margin-right: 4px; }
+.recording-toast-content {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  background: rgba(22,27,34,0.95); border: 1px solid var(--border); border-radius: 10px;
+  backdrop-filter: blur(8px); box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+.recording-toast-text { display: flex; flex-direction: column; gap: 1px; }
+.recording-toast-title { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.recording-toast-sub { font-size: 10px; color: var(--text-muted); }
 
 .playback-btn {
-  display: flex; align-items: center; gap: 5px; padding: 5px 12px;
+  display: flex; align-items: center; gap: 4px; padding: 5px 10px;
   border-radius: 6px; border: 1px solid var(--border); background: var(--bg-surface-alt);
-  color: var(--text-secondary); font-family: var(--mono); font-size: 11px;
-  cursor: pointer; transition: all 0.12s;
+  color: var(--text-secondary); font-family: var(--mono); font-size: 10px;
+  cursor: pointer; transition: all 0.12s; white-space: nowrap;
 }
 .playback-btn:hover { border-color: var(--accent); color: var(--text-primary); }
 .playback-btn.dismiss { padding: 5px; border: none; background: none; color: var(--text-dim); }
 .playback-btn.dismiss:hover { color: var(--text-primary); }
+
+/* ═══════════════════════════════════════════════
+   INLINE PLAYBACK OVERLAY
+   ═══════════════════════════════════════════════ */
+.playback-overlay {
+  position: fixed; inset: 0; z-index: 100; background: #000;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.playback-close-btn {
+  position: absolute; top: 16px; right: 16px; z-index: 101;
+  width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: rgba(255,255,255,0.1); color: white; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s;
+}
+.playback-close-btn:hover { background: rgba(255,255,255,0.2); }
 
 .flash-overlay {
   position: fixed; inset: 0; background: white; opacity: 0;

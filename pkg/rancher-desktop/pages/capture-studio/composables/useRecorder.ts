@@ -160,7 +160,7 @@ export function useRecorder() {
         error.value = `Recording error on ${src.type}: ${e.error?.message || 'unknown'}`;
       };
 
-      recorder.start(1000); // 1-second chunks
+      recorder.start(250); // 250ms chunks — smoother playback, less keyframe issues
       entries.push(entry);
     }
 
