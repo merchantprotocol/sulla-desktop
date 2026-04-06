@@ -6,7 +6,14 @@
     >
       <!-- Screen preview -->
       <div class="screen-preview">
-        <div class="placeholder">
+        <video
+          v-if="mediaSources.screenStream"
+          ref="screenVideoEl"
+          autoplay
+          muted
+          style="width: 100%; height: 100%; object-fit: contain; border-radius: 12px;"
+        ></video>
+        <div v-else class="placeholder">
           <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
           {{ primarySource?.name || 'Screen Capture' }}
         </div>
@@ -129,7 +136,14 @@
           :style="{ borderRadius: bubbleRadius }"
           @dblclick="swapAssignments"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <video
+            v-if="mediaSources.cameraStream"
+            ref="camVideoEl"
+            autoplay
+            muted
+            style="width: 100%; height: 100%; object-fit: cover;"
+          ></video>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         </div>
         <div class="shape-picker">
           <button
@@ -267,7 +281,7 @@
                 class="b"
                 :style="{
                   background: waveColor(src.type),
-                  height: (src.on ? (Math.random() * 14 + 2) : 2) + 'px',
+                  height: getTrackBarHeight(src, j - 1) + 'px',
                 }"
               ></div>
             </div>
@@ -337,6 +351,22 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { useAudioDriver } from './capture-studio/composables/useAudioDriver';
+import { createMicInstance, listAudioDevices, type MicInstance } from './capture-studio/composables/useMicCapture';
+import { useMediaSources } from './capture-studio/composables/useMediaSources';
+import { useRecorder } from './capture-studio/composables/useRecorder';
+import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-studio/composables/useWaveform';
+
+// ─── Composables ───
+const audioDriver = useAudioDriver();
+const mediaSources = useMediaSources();
+const recorder = useRecorder();
+
+// Mic instances keyed by source id
+const micInstances = reactive<Record<string, MicInstance>>({});
+
+// Default mic instance for the builtin mic
+micInstances['mic'] = createMicInstance();
 
 // ─── State ───
 const recording = ref(false);
@@ -487,9 +517,39 @@ function autoAssign() {
   }
 }
 
-// ─── Source toggles ───
-function toggleSrc(src: Source) {
+// ─── Source toggles (wired to real capture) ───
+async function toggleSrc(src: Source) {
   src.on = !src.on;
+
+  if (src.on) {
+    try {
+      if (src.type === 'screen') {
+        await mediaSources.acquireScreen();
+      } else if (src.type === 'camera') {
+        await mediaSources.acquireCamera();
+      } else if (src.type === 'mic') {
+        const mic = micInstances[src.id] || createMicInstance();
+        micInstances[src.id] = mic;
+        await mic.start();
+      } else if (src.type === 'system') {
+        await audioDriver.startCapture();
+      }
+    } catch (e) {
+      console.error(`[CaptureStudio] Failed to acquire ${src.type}:`, e);
+      src.on = false; // revert toggle on failure
+    }
+  } else {
+    if (src.type === 'screen') {
+      mediaSources.releaseScreen();
+    } else if (src.type === 'camera') {
+      mediaSources.releaseCamera();
+    } else if (src.type === 'mic') {
+      micInstances[src.id]?.stop();
+    } else if (src.type === 'system') {
+      await audioDriver.stopCapture();
+    }
+  }
+
   autoAssign();
 }
 
@@ -525,14 +585,44 @@ function swapAssignments() {
   }
 }
 
-// ─── Record ───
+// ─── Record (wired to disk writer) ───
 function toggleRecord() {
-  recording.value = !recording.value;
+  if (!recording.value) {
+    // Gather active streams for recording
+    const streams: Array<{ id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }> = [];
 
-  if (recording.value) {
+    if (mediaSources.screenStream) {
+      streams.push({ id: 'screen', type: 'screen', stream: mediaSources.screenStream });
+    }
+    if (mediaSources.cameraStream) {
+      streams.push({ id: 'cam', type: 'camera', stream: mediaSources.cameraStream });
+    }
+    for (const [id, mic] of Object.entries(micInstances)) {
+      if (mic.stream.value && mic.active.value) {
+        streams.push({ id, type: 'mic', stream: mic.stream.value });
+      }
+    }
+    // System audio comes from the screen stream's audio tracks
+    if (mediaSources.screenStream) {
+      const audioTracks = mediaSources.screenStream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        const sysStream = new MediaStream(audioTracks);
+        streams.push({ id: 'sys', type: 'system-audio', stream: sysStream });
+      }
+    }
+
+    if (streams.length === 0) {
+      console.warn('[CaptureStudio] No active streams to record');
+      return;
+    }
+
+    recorder.startSession(streams);
+    recording.value = true;
     seconds.value = 0;
     timerInterval = setInterval(() => { seconds.value++; }, 1000);
   } else {
+    recorder.stopSession();
+    recording.value = false;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   }
 }
@@ -559,7 +649,7 @@ function confirmAdd() {
   const id = 'custom_' + sourceCounter;
   const isVideo = selectedAddType.value === 'screen' || selectedAddType.value === 'camera';
 
-  sources.push({
+  const newSrc: Source = {
     id,
     type: selectedAddType.value,
     name: label,
@@ -568,7 +658,15 @@ function confirmAdd() {
     builtin: false,
     on: true,
     isVideo,
-  });
+  };
+  sources.push(newSrc);
+
+  // Create mic instance for new mic sources
+  if (selectedAddType.value === 'mic') {
+    const mic = createMicInstance();
+    micInstances[id] = mic;
+    mic.start(selectedDevice.value || undefined);
+  }
 
   if (isVideo) {
     autoAssign();
@@ -583,14 +681,19 @@ function confirmAdd() {
 }
 
 function removeSource(id: string) {
+  // Stop mic instance if exists
+  if (micInstances[id]) {
+    micInstances[id].stop();
+    delete micInstances[id];
+  }
   const idx = sources.findIndex(s => s.id === id);
   if (idx > -1) sources.splice(idx, 1);
   autoAssign();
 }
 
-// ─── Audio meter animation ───
+// ─── Audio meter animation (real data) ───
 const audioMeterVis = ref<HTMLElement | null>(null);
-let meterInterval: ReturnType<typeof setInterval> | null = null;
+let meterAnimId: number | null = null;
 
 watch(() => currentLayout.value, (layout) => {
   if (layout === 'audioonly') {
@@ -614,27 +717,40 @@ function startAudioMeter() {
         container.appendChild(bar);
       }
     }
-    if (meterInterval) return;
-    meterInterval = setInterval(() => {
+    if (meterAnimId) return;
+
+    function animateMeter() {
       if (!container) return;
       const bars = container.children;
+
+      // Combine all active mic levels + speaker level
+      let combinedLevel = audioDriver.speakerLevel.value;
+      for (const mic of Object.values(micInstances)) {
+        if (mic.active.value) {
+          combinedLevel = Math.max(combinedLevel, mic.level.value);
+        }
+      }
+
       for (let i = 0; i < bars.length; i++) {
         const el = bars[i] as HTMLElement;
         const center = bars.length / 2;
         const dist = Math.abs(i - center) / center;
-        const base = (1 - dist) * 80 + 10;
-        const h = Math.max(4, base + (Math.random() - 0.5) * 50);
+        const base = (1 - dist) * combinedLevel * 100;
+        const jitter = combinedLevel > 0.001 ? (Math.random() - 0.5) * combinedLevel * 40 : 0;
+        const h = Math.max(4, base + jitter);
         el.style.height = h + 'px';
         el.style.opacity = String(0.4 + (h / 120) * 0.6);
       }
-    }, 100);
+      meterAnimId = requestAnimationFrame(animateMeter);
+    }
+    animateMeter();
   });
 }
 
 function stopAudioMeter() {
-  if (meterInterval) {
-    clearInterval(meterInterval);
-    meterInterval = null;
+  if (meterAnimId) {
+    cancelAnimationFrame(meterAnimId);
+    meterAnimId = null;
   }
 }
 
@@ -802,12 +918,78 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
+// ─── Track panel waveform helper ───
+function getTrackBarHeight(src: Source, barIndex: number): number {
+  if (!src.on) return 2;
+
+  // Mic: use real AnalyserNode data
+  if (src.type === 'mic' || (src.type === 'mic' && micInstances[src.id])) {
+    const mic = micInstances[src.id];
+    if (mic?.analyser.value) {
+      const node = mic.analyser.value;
+      const data = new Uint8Array(node.frequencyBinCount);
+      node.getByteFrequencyData(data);
+      const binSize = Math.floor(data.length / 100);
+      let sum = 0;
+      for (let j = 0; j < binSize; j++) sum += data[barIndex * binSize + j];
+      const avg = sum / binSize / 255;
+      return Math.max(2, avg * 18);
+    }
+    return Math.max(2, (mic?.level.value || 0) * 14 + 2);
+  }
+
+  // Speaker: use RMS level from audio driver
+  if (src.type === 'system') {
+    const rms = audioDriver.speakerLevel.value;
+    if (rms > 0.001) {
+      const center = 50;
+      const dist = Math.abs(barIndex - center) / center;
+      return Math.max(2, (1 - dist) * rms * 16 + (Math.random() - 0.5) * rms * 4);
+    }
+    return 2;
+  }
+
+  // Video sources: show small static bars when active
+  return Math.max(2, Math.random() * 4 + 2);
+}
+
+// ─── Video element refs ───
+const screenVideoEl = ref<HTMLVideoElement | null>(null);
+const camVideoEl = ref<HTMLVideoElement | null>(null);
+
+// Bind video streams to <video> elements
+watch(() => mediaSources.screenStream, (stream) => {
+  if (screenVideoEl.value) {
+    screenVideoEl.value.srcObject = stream;
+  }
+});
+
+watch(() => mediaSources.cameraStream, (stream) => {
+  if (camVideoEl.value) {
+    camVideoEl.value.srcObject = stream;
+  }
+});
+
 // ─── Lifecycle ───
-onMounted(() => {
+onMounted(async () => {
   document.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseup', onMouseUp);
   document.addEventListener('keydown', onKeyDown);
   buildTpWords();
+
+  // Populate device dropdowns with real devices
+  try {
+    const { inputs } = await listAudioDevices();
+    if (inputs.length > 0) {
+      deviceOptions.mic = inputs.map(d => d.label);
+    }
+    const cameras = await mediaSources.listVideoDevices();
+    if (cameras.length > 0) {
+      deviceOptions.camera = cameras.map(d => d.label);
+    }
+  } catch (e) {
+    console.warn('[CaptureStudio] Failed to enumerate devices:', e);
+  }
 });
 
 onUnmounted(() => {
@@ -817,6 +999,11 @@ onUnmounted(() => {
   if (timerInterval) clearInterval(timerInterval);
   stopTpScroll();
   stopAudioMeter();
+
+  // Stop all mic instances
+  for (const mic of Object.values(micInstances)) {
+    mic.stop();
+  }
 });
 </script>
 
