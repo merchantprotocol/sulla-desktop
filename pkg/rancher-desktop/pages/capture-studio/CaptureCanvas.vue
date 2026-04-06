@@ -15,16 +15,30 @@
   </div>
 
   <!-- Side-by-side camera (shown in sidebyside layout) -->
-  <div class="sbs-camera">
-    <div class="placeholder">
+  <div class="sbs-camera" @contextmenu.prevent="$emit('show-camera-menu', $event)">
+    <video
+      v-if="cameraStream"
+      ref="sbsCameraVideoEl"
+      autoplay
+      muted
+      style="width: 100%; height: 100%; object-fit: cover; border-radius: 12px;"
+    ></video>
+    <div v-else class="placeholder">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       {{ pipSource?.name || 'Camera' }}
     </div>
   </div>
 
   <!-- Full-screen camera (shown in camonly layout) -->
-  <div class="fullscreen-camera">
-    <div class="placeholder">
+  <div class="fullscreen-camera" @contextmenu.prevent="$emit('show-camera-menu', $event)">
+    <video
+      v-if="cameraStream"
+      ref="fullCameraVideoEl"
+      autoplay
+      muted
+      style="width: 100%; height: 100%; object-fit: cover; border-radius: 12px;"
+    ></video>
+    <div v-else class="placeholder">
       <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       {{ primarySource?.name || 'Camera Full' }}
     </div>
@@ -66,9 +80,12 @@ const props = defineProps<{
 
 defineEmits<{
   (e: 'show-screen-menu', event: MouseEvent): void;
+  (e: 'show-camera-menu', event: MouseEvent): void;
 }>();
 
 const screenVideoEl = ref<HTMLVideoElement | null>(null);
+const sbsCameraVideoEl = ref<HTMLVideoElement | null>(null);
+const fullCameraVideoEl = ref<HTMLVideoElement | null>(null);
 const audioMeterVisRef = ref<HTMLElement | null>(null);
 
 // Bind screen stream to video element
@@ -78,6 +95,15 @@ watch(() => props.screenStream, (stream) => {
   }
 });
 
-// Expose the audio meter vis ref so the parent can drive the animation
+// Bind camera stream to all camera video elements
+watch(() => props.cameraStream, (stream) => {
+  if (sbsCameraVideoEl.value) {
+    sbsCameraVideoEl.value.srcObject = stream || null;
+  }
+  if (fullCameraVideoEl.value) {
+    fullCameraVideoEl.value.srcObject = stream || null;
+  }
+});
+
 defineExpose({ audioMeterVisRef });
 </script>

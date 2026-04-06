@@ -13,6 +13,7 @@
         :audioOnlySources="audioOnlySources"
         ref="captureCanvasRef"
         @show-screen-menu="showScreenContextMenu"
+        @show-camera-menu="showCameraContextMenu"
       />
 
       <TeleprompterLayout
@@ -77,7 +78,7 @@
       :waveformData="waveformData"
       :colorMap="colorMap"
       :iconMap="iconMap"
-      :diskDisplay="recorder.diskDisplay"
+      :diskDisplay="totalDiskDisplay"
       @toggle-src="toggleSrc"
       @remove-source="removeSource"
     />
@@ -168,8 +169,6 @@ micInstances['mic'] = createMicInstance();
 
 // ─── State ───
 const recording = ref(false);
-const seconds = ref(0);
-let timerInterval: ReturnType<typeof setInterval> | null = null;
 const tracksOpen = ref(false);
 const currentLayout = ref('pip');
 const cameraShape = ref('circle');
@@ -237,13 +236,23 @@ const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) 
 
 const activeSourceCount = computed(() => sources.filter(s => s.on).length);
 
+const totalDiskDisplay = computed(() => {
+  const total = recorder.bytesWritten.value + speakerCapture.bytesWritten.value;
+  if (total === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(total) / Math.log(k));
+  return parseFloat((total / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+});
+
 const audioOnlySources = computed(() => {
   return sources.filter(s => !s.isVideo && s.on).map(s => s.name).join(' + ') || 'No sources';
 });
 
 const timerDisplay = computed(() => {
-  const m = String(Math.floor(seconds.value / 60)).padStart(2, '0');
-  const s = String(seconds.value % 60).padStart(2, '0');
+  const secs = recorder.elapsedSeconds.value;
+  const m = String(Math.floor(secs / 60)).padStart(2, '0');
+  const s = String(secs % 60).padStart(2, '0');
   return m + ':' + s;
 });
 
@@ -396,8 +405,6 @@ async function toggleRecord() {
     }
 
     recording.value = true;
-    seconds.value = 0;
-    timerInterval = setInterval(() => { seconds.value++; }, 1000);
 
     // Start disk space monitoring
     diskSpace.startMonitoring(() => {
@@ -410,7 +417,6 @@ async function toggleRecord() {
     speakerCapture.stop();
     await recorder.stopSession();
     recording.value = false;
-    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     diskSpace.stopMonitoring();
   }
 }
@@ -499,7 +505,7 @@ function startAudioMeter() {
       const bars = container.children;
 
       // Combine all active mic levels + speaker level
-      let combinedLevel = audioDriver.speakerLevel.value;
+      let combinedLevel = (speakerCapture.active.value ? speakerCapture.level.value : audioDriver.speakerLevel.value);
       for (const mic of Object.values(micInstances)) {
         if (mic.active.value) {
           combinedLevel = Math.max(combinedLevel, mic.level.value);
@@ -638,7 +644,7 @@ function startWaveformLoop() {
           }
         }
       } else if (src.type === 'system') {
-        const rms = audioDriver.speakerLevel.value;
+        const rms = (speakerCapture.active.value ? speakerCapture.level.value : audioDriver.speakerLevel.value);
         for (let i = 0; i < 100; i++) {
           if (rms > 0.001) {
             const center = 50;
@@ -760,7 +766,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown);
-  if (timerInterval) clearInterval(timerInterval);
   stopAudioMeter();
   stopWaveformLoop();
   diskSpace.stopMonitoring();

@@ -1,10 +1,11 @@
 /**
- * Composable — screen and camera capture via browser media APIs.
+ * Composable — screen and camera capture via Electron desktopCapturer + getUserMedia.
  *
- * Permissions are pre-granted in background.ts (setPermissionCheckHandler).
- * getDisplayMedia is configured with audio: 'loopback' for system audio.
+ * Screen capture uses desktopCapturer (no browser picker popup).
+ * System audio comes from the audio-driver speaker socket, NOT from getDisplayMedia.
+ * Camera capture uses standard getUserMedia.
  *
- * Supports source switching: right-click to pick a different screen or camera.
+ * Supports source switching via right-click context menus.
  */
 
 import { ref, onUnmounted, type Ref } from 'vue';
@@ -21,41 +22,26 @@ export function useMediaSources() {
   const screenStream: Ref<MediaStream | null> = ref(null);
   const cameraStream: Ref<MediaStream | null> = ref(null);
   const activeScreenName = ref('');
+  const activeScreenSourceId = ref('');
   const activeCameraName = ref('');
   const activeCameraDeviceId = ref('');
 
   /**
-   * Acquire screen capture. Returns a MediaStream with video + system audio tracks.
+   * Acquire a specific screen/window source via desktopCapturer.
+   * If no sourceId is given, picks the first available screen.
    */
-  async function acquireScreen(): Promise<MediaStream> {
-    // Video only — system audio comes from the audio-driver speaker socket
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-      audio: false,
-    });
-    screenStream.value = stream;
-
-    // Try to get the screen name from the track label
-    const videoTrack = stream.getVideoTracks()[0];
-    activeScreenName.value = videoTrack?.label || 'Screen';
-
-    // Clean up ref if user stops sharing via browser UI
-    videoTrack?.addEventListener('ended', () => {
-      screenStream.value = null;
-      activeScreenName.value = '';
-    });
-
-    return stream;
-  }
-
-  /**
-   * Switch to a specific screen/window source by its desktopCapturer source id.
-   */
-  async function switchScreen(sourceId: string): Promise<MediaStream> {
-    // Stop current screen capture
+  async function acquireScreen(sourceId?: string): Promise<MediaStream> {
     releaseScreen();
 
-    // Use Electron's desktopCapturer constraints to pick a specific source
+    // If no source specified, pick the first screen
+    if (!sourceId) {
+      const sources = await listScreenSources();
+      const firstScreen = sources.find(s => s.name.toLowerCase().includes('screen')) || sources[0];
+      if (!firstScreen) throw new Error('No screen sources available');
+      sourceId = firstScreen.id;
+    }
+
+    // Use Electron's chromeMediaSource constraint to capture a specific source
     const stream = await (navigator.mediaDevices as any).getUserMedia({
       audio: false,
       video: {
@@ -67,15 +53,25 @@ export function useMediaSources() {
     });
 
     screenStream.value = stream;
+    activeScreenSourceId.value = sourceId;
+
     const videoTrack = stream.getVideoTracks()[0];
     activeScreenName.value = videoTrack?.label || 'Screen';
 
     videoTrack?.addEventListener('ended', () => {
       screenStream.value = null;
       activeScreenName.value = '';
+      activeScreenSourceId.value = '';
     });
 
     return stream;
+  }
+
+  /**
+   * Switch to a different screen source.
+   */
+  async function switchScreen(sourceId: string): Promise<MediaStream> {
+    return acquireScreen(sourceId);
   }
 
   function releaseScreen() {
@@ -83,6 +79,7 @@ export function useMediaSources() {
       screenStream.value.getTracks().forEach(t => t.stop());
       screenStream.value = null;
       activeScreenName.value = '';
+      activeScreenSourceId.value = '';
     }
   }
 
@@ -90,7 +87,6 @@ export function useMediaSources() {
    * Acquire camera capture.
    */
   async function acquireCamera(deviceId?: string): Promise<MediaStream> {
-    // Stop existing camera first
     releaseCamera();
 
     const constraints: MediaStreamConstraints = {
@@ -100,12 +96,10 @@ export function useMediaSources() {
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     cameraStream.value = stream;
 
-    // Get the actual device name
     const track = stream.getVideoTracks()[0];
     const settings = track?.getSettings();
     activeCameraDeviceId.value = settings?.deviceId || deviceId || '';
 
-    // Look up device label
     const devices = await navigator.mediaDevices.enumerateDevices();
     const device = devices.find(d => d.deviceId === activeCameraDeviceId.value);
     activeCameraName.value = device?.label || track?.label || 'Camera';
@@ -139,8 +133,7 @@ export function useMediaSources() {
    * List available screen/window sources via Electron's desktopCapturer.
    */
   async function listScreenSources(): Promise<ScreenSource[]> {
-    const sources = await ipcRenderer.invoke('capture-studio:get-sources');
-    return sources;
+    return ipcRenderer.invoke('capture-studio:get-sources');
   }
 
   /**
@@ -162,6 +155,7 @@ export function useMediaSources() {
     screenStream,
     cameraStream,
     activeScreenName,
+    activeScreenSourceId,
     activeCameraName,
     activeCameraDeviceId,
     acquireScreen,
