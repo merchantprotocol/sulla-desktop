@@ -1,6 +1,20 @@
 <template>
   <div class="capture-studio-app">
+    <!-- Loading screen -->
+    <div v-if="loading" class="loading-screen">
+      <div class="loading-content">
+        <svg class="loading-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/>
+          <circle cx="12" cy="12" r="3" fill="currentColor"/>
+        </svg>
+        <h2>Capture Studio</h2>
+        <p class="loading-msg">{{ loadingMessage }}</p>
+        <div class="loading-bar"><div class="loading-bar-fill"></div></div>
+      </div>
+    </div>
+
     <div
+      v-show="!loading"
       class="canvas"
       :class="canvasClass"
     >
@@ -182,6 +196,10 @@ const speakerCapture = useSpeakerCapture();
 
 // Mic instances keyed by source id (created on first use, not at module level)
 const micInstances = reactive<Record<string, MicInstance>>({});
+
+// Loading state
+const loading = ref(true);
+const loadingMessage = ref('Initializing Capture Studio...');
 
 // ─── State ───
 const recording = ref(false);
@@ -835,9 +853,23 @@ function openSystemPreferences() {
 
 onMounted(async () => {
   document.addEventListener('keydown', onKeyDown);
-  startWaveformLoop();
 
-  // Populate device dropdowns with real devices
+  // ── Boot sequence with loading screen ──
+
+  // 1. Start audio driver
+  loadingMessage.value = 'Starting audio driver...';
+  try {
+    const state = await audioDriver.getState();
+    if (!state.running) {
+      await audioDriver.startCapture();
+    }
+    console.log('[CaptureStudio] Audio driver started');
+  } catch (e) {
+    console.warn('[CaptureStudio] Failed to auto-start audio driver:', e);
+  }
+
+  // 2. Enumerate devices
+  loadingMessage.value = 'Detecting devices...';
   try {
     const { inputs } = await listAudioDevices();
     if (inputs.length > 0) {
@@ -847,46 +879,71 @@ onMounted(async () => {
     if (cameras.length > 0) {
       deviceOptions.camera = cameras.map(d => d.label);
     }
+    console.log('[CaptureStudio] Devices:', deviceOptions.mic.length, 'mics,', deviceOptions.camera.length, 'cameras');
   } catch (e) {
     console.warn('[CaptureStudio] Failed to enumerate devices:', e);
   }
 
-  // Apply saved settings once loaded
+  // 3. Load saved settings
+  loadingMessage.value = 'Loading settings...';
   watch(() => settings.loaded.value, (loaded) => {
     if (!loaded) return;
     if (settings.layout.value) currentLayout.value = settings.layout.value;
     if (settings.cameraShape.value) cameraShape.value = settings.cameraShape.value;
   }, { immediate: true });
 
-  // Sync settings on change
   watch(currentLayout, v => { settings.layout.value = v; });
   watch(cameraShape, v => { settings.cameraShape.value = v; });
 
-  // Auto-start audio driver so mic + speaker levels flow immediately
-  try {
-    const state = await audioDriver.getState();
-    if (!state.running) {
-      await audioDriver.startCapture();
-    }
-  } catch (e) {
-    console.warn('[CaptureStudio] Failed to auto-start audio driver:', e);
-  }
-
-  // Auto-enable mic on open
+  // 4. Auto-enable mic
+  loadingMessage.value = 'Enabling microphone...';
   const micSrc = sources.find(s => s.id === 'mic');
   if (micSrc && !micSrc.on) {
     await toggleSrc(micSrc);
   }
 
-  // Trigger audio-only layout since no video sources are on
+  // 5. Set initial layout and start meters
   autoAssign();
+  startWaveformLoop();
   if (currentLayout.value === 'audioonly') {
     startAudioMeter();
   }
+
+  // Boot complete
+  loadingMessage.value = 'Ready';
+  console.log('[CaptureStudio] Boot complete');
+  loading.value = false;
+});
+
+// ── Graceful shutdown when app is quitting ──
+ipcRenderer.on('app:before-quit', async() => {
+  console.log('[CaptureStudio] Received app:before-quit — stopping capture');
+
+  // Stop recording if active
+  if (recording.value) {
+    speakerCapture.stop();
+    await recorder.stopSession();
+    recording.value = false;
+  }
+
+  // Release all media streams (screen + camera)
+  mediaSources.releaseScreen();
+  mediaSources.releaseCamera();
+
+  // Stop all mic instances
+  for (const mic of Object.values(micInstances)) {
+    mic.stop();
+  }
+
+  // Stop audio driver capture
+  try {
+    await audioDriver.stopCapture();
+  } catch { /* already stopped */ }
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown);
+  ipcRenderer.removeAllListeners('app:before-quit');
   stopAudioMeter();
   stopWaveformLoop();
   diskSpace.stopMonitoring();
@@ -1493,6 +1550,54 @@ html, body {
 /* ═══════════════════════════════════════════════
    STATUS TOAST
    ═══════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════
+   LOADING SCREEN
+   ═══════════════════════════════════════════════ */
+.loading-screen {
+  position: absolute; inset: 0; z-index: 500;
+  background: var(--bg-page);
+  display: flex; align-items: center; justify-content: center;
+  -webkit-app-region: drag;
+}
+
+.loading-content {
+  text-align: center;
+  -webkit-app-region: no-drag;
+}
+
+.loading-icon {
+  color: var(--accent); opacity: 0.6; margin-bottom: 20px;
+  animation: loading-pulse 2s ease-in-out infinite;
+}
+
+@keyframes loading-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); }
+}
+
+.loading-content h2 {
+  font-size: 20px; font-weight: 600; color: var(--text-primary); margin: 0 0 8px;
+}
+
+.loading-msg {
+  font-size: 12px; color: var(--text-muted); margin: 0 0 20px;
+}
+
+.loading-bar {
+  width: 200px; height: 3px; background: var(--border); border-radius: 2px;
+  overflow: hidden; margin: 0 auto;
+}
+
+.loading-bar-fill {
+  width: 40%; height: 100%; background: var(--accent); border-radius: 2px;
+  animation: loading-slide 1.5s ease-in-out infinite;
+}
+
+@keyframes loading-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
 .status-toast {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
   padding: 8px 18px; background: var(--bg-surface); border: 1px solid var(--border);
