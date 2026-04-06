@@ -39,9 +39,15 @@
 
       <!-- Info badges -->
       <div class="info-badges">
-        <div class="info-badge"><div class="dot green"></div> Audio driver</div>
-        <div class="info-badge"><div class="dot blue"></div> Transcribing</div>
-        <div class="info-badge">1920x1080</div>
+        <div class="info-badge">
+          <div class="dot" :class="audioDriver.speakerRunning.value ? 'green' : 'off'"></div>
+          Audio driver
+        </div>
+        <div v-if="recording" class="info-badge">
+          <div class="dot" style="background: var(--record-red); animation: blink 1s ease-in-out infinite;"></div>
+          REC {{ timerDisplay }}
+        </div>
+        <div v-if="activeSourceCount > 0" class="info-badge">{{ activeSourceCount }} source{{ activeSourceCount !== 1 ? 's' : '' }}</div>
       </div>
 
       <FloatingControls
@@ -229,6 +235,8 @@ const videoSources = computed(() => sources.filter(s => s.isVideo && s.on));
 const primarySource = computed(() => sources.find(s => s.id === assign.primary && s.on) || null);
 const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) || null);
 
+const activeSourceCount = computed(() => sources.filter(s => s.on).length);
+
 const audioOnlySources = computed(() => {
   return sources.filter(s => !s.isVideo && s.on).map(s => s.name).join(' + ') || 'No sources';
 });
@@ -375,10 +383,16 @@ async function toggleRecord() {
 
     // Start speaker capture to WAV if audio driver is running
     if (audioDriver.speakerRunning.value && sessionId) {
-      const os = require('os');
       const path = require('path');
-      const speakerPath = path.join(os.homedir(), 'sulla', 'captures', sessionId, 'system-audio.wav');
+      const speakerPath = path.join(recorder.getSessionDir(), 'system-audio.wav');
       await speakerCapture.start(speakerPath);
+      recorder.registerExternalStream({
+        id:              'sys',
+        type:            'system-audio',
+        filename:        'system-audio.wav',
+        format:          'wav',
+        getBytesWritten: () => speakerCapture.bytesWritten.value,
+      });
     }
 
     recording.value = true;
@@ -1075,6 +1089,7 @@ html, body {
 .info-badge .dot { width: 5px; height: 5px; border-radius: 50%; }
 .info-badge .dot.green { background: var(--success); }
 .info-badge .dot.blue { background: var(--info); }
+.info-badge .dot.off { background: var(--text-dim); }
 
 /* ═══════════════════════════════════════════════
    FLOATING CONTROLS

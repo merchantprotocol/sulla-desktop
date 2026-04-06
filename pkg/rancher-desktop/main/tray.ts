@@ -21,7 +21,7 @@ import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send, openEditor, openCaptureStudio, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
+import { openMain, send, openEditor, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -44,6 +44,13 @@ export class Tray {
   private kubeConfigWatchers:      fs.FSWatcher[] = [];
   private fsWatcherInterval:       NodeJS.Timeout;
 
+  /**
+   * @deprecated This native context menu is no longer displayed. The tray uses
+   * a custom HTML panel (trayPanel/) instead. This array is kept temporarily
+   * because updateMenu() mutates it to track state (enabled/disabled, labels)
+   * before forwarding to sendPanelState(). It should be replaced with a
+   * dedicated state object that the panel reads directly.
+   */
   protected contextMenuItems: Electron.MenuItemConstructorOptions[] = [
     {
       id:    'main',
@@ -81,15 +88,6 @@ export class Tray {
             sendCommand();
           }
         }
-      },
-    },
-    {
-      id:    'capture-studio',
-      label: 'Capture Studio',
-      icon:  path.join(paths.resources, 'icons', 'automation-play.png'),
-      type:  'normal',
-      click() {
-        openCaptureStudio();
       },
     },
     { type: 'separator' },
@@ -514,7 +512,7 @@ export class Tray {
       });
     } else {
       // Re-enable items that were disabled when logged out
-      const loginControlled = new Set(['editor', 'docker-dashboard', 'extensions', 'secretary-mode', 'capture-studio']);
+      const loginControlled = new Set(['editor', 'docker-dashboard', 'extensions', 'secretary-mode']);
       this.contextMenuItems.forEach((item) => {
         if (item.id && loginControlled.has(item.id)) {
           item.enabled = true;

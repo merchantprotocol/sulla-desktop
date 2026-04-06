@@ -25,6 +25,15 @@ interface StreamEntry {
   bytesWritten: number;
 }
 
+interface ExternalStreamEntry {
+  id: string;
+  type: string;
+  filename: string;
+  startOffset: number;
+  format: string;
+  getBytesWritten: () => number;
+}
+
 function getCapturesDir(): string {
   return path.join(os.homedir(), 'sulla', 'captures');
 }
@@ -57,6 +66,7 @@ export function useRecorder() {
 
   let sessionDir = '';
   let entries: StreamEntry[] = [];
+  let externalEntries: ExternalStreamEntry[] = [];
   let timerInterval: ReturnType<typeof setInterval> | null = null;
   let sessionStartTime = 0;
 
@@ -160,9 +170,34 @@ export function useRecorder() {
 
     isRecording.value = true;
     elapsedSeconds.value = 0;
+    externalEntries = [];
     timerInterval = setInterval(() => { elapsedSeconds.value++; }, 1000);
 
     return id;
+  }
+
+  /**
+   * Register an external stream (e.g. speaker WAV written by useSpeakerCapture)
+   * so it appears in the session manifest.
+   */
+  function registerExternalStream(entry: {
+    id: string;
+    type: string;
+    filename: string;
+    format: string;
+    getBytesWritten: () => number;
+  }): void {
+    externalEntries.push({
+      ...entry,
+      startOffset: performance.now() - sessionStartTime,
+    });
+  }
+
+  /**
+   * Get the session directory path (for external writers to place files).
+   */
+  function getSessionDir(): string {
+    return sessionDir;
   }
 
   /**
@@ -203,19 +238,34 @@ export function useRecorder() {
       entry.writeStream.end();
     }
 
-    // Write manifest
+    // Write manifest (includes both MediaRecorder and external streams)
+    const allStreams = [
+      ...entries.map(e => ({
+        id: e.id,
+        type: e.type,
+        filename: e.filename,
+        format: 'webm',
+        startOffset: Math.round(e.startOffset),
+        bytes: e.bytesWritten,
+      })),
+      ...externalEntries.map(e => ({
+        id: e.id,
+        type: e.type,
+        filename: e.filename,
+        format: e.format,
+        startOffset: Math.round(e.startOffset),
+        bytes: e.getBytesWritten(),
+      })),
+    ];
+
+    const totalBytes = allStreams.reduce((sum, s) => sum + s.bytes, 0);
+
     const manifest = {
       sessionId: sessionId.value,
       startedAt: new Date(Date.now() - elapsedSeconds.value * 1000).toISOString(),
       duration: elapsedSeconds.value,
-      totalBytes: bytesWritten.value,
-      streams: entries.map(e => ({
-        id: e.id,
-        type: e.type,
-        filename: e.filename,
-        startOffset: Math.round(e.startOffset),
-        bytes: e.bytesWritten,
-      })),
+      totalBytes,
+      streams: allStreams,
     };
 
     try {
@@ -246,5 +296,7 @@ export function useRecorder() {
     error,
     startSession,
     stopSession,
+    registerExternalStream,
+    getSessionDir,
   };
 }
