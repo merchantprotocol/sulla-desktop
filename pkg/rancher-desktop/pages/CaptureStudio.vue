@@ -125,6 +125,25 @@
       Low disk space: {{ diskSpace.availableGB.value }} remaining
     </div>
 
+    <!-- Status message toast -->
+    <div v-if="statusMessage" class="status-toast">{{ statusMessage }}</div>
+
+    <!-- Playback bar (shown after recording stops) -->
+    <div v-if="lastSessionDir && !recording" class="playback-bar">
+      <span class="playback-label">Session saved</span>
+      <button class="playback-btn" @click="openLastSession">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Play
+      </button>
+      <button class="playback-btn" @click="openSessionFolder">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        Open Folder
+      </button>
+      <button class="playback-btn dismiss" @click="lastSessionDir = ''">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
     <!-- Flash overlay -->
     <div class="flash-overlay" :class="{ flash: flashActive }"></div>
   </div>
@@ -175,6 +194,8 @@ const cameraShape = ref('circle');
 const prompterEnabled = ref(false);
 const flashActive = ref(false);
 const addPopupOpen = ref(false);
+const statusMessage = ref('');
+const lastSessionDir = ref('');
 let sourceCounter = 0;
 
 const assign = reactive({ primary: 'screen', pip: 'cam' });
@@ -363,8 +384,8 @@ async function toggleRecord() {
     // Check disk space before starting
     const spaceCheck = diskSpace.checkBeforeRecording();
     if (!spaceCheck.ok) {
-      console.warn('[CaptureStudio]', spaceCheck.message);
-      // TODO: show UI warning
+      statusMessage.value = spaceCheck.message;
+      setTimeout(() => { statusMessage.value = ''; }, 5000);
       return;
     }
 
@@ -384,7 +405,8 @@ async function toggleRecord() {
     }
 
     if (streams.length === 0) {
-      console.warn('[CaptureStudio] No active streams to record');
+      statusMessage.value = 'Enable at least one source to record';
+      setTimeout(() => { statusMessage.value = ''; }, 3000);
       return;
     }
 
@@ -415,13 +437,41 @@ async function toggleRecord() {
   } else {
     // Stop speaker capture
     speakerCapture.stop();
+    lastSessionDir.value = recorder.getSessionDir();
     await recorder.stopSession();
     recording.value = false;
     diskSpace.stopMonitoring();
+    statusMessage.value = 'Recording saved';
+    setTimeout(() => { statusMessage.value = ''; }, 5000);
   }
 }
 
 // ─── Screenshot ───
+// ─── Playback ───
+function openLastSession() {
+  if (!lastSessionDir.value) return;
+  const fs = require('fs');
+  const path = require('path');
+
+  // Find the first video file to play
+  try {
+    const files = fs.readdirSync(lastSessionDir.value);
+    const videoFile = files.find((f: string) => f.endsWith('.webm') && (f.startsWith('screen') || f.startsWith('camera')));
+    const audioFile = files.find((f: string) => f.endsWith('.webm') || f.endsWith('.wav'));
+    const fileToPlay = videoFile || audioFile;
+    if (fileToPlay) {
+      shell.openPath(path.join(lastSessionDir.value, fileToPlay));
+    }
+  } catch (e: any) {
+    console.error('[CaptureStudio] Failed to open session:', e.message);
+  }
+}
+
+function openSessionFolder() {
+  if (!lastSessionDir.value) return;
+  shell.openPath(lastSessionDir.value);
+}
+
 function doScreenshot() {
   flashActive.value = true;
   setTimeout(() => { flashActive.value = false; }, 120);
@@ -485,9 +535,16 @@ watch(() => currentLayout.value, (layout) => {
 });
 
 function startAudioMeter() {
-  nextTick(() => {
+  if (meterAnimId) return;
+
+  function tryStart() {
     const container = captureCanvasRef.value?.audioMeterVisRef;
-    if (!container) return;
+    if (!container) {
+      // Retry — DOM may not have rendered audioonly yet
+      setTimeout(tryStart, 100);
+      return;
+    }
+
     if (container.children.length === 0) {
       const colors = ['var(--success)', 'var(--accent)', 'var(--info)', 'var(--success)'];
       for (let i = 0; i < 32; i++) {
@@ -498,10 +555,12 @@ function startAudioMeter() {
         container.appendChild(bar);
       }
     }
-    if (meterAnimId) return;
 
     function animateMeter() {
-      if (!container) return;
+      if (!container || currentLayout.value !== 'audioonly') {
+        meterAnimId = null;
+        return;
+      }
       const bars = container.children;
 
       // Combine all active mic levels + speaker level
@@ -524,8 +583,10 @@ function startAudioMeter() {
       }
       meterAnimId = requestAnimationFrame(animateMeter);
     }
-    animateMeter();
-  });
+    meterAnimId = requestAnimationFrame(animateMeter);
+  }
+
+  nextTick(tryStart);
 }
 
 function stopAudioMeter() {
@@ -1368,6 +1429,40 @@ html, body {
   width: 48px; height: 27px; border-radius: 3px; object-fit: cover;
   border: 1px solid var(--border); flex-shrink: 0;
 }
+
+/* ═══════════════════════════════════════════════
+   STATUS TOAST
+   ═══════════════════════════════════════════════ */
+.status-toast {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  padding: 8px 18px; background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 12px; color: var(--text-secondary);
+  backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  z-index: 60; animation: toast-in 0.2s ease;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
+/* ═══════════════════════════════════════════════
+   PLAYBACK BAR
+   ═══════════════════════════════════════════════ */
+.playback-bar {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  background: rgba(22,27,34,0.92); border: 1px solid var(--border); border-radius: 10px;
+  backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 55;
+}
+
+.playback-label { font-size: 11px; color: var(--text-muted); margin-right: 4px; }
+
+.playback-btn {
+  display: flex; align-items: center; gap: 5px; padding: 5px 12px;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--bg-surface-alt);
+  color: var(--text-secondary); font-family: var(--mono); font-size: 11px;
+  cursor: pointer; transition: all 0.12s;
+}
+.playback-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.playback-btn.dismiss { padding: 5px; border: none; background: none; color: var(--text-dim); }
+.playback-btn.dismiss:hover { color: var(--text-primary); }
 
 .flash-overlay {
   position: fixed; inset: 0; background: white; opacity: 0;
