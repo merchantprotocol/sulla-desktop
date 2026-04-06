@@ -572,6 +572,7 @@ function handleVoiceShortcut(e: KeyboardEvent): void {
 onMounted(async() => {
   await nextTick();
   updateComposerLayout();
+  composerTextareaEl.value?.focus();
   window.addEventListener('keydown', handleVoiceShortcut);
 });
 
