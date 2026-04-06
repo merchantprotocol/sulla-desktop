@@ -43,6 +43,8 @@ export function useSettings() {
   const tpSpeed = ref(6);
   const tpHighlightColor = ref('#e6edf3');
   const savePath = ref('');
+  const screenQuality = ref('auto');
+  const cameraQuality = ref('720p');
   const loaded = ref(false);
 
   // Load all settings on mount (parallelized)
@@ -50,6 +52,7 @@ export function useSettings() {
     const [
       layoutVal, cameraShapeVal, cameraDeviceIdVal, micDeviceIdVal,
       tpFontSizeVal, tpSpeedVal, tpHighlightColorVal, savePathVal,
+      screenQualityVal, cameraQualityVal,
     ] = await Promise.all([
       loadSetting('layout', 'pip'),
       loadSetting('cameraShape', 'circle'),
@@ -59,6 +62,8 @@ export function useSettings() {
       loadSetting('tpSpeed', 6),
       loadSetting('tpHighlightColor', '#e6edf3'),
       loadSetting('savePath', ''),
+      loadSetting('screenQuality', 'auto'),
+      loadSetting('cameraQuality', '720p'),
     ]);
     layout.value = layoutVal;
     cameraShape.value = cameraShapeVal;
@@ -68,6 +73,8 @@ export function useSettings() {
     tpSpeed.value = tpSpeedVal;
     tpHighlightColor.value = tpHighlightColorVal;
     savePath.value = savePathVal;
+    screenQuality.value = screenQualityVal;
+    cameraQuality.value = cameraQualityVal;
     loaded.value = true;
   });
 
@@ -86,6 +93,8 @@ export function useSettings() {
   watch(tpSpeed, v => debouncedSave('tpSpeed', v));
   watch(tpHighlightColor, v => debouncedSave('tpHighlightColor', v));
   watch(savePath, v => debouncedSave('savePath', v));
+  watch(screenQuality, v => debouncedSave('screenQuality', v));
+  watch(cameraQuality, v => debouncedSave('cameraQuality', v));
 
   // Clear pending save timeout on unmount
   onUnmounted(() => {
@@ -104,6 +113,8 @@ export function useSettings() {
     tpSpeed,
     tpHighlightColor,
     savePath,
+    screenQuality,
+    cameraQuality,
     loaded,
   };
 }

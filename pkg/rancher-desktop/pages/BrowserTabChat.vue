@@ -630,15 +630,14 @@ function showVoiceToast(message: string): void {
 }
 
 // ─── Voice configuration check ──────────────────────────────
+// Voice capture uses browser SpeechRecognition — mic button appears
+// whenever the browser supports it (Electron/Chromium always does).
 const isVoiceConfigured = ref(false);
-async function checkVoiceConfig() {
-  try {
-    const result = await ipcRenderer.invoke('integration-get-value', 'elevenlabs', 'api_key');
-    isVoiceConfigured.value = !!(result?.value);
-  } catch {
-    isVoiceConfigured.value = false;
-  }
+function checkVoiceConfig() {
+  const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  isVoiceConfigured.value = !!SR;
 }
+checkVoiceConfig();
 
 // ─── Voice Session ───────────────────────────────────────────
 // OOP voice system: VoiceRecorderService + TTSPlayerService + VoicePipeline
@@ -674,7 +673,6 @@ onMounted(async () => {
   if (chatScrollContainer.value) attachScrollListeners(chatScrollContainer.value);
   await modelSelector.start();
   checkFirstChat();
-  checkVoiceConfig();
 
   // Scroll to bottom on initial load if messages exist
   if (chatScrollContainer.value && messages.value.length > 0) {

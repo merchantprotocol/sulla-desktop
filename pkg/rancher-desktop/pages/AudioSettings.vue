@@ -22,36 +22,178 @@
 
       <!-- Content area -->
       <div class="audio-body">
-        <!-- Overview Tab -->
+
+        <!-- ═══════════════════════════════════════════════════════════
+             Text-to-Speech Tab
+             ═══════════════════════════════════════════════════════════ -->
         <div
-          v-if="currentNav === 'overview'"
+          v-if="currentNav === 'tts'"
           class="tab-content"
         >
-          <h2>Audio Configuration</h2>
+          <h2>Text-to-Speech</h2>
           <p class="description">
-            Overview of your audio settings for speech-to-text and text-to-speech.
+            Configure how Sulla speaks responses aloud. When a TTS provider is
+            connected and a voice is selected, voice chat becomes two-way &mdash;
+            you speak, Sulla speaks back. Without TTS, voice input still works
+            but Sulla replies with text only.
           </p>
 
-          <!-- API Key Status -->
+          <!-- Two-way voice status banner -->
+          <div
+            class="status-banner"
+            :class="ttsFullyConfigured ? 'banner-success' : 'banner-info'"
+          >
+            <span v-if="ttsFullyConfigured">Two-way voice is enabled. Sulla will speak responses using {{ ttsVoiceName || 'the selected voice' }}.</span>
+            <span v-else-if="!hasAnyTtsProvider">No TTS provider connected. Add an API key for a provider below to enable Sulla's voice.</span>
+            <span v-else-if="!ttsVoice">Select a voice below to enable two-way voice.</span>
+          </div>
+
+          <!-- Provider selection -->
           <div class="setting-section">
-            <h3>ElevenLabs Connection</h3>
+            <h3>Provider</h3>
+            <div
+              v-for="provider in ttsProviders"
+              :key="provider.id"
+              class="provider-card"
+              :class="{
+                'provider-active': ttsProvider === provider.id && provider.connected,
+                'provider-connected': provider.connected,
+                'provider-disconnected': !provider.connected,
+              }"
+              @click="provider.connected && selectTtsProvider(provider.id)"
+            >
+              <div class="provider-info">
+                <span class="provider-name">{{ provider.name }}</span>
+                <span
+                  class="status-badge"
+                  :class="provider.connected ? 'badge-success' : 'badge-warning'"
+                >
+                  {{ provider.connected ? 'Connected' : 'Not configured' }}
+                </span>
+              </div>
+              <p
+                v-if="!provider.connected"
+                class="provider-hint"
+              >
+                Add your {{ provider.name }} API key in the password vault to enable this provider.
+              </p>
+              <div
+                v-if="provider.connected && ttsProvider === provider.id"
+                class="provider-selected-badge"
+              >
+                Active
+              </div>
+            </div>
+          </div>
+
+          <!-- Voice selection (only when provider is connected) -->
+          <div
+            v-if="hasAnyTtsProvider"
+            class="setting-section"
+          >
+            <h3>Voice</h3>
+            <div class="voice-select-row">
+              <select
+                v-model="ttsVoice"
+                class="setting-select"
+                :disabled="loadingVoices"
+                @change="onVoiceChange"
+              >
+                <option value="">Select a voice...</option>
+                <option
+                  v-for="voice in voices"
+                  :key="voice.value"
+                  :value="voice.value"
+                >
+                  {{ voice.label }}
+                  <template v-if="voice.description"> ({{ voice.description }})</template>
+                </option>
+              </select>
+              <button
+                class="action-btn"
+                :disabled="loadingVoices"
+                @click="fetchVoices"
+              >
+                {{ loadingVoices ? 'Loading...' : 'Refresh' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Voice preview -->
+          <div
+            v-if="ttsVoice"
+            class="setting-section"
+          >
+            <h3>Preview</h3>
+            <button
+              class="action-btn"
+              :disabled="previewPlaying"
+              @click="previewVoice"
+            >
+              {{ previewPlaying ? 'Playing...' : 'Test Voice' }}
+            </button>
+            <p class="description">
+              Plays a short sample with the selected voice.
+            </p>
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             Secretary Mode Tab
+             ═══════════════════════════════════════════════════════════ -->
+        <div
+          v-if="currentNav === 'secretary'"
+          class="tab-content"
+        >
+          <h2>Secretary Mode</h2>
+          <p class="description">
+            Secretary mode uses the audio driver to capture both your microphone
+            and system audio (speaker output) for meeting transcription.
+            This is the only mode that requires the audio driver.
+          </p>
+
+          <!-- Audio Capture Status -->
+          <div class="setting-section">
+            <h3>Audio Capture</h3>
             <div class="status-row">
-              <span class="status-label">API Key:</span>
+              <span class="status-label">Loopback Driver:</span>
               <span
                 class="status-badge"
-                :class="apiKeyConnected ? 'badge-success' : 'badge-warning'"
+                :class="audioCaptureActive ? 'badge-success' : 'badge-warning'"
               >
-                {{ apiKeyConnected ? 'Connected' : 'Not configured' }}
+                {{ audioCaptureActive ? 'Active' : 'Inactive' }}
               </span>
             </div>
-            <p
-              v-if="!apiKeyConnected"
-              class="description"
-            >
-              Add your ElevenLabs API key in Integrations to enable audio features.
+            <p class="description">
+              System audio capture uses a virtual loopback driver to record
+              speaker output alongside microphone input. Activate via the tray
+              panel or by starting a Secretary Mode session.
             </p>
           </div>
 
+          <!-- Transcription Mode (secretary only) -->
+          <div class="setting-section">
+            <h3>Transcription Mode</h3>
+            <select
+              v-model="transcriptionMode"
+              class="setting-select"
+              @change="saveSettings"
+            >
+              <option value="browser">Browser (real-time)</option>
+              <option
+                v-if="gatewayConnected"
+                value="gateway"
+              >Enterprise Gateway</option>
+            </select>
+            <p class="description">
+              <strong>Browser</strong> uses built-in speech recognition for mic
+              transcription. Free, no API key needed.<br>
+              <strong>Enterprise Gateway</strong> routes both mic and speaker
+              audio through your gateway server for multi-channel transcription.
+            </p>
+          </div>
+
+          <!-- Gateway connection -->
           <div class="setting-section">
             <h3>Enterprise Gateway</h3>
             <div class="status-row">
@@ -67,27 +209,24 @@
               v-if="!gatewayConnected"
               class="description"
             >
-              Configure your Enterprise Gateway in Integrations to enable gateway transcription.
+              Configure the Enterprise Gateway URL and API key in the password vault
+              to enable gateway transcription.
             </p>
           </div>
+        </div>
 
-          <!-- Audio Capture (audio-driver) -->
-          <div class="setting-section">
-            <h3>Audio Capture</h3>
-            <div class="status-row">
-              <span class="status-label">Loopback Driver:</span>
-              <span
-                class="status-badge"
-                :class="audioCaptureActive ? 'badge-success' : 'badge-warning'"
-              >
-                {{ audioCaptureActive ? 'Active' : 'Inactive' }}
-              </span>
-            </div>
-            <p class="description">
-              System audio capture uses a virtual loopback driver to record speaker output
-              alongside microphone input. Activate via the tray panel Audio tab or Secretary Mode.
-            </p>
-          </div>
+        <!-- ═══════════════════════════════════════════════════════════
+             Microphone & Language Tab
+             ═══════════════════════════════════════════════════════════ -->
+        <div
+          v-if="currentNav === 'microphone'"
+          class="tab-content"
+        >
+          <h2>Microphone &amp; Language</h2>
+          <p class="description">
+            These settings apply to all voice features: chat, teleprompter,
+            capture studio, and secretary mode.
+          </p>
 
           <!-- Audio Input Device -->
           <div class="setting-section">
@@ -111,7 +250,7 @@
                 </option>
               </select>
               <button
-                class="refresh-btn"
+                class="action-btn"
                 :disabled="loadingDevices"
                 @click="fetchAudioDevices"
               >
@@ -120,277 +259,9 @@
             </div>
           </div>
 
-          <!-- Current Settings Summary -->
+          <!-- STT Language -->
           <div class="setting-section">
-            <h3>Active Configuration</h3>
-            <div class="summary-grid">
-              <div class="summary-item">
-                <span class="summary-label">Transcription Mode</span>
-                <span class="summary-value">{{ transcriptionModeLabel }}</span>
-              </div>
-              <div class="summary-item">
-                <span class="summary-label">TTS Voice</span>
-                <span class="summary-value">{{ ttsVoiceName || 'Not selected' }}</span>
-              </div>
-              <div class="summary-item">
-                <span class="summary-label">Secretary Mode</span>
-                <span class="summary-value">{{ secretaryEnabled ? (secretaryAgentName || 'Enabled') : 'Off' }}</span>
-              </div>
-              <div class="summary-item">
-                <span class="summary-label">System Audio</span>
-                <span class="summary-value">{{ secretaryEnabled && transcriptionMode === 'gateway' ? 'Multi-channel (auto)' : 'Single channel' }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Transcription Tab -->
-        <div
-          v-if="currentNav === 'transcription'"
-          class="tab-content"
-        >
-          <h2>Transcription</h2>
-          <p class="description">
-            Configure the speech-to-text model used when you record audio via the microphone button.
-          </p>
-
-          <div class="setting-section">
-            <h3>Mode</h3>
-            <select
-              v-model="transcriptionMode"
-              class="setting-select"
-              @change="saveSettings"
-            >
-              <option value="browser">Browser (real-time)</option>
-              <option
-                v-if="apiKeyConnected"
-                value="elevenlabs"
-              >ElevenLabs (high accuracy)</option>
-              <option
-                v-if="gatewayConnected"
-                value="gateway"
-              >Enterprise Gateway</option>
-            </select>
-            <p class="description">
-              <strong>Browser</strong> uses Chrome's built-in speech recognition for instant, live transcription
-              that shows your words as you speak. Free, no API key needed.<br>
-              <strong>ElevenLabs</strong> uses the Scribe model for higher accuracy transcription,
-              but text only appears after you finish speaking.<br>
-              <strong>Enterprise Gateway</strong> routes audio through your Enterprise Gateway server,
-              which handles transcription server-side. Configure the gateway URL and API key in
-              Integrations &rarr; Enterprise Sulla.
-            </p>
-          </div>
-
-          <div
-            v-if="transcriptionMode !== 'gateway'"
-            class="setting-section"
-          >
-            <h3>Model</h3>
-            <select
-              v-model="transcriptionModel"
-              class="setting-select"
-              @change="saveSettings"
-            >
-              <option value="scribe_v2">Scribe v2 (recommended)</option>
-              <option value="scribe_v1">Scribe v1</option>
-              <option value="scribe_v1_experimental">Scribe v1 Experimental</option>
-            </select>
-            <p class="description">
-              <strong>Scribe v2</strong> is the latest ElevenLabs model with improved accuracy and noise labeling.<br>
-              <strong>Scribe v1</strong> is the original production model with broad language support.
-            </p>
-          </div>
-        </div>
-
-        <!-- Voice Tab -->
-        <div
-          v-if="currentNav === 'voice'"
-          class="tab-content"
-        >
-          <h2>Text-to-Speech Voice</h2>
-          <p class="description">
-            Select the voice Sulla will use when speaking responses aloud.
-          </p>
-
-          <div class="setting-section">
-            <h3>Provider</h3>
-            <select
-              v-model="ttsProvider"
-              class="setting-select"
-              @change="saveSettings"
-            >
-              <option value="elevenlabs">ElevenLabs</option>
-            </select>
-          </div>
-
-          <div class="setting-section">
-            <h3>Voice</h3>
-            <div class="voice-select-row">
-              <select
-                v-model="ttsVoice"
-                class="setting-select"
-                :disabled="loadingVoices"
-                @change="saveSettings"
-              >
-                <option value="">Select a voice...</option>
-                <option
-                  v-for="voice in voices"
-                  :key="voice.value"
-                  :value="voice.value"
-                >
-                  {{ voice.label }}
-                  <template v-if="voice.description"> ({{ voice.description }})</template>
-                </option>
-              </select>
-              <button
-                class="refresh-btn"
-                :disabled="loadingVoices"
-                @click="fetchVoices"
-              >
-                {{ loadingVoices ? 'Loading...' : 'Refresh' }}
-              </button>
-            </div>
-            <p
-              v-if="!apiKeyConnected"
-              class="description warning"
-            >
-              Configure your ElevenLabs API key in Integrations to load available voices.
-            </p>
-          </div>
-
-          <!-- Voice Preview -->
-          <div class="setting-section">
-            <h3>Preview</h3>
-            <button
-              class="refresh-btn"
-              :disabled="previewPlaying || !ttsVoice"
-              @click="previewVoice"
-            >
-              {{ previewPlaying ? 'Playing...' : 'Test Voice' }}
-            </button>
-            <p class="description">
-              Plays a short sample with the selected voice.
-            </p>
-          </div>
-        </div>
-
-        <!-- Secretary Mode Tab -->
-        <div
-          v-if="currentNav === 'secretary'"
-          class="tab-content"
-        >
-          <h2>Secretary Mode</h2>
-          <p class="description">
-            When enabled, your transcribed audio is also forwarded to an ElevenLabs conversational agent.
-            You still receive the transcription as normal.
-          </p>
-
-          <div
-            v-if="!apiKeyConnected"
-            class="setting-section"
-          >
-            <p class="description warning">
-              Configure your ElevenLabs API key in Integrations to use Secretary Mode.
-            </p>
-          </div>
-
-          <template v-else>
-            <div class="setting-section">
-              <h3>Enable Secretary Mode</h3>
-              <label class="toggle-row">
-                <input
-                  v-model="secretaryEnabled"
-                  type="checkbox"
-                  class="setting-checkbox"
-                  @change="saveSettings"
-                >
-                <span>Forward transcriptions to an ElevenLabs agent</span>
-              </label>
-            </div>
-
-            <div class="setting-section">
-              <h3>ElevenLabs Agent</h3>
-              <div class="voice-select-row">
-                <select
-                  v-model="secretaryAgentId"
-                  class="setting-select"
-                  :disabled="loadingAgents || !secretaryEnabled"
-                  @change="onAgentChange"
-                >
-                  <option value="">
-                    Select an agent...
-                  </option>
-                  <option
-                    v-for="agent in elevenLabsAgents"
-                    :key="agent.value"
-                    :value="agent.value"
-                  >
-                    {{ agent.label }}
-                  </option>
-                </select>
-                <button
-                  class="refresh-btn"
-                  :disabled="loadingAgents"
-                  @click="fetchElevenLabsAgents"
-                >
-                  {{ loadingAgents ? 'Loading...' : 'Refresh' }}
-                </button>
-              </div>
-              <p
-                v-if="secretaryAgentName && secretaryEnabled"
-                class="description"
-              >
-                Active agent: <strong>{{ secretaryAgentName }}</strong>
-              </p>
-            </div>
-          </template>
-        </div>
-
-        <!-- Sensitivity Tab -->
-        <div
-          v-if="currentNav === 'sensitivity'"
-          class="tab-content"
-        >
-          <h2>Voice Sensitivity</h2>
-          <p class="description">
-            Tune how quickly voice input detects silence and submits your speech.
-          </p>
-
-          <div class="setting-section">
-            <h3>Silence Duration: {{ vadSilenceDuration }}ms</h3>
-            <input
-              v-model.number="vadSilenceDuration"
-              type="range"
-              min="300"
-              max="3000"
-              step="100"
-              class="setting-range"
-              @change="saveSettings"
-            >
-            <p class="description">
-              How long you must pause before speech is submitted. Lower = faster response, higher = more time to pause between thoughts.
-            </p>
-          </div>
-
-          <div class="setting-section">
-            <h3>Silence Threshold: {{ vadSilenceThreshold }}</h3>
-            <input
-              v-model.number="vadSilenceThreshold"
-              type="range"
-              min="3"
-              max="30"
-              step="1"
-              class="setting-range"
-              @change="saveSettings"
-            >
-            <p class="description">
-              Audio level below which counts as silence. Lower = more sensitive (picks up quiet speech), higher = needs louder voice.
-            </p>
-          </div>
-
-          <div class="setting-section">
-            <h3>STT Language</h3>
+            <h3>Speech Recognition Language</h3>
             <select
               v-model="sttLanguage"
               class="setting-select"
@@ -408,10 +279,12 @@
               <option value="zh-CN">Chinese (Simplified)</option>
             </select>
             <p class="description">
-              Language for browser transcription mode. ElevenLabs auto-detects language.
+              Language used by browser speech recognition for chat and
+              teleprompter voice input.
             </p>
           </div>
         </div>
+
       </div>
     </div>
   </div>
@@ -422,84 +295,82 @@ import { ref, computed, onMounted } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { useTheme } from '../composables/useTheme';
 
-// Initialize theme
 useTheme();
 
+// ─── Navigation ─────────────────────────────────────────────────
+
 const navItems = [
-  { id: 'overview', name: 'Overview' },
-  { id: 'transcription', name: 'Transcription' },
-  { id: 'voice', name: 'Voice' },
+  { id: 'tts', name: 'Text-to-Speech' },
   { id: 'secretary', name: 'Secretary Mode' },
-  { id: 'sensitivity', name: 'Sensitivity' },
+  { id: 'microphone', name: 'Microphone & Language' },
 ];
 
-const currentNav = ref('overview');
+const currentNav = ref('tts');
 
-// Settings state
-const apiKeyConnected = ref(false);
-const gatewayConnected = ref(false);
-const audioCaptureActive = ref(false);
+// ─── TTS Providers ──────────────────────────────────────────────
 
-// Listen for audio-driver state updates
-ipcRenderer.on('audio-driver:state', (_event: any, state: { running: boolean }) => {
-  audioCaptureActive.value = state.running;
-});
-const transcriptionMode = ref('browser');
-const transcriptionProvider = ref('elevenlabs');
-const transcriptionModel = ref('scribe_v2');
+interface TtsProviderInfo {
+  id:        string;
+  name:      string;
+  connected: boolean;
+  vaultKey:  { integrationId: string; property: string };
+}
+
+const ttsProviders = ref<TtsProviderInfo[]>([
+  { id: 'elevenlabs', name: 'ElevenLabs', connected: false, vaultKey: { integrationId: 'elevenlabs', property: 'api_key' } },
+]);
+
 const ttsProvider = ref('elevenlabs');
 const ttsVoice = ref('');
 const ttsVoiceName = ref('');
-
-// VAD sensitivity
-const vadSilenceThreshold = ref(12);
-const vadSilenceDuration = ref(800);
-
-// Voice preview
+const voices = ref<{ value: string; label: string; description?: string }[]>([]);
+const loadingVoices = ref(false);
 const previewPlaying = ref(false);
 
-// Audio devices
+const hasAnyTtsProvider = computed(() => ttsProviders.value.some(p => p.connected));
+const ttsFullyConfigured = computed(() => hasAnyTtsProvider.value && !!ttsVoice.value);
+
+function selectTtsProvider(id: string) {
+  ttsProvider.value = id;
+  ttsVoice.value = '';
+  ttsVoiceName.value = '';
+  saveSettings();
+  fetchVoices();
+}
+
+function onVoiceChange() {
+  const selected = voices.value.find(v => v.value === ttsVoice.value);
+  ttsVoiceName.value = selected?.label || '';
+  saveSettings();
+}
+
+// ─── Secretary Mode ─────────────────────────────────────────────
+
+const audioCaptureActive = ref(false);
+const gatewayConnected = ref(false);
+const transcriptionMode = ref('browser');
+
+ipcRenderer.on('audio-driver:state', (_event: any, state: { running: boolean }) => {
+  audioCaptureActive.value = state.running;
+});
+
+// ─── Microphone & Language ──────────────────────────────────────
+
 const audioInputDeviceId = ref('');
 const audioInputDevices = ref<{ value: string; label: string }[]>([]);
 const loadingDevices = ref(false);
-
-// STT language
 const sttLanguage = ref('en-US');
 
-// Voices
-const voices = ref<{ value: string; label: string; description?: string }[]>([]);
-const loadingVoices = ref(false);
-
-// Secretary Mode
-const secretaryEnabled = ref(false);
-const secretaryAgentId = ref('');
-const secretaryAgentName = ref('');
-const elevenLabsAgents = ref<{ value: string; label: string }[]>([]);
-const loadingAgents = ref(false);
-
-const transcriptionModeLabel = computed(() => {
-  switch (transcriptionMode.value) {
-    case 'browser': return 'Browser (real-time)';
-    case 'gateway': return 'Enterprise Gateway';
-    default: return 'ElevenLabs';
-  }
-});
+// ─── Settings persistence ───────────────────────────────────────
 
 async function loadSettings(): Promise<void> {
   try {
-    transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
-    transcriptionProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionProvider', 'elevenlabs');
-    transcriptionModel.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionModel', 'scribe_v2');
     ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'elevenlabs');
     ttsVoice.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoice', '');
     ttsVoiceName.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoiceName', '');
-    vadSilenceThreshold.value = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceThreshold', 12);
-    vadSilenceDuration.value = await ipcRenderer.invoke('sulla-settings-get', 'audioVadSilenceDuration', 800);
+    transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
     sttLanguage.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
-    secretaryEnabled.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryEnabled', false);
-    secretaryAgentId.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryAgentId', '');
-    secretaryAgentName.value = await ipcRenderer.invoke('sulla-settings-get', 'secretaryAgentName', '');
   } catch (err) {
     console.error('[AudioSettings] Failed to load settings:', err);
   }
@@ -507,33 +378,31 @@ async function loadSettings(): Promise<void> {
 
 async function saveSettings(): Promise<void> {
   try {
-    await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionMode', transcriptionMode.value);
-    await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionProvider', transcriptionProvider.value);
-    await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionModel', transcriptionModel.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTtsProvider', ttsProvider.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTtsVoice', ttsVoice.value);
-    await ipcRenderer.invoke('sulla-settings-set', 'audioVadSilenceThreshold', vadSilenceThreshold.value);
-    await ipcRenderer.invoke('sulla-settings-set', 'audioVadSilenceDuration', vadSilenceDuration.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioTtsVoiceName', ttsVoiceName.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionMode', transcriptionMode.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioSttLanguage', sttLanguage.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioInputDeviceId', audioInputDeviceId.value);
-    await ipcRenderer.invoke('sulla-settings-set', 'secretaryEnabled', secretaryEnabled.value);
-    await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentId', secretaryAgentId.value);
-    await ipcRenderer.invoke('sulla-settings-set', 'secretaryAgentName', secretaryAgentName.value);
-    // Store the display name of the selected voice
-    const selected = voices.value.find(v => v.value === ttsVoice.value);
-    ttsVoiceName.value = selected?.label || '';
-    await ipcRenderer.invoke('sulla-settings-set', 'audioTtsVoiceName', ttsVoiceName.value);
   } catch (err) {
     console.error('[AudioSettings] Failed to save settings:', err);
   }
 }
 
-async function checkApiKey(): Promise<void> {
-  try {
-    const result = await ipcRenderer.invoke('integration-get-value', 'elevenlabs', 'api_key');
-    apiKeyConnected.value = !!(result?.value);
-  } catch {
-    apiKeyConnected.value = false;
+// ─── Provider connection checks ─────────────────────────────────
+
+async function checkProviders(): Promise<void> {
+  for (const provider of ttsProviders.value) {
+    try {
+      const result = await ipcRenderer.invoke(
+        'integration-get-value',
+        provider.vaultKey.integrationId,
+        provider.vaultKey.property,
+      );
+      provider.connected = !!(result?.value);
+    } catch {
+      provider.connected = false;
+    }
   }
 }
 
@@ -549,10 +418,22 @@ async function checkGateway(): Promise<void> {
   }
 }
 
+// ─── Voice fetching ─────────────────────────────────────────────
+
 async function fetchVoices(): Promise<void> {
   if (loadingVoices.value) return;
   loadingVoices.value = true;
 
+  try {
+    if (ttsProvider.value === 'elevenlabs') {
+      await fetchElevenLabsVoices();
+    }
+  } finally {
+    loadingVoices.value = false;
+  }
+}
+
+async function fetchElevenLabsVoices(): Promise<void> {
   try {
     const result = await ipcRenderer.invoke('integration-get-value', 'elevenlabs', 'api_key');
     const apiKey = result?.value;
@@ -584,16 +465,21 @@ async function fetchVoices(): Promise<void> {
     }
   } catch {
     voices.value = getStaticVoices();
-  } finally {
-    loadingVoices.value = false;
   }
 }
+
+function getStaticVoices(): { value: string; label: string; description?: string }[] {
+  return [
+    { value: 'cgSgspJ2msm6clMCkdW9', label: 'Jessica', description: 'premade, default' },
+  ];
+}
+
+// ─── Device enumeration ─────────────────────────────────────────
 
 async function fetchAudioDevices(): Promise<void> {
   if (loadingDevices.value) return;
   loadingDevices.value = true;
   try {
-    // Must request mic permission first to get device labels
     await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
     const devices = await navigator.mediaDevices.enumerateDevices();
     const hiddenDevices = ['blackhole', 'sulla audio mirror'];
@@ -611,6 +497,8 @@ async function fetchAudioDevices(): Promise<void> {
     loadingDevices.value = false;
   }
 }
+
+// ─── Voice preview ──────────────────────────────────────────────
 
 async function previewVoice(): Promise<void> {
   if (previewPlaying.value) return;
@@ -634,68 +522,14 @@ async function previewVoice(): Promise<void> {
   }
 }
 
-async function fetchElevenLabsAgents(): Promise<void> {
-  if (loadingAgents.value) return;
-  loadingAgents.value = true;
-
-  try {
-    const result = await ipcRenderer.invoke('integration-get-value', 'elevenlabs', 'api_key');
-    const apiKey = result?.value;
-
-    if (!apiKey) {
-      elevenLabsAgents.value = [];
-      return;
-    }
-
-    const response = await fetch('https://api.elevenlabs.io/v1/convai/agents', {
-      headers: { 'xi-api-key': apiKey },
-    });
-
-    if (!response.ok) {
-      console.warn('[AudioSettings] Failed to fetch ElevenLabs agents:', response.status);
-      elevenLabsAgents.value = [];
-      return;
-    }
-
-    const body = await response.json() as { agents?: { agent_id: string; name: string }[] };
-
-    if (body.agents && body.agents.length > 0) {
-      elevenLabsAgents.value = body.agents.map(a => ({
-        value: a.agent_id,
-        label: a.name,
-      }));
-    } else {
-      elevenLabsAgents.value = [];
-    }
-  } catch (err) {
-    console.warn('[AudioSettings] Error fetching ElevenLabs agents:', err);
-    elevenLabsAgents.value = [];
-  } finally {
-    loadingAgents.value = false;
-  }
-}
-
-function onAgentChange(): void {
-  const selected = elevenLabsAgents.value.find(a => a.value === secretaryAgentId.value);
-  secretaryAgentName.value = selected?.label || '';
-  saveSettings();
-}
-
-function getStaticVoices(): { value: string; label: string; description?: string }[] {
-  // Only include voices with verified ElevenLabs IDs.
-  // Full list loads dynamically from the API when an API key is configured.
-  return [
-    { value: 'cgSgspJ2msm6clMCkdW9', label: 'Jessica', description: 'premade, default' },
-  ];
-}
+// ─── Init ───────────────────────────────────────────────────────
 
 onMounted(async() => {
   await loadSettings();
-  await checkApiKey();
+  await checkProviders();
   await checkGateway();
   await fetchVoices();
   await fetchAudioDevices();
-  await fetchElevenLabsAgents();
 });
 </script>
 
@@ -820,13 +654,6 @@ onMounted(async() => {
   }
 }
 
-.setting-range {
-  width: 100%;
-  max-width: 400px;
-  margin-bottom: 0.5rem;
-  accent-color: var(--accent-primary, var(--primary, #3b82f6));
-}
-
 .voice-select-row {
   display: flex;
   gap: 0.5rem;
@@ -839,7 +666,7 @@ onMounted(async() => {
   }
 }
 
-.refresh-btn {
+.action-btn {
   padding: 0.5rem 1rem;
   border: 1px solid var(--border-default, var(--input-border));
   border-radius: 6px;
@@ -857,22 +684,6 @@ onMounted(async() => {
     opacity: 0.6;
     cursor: not-allowed;
   }
-}
-
-.toggle-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-  font-size: var(--fs-body);
-  color: var(--text-primary, var(--body-text));
-}
-
-.setting-checkbox {
-  width: 1rem;
-  height: 1rem;
-  accent-color: var(--accent-primary, var(--primary, #3b82f6));
-  cursor: pointer;
 }
 
 .status-row {
@@ -904,30 +715,81 @@ onMounted(async() => {
   color: var(--status-warning, #f59e0b);
 }
 
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+// ── Status banner ──
+
+.status-banner {
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: var(--fs-body);
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
 }
 
-.summary-item {
+.banner-success {
+  background: var(--bg-success, rgba(34, 197, 94, 0.1));
+  color: var(--status-success, #22c55e);
+  border: 1px solid var(--status-success, #22c55e);
+}
+
+.banner-info {
+  background: var(--bg-warning, rgba(245, 158, 11, 0.08));
+  color: var(--text-muted, var(--muted));
+  border: 1px solid var(--border-default, var(--input-border));
+}
+
+// ── Provider cards ──
+
+.provider-card {
+  position: relative;
   padding: 1rem;
   border: 1px solid var(--border-default, var(--input-border));
   border-radius: 8px;
-  background: var(--bg-surface, var(--card-bg, transparent));
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
 
-  .summary-label {
-    display: block;
-    font-size: var(--fs-body-sm);
-    color: var(--text-muted, var(--muted));
-    margin-bottom: 0.25rem;
+  &.provider-connected:hover {
+    border-color: var(--accent-primary, var(--primary, #3b82f6));
+    background: var(--bg-surface-hover, rgba(59, 130, 246, 0.03));
   }
 
-  .summary-value {
-    display: block;
-    font-size: var(--fs-body);
-    font-weight: 500;
-    color: var(--text-primary, var(--body-text));
+  &.provider-active {
+    border-color: var(--accent-primary, var(--primary, #3b82f6));
+    background: var(--bg-active, var(--primary-light-bg, rgba(59, 130, 246, 0.05)));
   }
+
+  &.provider-disconnected {
+    cursor: default;
+    opacity: 0.7;
+  }
+}
+
+.provider-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.provider-name {
+  font-weight: 600;
+  font-size: var(--fs-body);
+}
+
+.provider-hint {
+  margin: 0.5rem 0 0;
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted, var(--muted));
+}
+
+.provider-selected-badge {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  font-size: var(--fs-body-sm);
+  padding: 0.15rem 0.5rem;
+  border-radius: 12px;
+  background: var(--accent-primary, var(--primary, #3b82f6));
+  color: #fff;
+  font-weight: 500;
 }
 </style>

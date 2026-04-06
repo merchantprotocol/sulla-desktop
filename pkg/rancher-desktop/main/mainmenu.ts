@@ -1,4 +1,4 @@
-import Electron, { Menu, MenuItem, MenuItemConstructorOptions, shell } from 'electron';
+import Electron, { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions, shell } from 'electron';
 
 import { VMBackend } from '@pkg/backend/backend';
 import { State } from '@pkg/backend/k8s';
@@ -27,6 +27,15 @@ export function setUserLoggedIn(unlocked: boolean): void {
     const tray = Tray.getInstanceIfExists();
     if (tray) tray.setUserLoggedIn(unlocked);
   } catch { /* tray not initialized yet */ }
+
+  // Broadcast to ALL renderer windows so every login/lock screen reacts
+  const channel = unlocked ? 'vault:logged-in' : 'vault:logged-out';
+
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      sendWhenReady(win, channel, {});
+    }
+  }
 }
 
 export default function buildApplicationMenu(): void {
@@ -799,11 +808,8 @@ function getMacApplicationMenu(): MenuItem[] {
           click:       async() => {
             try {
               // UI logout — lock menus and show lock screen, but keep VMK for agent
+              // setUserLoggedIn broadcasts vault:logged-out to all windows
               setUserLoggedIn(false);
-              const existing = getWindow('main-agent');
-              if (existing) {
-                sendWhenReady(existing, 'vault:logged-out', {});
-              }
             } catch (err) {
               console.error('[MainMenu] Logout failed:', err);
             }

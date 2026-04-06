@@ -318,7 +318,7 @@ onMounted(async() => {
   ipcRenderer.on('conversation-history:show-all' as any, onHistoryShowAll);
   ipcRenderer.on('conversation-history:restore-last-closed' as any, onHistoryRestoreLastClosed);
   ipcRenderer.on('conversation-history:navigate' as any, onHistoryNavigate);
-  ipcRenderer.on('vault:logged-out' as any, () => { loggedIn.value = false; });
+  // vault:logged-in / vault:logged-out are handled globally in useVaultUnlock composable
   ipcRenderer.invoke('k8s-progress').then((p: any) => {
     if (p?.description) backendProgressDesc.value = p.description;
   }).catch(() => {});

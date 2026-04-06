@@ -28,6 +28,7 @@
         ref="captureCanvasRef"
         @show-screen-menu="showScreenContextMenu"
         @show-camera-menu="showCameraContextMenu"
+        @show-audio-menu="showAudioContextMenu"
       />
 
       <TeleprompterLayout
@@ -184,10 +185,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, reactive, shallowReactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useAudioDriver } from './capture-studio/composables/useAudioDriver';
 import { createMicInstance, listAudioDevices, type MicInstance } from './capture-studio/composables/useMicCapture';
-import { useMediaSources } from './capture-studio/composables/useMediaSources';
+import { useMediaSources, QUALITY_PRESETS, type QualityPreset } from './capture-studio/composables/useMediaSources';
 import { useRecorder } from './capture-studio/composables/useRecorder';
 import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-studio/composables/useWaveform';
 import { useSettings } from './capture-studio/composables/useSettings';
@@ -215,7 +216,7 @@ const diskSpace = useDiskSpace();
 const speakerCapture = useSpeakerCapture();
 
 // Mic instances keyed by source id (created on first use, not at module level)
-const micInstances = reactive<Record<string, MicInstance>>({});
+const micInstances = shallowReactive<Record<string, MicInstance>>({});
 
 // Loading state
 const loading = ref(true);
@@ -272,6 +273,9 @@ const deviceOptions: Record<string, string[]> = {
   mic: ['MacBook Microphone', 'AirPods Pro', 'Blue Yeti', 'Rode NT-USB'],
   system: ['System Audio (Audio Driver)'],
 };
+
+// Map device labels → real browser deviceIds (populated during enumeration)
+const deviceIdMap = reactive<Record<string, string>>({});
 
 const layouts = [
   { id: 'pip', tip: 'PiP', icon: '<rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="7" cy="17" r="3"/>' },
@@ -492,9 +496,9 @@ async function toggleRecord() {
       // Mux screen video + mic audio into one stream for playback with sound
       if (micAudioTracks.length > 0) {
         const muxed = new MediaStream([...screenVal.getVideoTracks(), ...micAudioTracks]);
-        streams.push({ id: 'screen', type: 'screen', stream: muxed });
+        streams.push({ id: 'screen', type: 'screen', stream: muxed, quality: mediaSources.screenQuality.value });
       } else {
-        streams.push({ id: 'screen', type: 'screen', stream: screenVal });
+        streams.push({ id: 'screen', type: 'screen', stream: screenVal, quality: mediaSources.screenQuality.value });
       }
     }
     const camVal = mediaSources.cameraStream.value;
@@ -502,9 +506,9 @@ async function toggleRecord() {
       // Mux camera video + mic audio into one stream for playback with sound
       if (micAudioTracks.length > 0) {
         const muxed = new MediaStream([...camVal.getVideoTracks(), ...micAudioTracks]);
-        streams.push({ id: 'cam', type: 'camera', stream: muxed });
+        streams.push({ id: 'cam', type: 'camera', stream: muxed, quality: mediaSources.cameraQuality.value });
       } else {
-        streams.push({ id: 'cam', type: 'camera', stream: camVal });
+        streams.push({ id: 'cam', type: 'camera', stream: camVal, quality: mediaSources.cameraQuality.value });
       }
     }
 
@@ -514,10 +518,24 @@ async function toggleRecord() {
       return;
     }
 
-    const sessionId = recorder.startSession(streams);
+    let sessionId: string;
+    try {
+      sessionId = recorder.startSession(streams);
+    } catch (e: any) {
+      console.error('[CaptureStudio] Failed to start recording session:', e.message || e);
+      statusMessage.value = 'Failed to start recording: ' + (e.message || 'unknown error');
+      setTimeout(() => { statusMessage.value = ''; }, 5000);
+      return;
+    }
+
+    if (!sessionId) {
+      statusMessage.value = recorder.error.value || 'Failed to start recording';
+      setTimeout(() => { statusMessage.value = ''; }, 5000);
+      return;
+    }
 
     // Start speaker capture to WAV if audio driver is running
-    if (audioDriver.speakerRunning.value && sessionId) {
+    if (audioDriver.speakerRunning.value) {
       const path = require('path');
       const speakerPath = path.join(recorder.getSessionDir(), 'system-audio.wav');
       await speakerCapture.start(speakerPath);
@@ -608,7 +626,9 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
     const mic = createMicInstance();
     micInstances[id] = mic;
     try {
-      await mic.start(payload.deviceId || undefined);
+      // Resolve real browser deviceId from label (AddSourceDialog passes labels)
+      const realDeviceId = deviceIdMap[payload.deviceId] || undefined;
+      await mic.start(realDeviceId);
     } catch (e: any) {
       console.error('[CaptureStudio] Failed to start mic for new source:', e.message);
       newSrc.on = false;
@@ -723,13 +743,7 @@ function stopAudioMeter() {
 }
 
 // ─── Context menu for source switching ───
-interface CtxMenuItem {
-  id: string;
-  label: string;
-  thumbnail?: string;
-  active?: boolean;
-  action: () => void;
-}
+import type { CtxMenuItem } from './capture-studio/ContextMenu.vue';
 
 const ctxMenu = reactive({
   visible: false,
@@ -739,32 +753,69 @@ const ctxMenu = reactive({
   items: [] as CtxMenuItem[],
 });
 
+function buildQualityChildren(
+  currentPreset: string,
+  setFn: (p: any) => Promise<void>,
+  presets: readonly ('4k' | '1080p' | '720p' | '480p')[],
+  autoLabel: string,
+): CtxMenuItem[] {
+  const withReassign = async (p: string) => {
+    try {
+      await setFn(p);
+      // Only needed if the stream object was replaced (camera fallback re-acquire)
+      updateStreamAssignments();
+    } catch (e: any) {
+      console.error('[CaptureStudio] Quality change failed:', e.message);
+    }
+  };
+  return [
+    { id: 'q-auto', label: autoLabel, active: currentPreset === 'auto', action: () => withReassign('auto') },
+    ...presets.map(preset => ({
+      id: `q-${preset}`,
+      label: QUALITY_PRESETS[preset].label,
+      active: currentPreset === preset,
+      badge: `${QUALITY_PRESETS[preset].width}×${QUALITY_PRESETS[preset].height}`,
+      action: () => withReassign(preset),
+    })),
+  ];
+}
+
 async function showScreenContextMenu(e: MouseEvent) {
   try {
     const screenSources = await mediaSources.listScreenSources();
-    ctxMenu.items = screenSources.map(s => ({
+
+    const sourceChildren: CtxMenuItem[] = screenSources.map(s => ({
       id: s.id,
       label: s.name,
       thumbnail: s.thumbnailDataUrl,
-      active: false,
+      active: s.id === mediaSources.activeScreenSourceId.value,
       action: async () => {
         try {
           await mediaSources.switchScreen(s.id);
-          // Ensure screen source is marked on
           const src = sources.find(ss => ss.id === 'screen');
           if (src) {
             src.on = true;
             src.name = s.name;
             src.status = 'Capturing';
             autoAssign();
-  updateStreamAssignments();
+            updateStreamAssignments();
           }
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch screen:', err);
         }
       },
     }));
-    ctxMenu.title = 'Switch Screen Source';
+
+    const qualityChildren = buildQualityChildren(
+      mediaSources.screenQuality.value, mediaSources.setScreenQuality,
+      ['4k', '1080p', '720p', '480p'], 'Auto (native)',
+    );
+
+    ctxMenu.items = [
+      { id: 'sub-sources', label: 'Sources', children: sourceChildren, action: () => {} },
+      { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
+    ];
+    ctxMenu.title = 'Screen';
     ctxMenu.x = e.clientX;
     ctxMenu.y = e.clientY;
     ctxMenu.visible = true;
@@ -776,19 +827,31 @@ async function showScreenContextMenu(e: MouseEvent) {
 async function showCameraContextMenu(e: MouseEvent) {
   try {
     const cameras = await mediaSources.listVideoDevices();
-    ctxMenu.items = cameras.map(cam => ({
+
+    const deviceChildren: CtxMenuItem[] = cameras.map(cam => ({
       id: cam.deviceId,
       label: cam.label,
       active: cam.deviceId === mediaSources.activeCameraDeviceId.value,
       action: async () => {
         try {
           await mediaSources.switchCamera(cam.deviceId);
+          updateStreamAssignments();
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch camera:', err);
         }
       },
     }));
-    ctxMenu.title = 'Switch Camera';
+
+    const qualityChildren = buildQualityChildren(
+      mediaSources.cameraQuality.value, mediaSources.setCameraQuality,
+      ['1080p', '720p', '480p'], 'Auto (device default)',
+    );
+
+    ctxMenu.items = [
+      { id: 'sub-sources', label: 'Sources', children: deviceChildren, action: () => {} },
+      { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
+    ];
+    ctxMenu.title = 'Camera';
     ctxMenu.x = e.clientX;
     ctxMenu.y = e.clientY;
     ctxMenu.visible = true;
@@ -797,58 +860,158 @@ async function showCameraContextMenu(e: MouseEvent) {
   }
 }
 
+async function showAudioContextMenu(e: MouseEvent) {
+  try {
+    const { inputs } = await listAudioDevices();
+    // Refresh deviceIdMap with latest enumeration
+    for (const d of inputs) {
+      deviceIdMap[d.label] = d.deviceId;
+    }
+
+    const micSrc = sources.find(s => s.id === 'mic');
+    const currentMic = micInstances['mic'];
+    // Determine which deviceId is currently active (default = 'default')
+    const activeMicDeviceId = currentMic?.stream.value?.getAudioTracks()[0]?.getSettings()?.deviceId || 'default';
+
+    const deviceChildren: CtxMenuItem[] = inputs.map(d => ({
+      id: d.deviceId,
+      label: d.label,
+      active: d.deviceId === activeMicDeviceId,
+      action: async () => {
+        // Switch the builtin mic to the selected device
+        if (currentMic) {
+          currentMic.stop();
+        }
+        const mic = createMicInstance();
+        micInstances['mic'] = mic;
+        try {
+          await mic.start(d.deviceId === 'default' ? undefined : d.deviceId);
+          if (micSrc) {
+            micSrc.on = true;
+            micSrc.name = d.label;
+          }
+        } catch (err: any) {
+          console.error('[CaptureStudio] Failed to switch mic:', err.message);
+          if (micSrc) micSrc.on = false;
+        }
+      },
+    }));
+
+    ctxMenu.items = [
+      { id: 'sub-mics', label: 'Microphone', children: deviceChildren, action: () => {} },
+    ];
+    ctxMenu.title = 'Audio Source';
+    ctxMenu.x = e.clientX;
+    ctxMenu.y = e.clientY;
+    ctxMenu.visible = true;
+  } catch (err) {
+    console.error('[CaptureStudio] Failed to list audio devices:', err);
+  }
+}
+
 // ─── Track panel waveform (continuous animation) ───
 const waveformData = reactive<Record<string, number[]>>({});
+const waveformHistory = reactive<Record<string, number[]>>({});
 let waveformAnimId: number | null = null;
+let waveformLastScroll = 0;
+const WAVEFORM_SCROLL_INTERVAL = 80; // ms between scrolls — gives a steady DAW-like pace
+
+function getCurrentLevel(src: { id: string; type: string; on: boolean }): number {
+  if (src.type === 'mic') {
+    const mic = micInstances[src.id];
+    const analyserNode = mic && mic.analyser ? mic.analyser.value : null;
+    if (analyserNode) {
+      const data = new Uint8Array(analyserNode.frequencyBinCount);
+      analyserNode.getByteFrequencyData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i];
+      return sum / data.length / 255; // 0-1 RMS-like average
+    }
+    return (mic && mic.level) ? mic.level.value : 0;
+  } else if (src.type === 'system') {
+    const spActive = speakerCapture && speakerCapture.active ? speakerCapture.active.value : false;
+    return spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
+  }
+  // Video sources: return a small constant when on to show activity
+  return src.on ? 0.15 : 0;
+}
 
 function startWaveformLoop() {
   if (waveformAnimId) return;
+  waveformLastScroll = performance.now();
 
   function tick() {
+    const now = performance.now();
+    const shouldScroll = recording.value && (now - waveformLastScroll >= WAVEFORM_SCROLL_INTERVAL);
+    if (shouldScroll) waveformLastScroll = now;
+
     for (const src of sources) {
       if (!src.on) {
         waveformData[src.id] = [];
+        waveformHistory[src.id] = [];
         continue;
       }
 
-      const bars: number[] = [];
+      const level = getCurrentLevel(src);
 
-      if (src.type === 'mic') {
-        const mic = micInstances[src.id];
-        const analyserNode = mic && mic.analyser ? mic.analyser.value : null;
-        if (analyserNode) {
-          const data = new Uint8Array(analyserNode.frequencyBinCount);
-          analyserNode.getByteFrequencyData(data);
-          const binSize = Math.max(1, Math.floor(data.length / 100));
-          for (let i = 0; i < 100; i++) {
-            let sum = 0;
-            for (let j = 0; j < binSize; j++) sum += data[i * binSize + j];
-            bars.push(Math.max(2, (sum / binSize / 255) * 18));
-          }
+      // Update status text with live dB level for audio sources
+      if (src.type === 'mic' || src.type === 'system') {
+        if (level > 0.0001) {
+          const db = Math.round(20 * Math.log10(Math.max(level, 0.0001)));
+          src.status = `${db} dB`;
         } else {
-          const lvl = (mic && mic.level) ? mic.level.value : 0;
-          for (let i = 0; i < 100; i++) {
-            bars.push(Math.max(2, lvl * 14 + 2));
-          }
+          src.status = '-∞ dB';
         }
-      } else if (src.type === 'system') {
-        const spActive = speakerCapture && speakerCapture.active ? speakerCapture.active.value : false;
-        const rms = spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
-        for (let i = 0; i < 100; i++) {
-          if (rms > 0.001) {
-            const center = 50;
-            const dist = Math.abs(i - center) / center;
-            bars.push(Math.max(2, (1 - dist) * rms * 16 + (Math.random() - 0.5) * rms * 4));
-          } else {
-            bars.push(2);
-          }
-        }
-      } else {
-        // Video sources: small static indicator
-        for (let i = 0; i < 100; i++) bars.push(2);
       }
 
-      waveformData[src.id] = bars;
+      if (recording.value) {
+        // Scrolling timeline mode: push new sample, shift left
+        if (!waveformHistory[src.id] || waveformHistory[src.id].length === 0) {
+          waveformHistory[src.id] = new Array(100).fill(2);
+        }
+        if (shouldScroll) {
+          const h = Math.max(2, level * 18);
+          const hist = waveformHistory[src.id];
+          hist.push(h);
+          if (hist.length > 100) hist.shift();
+        }
+        waveformData[src.id] = [...waveformHistory[src.id]];
+      } else {
+        // Live spectrum mode (not recording)
+        const bars: number[] = [];
+        if (src.type === 'mic') {
+          const mic = micInstances[src.id];
+          const analyserNode = mic && mic.analyser ? mic.analyser.value : null;
+          if (analyserNode) {
+            const data = new Uint8Array(analyserNode.frequencyBinCount);
+            analyserNode.getByteFrequencyData(data);
+            const binSize = Math.max(1, Math.floor(data.length / 100));
+            for (let i = 0; i < 100; i++) {
+              let sum = 0;
+              for (let j = 0; j < binSize; j++) sum += data[i * binSize + j];
+              bars.push(Math.max(2, (sum / binSize / 255) * 18));
+            }
+          } else {
+            const lvl = level;
+            for (let i = 0; i < 100; i++) bars.push(Math.max(2, lvl * 14 + 2));
+          }
+        } else if (src.type === 'system') {
+          for (let i = 0; i < 100; i++) {
+            if (level > 0.001) {
+              const center = 50;
+              const dist = Math.abs(i - center) / center;
+              bars.push(Math.max(2, (1 - dist) * level * 16 + (Math.random() - 0.5) * level * 4));
+            } else {
+              bars.push(2);
+            }
+          }
+        } else {
+          for (let i = 0; i < 100; i++) bars.push(2);
+        }
+        waveformData[src.id] = bars;
+        // Clear history so next recording starts fresh
+        waveformHistory[src.id] = [];
+      }
     }
 
     waveformAnimId = requestAnimationFrame(tick);
@@ -922,25 +1085,24 @@ onMounted(async () => {
 
   // ── Boot sequence with loading screen ──
 
-  // 1. Start audio driver
+  // 1. Start audio driver — always cycle stop→start so the capture helper
+  //    and mirror are freshly initialised.  Trusting a stale "running" state
+  //    led to the Swift helper sitting on silence after the aggregate device
+  //    was torn down by a previous session.
   loadingMessage.value = 'Starting audio driver...';
-  console.log('[CaptureStudio] Boot: requesting audio driver state...');
+  console.log('[CaptureStudio] Boot: cycling audio driver stop→start for a clean capture...');
   try {
-    const state = await Promise.race([
-      audioDriver.getState(),
-      new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout getting audio state')), 5000)),
+    // Stop first to clear any stale capture / mirror state
+    await Promise.race([
+      audioDriver.stopCapture(),
+      new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout stopping audio')), 5000)),
+    ]).catch(() => { /* already stopped — fine */ });
+
+    const result = await Promise.race([
+      audioDriver.startCapture(),
+      new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout starting audio capture')), 15000)),
     ]);
-    console.log('[CaptureStudio] Audio driver state:', JSON.stringify(state));
-    if (!state || !state.running) {
-      console.log('[CaptureStudio] Starting audio capture...');
-      const result = await Promise.race([
-        audioDriver.startCapture(),
-        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout starting audio capture')), 10000)),
-      ]);
-      console.log('[CaptureStudio] Audio driver start result:', JSON.stringify(result));
-    } else {
-      console.log('[CaptureStudio] Audio driver already running');
-    }
+    console.log('[CaptureStudio] Audio driver start result:', JSON.stringify(result));
   } catch (e: any) {
     console.error('[CaptureStudio] Audio driver boot failed:', e.message || e);
   }
@@ -951,10 +1113,16 @@ onMounted(async () => {
     const { inputs } = await listAudioDevices();
     if (inputs.length > 0) {
       deviceOptions.mic = inputs.map(d => d.label);
+      for (const d of inputs) {
+        deviceIdMap[d.label] = d.deviceId;
+      }
     }
     const cameras = await mediaSources.listVideoDevices();
     if (cameras.length > 0) {
       deviceOptions.camera = cameras.map(d => d.label);
+      for (const d of cameras) {
+        deviceIdMap[d.label] = d.deviceId;
+      }
     }
     console.log('[CaptureStudio] Devices:', deviceOptions.mic.length, 'mics,', deviceOptions.camera.length, 'cameras');
   } catch (e) {
@@ -967,10 +1135,14 @@ onMounted(async () => {
     if (!loaded) return;
     if (settings.layout.value) currentLayout.value = settings.layout.value;
     if (settings.cameraShape.value) cameraShape.value = settings.cameraShape.value;
+    if (settings.screenQuality.value) mediaSources.screenQuality.value = settings.screenQuality.value as any;
+    if (settings.cameraQuality.value) mediaSources.cameraQuality.value = settings.cameraQuality.value as any;
   }, { immediate: true });
 
   watch(currentLayout, v => { settings.layout.value = v; });
   watch(cameraShape, v => { settings.cameraShape.value = v; });
+  watch(() => mediaSources.screenQuality.value, v => { settings.screenQuality.value = v; });
+  watch(() => mediaSources.cameraQuality.value, v => { settings.cameraQuality.value = v; });
 
   // 4. Auto-enable mic
   loadingMessage.value = 'Enabling microphone...';
@@ -1549,8 +1721,10 @@ html, body {
 
 .track-wave { flex: 1; height: 20px; background: var(--bg-surface-alt); border-radius: 3px; position: relative; overflow: hidden; }
 .track-wave .bars { display: flex; align-items: center; gap: 1px; height: 100%; padding: 2px; }
-.track-wave .bars .b { flex: 1; border-radius: 1px; opacity: 0.4; min-height: 2px; }
-.track-wave .playhead { position: absolute; right: 18%; top: 0; bottom: 0; width: 1.5px; background: var(--record-red); }
+.track-wave .bars .b { flex: 1; border-radius: 1px; opacity: 0.4; min-height: 2px; transition: height 0.08s ease-out; }
+.track-wave.recording .bars .b { opacity: 0.7; }
+.track-wave .playhead { position: absolute; right: 0; top: 0; bottom: 0; width: 2px; background: var(--record-red); box-shadow: 0 0 6px var(--record-red); animation: playhead-pulse 1s ease-in-out infinite; }
+@keyframes playhead-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
 .track-status { width: 44px; font-size: 10px; color: var(--text-dim); text-align: right; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 
@@ -1600,10 +1774,14 @@ html, body {
 }
 
 .ctx-menu {
-  position: fixed; z-index: 200; min-width: 220px; max-width: 340px;
+  position: fixed; z-index: 200; min-width: 180px; max-width: 340px;
   max-height: 400px; overflow-y: auto;
   background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.5); padding: 4px;
+}
+
+.ctx-menu-flyout {
+  z-index: 201;
 }
 
 .ctx-menu-header {
@@ -1620,9 +1798,38 @@ html, body {
 .ctx-menu-item:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
 .ctx-menu-item.active { color: var(--accent); }
 
+.ctx-menu-has-sub {
+  justify-content: space-between;
+}
+
+.ctx-menu-arrow {
+  width: 6px; height: 10px; flex-shrink: 0; opacity: 0.5;
+}
+
+.ctx-menu-sub-parent {
+  position: relative;
+}
+.ctx-menu-sub-parent:hover > .ctx-menu-has-sub {
+  background: var(--bg-surface-hover); color: var(--text-primary);
+}
+
 .ctx-menu-thumb {
   width: 48px; height: 27px; border-radius: 3px; object-fit: cover;
   border: 1px solid var(--border); flex-shrink: 0;
+}
+
+.ctx-menu-divider {
+  border-top: 1px solid var(--border); margin: 4px 0;
+}
+
+.ctx-menu-section {
+  display: block; padding: 6px 10px 2px; font-size: 9px; font-weight: 600;
+  color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+.ctx-menu-badge {
+  margin-left: auto; font-size: 9px; color: var(--text-dim);
+  background: var(--bg-surface-hover); padding: 1px 5px; border-radius: 3px;
 }
 
 /* ═══════════════════════════════════════════════

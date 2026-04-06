@@ -48,6 +48,7 @@
   <div
     class="audio-only-display"
     :class="{ visible: currentLayout === 'audioonly' }"
+    @contextmenu.prevent="$emit('show-audio-menu', $event)"
   >
     <div class="audio-meter-vis" ref="audioMeterVisRef"></div>
     <div class="audio-meter-label">
@@ -81,6 +82,7 @@ const props = defineProps<{
 defineEmits<{
   (e: 'show-screen-menu', event: MouseEvent): void;
   (e: 'show-camera-menu', event: MouseEvent): void;
+  (e: 'show-audio-menu', event: MouseEvent): void;
 }>();
 
 const screenVideoEl = ref<HTMLVideoElement | null>(null);

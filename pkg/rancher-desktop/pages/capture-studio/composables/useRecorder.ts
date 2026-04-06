@@ -38,6 +38,17 @@ function getCapturesDir(): string {
   return path.join(os.homedir(), 'sulla', 'captures');
 }
 
+import type { QualityPreset } from './useMediaSources';
+
+/** Bitrate targets per quality preset (bits per second). */
+const VIDEO_BITRATES: Record<string, number> = {
+  '480p':  1_500_000,   // 1.5 Mbps
+  '720p':  3_000_000,   // 3 Mbps
+  '1080p': 6_000_000,   // 6 Mbps
+  '4k':    20_000_000,  // 20 Mbps
+  'auto':  8_000_000,   // 8 Mbps default
+};
+
 function pickMimeType(kind: 'video' | 'audio'): string {
   if (kind === 'video') {
     if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) return 'video/webm;codecs=vp9,opus';
@@ -77,6 +88,7 @@ export function useRecorder() {
     id: string;
     type: 'screen' | 'camera' | 'mic' | 'system-audio';
     stream: MediaStream;
+    quality?: QualityPreset;
   }>): string {
     if (isRecording.value) stopSession();
 
@@ -120,7 +132,11 @@ export function useRecorder() {
 
       let recorder: MediaRecorder;
       try {
-        recorder = new MediaRecorder(src.stream, { mimeType });
+        const recorderOpts: MediaRecorderOptions = { mimeType };
+        if (hasVideo && src.quality) {
+          recorderOpts.videoBitsPerSecond = VIDEO_BITRATES[src.quality] || VIDEO_BITRATES['auto'];
+        }
+        recorder = new MediaRecorder(src.stream, recorderOpts);
       } catch (e: any) {
         console.error(`[useRecorder] Failed to create MediaRecorder for ${src.type}:`, e.message);
         ws.end();
@@ -160,7 +176,13 @@ export function useRecorder() {
         error.value = `Recording error on ${src.type}: ${e.error?.message || 'unknown'}`;
       };
 
-      recorder.start(250); // 250ms chunks — smoother playback, less keyframe issues
+      try {
+        recorder.start(250); // 250ms chunks — smoother playback, less keyframe issues
+      } catch (e: any) {
+        console.error(`[useRecorder] MediaRecorder.start() failed for ${src.type}:`, e.message);
+        ws.end();
+        continue;
+      }
       entries.push(entry);
     }
 

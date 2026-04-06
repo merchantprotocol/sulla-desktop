@@ -114,6 +114,12 @@ export async function activate({ onLevel, onRebuild }: { onLevel?: (data: any) =
 
   // 7. Start speaker socket + capture (with raw PCM callback for gateway + local transcription)
   speakerSocket.start();
+
+  // Wait for macOS to fully activate the aggregate device before capturing.
+  // Without this delay the Swift helper reads from BlackHole before audio is
+  // being routed through the mirror, producing silence on first activation.
+  await new Promise(resolve => setTimeout(resolve, 600));
+
   const gateway = await import('../service/gateway');
   const whisperTranscribe = await import('../service/whisper-transcribe');
   speakerCapture.start((level: any) => {

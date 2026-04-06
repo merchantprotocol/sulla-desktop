@@ -447,9 +447,16 @@ async function startWithDevice(micDeviceId) {
     micMeter.update(micLevel);
 
     // Feed VAD pipeline and feedback detector, then update UI
-    vad.process(micLevel, audioCapture.getAnalyser());
+    const vadState = vad.process(micLevel, audioCapture.getAnalyser());
     feedbackDetection.process(audioCapture.getAnalyser());
     updateDetectionUI();
+
+    // Broadcast mic VAD to all windows (chat, secretary, etc.)
+    window.audioDriver.broadcastMicVad({
+      speaking: vadState.speaking,
+      level: micLevel,
+      fanNoise: vadState.fanNoise,
+    });
   }, micDeviceId);
 
   currentState.micName = deviceInfo.micName;

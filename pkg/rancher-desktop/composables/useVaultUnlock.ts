@@ -7,6 +7,15 @@ const vaultSetUp = ref(true);
 const unlockError = ref('');
 const unlockMode = ref<'password' | 'recovery'>('password');
 
+// Listen for cross-window auth broadcasts from main process
+ipcRenderer.on('vault:logged-in' as any, () => {
+  loggedIn.value = true;
+  unlockError.value = '';
+});
+ipcRenderer.on('vault:logged-out' as any, () => {
+  loggedIn.value = false;
+});
+
 /**
  * Check login state on app start.
  * The vault auto-unlocks from safeStorage (agent can work immediately).

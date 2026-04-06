@@ -168,6 +168,32 @@ document.getElementById('btn-quit').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:quit');
 });
 
+// ── Settings toggles ───────────────────────────────────────────────────
+
+const toggleAutoStart = document.getElementById('toggle-auto-start');
+const toggleBackground = document.getElementById('toggle-start-background');
+
+// Load current settings on startup
+ipcRenderer.invoke('tray-panel:get-settings').then((settings) => {
+  toggleAutoStart.checked = settings.autoStart;
+  toggleBackground.checked = settings.startInBackground;
+}).catch(() => {});
+
+// Listen for settings state updates from main process
+ipcRenderer.on('tray-panel:settings-state', (_event, state) => {
+  toggleAutoStart.checked = state.autoStart;
+  toggleBackground.checked = state.startInBackground;
+});
+
+// Send setting changes to main process
+toggleAutoStart.addEventListener('change', () => {
+  ipcRenderer.send('tray-panel:set-setting', { key: 'autoStart', value: toggleAutoStart.checked });
+});
+
+toggleBackground.addEventListener('change', () => {
+  ipcRenderer.send('tray-panel:set-setting', { key: 'startInBackground', value: toggleBackground.checked });
+});
+
 // ── State updates from main process ─────────────────────────────────────
 
 const STATE_MAP = {

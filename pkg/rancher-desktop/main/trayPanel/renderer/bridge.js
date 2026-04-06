@@ -55,6 +55,9 @@ window.audioDriver = {
   onSpeakerDeviceChanged: (callback) => ipcRenderer.on("audio-driver:speaker-device-changed", (_e, name) => callback(name)),
   onVolumeChanged: (callback) => ipcRenderer.on("audio-driver:volume-changed", (_e, state) => callback(state)),
 
+  // Broadcast mic VAD state to main process for relay to all windows
+  broadcastMicVad: (data) => ipcRenderer.send("audio-driver:mic-vad-update", data),
+
   log: {
     error: (tag, msg, data) => ipcRenderer.send("audio-driver:log", "error", tag, msg, data),
     warn: (tag, msg, data) => ipcRenderer.send("audio-driver:log", "warn", tag, msg, data),

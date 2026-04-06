@@ -1221,4 +1221,19 @@ export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
   const lifecycle = getServiceLifecycleManager();
 
   await lifecycle.stopAll(mode);
+
+  // Force-close connection clients if they're still alive.
+  // Lifecycle may think they never started (e.g. slow Docker/Lima boot
+  // caused waitForReady to fail), but the clients may have connected
+  // independently via lazy-init or retry loops.
+  if (mode === 'full') {
+    if (postgresClient.isConnected()) {
+      console.log('[sullaEnd] Postgres still connected after lifecycle — force-closing');
+      try { await postgresClient.end(); } catch { /* ignore */ }
+    }
+    if (redisClient.getClient()?.status !== 'end') {
+      console.log('[sullaEnd] Redis client still alive after lifecycle — force-closing');
+      try { await redisClient.close(); } catch { /* ignore */ }
+    }
+  }
 }

@@ -16,7 +16,7 @@ import { showErrorDialogWithReport } from '@pkg/main/errorReporter';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
-import { createTrayPanel, toggleTrayPanel, sendPanelState, sendAuthState, destroyTrayPanel } from '@pkg/main/trayPanel';
+import { createTrayPanel, toggleTrayPanel, sendPanelState, sendAuthState, sendSettingsState, destroyTrayPanel } from '@pkg/main/trayPanel';
 import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
@@ -344,6 +344,10 @@ export class Tray {
   private settingsUpdateEvent = (cfg: Settings) => {
     this.settings = cfg;
     this.settingsChanged();
+    sendSettingsState({
+      autoStart:         cfg.application.autoStart,
+      startInBackground: cfg.application.startInBackground,
+    });
   };
 
   private updateNetworkStatusEvent = (_: Electron.IpcMainEvent, status: boolean) => {

@@ -244,25 +244,29 @@ export class SubconsciousAgentNode extends BaseNode {
    * Push a thinking message to the parent agent's WebSocket channel.
    * Everything the subconscious does is the main agent's thinking process.
    */
-  private async emitThinking(state: BaseThreadState, content: string): Promise<void> {
+  /**
+   * Build a lightweight state proxy that targets the parent's WebSocket
+   * channel/thread without mutating the real state.metadata.  This avoids
+   * a race where graph.execute() reads wsChannel while it's temporarily
+   * swapped, sending the completion signal to the wrong channel.
+   */
+  private buildParentState(state: BaseThreadState): BaseThreadState | null {
     const parentChannel = (state.metadata as any).parentWsChannel;
-    if (!parentChannel) return;
+    if (!parentChannel) return null;
 
-    // Swap both wsChannel and threadId to the parent's values so the
-    // frontend accepts the message on the correct channel and thread.
-    const originalChannel = state.metadata.wsChannel;
-    const originalThreadId = state.metadata.threadId;
-    const parentThreadId = (state.metadata as any).parentConversationId || originalThreadId;
+    const parentThreadId = (state.metadata as any).parentConversationId || state.metadata.threadId;
 
-    state.metadata.wsChannel = parentChannel;
-    state.metadata.threadId = parentThreadId;
+    return {
+      ...state,
+      metadata: { ...state.metadata, wsChannel: parentChannel, threadId: parentThreadId },
+    } as BaseThreadState;
+  }
 
-    try {
-      await this.wsChatMessage(state, content, 'assistant', 'thinking');
-    } finally {
-      state.metadata.wsChannel = originalChannel;
-      state.metadata.threadId = originalThreadId;
-    }
+  private async emitThinking(state: BaseThreadState, content: string): Promise<void> {
+    const parentState = this.buildParentState(state);
+    if (!parentState) return;
+
+    await this.wsChatMessage(parentState, content, 'assistant', 'thinking');
   }
 
   /**
@@ -270,21 +274,9 @@ export class SubconsciousAgentNode extends BaseNode {
    * The next thinking text will start a fresh bubble.
    */
   private async emitThinkingComplete(state: BaseThreadState): Promise<void> {
-    const parentChannel = (state.metadata as any).parentWsChannel;
-    if (!parentChannel) return;
+    const parentState = this.buildParentState(state);
+    if (!parentState) return;
 
-    const originalChannel = state.metadata.wsChannel;
-    const originalThreadId = state.metadata.threadId;
-    const parentThreadId = (state.metadata as any).parentConversationId || originalThreadId;
-
-    state.metadata.wsChannel = parentChannel;
-    state.metadata.threadId = parentThreadId;
-
-    try {
-      await this.wsChatMessage(state, '...', 'assistant', 'thinking_complete');
-    } finally {
-      state.metadata.wsChannel = originalChannel;
-      state.metadata.threadId = originalThreadId;
-    }
+    await this.wsChatMessage(parentState, '...', 'assistant', 'thinking_complete');
   }
 }

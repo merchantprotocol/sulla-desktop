@@ -8,10 +8,11 @@
 import path from 'path';
 import { BrowserWindow, ipcMain, app } from 'electron';
 
+import mainEvents from '@pkg/main/mainEvents';
+import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { openMain, openEditor, openCaptureStudio, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
-import setupUpdate from '@pkg/main/update';
 
 const console = Logging.background;
 
@@ -174,6 +175,15 @@ export function sendAuthState(state: { loggedIn: boolean; vaultSetUp: boolean })
 }
 
 /**
+ * Send settings state (autoStart, startInBackground) to the panel renderer.
+ */
+export function sendSettingsState(state: { autoStart: boolean; startInBackground: boolean }): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:settings-state', state);
+  }
+}
+
+/**
  * Destroy the panel window (app quit).
  */
 export function destroyTrayPanel(): void {
@@ -305,6 +315,29 @@ function registerPanelIpc(): void {
       return { success };
     } catch (err) {
       return { success: false, error: String(err) };
+    }
+  });
+
+  // ── Settings toggle IPC handlers ──────────────────────────────────────
+
+  ipcMain.handle('tray-panel:get-settings', async() => {
+    try {
+      const cfg = await mainEvents.invoke('settings-fetch');
+
+      return {
+        autoStart:        cfg.application.autoStart,
+        startInBackground: cfg.application.startInBackground,
+      };
+    } catch {
+      return { autoStart: false, startInBackground: false };
+    }
+  });
+
+  ipcMain.on('tray-panel:set-setting', (_event: Electron.IpcMainEvent, data: { key: string; value: boolean }) => {
+    if (data.key === 'autoStart') {
+      mainEvents.emit('settings-write', { application: { autoStart: data.value } });
+    } else if (data.key === 'startInBackground') {
+      mainEvents.emit('settings-write', { application: { startInBackground: data.value } });
     }
   });
 

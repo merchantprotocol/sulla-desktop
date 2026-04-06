@@ -102,6 +102,11 @@ function registerIpcHandlers(): void {
     }
   });
 
+  // Relay mic VAD from tray panel to all windows (chat, secretary, etc.)
+  ipcMain.on('audio-driver:mic-vad-update', (_event: Electron.IpcMainEvent, data: any) => {
+    broadcast('audio-driver:mic-vad', data);
+  });
+
   ipcMain.on('tray-panel:audio-toggle', async(_event: Electron.IpcMainEvent, enabled: boolean) => {
     log.info('IPC', 'tray-panel:audio-toggle received', { enabled });
     if (enabled) {

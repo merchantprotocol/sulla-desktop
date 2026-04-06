@@ -920,22 +920,27 @@ Electron.app.on('before-quit', async(event) => {
   const withTimeout = <T>(label: string, ms: number, promise: Promise<T>): Promise<T | void> => {
     sullaLog({ topic: 'shutdown', level: 'info', message: `Starting '${ label }' (timeout ${ ms }ms)` });
 
+    let timer: ReturnType<typeof setTimeout>;
+
+    const timeoutPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        const msg = `'${ label }' timed out after ${ ms }ms — skipping`;
+
+        console.warn(`[Shutdown] ${ msg }`);
+        sullaLog({ topic: 'shutdown', level: 'warn', message: msg });
+        resolve();
+      }, ms);
+      timer.unref();
+    });
+
     return Promise.race([
       promise.then((v) => {
         sullaLog({ topic: 'shutdown', level: 'info', message: `'${ label }' completed` });
 
         return v;
       }),
-      new Promise<void>((resolve) => {
-        setTimeout(() => {
-          const msg = `'${ label }' timed out after ${ ms }ms — skipping`;
-
-          console.warn(`[Shutdown] ${ msg }`);
-          sullaLog({ topic: 'shutdown', level: 'warn', message: msg });
-          resolve();
-        }, ms);
-      }),
-    ]);
+      timeoutPromise,
+    ]).finally(() => clearTimeout(timer));
   };
 
   // Vault lock is handled by ServiceLifecycleManager in sullaEnd()
@@ -988,13 +993,24 @@ Electron.app.on('before-quit', async(event) => {
     console.log(`[Shutdown] Full quit error: ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`);
     handleFailure(ex);
   } finally {
-    clearTimeout(forceExitTimer);
     gone = true;
     sullaLog({ topic: 'shutdown', level: 'info', message: 'Calling app.quit()' });
     if (process.env['APPIMAGE']) {
       await integrationManager.removeSymlinksOnly();
     }
     Electron.app.quit();
+
+    // Replace the 30s deadline with a tighter post-quit backstop.
+    // If app.quit() doesn't terminate the process within 5s (lingering
+    // handles from postgres/redis/k8s), force-exit cleanly.
+    clearTimeout(forceExitTimer);
+    const postQuitTimer = setTimeout(() => {
+      sullaLog({ topic: 'shutdown', level: 'warn', message: 'Post-quit backstop: process still alive after 5s — force-exiting' });
+      console.warn('[Shutdown] Post-quit backstop: process still alive after 5s — force-exiting');
+      process.exit(0);
+    }, 5_000);
+
+    postQuitTimer.unref();
   }
 });
 

@@ -18,6 +18,22 @@ export interface ScreenSource {
   thumbnailDataUrl: string;
 }
 
+export type QualityPreset = '480p' | '720p' | '1080p' | '4k' | 'auto';
+
+export interface QualityConfig {
+  label: string;
+  width: number;
+  height: number;
+  frameRate: number;
+}
+
+export const QUALITY_PRESETS: Record<Exclude<QualityPreset, 'auto'>, QualityConfig> = {
+  '480p':  { label: '480p (SD)',      width: 854,  height: 480,  frameRate: 30 },
+  '720p':  { label: '720p (HD)',      width: 1280, height: 720,  frameRate: 30 },
+  '1080p': { label: '1080p (Full HD)', width: 1920, height: 1080, frameRate: 30 },
+  '4k':    { label: '4K (Ultra HD)',   width: 3840, height: 2160, frameRate: 30 },
+};
+
 export function useMediaSources() {
   const screenStream: Ref<MediaStream | null> = ref(null);
   const cameraStream: Ref<MediaStream | null> = ref(null);
@@ -25,6 +41,8 @@ export function useMediaSources() {
   const activeScreenSourceId = ref('');
   const activeCameraName = ref('');
   const activeCameraDeviceId = ref('');
+  const screenQuality: Ref<QualityPreset> = ref('auto');
+  const cameraQuality: Ref<QualityPreset> = ref('720p');
 
   /**
    * Acquire a specific screen/window source via desktopCapturer.
@@ -43,7 +61,10 @@ export function useMediaSources() {
 
     let stream: MediaStream;
     try {
-      // Use Electron's chromeMediaSource constraint to capture a specific source
+      // Use Electron's chromeMediaSource constraint to capture a specific source.
+      // Screen capture always acquires at native resolution — quality preset
+      // only controls recording bitrate (see useRecorder).  Electron's
+      // desktopCapturer mandatory block does not support resolution constraints.
       stream = await (navigator.mediaDevices as any).getUserMedia({
         audio: false,
         video: {
@@ -102,8 +123,19 @@ export function useMediaSources() {
   async function acquireCamera(deviceId?: string): Promise<MediaStream> {
     releaseCamera();
 
+    const videoConstraint: MediaTrackConstraints | boolean =
+      deviceId ? { deviceId: { exact: deviceId } } : {};
+
+    // Apply quality constraints for camera (unless 'auto' = device default)
+    if (cameraQuality.value !== 'auto' && typeof videoConstraint === 'object') {
+      const preset = QUALITY_PRESETS[cameraQuality.value];
+      videoConstraint.width = { ideal: preset.width };
+      videoConstraint.height = { ideal: preset.height };
+      videoConstraint.frameRate = { ideal: preset.frameRate };
+    }
+
     const constraints: MediaStreamConstraints = {
-      video: deviceId ? { deviceId: { exact: deviceId } } : true,
+      video: Object.keys(videoConstraint as object).length > 0 ? videoConstraint : true,
       audio: false,
     };
 
@@ -158,6 +190,64 @@ export function useMediaSources() {
   }
 
   /**
+   * Change screen quality preset.
+   * Screen capture always runs at native resolution — this only affects
+   * the recording bitrate in useRecorder.
+   */
+  async function setScreenQuality(preset: QualityPreset): Promise<void> {
+    screenQuality.value = preset;
+  }
+
+  /**
+   * Change camera quality.  Applies constraints to the live track when
+   * possible so the feed never drops.  Falls back to re-acquire if
+   * applyConstraints isn't supported or fails.
+   */
+  async function setCameraQuality(preset: QualityPreset): Promise<void> {
+    cameraQuality.value = preset;
+    if (!cameraStream.value) return;
+
+    const track = cameraStream.value.getVideoTracks()[0];
+    if (!track) return;
+
+    if (preset === 'auto') {
+      // Remove resolution/framerate constraints — revert to device defaults
+      try {
+        await track.applyConstraints({
+          width: {},
+          height: {},
+          frameRate: {},
+        });
+        console.log('[useMediaSources] Camera quality → auto (constraints cleared)');
+        return;
+      } catch (e: any) {
+        console.warn('[useMediaSources] applyConstraints(auto) failed, re-acquiring:', e.message);
+      }
+    } else {
+      const cfg = QUALITY_PRESETS[preset];
+      try {
+        await track.applyConstraints({
+          width: { ideal: cfg.width },
+          height: { ideal: cfg.height },
+          frameRate: { ideal: cfg.frameRate },
+        });
+        console.log(`[useMediaSources] Camera quality → ${preset} via applyConstraints`);
+        return;
+      } catch (e: any) {
+        console.warn('[useMediaSources] applyConstraints failed, re-acquiring:', e.message);
+      }
+    }
+
+    // Fallback: full re-acquire (saves deviceId before release clears it)
+    const deviceId = activeCameraDeviceId.value || undefined;
+    try {
+      await acquireCamera(deviceId);
+    } catch (e: any) {
+      console.error('[useMediaSources] Camera re-acquire failed:', e.message);
+    }
+  }
+
+  /**
    * List available screen/window sources via Electron's desktopCapturer.
    */
   async function listScreenSources(): Promise<ScreenSource[]> {
@@ -186,12 +276,16 @@ export function useMediaSources() {
     activeScreenSourceId,
     activeCameraName,
     activeCameraDeviceId,
+    screenQuality,
+    cameraQuality,
     acquireScreen,
     switchScreen,
     releaseScreen,
     acquireCamera,
     switchCamera,
     releaseCamera,
+    setScreenQuality,
+    setCameraQuality,
     listScreenSources,
     listVideoDevices,
   };

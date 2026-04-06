@@ -18,15 +18,22 @@ export function useAudioDriver() {
 
   // ── IPC listeners (registered on mount, removed on unmount to prevent stacking) ──
 
+  let levelCount = 0;
   const onLevel = (_e: any, data: { rms: number }) => {
-    speakerLevel.value = data.rms;
+    speakerLevel.value = typeof data === 'number' ? data : data.rms;
+    levelCount++;
+    if (levelCount <= 5 || (levelCount % 300 === 0)) {
+      console.log('[useAudioDriver] speaker-level', { rms: speakerLevel.value, count: levelCount });
+    }
   };
 
   const onState = (_e: any, state: { running: boolean; message: string }) => {
+    console.log('[useAudioDriver] state changed', state);
     speakerRunning.value = state.running;
   };
 
   onMounted(() => {
+    console.log('[useAudioDriver] Registering IPC listeners');
     ipcRenderer.on('audio-driver:speaker-level', onLevel);
     ipcRenderer.on('audio-driver:state', onState);
   });
