@@ -189,30 +189,41 @@ export async function instantiateSullaStart(): Promise<void> {
       await llamaCppService.ensure();
       console.log('[Background] LlamaCppService initialized - llama.cpp ready:', llamaCppService.isReady);
 
-      if (llamaCppService.isReady) {
-        const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
-        const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-        let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
-
-        if (!(modelKey in GGUF_MODELS)) {
-          const mapped = modelKey.replace(/:/g, '-');
-
-          if (mapped in GGUF_MODELS) {
-            console.log(`[Background] Mapped legacy model key '${ modelKey }' -> '${ mapped }'`);
-            modelKey = mapped;
-          } else {
-            console.warn(`[Background] Unknown model key '${ modelKey }', falling back to qwen3.5-9b`);
-            modelKey = 'qwen3.5-9b';
-          }
-        }
-        console.log(`[Background] User selected model: ${ modelKey }`);
-
-        const modelPath = await llamaCppService.downloadModel(modelKey);
-        console.log(`[Background] Model ready at: ${ modelPath }`);
-
-        await llamaCppService.startServer(modelPath);
-        console.log(`[Background] llama-server running at ${ llamaCppService.serverBaseUrl }`);
+      if (!llamaCppService.isReady) {
+        return;
       }
+
+      // Check if user has set modelMode to 'remote' — skip local server startup
+      const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
+      const modelMode = await Settings.get('modelMode', 'local');
+
+      if (modelMode === 'remote') {
+        console.log('[Background] modelMode is "remote" — skipping local llama-server startup');
+
+        return;
+      }
+
+      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
+      let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
+
+      if (!(modelKey in GGUF_MODELS)) {
+        const mapped = modelKey.replace(/:/g, '-');
+
+        if (mapped in GGUF_MODELS) {
+          console.log(`[Background] Mapped legacy model key '${ modelKey }' -> '${ mapped }'`);
+          modelKey = mapped;
+        } else {
+          console.warn(`[Background] Unknown model key '${ modelKey }', falling back to qwen3.5-9b`);
+          modelKey = 'qwen3.5-9b';
+        }
+      }
+      console.log(`[Background] User selected model: ${ modelKey }`);
+
+      const modelPath = await llamaCppService.downloadModel(modelKey);
+      console.log(`[Background] Model ready at: ${ modelPath }`);
+
+      await llamaCppService.startServer(modelPath);
+      console.log(`[Background] llama-server running at ${ llamaCppService.serverBaseUrl }`);
     },
     async() => {
       try { await getLlamaCppService().stopServer(); } catch { /* not started */ }
@@ -724,6 +735,47 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       ready:        lm.isAllReady(),
       shuttingDown: lm.isShuttingDown(),
     };
+  });
+
+  // ── Local llama-server control ─────────────────────────────────────────────
+
+  ipcMain.handle('llama-server:status', async() => {
+    return { running: getLlamaCppService().isServerRunning };
+  });
+
+  ipcMain.handle('llama-server:stop', async() => {
+    console.log('[Background] IPC llama-server:stop — stopping local server');
+    try {
+      await getLlamaCppService().stopServer();
+    } catch { /* not running */ }
+
+    return { running: false };
+  });
+
+  ipcMain.handle('llama-server:start', async() => {
+    console.log('[Background] IPC llama-server:start — starting local server');
+    const llamaCpp = getLlamaCppService();
+
+    if (llamaCpp.isServerRunning) {
+      return { running: true };
+    }
+
+    const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
+    let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
+
+    if (!(modelKey in GGUF_MODELS)) {
+      const mapped = modelKey.replace(/:/g, '-');
+
+      modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
+    }
+
+    const modelPath = await llamaCpp.downloadModel(modelKey);
+
+    await llamaCpp.startServer(modelPath);
+    console.log(`[Background] llama-server started at ${ llamaCpp.serverBaseUrl }`);
+
+    return { running: true };
   });
 
   // ── Vault: export & import ─────────────────────────────────────────────────

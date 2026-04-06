@@ -159,6 +159,10 @@ export default defineComponent({
       activating:           false,
       activationError:      '' as string,
       savingSettings:       false,
+      // Local llama-server state
+      localServerRunning:   false,
+      localServerEnabled:   true,
+      togglingLocalServer:  false,
 
       // Guard flag to prevent feedback loop between primaryProvider watcher and IPC handler
       _suppressProviderWatch: false,
@@ -351,6 +355,20 @@ export default defineComponent({
         this.localModelDownloadProgress = data.percent;
       }
     });
+
+    // Load local server state
+    this.localServerEnabled = this.activeMode !== 'remote';
+    try {
+      const status = await ipcRenderer.invoke('llama-server:status');
+
+      this.localServerRunning = status?.running ?? false;
+      // If server is running, it's enabled regardless of mode
+      if (this.localServerRunning) {
+        this.localServerEnabled = true;
+      }
+    } catch {
+      this.localServerRunning = false;
+    }
 
     // Load system resource info for fitness indicators
     this.loadSystemResources();
@@ -938,6 +956,34 @@ export default defineComponent({
       }
     },
 
+    async toggleLocalServer() {
+      this.togglingLocalServer = true;
+      try {
+        if (this.localServerEnabled) {
+          // Disable — stop the server and save preference
+          await ipcRenderer.invoke('llama-server:stop');
+          await SullaSettingsModel.set('modelMode', 'remote');
+          this.localServerEnabled = false;
+          this.localServerRunning = false;
+          this.activeMode = 'remote';
+          console.log('[LM Settings] Local model server disabled');
+        } else {
+          // Enable — start the server and save preference
+          await SullaSettingsModel.set('modelMode', 'local');
+          await ipcRenderer.invoke('llama-server:start');
+          this.localServerEnabled = true;
+          this.localServerRunning = true;
+          this.activeMode = 'local';
+          console.log('[LM Settings] Local model server enabled');
+        }
+      } catch (err) {
+        console.error('[LM Settings] Failed to toggle local server:', err);
+        this.activationError = `Failed to ${ this.localServerEnabled ? 'stop' : 'start' } local model server.`;
+      } finally {
+        this.togglingLocalServer = false;
+      }
+    },
+
     async checkModelStatuses() {
       this.checkingModelStatuses = true;
       try {
@@ -1327,6 +1373,43 @@ export default defineComponent({
               <span class="config-label">Provider:</span>
               <span class="config-value">{{ selectedProvider }} / {{ selectedRemoteModel }}</span>
             </div>
+          </div>
+
+          <!-- Local Model Server Toggle -->
+          <div class="active-model-section">
+            <h3>Local Model Server</h3>
+            <p class="description">
+              The local llama-server runs a GGUF model on your Mac for offline inference.
+              Disable it to free CPU and memory when using remote providers only.
+            </p>
+            <div class="config-item">
+              <span class="config-label">Status:</span>
+              <span
+                class="status-badge"
+                :class="localServerRunning ? 'status-running' : 'status-stopped'"
+              >
+                {{ localServerRunning ? 'Running' : 'Stopped' }}
+              </span>
+            </div>
+            <div class="config-item toggle-row">
+              <label class="toggle-label" for="local-server-toggle">
+                Enable local model server
+              </label>
+              <button
+                class="toggle-btn"
+                :class="{ 'toggle-on': localServerEnabled, 'toggle-off': !localServerEnabled }"
+                :disabled="togglingLocalServer"
+                @click="toggleLocalServer"
+              >
+                <span class="toggle-knob" />
+              </button>
+            </div>
+            <p
+              v-if="!localServerEnabled"
+              class="setting-description"
+            >
+              The server will stay off until you re-enable it. Sulla will use remote providers only.
+            </p>
           </div>
         </div>
 
@@ -2019,6 +2102,7 @@ export default defineComponent({
     display: flex;
     gap: 0.5rem;
     padding: 0.25rem 0;
+    align-items: center;
 
     .config-label {
       color: var(--text-muted, var(--muted));
@@ -2027,6 +2111,56 @@ export default defineComponent({
 
     .config-value {
       font-weight: 500;
+    }
+  }
+
+  .toggle-row {
+    justify-content: space-between;
+    margin-top: 0.5rem;
+  }
+
+  .toggle-label {
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .toggle-btn {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    transition: background 0.2s;
+    padding: 0;
+    flex-shrink: 0;
+
+    &.toggle-on {
+      background: var(--accent, #3b82f6);
+    }
+
+    &.toggle-off {
+      background: var(--text-muted, #6b7280);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .toggle-knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 0.2s;
+    }
+
+    &.toggle-on .toggle-knob {
+      transform: translateX(20px);
     }
   }
 }

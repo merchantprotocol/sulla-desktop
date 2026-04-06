@@ -348,6 +348,9 @@ export interface IpcMainInvokeEvents {
   'system-resources':     () => { totalMemoryGB: number; availableMemoryGB: number; availableDiskGB: number };
   'local-models-status':  () => Record<string, boolean>;
   'local-model-download': (modelKey: string) => { ok: boolean };
+  'llama-server:status':  () => { running: boolean };
+  'llama-server:stop':    () => { running: boolean };
+  'llama-server:start':   () => { running: boolean };
   // #endregion
 
   // #region main/imageEvents

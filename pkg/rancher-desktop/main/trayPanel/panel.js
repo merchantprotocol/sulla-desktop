@@ -5,6 +5,81 @@
 
 const { ipcRenderer } = require('electron');
 
+// ── Auth state management ──────────────────────────────────────────────
+let isLoggedIn = false;
+
+function setAuthUI(loggedIn, vaultSetUp) {
+  isLoggedIn = loggedIn;
+  const overlay = document.getElementById('login-overlay');
+  const layout = document.querySelector('.app-layout');
+
+  if (!vaultSetUp || loggedIn) {
+    // Vault not set up (first run) or logged in — show normal UI
+    overlay.classList.add('hidden');
+    layout.classList.remove('locked');
+  } else {
+    // Locked — show login form
+    overlay.classList.remove('hidden');
+    layout.classList.add('locked');
+    setTimeout(() => {
+      const pwInput = document.getElementById('login-password');
+      if (pwInput) pwInput.focus();
+    }, 100);
+  }
+}
+
+// Check auth state on load
+ipcRenderer.invoke('tray-panel:check-auth').then((state) => {
+  setAuthUI(state.loggedIn, state.vaultSetUp);
+}).catch(() => {
+  // If check fails, default to showing login
+  setAuthUI(false, true);
+});
+
+// Listen for auth state changes from main process
+ipcRenderer.on('tray-panel:auth-state', (_event, state) => {
+  setAuthUI(state.loggedIn, state.vaultSetUp);
+  const pwInput = document.getElementById('login-password');
+  const errEl = document.getElementById('login-error');
+  if (pwInput) pwInput.value = '';
+  if (errEl) errEl.textContent = '';
+});
+
+// Login form submission
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const pwInput = document.getElementById('login-password');
+  const errEl = document.getElementById('login-error');
+  const submitBtn = document.getElementById('login-submit');
+  const password = pwInput.value.trim();
+
+  if (!password) return;
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Unlocking...';
+  errEl.textContent = '';
+
+  try {
+    const result = await ipcRenderer.invoke('tray-panel:login', { password });
+    if (result.success) {
+      pwInput.value = '';
+    } else {
+      errEl.textContent = 'Incorrect password';
+      pwInput.select();
+    }
+  } catch (err) {
+    errEl.textContent = 'Login failed';
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Unlock';
+  }
+});
+
+// "Open main window" link on login screen
+document.getElementById('login-open-main').addEventListener('click', () => {
+  ipcRenderer.send('tray-panel:open-main');
+});
+
 // ── Sidebar navigation ──────────────────────────────────────────────────
 
 const sidebarBtns = document.querySelectorAll('.sidebar-btn[data-panel]');

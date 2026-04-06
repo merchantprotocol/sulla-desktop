@@ -65,6 +65,7 @@ html, body {
 }
 
 #app {
+  position: relative;
   width: 360px;
   background: var(--bg);
   border-radius: 10px;
@@ -709,4 +710,135 @@ html, body {
 
 .meter-section.disabled .meter-peak {
   opacity: 0;
+}
+
+/* ─── Login overlay ──────────────────────────────────────── */
+
+.login-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+}
+
+.login-overlay.hidden {
+  display: none;
+}
+
+.app-layout.locked {
+  pointer-events: none;
+  filter: blur(2px);
+  opacity: 0.3;
+}
+
+.login-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 32px;
+  width: 100%;
+}
+
+.login-logo {
+  margin-bottom: 12px;
+  opacity: 0.9;
+}
+
+.login-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.login-subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 20px;
+}
+
+.login-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.login-input-wrap {
+  width: 100%;
+}
+
+.login-input {
+  width: 100%;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.login-input:focus {
+  border-color: var(--accent);
+}
+
+.login-input::placeholder {
+  color: var(--text-dim);
+}
+
+.login-error {
+  font-size: 11px;
+  color: var(--error);
+  min-height: 16px;
+  text-align: center;
+}
+
+.login-submit {
+  width: 100%;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.login-submit:hover {
+  background: var(--accent-hover);
+}
+
+.login-submit:active {
+  opacity: 0.8;
+}
+
+.login-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.login-link {
+  margin-top: 16px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.login-link:hover {
+  color: var(--accent);
 }

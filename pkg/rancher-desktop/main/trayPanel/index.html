@@ -9,6 +9,31 @@
   </head>
   <body>
     <div id="app">
+      <!-- ─── Login overlay (shown when not authenticated) ─── -->
+      <div id="login-overlay" class="login-overlay">
+        <div class="login-content">
+          <img class="login-logo" src="sulla-icon.png" width="40" height="40" alt="Sulla" />
+          <h2 class="login-title">Sulla Desktop</h2>
+          <p class="login-subtitle">Enter your master password to unlock</p>
+          <form id="login-form" class="login-form" autocomplete="off">
+            <div class="login-input-wrap">
+              <input
+                type="password"
+                id="login-password"
+                class="login-input"
+                placeholder="Master password"
+                autocomplete="current-password"
+                spellcheck="false"
+                required
+              />
+            </div>
+            <div id="login-error" class="login-error"></div>
+            <button type="submit" id="login-submit" class="login-submit">Unlock</button>
+          </form>
+          <button id="login-open-main" class="login-link">Open main window instead</button>
+        </div>
+      </div>
+
       <div class="app-layout">
         <!-- ─── Sidebar ──────────────────────────────────────── -->
         <nav class="sidebar">

@@ -165,6 +165,15 @@ export function sendAudioDetection(data: {
 }
 
 /**
+ * Send authentication state to the panel renderer.
+ */
+export function sendAuthState(state: { loggedIn: boolean; vaultSetUp: boolean }): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:auth-state', state);
+  }
+}
+
+/**
  * Destroy the panel window (app quit).
  */
 export function destroyTrayPanel(): void {
@@ -263,6 +272,40 @@ function registerPanelIpc(): void {
 
     // 5. Trigger the full shutdown sequence
     app.quit();
+  });
+
+  // ── Auth IPC handlers ─────────────────────────────────────────────────
+
+  ipcMain.handle('tray-panel:check-auth', async() => {
+    try {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      const vaultKey = getVaultKeyService();
+
+      return {
+        loggedIn:   vaultKey.isUnlocked(),
+        vaultSetUp: vaultKey.isSetUp(),
+      };
+    } catch {
+      return { loggedIn: false, vaultSetUp: false };
+    }
+  });
+
+  ipcMain.handle('tray-panel:login', async(_event: Electron.IpcMainInvokeEvent, data: { password: string }) => {
+    try {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      const vaultKey = getVaultKeyService();
+      const success = await vaultKey.recoverFromMasterPassword(data.password);
+
+      if (success) {
+        const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+
+        setUserLoggedIn(true);
+      }
+
+      return { success };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
   });
 
   // ── Audio panel IPC handlers ──────────────────────────────────────────

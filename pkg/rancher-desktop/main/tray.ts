@@ -16,7 +16,7 @@ import { showErrorDialogWithReport } from '@pkg/main/errorReporter';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
-import { createTrayPanel, toggleTrayPanel, sendPanelState, destroyTrayPanel } from '@pkg/main/trayPanel';
+import { createTrayPanel, toggleTrayPanel, sendPanelState, sendAuthState, destroyTrayPanel } from '@pkg/main/trayPanel';
 import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
@@ -366,6 +366,7 @@ export class Tray {
   public setUserLoggedIn(unlocked: boolean): void {
     this.userLoggedIn = unlocked;
     this.updateMenu();
+    sendAuthState({ loggedIn: unlocked, vaultSetUp: true });
   }
 
   /** Get the singleton without requiring settings (for vault state updates) */

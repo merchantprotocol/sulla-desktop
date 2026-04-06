@@ -56,6 +56,7 @@ import paths from '@pkg/utils/paths';
 import { protocolsRegistered, setupProtocolHandlers } from '@pkg/utils/protocols';
 import { executable } from '@pkg/utils/resources';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
+import { sullaLog } from '@pkg/utils/sullaLog';
 import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 import { getVersion } from '@pkg/utils/version';
 import getWSLVersion from '@pkg/utils/wslVersion';
@@ -908,6 +909,7 @@ Electron.app.on('before-quit', async(event) => {
   // ── Safety-net: force-exit if graceful shutdown exceeds 30 seconds ──
   const SHUTDOWN_DEADLINE_MS = 30_000;
   const forceExitTimer = setTimeout(() => {
+    sullaLog({ topic: 'shutdown', level: 'error', message: `Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting` });
     console.error(`[Shutdown] Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting`);
     process.exit(1);
   }, SHUTDOWN_DEADLINE_MS);
@@ -916,11 +918,20 @@ Electron.app.on('before-quit', async(event) => {
 
   // ── Helper: wrap a promise with a timeout ──
   const withTimeout = <T>(label: string, ms: number, promise: Promise<T>): Promise<T | void> => {
+    sullaLog({ topic: 'shutdown', level: 'info', message: `Starting '${ label }' (timeout ${ ms }ms)` });
+
     return Promise.race([
-      promise,
+      promise.then((v) => {
+        sullaLog({ topic: 'shutdown', level: 'info', message: `'${ label }' completed` });
+
+        return v;
+      }),
       new Promise<void>((resolve) => {
         setTimeout(() => {
-          console.warn(`[Shutdown] '${ label }' timed out after ${ ms }ms — skipping`);
+          const msg = `'${ label }' timed out after ${ ms }ms — skipping`;
+
+          console.warn(`[Shutdown] ${ msg }`);
+          sullaLog({ topic: 'shutdown', level: 'warn', message: msg });
           resolve();
         }, ms);
       }),
@@ -945,36 +956,41 @@ Electron.app.on('before-quit', async(event) => {
     console.error('[Shutdown] Audio driver shutdown error:', err);
   }
 
+  sullaLog({ topic: 'shutdown', level: 'info', message: 'Calling sullaEnd()' });
   console.log('[Shutdown] before-quit: calling sullaEnd()');
   await sullaEnd(isRestarting ? 'restart' : 'full');
+  sullaLog({ topic: 'shutdown', level: 'info', message: 'sullaEnd() complete' });
   console.log('[Shutdown] before-quit: sullaEnd() complete');
 
   /// /////////////////////////////////////////////////////////////////////////////
   // SULLA DESKTOP - END
   /// /////////////////////////////////////////////////////////////////////////////
 
-  console.log(`[Shutdown] ${ isRestarting ? 'RESTART' : 'FULL QUIT' } PATH — stopping k8smanager, extensions, integrations`);
+  const shutdownMode = isRestarting ? 'RESTART' : 'FULL QUIT';
+
+  sullaLog({ topic: 'shutdown', level: 'info', message: `${ shutdownMode } PATH — stopping k8smanager, extensions, integrations` });
+  console.log(`[Shutdown] ${ shutdownMode } — stopping k8smanager, extensions, integrations`);
   try {
-    console.log('[Shutdown] calling extensions/shutdown...');
     await withTimeout('extensions/shutdown', 10_000, mainEvents.tryInvoke('extensions/shutdown') ?? Promise.resolve());
 
     if (isRestarting) {
-      console.log('[Shutdown] RESTART — skipping k8smanager.stop() (VM stays alive)');
+      sullaLog({ topic: 'shutdown', level: 'info', message: 'RESTART — skipping k8smanager.stop() (VM stays alive)' });
     } else {
-      console.log('[Shutdown] calling k8smanager?.stop() (this stops Docker + Lima VM)...');
-      await withTimeout('k8smanager.stop', 15_000, k8smanager?.stop() ?? Promise.resolve());
+      await withTimeout('k8smanager.stop', 10_000, k8smanager?.stop() ?? Promise.resolve());
     }
 
-    console.log('[Shutdown] calling shutdown-integrations...');
     await withTimeout('shutdown-integrations', 10_000, mainEvents.tryInvoke('shutdown-integrations') ?? Promise.resolve());
 
-    console.log(`[Shutdown] ${ isRestarting ? 'Restart' : 'Full quit' } completed cleanly.`);
+    sullaLog({ topic: 'shutdown', level: 'info', message: `${ shutdownMode } completed cleanly` });
+    console.log(`[Shutdown] ${ shutdownMode } completed cleanly.`);
   } catch (ex: any) {
+    sullaLog({ topic: 'shutdown', level: 'error', message: `Quit error: ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`, error: ex });
     console.log(`[Shutdown] Full quit error: ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`);
     handleFailure(ex);
   } finally {
     clearTimeout(forceExitTimer);
     gone = true;
+    sullaLog({ topic: 'shutdown', level: 'info', message: 'Calling app.quit()' });
     if (process.env['APPIMAGE']) {
       await integrationManager.removeSymlinksOnly();
     }
@@ -1041,11 +1057,43 @@ ipcMainProxy.handle('start-backend' as any, () => {
 
 await onMainProxyLoad(ipcMainProxy);
 
-ipcMainProxy.on('model-changed', (_event, data) => {
+ipcMainProxy.on('model-changed', async(_event, data) => {
   // Relay the model-changed event to all open windows
   Electron.BrowserWindow.getAllWindows().forEach((win) => {
     win.webContents.send('model-changed', data);
   });
+
+  // Stop or start the local llama-server based on the new mode
+  const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
+  const llamaCpp = getLlamaCppService();
+
+  if (data.type === 'remote') {
+    // Switching to remote — stop local server to free resources
+    console.log('[Background] Model mode changed to remote — stopping local llama-server');
+    try {
+      await llamaCpp.stopServer();
+    } catch { /* not running */ }
+  } else if (data.type === 'local' && !llamaCpp.isServerRunning) {
+    // Switching to local — start server if not already running
+    console.log('[Background] Model mode changed to local — starting local llama-server');
+    try {
+      const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
+      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
+      let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
+
+      if (!(modelKey in GGUF_MODELS)) {
+        const mapped = modelKey.replace(/:/g, '-');
+
+        modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
+      }
+      const modelPath = await llamaCpp.downloadModel(modelKey);
+
+      await llamaCpp.startServer(modelPath);
+      console.log(`[Background] llama-server started at ${ llamaCpp.serverBaseUrl }`);
+    } catch (err) {
+      console.error('[Background] Failed to start local llama-server:', err);
+    }
+  }
 });
 
 // Error reporting — fire-and-forget from renderer

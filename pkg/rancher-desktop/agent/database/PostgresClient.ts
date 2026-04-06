@@ -8,6 +8,10 @@ export class PostgresClient {
   private connected = false;
   private shuttingDown = false;
 
+  get isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
   public async initialize(): Promise<void> {
     if (this.shuttingDown) return; // Don't reconnect during shutdown
     if (this.pool) return; // Already initialized
@@ -72,6 +76,9 @@ export class PostgresClient {
   }
 
   async queryWithResult<T extends QueryResultRow = any>(text: string, params: any[] = []): Promise<QueryResult<T>> {
+    if (this.shuttingDown) {
+      return { rows: [], rowCount: 0, command: '', oid: 0, fields: [] } as unknown as QueryResult<T>;
+    }
     const client = await this.getClient();
     try {
       const res = await client.query(text, params);
@@ -82,6 +89,9 @@ export class PostgresClient {
   }
 
   async query<T = any>(text: string, params: any[] = []): Promise<T[]> {
+    if (this.shuttingDown) {
+      return [];
+    }
     const client = await this.getClient();
     try {
       const res = await client.query(text, params);
