@@ -294,23 +294,33 @@ const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) 
 
 const activeSourceCount = computed(() => sources.filter(s => s.on).length);
 
-// The stream for the primary slot — could be screen OR camera depending on assignment
-const primaryStream = computed(() => {
-  const src = primarySource.value;
-  if (!src) return null;
-  if (src.type === 'screen') return mediaSources.screenStream.value;
-  if (src.type === 'camera') return mediaSources.cameraStream.value;
-  return null;
-});
+// Stream refs for primary and pip slots — updated explicitly after autoAssign
+const primaryStream = ref<MediaStream | null>(null);
+const pipStream = ref<MediaStream | null>(null);
 
-// The stream for the PiP/secondary slot
-const pipStream = computed(() => {
-  const src = pipSource.value;
-  if (!src) return null;
-  if (src.type === 'screen') return mediaSources.screenStream.value;
-  if (src.type === 'camera') return mediaSources.cameraStream.value;
-  return null;
-});
+function updateStreamAssignments() {
+  const primary = primarySource.value;
+  if (!primary) {
+    primaryStream.value = null;
+  } else if (primary.type === 'screen') {
+    primaryStream.value = mediaSources.screenStream.value;
+  } else if (primary.type === 'camera') {
+    primaryStream.value = mediaSources.cameraStream.value;
+  } else {
+    primaryStream.value = null;
+  }
+
+  const pip = pipSource.value;
+  if (!pip) {
+    pipStream.value = null;
+  } else if (pip.type === 'screen') {
+    pipStream.value = mediaSources.screenStream.value;
+  } else if (pip.type === 'camera') {
+    pipStream.value = mediaSources.cameraStream.value;
+  } else {
+    pipStream.value = null;
+  }
+}
 
 const totalDiskDisplay = computed(() => {
   const total = recorder.bytesWritten.value + speakerCapture.bytesWritten.value;
@@ -377,9 +387,11 @@ async function toggleSrc(src: Source) {
         if (!hasPermission) { src.on = false; return; }
         await mediaSources.acquireScreen();
         console.log('[CaptureStudio] Screen acquired, stream:', mediaSources.screenStream.value ? 'active' : 'null', 'tracks:', mediaSources.screenStream.value?.getVideoTracks().length);
+        updateStreamAssignments();
       } else if (src.type === 'camera') {
         await mediaSources.acquireCamera();
         console.log('[CaptureStudio] Camera acquired, stream:', mediaSources.cameraStream.value ? 'active' : 'null', 'tracks:', mediaSources.cameraStream.value?.getVideoTracks().length);
+        updateStreamAssignments();
       } else if (src.type === 'mic') {
         const mic = micInstances[src.id] || createMicInstance();
         micInstances[src.id] = mic;
@@ -404,6 +416,7 @@ async function toggleSrc(src: Source) {
   }
 
   autoAssign();
+  updateStreamAssignments();
   console.log('[CaptureStudio] After autoAssign:', {
     layout: currentLayout.value,
     primary: assign.primary,
@@ -604,6 +617,7 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
 
   if (isVideo) {
     autoAssign();
+  updateStreamAssignments();
     if (currentLayout.value === 'screenonly' || currentLayout.value === 'camonly') {
       currentLayout.value = 'pip';
     }
@@ -621,6 +635,7 @@ function removeSource(id: string) {
   const idx = sources.findIndex(s => s.id === id);
   if (idx > -1) sources.splice(idx, 1);
   autoAssign();
+  updateStreamAssignments();
 }
 
 // ─── Audio meter animation (real data) ───
@@ -742,6 +757,7 @@ async function showScreenContextMenu(e: MouseEvent) {
             src.name = s.name;
             src.status = 'Capturing';
             autoAssign();
+  updateStreamAssignments();
           }
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch screen:', err);
@@ -908,17 +924,25 @@ onMounted(async () => {
 
   // 1. Start audio driver
   loadingMessage.value = 'Starting audio driver...';
+  console.log('[CaptureStudio] Boot: requesting audio driver state...');
   try {
-    const state = await audioDriver.getState();
-    console.log('[CaptureStudio] Audio driver state:', state);
-    if (!state.running) {
-      const result = await audioDriver.startCapture();
-      console.log('[CaptureStudio] Audio driver start result:', result);
+    const state = await Promise.race([
+      audioDriver.getState(),
+      new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout getting audio state')), 5000)),
+    ]);
+    console.log('[CaptureStudio] Audio driver state:', JSON.stringify(state));
+    if (!state || !state.running) {
+      console.log('[CaptureStudio] Starting audio capture...');
+      const result = await Promise.race([
+        audioDriver.startCapture(),
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout starting audio capture')), 10000)),
+      ]);
+      console.log('[CaptureStudio] Audio driver start result:', JSON.stringify(result));
     } else {
       console.log('[CaptureStudio] Audio driver already running');
     }
   } catch (e: any) {
-    console.error('[CaptureStudio] Failed to auto-start audio driver:', e.message || e);
+    console.error('[CaptureStudio] Audio driver boot failed:', e.message || e);
   }
 
   // 2. Enumerate devices
@@ -957,6 +981,7 @@ onMounted(async () => {
 
   // 5. Set initial layout and start meters
   autoAssign();
+  updateStreamAssignments();
   startWaveformLoop();
   if (currentLayout.value === 'audioonly') {
     startAudioMeter();
