@@ -831,10 +831,26 @@ onMounted(async () => {
   watch(currentLayout, v => { settings.layout.value = v; });
   watch(cameraShape, v => { settings.cameraShape.value = v; });
 
+  // Auto-start audio driver so mic + speaker levels flow immediately
+  try {
+    const state = await audioDriver.getState();
+    if (!state.running) {
+      await audioDriver.startCapture();
+    }
+  } catch (e) {
+    console.warn('[CaptureStudio] Failed to auto-start audio driver:', e);
+  }
+
   // Auto-enable mic on open
   const micSrc = sources.find(s => s.id === 'mic');
   if (micSrc && !micSrc.on) {
     await toggleSrc(micSrc);
+  }
+
+  // Trigger audio-only layout since no video sources are on
+  autoAssign();
+  if (currentLayout.value === 'audioonly') {
+    startAudioMeter();
   }
 });
 
