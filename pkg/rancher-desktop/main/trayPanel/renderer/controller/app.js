@@ -317,7 +317,6 @@ function updateDetectionUI() {
 
   if (state.noiseLevel !== lastNoiseLevel) {
     lastNoiseLevel = state.noiseLevel;
-    log.info("Controller", "Noise level changed", { noiseLevel: state.noiseLevel });
     if (noiseBar) {
       noiseBar.className = "meter-fill noise-" + state.noiseLevel;
     }

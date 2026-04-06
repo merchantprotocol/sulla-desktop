@@ -38,7 +38,6 @@ const lookbackBuffer = require("./lookback-buffer");
 
 const log = window.audioDriver.log;
 
-let frameCount = 0;
 let lastSpeaking = false;
 let lastFanNoise = false;
 let callback = null;
@@ -53,7 +52,6 @@ const VARIANCE_GATE = 0.0001;        // Minimum variance — speech sustains, ta
 const SPEECH_ZCR_MAX = 0.15;         // Speech ZCR is low; taps/noise are higher
 const SPEECH_CENTROID_MAX = 0.20;    // Speech centroid is concentrated low
 
-const DEBUG_LOG_INTERVAL = 60;  // Log analyzer states every 60 frames (~1s)
 
 // ─── Orchestration ──────────────────────────────────────────────
 
@@ -150,27 +148,6 @@ function process(rms, analyser) {
     lookback: lookbackBuffer.getState(),
   };
 
-  // ── Debug logging (~1/second) ──────────────────────────────
-
-  frameCount++;
-  if (frameCount % DEBUG_LOG_INTERVAL === 0) {
-    log.debug("VAD", "Analyzer state", {
-      speaking: fc.speaking,
-      fanNoise: fan.detected,
-      noiseFloor: amp.noiseFloor.toFixed(4),
-      noiseLevel: amp.noiseLevel,
-      aboveFloorDB: amp.aboveFloorDB.toFixed(1),
-      zcr: zcr.smoothedZcr.toFixed(3),
-      variance: tvar.variance.toFixed(6),
-      pitch: pit.pitch,
-      pitchStdDev: pit.pitchStdDev.toFixed(1),
-      centroid: spec.centroid.toFixed(3),
-      rolloff: spec.rolloff.toFixed(3),
-      silenceRatio: sr.ratio.toFixed(2),
-      silenceClass: sr.classification,
-      fanConfidence: fan.confidence.toFixed(2),
-    });
-  }
 
   // ── Fire callback on state changes ─────────────────────────
 
@@ -234,7 +211,6 @@ function reset() {
   fanNoise.reset();
   lookbackBuffer.reset();
 
-  frameCount = 0;
   lastSpeaking = false;
   lastFanNoise = false;
   cachedState = null;

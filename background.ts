@@ -905,10 +905,32 @@ Electron.app.on('before-quit', async(event) => {
   event.preventDefault();
   console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');
 
+  // ── Safety-net: force-exit if graceful shutdown exceeds 30 seconds ──
+  const SHUTDOWN_DEADLINE_MS = 30_000;
+  const forceExitTimer = setTimeout(() => {
+    console.error(`[Shutdown] Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting`);
+    process.exit(1);
+  }, SHUTDOWN_DEADLINE_MS);
+
+  forceExitTimer.unref(); // don't let this timer keep the process alive on its own
+
+  // ── Helper: wrap a promise with a timeout ──
+  const withTimeout = <T>(label: string, ms: number, promise: Promise<T>): Promise<T | void> => {
+    return Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          console.warn(`[Shutdown] '${ label }' timed out after ${ ms }ms — skipping`);
+          resolve();
+        }, ms);
+      }),
+    ]);
+  };
+
   // Vault lock is handled by ServiceLifecycleManager in sullaEnd()
 
-  await httpCommandServer?.closeServer();
-  await httpCredentialHelperServer.closeServer();
+  await withTimeout('httpCommandServer.close', 5_000, httpCommandServer?.closeServer() ?? Promise.resolve());
+  await withTimeout('httpCredentialHelperServer.close', 5_000, httpCredentialHelperServer.closeServer());
 
   /// /////////////////////////////////////////////////////////////////////////////
   // SULLA DESKTOP - START
@@ -917,14 +939,14 @@ Electron.app.on('before-quit', async(event) => {
 
   // Shut down audio-driver (restore audio output, release capture, remove driver)
   try {
-    await audioDriver.shutdown();
+    await withTimeout('audioDriver.shutdown', 5_000, audioDriver.shutdown());
     console.log('[Shutdown] Audio driver shut down');
   } catch (err) {
     console.error('[Shutdown] Audio driver shutdown error:', err);
   }
 
   console.log('[Shutdown] before-quit: calling sullaEnd()');
-  await sullaEnd(event);
+  await sullaEnd(isRestarting ? 'restart' : 'full');
   console.log('[Shutdown] before-quit: sullaEnd() complete');
 
   /// /////////////////////////////////////////////////////////////////////////////
@@ -934,17 +956,24 @@ Electron.app.on('before-quit', async(event) => {
   console.log(`[Shutdown] ${ isRestarting ? 'RESTART' : 'FULL QUIT' } PATH — stopping k8smanager, extensions, integrations`);
   try {
     console.log('[Shutdown] calling extensions/shutdown...');
-    await mainEvents.tryInvoke('extensions/shutdown');
-    console.log('[Shutdown] calling k8smanager?.stop() (this stops Docker + Lima VM)...');
-    await k8smanager?.stop();
-    console.log('[Shutdown] calling shutdown-integrations...');
-    await mainEvents.tryInvoke('shutdown-integrations');
+    await withTimeout('extensions/shutdown', 10_000, mainEvents.tryInvoke('extensions/shutdown') ?? Promise.resolve());
 
-    console.log(`[Shutdown] Full quit completed cleanly.`);
+    if (isRestarting) {
+      console.log('[Shutdown] RESTART — skipping k8smanager.stop() (VM stays alive)');
+    } else {
+      console.log('[Shutdown] calling k8smanager?.stop() (this stops Docker + Lima VM)...');
+      await withTimeout('k8smanager.stop', 15_000, k8smanager?.stop() ?? Promise.resolve());
+    }
+
+    console.log('[Shutdown] calling shutdown-integrations...');
+    await withTimeout('shutdown-integrations', 10_000, mainEvents.tryInvoke('shutdown-integrations') ?? Promise.resolve());
+
+    console.log(`[Shutdown] ${ isRestarting ? 'Restart' : 'Full quit' } completed cleanly.`);
   } catch (ex: any) {
     console.log(`[Shutdown] Full quit error: ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`);
     handleFailure(ex);
   } finally {
+    clearTimeout(forceExitTimer);
     gone = true;
     if (process.env['APPIMAGE']) {
       await integrationManager.removeSymlinksOnly();

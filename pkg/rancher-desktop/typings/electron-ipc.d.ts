@@ -213,6 +213,10 @@ export interface IpcMainInvokeEvents {
   }) => boolean;
   'sulla-settings-get':     (property: string, defaultValue?: any) => any;
   'sulla-settings-set':     (property: string, value: any) => void;
+  'sulla-settings:get':     (key: string) => any;
+  'sulla-settings:set':     (key: string, value: any, cast?: string) => any;
+  'capture-studio:get-sources':      () => { id: string; name: string; thumbnailDataUrl: string }[];
+  'capture-studio:check-permissions': () => Record<string, string>;
   'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };
   'audio-speak':            (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
   'integration-get-value':  (integrationId: string, property: string) => { value: string } | null;

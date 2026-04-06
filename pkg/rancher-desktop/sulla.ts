@@ -217,6 +217,7 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => {
       try { await getLlamaCppService().stopServer(); } catch { /* not started */ }
     },
+    { persistOnRestart: true },
   );
 
   // ── Connection readiness gates ─────────────────────────────────────────
@@ -224,11 +225,13 @@ export async function instantiateSullaStart(): Promise<void> {
   lifecycle.register('postgres', [],
     async() => { await postgresClient.waitForReady(); },
     async() => { await postgresClient.end(); },
+    { persistOnRestart: true },
   );
 
   lifecycle.register('redis', [],
     async() => { await redisClient.waitForReady(); },
     async() => { await redisClient.close(); },
+    { persistOnRestart: true },
   );
 
   // ── Database layer (depends on postgres connection) ────────────────────
@@ -245,7 +248,10 @@ export async function instantiateSullaStart(): Promise<void> {
       await getSchedulerService().initialize();
       console.log('[Background] SchedulerService initialized');
     },
-    async() => { /* SchedulerService has no stop method */ },
+    async() => {
+      getSchedulerService().destroy();
+      console.log('[Background] SchedulerService destroyed');
+    },
   );
 
   lifecycle.register('heartbeat', ['database-manager', 'redis'],
@@ -253,7 +259,10 @@ export async function instantiateSullaStart(): Promise<void> {
       await getHeartbeatService().initialize();
       console.log('[Background] HeartbeatService initialized');
     },
-    async() => { /* HeartbeatService has no stop method */ },
+    async() => {
+      getHeartbeatService().destroy();
+      console.log('[Background] HeartbeatService destroyed');
+    },
   );
 
   lifecycle.register('workflow-scheduler', ['database-manager'],
@@ -707,6 +716,16 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
   });
 
+  // ── Lifecycle: expose startup/shutdown phase to renderer ──
+  ipcMain.on('lifecycle:status', (event) => {
+    const lm = getServiceLifecycleManager();
+
+    event.returnValue = {
+      ready:        lm.isAllReady(),
+      shuttingDown: lm.isShuttingDown(),
+    };
+  });
+
   // ── Vault: export & import ─────────────────────────────────────────────────
   const { dialog } = await import('electron');
   const fsPromises = await import('fs/promises');
@@ -1146,8 +1165,8 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
  *
  * @see sulla-desktop/background.ts
  */
-export async function sullaEnd(event: any) {
+export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
   const lifecycle = getServiceLifecycleManager();
 
-  await lifecycle.stopAll('full');
+  await lifecycle.stopAll(mode);
 }

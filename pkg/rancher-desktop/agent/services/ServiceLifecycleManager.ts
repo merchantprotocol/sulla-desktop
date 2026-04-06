@@ -26,6 +26,7 @@ class ServiceLifecycleManager extends EventEmitter {
   private services = new Map<string, ServiceDefinition>();
   private started = new Set<string>();
   private _shuttingDown = false;
+  private _allReady = false;
   private _startOrder: string[] = [];
 
   /**
@@ -64,6 +65,7 @@ class ServiceLifecycleManager extends EventEmitter {
    */
   async startAll(): Promise<void> {
     this._shuttingDown = false;
+    this._allReady = false;
     const order = this.topologicalSort();
 
     this._startOrder = order;
@@ -104,6 +106,7 @@ class ServiceLifecycleManager extends EventEmitter {
       }
     }
 
+    this._allReady = true;
     this.emit('all:ready');
     console.log(`[Lifecycle] Startup complete — ${ this.started.size }/${ order.length } services running`);
   }
@@ -118,6 +121,7 @@ class ServiceLifecycleManager extends EventEmitter {
       return;
     }
     this._shuttingDown = true;
+    this._allReady = false;
     this.emit('shutdown:begin', mode);
 
     // Reverse the startup order for teardown
@@ -156,6 +160,10 @@ class ServiceLifecycleManager extends EventEmitter {
 
   isStarted(name: string): boolean {
     return this.started.has(name);
+  }
+
+  isAllReady(): boolean {
+    return this._allReady && !this._shuttingDown;
   }
 
   /**

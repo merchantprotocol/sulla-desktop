@@ -234,7 +234,34 @@ function registerPanelIpc(): void {
     await setupUpdate(true, false);
   });
 
-  ipcMain.on('tray-panel:quit', () => {
+  ipcMain.on('tray-panel:quit', async() => {
+    // 1. Hide the tray panel immediately for visual feedback
+    panelWindow?.hide();
+
+    // 2. Tell all renderer windows to stop capture / recording
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send('app:before-quit');
+      }
+    }
+
+    // 3. Stop audio capture from the main process side
+    try {
+      const audioDriver = await import('@pkg/main/audio-driver/init');
+
+      await audioDriver.shutdown();
+    } catch (err) {
+      console.error('[TrayPanel] Pre-quit audio shutdown error:', err);
+    }
+
+    // 4. Close all open windows (gives them a chance to run onBeforeUnmount)
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.close();
+      }
+    }
+
+    // 5. Trigger the full shutdown sequence
     app.quit();
   });
 
