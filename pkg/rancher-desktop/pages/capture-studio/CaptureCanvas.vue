@@ -90,18 +90,37 @@ const audioMeterVisRef = ref<HTMLElement | null>(null);
 
 // Bind screen stream to video element
 watch(() => props.screenStream, (stream) => {
-  if (screenVideoEl.value) {
-    screenVideoEl.value.srcObject = stream || null;
+  const el = screenVideoEl.value;
+  if (el) {
+    try {
+      el.srcObject = stream && stream.active ? stream : null;
+    } catch (e: any) {
+      console.warn('[CaptureCanvas] Failed to set screen srcObject:', e.message);
+      el.srcObject = null;
+    }
   }
 });
 
 // Bind camera stream to all camera video elements
 watch(() => props.cameraStream, (stream) => {
-  if (sbsCameraVideoEl.value) {
-    sbsCameraVideoEl.value.srcObject = stream || null;
+  const safeStream = stream && stream.active ? stream : null;
+  const sbsEl = sbsCameraVideoEl.value;
+  if (sbsEl) {
+    try {
+      sbsEl.srcObject = safeStream;
+    } catch (e: any) {
+      console.warn('[CaptureCanvas] Failed to set sbs camera srcObject:', e.message);
+      sbsEl.srcObject = null;
+    }
   }
-  if (fullCameraVideoEl.value) {
-    fullCameraVideoEl.value.srcObject = stream || null;
+  const fullEl = fullCameraVideoEl.value;
+  if (fullEl) {
+    try {
+      fullEl.srcObject = safeStream;
+    } catch (e: any) {
+      console.warn('[CaptureCanvas] Failed to set full camera srcObject:', e.message);
+      fullEl.srcObject = null;
+    }
   }
 });
 

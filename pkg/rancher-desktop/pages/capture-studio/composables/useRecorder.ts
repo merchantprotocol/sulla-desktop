@@ -141,9 +141,10 @@ export function useRecorder() {
       };
 
       recorder.ondataavailable = async (e: BlobEvent) => {
-        if (e.data.size > 0) {
+        if (e.data.size > 0 && ws && !ws.destroyed) {
           try {
             const buffer = Buffer.from(await e.data.arrayBuffer());
+            if (ws.destroyed) return; // re-check after async
             ws.write(buffer);
             entry.bytesWritten += buffer.length;
             bytesWritten.value = entries.reduce((sum, en) => sum + en.bytesWritten, 0);
@@ -216,22 +217,33 @@ export function useRecorder() {
         return;
       }
 
+      let resolved = false;
+      const safeResolve = () => { if (!resolved) { resolved = true; resolve(); } };
+
       const origHandler = entry.recorder.ondataavailable;
       entry.recorder.ondataavailable = async (e: BlobEvent) => {
         // Process the final chunk
-        if (origHandler) await (origHandler as any)(e);
-        resolve();
+        try {
+          if (origHandler) await (origHandler as any)(e);
+        } catch (err: any) {
+          console.warn('[useRecorder] Final chunk handler error:', err.message);
+        }
+        safeResolve();
       };
 
       entry.recorder.onstop = () => {
         // Safety: resolve if ondataavailable never fires (empty final chunk)
-        setTimeout(resolve, 100);
+        setTimeout(safeResolve, 100);
       };
 
       entry.recorder.stop();
     }));
 
-    await Promise.all(stopPromises);
+    // Wait for stop promises with a 5-second timeout to prevent hanging forever
+    await Promise.race([
+      Promise.all(stopPromises),
+      new Promise<void>(resolve => setTimeout(resolve, 5000)),
+    ]);
 
     // Close all write streams
     for (const entry of entries) {
@@ -248,14 +260,20 @@ export function useRecorder() {
         startOffset: Math.round(e.startOffset),
         bytes: e.bytesWritten,
       })),
-      ...externalEntries.map(e => ({
-        id: e.id,
-        type: e.type,
-        filename: e.filename,
-        format: e.format,
-        startOffset: Math.round(e.startOffset),
-        bytes: e.getBytesWritten(),
-      })),
+      ...externalEntries.map(e => {
+        let bytes = 0;
+        try { bytes = e.getBytesWritten(); } catch (err: any) {
+          console.warn('[useRecorder] getBytesWritten failed for', e.id, err.message);
+        }
+        return {
+          id: e.id,
+          type: e.type,
+          filename: e.filename,
+          format: e.format,
+          startOffset: Math.round(e.startOffset),
+          bytes,
+        };
+      }),
     ];
 
     const totalBytes = allStreams.reduce((sum, s) => sum + s.bytes, 0);

@@ -5,8 +5,8 @@
       :class="canvasClass"
     >
       <CaptureCanvas
-        :screenStream="mediaSources.screenStream?.value || null"
-        :cameraStream="mediaSources.cameraStream?.value || null"
+        :screenStream="mediaSources.screenStream.value || null"
+        :cameraStream="mediaSources.cameraStream.value || null"
         :currentLayout="currentLayout"
         :primarySource="primarySource"
         :pipSource="pipSource"
@@ -22,7 +22,7 @@
       />
 
       <CameraBubble
-        :cameraStream="mediaSources.cameraStream?.value || null"
+        :cameraStream="mediaSources.cameraStream.value || null"
         :recording="recording"
         :cameraShape="cameraShape"
         :currentLayout="currentLayout"
@@ -180,11 +180,8 @@ const settings = useSettings();
 const diskSpace = useDiskSpace();
 const speakerCapture = useSpeakerCapture();
 
-// Mic instances keyed by source id
+// Mic instances keyed by source id (created on first use, not at module level)
 const micInstances = reactive<Record<string, MicInstance>>({});
-
-// Default mic instance for the builtin mic
-micInstances['mic'] = createMicInstance();
 
 // ─── State ───
 const recording = ref(false);
@@ -379,6 +376,8 @@ function swapAssignments() {
 }
 
 // ─── Record (wired to disk writer) ───
+let _stoppingFromCritical = false; // guard against infinite recursion from disk critical callback
+
 async function toggleRecord() {
   if (!recording.value) {
     // Check disk space before starting
@@ -389,18 +388,21 @@ async function toggleRecord() {
       return;
     }
 
-    // Gather active streams for recording
+    // Gather active streams for recording — check stream.active not just existence
     const streams: Array<{ id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }> = [];
 
-    if (mediaSources.screenStream.value) {
-      streams.push({ id: 'screen', type: 'screen', stream: mediaSources.screenStream.value });
+    const screenVal = mediaSources.screenStream.value;
+    if (screenVal && screenVal.active) {
+      streams.push({ id: 'screen', type: 'screen', stream: screenVal });
     }
-    if (mediaSources.cameraStream.value) {
-      streams.push({ id: 'cam', type: 'camera', stream: mediaSources.cameraStream.value });
+    const camVal = mediaSources.cameraStream.value;
+    if (camVal && camVal.active) {
+      streams.push({ id: 'cam', type: 'camera', stream: camVal });
     }
     for (const [id, mic] of Object.entries(micInstances)) {
-      if (mic.stream.value && mic.active.value) {
-        streams.push({ id, type: 'mic', stream: mic.stream.value });
+      const micStream = mic.stream.value;
+      if (micStream && micStream.active && mic.active.value) {
+        streams.push({ id, type: 'mic', stream: micStream });
       }
     }
 
@@ -430,15 +432,19 @@ async function toggleRecord() {
 
     // Start disk space monitoring
     diskSpace.startMonitoring(() => {
-      // Critical: auto-stop recording
+      // Critical: auto-stop recording — guard against infinite recursion
+      if (_stoppingFromCritical) return;
+      _stoppingFromCritical = true;
       console.warn('[CaptureStudio] Critical disk space — stopping recording');
-      toggleRecord(); // recursive call to stop
+      toggleRecord().finally(() => { _stoppingFromCritical = false; });
     });
   } else {
+    // Capture session dir BEFORE stopSession clears it
+    const capturedSessionDir = recorder.getSessionDir();
     // Stop speaker capture
     speakerCapture.stop();
-    lastSessionDir.value = recorder.getSessionDir();
     await recorder.stopSession();
+    lastSessionDir.value = capturedSessionDir;
     recording.value = false;
     diskSpace.stopMonitoring();
     statusMessage.value = 'Recording saved';
@@ -478,7 +484,7 @@ function doScreenshot() {
 }
 
 // ─── Add source (from dialog) ───
-function confirmAdd(payload: { type: string; deviceId: string; label: string }) {
+async function confirmAdd(payload: { type: string; deviceId: string; label: string }) {
   sourceCounter++;
   const id = 'custom_' + sourceCounter;
   const isVideo = payload.type === 'screen' || payload.type === 'camera';
@@ -499,7 +505,12 @@ function confirmAdd(payload: { type: string; deviceId: string; label: string }) 
   if (payload.type === 'mic') {
     const mic = createMicInstance();
     micInstances[id] = mic;
-    mic.start(payload.deviceId || undefined);
+    try {
+      await mic.start(payload.deviceId || undefined);
+    } catch (e: any) {
+      console.error('[CaptureStudio] Failed to start mic for new source:', e.message);
+      newSrc.on = false;
+    }
   }
 
   if (isVideo) {

@@ -5,7 +5,7 @@
  * Settings are loaded on mount and auto-saved on change with debounce.
  */
 
-import { ref, watch, onMounted } from 'vue';
+import { ref, watch, onMounted, onUnmounted } from 'vue';
 
 const { ipcRenderer } = require('electron');
 
@@ -45,16 +45,29 @@ export function useSettings() {
   const savePath = ref('');
   const loaded = ref(false);
 
-  // Load all settings on mount
+  // Load all settings on mount (parallelized)
   onMounted(async () => {
-    layout.value = await loadSetting('layout', 'pip');
-    cameraShape.value = await loadSetting('cameraShape', 'circle');
-    cameraDeviceId.value = await loadSetting('cameraDeviceId', '');
-    micDeviceId.value = await loadSetting('micDeviceId', '');
-    tpFontSize.value = await loadSetting('tpFontSize', 42);
-    tpSpeed.value = await loadSetting('tpSpeed', 6);
-    tpHighlightColor.value = await loadSetting('tpHighlightColor', '#e6edf3');
-    savePath.value = await loadSetting('savePath', '');
+    const [
+      layoutVal, cameraShapeVal, cameraDeviceIdVal, micDeviceIdVal,
+      tpFontSizeVal, tpSpeedVal, tpHighlightColorVal, savePathVal,
+    ] = await Promise.all([
+      loadSetting('layout', 'pip'),
+      loadSetting('cameraShape', 'circle'),
+      loadSetting('cameraDeviceId', ''),
+      loadSetting('micDeviceId', ''),
+      loadSetting('tpFontSize', 42),
+      loadSetting('tpSpeed', 6),
+      loadSetting('tpHighlightColor', '#e6edf3'),
+      loadSetting('savePath', ''),
+    ]);
+    layout.value = layoutVal;
+    cameraShape.value = cameraShapeVal;
+    cameraDeviceId.value = cameraDeviceIdVal;
+    micDeviceId.value = micDeviceIdVal;
+    tpFontSize.value = tpFontSizeVal;
+    tpSpeed.value = tpSpeedVal;
+    tpHighlightColor.value = tpHighlightColorVal;
+    savePath.value = savePathVal;
     loaded.value = true;
   });
 
@@ -73,6 +86,14 @@ export function useSettings() {
   watch(tpSpeed, v => debouncedSave('tpSpeed', v));
   watch(tpHighlightColor, v => debouncedSave('tpHighlightColor', v));
   watch(savePath, v => debouncedSave('savePath', v));
+
+  // Clear pending save timeout on unmount
+  onUnmounted(() => {
+    if (saveTimeout) {
+      clearTimeout(saveTimeout);
+      saveTimeout = null;
+    }
+  });
 
   return {
     layout,

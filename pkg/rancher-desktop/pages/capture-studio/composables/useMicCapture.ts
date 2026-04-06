@@ -92,8 +92,12 @@ export function createMicInstance(): MicInstance {
       active.value = true;
       poll();
     } catch (e) {
-      // Clean up partial state on failure
+      // Clean up partial state on failure — ensure audioCtx is closed
       console.error('[useMicCapture] Failed to start:', e);
+      if (audioCtx) {
+        try { audioCtx.close(); } catch { /* ignore */ }
+        audioCtx = null;
+      }
       stop();
       throw e; // re-throw so caller can handle (e.g. revert toggle)
     }
@@ -145,7 +149,16 @@ export async function listAudioDevices(): Promise<{
     // Permission denied — labels will be empty
   }
 
-  const devices = await navigator.mediaDevices.enumerateDevices();
+  let devices: MediaDeviceInfo[];
+  try {
+    devices = await navigator.mediaDevices.enumerateDevices();
+  } catch (e) {
+    // Ensure tempStream is cleaned up even if enumerateDevices throws
+    if (tempStream) {
+      tempStream.getTracks().forEach(t => t.stop());
+    }
+    throw e;
+  }
 
   if (tempStream) {
     tempStream.getTracks().forEach(t => t.stop());

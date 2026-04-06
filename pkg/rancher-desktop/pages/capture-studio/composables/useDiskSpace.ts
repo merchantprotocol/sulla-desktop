@@ -52,7 +52,14 @@ export function useDiskSpace() {
   function update() {
     const dir = getCapturesDir();
     // Ensure the directory exists for statfs
-    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
+
+    // Verify the directory actually exists before checking space
+    try {
+      fs.accessSync(dir);
+    } catch {
+      return; // Directory doesn't exist and couldn't be created
+    }
 
     const space = checkSpace(dir);
     if (!space) return;

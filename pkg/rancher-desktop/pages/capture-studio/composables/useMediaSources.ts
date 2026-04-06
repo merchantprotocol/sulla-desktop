@@ -41,16 +41,29 @@ export function useMediaSources() {
       sourceId = firstScreen.id;
     }
 
-    // Use Electron's chromeMediaSource constraint to capture a specific source
-    const stream = await (navigator.mediaDevices as any).getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: sourceId,
+    let stream: MediaStream;
+    try {
+      // Use Electron's chromeMediaSource constraint to capture a specific source
+      stream = await (navigator.mediaDevices as any).getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: sourceId,
+          },
         },
-      },
-    });
+      });
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError') {
+        throw new Error('Screen capture permission denied. Please enable screen recording in System Preferences.');
+      }
+      throw err;
+    }
+
+    // Verify the stream has tracks
+    if (!stream || stream.getVideoTracks().length === 0) {
+      throw new Error('Screen capture returned no video tracks');
+    }
 
     screenStream.value = stream;
     activeScreenSourceId.value = sourceId;
@@ -93,7 +106,22 @@ export function useMediaSources() {
       video: deviceId ? { deviceId: { exact: deviceId } } : true,
       audio: false,
     };
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError') {
+        throw new Error('Camera permission denied. Please enable camera access in System Preferences.');
+      }
+      throw err;
+    }
+
+    // Verify the stream has tracks
+    if (!stream || stream.getVideoTracks().length === 0) {
+      throw new Error('Camera capture returned no video tracks');
+    }
+
     cameraStream.value = stream;
 
     const track = stream.getVideoTracks()[0];

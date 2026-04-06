@@ -91,13 +91,13 @@ export function useSpeakerCapture() {
   /**
    * Start capturing speaker audio to a WAV file.
    */
-  async function start(outputPath: string): Promise<void> {
+  async function start(outputPath: string): Promise<boolean> {
     if (active.value) stop();
 
     const socketPath = await ipcRenderer.invoke('audio-driver:get-speaker-socket-path');
     if (!socketPath) {
       console.warn('[useSpeakerCapture] No speaker socket available — is audio driver running?');
-      return;
+      return false;
     }
 
     filePath = outputPath;
@@ -106,8 +106,13 @@ export function useSpeakerCapture() {
     pending = Buffer.alloc(0);
 
     // Open WAV file
-    writeStream = fs.createWriteStream(filePath);
-    writeWavHeader(writeStream);
+    try {
+      writeStream = fs.createWriteStream(filePath);
+      writeWavHeader(writeStream);
+    } catch (err: any) {
+      console.error('[useSpeakerCapture] Failed to create write stream:', err.message);
+      return false;
+    }
 
     writeStream.on('error', (err: any) => {
       console.error('[useSpeakerCapture] Write error:', err.message);
@@ -122,7 +127,7 @@ export function useSpeakerCapture() {
       // Parse length-prefixed frames
       while (pending.length >= 4) {
         const frameLen = pending.readUInt32BE(0);
-        if (frameLen === 0 || frameLen > 1024 * 1024) {
+        if (!Number.isFinite(frameLen) || frameLen <= 0 || frameLen > 1024 * 1024) {
           pending = Buffer.alloc(0);
           break;
         }
@@ -149,11 +154,13 @@ export function useSpeakerCapture() {
 
     socket.on('close', () => {
       if (active.value) {
-        console.warn('[useSpeakerCapture] Socket closed unexpectedly');
+        console.warn('[useSpeakerCapture] Socket closed unexpectedly — finalizing WAV');
+        stop();
       }
     });
 
     active.value = true;
+    return true;
   }
 
   /**
