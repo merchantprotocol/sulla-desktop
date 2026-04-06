@@ -13,6 +13,7 @@ import * as audio from './model/audio';
 import * as mirror from './model/mirror';
 import * as whisper from './model/whisper';
 import * as gateway from './service/gateway';
+import * as speakerSocket from './service/speaker-socket';
 import * as micSocket from './service/mic-socket';
 import * as whisperTranscribe from './service/whisper-transcribe';
 import { log, createLogger } from './model/logger';
@@ -174,6 +175,7 @@ function registerIpcHandlers(): void {
   // gateway-transcript-subscribe is already registered in sullaEvents.ts
 
   ipcMain.handle('audio-driver:get-mic-socket-path', () => micSocket.getPath());
+  ipcMain.handle('audio-driver:get-speaker-socket-path', () => speakerSocket.getPath());
 
   ipcMain.handle('audio-driver:speaker-volume-up', () => lifecycle.speakerVolumeUp());
   ipcMain.handle('audio-driver:speaker-volume-down', () => lifecycle.speakerVolumeDown());

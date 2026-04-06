@@ -12,6 +12,7 @@ import * as platform from '../platform';
 import * as loopback from '../model/loopback';
 import * as mirror from '../model/mirror';
 import * as speakerCapture from '../model/speaker-capture';
+import * as speakerSocket from '../service/speaker-socket';
 
 let onSpeakerLevel: ((data: any) => void) | null = null;
 let onMirrorRebuilt: ((event: any) => void) | null = null;
@@ -111,7 +112,8 @@ export async function activate({ onLevel, onRebuild }: { onLevel?: (data: any) =
     if (onMirrorRebuilt) onMirrorRebuilt(event);
   });
 
-  // 7. Start speaker capture (with raw PCM callback for gateway + local transcription)
+  // 7. Start speaker socket + capture (with raw PCM callback for gateway + local transcription)
+  speakerSocket.start();
   const gateway = await import('../service/gateway');
   const whisperTranscribe = await import('../service/whisper-transcribe');
   speakerCapture.start((level: any) => {
@@ -121,6 +123,8 @@ export async function activate({ onLevel, onRebuild }: { onLevel?: (data: any) =
       gateway.sendAudio(pcmData, 1);
       // Feed speaker audio to local whisper transcription (secretary mode)
       whisperTranscribe.feedSpeaker(pcmData);
+      // Feed speaker audio to capture studio socket
+      speakerSocket.writeChunk(pcmData);
     },
   });
 
@@ -158,6 +162,7 @@ export async function deactivate({ removeDriver = false } = {}) {
   physicalDeviceUID = null;
 
   speakerCapture.stop();
+  speakerSocket.stop();
   mirror.stopWatching();
   await mirror.disable();
 

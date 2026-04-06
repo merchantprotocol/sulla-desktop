@@ -28,9 +28,10 @@ export function useMediaSources() {
    * Acquire screen capture. Returns a MediaStream with video + system audio tracks.
    */
   async function acquireScreen(): Promise<MediaStream> {
+    // Video only — system audio comes from the audio-driver speaker socket
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
-      audio: true,
+      audio: false,
     });
     screenStream.value = stream;
 

@@ -70,6 +70,10 @@ export function useAudioDriver() {
     await ipcRenderer.invoke('audio-driver:speaker-mute-toggle');
   }
 
+  async function getSpeakerSocketPath(): Promise<string | null> {
+    return ipcRenderer.invoke('audio-driver:get-speaker-socket-path');
+  }
+
   return {
     speakerLevel,
     speakerRunning,
@@ -80,5 +84,6 @@ export function useAudioDriver() {
     speakerVolumeUp,
     speakerVolumeDown,
     speakerMuteToggle,
+    getSpeakerSocketPath,
   };
 }
