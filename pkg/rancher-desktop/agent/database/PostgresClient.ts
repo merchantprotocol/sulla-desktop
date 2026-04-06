@@ -6,8 +6,10 @@ import { SullaSettingsModel } from './models/SullaSettingsModel';
 export class PostgresClient {
   private pool: Pool | null = null;
   private connected = false;
+  private shuttingDown = false;
 
   public async initialize(): Promise<void> {
+    if (this.shuttingDown) return; // Don't reconnect during shutdown
     if (this.pool) return; // Already initialized
 
     // Get password from settings
@@ -26,6 +28,7 @@ export class PostgresClient {
 
     // Graceful pool error handling
     this.pool.on('error', (err) => {
+      if (this.shuttingDown) return; // suppress noise during shutdown
       console.error('[PostgresPool] Unexpected error on idle client', err);
       this.connected = false;
     });
@@ -59,6 +62,9 @@ export class PostgresClient {
   }
 
   async getClient(): Promise<PoolClient> {
+    if (this.shuttingDown) {
+      throw new Error('PostgreSQL is shutting down — refusing new connections');
+    }
     if (!this.connected) {
       await this.initialize();
     }
@@ -142,7 +148,8 @@ export class PostgresClient {
   }
 
   async end(): Promise<void> {
-    if (!this.pool || !this.connected) return;
+    this.shuttingDown = true;
+    if (!this.pool) return;
 
     try {
       await this.pool.end();

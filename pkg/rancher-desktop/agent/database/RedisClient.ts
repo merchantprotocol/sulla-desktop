@@ -64,6 +64,7 @@ export class RedisClient {
 
     client.on('error', (err: any) => {
       this.connected = false;
+      if (this.shuttingDown) return; // suppress noise during shutdown
       // Reduce error verbosity for common startup errors
       if ((err).code === 'ECONNREFUSED' || (err).code === 'EPIPE' || (err).code === 'ECONNRESET') {
         console.log(`[RedisClient] Connection error (${ (err).code }): Redis server not available yet`);
@@ -74,7 +75,9 @@ export class RedisClient {
 
     client.on('close', () => {
       this.connected = false;
-      console.log('[RedisClient] Connection closed');
+      if (!this.shuttingDown) {
+        console.log('[RedisClient] Connection closed');
+      }
     });
 
     // If the client enters 'end' state (retryStrategy returned null or
@@ -82,7 +85,9 @@ export class RedisClient {
     // happen with our retryStrategy, but guard against it defensively.
     client.on('end', () => {
       this.connected = false;
-      console.warn('[RedisClient] Client entered "end" state — will recreate on next command');
+      if (!this.shuttingDown) {
+        console.warn('[RedisClient] Client entered "end" state — will recreate on next command');
+      }
     });
 
     return client;
@@ -99,6 +104,7 @@ export class RedisClient {
    * Initialize and test connection
    */
   async initialize(): Promise<boolean> {
+    if (this.shuttingDown) return false; // Don't reconnect during shutdown
     if (this.connected) return true;
 
     // If the ioredis client is in 'end' state it is permanently dead and
@@ -308,6 +314,9 @@ export class RedisClient {
   }
 
   private async ensureConnected(): Promise<void> {
+    if (this.shuttingDown) {
+      throw new Error('Redis is shutting down — refusing new connections');
+    }
     if (!this.connected) {
       const ok = await this.initialize();
       if (!ok) {

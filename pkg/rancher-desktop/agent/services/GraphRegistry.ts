@@ -25,21 +25,13 @@ const registry = new Map<string, {
 /** Summarizer: no tools — pure text analysis and XML output */
 const SUMMARIZER_TOOLS: string[] = [];
 
-/** Memory Recall: search files and read them to find relevant context */
+/** Memory Recall: targeted searches for resources, tabs, credentials, environment */
 const MEMORY_RECALL_TOOLS: string[] = [
-  'file_search',           // Semantic search across ~/sulla/
-  'read_file',             // Read file contents with optional line range
-  'vault_list',            // List saved website credentials
-  'search_history',        // Search browsing history by query/time range
-  'search_conversations',  // Search past chats, workflows, graph executions
-  'github_read_file',      // Read files from GitHub repositories
-  'get_human_presence',    // Check if user is available
+  'file_search',           // Search ~/sulla/resources/ for skills & workflows
+  'read_file',             // Read SKILL.md, workflow YAML, environment docs
   'list_tabs',             // See what browser tabs are open
-  'check_agent_jobs',      // Check status of spawned agent jobs
-  'github_get_issue',      // Get details of a specific issue
-  'github_get_issues',     // List/filter issues from a repo
-  'github_list_branches',  // List branches in a repo
-  'git_log',               // Recent commit history
+  'vault_list',            // List available integration service credentials
+  'get_human_presence',    // Check if user is available
 ];
 
 /** Observation Agent: manage observational memory and update identity files */
@@ -54,76 +46,44 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
 // SUBCONSCIOUS MIDDLEWARE PROMPTS
 // ============================================================================
 
-const MEMORY_RECALL_PROMPT = `You are a READ-ONLY memory recall process supporting a primary agent.
+const MEMORY_RECALL_PROMPT = `You are a READ-ONLY recall process. You gather context for a primary agent.
 
-CRITICAL: You do NOT execute tasks. You do NOT call APIs, run commands, browse
-websites, or interact with any service. You ONLY search files and return what
-you find. Your sole tool is file_search.
+CRITICAL: You do NOT execute tasks, call APIs, run commands, or browse websites.
+You search specific locations, read what you find, and return it.
 
-Your job: search ~/sulla/ for skills, integrations, workflows, and project
-context that are relevant to the current conversation. Return what you find
-so the primary agent can use it.
+## Your checklist
 
-### Long-term Memory (Sulla Home Directory)
-Your permanent knowledge base is the filesystem at \`~/sulla\`. Skills, workflows, agent configs, projects, identity files, daily logs, and integrations — all readable/writable files. This IS your memory. Search and read it for context. Write to it when you learn something worth keeping.
+Complete these steps in order, then finish:
 
-### Sulla Home Directory
-\`\`\`
-~/sulla/
-├── agents/                              # Agent persona configs (agentId = folder name)
-├── skills/                              # Skill library (one folder per skill, each has SKILL.md)
-├── workflows/                           # Sulla Workflow YAML files (slug = filename without .yaml)
-├── projects/                            # Project workspaces (each has PROJECT.md)
-├── integrations/                        # YAML configs for third-party API integrations
-├── daily-logs/                          # Daily pipeline outputs
-│   └── YYYY-MM-DD/
-│       ├── {domain}/observations/       # Observer outputs (one .md per topic)
-│       └── {domain}/thinking/           # Thinker analysis outputs
-└── identity/                            # Persistent identity & goals
-    ├── human/
-    │   ├── identity.md                  # Who the human is
-    │   └── goals.md                     # Human goals (daily → 2-year)
-    ├── business/
-    │   ├── identity.md                  # Business identity
-    │   └── goals.md                     # Business goals
-    ├── world/
-    │   ├── identity.md                  # World context
-    │   └── goals.md                     # World forecasts
-    └── agent/
-        ├── identity.md                  # Agent self-identity
-        └── goals.md                     # Agent goals
-\`\`\`
-Domains: \`human\`, \`business\`, \`world\`, \`agent\`
-Use \`file_search\` to locate any agent, skill, workflow, project, or integration config by keyword.
+### 1. Skills
+Search \`~/sulla/resources/skills/\` for skills relevant to the current conversation.
+For each match, read the SKILL.md and include the key instructions.
 
-### Codebase
-Your source code lives locally at \`~/.sulla-desktop\` — this is a working git repository linked to https://github.com/merchantprotocol/sulla-desktop. You can read, modify, and push changes to this repo as pull requests. Architecture and system docs live in the \`/doc\` folder.
+### 2. Workflows
+Search \`~/sulla/resources/workflows/\` for workflows relevant to the current conversation.
+For each match, read the YAML and include the workflow definition.
 
-How to search:
-- Use file_search with dirPath="~/sulla" or a subdirectory
-- Describe what you're looking for as a natural language phrase
-- Read the results and determine what's relevant
+### 3. Open Tabs
+Call \`list_tabs\` to see what the human currently has open in the browser.
+Include tab titles and URLs.
 
-### History & Conversations
+### 4. Credentials
+Call \`vault_list\` to see what integration service accounts are available.
+Include the service names and usernames (never passwords).
 
-**Browsing History** (URLs visited in browser tabs):
-- **search_history** — Search visited URLs by text query and/or time range. Returns page titles, URLs, visit counts, and timestamps.
+### 5. Environment
+Search \`~/sulla/integrations/environment/\` for any environment docs relevant
+to the conversation. Read and include key details from matching files.
 
-**Conversation History** (chat sessions, workflows, and graph executions):
-- **search_conversations** — Search past conversations by keyword (searches titles and summaries), list recent conversations (optionally filtered by type: chat/browser/workflow/graph), or retrieve full details for a specific conversation by ID or thread ID.
+## Output format
 
-**Key vault capabilities** (all called via Tools API):
-- **vault/list** — List all saved accounts. Shows website URLs, usernames, and AI access levels. Passwords are NEVER included in the response.
+Return your findings organized by section. Paste the actual content — skill
+instructions, workflow YAML, tab URLs, credential names, environment details.
+Cite file paths for everything you include.
 
-What to return (in AGENT_DONE):
-- Relevant skill instructions (paste key content from SKILL.md)
-- Relevant integration endpoints and examples (paste from INTEGRATION.md)
-- Relevant workflow definitions
-- Relevant project or identity context
-- Always cite your sources
+If a section has no relevant results, skip it entirely.
+When all 5 steps are done, finish immediately.`;
 
-If nothing relevant is found, finish immediately with an empty AGENT_DONE.
-Do not keep searching if the first few searches return nothing relevant.`;
 
 const OBSERVATION_AGENT_PROMPT = `You are the observation process for an AI agent.
 
@@ -434,7 +394,7 @@ export const GraphRegistry = {
     const state = await buildSubconsciousState({
       systemPrompt:           MEMORY_RECALL_PROMPT,
       tools:                  MEMORY_RECALL_TOOLS,
-      userMessage:            'Determine if there are skills, tools, resources, projects, or anything in our internal system that would be relevant to this conversation and help it be completed more efficiently. Search the file structure and available resources. Return ONLY what is directly relevant.',
+      userMessage:            'Run through the checklist: search resources/skills, resources/workflows, open tabs, vault credentials, and environment docs. Return what is relevant to this conversation.',
       messages:               [...parentState.messages],
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'memory-recall',

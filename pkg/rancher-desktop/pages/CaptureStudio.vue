@@ -1087,7 +1087,7 @@ function startWaveformLoop() {
             bars.push(Math.max(2, (sum / binSize / 255) * 18));
           }
         } else {
-          const lvl = mic?.level.value || 0;
+          const lvl = mic?.level?.value || 0;
           for (let i = 0; i < 100; i++) {
             bars.push(Math.max(2, lvl * 14 + 2));
           }

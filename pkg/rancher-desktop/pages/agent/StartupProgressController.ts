@@ -212,7 +212,6 @@ export class StartupProgressController {
       }
 
       this.markReady();
-      window.location.reload();
     }, 3000);
   }
 }

@@ -528,6 +528,14 @@ function handleTransferData(ctx: DispatchContext, agentId: string, _threadId: st
     ctx.waitingForUser.value = waiting;
     ctx.stopReason.value = reason;
     ctx.registry.setLoading(agentId, false);
+
+    // Mark all open thinking bubbles as completed so the helix/timer stops
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+      }
+    }
   }
 }
 
