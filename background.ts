@@ -105,6 +105,7 @@ const firstRunCoordinator = new FirstRunCoordinator();
 let cfg: settings.Settings;
 let firstRunDialogComplete = false;
 let gone = false; // when true indicates app is shutting down
+let shuttingDown = false; // re-entrancy guard for before-quit handler
 let backendStarted = false;
 let imageEventHandler: ImageEventHandler | null = null;
 let currentContainerEngine = settings.ContainerEngine.NONE;
@@ -886,7 +887,7 @@ mainEvents.on('restarting', () => {
 Electron.app.on('before-quit', async(event) => {
   const triggerStack = new Error('before-quit trigger trace').stack;
 
-  console.log(`[Shutdown] before-quit fired — gone=${ gone }, isRestarting=${ isRestarting }`);
+  console.log(`[Shutdown] before-quit fired — gone=${ gone }, shuttingDown=${ shuttingDown }, isRestarting=${ isRestarting }`);
   console.log(`[Shutdown] before-quit call stack:\n${ triggerStack }`);
   if (gone) {
     console.log('[Shutdown] before-quit: already gone, emitting "quit" and returning');
@@ -894,6 +895,13 @@ Electron.app.on('before-quit', async(event) => {
 
     return;
   }
+  if (shuttingDown) {
+    console.log('[Shutdown] before-quit: shutdown already in progress, suppressing duplicate');
+    event.preventDefault();
+
+    return;
+  }
+  shuttingDown = true;
   event.preventDefault();
   console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');
 
@@ -1084,16 +1092,21 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
 
 // ── Capture Studio IPC ──────────────────────────────────────────────────
 ipcMainProxy.handle('capture-studio:get-sources', async() => {
-  const sources = await Electron.desktopCapturer.getSources({
-    types:          ['screen', 'window'],
-    thumbnailSize:  { width: 320, height: 180 },
-    fetchWindowIcons: false,
-  });
-  return sources.map(s => ({
-    id:               s.id,
-    name:             s.name,
-    thumbnailDataUrl: s.thumbnail.toDataURL(),
-  }));
+  try {
+    const sources = await Electron.desktopCapturer.getSources({
+      types:          ['screen', 'window'],
+      thumbnailSize:  { width: 320, height: 180 },
+      fetchWindowIcons: false,
+    });
+    return sources.map(s => ({
+      id:               s.id,
+      name:             s.name,
+      thumbnailDataUrl: s.thumbnail.toDataURL(),
+    }));
+  } catch (e: any) {
+    console.warn('[capture-studio:get-sources] Failed:', e.message);
+    return [];
+  }
 });
 
 ipcMainProxy.handle('capture-studio:check-permissions', () => {
@@ -1114,11 +1127,20 @@ ipcMainProxy.handle('capture-studio:check-permissions', () => {
 });
 
 ipcMainProxy.handle('sulla-settings:get', async(_event: any, key: string) => {
-  return SullaSettingsModel.get(key);
+  try {
+    return await SullaSettingsModel.get(key);
+  } catch (e: any) {
+    console.warn('[sulla-settings:get] Failed:', key, e.message);
+    return null;
+  }
 });
 
 ipcMainProxy.handle('sulla-settings:set', async(_event: any, key: string, value: any, cast?: string) => {
-  return SullaSettingsModel.set(key, value, cast);
+  try {
+    return await SullaSettingsModel.set(key, value, cast);
+  } catch (e: any) {
+    console.warn('[sulla-settings:set] Failed:', key, e.message);
+  }
 });
 
 ipcMainProxy.handle('settings-write', (event, arg) => {
