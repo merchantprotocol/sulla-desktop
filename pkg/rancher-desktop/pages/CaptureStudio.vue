@@ -57,7 +57,7 @@
               class="pw"
               :class="getTpWordClass(i)"
               :style="getTpWordStyle(i)"
-              @click="tpCurrentIndex = i; renderTpState()"
+              @click="tpCurrentIndex = i; teleprompterTracker.setCurrentIndex(i); renderTpState()"
             >{{ word + ' ' }}</span>
           </div>
         </div>
@@ -86,6 +86,17 @@
           <span class="tp-tb-label">Speed</span>
           <input type="range" min="6" max="16" step="2" v-model.number="tpSpeed">
           <span class="tp-tb-val">{{ tpSpeed }}</span>
+
+          <div class="tp-tb-divider"></div>
+
+          <button
+            class="tp-tb-btn"
+            :class="{ active: voiceTracking }"
+            @click="toggleVoiceTracking"
+            title="Voice tracking"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+          </button>
 
           <div class="tp-tb-divider"></div>
 
@@ -356,6 +367,7 @@ import { createMicInstance, listAudioDevices, type MicInstance } from './capture
 import { useMediaSources } from './capture-studio/composables/useMediaSources';
 import { useRecorder } from './capture-studio/composables/useRecorder';
 import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-studio/composables/useWaveform';
+import { useTeleprompterTracking } from './capture-studio/composables/useTeleprompterTracking';
 
 // ─── Composables ───
 const audioDriver = useAudioDriver();
@@ -570,9 +582,15 @@ function selectLayout(layout: string) {
 
   if (layout === 'teleprompter') {
     buildTpWords();
-    startTpScroll();
+    if (!voiceTracking.value) {
+      startTpScroll();
+    }
   } else {
     stopTpScroll();
+    if (voiceTracking.value) {
+      voiceTracking.value = false;
+      teleprompterTracker.stopTracking();
+    }
   }
 }
 
@@ -806,6 +824,13 @@ const tpHighlightColor = ref('#e6edf3');
 const tpFontSize = ref(42);
 const tpScriptOpen = ref(false);
 let tpPaused = false;
+const voiceTracking = ref(false);
+
+// Voice tracking composable — updates tpCurrentIndex when speech matches script
+const teleprompterTracker = useTeleprompterTracking((index: number) => {
+  tpCurrentIndex.value = index;
+  renderTpState();
+});
 
 const tpColors = ['#e6edf3', '#3fb950', '#58a6ff', '#e3b341', '#f0883e', '#f85149'];
 
@@ -898,6 +923,23 @@ function loadTpFile(event: Event) {
     }
   };
   reader.readAsText(file);
+}
+
+// ─── Voice tracking toggle ───
+function toggleVoiceTracking() {
+  voiceTracking.value = !voiceTracking.value;
+
+  if (voiceTracking.value) {
+    // Stop timer-based scrolling, start voice tracking
+    stopTpScroll();
+    teleprompterTracker.startTracking(tpWords.value, tpCurrentIndex.value);
+  } else {
+    // Stop voice tracking, resume timer-based scrolling
+    teleprompterTracker.stopTracking();
+    if (currentLayout.value === 'teleprompter') {
+      startTpScroll();
+    }
+  }
 }
 
 // ─── Keyboard: space pause/resume, arrows navigate ───
@@ -999,6 +1041,9 @@ onUnmounted(() => {
   if (timerInterval) clearInterval(timerInterval);
   stopTpScroll();
   stopAudioMeter();
+
+  // Stop voice tracking
+  teleprompterTracker.stopTracking();
 
   // Stop all mic instances
   for (const mic of Object.values(micInstances)) {
@@ -1196,6 +1241,7 @@ html, body {
   transition: all 0.12s;
 }
 .tp-tb-btn:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.tp-tb-btn.active { color: var(--accent); background: rgba(80,150,179,0.1); }
 
 .tp-tb-val { font-size: 11px; color: var(--text-muted); min-width: 24px; text-align: center; font-variant-numeric: tabular-nums; }
 
