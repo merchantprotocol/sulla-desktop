@@ -82,6 +82,41 @@ rebuild-hard: clean-hard install build
 
 build-mac:
     yarn package
+    @echo "DMG built in dist/"
+
+# Open the DMG so you can drag Sulla Desktop into Applications
+install-mac:
+    #!/bin/sh
+    set -e
+    dmg=$(ls -t dist/*.dmg 2>/dev/null | head -1)
+    if [ -z "$dmg" ]; then
+        echo "No DMG found in dist/. Run 'just build-mac' first."
+        exit 1
+    fi
+    echo "Opening $dmg ..."
+    open "$dmg"
+
+# Stop Sulla Desktop, remove from Applications, and eject the DMG
+uninstall-mac:
+    #!/bin/sh
+    set -e
+    # Quit the .app bundle if running
+    osascript -e 'quit app "Sulla Desktop"' 2>/dev/null || true
+    sleep 1
+    # Remove from Applications
+    if [ -d "/Applications/Sulla Desktop.app" ]; then
+        rm -rf "/Applications/Sulla Desktop.app"
+        echo "Removed Sulla Desktop from /Applications."
+    else
+        echo "Sulla Desktop not found in /Applications."
+    fi
+    # Eject any mounted Sulla Desktop DMGs
+    for vol in /Volumes/Sulla*Desktop*; do
+        if [ -d "$vol" ]; then
+            hdiutil detach "$vol" 2>/dev/null && echo "Ejected $vol" || true
+        fi
+    done
+    echo "Uninstall complete."
 
 # Dev mode (foreground)
 dev:

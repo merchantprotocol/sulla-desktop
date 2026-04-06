@@ -21,6 +21,7 @@ import { app, webContents } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import { submitErrorReport } from '@pkg/main/errorReporter';
+import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
@@ -133,139 +134,211 @@ export async function initiateWindowContext(): Promise<void> {
  * @see sulla-desktop/background.ts
  */
 export async function instantiateSullaStart(): Promise<void> {
-  // Integration factories are already registered above
-  // This function serves as the explicit initialization hook
   console.log('[Integrations] Sulla integrations initialized');
 
   // NOTE: initSullaEvents() is now called in background.ts before initUI()
   // so handlers are registered before any window can invoke them.
 
-  // Bootstrap ~/sulla directory structure and clone default repos if needed.
   await bootstrapSullaHome();
 
-  try {
-    const backendGraphWebSocketService = getBackendGraphWebSocketService();
-    console.log('[Background] BackendGraphWebSocketService initialized - backend agent messages will be processed');
+  // PG connection issue — keep global handler
+  process.on('unhandledRejection', (reason: any) => {
+    if (reason?.code === '57P01') {
+      console.warn('[Unhandled] Ignored Postgres admin termination');
 
-    // PG connection issue
-    process.on('unhandledRejection', (reason: any) => {
-      if (reason?.code === '57P01') {
-        console.warn('[Unhandled] Ignored Postgres admin termination');
-
-        return;
-      }
-      console.error('[Unhandled Rejection]', reason);
-      const err = reason instanceof Error ? reason : new Error(String(reason));
-
-      submitErrorReport({
-        error_type:    err.name || 'unhandledRejection',
-        error_message: err.message,
-        stack_trace:   err.stack || '',
-        user_context:  'unhandledRejection in sulla.ts (Sulla services)',
-      }).catch(() => {});
-    });
-
-    await afterBackgroundLoaded();
-
-    const schedulerService = getSchedulerService();
-    await schedulerService.initialize();
-    console.log('[Background] SchedulerService initialized - calendar events will trigger in background');
-
-    const heartbeatService = getHeartbeatService();
-    await heartbeatService.initialize();
-    console.log('[Background] HeartbeatService initialized - periodic tasks will run in background');
-
-    const workflowSchedulerService = getWorkflowSchedulerService();
-    await workflowSchedulerService.initialize();
-    console.log('[Background] WorkflowSchedulerService initialized - cron-triggered workflows active');
-
-    // Start the chat completions API server
-    console.log('[Background] Starting chat completions API server...');
-    try {
-      console.log('[Background] Chat completions server instance created');
-      const chatServer = getChatCompletionsServer();
-      await chatServer.start();
-      console.log('[Background] Chat completions API server started successfully');
-    } catch (error) {
-      console.error('[Background] Failed to start chat completions API server:', error);
+      return;
     }
+    console.error('[Unhandled Rejection]', reason);
+    const err = reason instanceof Error ? reason : new Error(String(reason));
 
-    // Unlock the vault before integrations attempt to decrypt credentials
-    try {
-      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-      const vault = getVaultKeyService();
-      const unlocked = await vault.initialize();
-      console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked (setup or password required)' }`);
-    } catch (err) {
-      console.error('[Background] Vault initialization failed:', err);
-    }
+    submitErrorReport({
+      error_type:    err.name || 'unhandledRejection',
+      error_message: err.message,
+      stack_trace:   err.stack || '',
+      user_context:  'unhandledRejection in sulla.ts (Sulla services)',
+    }).catch(() => {});
+  });
 
-    SullaIntegrations();
+  const lifecycle = getServiceLifecycleManager();
 
-    // Load YAML-defined API integrations from ~/sulla/integrations
-    try {
-      const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
-      const configLoader = getIntegrationConfigLoader();
-      await configLoader.loadAll();
-      console.log('[Background] IntegrationConfigLoader ready:', configLoader.getAvailableIntegrations().join(', ') || '(none)');
-    } catch (error) {
-      console.error('[Background] Failed to load integration configs:', error);
-    }
+  // ── Independent services (no DB/Redis dependency) ──────────────────────
 
-    // Resume OAuth token refresh timers for any previously connected OAuth integrations
-    try {
-      const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
-      const oauthService = getOAuthService();
-      await oauthService.resumeRefreshTimers();
-      console.log('[Background] OAuthService refresh timers resumed');
-    } catch (error) {
-      console.error('[Background] Failed to resume OAuth refresh timers:', error);
-    }
+  // Terminal server was already started in onMainProxyLoad — register for shutdown only
+  lifecycle.register('terminal-server', [],
+    async() => { /* already started in onMainProxyLoad */ },
+    async() => {
+      const { getTerminalServer } = await import('@pkg/main/terminalServer');
 
-    // MCP servers are initialized lazily — on first tool listing or tool call.
-    // This avoids blocking startup for MCP servers that may not be used.
-    console.log('[Background] MCP servers will initialize on first use (lazy init)');
+      await getTerminalServer().stop();
+    },
+    { alreadyStarted: true },
+  );
 
-    // Ensure llama.cpp binaries are installed, download user's model, and start server
-    try {
+  lifecycle.register('backend-ws', [],
+    async() => {
+      getBackendGraphWebSocketService();
+      console.log('[Background] BackendGraphWebSocketService initialized');
+    },
+    async() => { /* stateless singleton, no teardown */ },
+  );
+
+  lifecycle.register('llama-cpp', [],
+    async() => {
       const llamaCppService = getLlamaCppService();
+
       await llamaCppService.ensure();
       console.log('[Background] LlamaCppService initialized - llama.cpp ready:', llamaCppService.isReady);
 
-      if (llamaCppService.isReady) {
-        // Read the user's selected model from settings
-        const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-        const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-        let modelKey = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
-
-        // Map legacy Ollama-format keys (e.g. 'qwen2:0.5b') to GGUF keys (e.g. 'qwen2-0.5b')
-        if (!(modelKey in GGUF_MODELS)) {
-          const mapped = modelKey.replace(/:/g, '-');
-          if (mapped in GGUF_MODELS) {
-            console.log(`[Background] Mapped legacy model key '${ modelKey }' -> '${ mapped }'`);
-            modelKey = mapped;
-          } else {
-            console.warn(`[Background] Unknown model key '${ modelKey }', falling back to qwen3.5-9b`);
-            modelKey = 'qwen3.5-9b';
-          }
-        }
-        console.log(`[Background] User selected model: ${ modelKey }`);
-
-        // Download the GGUF model (no-ops if already on disk)
-        const modelPath = await llamaCppService.downloadModel(modelKey);
-        console.log(`[Background] Model ready at: ${ modelPath }`);
-
-        // Start llama-server on port 30114
-        await llamaCppService.startServer(modelPath);
-        console.log(`[Background] llama-server running at ${ llamaCppService.serverBaseUrl }`);
-
-        // Training deps are NOT installed at startup.
-        // They are installed on-demand when the user opens the Model Training
-        // window and clicks "Install Training Environment".
+      if (!llamaCppService.isReady) {
+        return;
       }
-    } catch (error) {
-      console.error('[Background] Failed to start llama.cpp server:', error);
-    }
+
+      // Check if user has set modelMode to 'remote' — skip local server startup
+      const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
+      const modelMode = await Settings.get('modelMode', 'local');
+
+      if (modelMode === 'remote') {
+        console.log('[Background] modelMode is "remote" — skipping local llama-server startup');
+
+        return;
+      }
+
+      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
+      let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
+
+      if (!(modelKey in GGUF_MODELS)) {
+        const mapped = modelKey.replace(/:/g, '-');
+
+        if (mapped in GGUF_MODELS) {
+          console.log(`[Background] Mapped legacy model key '${ modelKey }' -> '${ mapped }'`);
+          modelKey = mapped;
+        } else {
+          console.warn(`[Background] Unknown model key '${ modelKey }', falling back to qwen3.5-9b`);
+          modelKey = 'qwen3.5-9b';
+        }
+      }
+      console.log(`[Background] User selected model: ${ modelKey }`);
+
+      const modelPath = await llamaCppService.downloadModel(modelKey);
+      console.log(`[Background] Model ready at: ${ modelPath }`);
+
+      await llamaCppService.startServer(modelPath);
+      console.log(`[Background] llama-server running at ${ llamaCppService.serverBaseUrl }`);
+    },
+    async() => {
+      try { await getLlamaCppService().stopServer(); } catch { /* not started */ }
+    },
+    { persistOnRestart: true },
+  );
+
+  // ── Connection readiness gates ─────────────────────────────────────────
+
+  lifecycle.register('postgres', [],
+    async() => { await postgresClient.waitForReady(); },
+    async() => { await postgresClient.end(); },
+    { persistOnRestart: true },
+  );
+
+  lifecycle.register('redis', [],
+    async() => { await redisClient.waitForReady(); },
+    async() => { await redisClient.close(); },
+    { persistOnRestart: true },
+  );
+
+  // ── Database layer (depends on postgres connection) ────────────────────
+
+  lifecycle.register('database-manager', ['postgres'],
+    async() => { await afterBackgroundLoaded(); },
+    async() => { await getDatabaseManager().stop(); },
+  );
+
+  // ── Application services (depend on database-manager) ──────────────────
+
+  lifecycle.register('scheduler', ['database-manager'],
+    async() => {
+      await getSchedulerService().initialize();
+      console.log('[Background] SchedulerService initialized');
+    },
+    async() => {
+      getSchedulerService().destroy();
+      console.log('[Background] SchedulerService destroyed');
+    },
+  );
+
+  lifecycle.register('heartbeat', ['database-manager', 'redis'],
+    async() => {
+      await getHeartbeatService().initialize();
+      console.log('[Background] HeartbeatService initialized');
+    },
+    async() => {
+      getHeartbeatService().destroy();
+      console.log('[Background] HeartbeatService destroyed');
+    },
+  );
+
+  lifecycle.register('workflow-scheduler', ['database-manager'],
+    async() => {
+      await getWorkflowSchedulerService().initialize();
+      console.log('[Background] WorkflowSchedulerService initialized');
+    },
+    async() => { getWorkflowSchedulerService().shutdown(); },
+  );
+
+  lifecycle.register('chat-server', ['database-manager'],
+    async() => {
+      const chatServer = getChatCompletionsServer();
+
+      await chatServer.start();
+      console.log('[Background] Chat completions API server started');
+    },
+    async() => { await getChatCompletionsServer().stop(); },
+  );
+
+  lifecycle.register('vault', ['database-manager'],
+    async() => {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      const unlocked = await getVaultKeyService().initialize();
+
+      console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
+    },
+    async() => {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+
+      getVaultKeyService().lock();
+    },
+  );
+
+  lifecycle.register('integrations', ['vault'],
+    async() => {
+      SullaIntegrations();
+      const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+      const configLoader = getIntegrationConfigLoader();
+
+      await configLoader.loadAll();
+      console.log('[Background] IntegrationConfigLoader ready:', configLoader.getAvailableIntegrations().join(', ') || '(none)');
+    },
+    async() => { /* no teardown */ },
+  );
+
+  lifecycle.register('oauth', ['database-manager', 'vault'],
+    async() => {
+      const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
+
+      await getOAuthService().resumeRefreshTimers();
+      console.log('[Background] OAuthService refresh timers resumed');
+    },
+    async() => {
+      const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
+
+      getOAuthService().shutdown();
+    },
+  );
+
+  // MCP servers are initialized lazily — on first tool listing or tool call.
+  console.log('[Background] MCP servers will initialize on first use (lazy init)');
+
+  try {
+    await lifecycle.startAll();
   } catch (ex: any) {
     console.error('[Background] Failed to initialize Sulla:', ex);
   }
@@ -281,12 +354,13 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
   SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
 
-  // Start the terminal WebSocket server early (PTY into Lima VM)
-  // Dynamic import to avoid bundling node-pty into the renderer process
-  // The server starts immediately but individual sessions check Lima status on connect
+  // Start the terminal WebSocket server early (PTY into Lima VM).
+  // It has no DB/Redis dependencies. Shutdown is handled by lifecycle manager
+  // (registered in instantiateSullaStart).
   try {
     const { getTerminalServer } = await import('@pkg/main/terminalServer');
     const termServer = getTerminalServer();
+
     await termServer.start();
     console.log('[Background] Terminal WebSocket server started on ws://127.0.0.1:6108');
   } catch (error) {
@@ -651,6 +725,57 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     } catch {
       event.returnValue = plaintext;
     }
+  });
+
+  // ── Lifecycle: expose startup/shutdown phase to renderer ──
+  ipcMain.on('lifecycle:status', (event) => {
+    const lm = getServiceLifecycleManager();
+
+    event.returnValue = {
+      ready:        lm.isAllReady(),
+      shuttingDown: lm.isShuttingDown(),
+    };
+  });
+
+  // ── Local llama-server control ─────────────────────────────────────────────
+
+  ipcMain.handle('llama-server:status', async() => {
+    return { running: getLlamaCppService().isServerRunning };
+  });
+
+  ipcMain.handle('llama-server:stop', async() => {
+    console.log('[Background] IPC llama-server:stop — stopping local server');
+    try {
+      await getLlamaCppService().stopServer();
+    } catch { /* not running */ }
+
+    return { running: false };
+  });
+
+  ipcMain.handle('llama-server:start', async() => {
+    console.log('[Background] IPC llama-server:start — starting local server');
+    const llamaCpp = getLlamaCppService();
+
+    if (llamaCpp.isServerRunning) {
+      return { running: true };
+    }
+
+    const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
+    let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
+
+    if (!(modelKey in GGUF_MODELS)) {
+      const mapped = modelKey.replace(/:/g, '-');
+
+      modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
+    }
+
+    const modelPath = await llamaCpp.downloadModel(modelKey);
+
+    await llamaCpp.startServer(modelPath);
+    console.log(`[Background] llama-server started at ${ llamaCpp.serverBaseUrl }`);
+
+    return { running: true };
   });
 
   // ── Vault: export & import ─────────────────────────────────────────────────
@@ -1065,62 +1190,25 @@ export async function afterBackgroundLoaded() {
 }
 
 /**
- * Application shutdown graceful commands
+ * Application shutdown graceful commands.
+ * All service teardown is handled by ServiceLifecycleManager.stopAll().
+ * Only SIGTERM/SIGINT are registered here as emergency fallbacks.
  *
  * @see sulla-desktop/background.ts
  */
 export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
-  // Window close is now handled by FirstRunCoordinator in background.ts
-
-  app.on('will-quit', async() => {
-    console.log('[Shutdown] will-quit fired');
-    // Clear OAuth refresh timers
-    try {
-      const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
-      getOAuthService().shutdown();
-      console.log('[Shutdown] OAuth refresh timers cleared');
-    } catch { /* OAuthService may not have been initialized */ }
-
-    try {
-      await redisClient.close();
-      console.log('[Shutdown] Redis closed');
-    } catch (err) {
-      console.warn('[Shutdown] Redis close failed:', err instanceof Error ? err.message : String(err));
-    }
-
-    try {
-      await getDatabaseManager().stop();
-      console.log('[Shutdown] Postgres closed');
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.warn('[Shutdown] Postgres close failed:', errorMessage);
-    }
-
-    // Stop Docker containers only if they were started this session
-    console.log(`[Shutdown] will-quit: about to call trySullaComposeDown — sullaDockerServicesStarted=${ sullaDockerServicesStarted }`);
-    trySullaComposeDown();
-  });
-
-  Electron.app.on('before-quit', async() => {
-    console.log('[Shutdown] sulla.ts before-quit handler fired');
-    try {
-      await redisClient.close();
-    } catch { }
-    try {
-      await getDatabaseManager().stop();
-    } catch { } // swallow any remaining errors
-  });
-
   process.on('SIGTERM', async() => {
-    console.log('[Shutdown] SIGTERM received — closing redis, postgres and quitting');
-    await redisClient.close().catch(() => {});
-    await postgresClient.end();
+    console.log('[Shutdown] SIGTERM received');
+    const lifecycle = getServiceLifecycleManager();
+
+    await lifecycle.stopAll('full');
     app.quit();
   });
   process.on('SIGINT', async() => {
-    console.log('[Shutdown] SIGINT received — closing redis, postgres and quitting');
-    await redisClient.close().catch(() => {});
-    await postgresClient.end();
+    console.log('[Shutdown] SIGINT received');
+    const lifecycle = getServiceLifecycleManager();
+
+    await lifecycle.stopAll('full');
     app.quit();
   });
 }
@@ -1129,18 +1217,8 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
  *
  * @see sulla-desktop/background.ts
  */
-export async function sullaEnd(event: any) {
-  try {
-    const chatServer = getChatCompletionsServer();
-    await chatServer.stop();
-  } catch (error) {
-    console.error('[Background] Error stopping chat completions server:', error);
-  }
+export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
+  const lifecycle = getServiceLifecycleManager();
 
-  try {
-    const { getTerminalServer } = await import('@pkg/main/terminalServer');
-    await getTerminalServer().stop();
-  } catch (error) {
-    console.error('[Background] Error stopping terminal server:', error);
-  }
-};
+  await lifecycle.stopAll(mode);
+}

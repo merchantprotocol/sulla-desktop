@@ -52,6 +52,7 @@ export function getHeartbeatService(): HeartbeatService {
 export class HeartbeatService {
   private initialized = false;
   private schedulerId: ReturnType<typeof setInterval> | null = null;
+  private alignTimerId: ReturnType<typeof setTimeout> | null = null;
   private isExecuting = false;
   private lastTriggerMs = 0; // simple in-memory last-run tracker
 
@@ -120,7 +121,9 @@ export class HeartbeatService {
 
     // Align to next full minute
     const msToNextMinute = 60000 - (Date.now() % 60000);
-    setTimeout(() => {
+    this.alignTimerId = setTimeout(() => {
+      this.alignTimerId = null;
+      if (!this.initialized) return; // destroyed before timer fired
       this.checkAndMaybeTrigger();
       this.schedulerId = setInterval(() => this.checkAndMaybeTrigger(), 60000);
     }, msToNextMinute);
@@ -275,15 +278,19 @@ export class HeartbeatService {
   }
 
   destroy(): void {
+    this.initialized = false;
     // Abort any in-flight execution
     if (this.activeAbort) {
       this.activeAbort.abort();
       this.activeAbort = null;
     }
+    if (this.alignTimerId) {
+      clearTimeout(this.alignTimerId);
+      this.alignTimerId = null;
+    }
     if (this.schedulerId) {
       clearInterval(this.schedulerId);
       this.schedulerId = null;
     }
-    this.initialized = false;
   }
 }

@@ -139,17 +139,46 @@ export class AgentNode extends BaseNode {
 
     // Run subconscious middleware: parallel agents for summarization,
     // memory recall, and observation management.
-    // Recall context is written to state.metadata.recallContext and
-    // appended to the system prompt below.
+    // Recall context is merged into the last assistant message so the
+    // primary agent treats it as its own knowledge, not external info.
     const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
     await runSubconsciousMiddleware(state, {
       includeObservations: shouldInjectObservations,
     });
 
-    // Append recall context to system prompt if present
+    // Merge recall context into the last assistant message (or create one)
+    // so the primary agent sees it as information it already has.
     const recallContext = (state.metadata as any).recallContext;
     if (recallContext) {
-      enrichedPrompt += `\n\n## Relevant Context\n\n${ recallContext }`;
+      const recallBlock = `\n\n<recall_context>\n${ recallContext }\n</recall_context>`;
+      let merged = false;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        if (state.messages[i].role === 'assistant') {
+          const msg = state.messages[i];
+          if (typeof msg.content === 'string') {
+            // Plain string content — append directly
+            msg.content += recallBlock;
+          } else if (Array.isArray(msg.content)) {
+            // Content blocks array (e.g. [{type:'text', text:'...'}, ...])
+            // Append a new text block with the recall context
+            msg.content.push({ type: 'text', text: recallBlock });
+          } else {
+            // Unknown format — wrap as string
+            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + recallBlock;
+          }
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) {
+        // First turn — no assistant message yet, insert one before the last user message
+        const insertIdx = Math.max(0, state.messages.length - 1);
+        state.messages.splice(insertIdx, 0, {
+          role:    'assistant',
+          content: recallBlock.trim(),
+          metadata: { source: 'recall', _synthetic: true },
+        });
+      }
     }
 
     // Training data: capture the full assembled system prompt (once per session)

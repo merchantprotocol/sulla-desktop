@@ -1046,17 +1046,9 @@ export function initSullaEvents(): void {
   // Audio / Transcription handlers
   // ─────────────────────────────────────────────────────────────
 
-  ipcMainProxy.handle('audio-transcribe', async(_event: unknown, payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => {
-    const { getTranscriptionService } = await import('@pkg/agent/services/TranscriptionService');
-    const service = getTranscriptionService();
-    const result = await service.transcribe(
-      Buffer.from(payload.audio),
-      payload.mimeType,
-      { diarize: payload.diarize, model: payload.model, sessionId: payload.sessionId },
-    );
-
-    return result;
-  });
+  // NOTE: audio-transcribe handler removed — transcription is now handled
+  // by the audio-driver's gateway.js service (streams audio directly to
+  // the transcription gateway via WebSocket).
 
   ipcMainProxy.handle('audio-speak', async(_event: unknown, payload: { text: string; voiceId?: string }) => {
     const { getTextToSpeechService } = await import('@pkg/agent/services/TextToSpeechService');

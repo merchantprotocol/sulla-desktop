@@ -42,6 +42,7 @@
     "lint:spelling": "bash scripts/spelling.sh",
     "generate:nerdctl-stub": "powershell -ExecutionPolicy RemoteSigned scripts/windows/generate-nerdctl-stub.ps1",
     "generate:extension-data": "node scripts/ts-wrapper.js scripts/extension-data.ts",
+    "build:audio-native": "bash scripts/build-audio-native.sh",
     "build": "node scripts/ts-wrapper.js scripts/build.ts",
     "build:mac": "node scripts/ts-wrapper.js scripts/build.ts --mac",
     "build:win": "node scripts/ts-wrapper.js scripts/build.ts --win",
@@ -158,6 +159,7 @@
     "vue-select": "3.20.4",
     "vuex": "4.1.0",
     "which": "6.0.0",
+    "ws": "^8.20.0",
     "yaml": "2.8.2",
     "zod-to-json-schema": "3.23.5"
   },

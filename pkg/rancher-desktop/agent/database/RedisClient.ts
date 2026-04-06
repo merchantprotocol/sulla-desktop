@@ -15,6 +15,7 @@ export class RedisClient {
   private gaveUp = false;
   private gaveUpAt = 0;
   private cooldownMs = 30_000; // retry after 30s cooldown if we gave up
+  private shuttingDown = false;
 
   constructor() {
     this.client = this.createClient();
@@ -25,12 +26,16 @@ export class RedisClient {
    * Called on construction and when a dead client needs to be replaced.
    */
   private createClient(): Redis {
+    const self = this; // capture for retryStrategy closure
+
     const client = new Redis(REDIS_URL, {
-      // Never return null — always keep trying to reconnect.
-      // The Lima VM / Docker containers can restart at any time;
-      // a dead ioredis client cannot be revived, so we must keep retrying.
       retryStrategy: (times: number) => {
-        // Back off up to 10s between retries, indefinitely
+        // During shutdown, stop retrying immediately
+        if (self.shuttingDown) {
+          return null;
+        }
+
+        // Back off up to 10s between retries
         const delay = Math.min(times * 200, 10_000);
 
         if (times % 30 === 0) {
@@ -59,6 +64,7 @@ export class RedisClient {
 
     client.on('error', (err: any) => {
       this.connected = false;
+      if (this.shuttingDown) return; // suppress noise during shutdown
       // Reduce error verbosity for common startup errors
       if ((err).code === 'ECONNREFUSED' || (err).code === 'EPIPE' || (err).code === 'ECONNRESET') {
         console.log(`[RedisClient] Connection error (${ (err).code }): Redis server not available yet`);
@@ -69,7 +75,9 @@ export class RedisClient {
 
     client.on('close', () => {
       this.connected = false;
-      console.log('[RedisClient] Connection closed');
+      if (!this.shuttingDown) {
+        console.log('[RedisClient] Connection closed');
+      }
     });
 
     // If the client enters 'end' state (retryStrategy returned null or
@@ -77,7 +85,9 @@ export class RedisClient {
     // happen with our retryStrategy, but guard against it defensively.
     client.on('end', () => {
       this.connected = false;
-      console.warn('[RedisClient] Client entered "end" state — will recreate on next command');
+      if (!this.shuttingDown) {
+        console.warn('[RedisClient] Client entered "end" state — will recreate on next command');
+      }
     });
 
     return client;
@@ -94,6 +104,7 @@ export class RedisClient {
    * Initialize and test connection
    */
   async initialize(): Promise<boolean> {
+    if (this.shuttingDown) return false; // Don't reconnect during shutdown
     if (this.connected) return true;
 
     // If the ioredis client is in 'end' state it is permanently dead and
@@ -253,18 +264,44 @@ export class RedisClient {
     return this.client.publish(channel, message);
   }
 
+  /**
+   * Wait until Redis is actually reachable from the host.
+   * Called by ServiceLifecycleManager before any service that needs Redis.
+   */
+  async waitForReady(maxAttempts = 30, intervalMs = 1000): Promise<void> {
+    for (let i = 1; i <= maxAttempts; i++) {
+      try {
+        if (this.client.status === 'end') {
+          this.client = this.createClient();
+        }
+        if (this.client.status === 'wait') {
+          await this.client.connect();
+        }
+        await this.client.ping();
+        this.connected = true;
+        this.connectionAttempts = 0;
+        console.log(`[RedisClient] Host port 30117 reachable (attempt ${ i })`);
+
+        return;
+      } catch {
+        if (i === maxAttempts) {
+          throw new Error(`Redis not reachable after ${ maxAttempts } attempts`);
+        }
+        console.log(`[RedisClient] waitForReady attempt ${ i }/${ maxAttempts } failed, retrying...`);
+        await new Promise(r => setTimeout(r, intervalMs));
+      }
+    }
+  }
+
   // Close connection (call on shutdown)
   async close(): Promise<void> {
+    this.shuttingDown = true;
+
     try {
-      if (this.connected) {
-        await this.client.quit();
-      } else {
-        // Force-disconnect to stop the reconnection retry loop
-        this.client.disconnect();
-      }
-    } catch {
-      // If quit fails, force-disconnect
+      // Force-disconnect immediately to stop the retry loop
       this.client.disconnect();
+    } catch {
+      // already disconnected
     }
     this.connected = false;
     this.gaveUp = false;
@@ -277,6 +314,9 @@ export class RedisClient {
   }
 
   private async ensureConnected(): Promise<void> {
+    if (this.shuttingDown) {
+      throw new Error('Redis is shutting down — refusing new connections');
+    }
     if (!this.connected) {
       const ok = await this.initialize();
       if (!ok) {

@@ -5,10 +5,11 @@
  * positioned below the tray icon, dismissed on blur.
  */
 
+import path from 'path';
 import { BrowserWindow, ipcMain, app } from 'electron';
 
 import Logging from '@pkg/utils/logging';
-import { openMain, openEditor, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
+import { openMain, openEditor, openCaptureStudio, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import setupUpdate from '@pkg/main/update';
 
@@ -38,8 +39,21 @@ export function createTrayPanel(): BrowserWindow {
     },
   });
 
-  // Load panel via the app:// protocol (same as all other windows)
-  panelWindow.loadURL('app://./trayPanel/index.html');
+  // Load panel via filesystem path (not app:// protocol) so that
+  // require() in panel.js can resolve relative paths to renderer modules.
+  // This matches how the standalone audio-driver loads its renderer.
+  const appRoot = app.getAppPath();
+  const trayPanelDir = app.isPackaged
+    ? path.join(appRoot, 'trayPanel')
+    : path.join(appRoot, 'dist', 'app', 'trayPanel');
+  panelWindow.loadFile(path.join(trayPanelDir, 'index.html'));
+
+  // Open DevTools with Cmd+Shift+I (debug the tray panel renderer)
+  panelWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.meta && input.shift && input.key === 'i') {
+      panelWindow?.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
 
   // Hide on blur — click anywhere else to dismiss
   panelWindow.on('blur', () => {
@@ -96,6 +110,70 @@ export function sendPanelState(state: {
 }
 
 /**
+ * Send audio capture state to the panel renderer.
+ */
+export function sendAudioState(state: { running: boolean; message?: string }): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-state', state);
+  }
+}
+
+/**
+ * Send audio level data to the panel renderer for meter display.
+ */
+export function sendAudioMicLevel(level: number): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-mic-level', level);
+  }
+}
+
+export function sendAudioSpeakerLevel(level: number): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-speaker-level', level);
+  }
+}
+
+/**
+ * Send available audio devices to the panel renderer.
+ */
+export function sendAudioDevices(data: {
+  inputs: Array<{ deviceId: string; label: string }>;
+  outputs: Array<{ deviceId: string; label: string }>;
+  activeInput?: string;
+  activeOutput?: string;
+}): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-devices', data);
+  }
+}
+
+/**
+ * Send audio detection state (VAD, noise, feedback) to the panel renderer.
+ */
+export function sendAudioDetection(data: {
+  statusDotClass: string;
+  statusText: string;
+  noisePct: number;
+  noiseLevel: string;
+  noiseLabel: string;
+  feedbackPct: number;
+  feedbackLabel: string;
+}): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:audio-detection', data);
+  }
+}
+
+/**
+ * Send authentication state to the panel renderer.
+ */
+export function sendAuthState(state: { loggedIn: boolean; vaultSetUp: boolean }): void {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('tray-panel:auth-state', state);
+  }
+}
+
+/**
  * Destroy the panel window (app quit).
  */
 export function destroyTrayPanel(): void {
@@ -134,6 +212,11 @@ function registerPanelIpc(): void {
     panelWindow?.hide();
   });
 
+  ipcMain.on('tray-panel:open-capture-studio', () => {
+    openCaptureStudio();
+    panelWindow?.hide();
+  });
+
   ipcMain.on('tray-panel:secretary-mode', () => {
     openMain();
     const agentWindow = getWindow('main-agent');
@@ -160,7 +243,74 @@ function registerPanelIpc(): void {
     await setupUpdate(true, false);
   });
 
-  ipcMain.on('tray-panel:quit', () => {
+  ipcMain.on('tray-panel:quit', async() => {
+    // 1. Hide the tray panel immediately for visual feedback
+    panelWindow?.hide();
+
+    // 2. Tell all renderer windows to stop capture / recording
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send('app:before-quit');
+      }
+    }
+
+    // 3. Stop audio capture from the main process side
+    try {
+      const audioDriver = await import('@pkg/main/audio-driver/init');
+
+      await audioDriver.shutdown();
+    } catch (err) {
+      console.error('[TrayPanel] Pre-quit audio shutdown error:', err);
+    }
+
+    // 4. Close all open windows (gives them a chance to run onBeforeUnmount)
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.close();
+      }
+    }
+
+    // 5. Trigger the full shutdown sequence
     app.quit();
   });
+
+  // ── Auth IPC handlers ─────────────────────────────────────────────────
+
+  ipcMain.handle('tray-panel:check-auth', async() => {
+    try {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      const vaultKey = getVaultKeyService();
+
+      return {
+        loggedIn:   vaultKey.isUnlocked(),
+        vaultSetUp: vaultKey.isSetUp(),
+      };
+    } catch {
+      return { loggedIn: false, vaultSetUp: false };
+    }
+  });
+
+  ipcMain.handle('tray-panel:login', async(_event: Electron.IpcMainInvokeEvent, data: { password: string }) => {
+    try {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      const vaultKey = getVaultKeyService();
+      const success = await vaultKey.recoverFromMasterPassword(data.password);
+
+      if (success) {
+        const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+
+        setUserLoggedIn(true);
+      }
+
+      return { success };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // ── Audio panel IPC handlers ──────────────────────────────────────────
+  // These are handled by audio-driver/init.js which registers its own
+  // ipcMain.on('tray-panel:audio-*') handlers. The audio-driver init
+  // module is loaded in background.ts and registers all handlers there.
+  // No duplicate registration needed here.
 }

@@ -13,6 +13,12 @@
   --off: #555;
   --toggle-bg: #3a3a3a;
   --toggle-knob: #999;
+  --mic-low: #30d158;
+  --mic-mid: #ff9f0a;
+  --mic-hot: #ff453a;
+  --speaker-low: #64d2ff;
+  --speaker-mid: #bf5af2;
+  --speaker-hot: #ff6482;
 }
 
 /* ─── Light mode ──────────────────────────────────────────── */
@@ -31,6 +37,12 @@
     --off: #c7c7cc;
     --toggle-bg: #d1d1d6;
     --toggle-knob: #fff;
+    --mic-low: #28a745;
+    --mic-mid: #ff9500;
+    --mic-hot: #ff3b30;
+    --speaker-low: #5ac8fa;
+    --speaker-mid: #af52de;
+    --speaker-hot: #ff2d55;
   }
 }
 
@@ -53,6 +65,7 @@ html, body {
 }
 
 #app {
+  position: relative;
   width: 360px;
   background: var(--bg);
   border-radius: 10px;
@@ -380,4 +393,452 @@ html, body {
 .quit-btn:hover {
   background: rgba(255, 59, 48, 0.08);
   border-color: var(--error);
+}
+
+/* ─── Audio panel — toggle switch ────────────────────────── */
+
+.toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--toggle-bg);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--toggle-knob);
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.toggle input:checked + .toggle-slider {
+  background: var(--success);
+}
+
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+.toggle input:disabled + .toggle-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Audio panel — status bar ───────────────────────────── */
+
+.audio-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.audio-status-bar #audio-status-text {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ─── Audio panel — sections ─────────────────────────────── */
+
+.audio-section {
+  padding: 8px 0;
+}
+
+.audio-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.source-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* ─── Audio panel — meter bars ───────────────────────────── */
+
+.meter-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.meter-track {
+  position: relative;
+  height: 6px;
+  background: var(--surface);
+  border-radius: 3px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.meter-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 3px;
+  width: 0%;
+  transition: width 50ms linear;
+  will-change: width;
+}
+
+.meter-fill.mic {
+  background: linear-gradient(90deg, var(--mic-low) 0%, var(--mic-mid) 70%, var(--mic-hot) 100%);
+}
+
+.meter-fill.speaker {
+  background: linear-gradient(90deg, var(--speaker-low) 0%, var(--speaker-mid) 70%, var(--speaker-hot) 100%);
+}
+
+.meter-peak {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--text);
+  opacity: 0.6;
+  left: 0%;
+  transition: left 50ms linear, opacity 0.5s;
+  will-change: left;
+}
+
+.meter-db {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  color: var(--text-dim);
+  min-width: 38px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ─── Audio panel — detection meters ─────────────────────── */
+
+.detection-section {
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
+.detection-section.hidden {
+  display: none;
+}
+
+.detection-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.detection-label {
+  font-size: 9px;
+  color: var(--text-dim);
+  min-width: 46px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.detection-track {
+  height: 4px;
+}
+
+.detection-value {
+  font-size: 9px;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  color: var(--text-dim);
+  min-width: 46px;
+  text-align: right;
+}
+
+.meter-fill.noise-low {
+  background: var(--success);
+  transition: width 200ms ease;
+}
+
+.meter-fill.noise-moderate {
+  background: var(--mic-mid);
+  transition: width 200ms ease;
+}
+
+.meter-fill.noise-high {
+  background: var(--mic-hot);
+  transition: width 200ms ease;
+}
+
+.meter-fill.feedback-fill {
+  background: var(--mic-hot);
+  transition: width 150ms ease;
+}
+
+/* ─── Audio panel — icon controls ────────────────────────── */
+
+.icon-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--surface);
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text);
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.icon-btn:hover {
+  background: var(--border);
+}
+
+.icon-btn.muted {
+  opacity: 0.4;
+}
+
+.volume-pct {
+  font-size: 11px;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  color: var(--text-dim);
+  min-width: 32px;
+  text-align: center;
+}
+
+/* ─── Audio panel — device select ────────────────────────── */
+
+.device-select {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  max-width: 180px;
+  flex: 1;
+  margin-left: 8px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  padding-right: 14px;
+  text-overflow: ellipsis;
+}
+
+.device-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.device-select option {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ─── Audio panel — VAD status dot states ────────────────── */
+
+.dot.speaking {
+  background: var(--success);
+  box-shadow: 0 0 4px var(--success);
+}
+
+.dot.caller-speaking {
+  background: var(--speaker-low);
+  box-shadow: 0 0 4px var(--speaker-low);
+}
+
+.dot.fan-noise {
+  background: var(--mic-mid);
+  box-shadow: 0 0 4px var(--mic-mid);
+}
+
+.dot.transitioning {
+  background: var(--warning);
+  box-shadow: 0 0 4px var(--warning);
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+
+/* ─── Audio panel — disabled state ───────────────────────── */
+
+.meter-section.disabled .meter-fill {
+  width: 0% !important;
+  transition: width 0.3s;
+}
+
+.meter-section.disabled .meter-peak {
+  opacity: 0;
+}
+
+/* ─── Login overlay ──────────────────────────────────────── */
+
+.login-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+}
+
+.login-overlay.hidden {
+  display: none;
+}
+
+.app-layout.locked {
+  pointer-events: none;
+  filter: blur(2px);
+  opacity: 0.3;
+}
+
+.login-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 32px;
+  width: 100%;
+}
+
+.login-logo {
+  margin-bottom: 12px;
+  opacity: 0.9;
+}
+
+.login-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.login-subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 20px;
+}
+
+.login-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.login-input-wrap {
+  width: 100%;
+}
+
+.login-input {
+  width: 100%;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.login-input:focus {
+  border-color: var(--accent);
+}
+
+.login-input::placeholder {
+  color: var(--text-dim);
+}
+
+.login-error {
+  font-size: 11px;
+  color: var(--error);
+  min-height: 16px;
+  text-align: center;
+}
+
+.login-submit {
+  width: 100%;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.login-submit:hover {
+  background: var(--accent-hover);
+}
+
+.login-submit:active {
+  opacity: 0.8;
+}
+
+.login-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.login-link {
+  margin-top: 16px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.login-link:hover {
+  color: var(--accent);
 }

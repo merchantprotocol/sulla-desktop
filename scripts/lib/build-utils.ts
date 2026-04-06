@@ -314,15 +314,46 @@ export default {
       return;
     }
 
+    // Recursively copy entire trayPanel directory (HTML, CSS, JS, renderer/)
+    const copyDir = (srcDir: string, destDir: string) => {
+      fs.mkdirSync(destDir, { recursive: true });
+      for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+        const srcPath = path.join(srcDir, entry.name);
+        const destPath = path.join(destDir, entry.name);
+        if (entry.isDirectory()) {
+          copyDir(srcPath, destPath);
+        } else {
+          fs.copyFileSync(srcPath, destPath);
+        }
+      }
+    };
+
+    copyDir(src, dest);
+    console.log('[build-utils] Copied tray panel assets to dist/app/trayPanel/');
+  },
+
+  /**
+   * Copy audio-driver native platform assets (Swift scripts, C binary) into dist/app/.
+   * These are runtime-executed scripts/binaries, not bundled by webpack.
+   * The TS code references them via __dirname which resolves to dist/app/ at runtime.
+   */
+  copyAudioDriverNativeAssets(): void {
+    const src = path.join(this.rootDir, 'pkg', 'rancher-desktop', 'main', 'audio-driver', 'platform', 'darwin');
+    const dest = path.join(this.appDir, 'audio-driver', 'platform', 'darwin');
+
+    if (!fs.existsSync(src)) {
+      return;
+    }
+
     fs.mkdirSync(dest, { recursive: true });
 
-    for (const file of ['index.html', 'style.css', 'panel.js', 'sulla-icon.png']) {
-      const srcFile = path.join(src, file);
-      if (fs.existsSync(srcFile)) {
-        fs.copyFileSync(srcFile, path.join(dest, file));
+    for (const entry of fs.readdirSync(src)) {
+      // Copy .swift scripts, .c source, and compiled binaries (not .ts files)
+      if (entry.endsWith('.swift') || entry.endsWith('.c') || entry === 'create-mirror') {
+        fs.copyFileSync(path.join(src, entry), path.join(dest, entry));
       }
     }
-    console.log('[build-utils] Copied tray panel assets to dist/app/trayPanel/');
+    console.log('[build-utils] Copied audio-driver native assets to dist/app/audio-driver/platform/darwin/');
   },
 
 };

@@ -446,10 +446,15 @@ User: ${text}`;
   private async transcribeSegment(audioBlob: Blob, mimeType: string): Promise<void> {
     try {
       const arrayBuffer = await audioBlob.arrayBuffer();
-      const result = await ipcRenderer.invoke('audio-transcribe', {
-        audio: arrayBuffer, mimeType, diarize: true, model: this.transcriptionModel,
-        ...(this.gatewaySessionId ? { sessionId: this.gatewaySessionId } : {}),
+      // Route through audio-driver gateway for transcription (replaces
+      // the removed audio-transcribe IPC handler that used TranscriptionService)
+      const result = await ipcRenderer.invoke('audio-driver:gateway-send', {
+        audio: arrayBuffer, channel: 0,
       });
+      // For non-gateway modes, transcription happens via the gateway's
+      // REST endpoint. The result comes back as a gateway-transcript event.
+      void result; // response handled via gateway-transcript IPC event
+      return;
       if (result?.text?.trim()) {
         const text = result.text.trim();
         this.cb.addEntry(text);
@@ -563,21 +568,17 @@ User: ${text}`;
       throw new Error('No media stream available for gateway streaming');
     }
 
-    // ── Connect to audio-driver for system/speaker audio ────────
-    // The audio-driver captures system audio via WASAPI (Windows) or
-    // CoreAudio+BlackHole (macOS) and streams labeled chunks over a
-    // local Unix socket. Speaker chunks (channel 1) are forwarded
-    // to the gateway automatically by the main process.
+    // ── Activate audio-driver for system/speaker audio ────────────
+    // The audio-driver is now built into Sulla Desktop. It captures
+    // system audio via CoreAudio+BlackHole (macOS), WASAPI (Windows),
+    // or PulseAudio (Linux). Speaker chunks (channel 1) are forwarded
+    // to the gateway automatically by the main process lifecycle.
     try {
-      const driverResult = await ipcRenderer.invoke('audio-driver-connect');
-      this.audioDriverConnected = driverResult?.ok ?? false;
-      if (this.audioDriverConnected) {
-        console.log('[SecretaryMode] Connected to audio-driver for system audio (channel 1)');
-      } else {
-        console.log('[SecretaryMode] Audio-driver not available — speaker audio will not be captured');
-      }
+      ipcRenderer.send('audio-driver:toggle'); // activates capture lifecycle
+      this.audioDriverConnected = true;
+      console.log('[SecretaryMode] Audio-driver activated for system audio (channel 1)');
     } catch (err) {
-      console.log('[SecretaryMode] Audio-driver connection failed:', (err as Error).message);
+      console.log('[SecretaryMode] Audio-driver activation failed:', (err as Error).message);
       this.audioDriverConnected = false;
     }
 
@@ -603,7 +604,7 @@ User: ${text}`;
       };
     }
 
-    const result = await ipcRenderer.invoke('gateway-audio-start', startPayload);
+    const result = await ipcRenderer.invoke('audio-driver:gateway-start', startPayload);
     if (result?.error || !result?.sessionId) {
       const reason = result?.error || 'no session ID returned';
       this.cb.addEntry(`Gateway audio connection failed: ${reason}`, 'transcript');
@@ -628,7 +629,7 @@ User: ${text}`;
           console.log(`[SecretaryMode] Mic chunk #${micChunkCount} (${event.data.size} bytes)`);
         }
         const arrayBuffer = await event.data.arrayBuffer();
-        ipcRenderer.invoke('gateway-audio-send', { audio: arrayBuffer, channel: 0 }).catch((err) => {
+        ipcRenderer.invoke('audio-driver:gateway-send', { audio: arrayBuffer, channel: 0 }).catch((err) => {
           console.error('[SecretaryMode] Failed to send mic chunk:', err);
         });
       }
@@ -669,8 +670,8 @@ User: ${text}`;
     }
 
     if (this.gatewaySessionId) {
-      ipcRenderer.invoke('gateway-audio-stop').catch((err) => {
-        console.error('[SecretaryMode] gateway-audio-stop failed:', err);
+      ipcRenderer.invoke('audio-driver:gateway-stop').catch((err) => {
+        console.error('[SecretaryMode] audio-driver:gateway-stop failed:', err);
       });
       this.gatewaySessionId = null;
     }

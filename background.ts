@@ -8,6 +8,8 @@ import Electron, { MessageBoxOptions } from 'electron';
 import _ from 'lodash';
 import semver from 'semver';
 
+import * as audioDriver from '@pkg/main/audio-driver/init';
+
 import { State } from '@pkg/backend/backend';
 import BackendHelper from '@pkg/backend/backendHelper';
 import K8sFactory from '@pkg/backend/factory';
@@ -54,6 +56,7 @@ import paths from '@pkg/utils/paths';
 import { protocolsRegistered, setupProtocolHandlers } from '@pkg/utils/protocols';
 import { executable } from '@pkg/utils/resources';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
+import { sullaLog } from '@pkg/utils/sullaLog';
 import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 import { getVersion } from '@pkg/utils/version';
 import getWSLVersion from '@pkg/utils/wslVersion';
@@ -103,6 +106,7 @@ const firstRunCoordinator = new FirstRunCoordinator();
 let cfg: settings.Settings;
 let firstRunDialogComplete = false;
 let gone = false; // when true indicates app is shutting down
+let shuttingDown = false; // re-entrancy guard for before-quit handler
 let backendStarted = false;
 let imageEventHandler: ImageEventHandler | null = null;
 let currentContainerEngine = settings.ContainerEngine.NONE;
@@ -666,6 +670,15 @@ async function initUI() {
     Tray.getInstance(cfg).show();
   }
 
+  // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming)
+  // Registers IPC handlers in the main process — no window reference needed.
+  try {
+    audioDriver.initialize();
+    console.log('[Audio Driver] Initialized');
+  } catch (err) {
+    console.error('[Audio Driver] Failed to initialize:', err);
+  }
+
   if (!cfg.application.startInBackground) {
     window.openMain();
   } else if (Electron.app.dock) {
@@ -875,7 +888,7 @@ mainEvents.on('restarting', () => {
 Electron.app.on('before-quit', async(event) => {
   const triggerStack = new Error('before-quit trigger trace').stack;
 
-  console.log(`[Shutdown] before-quit fired — gone=${ gone }, isRestarting=${ isRestarting }`);
+  console.log(`[Shutdown] before-quit fired — gone=${ gone }, shuttingDown=${ shuttingDown }, isRestarting=${ isRestarting }`);
   console.log(`[Shutdown] before-quit call stack:\n${ triggerStack }`);
   if (gone) {
     console.log('[Shutdown] before-quit: already gone, emitting "quit" and returning');
@@ -883,47 +896,101 @@ Electron.app.on('before-quit', async(event) => {
 
     return;
   }
+  if (shuttingDown) {
+    console.log('[Shutdown] before-quit: shutdown already in progress, suppressing duplicate');
+    event.preventDefault();
+
+    return;
+  }
+  shuttingDown = true;
   event.preventDefault();
   console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');
 
-  // Lock the vault — zero VMK from memory on quit
-  try {
-    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-    getVaultKeyService().lock();
-    console.log('[Shutdown] Vault locked — VMK zeroed');
-  } catch { /* vault not initialized */ }
+  // ── Safety-net: force-exit if graceful shutdown exceeds 30 seconds ──
+  const SHUTDOWN_DEADLINE_MS = 30_000;
+  const forceExitTimer = setTimeout(() => {
+    sullaLog({ topic: 'shutdown', level: 'error', message: `Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting` });
+    console.error(`[Shutdown] Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting`);
+    process.exit(1);
+  }, SHUTDOWN_DEADLINE_MS);
 
-  await httpCommandServer?.closeServer();
-  await httpCredentialHelperServer.closeServer();
+  forceExitTimer.unref(); // don't let this timer keep the process alive on its own
+
+  // ── Helper: wrap a promise with a timeout ──
+  const withTimeout = <T>(label: string, ms: number, promise: Promise<T>): Promise<T | void> => {
+    sullaLog({ topic: 'shutdown', level: 'info', message: `Starting '${ label }' (timeout ${ ms }ms)` });
+
+    return Promise.race([
+      promise.then((v) => {
+        sullaLog({ topic: 'shutdown', level: 'info', message: `'${ label }' completed` });
+
+        return v;
+      }),
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          const msg = `'${ label }' timed out after ${ ms }ms — skipping`;
+
+          console.warn(`[Shutdown] ${ msg }`);
+          sullaLog({ topic: 'shutdown', level: 'warn', message: msg });
+          resolve();
+        }, ms);
+      }),
+    ]);
+  };
+
+  // Vault lock is handled by ServiceLifecycleManager in sullaEnd()
+
+  await withTimeout('httpCommandServer.close', 5_000, httpCommandServer?.closeServer() ?? Promise.resolve());
+  await withTimeout('httpCredentialHelperServer.close', 5_000, httpCredentialHelperServer.closeServer());
 
   /// /////////////////////////////////////////////////////////////////////////////
   // SULLA DESKTOP - START
   // Commands to shut down database connections
   /// /////////////////////////////////////////////////////////////////////////////
 
+  // Shut down audio-driver (restore audio output, release capture, remove driver)
+  try {
+    await withTimeout('audioDriver.shutdown', 5_000, audioDriver.shutdown());
+    console.log('[Shutdown] Audio driver shut down');
+  } catch (err) {
+    console.error('[Shutdown] Audio driver shutdown error:', err);
+  }
+
+  sullaLog({ topic: 'shutdown', level: 'info', message: 'Calling sullaEnd()' });
   console.log('[Shutdown] before-quit: calling sullaEnd()');
-  await sullaEnd(event);
+  await sullaEnd(isRestarting ? 'restart' : 'full');
+  sullaLog({ topic: 'shutdown', level: 'info', message: 'sullaEnd() complete' });
   console.log('[Shutdown] before-quit: sullaEnd() complete');
 
   /// /////////////////////////////////////////////////////////////////////////////
   // SULLA DESKTOP - END
   /// /////////////////////////////////////////////////////////////////////////////
 
-  console.log(`[Shutdown] ${ isRestarting ? 'RESTART' : 'FULL QUIT' } PATH — stopping k8smanager, extensions, integrations`);
-  try {
-    console.log('[Shutdown] calling extensions/shutdown...');
-    await mainEvents.tryInvoke('extensions/shutdown');
-    console.log('[Shutdown] calling k8smanager?.stop() (this stops Docker + Lima VM)...');
-    await k8smanager?.stop();
-    console.log('[Shutdown] calling shutdown-integrations...');
-    await mainEvents.tryInvoke('shutdown-integrations');
+  const shutdownMode = isRestarting ? 'RESTART' : 'FULL QUIT';
 
-    console.log(`[Shutdown] Full quit completed cleanly.`);
+  sullaLog({ topic: 'shutdown', level: 'info', message: `${ shutdownMode } PATH — stopping k8smanager, extensions, integrations` });
+  console.log(`[Shutdown] ${ shutdownMode } — stopping k8smanager, extensions, integrations`);
+  try {
+    await withTimeout('extensions/shutdown', 10_000, mainEvents.tryInvoke('extensions/shutdown') ?? Promise.resolve());
+
+    if (isRestarting) {
+      sullaLog({ topic: 'shutdown', level: 'info', message: 'RESTART — skipping k8smanager.stop() (VM stays alive)' });
+    } else {
+      await withTimeout('k8smanager.stop', 10_000, k8smanager?.stop() ?? Promise.resolve());
+    }
+
+    await withTimeout('shutdown-integrations', 10_000, mainEvents.tryInvoke('shutdown-integrations') ?? Promise.resolve());
+
+    sullaLog({ topic: 'shutdown', level: 'info', message: `${ shutdownMode } completed cleanly` });
+    console.log(`[Shutdown] ${ shutdownMode } completed cleanly.`);
   } catch (ex: any) {
+    sullaLog({ topic: 'shutdown', level: 'error', message: `Quit error: ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`, error: ex });
     console.log(`[Shutdown] Full quit error: ${ isK8sError(ex) ? ex.errCode : (ex.errCode ?? '<unknown>') }`);
     handleFailure(ex);
   } finally {
+    clearTimeout(forceExitTimer);
     gone = true;
+    sullaLog({ topic: 'shutdown', level: 'info', message: 'Calling app.quit()' });
     if (process.env['APPIMAGE']) {
       await integrationManager.removeSymlinksOnly();
     }
@@ -990,11 +1057,43 @@ ipcMainProxy.handle('start-backend' as any, () => {
 
 await onMainProxyLoad(ipcMainProxy);
 
-ipcMainProxy.on('model-changed', (_event, data) => {
+ipcMainProxy.on('model-changed', async(_event, data) => {
   // Relay the model-changed event to all open windows
   Electron.BrowserWindow.getAllWindows().forEach((win) => {
     win.webContents.send('model-changed', data);
   });
+
+  // Stop or start the local llama-server based on the new mode
+  const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
+  const llamaCpp = getLlamaCppService();
+
+  if (data.type === 'remote') {
+    // Switching to remote — stop local server to free resources
+    console.log('[Background] Model mode changed to remote — stopping local llama-server');
+    try {
+      await llamaCpp.stopServer();
+    } catch { /* not running */ }
+  } else if (data.type === 'local' && !llamaCpp.isServerRunning) {
+    // Switching to local — start server if not already running
+    console.log('[Background] Model mode changed to local — starting local llama-server');
+    try {
+      const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
+      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
+      let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
+
+      if (!(modelKey in GGUF_MODELS)) {
+        const mapped = modelKey.replace(/:/g, '-');
+
+        modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
+      }
+      const modelPath = await llamaCpp.downloadModel(modelKey);
+
+      await llamaCpp.startServer(modelPath);
+      console.log(`[Background] llama-server started at ${ llamaCpp.serverBaseUrl }`);
+    } catch (err) {
+      console.error('[Background] Failed to start local llama-server:', err);
+    }
+  }
 });
 
 // Error reporting — fire-and-forget from renderer
@@ -1067,6 +1166,59 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
     throw err;
   }
 }
+
+// ── Capture Studio IPC ──────────────────────────────────────────────────
+ipcMainProxy.handle('capture-studio:get-sources', async() => {
+  try {
+    const sources = await Electron.desktopCapturer.getSources({
+      types:          ['screen', 'window'],
+      thumbnailSize:  { width: 320, height: 180 },
+      fetchWindowIcons: false,
+    });
+    return sources.map(s => ({
+      id:               s.id,
+      name:             s.name,
+      thumbnailDataUrl: s.thumbnail.toDataURL(),
+    }));
+  } catch (e: any) {
+    console.warn('[capture-studio:get-sources] Failed:', e.message);
+    return [];
+  }
+});
+
+ipcMainProxy.handle('capture-studio:check-permissions', () => {
+  const result: Record<string, string> = {
+    screen:     'granted',
+    camera:     'granted',
+    microphone: 'granted',
+  };
+  if (process.platform === 'darwin') {
+    const { systemPreferences } = Electron;
+    if (systemPreferences.getMediaAccessStatus) {
+      result.screen = systemPreferences.getMediaAccessStatus('screen');
+      result.camera = systemPreferences.getMediaAccessStatus('camera');
+      result.microphone = systemPreferences.getMediaAccessStatus('microphone');
+    }
+  }
+  return result;
+});
+
+ipcMainProxy.handle('sulla-settings:get', async(_event: any, key: string) => {
+  try {
+    return await SullaSettingsModel.get(key);
+  } catch (e: any) {
+    console.warn('[sulla-settings:get] Failed:', key, e.message);
+    return null;
+  }
+});
+
+ipcMainProxy.handle('sulla-settings:set', async(_event: any, key: string, value: any, cast?: string) => {
+  try {
+    return await SullaSettingsModel.set(key, value, cast);
+  } catch (e: any) {
+    console.warn('[sulla-settings:set] Failed:', key, e.message);
+  }
+});
 
 ipcMainProxy.handle('settings-write', (event, arg) => {
   try {

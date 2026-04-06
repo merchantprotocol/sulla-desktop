@@ -6,8 +6,14 @@ import { SullaSettingsModel } from './models/SullaSettingsModel';
 export class PostgresClient {
   private pool: Pool | null = null;
   private connected = false;
+  private shuttingDown = false;
+
+  get isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
 
   public async initialize(): Promise<void> {
+    if (this.shuttingDown) return; // Don't reconnect during shutdown
     if (this.pool) return; // Already initialized
 
     // Get password from settings
@@ -26,6 +32,7 @@ export class PostgresClient {
 
     // Graceful pool error handling
     this.pool.on('error', (err) => {
+      if (this.shuttingDown) return; // suppress noise during shutdown
       console.error('[PostgresPool] Unexpected error on idle client', err);
       this.connected = false;
     });
@@ -59,6 +66,9 @@ export class PostgresClient {
   }
 
   async getClient(): Promise<PoolClient> {
+    if (this.shuttingDown) {
+      throw new Error('PostgreSQL is shutting down — refusing new connections');
+    }
     if (!this.connected) {
       await this.initialize();
     }
@@ -66,6 +76,9 @@ export class PostgresClient {
   }
 
   async queryWithResult<T extends QueryResultRow = any>(text: string, params: any[] = []): Promise<QueryResult<T>> {
+    if (this.shuttingDown) {
+      return { rows: [], rowCount: 0, command: '', oid: 0, fields: [] } as unknown as QueryResult<T>;
+    }
     const client = await this.getClient();
     try {
       const res = await client.query(text, params);
@@ -76,6 +89,9 @@ export class PostgresClient {
   }
 
   async query<T = any>(text: string, params: any[] = []): Promise<T[]> {
+    if (this.shuttingDown) {
+      return [];
+    }
     const client = await this.getClient();
     try {
       const res = await client.query(text, params);
@@ -109,8 +125,41 @@ export class PostgresClient {
     }
   }
 
+  /**
+   * Wait until PostgreSQL is actually reachable from the host.
+   * Called by ServiceLifecycleManager before DatabaseManager starts.
+   */
+  async waitForReady(maxAttempts = 30, intervalMs = 1000): Promise<void> {
+    const password = await SullaSettingsModel.get('sullaServicePassword', 'sulla_dev_password');
+
+    for (let i = 1; i <= maxAttempts; i++) {
+      let probe: Pool | null = null;
+
+      try {
+        probe = new Pool({
+          host: '127.0.0.1', port: 30116, user: 'sulla',
+          password, database: 'sulla', max: 1,
+          connectionTimeoutMillis: 2000,
+        });
+        await probe.query('SELECT 1');
+        console.log(`[PostgresClient] Host port 30116 reachable (attempt ${ i })`);
+
+        return;
+      } catch {
+        if (i === maxAttempts) {
+          throw new Error(`PostgreSQL not reachable after ${ maxAttempts } attempts`);
+        }
+        console.log(`[PostgresClient] waitForReady attempt ${ i }/${ maxAttempts } failed, retrying...`);
+        await new Promise(r => setTimeout(r, intervalMs));
+      } finally {
+        try { await probe?.end(); } catch { /* ignore */ }
+      }
+    }
+  }
+
   async end(): Promise<void> {
-    if (!this.pool || !this.connected) return;
+    this.shuttingDown = true;
+    if (!this.pool) return;
 
     try {
       await this.pool.end();

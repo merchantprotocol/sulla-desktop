@@ -2,7 +2,7 @@
 // Singleton – runs migrations + seeders once per process after backend is ready
 // Tracks execution in postgres tables
 
-import { postgresClient, PostgresClient } from '@pkg/agent/database/PostgresClient';
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { migrationsRegistry } from './migrations';
 import { seedersRegistry } from './seeders';
 import { SullaSettingsModel } from './models/SullaSettingsModel';
@@ -30,70 +30,45 @@ export class DatabaseManager {
   private pollingInterval: NodeJS.Timeout | null = null;
   private isPolling = false;
 
+  /**
+   * Initialize the database: connect, run migrations, seed data, warm caches.
+   * The ServiceLifecycleManager ensures PostgreSQL is reachable before calling this,
+   * so no retry loop is needed.
+   */
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    const MAX_ATTEMPTS = 60;          // ~2 minutes total
-    const INITIAL_DELAY = 2000;
-    let attempt = 0;
+    console.log('[DB] Connecting to PostgreSQL...');
 
-    while (attempt < MAX_ATTEMPTS) {
-      attempt++;
-      const delay = INITIAL_DELAY * Math.pow(1.5, attempt - 1); // ~3s → ~30s backoff
+    // Use the shared singleton — lifecycle manager already verified the host port is reachable
+    await postgresClient.initialize();
+    await postgresClient.query('SELECT 1');
+    console.log('[DB] Connection healthy');
+    this.initialized = true;
 
-      try {
-        console.log(`[DB] Attempt ${ attempt }/${ MAX_ATTEMPTS } — connecting...`);
+    await this.runMigrations();
 
-        // Fresh client each attempt — prevents poisoning
-        const client = new PostgresClient(); // create fresh instance
-        await client.initialize();
+    // Now that tables are ready, sync settings to persistent storage
+    await SullaSettingsModel.bootstrap();
 
-        // Real health check
-        await client.query('SELECT 1');
-        console.log('[DB] Connection healthy');
-        this.initialized = true;
+    // Settings are ready to be used in seeding
+    await this.runSeeders();
 
-        // One-time setup
-        await this.runMigrations();
-
-        // now that tables are ready, sync to persistent storage
-        await SullaSettingsModel.bootstrap();
-
-        // settings are ready to be used in seeding
-        await this.runSeeders();
-
-        // warm skills registry cache immediately after DB+seed initialization
-        try {
-          await skillsRegistry.initialize();
-        } catch (error) {
-          console.warn('[DB] SkillsRegistry warm initialization failed:', error);
-        }
-
-        // warm project registry cache
-        try {
-          await projectRegistry.initialize();
-        } catch (error) {
-          console.warn('[DB] ProjectRegistry warm initialization failed:', error);
-        }
-
-        console.log('[DB] Database fully initialized');
-        return;
-      } catch (err: any) {
-        console.debug(`[DB] Attempt ${ attempt } failed: ${ err.message || err }`);
-
-        if (attempt === MAX_ATTEMPTS) {
-          console.error('[DB] Gave up after max attempts — database unavailable');
-          throw err;
-        }
-
-        // Exponential backoff + jitter
-        const jitter = Math.random() * 500;
-        await new Promise(r => setTimeout(r, delay + jitter));
-      } finally {
-        // Clean up any temporary client
-        // (if your client doesn't auto-close, add client.end() here)
-      }
+    // Warm skills registry cache
+    try {
+      await skillsRegistry.initialize();
+    } catch (error) {
+      console.warn('[DB] SkillsRegistry warm initialization failed:', error);
     }
+
+    // Warm project registry cache
+    try {
+      await projectRegistry.initialize();
+    } catch (error) {
+      console.warn('[DB] ProjectRegistry warm initialization failed:', error);
+    }
+
+    console.log('[DB] Database fully initialized');
   }
 
   async stop(): Promise<void> {

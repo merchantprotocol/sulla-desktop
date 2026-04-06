@@ -88,6 +88,31 @@ export class SchedulerService {
     }
   }
 
+  destroy(): void {
+    this.initialized = false;
+
+    // Cancel all scheduled jobs
+    for (const [eventId, { job }] of this.scheduledJobs) {
+      job.cancel();
+      console.log(`[SchedulerService] Shutdown: cancelled event ${ eventId }`);
+    }
+    this.scheduledJobs.clear();
+
+    // Clear pending acks
+    for (const [, pending] of this.pendingAcks) {
+      clearTimeout(pending.timer);
+      pending.resolve(false);
+    }
+    this.pendingAcks.clear();
+
+    // Unsubscribe from WebSocket
+    if (this.unsubscribeFrontend) {
+      this.unsubscribeFrontend();
+      this.unsubscribeFrontend = null;
+    }
+    this.wsInitialized = false;
+  }
+
   rescheduleEvent(event: any): void {
     this.scheduleEvent(event);
   }

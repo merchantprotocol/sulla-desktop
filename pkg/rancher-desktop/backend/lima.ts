@@ -2385,6 +2385,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
     await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-redis'), { recursive: true });
 
+    // Ensure data directories are writable by container users (postgres=UID 70, redis=UID 999)
+    await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);
+    await fs.promises.chmod(path.join(sullaDataDir, 'sulla-redis'), 0o777);
+
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);

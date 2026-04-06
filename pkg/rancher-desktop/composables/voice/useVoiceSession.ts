@@ -1,20 +1,23 @@
 /**
- * useVoiceSession — thin Vue composable bridging voice services to reactivity.
+ * useVoiceSession — thin Vue composable for voice features.
  *
- * Creates VoiceRecorderService, TTSPlayerService, and VoicePipeline.
- * Maps service events to Vue refs for template binding.
+ * After the audio-driver migration, microphone capture and transcription
+ * are handled by the audio-driver lifecycle (main process). This composable
+ * now only manages TTS playback and exposes recording state refs that are
+ * updated via IPC from the audio-driver.
+ *
  * Called once per BrowserTabChat instance.
  */
 
-import { ref, readonly, watch, onUnmounted, type Ref } from 'vue';
+import { ref, readonly, onUnmounted, type Ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { ChatInterface, ChatMessage } from '../../pages/agent/ChatInterface';
-import { VoiceRecorderService } from './VoiceRecorderService';
 import { TTSPlayerService } from './TTSPlayerService';
-import { VoicePipeline, type VoiceMode, type PipelineState } from './VoicePipeline';
-import { setVoiceLogContext } from './VoiceLogger';
 
 // ─── Types ──────────────────────────────────────────────────────
+
+export type VoiceMode = 'voice' | 'secretary' | 'intake';
+export type PipelineState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
 export interface UseVoiceSessionOptions {
   chatController: ChatInterface;
@@ -42,7 +45,7 @@ export interface UseVoiceSessionReturn {
 // ─── Composable ─────────────────────────────────────────────────
 
 export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessionReturn {
-  const { chatController, messages, onError } = options;
+  const { chatController, onError: _onError } = options;
 
   // ── Reactive state ──
   const isRecording = ref(false);
@@ -52,92 +55,61 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   const pipelineState = ref<PipelineState>('IDLE');
   const voiceMode = ref<VoiceMode>('voice');
 
-  // ── Create services ──
-  const recorder = new VoiceRecorderService({
-    ipcInvoke: ipcRenderer.invoke.bind(ipcRenderer),
-  });
-
+  // ── TTS service (kept from original) ──
   const ttsPlayer = new TTSPlayerService({
     ipcInvoke: ipcRenderer.invoke.bind(ipcRenderer),
   });
 
-  const pipeline = new VoicePipeline({
-    recorder,
-    ttsPlayer,
-    chatController,
-    messages,
-    mode: voiceMode,
-  });
-
-  // ── Bridge service events → Vue refs ──
   const unsubs: Array<() => void> = [];
-
-  unsubs.push(
-    recorder.on('recordingStart', () => {
-      isRecording.value = true;
-    }),
-    recorder.on('recordingStop', () => {
-      isRecording.value = false;
-    }),
-    recorder.on('levelChange', (level) => {
-      audioLevel.value = level;
-    }),
-  );
-
-  if (onError) {
-    unsubs.push(
-      recorder.on('error', (msg) => onError(msg)),
-    );
-  }
-
-  // Poll recording duration from service (it updates its own property)
-  let durationInterval: ReturnType<typeof setInterval> | null = null;
-  unsubs.push(
-    recorder.on('recordingStart', () => {
-      durationInterval = setInterval(() => {
-        recordingDuration.value = recorder.recordingDuration;
-      }, 250);
-    }),
-    recorder.on('recordingStop', () => {
-      if (durationInterval) {
-        clearInterval(durationInterval);
-        durationInterval = null;
-      }
-      recordingDuration.value = '0:00';
-    }),
-  );
 
   unsubs.push(
     ttsPlayer.on('playbackStart', () => {
       isTTSPlaying.value = true;
+      pipelineState.value = 'SPEAKING';
     }),
     ttsPlayer.on('queueEmpty', () => {
       isTTSPlaying.value = false;
+      if (pipelineState.value === 'SPEAKING') {
+        pipelineState.value = isRecording.value ? 'LISTENING' : 'IDLE';
+      }
     }),
   );
 
-  // Track pipeline state changes by polling (pipeline updates its own .state property)
-  const stateInterval = setInterval(() => {
-    if (pipelineState.value !== pipeline.state) {
-      pipelineState.value = pipeline.state;
-    }
-  }, 100);
-
-  // ── Set voice log context (thread ID for persistent logging) ──
-  const stopThreadWatch = watch(
-    () => chatController.threadId.value,
-    (id) => {
-      if (id) setVoiceLogContext(id);
-    },
-    { immediate: true },
+  // ── Listen for speak events from the agent ──
+  unsubs.push(
+    chatController.onSpeakDispatch((text, _threadId, _pipelineSequence) => {
+      if (text.trim()) {
+        ttsPlayer.enqueue(text.trim(), `speak_${Date.now()}`);
+        if (pipelineState.value === 'THINKING') {
+          pipelineState.value = 'SPEAKING';
+        }
+      }
+    }),
   );
 
-  // ── Start pipeline ──
-  pipeline.start();
+  // ── Audio-driver IPC listeners ──
+  // The audio-driver lifecycle sends recording state updates via IPC.
+  // These will be wired when the audio-driver is fully integrated.
+  const onAudioState = (_event: any, state: { running: boolean }) => {
+    isRecording.value = state.running;
+    if (state.running) {
+      pipelineState.value = 'LISTENING';
+    } else if (pipelineState.value === 'LISTENING') {
+      pipelineState.value = 'IDLE';
+    }
+  };
+
+  const onMicLevel = (_event: any, level: number) => {
+    audioLevel.value = level;
+  };
+
+  ipcRenderer.on('audio-driver:state', onAudioState);
+  ipcRenderer.on('audio-driver:mic-level', onMicLevel);
 
   // ── Actions ──
   async function toggleRecording(): Promise<void> {
-    await recorder.toggle();
+    // Delegate to audio-driver lifecycle via IPC
+    ipcRenderer.send('audio-driver:toggle');
   }
 
   function stopTTS(): void {
@@ -146,28 +118,21 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
 
   // ── Cleanup ──
   function dispose(): void {
-    stopThreadWatch();
-    clearInterval(stateInterval);
-    if (durationInterval) {
-      clearInterval(durationInterval);
-      durationInterval = null;
-    }
     for (const unsub of unsubs) unsub();
     unsubs.length = 0;
-    pipeline.dispose();
+    ipcRenderer.removeListener('audio-driver:state', onAudioState);
+    ipcRenderer.removeListener('audio-driver:mic-level', onMicLevel);
     ttsPlayer.dispose();
-    recorder.dispose();
   }
 
-  // Auto-cleanup on component unmount
   onUnmounted(dispose);
 
   return {
-    isRecording:     readonly(isRecording),
-    audioLevel:      readonly(audioLevel),
+    isRecording:       readonly(isRecording),
+    audioLevel:        readonly(audioLevel),
     recordingDuration: readonly(recordingDuration),
-    isTTSPlaying:    readonly(isTTSPlaying),
-    pipelineState:   readonly(pipelineState),
+    isTTSPlaying:      readonly(isTTSPlaying),
+    pipelineState:     readonly(pipelineState),
     voiceMode,
     toggleRecording,
     stopTTS,
