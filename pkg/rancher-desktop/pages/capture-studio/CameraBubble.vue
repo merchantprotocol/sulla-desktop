@@ -13,13 +13,13 @@
       @contextmenu.prevent="$emit('show-camera-menu', $event)"
     >
       <video
-        v-if="cameraStream"
         ref="camVideoEl"
         autoplay
         muted
-        style="width: 100%; height: 100%; object-fit: cover;"
+        playsinline
+        :style="{ width: '100%', height: '100%', objectFit: 'cover', display: cameraStream ? 'block' : 'none' }"
       ></video>
-      <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <svg v-if="!cameraStream" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
     </div>
     <div class="shape-picker">
       <button
@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
 const props = defineProps<{
   cameraStream: MediaStream | null;
@@ -66,14 +66,22 @@ const bubbleRadius = computed(() => {
   return '50%';
 });
 
-// Video element ref
+// Video element — always in DOM (display:none when no stream), so ref is always available
 const camVideoEl = ref<HTMLVideoElement | null>(null);
 
 watch(() => props.cameraStream, (stream) => {
-  if (camVideoEl.value) {
-    camVideoEl.value.srcObject = stream || null;
-  }
-});
+  // Use nextTick to ensure DOM is updated after reactivity flush
+  nextTick(() => {
+    const el = camVideoEl.value;
+    if (!el) return;
+    try {
+      el.srcObject = (stream && stream.active) ? stream : null;
+    } catch (e: any) {
+      console.warn('[CameraBubble] Failed to set srcObject:', e.message);
+      el.srcObject = null;
+    }
+  });
+}, { immediate: true });
 
 // Drag logic
 const camContainer = ref<HTMLElement | null>(null);

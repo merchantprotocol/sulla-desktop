@@ -5,8 +5,8 @@
       :class="canvasClass"
     >
       <CaptureCanvas
-        :screenStream="mediaSources.screenStream.value || null"
-        :cameraStream="mediaSources.cameraStream.value || null"
+        :screenStream="primaryStream"
+        :cameraStream="pipStream"
         :currentLayout="currentLayout"
         :primarySource="primarySource"
         :pipSource="pipSource"
@@ -22,7 +22,7 @@
       />
 
       <CameraBubble
-        :cameraStream="mediaSources.cameraStream.value || null"
+        :cameraStream="pipStream"
         :recording="recording"
         :cameraShape="cameraShape"
         :currentLayout="currentLayout"
@@ -253,6 +253,24 @@ const primarySource = computed(() => sources.find(s => s.id === assign.primary &
 const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) || null);
 
 const activeSourceCount = computed(() => sources.filter(s => s.on).length);
+
+// The stream for the primary slot — could be screen OR camera depending on assignment
+const primaryStream = computed(() => {
+  const src = primarySource.value;
+  if (!src) return null;
+  if (src.type === 'screen') return mediaSources.screenStream.value;
+  if (src.type === 'camera') return mediaSources.cameraStream.value;
+  return null;
+});
+
+// The stream for the PiP/secondary slot
+const pipStream = computed(() => {
+  const src = pipSource.value;
+  if (!src) return null;
+  if (src.type === 'screen') return mediaSources.screenStream.value;
+  if (src.type === 'camera') return mediaSources.cameraStream.value;
+  return null;
+});
 
 const totalDiskDisplay = computed(() => {
   const total = recorder.bytesWritten.value + speakerCapture.bytesWritten.value;
