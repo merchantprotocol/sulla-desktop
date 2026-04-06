@@ -4,185 +4,38 @@
       class="canvas"
       :class="canvasClass"
     >
-      <!-- Screen preview -->
-      <div class="screen-preview" @contextmenu.prevent="showScreenContextMenu">
-        <video
-          v-if="mediaSources.screenStream.value"
-          ref="screenVideoEl"
-          autoplay
-          muted
-          style="width: 100%; height: 100%; object-fit: contain; border-radius: 12px;"
-        ></video>
-        <div v-else class="placeholder">
-          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          {{ primarySource?.name || 'Screen Capture' }}
-        </div>
-      </div>
+      <CaptureCanvas
+        :screenStream="mediaSources.screenStream.value"
+        :cameraStream="mediaSources.cameraStream.value"
+        :currentLayout="currentLayout"
+        :primarySource="primarySource"
+        :pipSource="pipSource"
+        :audioOnlySources="audioOnlySources"
+        ref="captureCanvasRef"
+        @show-screen-menu="showScreenContextMenu"
+      />
 
-      <!-- Side-by-side camera (shown in sidebyside layout) -->
-      <div class="sbs-camera">
-        <div class="placeholder">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          {{ pipSource?.name || 'Camera' }}
-        </div>
-      </div>
+      <TeleprompterLayout
+        ref="teleprompterRef"
+        :currentLayout="currentLayout"
+      />
 
-      <!-- Full-screen camera (shown in camonly layout) -->
-      <div class="fullscreen-camera">
-        <div class="placeholder">
-          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          {{ primarySource?.name || 'Camera Full' }}
-        </div>
-      </div>
+      <CameraBubble
+        :cameraStream="mediaSources.cameraStream.value"
+        :recording="recording"
+        :cameraShape="cameraShape"
+        :currentLayout="currentLayout"
+        :pipSource="pipSource"
+        @update:cameraShape="cameraShape = $event"
+        @swap="swapAssignments"
+        @show-camera-menu="showCameraContextMenu"
+      />
 
-      <!-- Audio-only display -->
-      <div
-        class="audio-only-display"
-        :class="{ visible: currentLayout === 'audioonly' }"
-      >
-        <div class="audio-meter-vis" ref="audioMeterVis"></div>
-        <div class="audio-meter-label">
-          <div class="source-name">{{ audioOnlySources }}</div>
-          <div>Audio only — no video sources active</div>
-        </div>
-      </div>
-
-      <!-- Teleprompter layout — immersive -->
-      <div class="teleprompter-layout">
-        <div class="tp-immersive-text">
-          <div class="tp-preview-text" ref="tpPreviewText" :style="{ fontSize: tpFontSize + 'px' }">
-            <span
-              v-for="(word, i) in tpWords"
-              :key="i"
-              class="pw"
-              :class="getTpWordClass(i)"
-              :style="getTpWordStyle(i)"
-              @click="tpCurrentIndex = i; teleprompterTracker.setCurrentIndex(i); renderTpState()"
-            >{{ word + ' ' }}</span>
-          </div>
-        </div>
-
-        <!-- Floating toolbar -->
-        <div class="tp-float-toolbar">
-          <span class="tp-tb-label">Color</span>
-          <div
-            v-for="color in tpColors"
-            :key="color"
-            class="tp-swatch"
-            :class="{ active: tpHighlightColor === color }"
-            :style="{ background: color }"
-            @click="tpHighlightColor = color"
-          ></div>
-
-          <div class="tp-tb-divider"></div>
-
-          <span class="tp-tb-label">Size</span>
-          <button class="tp-tb-btn" @click="tpFontSize = Math.max(18, tpFontSize - 2)">-</button>
-          <span class="tp-tb-val">{{ tpFontSize }}</span>
-          <button class="tp-tb-btn" @click="tpFontSize = Math.min(72, tpFontSize + 2)">+</button>
-
-          <div class="tp-tb-divider"></div>
-
-          <span class="tp-tb-label">Speed</span>
-          <input type="range" min="6" max="16" step="2" v-model.number="tpSpeed">
-          <span class="tp-tb-val">{{ tpSpeed }}</span>
-
-          <div class="tp-tb-divider"></div>
-
-          <button
-            class="tp-tb-btn"
-            :class="{ active: voiceTracking }"
-            @click="toggleVoiceTracking"
-            title="Voice tracking"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
-          </button>
-
-          <div class="tp-tb-divider"></div>
-
-          <button class="tp-tb-edit-btn" @click="tpScriptOpen = !tpScriptOpen">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-            Edit Script
-          </button>
-        </div>
-
-        <!-- Script editor overlay -->
-        <div class="tp-script-overlay" :class="{ open: tpScriptOpen }">
-          <div class="tp-overlay-header">
-            Edit Script
-            <button class="tp-overlay-close" @click="tpScriptOpen = false">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-          </div>
-          <div class="tp-overlay-body">
-            <textarea
-              class="tp-textarea"
-              v-model="tpScript"
-              @input="buildTpWords"
-              placeholder="Type or paste your script..."
-            ></textarea>
-            <div class="tp-meta-row">
-              <span>{{ tpWords.length }} word{{ tpWords.length !== 1 ? 's' : '' }}</span>
-              <span>~{{ Math.ceil(tpWords.length / 150) }} min</span>
-            </div>
-            <button class="tp-file-btn" @click="($refs.tpFileInput as HTMLInputElement).click()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Load from file
-            </button>
-            <input type="file" ref="tpFileInput" accept=".txt,.md" style="display:none" @change="loadTpFile">
-          </div>
-        </div>
-      </div>
-
-      <!-- Camera bubble -->
-      <div
-        class="cam-container"
-        ref="camContainer"
-        v-show="currentLayout === 'pip' && pipSource"
-        @mousedown="startDrag"
-      >
-        <div
-          class="cam-bubble"
-          :class="{ recording: recording, hidden: cameraShape === 'hidden' }"
-          :style="{ borderRadius: bubbleRadius }"
-          @dblclick="swapAssignments"
-          @contextmenu.prevent="showCameraContextMenu"
-        >
-          <video
-            v-if="mediaSources.cameraStream.value"
-            ref="camVideoEl"
-            autoplay
-            muted
-            style="width: 100%; height: 100%; object-fit: cover;"
-          ></video>
-          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        </div>
-        <div class="shape-picker">
-          <button
-            v-for="shape in shapes"
-            :key="shape.id"
-            class="shape-btn"
-            :class="{ active: cameraShape === shape.id }"
-            @click.stop="cameraShape = shape.id"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="shape.icon"></svg>
-          </button>
-        </div>
-      </div>
-
-      <!-- Layout bar -->
-      <div class="layout-bar">
-        <button
-          v-for="layout in layouts"
-          :key="layout.id"
-          class="layout-btn"
-          :class="{ active: currentLayout === layout.id }"
-          @click="selectLayout(layout.id)"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="layout.icon"></svg>
-          <span class="tip">{{ layout.tip }}</span>
-        </button>
-      </div>
+      <LayoutBar
+        :currentLayout="currentLayout"
+        :layouts="layouts"
+        @select-layout="selectLayout"
+      />
 
       <!-- Info badges -->
       <div class="info-badges">
@@ -191,191 +44,53 @@
         <div class="info-badge">1920x1080</div>
       </div>
 
-      <!-- Floating controls -->
-      <div class="float-controls" :class="{ 'tp-hidden': currentLayout === 'teleprompter' }">
-        <!-- Default sources -->
-        <button
-          v-for="src in builtinSources"
-          :key="src.id"
-          class="src-toggle"
-          :class="{ on: src.on, off: !src.on, recording: recording && src.on }"
-          :title="src.name"
-          @click="toggleSrc(src)"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="iconMap[src.type]"></svg>
-          <div v-if="src.on" class="active-dot"></div>
-          <div v-if="src.type === 'mic'" class="mic-ring"></div>
-          <div v-if="src.on && src.isVideo && assign.primary === src.id" class="role-indicator primary-role">P</div>
-          <div v-else-if="src.on && src.isVideo && assign.pip === src.id && (currentLayout === 'pip' || currentLayout === 'sidebyside')" class="role-indicator pip-role">2</div>
-        </button>
-
-        <!-- Custom sources -->
-        <button
-          v-for="src in customSources"
-          :key="src.id"
-          class="src-toggle custom"
-          :class="{ on: src.on, off: !src.on }"
-          :title="src.name"
-          @click="toggleSrc(src)"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="iconMap[src.type] || iconMap.mic"></svg>
-          <div v-if="src.on" class="active-dot"></div>
-          <div v-if="src.on && src.isVideo && assign.primary === src.id" class="role-indicator primary-role">P</div>
-          <div v-else-if="src.on && src.isVideo && assign.pip === src.id && (currentLayout === 'pip' || currentLayout === 'sidebyside')" class="role-indicator pip-role">2</div>
-        </button>
-
-        <!-- Add source -->
-        <button class="add-src-btn" @click="addPopupOpen = true" title="Add source">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </button>
-
-        <div class="fc-divider"></div>
-
-        <!-- Prompter toggle -->
-        <button
-          class="prompter-toggle"
-          :class="{ active: prompterEnabled }"
-          @click="prompterEnabled = !prompterEnabled"
-          title="Teleprompter"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          <div class="active-dot"></div>
-        </button>
-
-        <!-- Track panel toggle -->
-        <button
-          class="track-toggle-btn"
-          :class="{ active: tracksOpen }"
-          @click="tracksOpen = !tracksOpen"
-          title="Track lanes"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="8" cy="6" r="2" fill="currentColor"/><circle cx="16" cy="12" r="2" fill="currentColor"/><circle cx="10" cy="18" r="2" fill="currentColor"/></svg>
-        </button>
-
-        <!-- Screenshot -->
-        <button class="screenshot-btn" @click="doScreenshot" title="Screenshot">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-        </button>
-
-        <div class="fc-divider"></div>
-
-        <span class="fc-timer" :class="{ visible: recording }">{{ timerDisplay }}</span>
-        <button
-          class="record-pill"
-          :class="{ idle: !recording, active: recording }"
-          @click="toggleRecord"
-        >
-          <div class="dot"></div>
-          <span>{{ recording ? 'Stop' : 'Record' }}</span>
-        </button>
-      </div>
+      <FloatingControls
+        :sources="sources"
+        :builtinSources="builtinSources"
+        :customSources="customSources"
+        :recording="recording"
+        :timerDisplay="timerDisplay"
+        :prompterEnabled="prompterEnabled"
+        :tracksOpen="tracksOpen"
+        :currentLayout="currentLayout"
+        :assign="assign"
+        :iconMap="iconMap"
+        @toggle-src="toggleSrc"
+        @toggle-prompter="prompterEnabled = !prompterEnabled"
+        @toggle-tracks="tracksOpen = !tracksOpen"
+        @screenshot="doScreenshot"
+        @toggle-record="toggleRecord"
+        @add-source="addPopupOpen = true"
+      />
     </div>
 
-    <!-- Track panel -->
-    <div class="track-panel" :class="{ open: tracksOpen }">
-      <div class="track-panel-header">
-        Tracks
-        <div class="spacer"></div>
-        <span class="disk-info">Disk: {{ recorder.diskDisplay }}</span>
-      </div>
-      <div class="track-lanes">
-        <div v-for="src in sources" :key="src.id" class="track-lane">
-          <div class="track-color" :class="colorMap[src.type] || 'custom'"></div>
-          <div class="track-icon" :style="{ color: src.on ? 'var(--text-muted)' : 'var(--text-dim)' }">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="iconMap[src.type] || iconMap.mic"></svg>
-          </div>
-          <span class="track-name" :style="{ opacity: src.on ? 1 : 0.4 }">{{ src.name }}</span>
-          <div class="track-wave">
-            <div class="bars">
-              <div
-                v-for="j in 100"
-                :key="j"
-                class="b"
-                :style="{
-                  background: waveColor(src.type),
-                  height: getTrackBarHeight(src, j - 1) + 'px',
-                }"
-              ></div>
-            </div>
-            <div v-if="recording" class="playhead"></div>
-          </div>
-          <span class="track-status">{{ src.on ? src.status : 'off' }}</span>
-          <button
-            class="track-mute"
-            :class="{ muted: !src.on }"
-            @click="toggleSrc(src)"
-          >M</button>
-          <button
-            v-if="!src.builtin"
-            class="track-remove"
-            @click="removeSource(src.id)"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-      </div>
-    </div>
+    <TrackPanel
+      :sources="sources"
+      :tracksOpen="tracksOpen"
+      :recording="recording"
+      :waveformData="waveformData"
+      :colorMap="colorMap"
+      :iconMap="iconMap"
+      :diskDisplay="recorder.diskDisplay"
+      @toggle-src="toggleSrc"
+      @remove-source="removeSource"
+    />
 
-    <!-- Add source popup -->
-    <div class="add-popup-overlay" :class="{ open: addPopupOpen }">
-      <div class="add-popup">
-        <div class="popup-header">
-          <h3>{{ addStep === 'type' ? 'Add Source' : 'Choose ' + (selectedAddType ? selectedAddType.charAt(0).toUpperCase() + selectedAddType.slice(1) : '') }}</h3>
-          <button class="popup-close" @click="addPopupOpen = false">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
+    <AddSourceDialog
+      :visible="addPopupOpen"
+      :deviceOptions="deviceOptions"
+      @close="addPopupOpen = false"
+      @add-source="confirmAdd"
+    />
 
-        <!-- Step 1: type -->
-        <div v-if="addStep === 'type'" class="type-grid">
-          <div
-            v-for="t in sourceTypes"
-            :key="t.id"
-            class="type-card"
-            @click="selectAddType(t.id)"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" v-html="t.icon"></svg>
-            <span>{{ t.label }}</span>
-          </div>
-        </div>
-
-        <!-- Step 2: device -->
-        <div v-if="addStep === 'device'" class="device-step visible">
-          <label>{{ addDeviceLabel }}</label>
-          <select class="device-select" v-model="selectedDevice">
-            <option v-for="d in deviceOptions[selectedAddType] || []" :key="d" :value="d">{{ d }}</option>
-          </select>
-          <label>Label (optional)</label>
-          <input class="device-label-input" v-model="sourceLabel" :placeholder="selectedAddType === 'system' ? 'e.g. System' : 'e.g. Guest ' + (selectedAddType || '')" />
-        </div>
-
-        <div v-if="addStep === 'device'" class="popup-actions">
-          <button class="popup-btn secondary" @click="addStep = 'type'">Back</button>
-          <button class="popup-btn primary" @click="confirmAdd">Add Source</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Context menu -->
-    <div
-      v-if="ctxMenu.visible"
-      class="ctx-menu"
-      :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
-      @click="ctxMenu.visible = false"
-    >
-      <div class="ctx-menu-header">{{ ctxMenu.title }}</div>
-      <button
-        v-for="item in ctxMenu.items"
-        :key="item.id"
-        class="ctx-menu-item"
-        :class="{ active: item.active }"
-        @click="item.action()"
-      >
-        <img v-if="item.thumbnail" :src="item.thumbnail" class="ctx-menu-thumb" />
-        {{ item.label }}
-      </button>
-    </div>
-    <div v-if="ctxMenu.visible" class="ctx-menu-backdrop" @click="ctxMenu.visible = false"></div>
+    <ContextMenu
+      :visible="ctxMenu.visible"
+      :x="ctxMenu.x"
+      :y="ctxMenu.y"
+      :title="ctxMenu.title"
+      :items="ctxMenu.items"
+      @close="ctxMenu.visible = false"
+    />
 
     <!-- Flash overlay -->
     <div class="flash-overlay" :class="{ flash: flashActive }"></div>
@@ -389,7 +104,15 @@ import { createMicInstance, listAudioDevices, type MicInstance } from './capture
 import { useMediaSources } from './capture-studio/composables/useMediaSources';
 import { useRecorder } from './capture-studio/composables/useRecorder';
 import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-studio/composables/useWaveform';
-import { useTeleprompterTracking } from './capture-studio/composables/useTeleprompterTracking';
+
+import ContextMenu from './capture-studio/ContextMenu.vue';
+import LayoutBar from './capture-studio/LayoutBar.vue';
+import CameraBubble from './capture-studio/CameraBubble.vue';
+import FloatingControls from './capture-studio/FloatingControls.vue';
+import TrackPanel from './capture-studio/TrackPanel.vue';
+import TeleprompterLayout from './capture-studio/TeleprompterLayout.vue';
+import AddSourceDialog from './capture-studio/AddSourceDialog.vue';
+import CaptureCanvas from './capture-studio/CaptureCanvas.vue';
 
 // ─── Composables ───
 const audioDriver = useAudioDriver();
@@ -412,10 +135,6 @@ const cameraShape = ref('circle');
 const prompterEnabled = ref(false);
 const flashActive = ref(false);
 const addPopupOpen = ref(false);
-const addStep = ref<'type' | 'device'>('type');
-const selectedAddType = ref<string | null>(null);
-const selectedDevice = ref('');
-const sourceLabel = ref('');
 let sourceCounter = 0;
 
 const assign = reactive({ primary: 'screen', pip: 'cam' });
@@ -449,17 +168,6 @@ const iconMap: Record<string, string> = {
   system: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>',
 };
 
-const waveColorMap: Record<string, string> = {
-  screen: '#58a6ff',
-  camera: '#5096b3',
-  mic: '#3fb950',
-  system: '#e3b341',
-};
-
-function waveColor(type: string) {
-  return waveColorMap[type] || '#b392f0';
-}
-
 const deviceOptions: Record<string, string[]> = {
   screen: ['Entire Screen', 'Custom Region...', 'Screen 1 — Built-in Retina', 'Screen 2 — S27E590', 'VS Code', 'Chrome', 'Slack', 'Terminal'],
   camera: ['FaceTime HD Camera', 'Continuity Camera — iPhone', 'Logitech C920'],
@@ -475,28 +183,7 @@ const layouts = [
   { id: 'teleprompter', tip: 'Teleprompter', icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>' },
 ];
 
-const shapes = [
-  { id: 'circle', icon: '<circle cx="12" cy="12" r="10"/>' },
-  { id: 'rect', icon: '<rect x="3" y="3" width="18" height="18" rx="2"/>' },
-  { id: 'rounded', icon: '<rect x="3" y="3" width="18" height="18" rx="6"/>' },
-  { id: 'hidden', icon: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>' },
-];
-
-const sourceTypes = [
-  { id: 'screen', label: 'Screen / Window', icon: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>' },
-  { id: 'camera', label: 'Camera', icon: '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>' },
-  { id: 'mic', label: 'Microphone', icon: '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/>' },
-  { id: 'system', label: 'System Audio', icon: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>' },
-];
-
 // ─── Computed ───
-const bubbleRadius = computed(() => {
-  if (cameraShape.value === 'circle') return '50%';
-  if (cameraShape.value === 'rect') return '8px';
-  if (cameraShape.value === 'rounded') return '24px';
-  return '50%';
-});
-
 const canvasClass = computed(() => {
   if (currentLayout.value === 'pip') return '';
   return 'layout-' + currentLayout.value;
@@ -517,12 +204,9 @@ const timerDisplay = computed(() => {
   return m + ':' + s;
 });
 
-const addDeviceLabel = computed(() => {
-  if (selectedAddType.value === 'screen') return 'Screen or window';
-  if (selectedAddType.value === 'camera') return 'Camera device';
-  if (selectedAddType.value === 'mic') return 'Microphone device';
-  return 'Audio source';
-});
+// ─── Template refs for child components ───
+const teleprompterRef = ref<InstanceType<typeof TeleprompterLayout> | null>(null);
+const captureCanvasRef = ref<InstanceType<typeof CaptureCanvas> | null>(null);
 
 // ─── Auto-assign: pick best layout when sources change ───
 function autoAssign() {
@@ -603,16 +287,9 @@ function selectLayout(layout: string) {
   currentLayout.value = layout;
 
   if (layout === 'teleprompter') {
-    buildTpWords();
-    if (!voiceTracking.value) {
-      startTpScroll();
-    }
+    teleprompterRef.value?.activate();
   } else {
-    stopTpScroll();
-    if (voiceTracking.value) {
-      voiceTracking.value = false;
-      teleprompterTracker.stopTracking();
-    }
+    teleprompterRef.value?.deactivate();
   }
 }
 
@@ -673,28 +350,18 @@ function doScreenshot() {
   setTimeout(() => { flashActive.value = false; }, 120);
 }
 
-// ─── Add source popup ───
-function selectAddType(type: string) {
-  selectedAddType.value = type;
-  selectedDevice.value = (deviceOptions[type] || [])[0] || '';
-  sourceLabel.value = '';
-  addStep.value = 'device';
-}
-
-function confirmAdd() {
-  if (!selectedAddType.value) return;
+// ─── Add source (from dialog) ───
+function confirmAdd(payload: { type: string; deviceId: string; label: string }) {
   sourceCounter++;
-  const device = selectedDevice.value;
-  const label = sourceLabel.value || device.split(' — ')[0].split('(')[0].trim();
   const id = 'custom_' + sourceCounter;
-  const isVideo = selectedAddType.value === 'screen' || selectedAddType.value === 'camera';
+  const isVideo = payload.type === 'screen' || payload.type === 'camera';
 
   const newSrc: Source = {
     id,
-    type: selectedAddType.value,
-    name: label,
-    color: colorMap[selectedAddType.value] || 'custom',
-    status: selectedAddType.value === 'screen' ? '1080p' : selectedAddType.value === 'camera' ? '720p' : '-18 dB',
+    type: payload.type,
+    name: payload.label,
+    color: colorMap[payload.type] || 'custom',
+    status: payload.type === 'screen' ? '1080p' : payload.type === 'camera' ? '720p' : '-18 dB',
     builtin: false,
     on: true,
     isVideo,
@@ -702,10 +369,10 @@ function confirmAdd() {
   sources.push(newSrc);
 
   // Create mic instance for new mic sources
-  if (selectedAddType.value === 'mic') {
+  if (payload.type === 'mic') {
     const mic = createMicInstance();
     micInstances[id] = mic;
-    mic.start(selectedDevice.value || undefined);
+    mic.start(payload.deviceId || undefined);
   }
 
   if (isVideo) {
@@ -716,8 +383,6 @@ function confirmAdd() {
   }
 
   addPopupOpen.value = false;
-  addStep.value = 'type';
-  selectedAddType.value = null;
 }
 
 function removeSource(id: string) {
@@ -732,7 +397,6 @@ function removeSource(id: string) {
 }
 
 // ─── Audio meter animation (real data) ───
-const audioMeterVis = ref<HTMLElement | null>(null);
 let meterAnimId: number | null = null;
 
 watch(() => currentLayout.value, (layout) => {
@@ -745,7 +409,7 @@ watch(() => currentLayout.value, (layout) => {
 
 function startAudioMeter() {
   nextTick(() => {
-    const container = audioMeterVis.value;
+    const container = captureCanvasRef.value?.audioMeterVisRef;
     if (!container) return;
     if (container.children.length === 0) {
       const colors = ['var(--success)', 'var(--accent)', 'var(--info)', 'var(--success)'];
@@ -868,197 +532,7 @@ async function showCameraContextMenu(e: MouseEvent) {
   }
 }
 
-// ─── Drag bubble ───
-const camContainer = ref<HTMLElement | null>(null);
-let dragging = false;
-let dragStartX = 0;
-let dragStartY = 0;
-let dragOrigX = 0;
-let dragOrigY = 0;
-
-function startDrag(e: MouseEvent) {
-  if ((e.target as HTMLElement).closest('.shape-btn')) return;
-  const el = camContainer.value;
-  if (!el) return;
-  dragging = true;
-  el.classList.add('dragging');
-  const rect = el.getBoundingClientRect();
-  dragStartX = e.clientX;
-  dragStartY = e.clientY;
-  dragOrigX = rect.left;
-  dragOrigY = rect.top;
-  el.style.right = 'auto';
-  el.style.bottom = 'auto';
-  el.style.left = dragOrigX + 'px';
-  el.style.top = dragOrigY + 'px';
-  e.preventDefault();
-}
-
-function onMouseMove(e: MouseEvent) {
-  if (!dragging) return;
-  const el = camContainer.value;
-  if (!el) return;
-  const dx = e.clientX - dragStartX;
-  const dy = e.clientY - dragStartY;
-  el.style.left = (dragOrigX + dx) + 'px';
-  el.style.top = (dragOrigY + dy) + 'px';
-}
-
-function onMouseUp() {
-  if (!dragging) return;
-  dragging = false;
-  camContainer.value?.classList.remove('dragging');
-}
-
-// ─── Teleprompter ───
-const tpScript = ref(`Welcome everyone to today's product demo. I'm really excited to show you what we've been building over the past few weeks. The capture studio is a new feature inside Sulla Desktop that lets you record your screen, your webcam, your microphone, and your system audio all at the same time as completely separate streams. This means you can edit each one independently later. Think of it like having a multi-camera setup but right from your laptop. The key innovation here is the teleprompter. Instead of looking off to the side to read your notes, the text appears right near your camera so you maintain eye contact with your audience. You can adjust the color of the highlighted text, change the font size, and control the scroll speed. It even supports voice-tracked scrolling where it listens to what you're saying and automatically advances the script to match your pace. Let me show you how the layout system works. You can switch between picture-in-picture mode where your camera appears as a small bubble over your screen recording, side-by-side mode for interviews or pair programming, screen-only mode when you just want to show your desktop, and camera-only mode for direct-to-camera content like this. Each video source can be toggled on and off independently. You can add new sources like a phone camera for vertical content or a second screen capture. The system automatically picks the best layout based on which sources are active. If you turn off your screen and only have your camera running it switches to full-screen camera automatically. Now let me walk you through the recording workflow. You hit the record button and all active sources start capturing simultaneously. The audio driver handles microphone and system audio capture separately so you get clean isolated tracks. During recording you can see the track lanes panel which shows waveforms for each active source. After you stop recording everything gets saved as separate files in a capture session folder with a manifest that describes all the timing relationships between the streams. From there you can hand it off to the Remotion editor for composition and export. Questions? Drop them in the chat and I'll answer them at the end.`);
-const tpWords = ref<string[]>([]);
-const tpCurrentIndex = ref(0);
-let tpScrollInterval: ReturnType<typeof setInterval> | null = null;
-const tpSpeed = ref(6);
-const tpHighlightColor = ref('#e6edf3');
-const tpFontSize = ref(42);
-const tpScriptOpen = ref(false);
-let tpPaused = false;
-const voiceTracking = ref(false);
-
-// Voice tracking composable — updates tpCurrentIndex when speech matches script
-const teleprompterTracker = useTeleprompterTracking((index: number) => {
-  tpCurrentIndex.value = index;
-  renderTpState();
-});
-
-const tpColors = ['#e6edf3', '#3fb950', '#58a6ff', '#e3b341', '#f0883e', '#f85149'];
-
-const tpPreviewText = ref<HTMLElement | null>(null);
-
-function buildTpWords() {
-  const text = tpScript.value.trim();
-  tpWords.value = text ? text.split(/\s+/) : [];
-  tpCurrentIndex.value = 0;
-}
-
-function getTpWordClass(i: number) {
-  const idx = tpCurrentIndex.value;
-  if (i < idx - 2) return 'spoken';
-  if (i < idx) return 'spoken';
-  if (i === idx) return 'current';
-  if (i <= idx + 3) return 'near';
-  if (i <= idx + 20) return 'upcoming';
-  return 'far';
-}
-
-function getTpWordStyle(i: number) {
-  const idx = tpCurrentIndex.value;
-  if (i < idx && i >= idx - 2) return { opacity: 0.2 };
-  if (i === idx) return { color: tpHighlightColor.value };
-  return {};
-}
-
-function renderTpState() {
-  nextTick(() => {
-    const el = tpPreviewText.value;
-    if (!el) return;
-    const spans = el.querySelectorAll('.pw');
-    const currentSpan = spans[tpCurrentIndex.value] as HTMLElement | undefined;
-    if (currentSpan) {
-      const container = el.parentElement;
-      if (!container) return;
-      const containerH = container.clientHeight;
-      const targetY = 10;
-      const wordTop = currentSpan.offsetTop;
-      const offset = wordTop - targetY;
-      const maxScroll = el.scrollHeight - containerH;
-      const clampedOffset = Math.min(Math.max(0, offset), Math.max(0, maxScroll));
-      el.style.transform = 'translateY(' + (-clampedOffset) + 'px)';
-      el.style.transition = 'transform 0.4s ease';
-    }
-  });
-}
-
-function startTpScroll() {
-  if (tpScrollInterval) return;
-  tpPaused = false;
-  const msPerWord = 1400 - (tpSpeed.value * 70);
-  tpScrollInterval = setInterval(() => {
-    if (tpCurrentIndex.value < tpWords.value.length - 1) {
-      tpCurrentIndex.value++;
-      renderTpState();
-    } else {
-      stopTpScroll();
-    }
-  }, msPerWord);
-}
-
-function stopTpScroll() {
-  if (tpScrollInterval) {
-    clearInterval(tpScrollInterval);
-    tpScrollInterval = null;
-    tpPaused = true;
-  }
-}
-
-watch(tpSpeed, () => {
-  if (tpScrollInterval) {
-    stopTpScroll();
-    startTpScroll();
-  }
-});
-
-function loadTpFile(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    tpScript.value = (e.target?.result as string) || '';
-    buildTpWords();
-    if (currentLayout.value === 'teleprompter' && !tpPaused) {
-      stopTpScroll();
-      startTpScroll();
-    }
-  };
-  reader.readAsText(file);
-}
-
-// ─── Voice tracking toggle ───
-function toggleVoiceTracking() {
-  voiceTracking.value = !voiceTracking.value;
-
-  if (voiceTracking.value) {
-    // Stop timer-based scrolling, start voice tracking
-    stopTpScroll();
-    teleprompterTracker.startTracking(tpWords.value, tpCurrentIndex.value);
-  } else {
-    // Stop voice tracking, resume timer-based scrolling
-    teleprompterTracker.stopTracking();
-    if (currentLayout.value === 'teleprompter') {
-      startTpScroll();
-    }
-  }
-}
-
-// ─── Keyboard: space pause/resume, arrows navigate ───
-function onKeyDown(e: KeyboardEvent) {
-  if (currentLayout.value !== 'teleprompter') return;
-  if ((e.target as HTMLElement).tagName === 'TEXTAREA' || (e.target as HTMLElement).tagName === 'INPUT') return;
-
-  if (e.code === 'Space') {
-    e.preventDefault();
-    if (tpScrollInterval) stopTpScroll();
-    else startTpScroll();
-  } else if (e.code === 'ArrowDown' || e.code === 'ArrowRight') {
-    e.preventDefault();
-    if (tpCurrentIndex.value < tpWords.value.length - 1) { tpCurrentIndex.value++; renderTpState(); }
-  } else if (e.code === 'ArrowUp' || e.code === 'ArrowLeft') {
-    e.preventDefault();
-    if (tpCurrentIndex.value > 0) { tpCurrentIndex.value--; renderTpState(); }
-  }
-}
-
 // ─── Track panel waveform (continuous animation) ───
-// Reactive tick counter drives re-renders. Pre-computed bar data avoids
-// reading AnalyserNode during render (which doesn't trigger reactivity).
 const waveformData = reactive<Record<string, number[]>>({});
 let waveformAnimId: number | null = null;
 
@@ -1123,35 +597,8 @@ function stopWaveformLoop() {
   }
 }
 
-function getTrackBarHeight(src: Source, barIndex: number): number {
-  const data = waveformData[src.id];
-  if (data && data.length > barIndex) return data[barIndex];
-  return 2;
-}
-
-// ─── Video element refs ───
-const screenVideoEl = ref<HTMLVideoElement | null>(null);
-const camVideoEl = ref<HTMLVideoElement | null>(null);
-
-// Bind video streams to <video> elements
-watch(() => mediaSources.screenStream.value, (stream) => {
-  if (screenVideoEl.value) {
-    screenVideoEl.value.srcObject = stream || null;
-  }
-});
-
-watch(() => mediaSources.cameraStream.value, (stream) => {
-  if (camVideoEl.value) {
-    camVideoEl.value.srcObject = stream || null;
-  }
-});
-
 // ─── Lifecycle ───
 onMounted(async () => {
-  document.addEventListener('mousemove', onMouseMove);
-  document.addEventListener('mouseup', onMouseUp);
-  document.addEventListener('keydown', onKeyDown);
-  buildTpWords();
   startWaveformLoop();
 
   // Populate device dropdowns with real devices
@@ -1176,18 +623,11 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  document.removeEventListener('mousemove', onMouseMove);
-  document.removeEventListener('mouseup', onMouseUp);
-  document.removeEventListener('keydown', onKeyDown);
   if (timerInterval) clearInterval(timerInterval);
-  stopTpScroll();
   stopAudioMeter();
 
   // Stop waveform animation
   stopWaveformLoop();
-
-  // Stop voice tracking
-  teleprompterTracker.stopTracking();
 
   // Stop all mic instances
   for (const mic of Object.values(micInstances)) {
