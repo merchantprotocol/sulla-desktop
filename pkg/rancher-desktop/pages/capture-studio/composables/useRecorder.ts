@@ -39,11 +39,21 @@ function pickMimeType(kind: 'video' | 'audio'): string {
   return 'audio/webm';
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
 export function useRecorder() {
   const isRecording = ref(false);
   const sessionId = ref('');
   const elapsedSeconds = ref(0);
   const bytesWritten = ref(0);
+  const diskDisplay = ref('0 B');
+  const error = ref<string | null>(null);
 
   let sessionDir = '';
   let entries: StreamEntry[] = [];
@@ -60,14 +70,23 @@ export function useRecorder() {
   }>): string {
     if (isRecording.value) stopSession();
 
+    error.value = null;
     const id = randomUUID().slice(0, 13);
     sessionId.value = id;
     sessionDir = path.join(getCapturesDir(), id);
-    fs.mkdirSync(sessionDir, { recursive: true });
+
+    try {
+      fs.mkdirSync(sessionDir, { recursive: true });
+    } catch (e: any) {
+      error.value = `Failed to create capture directory: ${e.message}`;
+      console.error('[useRecorder]', error.value);
+      return '';
+    }
 
     sessionStartTime = performance.now();
     entries = [];
     bytesWritten.value = 0;
+    diskDisplay.value = '0 B';
 
     for (const src of streams) {
       const hasVideo = src.stream.getVideoTracks().length > 0;
@@ -75,9 +94,29 @@ export function useRecorder() {
       const ext = 'webm';
       const filename = `${src.type}${src.id ? `-${src.id}` : ''}.${ext}`;
       const filePath = path.join(sessionDir, filename);
-      const ws = fs.createWriteStream(filePath);
 
-      const recorder = new MediaRecorder(src.stream, { mimeType });
+      let ws: any;
+      try {
+        ws = fs.createWriteStream(filePath);
+      } catch (e: any) {
+        console.error(`[useRecorder] Failed to create write stream for ${filename}:`, e.message);
+        continue;
+      }
+
+      ws.on('error', (e: any) => {
+        console.error(`[useRecorder] Write stream error for ${filename}:`, e.message);
+        error.value = `Disk write error: ${e.message}`;
+      });
+
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(src.stream, { mimeType });
+      } catch (e: any) {
+        console.error(`[useRecorder] Failed to create MediaRecorder for ${src.type}:`, e.message);
+        ws.end();
+        continue;
+      }
+
       const startOffset = performance.now() - sessionStartTime;
 
       const entry: StreamEntry = {
@@ -93,15 +132,30 @@ export function useRecorder() {
 
       recorder.ondataavailable = async (e: BlobEvent) => {
         if (e.data.size > 0) {
-          const buffer = Buffer.from(await e.data.arrayBuffer());
-          ws.write(buffer);
-          entry.bytesWritten += buffer.length;
-          bytesWritten.value = entries.reduce((sum, en) => sum + en.bytesWritten, 0);
+          try {
+            const buffer = Buffer.from(await e.data.arrayBuffer());
+            ws.write(buffer);
+            entry.bytesWritten += buffer.length;
+            bytesWritten.value = entries.reduce((sum, en) => sum + en.bytesWritten, 0);
+            diskDisplay.value = formatBytes(bytesWritten.value);
+          } catch (err: any) {
+            console.error(`[useRecorder] Chunk write failed for ${filename}:`, err.message);
+          }
         }
+      };
+
+      recorder.onerror = (e: any) => {
+        console.error(`[useRecorder] MediaRecorder error for ${src.type}:`, e.error?.message || e);
+        error.value = `Recording error on ${src.type}: ${e.error?.message || 'unknown'}`;
       };
 
       recorder.start(1000); // 1-second chunks
       entries.push(entry);
+    }
+
+    if (entries.length === 0) {
+      error.value = 'No streams could be recorded';
+      return '';
     }
 
     isRecording.value = true;
@@ -112,15 +166,40 @@ export function useRecorder() {
   }
 
   /**
-   * Stop all recorders, finalize files, write manifest.
+   * Stop all recorders, wait for final chunks, then write manifest.
    */
-  function stopSession(): string {
+  async function stopSession(): Promise<string> {
     if (!isRecording.value) return '';
 
-    for (const entry of entries) {
-      if (entry.recorder.state !== 'inactive') {
-        entry.recorder.stop();
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    isRecording.value = false;
+
+    // Stop all recorders and wait for their final ondataavailable to fire
+    const stopPromises = entries.map(entry => new Promise<void>((resolve) => {
+      if (entry.recorder.state === 'inactive') {
+        resolve();
+        return;
       }
+
+      const origHandler = entry.recorder.ondataavailable;
+      entry.recorder.ondataavailable = async (e: BlobEvent) => {
+        // Process the final chunk
+        if (origHandler) await (origHandler as any)(e);
+        resolve();
+      };
+
+      entry.recorder.onstop = () => {
+        // Safety: resolve if ondataavailable never fires (empty final chunk)
+        setTimeout(resolve, 100);
+      };
+
+      entry.recorder.stop();
+    }));
+
+    await Promise.all(stopPromises);
+
+    // Close all write streams
+    for (const entry of entries) {
       entry.writeStream.end();
     }
 
@@ -129,6 +208,7 @@ export function useRecorder() {
       sessionId: sessionId.value,
       startedAt: new Date(Date.now() - elapsedSeconds.value * 1000).toISOString(),
       duration: elapsedSeconds.value,
+      totalBytes: bytesWritten.value,
       streams: entries.map(e => ({
         id: e.id,
         type: e.type,
@@ -138,13 +218,15 @@ export function useRecorder() {
       })),
     };
 
-    fs.writeFileSync(
-      path.join(sessionDir, 'manifest.json'),
-      JSON.stringify(manifest, null, 2),
-    );
+    try {
+      fs.writeFileSync(
+        path.join(sessionDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+      );
+    } catch (e: any) {
+      console.error('[useRecorder] Failed to write manifest:', e.message);
+    }
 
-    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-    isRecording.value = false;
     const returnId = sessionId.value;
     entries = [];
 
@@ -160,6 +242,8 @@ export function useRecorder() {
     sessionId,
     elapsedSeconds,
     bytesWritten,
+    diskDisplay,
+    error,
     startSession,
     stopSession,
   };

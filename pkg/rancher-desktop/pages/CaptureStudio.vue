@@ -264,7 +264,7 @@
       <div class="track-panel-header">
         Tracks
         <div class="spacer"></div>
-        <span class="disk-info">Disk: 0 B</span>
+        <span class="disk-info">Disk: {{ recorder.diskDisplay }}</span>
       </div>
       <div class="track-lanes">
         <div v-for="src in sources" :key="src.id" class="track-lane">
@@ -398,9 +398,9 @@ interface Source {
 }
 
 const sources = reactive<Source[]>([
-  { id: 'screen', type: 'screen', name: 'Screen', color: 'screen', status: '1080p', builtin: true, on: true, isVideo: true },
-  { id: 'cam', type: 'camera', name: 'Mac Camera', color: 'cam', status: '720p', builtin: true, on: true, isVideo: true },
-  { id: 'mic', type: 'mic', name: 'Microphone', color: 'mic', status: '-12 dB', builtin: true, on: true, isVideo: false },
+  { id: 'screen', type: 'screen', name: 'Screen', color: 'screen', status: '—', builtin: true, on: false, isVideo: true },
+  { id: 'cam', type: 'camera', name: 'Camera', color: 'cam', status: '—', builtin: true, on: false, isVideo: true },
+  { id: 'mic', type: 'mic', name: 'Microphone', color: 'mic', status: '—', builtin: true, on: false, isVideo: false },
 ]);
 
 const builtinSources = computed(() => sources.filter(s => s.builtin));
@@ -586,7 +586,7 @@ function swapAssignments() {
 }
 
 // ─── Record (wired to disk writer) ───
-function toggleRecord() {
+async function toggleRecord() {
   if (!recording.value) {
     // Gather active streams for recording
     const streams: Array<{ id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }> = [];
@@ -621,7 +621,7 @@ function toggleRecord() {
     seconds.value = 0;
     timerInterval = setInterval(() => { seconds.value++; }, 1000);
   } else {
-    recorder.stopSession();
+    await recorder.stopSession();
     recording.value = false;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   }

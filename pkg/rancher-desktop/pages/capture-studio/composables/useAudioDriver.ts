@@ -8,7 +8,7 @@
  * Reference: main/trayPanel/renderer/bridge.js
  */
 
-import { ref, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 
 const { ipcRenderer } = require('electron');
 
@@ -16,7 +16,7 @@ export function useAudioDriver() {
   const speakerLevel = ref(0);
   const speakerRunning = ref(false);
 
-  // ── IPC listeners ──
+  // ── IPC listeners (registered on mount, removed on unmount to prevent stacking) ──
 
   const onLevel = (_e: any, data: { rms: number }) => {
     speakerLevel.value = data.rms;
@@ -26,8 +26,10 @@ export function useAudioDriver() {
     speakerRunning.value = state.running;
   };
 
-  ipcRenderer.on('audio-driver:speaker-level', onLevel);
-  ipcRenderer.on('audio-driver:state', onState);
+  onMounted(() => {
+    ipcRenderer.on('audio-driver:speaker-level', onLevel);
+    ipcRenderer.on('audio-driver:state', onState);
+  });
 
   onUnmounted(() => {
     ipcRenderer.removeListener('audio-driver:speaker-level', onLevel);

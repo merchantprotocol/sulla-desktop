@@ -60,37 +60,54 @@ export function createMicInstance(): MicInstance {
   async function start(deviceId?: string) {
     if (active.value) stop();
 
-    audioCtx = new AudioContext();
+    try {
+      audioCtx = new AudioContext();
 
-    const constraints: MediaStreamConstraints = {
-      audio: deviceId
-        ? { deviceId: { exact: deviceId }, autoGainControl: false, noiseSuppression: false, echoCancellation: false }
-        : { autoGainControl: false, noiseSuppression: false, echoCancellation: false },
-    };
+      const constraints: MediaStreamConstraints = {
+        audio: deviceId
+          ? { deviceId: { exact: deviceId }, autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+          : { autoGainControl: false, noiseSuppression: false, echoCancellation: false },
+      };
 
-    const micStream = await navigator.mediaDevices.getUserMedia(constraints);
-    stream.value = micStream;
+      const micStream = await navigator.mediaDevices.getUserMedia(constraints);
+      stream.value = micStream;
 
-    const source = audioCtx.createMediaStreamSource(micStream);
-    gainNode = audioCtx.createGain();
-    gainNode.gain.value = muted ? 0 : currentGain;
+      // Auto-cleanup if the track ends externally (device disconnected, etc.)
+      micStream.getAudioTracks()[0]?.addEventListener('ended', () => {
+        console.warn('[useMicCapture] Audio track ended externally');
+        stop();
+      });
 
-    const node = audioCtx.createAnalyser();
-    node.fftSize = 512;
-    analyser.value = node;
+      const source = audioCtx.createMediaStreamSource(micStream);
+      gainNode = audioCtx.createGain();
+      gainNode.gain.value = muted ? 0 : currentGain;
 
-    source.connect(gainNode);
-    gainNode.connect(node);
+      const node = audioCtx.createAnalyser();
+      node.fftSize = 512;
+      analyser.value = node;
 
-    active.value = true;
-    poll();
+      source.connect(gainNode);
+      gainNode.connect(node);
+
+      active.value = true;
+      poll();
+    } catch (e) {
+      // Clean up partial state on failure
+      console.error('[useMicCapture] Failed to start:', e);
+      stop();
+      throw e; // re-throw so caller can handle (e.g. revert toggle)
+    }
   }
 
   function stop() {
     if (animFrameId) cancelAnimationFrame(animFrameId);
     animFrameId = null;
-    if (stream.value) stream.value.getTracks().forEach(t => t.stop());
-    if (audioCtx) audioCtx.close();
+    if (stream.value) {
+      stream.value.getTracks().forEach(t => t.stop());
+    }
+    if (audioCtx) {
+      try { audioCtx.close(); } catch { /* already closed */ }
+    }
     audioCtx = null;
     gainNode = null;
     analyser.value = null;
