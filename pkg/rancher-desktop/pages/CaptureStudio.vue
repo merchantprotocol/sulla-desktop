@@ -960,39 +960,77 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-// ─── Track panel waveform helper ───
+// ─── Track panel waveform (continuous animation) ───
+// Reactive tick counter drives re-renders. Pre-computed bar data avoids
+// reading AnalyserNode during render (which doesn't trigger reactivity).
+const waveformData = reactive<Record<string, number[]>>({});
+let waveformAnimId: number | null = null;
+
+function startWaveformLoop() {
+  if (waveformAnimId) return;
+
+  function tick() {
+    for (const src of sources) {
+      if (!src.on) {
+        waveformData[src.id] = [];
+        continue;
+      }
+
+      const bars: number[] = [];
+
+      if (src.type === 'mic') {
+        const mic = micInstances[src.id];
+        if (mic?.analyser.value) {
+          const node = mic.analyser.value;
+          const data = new Uint8Array(node.frequencyBinCount);
+          node.getByteFrequencyData(data);
+          const binSize = Math.max(1, Math.floor(data.length / 100));
+          for (let i = 0; i < 100; i++) {
+            let sum = 0;
+            for (let j = 0; j < binSize; j++) sum += data[i * binSize + j];
+            bars.push(Math.max(2, (sum / binSize / 255) * 18));
+          }
+        } else {
+          const lvl = mic?.level.value || 0;
+          for (let i = 0; i < 100; i++) {
+            bars.push(Math.max(2, lvl * 14 + 2));
+          }
+        }
+      } else if (src.type === 'system') {
+        const rms = audioDriver.speakerLevel.value;
+        for (let i = 0; i < 100; i++) {
+          if (rms > 0.001) {
+            const center = 50;
+            const dist = Math.abs(i - center) / center;
+            bars.push(Math.max(2, (1 - dist) * rms * 16 + (Math.random() - 0.5) * rms * 4));
+          } else {
+            bars.push(2);
+          }
+        }
+      } else {
+        // Video sources: small static indicator
+        for (let i = 0; i < 100; i++) bars.push(2);
+      }
+
+      waveformData[src.id] = bars;
+    }
+
+    waveformAnimId = requestAnimationFrame(tick);
+  }
+  tick();
+}
+
+function stopWaveformLoop() {
+  if (waveformAnimId) {
+    cancelAnimationFrame(waveformAnimId);
+    waveformAnimId = null;
+  }
+}
+
 function getTrackBarHeight(src: Source, barIndex: number): number {
-  if (!src.on) return 2;
-
-  // Mic: use real AnalyserNode data
-  if (src.type === 'mic' || (src.type === 'mic' && micInstances[src.id])) {
-    const mic = micInstances[src.id];
-    if (mic?.analyser.value) {
-      const node = mic.analyser.value;
-      const data = new Uint8Array(node.frequencyBinCount);
-      node.getByteFrequencyData(data);
-      const binSize = Math.floor(data.length / 100);
-      let sum = 0;
-      for (let j = 0; j < binSize; j++) sum += data[barIndex * binSize + j];
-      const avg = sum / binSize / 255;
-      return Math.max(2, avg * 18);
-    }
-    return Math.max(2, (mic?.level.value || 0) * 14 + 2);
-  }
-
-  // Speaker: use RMS level from audio driver
-  if (src.type === 'system') {
-    const rms = audioDriver.speakerLevel.value;
-    if (rms > 0.001) {
-      const center = 50;
-      const dist = Math.abs(barIndex - center) / center;
-      return Math.max(2, (1 - dist) * rms * 16 + (Math.random() - 0.5) * rms * 4);
-    }
-    return 2;
-  }
-
-  // Video sources: show small static bars when active
-  return Math.max(2, Math.random() * 4 + 2);
+  const data = waveformData[src.id];
+  if (data && data.length > barIndex) return data[barIndex];
+  return 2;
 }
 
 // ─── Video element refs ───
@@ -1018,6 +1056,7 @@ onMounted(async () => {
   document.addEventListener('mouseup', onMouseUp);
   document.addEventListener('keydown', onKeyDown);
   buildTpWords();
+  startWaveformLoop();
 
   // Populate device dropdowns with real devices
   try {
@@ -1041,6 +1080,9 @@ onUnmounted(() => {
   if (timerInterval) clearInterval(timerInterval);
   stopTpScroll();
   stopAudioMeter();
+
+  // Stop waveform animation
+  stopWaveformLoop();
 
   // Stop voice tracking
   teleprompterTracker.stopTracking();
