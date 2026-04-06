@@ -90,11 +90,14 @@ const audioMeterVisRef = ref<HTMLElement | null>(null);
 
 // Bind screen stream to video element
 watch(() => props.screenStream, (stream) => {
+  console.log('[CaptureCanvas] screenStream watcher fired:', stream ? 'stream' : 'null', stream?.active ? 'active' : 'inactive');
   nextTick(() => {
     const el = screenVideoEl.value;
+    console.log('[CaptureCanvas] screenVideoEl:', el ? 'exists' : 'null');
     if (!el) return;
     try {
-      el.srcObject = (stream && stream.active) ? stream : null;
+      el.srcObject = stream || null;
+      console.log('[CaptureCanvas] srcObject set successfully, active:', stream?.active, 'videoTracks:', stream?.getVideoTracks().length);
     } catch (e: any) {
       console.warn('[CaptureCanvas] Failed to set screen srcObject:', e.message);
       el.srcObject = null;
@@ -104,22 +107,19 @@ watch(() => props.screenStream, (stream) => {
 
 // Bind camera stream to all camera video elements
 watch(() => props.cameraStream, (stream) => {
+  console.log('[CaptureCanvas] cameraStream watcher fired:', stream ? 'stream' : 'null');
   nextTick(() => {
-    const safeStream = (stream && stream.active) ? stream : null;
-
     const sbsEl = sbsCameraVideoEl.value;
     if (sbsEl) {
-      try { sbsEl.srcObject = safeStream; } catch (e: any) {
+      try { sbsEl.srcObject = stream || null; } catch (e: any) {
         console.warn('[CaptureCanvas] Failed to set sbs camera srcObject:', e.message);
-        sbsEl.srcObject = null;
       }
     }
 
     const fullEl = fullCameraVideoEl.value;
     if (fullEl) {
-      try { fullEl.srcObject = safeStream; } catch (e: any) {
+      try { fullEl.srcObject = stream || null; } catch (e: any) {
         console.warn('[CaptureCanvas] Failed to set full camera srcObject:', e.message);
-        fullEl.srcObject = null;
       }
     }
   });

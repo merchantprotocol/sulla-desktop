@@ -70,12 +70,13 @@ const bubbleRadius = computed(() => {
 const camVideoEl = ref<HTMLVideoElement | null>(null);
 
 watch(() => props.cameraStream, (stream) => {
-  // Use nextTick to ensure DOM is updated after reactivity flush
+  console.log('[CameraBubble] cameraStream watcher fired:', stream ? 'stream' : 'null');
   nextTick(() => {
     const el = camVideoEl.value;
-    if (!el) return;
+    if (!el) { console.log('[CameraBubble] video el is null'); return; }
     try {
-      el.srcObject = (stream && stream.active) ? stream : null;
+      el.srcObject = stream || null;
+      console.log('[CameraBubble] srcObject set');
     } catch (e: any) {
       console.warn('[CameraBubble] Failed to set srcObject:', e.message);
       el.srcObject = null;

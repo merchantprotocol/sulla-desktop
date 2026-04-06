@@ -325,6 +325,7 @@ function autoAssign() {
 
 // ─── Source toggles (wired to real capture) ───
 async function toggleSrc(src: Source) {
+  console.log('[CaptureStudio] toggleSrc:', src.id, src.type, 'currently on:', src.on, '→', !src.on);
   src.on = !src.on;
 
   if (src.on) {
@@ -332,10 +333,13 @@ async function toggleSrc(src: Source) {
       if (src.type === 'screen') {
         // Check macOS permission before attempting screen capture
         const hasPermission = await checkScreenPermission();
+        console.log('[CaptureStudio] Screen permission check:', hasPermission);
         if (!hasPermission) { src.on = false; return; }
         await mediaSources.acquireScreen();
+        console.log('[CaptureStudio] Screen acquired, stream:', mediaSources.screenStream.value ? 'active' : 'null', 'tracks:', mediaSources.screenStream.value?.getVideoTracks().length);
       } else if (src.type === 'camera') {
         await mediaSources.acquireCamera();
+        console.log('[CaptureStudio] Camera acquired, stream:', mediaSources.cameraStream.value ? 'active' : 'null', 'tracks:', mediaSources.cameraStream.value?.getVideoTracks().length);
       } else if (src.type === 'mic') {
         const mic = micInstances[src.id] || createMicInstance();
         micInstances[src.id] = mic;
@@ -343,8 +347,8 @@ async function toggleSrc(src: Source) {
       } else if (src.type === 'system') {
         await audioDriver.startCapture();
       }
-    } catch (e) {
-      console.error(`[CaptureStudio] Failed to acquire ${src.type}:`, e);
+    } catch (e: any) {
+      console.error(`[CaptureStudio] Failed to acquire ${src.type}:`, e.message || e);
       src.on = false; // revert toggle on failure
     }
   } else {
@@ -360,6 +364,15 @@ async function toggleSrc(src: Source) {
   }
 
   autoAssign();
+  console.log('[CaptureStudio] After autoAssign:', {
+    layout: currentLayout.value,
+    primary: assign.primary,
+    pip: assign.pip,
+    videoSources: videoSources.value.map(s => s.id),
+    screenStream: mediaSources.screenStream.value ? 'active' : 'null',
+    cameraStream: mediaSources.cameraStream.value ? 'active' : 'null',
+    primaryStream: primaryStream.value ? 'active' : 'null',
+  });
 }
 
 // ─── Layout selection ───
