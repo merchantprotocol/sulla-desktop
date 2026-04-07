@@ -1238,6 +1238,10 @@ export class LlamaCppService {
       _isGpuBuild = detectGpuCapability();
       this._installedTag = currentTag;
       this._ready = true;
+
+      // Check for newer release in the background — update without blocking startup
+      this.checkForUpdate(currentTag).catch(err =>
+        console.warn(`${ LOG_PREFIX } Background update check failed:`, err));
       return;
     }
 
@@ -1262,6 +1266,40 @@ export class LlamaCppService {
     } catch (err) {
       console.error(`${ LOG_PREFIX } Failed to install llama.cpp:`, err);
       this._ready = false;
+    }
+  }
+
+  /**
+     * Background update check — fetches latest tag and upgrades if newer.
+     * Restarts llama-server automatically if it was running.
+     */
+  private async checkForUpdate(currentTag: string): Promise<void> {
+    const latestTag = await fetchLatestTag();
+    if (latestTag === currentTag) {
+      console.log(`${ LOG_PREFIX } Already at latest version ${ currentTag }`);
+      return;
+    }
+
+    console.log(`${ LOG_PREFIX } Update available: ${ currentTag } → ${ latestTag }. Downloading...`);
+
+    const wasRunning = this._serverRunning;
+    const activeModel = this._activeModel;
+
+    // Stop server before replacing binaries
+    if (wasRunning) {
+      await this.stopServer();
+    }
+
+    await downloadAndExtract(latestTag);
+    this._installedTag = latestTag;
+    this._ready = !!findBinary('llama-server');
+
+    console.log(`${ LOG_PREFIX } Updated to ${ latestTag }`);
+
+    // Restart server with the same model if it was running
+    if (wasRunning && activeModel && this._ready) {
+      console.log(`${ LOG_PREFIX } Restarting llama-server with model ${ activeModel }...`);
+      await this.startServer(activeModel);
     }
   }
 
