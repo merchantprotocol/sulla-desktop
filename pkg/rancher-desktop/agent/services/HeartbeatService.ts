@@ -196,8 +196,9 @@ export class HeartbeatService {
     this.recordEvent('sleep_prevention_started', 'caffeinate acquired for heartbeat execution');
 
     try {
-      const basePrompt = await SullaSettingsModel.get('heartbeatPrompt', '');
-      const fullPrompt = this.buildHeartbeatPrompt(basePrompt);
+      // System prompt is now built by SystemPromptBuilder in HeartbeatNode.
+      // The user message is just a timestamp trigger for the heartbeat cycle.
+      const fullPrompt = this.buildHeartbeatPrompt('');
 
       console.log('[HeartbeatService] Dispatching to HeartbeatGraph via GraphRegistry');
 

@@ -292,8 +292,10 @@ export default defineComponent({
     ipcRenderer.on('model-changed', this.handleModelChanged);
 
     // Load all settings from database
-    this.soulPrompt = await SullaSettingsModel.get('soulPrompt', soulPrompt);
-    this.heartbeatPrompt = await SullaSettingsModel.get('heartbeatPrompt', heartbeatPrompt);
+    // Soul and heartbeat prompts are now managed via agent config .md files.
+    // Keeping defaults for backwards compatibility with UI references.
+    this.soulPrompt = soulPrompt;
+    this.heartbeatPrompt = heartbeatPrompt;
     this.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
@@ -1049,9 +1051,8 @@ export default defineComponent({
       this.savingSettings = true;
       try {
         await this.writeExperimentalSettings();
-        // Save prompts to database
-        await SullaSettingsModel.set('soulPrompt', this.soulPrompt, 'string');
-        await SullaSettingsModel.set('heartbeatPrompt', this.heartbeatPrompt, 'string');
+        // Soul and heartbeat prompts are now managed via agent config .md files.
+        // No longer saved to database settings.
         console.log('[LM Settings] Settings saved');
       } catch (err) {
         console.error('Failed to save LM settings:', err);
@@ -1675,24 +1676,10 @@ export default defineComponent({
           </div>
 
           <div class="form-group">
-            <label class="form-label">Soul Prompt</label>
-            <textarea
-              v-model="soulPromptEditor"
-              class="soul-textarea"
-              spellcheck="false"
-            />
             <p class="setting-description">
-              The system prompt that shapes the agent's personality and behavior. Leave blank to use the built-in default.
+              Soul and heartbeat prompts are now managed via agent config files in <code>~/sulla/agents/</code>.
+              Drop a <code>soul.md</code> or <code>heartbeat.md</code> file into any agent's directory to override that section.
             </p>
-            <div class="soul-actions">
-              <button
-                class="btn role-secondary"
-                type="button"
-                @click="soulPrompt = soulPromptDefault"
-              >
-                Reset to default
-              </button>
-            </div>
           </div>
         </div>
 
@@ -1765,26 +1752,12 @@ export default defineComponent({
             </p>
           </div>
 
-          <!-- Instructions Setting -->
+          <!-- Instructions are now managed via agent config files -->
           <div class="setting-group">
-            <label class="setting-label">Heartbeat Instructions</label>
-            <textarea
-              v-model="heartbeatPromptEditor"
-              class="soul-textarea"
-              spellcheck="false"
-            />
             <p class="setting-description">
-              Instructions sent to the agent each time the heartbeat triggers. Leave blank to use the built-in default.
+              Heartbeat instructions are now managed via agent config files in <code>~/sulla/agents/</code>.
+              Override any prompt section by adding a matching <code>.md</code> file to the agent's directory.
             </p>
-            <div class="soul-actions">
-              <button
-                class="btn role-secondary"
-                type="button"
-                @click="heartbeatPrompt = heartbeatPromptDefault"
-              >
-                Reset to default
-              </button>
-            </div>
           </div>
         </div>
       </div>

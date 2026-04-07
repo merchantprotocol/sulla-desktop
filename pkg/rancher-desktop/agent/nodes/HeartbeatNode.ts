@@ -13,85 +13,9 @@ import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware'
 import { GraphRegistry } from '../services/GraphRegistry';
 
 // ============================================================================
-// PROMPT CONSTANTS
+// PROMPT CONSTANTS — Now section-based via SystemPromptBuilder.
+// Inline constants removed; content migrated to prompts/sections/*.ts.
 // ============================================================================
-
-async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
-  try {
-    const { getActiveAgentsRegistry } = await import('../services/ActiveAgentsRegistry');
-    const registry = getActiveAgentsRegistry();
-    const block = await registry.buildContextBlock();
-    return `${ block }\n\nYou run on the **${ wsChannel }** WebSocket channel. Your \`sender_id\` and \`sender_channel\` are both \`${ wsChannel }\`.`;
-  } catch {
-    return `## Inter-Agent Communication\n\nYou run on the **${ wsChannel }** WebSocket channel. Agent registry unavailable.`;
-  }
-}
-
-const HEARTBEAT_PROMPT_DIRECTIVE = `## Output Rules — CRITICAL
-
-Your text output triggers a desktop notification. The user does NOT want to see your thinking, reasoning, planning, or tool narration. They want terse status updates only.
-
-**Your response text must be ONLY one of these:**
-
-1. **Picking up a project:**
-   Tell the user where the project stands, where it needs to go, and what your plan is.
-   Example:
-   > **Lead Generation** — Currently: scraper built but no enrichment pipeline. Goal: fully automated lead list with email verification. Plan: wire up the Clearbit integration, add email validation step, test with 50 leads.
-
-2. **Made progress:**
-   Say what you did and what's next.
-   Example:
-   > **Lead Generation**: Wired up Clearbit enrichment, 50 test leads processed. Next: add email verification step.
-
-3. **No projects found:** "No active projects found."
-
-That's it. Nothing else in your response text. No thinking. No "let me check." No "I found 3 projects, let me evaluate." No narration of tool calls. Just the status.
-
-All detailed reasoning, tool results, and decision-making happen silently in your tool calls. Your final text response is the notification.
-
-## ACTIVE_PROJECTS.md — Status Tracking
-
-After every cycle where you make progress or hit a blocker, update \`~/sulla/projects/ACTIVE_PROJECTS.md\`:
-
-- Record your current status for each project you touched: what you did, what's next, any blockers.
-- Blockers go here, not in notifications — the user checks this file at their own pace.
-- Keep entries concise: project name, status (active/blocked/done), one-line summary, blocker details if any.
-
-## Completion Wrappers
-
-- You MUST end every response with exactly ONE of the three wrapper blocks: DONE, BLOCKED, or CONTINUE.
-- If the task is fully accomplished, output the DONE wrapper.
-- If execution is blocked and you cannot proceed, output the BLOCKED wrapper.
-- If you have made progress but the task is not yet complete, output the CONTINUE wrapper with a one-line status message of what you are working on right now.`;
-
-const HEARTBEAT_PROMPT_COMPLETION_WRAPPERS = `
-CRITICAL CONTINUITY RULES:
-- This is a persistent conversation. Review the entire message history before every action.
-- If you see the same user request again, it means previous actions failed or were incomplete — continue from there using the latest state.
-- Never restart or repeat steps that are already marked complete in memory.
-- Don't use language that would suggest this is a brand new conversation, like: "On it.", "Got it." etc.
-
-DONE wrapper (use when goal fully completed):
-<AGENT_DONE>
-[1-3 sentence summary of what was accomplished]
-Needs user input: [yes/no]
-</AGENT_DONE>
-
-BLOCKED wrapper (use when you need user input, credentials, or a decision before you can continue):
-<AGENT_BLOCKED>
-<BLOCKER_REASON>[one-line concrete blocker]</BLOCKER_REASON>
-<UNBLOCK_REQUIREMENTS>[exact dependency/credential/input needed to proceed]</UNBLOCK_REQUIREMENTS>
-</AGENT_BLOCKED>
-
-IMPORTANT: If you have a question for the user, you MUST use the BLOCKED wrapper. Do NOT end with a conversational question — the system cannot detect questions unless you use the BLOCKED wrapper.
-
-CONTINUE wrapper (use when you made progress but the task is NOT yet complete):
-<AGENT_CONTINUE>
-<STATUS_REPORT>[one-line: what you are actively working on now]</STATUS_REPORT>
-</AGENT_CONTINUE>
-
-You MUST end every response with exactly ONE of these three wrappers. Never end a response without one.
-`;
 
 // ============================================================================
 // OUTCOME EXTRACTION — XML REGEXES
@@ -137,28 +61,13 @@ export class HeartbeatNode extends BaseNode {
     }
 
     // ----------------------------------------------------------------
-    // 1. BUILD SYSTEM PROMPT
+    // 1. BUILD SYSTEM PROMPT (section-based via SystemPromptBuilder)
     // ----------------------------------------------------------------
-    const wsChannel = String(state.metadata.wsChannel || 'heartbeat');
-    const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
-
-    // Load the user-editable heartbeat prompt from language model settings
-    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-    const settingsHeartbeatPrompt = await SullaSettingsModel.get('heartbeatPrompt', '');
-
-    const baseSystemPrompt = [
-      channelAwareness,
-      settingsHeartbeatPrompt,
-      HEARTBEAT_PROMPT_DIRECTIVE,
-      HEARTBEAT_PROMPT_COMPLETION_WRAPPERS,
-    ].filter(s => s.trim()).join('\n\n');
-
-    // Enrich with global soul prompt + agent identity from dreaming-protocol config.
-    const enrichedPrompt = await this.enrichPrompt(baseSystemPrompt, state, {
-      includeSoul:        true,
-      includeAwareness:   false,
-      includeEnvironment: false,
-      includeMemory:      false,
+    // All sections (soul, workspace, tooling, heartbeat, completion wrappers,
+    // channel awareness, etc.) are composed by SystemPromptBuilder.
+    const enrichedPrompt = await this.enrichPrompt('', state, {
+      promptMode:  'full',
+      isHeartbeat: true,
     });
 
     // ----------------------------------------------------------------
