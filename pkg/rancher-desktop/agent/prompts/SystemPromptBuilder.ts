@@ -29,8 +29,8 @@ export interface PromptSection {
 }
 
 export interface PromptBuildContext {
-  /** Prompt mode: full (main agent), minimal (subagents), none (pass-through) */
-  mode: 'full' | 'minimal' | 'none';
+  /** Prompt mode: full (main agent), minimal (subagents), local (condensed for local LLMs), none (pass-through) */
+  mode: 'full' | 'minimal' | 'local' | 'none';
   /** Agent identifier (e.g. 'observer', 'code-researcher') */
   agentId: string;
   /** Parsed agent config.yaml, if available */

@@ -14,6 +14,19 @@ const LLAMA_SERVER_PORT = 30114;
 const GITHUB_API_LATEST = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest';
 
 /**
+ * Minimum llama.cpp build tag required.
+ * b8637 added gemma4 architecture support; subsequent builds added tokenizer
+ * and softcapping fixes.  Bump this when a new model needs a newer build.
+ */
+const MIN_LLAMA_TAG = 'b8637';
+
+/** Extract the numeric build number from a tag like "b8606". Returns 0 if unparseable. */
+function parseBuildNumber(tag: string): number {
+  const m = /^b(\d+)$/.exec(tag);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
  * Registry of GGUF models available for download.
  * Keys match the model names used in FirstRunResources.vue.
  * Each entry has the direct HuggingFace download URL and filename.
@@ -29,6 +42,8 @@ export interface GGUFModelEntry {
   description:   string;
   /** Unsloth HuggingFace repo ID for training (e.g. 'unsloth/Qwen3.5-9B'). */
   trainingRepo?: string;
+  /** True for models with Sliding Window Attention (gemma4, etc.) that need --swa-full for cache reuse. */
+  swaModel?:     boolean;
 }
 
 export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
@@ -164,6 +179,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 4,
     minCPUs:     2,
     description: "Google's Gemma 4 E2B — multimodal (text+image+audio), ultralight",
+    swaModel:    true,
   },
   'gemma4-e4b': {
     displayName: 'Gemma 4 E4B',
@@ -174,6 +190,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 7,
     minCPUs:     2,
     description: "Google's Gemma 4 E4B — multimodal (text+image+audio), recommended for most laptops",
+    swaModel:    true,
   },
   'gemma4-26b': {
     displayName: 'Gemma 4 26B-A4B',
@@ -184,6 +201,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 20,
     minCPUs:     4,
     description: "Google's Gemma 4 26B MoE — only 3.8B params active, runs like a 4B at frontier quality",
+    swaModel:    true,
   },
   'codellama-7b': {
     displayName: 'Code Llama 7B',
@@ -545,6 +563,20 @@ async function downloadAndExtract(tag: string): Promise<void> {
         fs.chmodSync(p, 0o755);
       }
     }
+  }
+
+  // Remove old build directories so findBinary() picks the new one
+  try {
+    const entries = fs.readdirSync(llamaCppDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name.startsWith('llama-b') && entry.name !== `llama-${ tag }`) {
+        const oldDir = path.join(llamaCppDir, entry.name);
+        console.log(`${ LOG_PREFIX } Removing old build directory: ${ entry.name }`);
+        fs.rmSync(oldDir, { recursive: true, force: true });
+      }
+    }
+  } catch (err) {
+    console.warn(`${ LOG_PREFIX } Failed to clean up old build directories:`, err);
   }
 
   // Write version file
@@ -1234,15 +1266,22 @@ export class LlamaCppService {
     // Verify the binary actually exists (guards against partial installs)
     const serverBin = findBinary('llama-server');
     if (currentTag && serverBin) {
-      console.log(`${ LOG_PREFIX } llama.cpp ${ currentTag } already installed at ${ serverBin }`);
-      _isGpuBuild = detectGpuCapability();
-      this._installedTag = currentTag;
-      this._ready = true;
+      // Check if the installed build meets the minimum version requirement
+      const installedBuild = parseBuildNumber(currentTag);
+      const minBuild = parseBuildNumber(MIN_LLAMA_TAG);
+      if (installedBuild > 0 && minBuild > 0 && installedBuild < minBuild) {
+        console.log(`${ LOG_PREFIX } llama.cpp ${ currentTag } is below minimum ${ MIN_LLAMA_TAG } — upgrading...`);
+      } else {
+        console.log(`${ LOG_PREFIX } llama.cpp ${ currentTag } already installed at ${ serverBin }`);
+        _isGpuBuild = detectGpuCapability();
+        this._installedTag = currentTag;
+        this._ready = true;
 
-      // Check for newer release in the background — update without blocking startup
-      this.checkForUpdate(currentTag).catch(err =>
-        console.warn(`${ LOG_PREFIX } Background update check failed:`, err));
-      return;
+        // Check for newer release in the background — update without blocking startup
+        this.checkForUpdate(currentTag).catch(err =>
+          console.warn(`${ LOG_PREFIX } Background update check failed:`, err));
+        return;
+      }
     }
 
     // Download latest release
@@ -1390,12 +1429,35 @@ export class LlamaCppService {
     this._contextSize = this.calculateContextSize(modelFileSize);
     console.log(`${ LOG_PREFIX } Starting llama-server on port ${ port } with model ${ modelPath } (ctx=${ this._contextSize })`);
 
+    // Look up the model entry to check for SWA and other per-model flags
+    const modelBasename = path.basename(modelPath);
+    const modelEntry = Object.values(GGUF_MODELS).find(e => e.filename === modelBasename);
+
+    // Slot-save directory for persistent KV cache across restarts
+    const slotCacheDir = path.join(getLlmRoot(), 'slot-cache');
+    fs.mkdirSync(slotCacheDir, { recursive: true });
+
     const args = [
       '--model', modelPath,
       '--port', String(port),
       '--host', '127.0.0.1',
       '--ctx-size', String(this._contextSize),
+      // Use a single slot to maximize cache hits for our single-user desktop app
+      '-np', '1',
+      // Enable flash attention for better performance and quantized KV cache support
+      '--flash-attn',
+      // Quantize KV cache to q8_0 to reduce memory usage while preserving quality
+      '--cache-type-k', 'q8_0',
+      '--cache-type-v', 'q8_0',
+      // Persistent slot save path for KV cache across server restarts
+      '--slot-save-path', slotCacheDir,
     ];
+
+    // SWA models (gemma4, etc.) need --swa-full to enable prompt cache reuse
+    if (modelEntry?.swaModel) {
+      args.push('--swa-full');
+      console.log(`${ LOG_PREFIX } SWA model detected — enabling --swa-full for cache reuse`);
+    }
 
     // Only offload to GPU if we have a GPU-accelerated build
     if (_isGpuBuild) {

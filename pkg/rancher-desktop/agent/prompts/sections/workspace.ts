@@ -10,6 +10,29 @@ import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 export function buildWorkspaceSection(ctx: PromptBuildContext): PromptSection | null {
   const sullaHome = ctx.templateVars['{{sulla_home}}'] || '~/sulla';
 
+  if (ctx.mode === 'local') {
+    const content = `## Environment
+You run inside an isolated Lima VM. Commands via \`exec\` execute in this sandbox.
+
+Sulla Home: ${ sullaHome }/
+Key dirs: resources/ (defaults), skills/, workflows/, agents/, integrations/, identity/ (human/business/agent goals), projects/, logs/
+
+Use \`file_search\` to find skills/workflows. Use \`load_skill\` to load instructions.
+
+Session start — read these before acting:
+1. \`~/sulla/integrations/environment/tools-api-reference.md\` — tool reference
+2. \`~/sulla/integrations/environment/agent.md\` — agent principles
+3. \`~/sulla/identity/human/identity.md\` — who you work for
+4. \`~/sulla/projects/ACTIVE_PROJECTS.md\` — current projects`;
+
+    return {
+      id:             'workspace',
+      content,
+      priority:       60,
+      cacheStability: 'stable',
+    };
+  }
+
   const content = `## Environment
 
 You run inside an isolated Lima VM. You do NOT have access to the host machine. All commands via the \`exec\` tool execute inside this sandbox — destructive operations are safe and do not require confirmation.

@@ -10,6 +10,27 @@ import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 export function buildToolingSection(ctx: PromptBuildContext): PromptSection | null {
   const toolCategories = ctx.templateVars['{{tool_categories}}'] || '';
 
+  if (ctx.mode === 'local') {
+    const content = `## Tools
+Your tools are function calls in this conversation — already loaded.
+${ toolCategories ? `Categories: ${ toolCategories }` : 'Calendar, Credential Vault, Browser, Docker, Code Execution (exec), Memory.' }
+
+**Tool-first rule**: Before writing code or using exec, check if a built-in tool does it. Use \`browse_tools\` to search.
+- Web → \`browse_page\`, \`get_page_text\` (not curl)
+- Files → \`read_file\`, \`file_search\` (not cat)
+- GitHub → \`github_*\` tools (not gh CLI)
+- Postgres → \`pg_*\` tools (not psql)
+
+Make parallel tool calls when possible.`;
+
+    return {
+      id:             'tooling',
+      content,
+      priority:       40,
+      cacheStability: 'stable',
+    };
+  }
+
   const content = `## Capabilities
 
 Your tools are provided as function calls in this conversation. They are already loaded and ready to use.

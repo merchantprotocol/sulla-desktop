@@ -29,25 +29,26 @@ import { buildRuntimeSection } from './runtime';
 // ============================================================================
 
 // Stable sections (cached across turns)
-SystemPromptBuilder.register('identity',            buildIdentitySection,            ['full', 'minimal']);
-SystemPromptBuilder.register('soul',                buildSoulSection,                ['full']);
-SystemPromptBuilder.register('safety',              buildSafetySection,              ['full', 'minimal']);
-SystemPromptBuilder.register('execution_bias',      buildExecutionBiasSection,       ['full']);
-SystemPromptBuilder.register('tooling',             buildToolingSection,             ['full', 'minimal']);
-SystemPromptBuilder.register('narration_policy',    buildNarrationPolicySection,     ['full']);
+// 'local' mode includes condensed variants of most sections for small-context local LLMs.
+SystemPromptBuilder.register('identity',            buildIdentitySection,            ['full', 'minimal', 'local']);
+SystemPromptBuilder.register('soul',                buildSoulSection,                ['full', 'local']);
+SystemPromptBuilder.register('safety',              buildSafetySection,              ['full', 'minimal', 'local']);
+SystemPromptBuilder.register('execution_bias',      buildExecutionBiasSection,       ['full', 'local']);
+SystemPromptBuilder.register('tooling',             buildToolingSection,             ['full', 'minimal', 'local']);
+SystemPromptBuilder.register('narration_policy',    buildNarrationPolicySection,     ['full', 'local']);
 SystemPromptBuilder.register('environment',         buildEnvironmentSection,         ['full']);
-SystemPromptBuilder.register('skills',              buildSkillsSection,              ['full']);
-SystemPromptBuilder.register('workspace',           buildWorkspaceSection,           ['full', 'minimal']);
-SystemPromptBuilder.register('trust',               buildTrustSection,               ['full', 'minimal']);
+SystemPromptBuilder.register('skills',              buildSkillsSection,              ['full', 'local']);
+SystemPromptBuilder.register('workspace',           buildWorkspaceSection,           ['full', 'minimal', 'local']);
+SystemPromptBuilder.register('trust',               buildTrustSection,               ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('voice_mode',          buildVoiceModeSection,           ['full']);
-SystemPromptBuilder.register('completion_wrappers', buildCompletionWrappersSection,  ['full', 'minimal']);
-SystemPromptBuilder.register('agent_prompt',        buildAgentPromptSection,         ['full', 'minimal']);
+SystemPromptBuilder.register('completion_wrappers', buildCompletionWrappersSection,  ['full', 'minimal', 'local']);
+SystemPromptBuilder.register('agent_prompt',        buildAgentPromptSection,         ['full', 'minimal', 'local']);
 
 // Dynamic sections (change per turn — after cache boundary)
 SystemPromptBuilder.register('channel_awareness',   buildChannelAwarenessSection,    ['full']);
 SystemPromptBuilder.register('heartbeat',           buildHeartbeatSection,           ['full']);
 SystemPromptBuilder.register('silent_reply',        buildSilentReplySection,         ['full']);
-SystemPromptBuilder.register('runtime',             buildRuntimeSection,             ['full', 'minimal']);
+SystemPromptBuilder.register('runtime',             buildRuntimeSection,             ['full', 'minimal', 'local']);
 
 /** All registered section IDs — useful for matching agent .md file overrides */
 export const REGISTERED_SECTION_IDS = new Set(SystemPromptBuilder.getRegisteredSectionIds());

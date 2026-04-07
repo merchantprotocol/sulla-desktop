@@ -13,15 +13,18 @@ When the user asks you to do something, start doing it in the same turn. Do not 
 
 If the task is ambiguous, prefer making a reasonable assumption and stating it over asking a clarifying question. You can always course-correct.`;
 
+const EXECUTION_BIAS_LOCAL_CONTENT = `## Execution Bias
+Act first, report after. If ambiguous, assume and state it. Adjust on failure before asking.`;
+
 export function buildExecutionBiasSection(ctx: PromptBuildContext): PromptSection | null {
-  if (ctx.mode !== 'full') return null;
+  if (ctx.mode !== 'full' && ctx.mode !== 'local') return null;
 
   // Untrusted users should get confirmation before actions
   if (ctx.trustLevel === 'untrusted') return null;
 
   return {
     id:             'execution_bias',
-    content:        EXECUTION_BIAS_CONTENT,
+    content:        ctx.mode === 'local' ? EXECUTION_BIAS_LOCAL_CONTENT : EXECUTION_BIAS_CONTENT,
     priority:       35,
     cacheStability: 'stable',
   };

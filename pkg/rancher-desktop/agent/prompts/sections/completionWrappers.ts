@@ -42,10 +42,36 @@ CONTINUE wrapper (use when you made progress but the task is NOT yet complete):
 
 You MUST end every response with exactly ONE of these three wrappers. Never end a response without one.`;
 
+const COMPLETION_WRAPPERS_LOCAL_CONTENT = `## Completion Wrappers
+
+End EVERY response with exactly ONE wrapper:
+
+DONE (task complete):
+<AGENT_DONE>
+[1-3 sentence summary]
+Needs user input: [yes/no]
+</AGENT_DONE>
+
+BLOCKED (need user input/credentials/decision):
+<AGENT_BLOCKED>
+<BLOCKER_REASON>[one-line blocker]</BLOCKER_REASON>
+<UNBLOCK_REQUIREMENTS>[what's needed to proceed]</UNBLOCK_REQUIREMENTS>
+</AGENT_BLOCKED>
+
+CONTINUE (made progress, not done yet):
+<AGENT_CONTINUE>
+<STATUS_REPORT>[what you're working on now]</STATUS_REPORT>
+</AGENT_CONTINUE>
+
+Rules:
+- Questions for the user MUST use BLOCKED wrapper — the system cannot detect questions otherwise.
+- This is a persistent conversation. Review history before acting. Never restart completed steps.
+- Always end with exactly one wrapper. Never end without one.`;
+
 export function buildCompletionWrappersSection(ctx: PromptBuildContext): PromptSection | null {
   return {
     id:             'completion_wrappers',
-    content:        COMPLETION_WRAPPERS_CONTENT,
+    content:        ctx.mode === 'local' ? COMPLETION_WRAPPERS_LOCAL_CONTENT : COMPLETION_WRAPPERS_CONTENT,
     priority:       80,
     cacheStability: 'stable',
   };

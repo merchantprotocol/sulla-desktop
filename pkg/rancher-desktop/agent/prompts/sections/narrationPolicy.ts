@@ -17,12 +17,15 @@ After tool calls, narrate results concisely to preserve context across conversat
 - Skip narration for routine reads that produced expected results.
 - Always narrate when: the result changes your plan, reveals something unexpected, or produced an error.`;
 
+const NARRATION_LOCAL_CONTENT = `## Narration
+After tool calls, narrate results in one sentence. Focus on what was found, not what you did. Skip narration for expected results. Always narrate errors or surprises.`;
+
 export function buildNarrationPolicySection(ctx: PromptBuildContext): PromptSection | null {
-  if (ctx.mode !== 'full') return null;
+  if (ctx.mode !== 'full' && ctx.mode !== 'local') return null;
 
   return {
     id:             'narration_policy',
-    content:        NARRATION_POLICY_CONTENT,
+    content:        ctx.mode === 'local' ? NARRATION_LOCAL_CONTENT : NARRATION_POLICY_CONTENT,
     priority:       45,
     cacheStability: 'stable',
   };

@@ -77,8 +77,8 @@ export interface PromptEnrichmentOptions {
   includeEnvironment?: boolean;
   includeMemory?:      boolean;
   includeTools?:       boolean;
-  /** Prompt mode for section-based builder: full (main agent), minimal (subagents), none (pass-through) */
-  promptMode?:         'full' | 'minimal' | 'none';
+  /** Prompt mode for section-based builder: full (main agent), minimal (subagents), local (condensed for local LLMs), none (pass-through) */
+  promptMode?:         'full' | 'minimal' | 'local' | 'none';
   /** Whether this is the heartbeat (autonomous) agent */
   isHeartbeat?:        boolean;
   /** Chat mode override for voice section injection */
@@ -651,9 +651,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       excludeSections.add('soul');
     }
 
-    // Determine prompt mode
-    const mode = options.promptMode || 'full';
-
     // Determine trust level
     const trust = (state.metadata as any).isTrustedUser;
     const trustLevel = trust === 'untrusted' ? 'untrusted'
@@ -663,6 +660,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Detect provider
     const llm = await getPrimaryService();
     const providerName = llm?.getProviderName?.() || 'anthropic';
+
+    // Determine prompt mode — auto-select 'local' for local LLMs (ollama/llama-server)
+    // to use condensed prompts that fit in smaller context windows.
+    const mode = options.promptMode || (providerName === 'ollama' ? 'local' : 'full');
 
     // Build prompt context
     const buildCtx: PromptBuildContext = {
