@@ -766,13 +766,13 @@ useTheme();
 // ─── Navigation ─────────────────────────────────────────────────
 
 const navItems = [
-  { id: 'speaker', name: 'Speaker' },
   { id: 'tts', name: 'Text-to-Speech' },
   { id: 'secretary', name: 'Secretary Mode' },
   { id: 'microphone', name: 'Microphone & Language' },
+  { id: 'speaker', name: 'Speaker' },
 ];
 
-const currentNav = ref('speaker');
+const currentNav = ref('tts');
 
 // ─── TTS Providers ──────────────────────────────────────────────
 
