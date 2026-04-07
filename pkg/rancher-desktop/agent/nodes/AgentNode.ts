@@ -46,10 +46,20 @@ Your tools are provided as function calls in this conversation. They are already
 
 Use \`file_search\` to find relevant skills, workflows, or integration docs. Use \`load_skill\` to load full skill instructions.
 
-### What you should know
+### Session Start — Import context when needed
 
-\`read_file\` → \`~/sulla/integrations/environment/tools-api-reference.md\` - Before using any tools, read the full tool reference
+At the start of every session, read the following files in order before doing anything else:
 
+1. \`read_file\` → \`~/sulla/integrations/environment/tools-api-reference.md\` — full tool category list, call format, and examples
+2. \`read_file\` → \`~/sulla/integrations/environment/environment-overview.md\` — Sulla Desktop architecture, what runs where (host vs. Lima VM), directory layout
+3. \`read_file\` → \`~/sulla/integrations/environment/agent.md\` — core agent principles, communication rules, completion wrappers
+4. \`read_file\` → \`~/sulla/identity/human/identity.md\` — who you are working for, their operating model and priorities
+5. \`read_file\` → \`~/sulla/identity/business/identity.md\` — business model, revenue structure, active deadlines
+6. \`read_file\` → \`~/sulla/identity/human/goals.md\` — 13-week arc, financial targets, operating rules
+7. \`read_file\` → \`~/sulla/projects/ACTIVE_PROJECTS.md\` — current active projects and blockers
+8. \`read_file\` → \`~/sulla/identity/business_priorities.md\` — real-time priority status
+
+Do not guess tool names, assume project context, or proceed without reading these first.
 
 ### Capabilities
 
