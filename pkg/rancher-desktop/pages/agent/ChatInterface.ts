@@ -290,6 +290,38 @@ export class ChatInterface {
   }
 
   /**
+   * Inject a queued message into the running graph's state immediately.
+   * The message is removed from the queue and appended to state.messages
+   * without interrupting or restarting the graph.  If the graph has already
+   * finished (race condition), falls back to a normal send that triggers execution.
+   */
+  async injectQueuedMessage(messageId: string): Promise<void> {
+    const msg = this.messageQueue.getById(messageId);
+    if (!msg) return;
+
+    this.messageQueue.dequeue(messageId);
+
+    const attachments = msg.attachments?.map(a => ({
+      mediaType: a.mediaType,
+      base64:    a.base64,
+    }));
+
+    const metadata = attachments?.length
+      ? { ...msg.metadata, attachments: attachments.map(a => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: a.mediaType, data: a.base64 } })) }
+      : msg.metadata;
+
+    if (this.persona.graphRunning.value) {
+      // Graph still running — inject without triggering execution
+      console.log(`[ChatInterface:injectQueuedMessage] Injecting into running graph: ${ msg.content.slice(0, 50) }...`);
+      await this.persona.injectMessage(msg.content, metadata);
+    } else {
+      // Graph already finished (race condition) — fall back to normal send
+      console.log(`[ChatInterface:injectQueuedMessage] Graph not running, falling back to normal send: ${ msg.content.slice(0, 50) }...`);
+      await this.sendMessageInternal(msg.content, metadata, attachments);
+    }
+  }
+
+  /**
    * Register a listener for direct speak event delivery.
    * Bypasses the messages array watcher for lower-latency TTS triggering.
    * Returns an unsubscribe function.

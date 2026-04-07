@@ -130,7 +130,23 @@ async function start(onLevel, micDeviceId) {
   };
 
   log.info("AudioCapture", "Opening mic...", { deviceId: micDeviceId || "default" });
-  micStream = await navigator.mediaDevices.getUserMedia(constraints);
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (err) {
+    const name = err?.name || 'UnknownError';
+    const msg = err?.message || String(err);
+    log.error("AudioCapture", "getUserMedia failed", { name, message: msg });
+
+    // Report the error back to the main process so the UI can show it
+    if (window.audioDriver?.reportMicError) {
+      window.audioDriver.reportMicError({
+        error: name === 'NotAllowedError' ? 'microphone-permission-denied' : 'microphone-unavailable',
+        name,
+        message: msg,
+      });
+    }
+    throw err;
+  }
 
   const source = audioCtx.createMediaStreamSource(micStream);
   micGainNode = audioCtx.createGain();

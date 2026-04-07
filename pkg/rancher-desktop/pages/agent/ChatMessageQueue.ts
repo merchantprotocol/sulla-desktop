@@ -38,6 +38,13 @@ export class ChatMessageQueue {
   }
 
   /**
+   * Find a message by ID without removing it
+   */
+  getById(messageId: string): QueuedMessage | null {
+    return this.queue.value.find(m => m.id === messageId) ?? null;
+  }
+
+  /**
    * Remove a specific message from the queue
    */
   dequeue(messageId: string): boolean {

@@ -693,7 +693,21 @@ async function initUI() {
 
 async function doFirstRunDialog() {
   const firstRunCredentialsNeeded = await SullaSettingsModel.get('firstRunCredentialsNeeded', true);
-  const needsFirstRun = !noModalDialogs && (settingsImpl.firstRunDialogNeeded() || firstRunCredentialsNeeded);
+
+  // Defense-in-depth: if vault files already exist in ~/.sulla/, credentials
+  // were set in a prior install. An upgrade (or manual tampering) may have
+  // wiped the settings flag, but the vault proves setup already happened.
+  // Don't allow re-triggering credential setup — that would orphan the vault.
+  const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+  const vaultAlreadySetUp = getVaultKeyService().isSetUp();
+
+  if (firstRunCredentialsNeeded && vaultAlreadySetUp) {
+    console.log('[FirstRun] Vault already exists — restoring firstRunCredentialsNeeded=false (upgrade detected)');
+    await SullaSettingsModel.set('firstRunCredentialsNeeded', false, 'boolean');
+  }
+
+  const credentialsNeeded = firstRunCredentialsNeeded && !vaultAlreadySetUp;
+  const needsFirstRun = !noModalDialogs && (settingsImpl.firstRunDialogNeeded() || credentialsNeeded);
 
   if (needsFirstRun) {
     await window.openFirstRunDialog();

@@ -31,12 +31,70 @@
           class="tab-content"
         >
           <h2>Microphone</h2>
-          <p class="description">
-            These settings apply to all voice features: chat, teleprompter,
-            capture studio, and secretary mode.
-          </p>
 
-          <!-- Audio Input Device -->
+          <!-- ── Permission gate: hide settings until mic access is granted ── -->
+          <div
+            v-if="micPermission !== 'granted'"
+            class="setup-gate"
+          >
+            <p class="setup-gate-description">
+              Sulla Desktop needs microphone access for voice chat, transcription,
+              and capture features.
+            </p>
+            <div
+              v-if="micError"
+              class="status-banner banner-error"
+              style="margin-bottom: 1rem;"
+            >
+              <span class="banner-text">{{ micError }}</span>
+            </div>
+            <button
+              v-if="micPermission === 'not-determined' || micPermission === 'unknown'"
+              class="action-btn btn-primary btn-lg"
+              :disabled="micPermissionChecking"
+              @click="requestMicPermission"
+            >
+              {{ micPermissionChecking ? 'Requesting...' : 'Enable Microphone' }}
+            </button>
+            <div
+              v-else
+              class="setup-gate-denied"
+            >
+              <p>
+                Microphone access was denied. To fix this:
+              </p>
+              <ol>
+                <li>Open <strong>System Settings</strong></li>
+                <li>Go to <strong>Privacy &amp; Security &gt; Microphone</strong></li>
+                <li>Enable <strong>Sulla Desktop</strong></li>
+                <li>
+                  <button
+                    class="action-btn"
+                    @click="checkMicPermission"
+                  >
+                    {{ micPermissionChecking ? 'Checking...' : 'Check Again' }}
+                  </button>
+                </li>
+              </ol>
+            </div>
+          </div>
+
+          <!-- ── Mic settings (only shown when permission is granted) ── -->
+          <template v-else>
+            <p class="description">
+              These settings apply to all voice features: chat, teleprompter,
+              capture studio, and secretary mode.
+            </p>
+
+            <!-- Mic error banner -->
+            <div
+              v-if="micError"
+              class="status-banner banner-error"
+            >
+              <span class="banner-text">{{ micError }}</span>
+            </div>
+
+            <!-- Audio Input Device -->
           <div class="setting-section">
             <h3>Microphone</h3>
             <div class="voice-select-row">
@@ -232,7 +290,7 @@
             </p>
           </div>
 
-
+          </template>
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════
@@ -358,12 +416,64 @@
           class="tab-content"
         >
           <h2>Speaker</h2>
-          <p class="description">
-            Configure your system speaker output. The speaker driver captures
-            system audio via a virtual loopback device for meeting transcription.
-          </p>
 
-          <!-- Output Device Selector -->
+          <!-- ── Install gate: hide settings until loopback driver is installed ── -->
+          <div
+            v-if="loopbackInstalled === false"
+            class="setup-gate"
+          >
+            <p class="setup-gate-description">
+              The speaker capture driver requires BlackHole, a virtual audio
+              loopback device for capturing system audio.
+            </p>
+            <div
+              v-if="loopbackError"
+              class="status-banner banner-error"
+              style="margin-bottom: 1rem;"
+            >
+              <span class="banner-text">{{ loopbackError }}</span>
+            </div>
+            <button
+              class="action-btn btn-primary btn-lg"
+              :disabled="loopbackInstalling"
+              @click="installLoopback"
+            >
+              {{ loopbackInstalling ? 'Installing...' : 'Install Audio Driver' }}
+            </button>
+            <p class="setup-gate-hint">
+              Installs BlackHole via Homebrew. Requires
+              <a
+                href="https://brew.sh"
+                target="_blank"
+              >Homebrew</a>.
+            </p>
+            <button
+              class="action-btn"
+              style="margin-top: 0.5rem;"
+              @click="checkLoopbackStatus"
+            >
+              Check Again
+            </button>
+          </div>
+
+          <!-- Loading state -->
+          <div
+            v-else-if="loopbackInstalled === null"
+            class="setup-gate"
+          >
+            <p class="setup-gate-description">
+              Checking audio driver status...
+            </p>
+          </div>
+
+          <!-- ── Speaker settings (only shown when loopback is installed) ── -->
+          <template v-else>
+            <p class="description">
+              Configure your system speaker output. The speaker driver captures
+              system audio via a virtual loopback device for meeting transcription.
+            </p>
+
+            <!-- Output Device Selector -->
           <div class="setting-section">
             <h3>Output Device</h3>
             <div class="voice-select-row">
@@ -523,6 +633,7 @@
               being captured correctly. Play some audio to see the level meter.
             </p>
           </div>
+          </template>
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════
@@ -1091,6 +1202,87 @@ async function fetchSpeakerVolume() {
 ipc.on('audio-driver:speaker-level', onSpeakerLevelForMeter);
 ipc.on('audio-driver:volume-changed', onVolumeChanged);
 
+// ─── Permissions & install status ────────────────────────────────
+
+const micPermission = ref<string>('unknown'); // 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'
+const micPermissionChecking = ref(false);
+const micError = ref<string | null>(null);
+const loopbackInstalled = ref<boolean | null>(null); // null = not checked yet
+const loopbackName = ref<string | null>(null);
+const loopbackInstalling = ref(false);
+const loopbackError = ref<string | null>(null);
+
+async function checkMicPermission() {
+  micPermissionChecking.value = true;
+  try {
+    const result = await ipc.invoke('audio-driver:check-permissions');
+    micPermission.value = result?.microphone || 'unknown';
+  } catch (e: any) {
+    console.error('[AudioSettings] checkMicPermission error:', e);
+  } finally {
+    micPermissionChecking.value = false;
+  }
+}
+
+async function requestMicPermission() {
+  micPermissionChecking.value = true;
+  micError.value = null;
+  try {
+    const result = await ipc.invoke('audio-driver:request-mic-permission');
+    if (result?.granted) {
+      micPermission.value = 'granted';
+    } else {
+      micPermission.value = result?.status || 'denied';
+      if (result?.openSettings) {
+        micError.value = 'Microphone access was denied. Open System Settings > Privacy & Security > Microphone to grant access.';
+      }
+    }
+  } catch (e: any) {
+    console.error('[AudioSettings] requestMicPermission error:', e);
+  } finally {
+    micPermissionChecking.value = false;
+  }
+}
+
+async function checkLoopbackStatus() {
+  try {
+    const result = await ipc.invoke('audio-driver:check-loopback');
+    loopbackInstalled.value = result?.installed ?? false;
+    loopbackName.value = result?.name || null;
+  } catch (e: any) {
+    console.error('[AudioSettings] checkLoopbackStatus error:', e);
+  }
+}
+
+async function installLoopback() {
+  loopbackInstalling.value = true;
+  loopbackError.value = null;
+  try {
+    const result = await ipc.invoke('audio-driver:install-loopback');
+    if (result?.ok) {
+      loopbackInstalled.value = true;
+      loopbackName.value = result?.name || null;
+    } else {
+      loopbackError.value = result?.error || 'Installation failed';
+    }
+  } catch (e: any) {
+    loopbackError.value = e.message || 'Installation failed';
+    console.error('[AudioSettings] installLoopback error:', e);
+  } finally {
+    loopbackInstalling.value = false;
+  }
+}
+
+// Listen for mic errors from the renderer (e.g. getUserMedia denied)
+function onMicError(_event: any, data: any) {
+  console.error('[AudioSettings] mic-error:', data);
+  micError.value = data?.error === 'microphone-permission-denied'
+    ? 'Microphone permission denied. Open System Settings > Privacy & Security > Microphone to grant access.'
+    : `Microphone error: ${data?.message || data?.error || 'unknown'}`;
+  micRunning.value = false;
+}
+ipc.on('audio-driver:mic-error', onMicError);
+
 // ─── Audio Driver pipeline ──────────────────────────────────────
 
 const micRunning = ref(false);
@@ -1233,17 +1425,24 @@ function onDriverState(_event: any, state: { running: boolean; micRunning?: bool
 }
 
 async function toggleMicDriver() {
+  micError.value = null;
   if (micRunning.value) {
     // Stop any active recording first
     if (micTestRecording.value) {
       await stopMicTestRecording();
     }
     await ipc.invoke('audio-driver:stop-mic', 'audio-settings-test');
+    micRunning.value = false;
   } else {
     // Request both PCM formats so raw + gated are both available
-    await ipc.invoke('audio-driver:start-mic', 'audio-settings-test', ['pcm-s16le', 'pcm-s16le-raw']);
+    const result = await ipc.invoke('audio-driver:start-mic', 'audio-settings-test', ['pcm-s16le', 'pcm-s16le-raw']);
+    if (result?.ok === false && result?.error === 'microphone-permission-denied') {
+      micPermission.value = 'denied';
+      micError.value = 'Microphone permission denied. Open System Settings > Privacy & Security > Microphone to grant access.';
+      return;
+    }
+    micRunning.value = true;
   }
-  micRunning.value = !micRunning.value;
 }
 
 // ─── Mic test recording ─────────────────────────────────────────
@@ -1836,7 +2035,14 @@ onMounted(async() => {
     const state = await ipc.invoke('audio-driver:get-state');
     micRunning.value = !!state?.micRunning || !!state?.running;
     speakerRunning.value = !!state?.speakerRunning;
+    if (state?.permissions) {
+      micPermission.value = state.permissions.microphone || 'unknown';
+    }
   } catch { /* ignore */ }
+
+  // Check permissions and loopback status on load
+  await checkMicPermission();
+  await checkLoopbackStatus();
 
   await fetchSpeakerDevices();
   await fetchSpeakerVolume();
@@ -1853,6 +2059,7 @@ onMounted(async() => {
 });
 
 onUnmounted(() => {
+  ipc.removeListener('audio-driver:mic-error', onMicError);
   ipc.removeListener('audio-driver:mic-vad', onMicVad);
   ipc.removeListener('audio-driver:speaker-level', onSpeakerLevel);
   ipc.removeListener('audio-driver:speaker-level', onSpeakerLevelForMeter);
@@ -2070,6 +2277,79 @@ onUnmounted(() => {
   background: var(--bg-warning, rgba(245, 158, 11, 0.08));
   color: var(--text-muted, var(--muted));
   border: 1px solid var(--border-default, var(--input-border));
+}
+
+.banner-warning {
+  background: var(--bg-warning, rgba(245, 158, 11, 0.1));
+  color: var(--status-warning, #f59e0b);
+  border: 1px solid var(--status-warning, #f59e0b);
+}
+
+.banner-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--status-error, #ef4444);
+  border: 1px solid var(--status-error, #ef4444);
+}
+
+.banner-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.banner-text {
+  display: block;
+}
+
+.badge-neutral {
+  background: var(--bg-surface, rgba(128, 128, 128, 0.1));
+  color: var(--text-muted, var(--muted));
+}
+
+// ── Setup gate (permission / install required) ──
+
+.setup-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 3rem 2rem;
+  min-height: 200px;
+}
+
+.setup-gate-description {
+  font-size: var(--fs-body);
+  color: var(--text-muted, var(--muted));
+  margin-bottom: 1.5rem;
+  max-width: 400px;
+  line-height: 1.5;
+}
+
+.setup-gate-denied {
+  text-align: left;
+  max-width: 400px;
+
+  p { margin-bottom: 0.5rem; }
+
+  ol {
+    margin: 0;
+    padding-left: 1.25rem;
+    line-height: 2;
+  }
+}
+
+.setup-gate-hint {
+  font-size: var(--fs-small, 0.8rem);
+  color: var(--text-muted, var(--muted));
+  margin-top: 0.5rem;
+
+  a { color: var(--accent-primary, var(--primary, #3b82f6)); }
+}
+
+.btn-lg {
+  padding: 0.75rem 2rem;
+  font-size: 1rem;
 }
 
 // ── Provider cards ──

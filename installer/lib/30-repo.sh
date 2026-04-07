@@ -118,55 +118,6 @@ repo::safe_remove_install_dir() {
 }
 
 # ---------------------------------------------------------------------------
-# Reset first-run state (nightly only)
-# ---------------------------------------------------------------------------
-repo::reset_first_run_state() {
-  log REPO "Resetting first-run state (OS=$OS)"
-  local removed=false
-  local settings_file="" fallback_file=""
-
-  case "$OS" in
-    macos)
-      settings_file="$HOME/Library/Preferences/rancher-desktop/settings.json"
-      fallback_file="$HOME/Library/Application Support/Sulla Desktop/sulla-settings-fallback.json"
-      ;;
-    linux)
-      settings_file="$HOME/.config/rancher-desktop/settings.json"
-      fallback_file="$HOME/.config/Sulla Desktop/sulla-settings-fallback.json"
-      ;;
-    windows)
-      settings_file="$LOCALAPPDATA/rancher-desktop/settings.json"
-      fallback_file="$LOCALAPPDATA/Sulla Desktop/sulla-settings-fallback.json"
-      ;;
-  esac
-
-  log REPO "Checking settings file: ${settings_file:-<not set>}"
-  if [ -n "$settings_file" ] && [ -f "$settings_file" ]; then
-    log REPO "Removing settings file: $settings_file"
-    rm -f "$settings_file"
-    removed=true
-  else
-    log REPO "Settings file not found or not set — skipping"
-  fi
-
-  log REPO "Checking fallback file: ${fallback_file:-<not set>}"
-  if [ -n "$fallback_file" ] && [ -f "$fallback_file" ]; then
-    log REPO "Removing fallback file: $fallback_file"
-    rm -f "$fallback_file"
-    removed=true
-  else
-    log REPO "Fallback file not found or not set — skipping"
-  fi
-
-  if [ "$removed" = true ]; then
-    log REPO "First-run state reset complete (containers & data preserved)"
-    echo "  [nightly] Reset first-run state (containers & data preserved)" >> "$INSTALL_LOG"
-  else
-    log REPO "No first-run state files found — nothing to reset"
-  fi
-}
-
-# ---------------------------------------------------------------------------
 # Ensure repo is cloned and at the right version
 # ---------------------------------------------------------------------------
 repo::ensure() {
@@ -193,11 +144,10 @@ repo::ensure() {
     return
   fi
 
-  # Nightly: wipe and reset first-run state
+  # Nightly: wipe repo dir (user settings are preserved)
   if [ "$USE_NIGHTLY" = true ] && [ -d "$INSTALL_DIR" ]; then
-    log REPO "Nightly mode with existing install dir — wiping and resetting first-run state"
+    log REPO "Nightly mode with existing install dir — wiping repo (preserving user settings)"
     repo::safe_remove_install_dir "$INSTALL_DIR"
-    repo::reset_first_run_state
   elif [ "$USE_NIGHTLY" = true ]; then
     log REPO "Nightly mode but no existing install dir — fresh clone path"
   fi

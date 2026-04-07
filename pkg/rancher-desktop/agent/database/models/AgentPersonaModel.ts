@@ -392,6 +392,59 @@ export class AgentPersonaService {
     return delivered;
   }
 
+  /**
+   * Inject a message into the running graph's state without triggering a new
+   * graph execution cycle.  The message is appended to state.messages so the
+   * graph picks it up on its next natural loop iteration.
+   *
+   * If the backend cannot find a running state (race — graph already finished),
+   * it falls back to a full dispatch which starts a new execution cycle.
+   */
+  async injectMessage(content: string, extraMetadata?: Record<string, unknown>): Promise<boolean> {
+    if (!content.trim()) return false;
+
+    const id = this.state.agentId;
+    console.log(`[AgentPersonaService] injectMessage() — channel="${ id }", threadId="${ this.state.threadId || '(none)' }", content="${ content.slice(0, 80) }"`);
+
+    // Optimistic UI — push the user message locally so it appears in chat immediately
+    const attachments = extraMetadata?.attachments as any[] | undefined;
+    const firstImage = attachments?.find((a: any) => a?.type === 'image' && a?.source?.data);
+    const localMessage: any = {
+      id:        `user_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
+      channelId: id,
+      threadId:  this.state.threadId,
+      role:      'user',
+      content:   content || (firstImage ? '(image attached)' : ''),
+    };
+    if (firstImage) {
+      localMessage.image = {
+        dataUrl:     `data:${ firstImage.source.media_type };base64,${ firstImage.source.data }`,
+        contentType: firstImage.source.media_type,
+      };
+    }
+    this.messages.push(localMessage);
+
+    // Send inject_message — backend will push to state.messages without calling graph.execute()
+    let delivered: boolean;
+    try {
+      delivered = await this.wsService.send(id, {
+        type:      'inject_message',
+        data:      { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata },
+        timestamp: Date.now(),
+      });
+      console.log(`[AgentPersonaService] injectMessage() — WebSocket send result: delivered=${ delivered }`);
+    } catch (err) {
+      console.error(`[AgentPersonaService] injectMessage() — WebSocket send THREW:`, err);
+      delivered = false;
+    }
+
+    if (!delivered) {
+      console.warn(`[AgentPersonaService] Inject delivery FAILED for channel="${ id }"`);
+    }
+
+    return delivered;
+  }
+
   private threadStorageKey(): string {
     const base = this.state.agentId;
     return this.tabId ? `chat_threadId_${ base }_${ this.tabId }` : `chat_threadId_${ base }`;
