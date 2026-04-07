@@ -31,6 +31,8 @@ mac:
   target: [ dmg, zip ]
   identity: ~ # We sign in a separate step
   artifactName: Sulla-Desktop-${version}-mac.${ext}
+  extendInfo:
+    NSMicrophoneUsageDescription: "Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio."
 win:
   icon: ./pkg/rancher-desktop/pages/agent/sulla-icon.ico
   target: [ zip ]

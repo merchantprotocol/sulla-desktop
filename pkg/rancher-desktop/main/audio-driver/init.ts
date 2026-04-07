@@ -27,7 +27,7 @@
  * ```
  */
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, systemPreferences } from 'electron';
 import * as lifecycle from './controller/lifecycle';
 import { MicrophoneDriverController } from './controller/MicrophoneDriverController';
 import { SpeakerDriverController } from './controller/SpeakerDriverController';
@@ -160,6 +160,22 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('audio-driver:start-mic', async(event: Electron.IpcMainInvokeEvent, serviceId?: string, formats?: string[]) => {
     log.info('IPC', 'start-mic', { serviceId, formats });
+
+    // On macOS, proactively request microphone permission before the renderer
+    // calls getUserMedia. This triggers the system permission dialog if the user
+    // hasn't granted access yet. Without this, getUserMedia silently fails.
+    if (process.platform === 'darwin' && systemPreferences.askForMediaAccess) {
+      const micPermission = systemPreferences.getMediaAccessStatus('microphone');
+      log.info('IPC', 'Mic permission status before start', { micPermission });
+      if (micPermission !== 'granted') {
+        const granted = await systemPreferences.askForMediaAccess('microphone');
+        log.info('IPC', 'Mic permission request result', { granted });
+        if (!granted) {
+          return { ok: false, error: 'microphone-permission-denied', micRunning: false, speakerRunning: speaker.running, running: speaker.running };
+        }
+      }
+    }
+
     await mic.start(serviceId || 'unknown', event.sender, { formats });
     return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
   });
@@ -216,6 +232,13 @@ function registerIpcHandlers(): void {
   // VAD relay is handled by MicrophoneDriverController._registerVadListener()
   // — it intercepts mic-vad-update, updates its own state, and re-broadcasts.
 
+  // ── Mic error relay (from renderer getUserMedia failure) ─────────
+
+  ipcMain.on('audio-driver:mic-error', (_event: Electron.IpcMainEvent, data: any) => {
+    log.error('IPC', 'mic-error from renderer', data);
+    broadcast('audio-driver:mic-error', data);
+  });
+
   // ── Mic gain/mute forwarding to tray panel renderer ─────────────
 
   ipcMain.on('audio-driver:mic-gain', (_event: Electron.IpcMainEvent, value: number) => {
@@ -243,6 +266,49 @@ function registerIpcHandlers(): void {
     log.info('IPC', 'set-system-input', { deviceName });
     const platform = await import('./platform');
     return platform.devices.setInput(deviceName);
+  });
+
+  // ── Permissions & install status ────────────────────────────────
+
+  ipcMain.handle('audio-driver:check-permissions', async() => {
+    const result = lifecycle.checkPermissions();
+    log.info('IPC', 'check-permissions', result);
+    return result;
+  });
+
+  ipcMain.handle('audio-driver:request-mic-permission', async() => {
+    if (process.platform !== 'darwin') {
+      return { granted: true };
+    }
+    const status = systemPreferences.getMediaAccessStatus('microphone');
+    if (status === 'granted') {
+      return { granted: true };
+    }
+    if (status === 'denied' || status === 'restricted') {
+      // macOS won't re-prompt once denied — user must go to System Settings
+      return { granted: false, status, openSettings: true };
+    }
+    // status is 'not-determined' — trigger the system prompt
+    const granted = await systemPreferences.askForMediaAccess('microphone');
+    return { granted };
+  });
+
+  ipcMain.handle('audio-driver:check-loopback', async() => {
+    const loopback = await import('./model/loopback');
+    const detection = await loopback.detect();
+    return { installed: detection.found, name: detection.name || null, driver: detection.driver || null };
+  });
+
+  ipcMain.handle('audio-driver:install-loopback', async() => {
+    log.info('IPC', 'install-loopback');
+    const platformMod = await import('./platform');
+    const installed = await platformMod.loopback.install();
+    if (installed) {
+      const loopback = await import('./model/loopback');
+      const detection = await loopback.detect();
+      return { ok: true, installed: detection.found, name: detection.name || null };
+    }
+    return { ok: false, installed: false, error: 'Installation failed — Homebrew may not be installed' };
   });
 
   // ── Volume control ──────────────────────────────────────────────

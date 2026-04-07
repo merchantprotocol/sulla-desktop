@@ -112,6 +112,9 @@ window.audioDriver = {
   // Send raw PCM chunk (s16le, 16kHz, mono) to main process
   sendMicPcm: (buffer) => ipcRenderer.send("audio-driver:mic-pcm", buffer),
 
+  // Report mic errors (e.g. getUserMedia permission denied) to main process
+  reportMicError: (data) => ipcRenderer.send("audio-driver:mic-error", data),
+
   log: {
     error: (tag, msg, data) => ipcRenderer.send("audio-driver:log", "error", tag, msg, data),
     warn: (tag, msg, data) => ipcRenderer.send("audio-driver:log", "warn", tag, msg, data),

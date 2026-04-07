@@ -835,6 +835,9 @@ export function createMessageDispatcher(): MessageDispatcher {
   // Workflow
   dispatcher.register('workflow_execution_event', handleWorkflowExecutionEvent);
 
+  // Inject (frontend→backend only; no-op if echoed back since UI is already updated optimistically)
+  dispatcher.register('inject_message', handleNoop);
+
   // Protocol no-ops
   dispatcher.register('ack',       handleNoop);
   dispatcher.register('ping',      handleNoop);

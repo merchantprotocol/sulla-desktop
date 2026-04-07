@@ -175,7 +175,38 @@ export class BackendGraphWebSocketService {
       return;
     }
 
-    if (msg.type !== 'user_message') return;
+    // ── Inject message into running graph state (no execution trigger) ──
+    if (msg.type === 'inject_message') {
+      const data = typeof msg.data === 'string' ? { content: msg.data } : (msg.data as any);
+      const content = (data?.content ?? '').trim();
+      const threadId = data?.threadId as string | undefined;
+      if (!content || !threadId) return;
+
+      const existing = GraphRegistry.get(threadId);
+      if (existing) {
+        // Graph state exists — inject directly without executing
+        const attachments = data?.metadata?.attachments as any[] | undefined;
+        const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+        const messageContent: any = hasAttachments
+          ? [{ type: 'text', text: content }, ...attachments.filter((a: any) => a?.type === 'image' && a?.source?.type === 'base64')]
+          : content;
+
+        existing.state.messages.push({
+          id:        nextMessageId(),
+          role:      'user',
+          content:   messageContent,
+          timestamp: Date.now(),
+          metadata:  { source: 'inject', inputSource: data?.metadata?.inputSource || 'keyboard' },
+        } as any);
+        console.log(`[BackendGraphWS] Injected message into running state for thread ${ threadId }: ${ content.slice(0, 50) }...`);
+        return;
+      }
+
+      // Graph not found — fall through to full dispatch (triggers execution)
+      console.log(`[BackendGraphWS] inject_message: no running state for thread ${ threadId }, falling back to full dispatch`);
+    }
+
+    if (msg.type !== 'user_message' && msg.type !== 'inject_message') return;
 
     const data = typeof msg.data === 'string' ? { content: msg.data } : (msg.data as any);
     const content = (data?.content ?? '').trim();

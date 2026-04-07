@@ -25,5 +25,7 @@
   <true/>
   <key>LSUIElement</key>
   <false/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio.</string>
 </dict>
 </plist>
