@@ -11,6 +11,7 @@ import semver from 'semver';
 import * as audioDriver from '@pkg/main/audio-driver/init';
 import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
 import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
+import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
 
 import { State } from '@pkg/backend/backend';
 import BackendHelper from '@pkg/backend/backendHelper';
@@ -679,6 +680,7 @@ async function initUI() {
     console.log('[Audio Driver] Initialized');
     registerCaptureStudioTracking();
     registerTeleprompterIpc();
+    registerTeleprompterTrackingIpc();
     console.log('[Capture Studio] Tracking + Teleprompter IPC registered');
   } catch (err) {
     console.error('[Audio Driver] Failed to initialize:', err);

@@ -474,12 +474,17 @@ function registerIpcHandlers(): void {
       await whisper.detect();
     }
 
+    // Lazy-import to avoid circular dependency at module load time
+    const { onWhisperTranscript } = await import('@pkg/main/teleprompterTracking');
+
     const ok = whisperTranscribe.start({
       mode:         opts.mode,
       language:     opts.language,
       model:        opts.model,
       onTranscript: (event) => {
         broadcast('gateway-transcript', event);
+        // Feed the main-process teleprompter tracker (no-ops if not tracking)
+        onWhisperTranscript(event);
       },
     });
 

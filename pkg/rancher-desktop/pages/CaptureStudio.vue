@@ -453,11 +453,8 @@ function syncPrompterFull() {
   ipcRenderer.invoke('teleprompter:set-style', { fontSize, highlightColor });
 }
 
-function syncPrompterPosition(index: number) {
-  if (prompterEnabled.value) {
-    ipcRenderer.invoke('teleprompter:update-position', { currentIndex: Number(index) });
-  }
-}
+// Position sync removed — the main process (teleprompterTracking.ts)
+// broadcasts position updates directly to the float window.
 
 function syncPrompterStyle(style: { fontSize: number; highlightColor: string }) {
   if (prompterEnabled.value) {
@@ -1310,13 +1307,11 @@ function openSystemPreferences() {
 onMounted(async () => {
   document.addEventListener('keydown', onKeyDown);
 
-  // Hook teleprompter updates to sync with floating window
+  // Hook teleprompter style/script updates to sync with floating window.
+  // Position sync is handled by the main process (teleprompterTracking.ts).
   nextTick(() => {
     const tp = teleprompterRef.value;
     if (tp) {
-      tp.setOnPositionUpdate?.((index: number) => {
-        syncPrompterPosition(index);
-      });
       tp.setOnStyleUpdate?.((style: { fontSize: number; highlightColor: string }) => {
         syncPrompterStyle(style);
       });

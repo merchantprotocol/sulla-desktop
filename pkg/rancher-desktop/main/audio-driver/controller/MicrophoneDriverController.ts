@@ -281,6 +281,26 @@ export class MicrophoneDriverController {
 
     // Send VAD data only to windows that requested the mic
     this._sendToHolders('audio-driver:mic-vad', data);
+
+    // Feed the main-process teleprompter tracker (no-ops if not tracking)
+    this._feedTeleprompterTracking(data);
+  }
+
+  /**
+   * Lazy-forward VAD to the teleprompter tracking module.
+   * Uses a cached import to avoid overhead on every frame.
+   */
+  private _tpTrackingModule: { onVadUpdate: (data: any) => void } | null | undefined;
+
+  private _feedTeleprompterTracking(data: any): void {
+    if (this._tpTrackingModule === undefined) {
+      // First call — lazy-import
+      import('@pkg/main/teleprompterTracking')
+        .then((mod) => { this._tpTrackingModule = mod; mod.onVadUpdate(data); })
+        .catch(() => { this._tpTrackingModule = null; });
+      return;
+    }
+    this._tpTrackingModule?.onVadUpdate(data);
   }
 
   // ── ACK handlers ──────────────────────────────────────────────
