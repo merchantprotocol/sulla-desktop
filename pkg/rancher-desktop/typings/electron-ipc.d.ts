@@ -235,6 +235,10 @@ export interface IpcMainInvokeEvents {
   'audio-driver-status':     () => { connected: boolean; installed: boolean; socketExists: boolean };
   // #endregion
 
+  // #region Computer Use
+  'computer-use:request-permission': (appName: string) => { ok: boolean; error?: string };
+  // #endregion
+
   // #region Filesystem
   'filesystem-get-root':        () => string;
   'filesystem-get-git-changes': (path: string) => Promise<{ status: string, file: string }[]>;
