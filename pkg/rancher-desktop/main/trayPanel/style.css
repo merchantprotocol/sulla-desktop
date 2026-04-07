@@ -264,6 +264,12 @@ html, body {
   color: var(--accent);
 }
 
+.link-btn.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .link-icon {
   flex-shrink: 0;
   opacity: 0.7;

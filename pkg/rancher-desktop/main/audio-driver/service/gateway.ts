@@ -1,16 +1,66 @@
 /**
- * Service — gateway connection manager.
+ * @module audio-driver/service/gateway
  *
- * Manages the lobby WebSocket to the transcription gateway, session
- * creation/teardown via REST, and the per-session audio streaming
- * WebSocket. Matches the protocol used by Sulla Desktop.
+ * # Gateway Connection Manager
  *
- * Lifecycle:
- *   connectLobby()   → persistent WebSocket for health + announcements
- *   startSession()   → REST creates session, opens audio + listener WSes
- *   sendAudio()      → binary frames to audio WebSocket
- *   stopSession()    → closes WSes, REST deletes session
- *   disconnectLobby()→ tears down lobby
+ * Manages all network communication with the transcription gateway server.
+ * The gateway receives mic and speaker audio streams and returns real-time
+ * transcription events (partial and final turns).
+ *
+ * ## Connection architecture
+ *
+ * Three independent WebSocket connections are used:
+ *
+ * 1. **Lobby WebSocket** (`/ws/listener`) — a persistent connection opened at
+ *    app startup. Receives health pings, global announcements, and transcript
+ *    events for sessions where this client is a listener. Reconnects with
+ *    exponential backoff (up to 20 attempts, 5 s base delay, 60 s max).
+ *
+ * 2. **Audio WebSocket** (`/ws/audio/:sessionId`) — opened when a transcription
+ *    session starts. Carries binary audio frames for both channels. Reconnects
+ *    up to 5 times with a 2 s fixed delay.
+ *
+ * 3. **Session Listener WebSocket** (`/ws/listener/:sessionId`) — opened per
+ *    session to receive transcript events specific to that session. Reconnects
+ *    up to 10 times with a 2 s fixed delay.
+ *
+ * ## Audio framing protocol
+ *
+ * - **Channel 0 (mic)**: raw WebM/Opus bytes sent as-is (no header). The first
+ *   chunk on a new connection MUST be channel 0 so the gateway's AudioConverter
+ *   can auto-detect the WebM/Opus container before any raw PCM arrives.
+ * - **Channel > 0 (speaker, etc.)**: prefixed with a 2-byte header:
+ *   `[0x01][channel_id]` followed by the raw PCM (s16le) payload.
+ * - Speaker chunks arriving before the first mic chunk are buffered (up to
+ *   {@link MAX_SPEAKER_BUFFER} = ~2.5 s) and flushed once the first mic chunk
+ *   is sent.
+ *
+ * ## Backpressure
+ *
+ * If the audio WebSocket's `bufferedAmount` exceeds 64 KB, audio chunks are
+ * silently dropped to prevent unbounded memory growth in slow network conditions.
+ *
+ * ## Session lifecycle
+ *
+ * ```
+ * startSession()  → POST /api/desktop/sessions → sessionId, callId
+ *                 → opens audio WS + listener WS
+ * sendAudio()     → binary frame on audio WS
+ * stopSession()   → closes audio WS + listener WS
+ *                 → DELETE /api/desktop/sessions/:sessionId
+ * ```
+ *
+ * ## Reliable delivery
+ *
+ * Both the lobby and session listener WebSockets support reliable delivery:
+ * incoming messages with a `_msg_id` field are acknowledged with an `ack` event
+ * so the gateway knows the client received them.
+ *
+ * ## Authentication
+ *
+ * Gateway URL and API key are read from the auth model (`model/auth.ts`).
+ * All REST and WebSocket requests include an `Authorization: Bearer <key>` header
+ * when a key is available.
  */
 
 import { net, app } from 'electron';
@@ -88,6 +138,19 @@ function _wsOpts(): Record<string, any> {
 
 // ─── Lobby WebSocket ────────────────────────────────────────────
 
+/**
+ * Open the persistent lobby WebSocket connection.
+ *
+ * The lobby connection is kept alive for the entire app lifetime. It receives
+ * health pings from the gateway (used to detect stale connections), global
+ * announcements, and transcript events for sessions where this desktop client
+ * is a listener.
+ *
+ * On first connect, sends a `capabilities` handshake enabling reliable delivery.
+ * Automatically reconnects with exponential backoff on close.
+ *
+ * No-op if already connected.
+ */
 export function connectLobby(): void {
   if (lobbyWs) return;
 
@@ -151,6 +214,10 @@ export function connectLobby(): void {
   });
 }
 
+/**
+ * Close the lobby WebSocket and cancel any pending reconnect timer.
+ * Called during app shutdown.
+ */
 export function disconnectLobby(): void {
   _clearLobbyReconnect();
   _clearHealthPing();
@@ -204,7 +271,21 @@ function _clearHealthPing(): void {
 // ─── Session REST ───────────────────────────────────────────────
 
 /**
- * Create a new streaming session.
+ * Create a new streaming transcription session on the gateway.
+ *
+ * 1. POSTs to `/api/desktop/sessions` with caller name and channel definitions
+ * 2. Opens the audio WebSocket for binary streaming
+ * 3. Opens the session listener WebSocket for transcript events
+ *
+ * Default channel layout:
+ * - Channel 0: mic (WebM/Opus from renderer MediaRecorder)
+ * - Channel 1: speaker/system audio (s16le PCM from CoreAudio capture)
+ *
+ * @param opts.callerName - Display name for the session (default: `'Audio Driver'`)
+ * @param opts.channels   - Channel definitions; keys are channel IDs as strings.
+ *                          Each value has `label`, `source`, and optional `audioFormat`.
+ * @returns `{ sessionId, callId }` — identifiers for the created session
+ * @throws If the REST call fails (network error, auth failure, server error)
  */
 export async function startSession(opts: {
   callerName?: string;
@@ -245,7 +326,15 @@ export async function startSession(opts: {
 }
 
 /**
- * End the current session.
+ * End the current transcription session.
+ *
+ * Closes the audio and listener WebSockets first (to stop audio flow
+ * immediately), then sends a DELETE to the gateway REST API to clean up
+ * server-side resources. Silently handles the case where the session was
+ * already stopped or never started.
+ *
+ * Resets all per-session state: sessionId, callId, chunk counters, mic-first
+ * ordering flag, and buffered speaker chunks.
  */
 export async function stopSession(): Promise<void> {
   const sid = sessionId;
@@ -335,7 +424,25 @@ function _clearAudioReconnect(): void {
 }
 
 /**
- * Send an audio chunk to the gateway.
+ * Send a single audio chunk to the gateway over the audio WebSocket.
+ *
+ * Channel 0 (mic) data is sent as raw bytes — the gateway auto-detects
+ * the WebM/Opus container from the first chunk. Channel > 0 (speaker)
+ * data is prefixed with `[0x01][channel_id]` so the gateway can demux.
+ *
+ * **Ordering constraint**: The first chunk on a fresh connection MUST be
+ * channel 0. Speaker chunks arriving before the first mic chunk are
+ * buffered in memory and flushed once the mic header has been sent.
+ * This ensures the gateway's AudioConverter sees the WebM header before
+ * any raw PCM.
+ *
+ * Silently drops data if:
+ * - The audio WebSocket is not open
+ * - `bufferedAmount` exceeds 64 KB (backpressure)
+ *
+ * @param audioData - Buffer or ArrayBuffer containing the audio payload
+ * @param channel   - `0` for mic (WebM/Opus), `1` for speaker (s16le PCM),
+ *                    higher values for future channels
  */
 let audioChunkCount = 0;
 let micFirstChunkSent = false;
@@ -505,6 +612,10 @@ function _restDelete(url: string): Promise<string> {
 
 // ─── Status ─────────────────────────────────────────────────────
 
+/**
+ * Return the current connection status of all gateway WebSockets and the
+ * active session/call identifiers. Used by `audio-driver:get-state` IPC.
+ */
 export function getStatus(): {
   lobbyConnected: boolean;
   audioConnected: boolean;
@@ -519,7 +630,16 @@ export function getStatus(): {
   };
 }
 
+/**
+ * Register a callback for transcript events (`transcript_turn`, `transcript_partial`).
+ * Only one callback is supported; calling again replaces the previous one.
+ */
 export function onTranscriptEvent(cb: (msg: any) => void): void { onTranscript = cb; }
+
+/**
+ * Register a callback for connection status changes (lobby connect/disconnect,
+ * audio WS open/close, session start/stop). Only one callback is supported.
+ */
 export function onStatus(cb: (status: any) => void): void { onStatusChange = cb; }
 
 function _fireStatus(): void {

@@ -48,8 +48,10 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
 
 const MEMORY_RECALL_PROMPT = `You are a READ-ONLY recall process. You gather context for a primary agent.
 
-CRITICAL: You do NOT execute tasks, call APIs, run commands, or browse websites.
-You search specific locations, read what you find, and return it.
+## First: Decide if memory recall is needed
+
+Read the latest user message in the conversation. If you have all the context you need to respond, return nothing. Do not call any tools.
+If you need more context, proceed with the checklist below.
 
 ## Your checklist
 

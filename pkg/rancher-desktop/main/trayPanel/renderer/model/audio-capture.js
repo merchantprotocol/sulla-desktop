@@ -1,10 +1,51 @@
 /**
- * Model — microphone capture via Web Audio API.
+ * @file audio-capture.js — Microphone Capture Module (Tray Panel Renderer)
  *
- * Captures mic audio via getUserMedia + AnalyserNode.
- * Speaker capture is handled by the main process (CoreAudio daemon).
+ * # Microphone Capture via Web Audio API
  *
- * No DOM access, no view logic — pure audio data.
+ * This is the renderer-side component of the audio driver's mic pipeline.
+ * It runs inside the tray panel's BrowserWindow (which has `nodeIntegration: true`)
+ * and provides:
+ *
+ * - **getUserMedia** acquisition with configurable device selection
+ * - **GainNode** for software volume control and mute
+ * - **AnalyserNode** (FFT size 512) for real-time level metering and VAD input
+ * - **MediaRecorder** producing 250 ms WebM/Opus chunks for gateway streaming
+ *
+ * ## Audio graph
+ *
+ * ```
+ * getUserMedia (raw mic)
+ *   → MediaStreamSource
+ *   → GainNode (gain control + mute)
+ *   → AnalyserNode (level metering + VAD feature extraction)
+ *
+ * getUserMedia (raw mic, same stream)
+ *   → MediaRecorder (250 ms WebM/Opus chunks)
+ *   → onChunk callback → mic Unix socket → main process → gateway
+ * ```
+ *
+ * Note: the MediaRecorder records from the raw `micStream` (before the
+ * GainNode), so muting via gain only affects the AnalyserNode levels and
+ * VAD — the recorded audio is always full-volume. This is intentional:
+ * the gateway receives unprocessed audio for best transcription quality.
+ *
+ * ## Browser audio constraints
+ *
+ * All automatic processing is disabled (`autoGainControl: false`,
+ * `noiseSuppression: false`, `echoCancellation: false`) because the audio
+ * driver's own VAD pipeline handles these concerns. Enabling browser-level
+ * processing would interfere with the noise floor and VAD thresholds.
+ *
+ * ## Important: do not duplicate this module
+ *
+ * This module is the ONLY place in sulla-desktop that should call
+ * `getUserMedia({ audio: ... })` for ongoing capture. Other windows
+ * (chat, secretary, etc.) receive mic data through IPC events broadcast
+ * by the main process. Creating additional `getUserMedia` streams would
+ * conflict with this one and produce duplicate audio on the gateway.
+ *
+ * No DOM access, no view logic — pure audio data model.
  */
 
 const log = window.audioDriver.log;
@@ -24,7 +65,14 @@ let recordingCallback = null;
 const CHUNK_INTERVAL_MS = 250;
 
 /**
- * List all available audio devices.
+ * List all available audio input and output devices.
+ *
+ * Temporarily opens a mic stream if one is not already active, because
+ * `enumerateDevices()` only returns labels after `getUserMedia` has been
+ * granted. Internal loopback/mirror devices (BlackHole, Audio Driver Mirror)
+ * are filtered out so they never appear in user-facing dropdowns.
+ *
+ * @returns {{ inputs: Array<{deviceId: string, label: string}>, outputs: Array<{deviceId: string, label: string}> }}
  */
 async function listDevices() {
   let tempStream = null;
@@ -58,7 +106,22 @@ async function listDevices() {
 }
 
 /**
- * Start mic capture.
+ * Start microphone capture and build the Web Audio graph.
+ *
+ * Opens a `getUserMedia` stream with the specified device (or default),
+ * creates the AudioContext → Source → GainNode → AnalyserNode chain,
+ * and begins polling levels via `requestAnimationFrame`.
+ *
+ * After the stream is open, auto-detects the active mic and default
+ * speaker names and pushes them to the main process via
+ * `window.audioDriver.setDeviceNames()`.
+ *
+ * @param {function} onLevel    - Called every animation frame with the current
+ *                                mic RMS level (0.0 - 1.0). Used to drive the
+ *                                mic meter UI and feed the VAD pipeline.
+ * @param {string}   micDeviceId - Optional `deviceId` to select a specific mic.
+ *                                 Pass `undefined` to use the system default.
+ * @returns {{ micName: string, speakerName: string, micDeviceId: string }}
  */
 async function start(onLevel, micDeviceId) {
   levelCallback = onLevel;
@@ -95,6 +158,13 @@ async function start(onLevel, micDeviceId) {
   return deviceInfo;
 }
 
+/**
+ * Compute the RMS (root mean square) level from an AnalyserNode's time-domain data.
+ * The result is scaled by 3x and clamped to 0.0-1.0 for UI display sensitivity.
+ *
+ * @param {AnalyserNode} analyserNode
+ * @returns {number} RMS level between 0.0 and 1.0
+ */
 function computeRms(analyserNode) {
   if (!analyserNode) return 0;
   const data = new Float32Array(analyserNode.fftSize);
@@ -104,6 +174,10 @@ function computeRms(analyserNode) {
   return Math.min(1, Math.sqrt(sum / data.length) * 3);
 }
 
+/**
+ * Animation-frame polling loop. Computes mic RMS each frame and delivers it
+ * to the level callback (which typically feeds both the meter UI and the VAD).
+ */
 function poll() {
   if (!micAnalyser) return;
   const micLevel = computeRms(micAnalyser);
@@ -111,6 +185,10 @@ function poll() {
   animFrameId = requestAnimationFrame(poll);
 }
 
+/**
+ * Stop mic capture, tear down the Web Audio graph, and release the mic stream.
+ * Cancels the animation-frame polling loop and closes the AudioContext.
+ */
 function stop() {
   log.info("AudioCapture", "Stopping mic capture");
   if (animFrameId) cancelAnimationFrame(animFrameId);
@@ -123,22 +201,40 @@ function stop() {
   levelCallback = null;
 }
 
+/**
+ * Set the software gain multiplier for the mic.
+ * Only affects the AnalyserNode (and therefore VAD levels); the MediaRecorder
+ * records from the raw stream at full volume.
+ *
+ * @param {number} value - Gain multiplier (0.0 = silence, 1.0 = unity, >1.0 = boost)
+ */
 function setMicGain(value) {
   micGain = value;
   if (micGainNode && !micMuted) micGainNode.gain.value = value;
 }
 
+/**
+ * Mute or unmute the mic without stopping the stream.
+ * Sets the GainNode to 0 (mute) or restores the current gain value (unmute).
+ * @param {boolean} muted
+ */
 function setMicMuted(muted) {
   micMuted = muted;
   if (micGainNode) micGainNode.gain.value = muted ? 0 : micGain;
   log.info("AudioCapture", muted ? "Mic muted" : "Mic unmuted");
 }
 
+/** Return the deviceId of the currently active mic track, or null if stopped. */
 function getActiveDeviceId() {
   if (!micStream) return null;
   return micStream.getAudioTracks()[0]?.getSettings().deviceId || null;
 }
 
+/**
+ * Detect the names of the currently active mic and default speaker devices.
+ * Called after getUserMedia resolves to report device names to the main process.
+ * @returns {{ micName: string, speakerName: string, micDeviceId: string }}
+ */
 async function detectDevices() {
   const devices = await navigator.mediaDevices.enumerateDevices();
   const track = micStream.getAudioTracks()[0];
@@ -155,6 +251,7 @@ async function detectDevices() {
   return { micName, speakerName, micDeviceId: settings.deviceId };
 }
 
+/** Return the mic AnalyserNode (for VAD and feedback detection), or null if stopped. */
 function getAnalyser() {
   return micAnalyser;
 }
@@ -209,6 +306,7 @@ function stopRecording() {
   }
 }
 
+/** Whether the MediaRecorder is currently capturing chunks. */
 function isRecording() {
   return mediaRecorder !== null && mediaRecorder.state === "recording";
 }

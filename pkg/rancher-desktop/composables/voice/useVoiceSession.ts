@@ -258,8 +258,8 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   const onMicVad = (_event: any, data: { speaking: boolean; level: number; fanNoise: boolean }) => {
     if (!isRecording.value) return;
 
-    // Update audio level for the meter
-    audioLevel.value = data.level;
+    // Update audio level for the meter (scale 0-1 RMS to 0-100 for UI)
+    audioLevel.value = Math.round(Math.min(100, data.level * 100));
 
     if (data.speaking) {
       // Clear any pending silence timer

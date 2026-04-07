@@ -25,57 +25,6 @@ import { parseJson } from '../services/JsonParseService';
 /** Message count threshold before the summarizer runs */
 const TRIGGER_WINDOW_SIZE = 45;
 
-/**
- * Detect whether the latest user message is a simple greeting or trivial
- * message that doesn't need full memory recall (skills, workflows, tabs,
- * credentials, environment search).  This avoids ~2 minutes of recall
- * overhead for messages like "hi", "thanks", "good morning", etc.
- */
-function isSimpleMessage(state: BaseThreadState): boolean {
-  // Find the last user message
-  let lastUserText = '';
-  for (let i = state.messages.length - 1; i >= 0; i--) {
-    const msg = state.messages[i];
-    if (msg.role === 'user') {
-      if (typeof msg.content === 'string') {
-        lastUserText = msg.content;
-      } else if (Array.isArray(msg.content)) {
-        lastUserText = msg.content
-          .filter((b: any) => b?.type === 'text')
-          .map((b: any) => b.text || '')
-          .join(' ');
-      }
-      break;
-    }
-  }
-
-  const trimmed = lastUserText.trim().toLowerCase();
-  if (!trimmed) return true;
-
-  // Short messages (under 20 chars) that match common greetings/acknowledgements
-  if (trimmed.length <= 20) {
-    const greetings = [
-      'hi', 'hey', 'hello', 'yo', 'sup', 'hola', 'howdy',
-      'good morning', 'good afternoon', 'good evening', 'good night',
-      'gm', 'morning', 'evening',
-      'thanks', 'thank you', 'thx', 'ty', 'appreciate it',
-      'ok', 'okay', 'k', 'cool', 'nice', 'great', 'awesome', 'perfect',
-      'yes', 'no', 'yep', 'nope', 'yeah', 'nah', 'sure', 'yup',
-      'bye', 'goodbye', 'see ya', 'later', 'cya',
-      'lol', 'haha', 'heh', 'lmao',
-      'what\'s up', 'whats up', 'wassup',
-      'how are you', 'how\'s it going',
-    ];
-    // Exact match or match after stripping punctuation
-    const stripped = trimmed.replace(/[!?.,\s]+$/g, '');
-    if (greetings.includes(stripped) || greetings.includes(trimmed)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
@@ -104,16 +53,10 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(runSummarizer(state));
   }
 
-  // 2. Memory Recall — skip for simple greetings/acknowledgements
-  const simple = isSimpleMessage(state);
-  if (simple) {
-    console.log('[SubconsciousMiddleware] Simple message detected — skipping memory recall');
-    (state.metadata as any).recallContext = null;
-  } else {
-    launched.push('memory-recall');
-    const recallPromise = runMemoryRecall(state);
-    awaitedTasks.push(recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx; }));
-  }
+  // 2. Memory Recall — always (awaited: writes to state.metadata.recallContext)
+  launched.push('memory-recall');
+  const recallPromise = runMemoryRecall(state);
+  awaitedTasks.push(recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx; }));
 
   // 3. Observation Agent — fire-and-forget: it only does side-effect tool
   //    calls (add/remove observational memory, update identity files) and

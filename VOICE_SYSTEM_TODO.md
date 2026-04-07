@@ -30,3 +30,12 @@
 - [ ] Conversation mode UI (distinct phone-call-like voice state)
 - [ ] Wake word detection (hands-free activation)
 - [ ] Speaker verification / voice biometrics
+
+## Phase 5: Audio Driver Migration
+
+Migrate all remaining direct `getUserMedia` callers to use the audio driver pipeline. See [`docs/AUDIO_POLICY.md`](docs/AUDIO_POLICY.md) for the canonical audio usage policy.
+
+- [ ] Migrate Capture Studio mic capture (`pages/capture-studio/composables/useMicCapture.ts`) to use audio driver pipeline
+- [ ] Migrate Secretary Mode mic capture (`controllers/SecretaryModeController.ts`) to use audio driver pipeline
+- [ ] Remove direct `getUserMedia` from voice session composable (already uses `audio-driver:mic-vad` for VAD, but `VoiceRecorderService` still maintains its own mic stream)
+- [ ] Document all exemptions from audio-driver-first policy (currently only Raw Mic Test in `AudioSettings.vue`)

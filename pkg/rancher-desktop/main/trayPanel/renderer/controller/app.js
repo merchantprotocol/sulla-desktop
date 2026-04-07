@@ -435,7 +435,13 @@ async function refreshDevices(activeMicId) {
 
 async function startWithDevice(micDeviceId) {
   // 1. Enable mirror FIRST so BlackHole receives system audio
-  currentState = await window.audioDriver.startCapture();
+  // If backend is already running (e.g. started by chat), just fetch state
+  const existingState = await window.audioDriver.getState();
+  if (existingState.running) {
+    currentState = existingState;
+  } else {
+    currentState = await window.audioDriver.startCapture();
+  }
   renderState(currentState);
 
   // 2. Now open mic stream (speaker comes from main process via daemon)
@@ -456,6 +462,11 @@ async function startWithDevice(micDeviceId) {
       speaking: vadState.speaking,
       level: micLevel,
       fanNoise: vadState.fanNoise,
+      noiseFloor: vadState.amplitude ? vadState.amplitude.noiseFloor : 0,
+      zcr: vadState.zeroCrossing ? vadState.zeroCrossing.smoothedZcr : 0,
+      variance: vadState.temporalVariance ? vadState.temporalVariance.variance : 0,
+      pitch: vadState.pitch ? vadState.pitch.pitch : null,
+      centroid: vadState.spectral ? vadState.spectral.centroid : 0,
     });
   }, micDeviceId);
 

@@ -1,18 +1,59 @@
 /**
- * Model — Voice Activity Detection orchestrator.
+ * @module trayPanel/renderer/model/vad
  *
- * Thin coordinator that feeds raw audio data through the analyzer
- * pipeline, collects features, runs decision logic, and exposes
- * a unified state. Replaces the standalone noise-detection model.
+ * # Voice Activity Detection Orchestrator
  *
- * Pipeline:
- *   Raw audio → [Analyzers] → features → [Decision] → speaking/silence
- *                                                    → [Lookback Buffer]
+ * This is the **core speech detection engine** that powers all mic-based
+ * features in Sulla Desktop. Every component that needs to know "is the
+ * user speaking?" relies on this module's output — it is the single source
+ * of truth for speech/silence classification.
  *
- * Backwards-compatible: exposes noiseFloor, isSpeaking, noiseLevel
- * so the existing detection UI in the audio tab works unchanged.
+ * ## Why this exists (instead of a simple threshold)
  *
- * No DOM access, no view logic — pure orchestration.
+ * A naive RMS threshold triggers on keyboard taps, desk bumps, fan noise,
+ * and HVAC hum. This orchestrator uses a **multi-stage pipeline** to
+ * distinguish real speech from transient and steady-state noise:
+ *
+ * ## Pipeline
+ *
+ * ```
+ * Raw audio (Float32 time-domain) from AnalyserNode
+ *   → Stage 1: Signal Analyzers (run in parallel)
+ *       amplitude   — RMS, adaptive noise floor, dB above floor
+ *       zeroCrossing — ZCR (speech is low; taps/noise are high)
+ *       temporalVariance — sustained energy = speech; transients = taps
+ *       pitch       — autocorrelation pitch detection (80–400 Hz = voice)
+ *       spectral    — FFT centroid + rolloff (speech energy is low-frequency)
+ *   → Gate: suppress non-speech before decision
+ *       RMS > RMS_GATE, variance > VARIANCE_GATE, ZCR < ZCR_MAX, centroid < CENTROID_MAX
+ *   → Stage 2: Decision Logic
+ *       hysteresis  — dual threshold (on/off) prevents rapid toggling
+ *       frameCounter — N consecutive frames required to change state
+ *       silenceRatio — long-term speaking/silence ratio
+ *       fanNoise    — cross-signal steady-pitch + low-variance = mechanical noise
+ *   → Stage 3: Lookback Buffer
+ *       circular buffer of recent audio + speaking state for context
+ * ```
+ *
+ * ## Output
+ *
+ * The `process()` function returns a state object with:
+ * - `speaking` (boolean) — the final speech/silence decision
+ * - `fanNoise` (boolean) — mechanical noise detected
+ * - `noiseFloor` (number) — adaptive noise floor RMS
+ * - `noiseLevel` (string) — 'low' | 'moderate' | 'high'
+ * - Full sub-state for each analyzer (amplitude, zeroCrossing, pitch, etc.)
+ *
+ * This state is broadcast to all windows via `audio-driver:mic-vad` IPC
+ * by the tray panel controller.
+ *
+ * ## Integration
+ *
+ * Do NOT call this module directly from outside the tray panel renderer.
+ * Use `AudioDriverClient.on('vad', ...)` or `useAudioDriver().speaking`
+ * to consume VAD state from any window.
+ *
+ * No DOM access, no view logic — pure signal analysis and orchestration.
  */
 
 // ─── Analyzers ──────────────────────────────────────────────────
@@ -46,11 +87,18 @@ let callback = null;
 let cachedState = null;
 
 // ─── Configuration ──────────────────────────────────────────────
+// These thresholds gate the decision pipeline. A signal must pass ALL
+// gates to be considered speech. Values are tuned for typical desktop
+// microphones at arm's length.
 
-const RMS_GATE = 0.005;              // Minimum RMS to even consider speech
-const VARIANCE_GATE = 0.0001;        // Minimum variance — speech sustains, taps don't
-const SPEECH_ZCR_MAX = 0.15;         // Speech ZCR is low; taps/noise are higher
-const SPEECH_CENTROID_MAX = 0.20;    // Speech centroid is concentrated low
+/** Minimum RMS to even consider speech. Below this = silence/noise floor. */
+const RMS_GATE = 0.005;
+/** Minimum temporal variance — speech sustains energy; taps/bumps don't. */
+const VARIANCE_GATE = 0.0001;
+/** Maximum zero-crossing rate for speech. Taps and noise have higher ZCR. */
+const SPEECH_ZCR_MAX = 0.15;
+/** Maximum spectral centroid for speech. Voice energy is concentrated low. */
+const SPEECH_CENTROID_MAX = 0.20;
 
 
 // ─── Orchestration ──────────────────────────────────────────────
