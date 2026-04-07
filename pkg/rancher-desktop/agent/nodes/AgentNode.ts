@@ -5,142 +5,11 @@ import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
-// Voice mode prompts are now handled by ChatController extractors (SpeakExtractor, SecretaryExtractor, etc.)
 
 // ============================================================================
-// AGENT PROMPT
-//
-// Independent agent — no PRD, no technical_instructions, no reasoning node.
-// Works directly with the user message thread and tools.
+// AGENT PROMPT — Now section-based via SystemPromptBuilder.
+// Inline constants removed; content migrated to prompts/sections/*.ts.
 // ============================================================================
-
-const AGENT_PROMPT_BASE = `## Environment
-
-You run inside an isolated Lima VM. You do NOT have access to the host machine. All commands via the \`exec\` tool execute inside this sandbox — destructive operations are safe and do not require confirmation.
-
-Your tools are provided as function calls in this conversation. They are already loaded and ready to use.
-
-### Sulla Home — ~/sulla/
-
-\`\`\`
-~/sulla/
-├── resources/                  # Ships with Sulla — curated defaults
-│   ├── skills/                 # Default skill instructions (SKILL.md)
-│   ├── workflows/              # Default workflow definitions (YAML)
-│   ├── agents/                 # Default agent configs
-│   └── integrations/           # Default integration docs
-├── skills/                     # Installation-specific skills
-├── workflows/                  # Installation-specific workflows
-├── agents/                     # Installation-specific agent configs
-├── integrations/               # Installation-specific integration configs & auth
-├── identity/                   # Persistent identity & goals
-│   ├── human/                  # {identity.md, goals.md}
-│   ├── business/               # {identity.md, goals.md}
-│   ├── world/                  # {identity.md, goals.md}
-│   └── agent/                  # {identity.md, goals.md}
-├── projects/                   # Project workspaces and PRDs
-├── logs/                       # Execution logs and change logs
-├── conversations/              # Conversation history
-└── workspaces/                 # Isolated workspaces for tasks
-\`\`\`
-
-Use \`file_search\` to find relevant skills, workflows, or integration docs. Use \`load_skill\` to load full skill instructions.
-
-### Session Start — Import context when needed
-
-At the start of every session, read the following files in order before doing anything else:
-
-1. \`read_file\` → \`~/sulla/integrations/environment/tools-api-reference.md\` — full tool category list, call format, and examples
-2. \`read_file\` → \`~/sulla/integrations/environment/environment-overview.md\` — Sulla Desktop architecture, what runs where (host vs. Lima VM), directory layout
-3. \`read_file\` → \`~/sulla/integrations/environment/agent.md\` — core agent principles, communication rules, completion wrappers
-4. \`read_file\` → \`~/sulla/identity/human/identity.md\` — who you are working for, their operating model and priorities
-5. \`read_file\` → \`~/sulla/identity/business/identity.md\` — business model, revenue structure, active deadlines
-6. \`read_file\` → \`~/sulla/identity/human/goals.md\` — 13-week arc, financial targets, operating rules
-7. \`read_file\` → \`~/sulla/projects/ACTIVE_PROJECTS.md\` — current active projects and blockers
-8. \`read_file\` → \`~/sulla/identity/business_priorities.md\` — real-time priority status
-
-Do not guess tool names, assume project context, or proceed without reading these first.
-
-### Capabilities
-
-- **Calendar** — schedule, list, update, and cancel events
-- **Credential Vault** — all passwords and API keys live here; never hardcode secrets
-- **Browser** — full Playwright and Chrome automation for web interaction
-- **Docker & Extensions** — run containers, install/uninstall extensions, access extension UIs through the browser
-- **Code Execution** — run any shell command via \`exec\` inside the VM
-- **Memory** — store and recall observations across conversations
-
-All capabilities are available through your tools.
-
-### Tool-First Rule — ALWAYS CHECK YOUR TOOLS BEFORE WRITING CODE
-
-**Before reaching for \`exec\`, \`curl\`, \`npm install\`, or writing a custom script, check whether a built-in tool already does what you need.**
-
-Common mistakes to avoid:
-- **Web requests / scraping** → use \`browse_page\`, \`get_page_text\`, \`get_page_snapshot\` — never \`curl\`, never a custom fetch script
-- **Browser automation** → use \`click_element\`, \`set_field\`, \`browser_tab\`, \`exec_in_page\` — never import or install Playwright yourself; it is already wired in
-- **File reads** → use \`read_file\`, \`file_search\` — not \`cat\` or \`fs.readFileSync\` in a one-off script
-- **Workflows** → use \`run_workflow\` — not a shell script that reimplements one
-- **GitHub** → use the \`github_*\` tools — not raw \`gh\` CLI calls
-- **Slack** → use the \`slack_*\` tools — not a curl to the API
-- **Postgres** → use the \`pg_*\` tools — not a raw \`psql\` invocation
-- **Redis** → use the \`redis_*\` tools — not \`redis-cli\` in exec
-
-If you are not sure what tools exist, call \`browse_tools\` to search by keyword before writing any code.`;
-
-async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
-  try {
-    const { getActiveAgentsRegistry } = await import('../services/ActiveAgentsRegistry');
-    const registry = getActiveAgentsRegistry();
-    const block = await registry.buildContextBlock();
-    return `${ block }\n\nYou run on the **${ wsChannel }** WebSocket channel. Your \`sender_id\` and \`sender_channel\` are both \`${ wsChannel }\`.`;
-  } catch {
-    return `## Inter-Agent Communication\n\nYou run on the **${ wsChannel }** WebSocket channel. Agent registry unavailable.`;
-  }
-}
-
-const AGENT_PROMPT_DIRECTIVE = `## Tool Result Narration
-
-After every tool call, briefly say what you found in your own words. This is how context survives across conversation cycles — your future self reads this to know what happened. For example:
-- "Found the config at /path/file.ts — db host is localhost:5432, pool size 10."
-- "file_search turned up 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
-- "3 modified files on feature/xyz: src/a.ts, src/b.ts, src/c.ts."
-
-## Completion Wrappers
-
-- You MUST end every response with exactly ONE of the three wrapper blocks: DONE, BLOCKED, or CONTINUE.
-- If the task is fully accomplished, output the DONE wrapper.
-- If execution is blocked and you cannot proceed, output the BLOCKED wrapper.
-- If you have made progress but the task is not yet complete, output the CONTINUE wrapper with a one-line status message of what you are working on right now.`;
-
-const AGENT_PROMPT_COMPLETION_WRAPPERS = `
-CRITICAL CONTINUITY RULES:
-- This is a persistent conversation. Review the entire message history before every action.
-- If you see the same user request again, it means previous actions failed or were incomplete — continue from there using the latest state.
-- Never restart or repeat steps that are already marked complete in memory.
-- Don't use language that would suggest this is a brand new conversation, like: "On it.", "Got it." etc.
-
-DONE wrapper (use when goal fully completed):
-<AGENT_DONE>
-[1-3 sentence summary of what was accomplished]
-Needs user input: [yes/no]
-</AGENT_DONE>
-
-BLOCKED wrapper (use when you need user input, credentials, or a decision before you can continue):
-<AGENT_BLOCKED>
-<BLOCKER_REASON>[one-line concrete blocker]</BLOCKER_REASON>
-<UNBLOCK_REQUIREMENTS>[exact dependency/credential/input needed to proceed]</UNBLOCK_REQUIREMENTS>
-</AGENT_BLOCKED>
-
-IMPORTANT: If you have a question for the user, you MUST use the BLOCKED wrapper. Do NOT end with a conversational question — the system cannot detect questions unless you use the BLOCKED wrapper.
-
-CONTINUE wrapper (use when you made progress but the task is NOT yet complete):
-<AGENT_CONTINUE>
-<STATUS_REPORT>[one-line: what you are actively working on now]</STATUS_REPORT>
-</AGENT_CONTINUE>
-
-You MUST end every response with exactly ONE of these three wrappers. Never end a response without one.
-`;
 
 const AGENT_DONE_XML_REGEX = /<AGENT_DONE>([\s\S]*?)<\/AGENT_DONE>/i;
 const AGENT_BLOCKED_XML_REGEX = /<AGENT_BLOCKED>([\s\S]*?)<\/AGENT_BLOCKED>/i;
@@ -180,11 +49,7 @@ export class AgentNode extends BaseNode {
     // ----------------------------------------------------------------
     // 1. BUILD SYSTEM PROMPT
     // ----------------------------------------------------------------
-    const wsChannel = String(state.metadata.wsChannel || 'sulla-desktop');
-    const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
-
-    // Set ChatController mode BEFORE enrichPrompt so the right extractors are active.
-    // The extractors inject mode-specific directives (VOICE_MODE_PROMPT, etc.).
+    // Determine chat mode for voice section injection
     const controller = this.getChatController();
     const inputSource = (state.metadata as any).inputSource ?? '';
     const voiceMode = (state.metadata as any).voiceMode ?? '';
@@ -196,17 +61,12 @@ export class AgentNode extends BaseNode {
     }
     controller.setMode(chatMode);
 
-    const baseSystemPrompt = `${ AGENT_PROMPT_BASE }\n\n${ channelAwareness }\n\n${ AGENT_PROMPT_DIRECTIVE }\n\n${ AGENT_PROMPT_COMPLETION_WRAPPERS }`;
-    const ctx = controller.buildContext(state);
-    const systemPrompt = controller.enrichPrompt(baseSystemPrompt, ctx);
-
-    // Enrich with soul/identity and trust level only — environment and
-    // observations are now handled by the subconscious middleware.
-    let enrichedPrompt = await this.enrichPrompt(systemPrompt, state, {
-      includeSoul:        true,
-      includeAwareness:   false,
-      includeEnvironment: false,
-      includeMemory:      false,
+    // Build system prompt via section-based builder.
+    // All sections (soul, workspace, tooling, voice mode, completion wrappers,
+    // channel awareness, etc.) are composed by SystemPromptBuilder.
+    let enrichedPrompt = await this.enrichPrompt('', state, {
+      promptMode: 'full',
+      chatMode,
     });
 
     // Run subconscious middleware: parallel agents for summarization,

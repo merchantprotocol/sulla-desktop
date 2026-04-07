@@ -223,7 +223,13 @@ export class AnthropicService extends BaseLanguageModel {
     };
 
     if (systemMessage?.content) {
-      anthropicBody.system = systemMessage.content;
+      // Use Anthropic cache-optimized content blocks if available
+      const cacheBlocks = systemMessage.metadata?.__anthropicSystemBlocks;
+      if (cacheBlocks && Array.isArray(cacheBlocks)) {
+        anthropicBody.system = cacheBlocks;
+      } else {
+        anthropicBody.system = systemMessage.content;
+      }
     }
 
     // Explicitly disable extended thinking to prevent conflicts with
