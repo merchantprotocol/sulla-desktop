@@ -32,7 +32,7 @@ export function isAvailable(): boolean {
   return cachedStatus?.available === true;
 }
 
-export async function install(onProgress?: (line: string) => void): Promise<boolean> {
+export async function install(onProgress?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
   return platform.whisper.install(onProgress);
 }
 
