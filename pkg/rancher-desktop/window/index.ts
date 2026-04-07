@@ -556,10 +556,11 @@ export function openCaptureStudio() {
         }
         : {}),
       webPreferences: {
-        devTools:         !app.isPackaged,
-        nodeIntegration:  true,
-        contextIsolation: false,
-        webSecurity:      false,
+        devTools:               !app.isPackaged,
+        nodeIntegration:        true,
+        contextIsolation:       false,
+        webSecurity:            false,
+        backgroundThrottling:   false,
       },
     });
 

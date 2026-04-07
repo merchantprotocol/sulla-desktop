@@ -244,6 +244,15 @@ function toggleVoiceTracking() {
   }
 }
 
+// When the floating window opens, ensure voice tracking is running so speech
+// is followed regardless of which capture-studio layout is currently selected.
+watch(() => props.prompterWindowOpen, (open) => {
+  if (open && voiceTracking.value && !teleprompterTracker.isTracking.value) {
+    if (tpWords.value.length === 0) buildTpWords();
+    teleprompterTracker.startTracking(tpWords.value, tpCurrentIndex.value);
+  }
+});
+
 // Keyboard: space pause/resume, arrows navigate
 function onKeyDown(e: KeyboardEvent) {
   if (props.currentLayout !== 'teleprompter') return;
@@ -279,28 +288,9 @@ function deactivate() {
   // Only the auto-scroll timer stops.
 }
 
-// Callback for parent to receive position updates (for floating window sync)
-let onPositionUpdate: ((index: number) => void) | null = null;
-
-function setOnPositionUpdate(cb: (index: number) => void) {
-  onPositionUpdate = cb;
-}
-
-// Patch renderTpState to also notify parent
-const _origRenderTpState = renderTpState;
-function renderTpStateWithSync() {
-  _origRenderTpState();
-  if (onPositionUpdate) {
-    onPositionUpdate(tpCurrentIndex.value);
-  }
-}
-
-// Override calls that advance the index to use the synced version
-watch(tpCurrentIndex, () => {
-  if (onPositionUpdate) {
-    onPositionUpdate(tpCurrentIndex.value);
-  }
-});
+// Position sync is handled by the main process (teleprompterTracking.ts)
+// — it broadcasts teleprompter-tracking:position to all windows including
+// the floating window.  No renderer relay needed.
 
 // Notify parent on any style change so floating window stays in sync
 let onStyleUpdate: ((style: { fontSize: number; highlightColor: string }) => void) | null = null;
@@ -326,6 +316,13 @@ watch(tpWords, () => {
   if (onScriptUpdate) {
     onScriptUpdate({ words: tpWords.value, currentIndex: tpCurrentIndex.value });
   }
+  // Keep the main-process tracker in sync when the script changes mid-session
+  if (teleprompterTracker.isTracking.value) {
+    ipc.invoke('teleprompter-tracking:set-script', {
+      words:        tpWords.value,
+      currentIndex: tpCurrentIndex.value,
+    }).catch(() => {});
+  }
 });
 
 defineExpose({
@@ -336,7 +333,6 @@ defineExpose({
   tpCurrentIndex,
   tpFontSize,
   tpHighlightColor,
-  setOnPositionUpdate,
   setOnStyleUpdate,
   setOnScriptUpdate,
 });

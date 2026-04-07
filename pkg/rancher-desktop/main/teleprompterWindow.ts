@@ -181,8 +181,14 @@ export function registerTeleprompterIpc(): void {
   });
 
   // Forward jump-to from the floating window back to all renderer windows
-  // so the tracking composable can sync its position.
-  ipcMain.handle('teleprompter:jump-to', (_event: unknown, data: { currentIndex: number }) => {
+  // AND update the main-process tracking module's position.
+  ipcMain.handle('teleprompter:jump-to', async(_event: unknown, data: { currentIndex: number }) => {
+    // Update the main-process tracker directly
+    try {
+      const tracking = await import('@pkg/main/teleprompterTracking');
+      tracking.onJumpTo(data.currentIndex);
+    } catch { /* tracking module not loaded yet — fine */ }
+
     // Broadcast to all windows except the floating prompter itself
     for (const win of BrowserWindow.getAllWindows()) {
       if (win !== prompterWindow && !win.isDestroyed()) {
