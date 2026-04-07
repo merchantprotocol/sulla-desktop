@@ -27,38 +27,31 @@ export function useAudioDriver() {
     }
   };
 
-  const onState = (_e: any, state: { running: boolean; message: string }) => {
-    console.log('[useAudioDriver] state changed', state);
-    speakerRunning.value = state.running;
-  };
-
   onMounted(() => {
     console.log('[useAudioDriver] Registering IPC listeners');
     ipcRenderer.on('audio-driver:speaker-level', onLevel);
-    ipcRenderer.on('audio-driver:state', onState);
   });
 
   onUnmounted(() => {
     ipcRenderer.removeListener('audio-driver:speaker-level', onLevel);
-    ipcRenderer.removeListener('audio-driver:state', onState);
   });
 
   // ── Commands ──
 
-  async function startCapture(): Promise<{ running: boolean; message: string }> {
-    const result = await ipcRenderer.invoke('audio-driver:start-capture');
-    speakerRunning.value = result.running;
-    return result;
+  async function startSpeaker(): Promise<void> {
+    const result = await ipcRenderer.invoke('audio-driver:start-speaker', 'capture-studio');
+    speakerRunning.value = !!result?.speakerRunning;
   }
 
-  async function stopCapture(): Promise<{ running: boolean; message: string }> {
-    const result = await ipcRenderer.invoke('audio-driver:stop-capture');
-    speakerRunning.value = result.running;
-    return result;
+  async function stopSpeaker(): Promise<void> {
+    const result = await ipcRenderer.invoke('audio-driver:stop-speaker', 'capture-studio');
+    speakerRunning.value = !!result?.speakerRunning;
   }
 
-  async function getState(): Promise<{ running: boolean; message: string }> {
-    return ipcRenderer.invoke('audio-driver:get-state');
+  async function getState(): Promise<any> {
+    const state = await ipcRenderer.invoke('audio-driver:get-state');
+    speakerRunning.value = !!state?.speakerRunning;
+    return state;
   }
 
   async function speakerVolumeGet(): Promise<{ ok: boolean; volume: number; muted: boolean }> {
@@ -84,8 +77,8 @@ export function useAudioDriver() {
   return {
     speakerLevel,
     speakerRunning,
-    startCapture,
-    stopCapture,
+    startSpeaker,
+    stopSpeaker,
     getState,
     speakerVolumeGet,
     speakerVolumeUp,

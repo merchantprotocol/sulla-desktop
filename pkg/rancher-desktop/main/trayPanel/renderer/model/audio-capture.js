@@ -67,26 +67,21 @@ const CHUNK_INTERVAL_MS = 250;
 /**
  * List all available audio input and output devices.
  *
- * Temporarily opens a mic stream if one is not already active, because
- * `enumerateDevices()` only returns labels after `getUserMedia` has been
- * granted. Internal loopback/mirror devices (BlackHole, Audio Driver Mirror)
- * are filtered out so they never appear in user-facing dropdowns.
+ * Device labels are only available after `getUserMedia` has been granted,
+ * so labels will be empty until capture is first started. Fallback names
+ * are used in the meantime. Internal loopback/mirror devices (BlackHole,
+ * Audio Driver Mirror) are filtered out so they never appear in dropdowns.
  *
  * @returns {{ inputs: Array<{deviceId: string, label: string}>, outputs: Array<{deviceId: string, label: string}> }}
  */
 async function listDevices() {
-  let tempStream = null;
-  try {
-    tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (e) {
-    log.warn("AudioCapture", "Cannot enumerate devices without mic permission", { error: e.message });
-  }
-
+  // Skip getUserMedia when no capture is active. Opening a temporary mic
+  // stream just to get device labels triggers the macOS mic indicator on
+  // every boot. Without an active stream enumerateDevices() returns empty
+  // labels, but the fallback names below handle that gracefully. Once the
+  // user starts capture, refreshDevices() is called again with an active
+  // micStream so labels populate correctly.
   const devices = await navigator.mediaDevices.enumerateDevices();
-
-  if (tempStream && !micStream) {
-    tempStream.getTracks().forEach((t) => t.stop());
-  }
 
   // Hide internal loopback/mirror devices from the dropdowns
   const isInternal = (label) =>

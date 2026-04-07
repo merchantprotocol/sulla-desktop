@@ -15,9 +15,9 @@
  *
  * // In a plain controller — class API, manual cleanup
  * const client = AudioDriverClient.getInstance();
- * client.startMic();
+ * client.startMic('my-feature');   // serviceId for ref-counting
  * client.on('vad', (data) => console.log(data.speaking));
- * // later: client.dispose()
+ * // later: client.stopMic('my-feature');  client.dispose()
  * ```
  *
  * ## Why singleton?
@@ -204,98 +204,101 @@ export class AudioDriverClient {
   // ── Microphone Lifecycle ────────────────────────────────────
 
   /**
-   * Start the mic capture pipeline.
-   * Activates getUserMedia → GainNode → AnalyserNode → VAD in the tray panel.
-   * VAD events (`vad`) begin broadcasting immediately.
+   * Start the mic capture pipeline for a specific service.
+   * The controller uses reference counting — mic stays on as long as
+   * any service holds it.
+   *
+   * @param serviceId - Identifies who is requesting the mic (e.g. 'audio-settings-test', 'call-session')
    */
-  async startMic(): Promise<void> {
-    this._log('startMic()');
-    await getIpc().invoke('audio-driver:start-mic');
-    this._micRunning = true;
-    this._log('startMic() complete', { micRunning: true });
-    this._emit('stateChange', this._buildState());
+  async startMic(serviceId: string): Promise<void> {
+    this._log('startMic()', { serviceId });
+    const state = await getIpc().invoke('audio-driver:start-mic', serviceId);
+    this._applyState(state);
+    this._log('startMic() complete', { serviceId, micRunning: this._micRunning });
   }
 
   /**
-   * Stop the mic capture pipeline.
-   * The mic stream, VAD, and all analysis stop. Level drops to 0.
+   * Release the mic for a specific service.
+   * Mic only stops when no services hold it.
+   *
+   * @param serviceId - Must match the serviceId used in startMic()
    */
-  async stopMic(): Promise<void> {
-    this._log('stopMic()');
-    await getIpc().invoke('audio-driver:stop-mic');
-    this._micRunning = false;
-    this._micLevel = 0;
-    this._speaking = false;
-    this._fanNoise = false;
-    this._log('stopMic() complete', { micRunning: false });
-    this._emit('stateChange', this._buildState());
+  async stopMic(serviceId: string): Promise<void> {
+    this._log('stopMic()', { serviceId });
+    const state = await getIpc().invoke('audio-driver:stop-mic', serviceId);
+    this._applyState(state);
+    if (!this._micRunning) {
+      this._micLevel = 0;
+      this._speaking = false;
+      this._fanNoise = false;
+    }
+    this._log('stopMic() complete', { serviceId, micRunning: this._micRunning });
   }
 
-  /** Toggle mic on/off based on current state. */
-  toggleMic(): void {
+  /** Toggle mic on/off for a service based on current state. */
+  toggleMic(serviceId: string): void {
     if (this._micRunning) {
-      this.stopMic();
+      this.stopMic(serviceId);
     } else {
-      this.startMic();
+      this.startMic(serviceId);
     }
   }
 
   // ── Speaker Lifecycle ───────────────────────────────────────
 
   /**
-   * Start the speaker capture pipeline.
-   * Activates BlackHole loopback → aggregate mirror → CoreAudio Swift helper.
-   * Speaker level events (`speakerLevel`) begin broadcasting.
+   * Start the speaker capture pipeline for a specific service.
+   *
+   * @param serviceId - Identifies who is requesting the speaker (e.g. 'secretary-mode', 'audio-settings-test')
    */
-  async startSpeaker(): Promise<void> {
-    this._log('startSpeaker()');
-    await getIpc().invoke('audio-driver:start-speaker');
-    this._speakerRunning = true;
-    this._log('startSpeaker() complete', { speakerRunning: true });
-    this._emit('stateChange', this._buildState());
+  async startSpeaker(serviceId: string): Promise<void> {
+    this._log('startSpeaker()', { serviceId });
+    const state = await getIpc().invoke('audio-driver:start-speaker', serviceId);
+    this._applyState(state);
+    this._log('startSpeaker() complete', { serviceId, speakerRunning: this._speakerRunning });
   }
 
   /**
-   * Stop the speaker capture pipeline.
-   * Tears down the mirror device and stops the CoreAudio helper.
+   * Release the speaker for a specific service.
+   * Speaker only stops when no services hold it.
+   *
+   * @param serviceId - Must match the serviceId used in startSpeaker()
    */
-  async stopSpeaker(): Promise<void> {
-    this._log('stopSpeaker()');
-    await getIpc().invoke('audio-driver:stop-speaker');
-    this._speakerRunning = false;
-    this._speakerLevel = 0;
-    this._log('stopSpeaker() complete', { speakerRunning: false });
-    this._emit('stateChange', this._buildState());
+  async stopSpeaker(serviceId: string): Promise<void> {
+    this._log('stopSpeaker()', { serviceId });
+    const state = await getIpc().invoke('audio-driver:stop-speaker', serviceId);
+    this._applyState(state);
+    if (!this._speakerRunning) {
+      this._speakerLevel = 0;
+    }
+    this._log('stopSpeaker() complete', { serviceId, speakerRunning: this._speakerRunning });
   }
 
-  /** Toggle speaker on/off based on current state. */
-  toggleSpeaker(): void {
+  /** Toggle speaker on/off for a service based on current state. */
+  toggleSpeaker(serviceId: string): void {
     if (this._speakerRunning) {
-      this.stopSpeaker();
+      this.stopSpeaker(serviceId);
     } else {
-      this.startSpeaker();
+      this.startSpeaker(serviceId);
     }
   }
 
   // ── Combined convenience ────────────────────────────────────
 
-  /** Start both mic and speaker capture. */
-  async startAll(): Promise<void> {
-    await Promise.all([this.startMic(), this.startSpeaker()]);
+  /** Start both mic and speaker capture for a service. */
+  async startAll(serviceId: string): Promise<void> {
+    await Promise.all([this.startMic(serviceId), this.startSpeaker(serviceId)]);
   }
 
-  /** Stop both mic and speaker capture. */
-  async stopAll(): Promise<void> {
-    await Promise.all([this.stopMic(), this.stopSpeaker()]);
+  /** Stop both mic and speaker capture for a service. */
+  async stopAll(serviceId: string): Promise<void> {
+    await Promise.all([this.stopMic(serviceId), this.stopSpeaker(serviceId)]);
   }
 
   /** Query the full state from the main process. */
   async getState(): Promise<AudioDriverState> {
     const state = await getIpc().invoke('audio-driver:get-state');
-    if (state) {
-      this._micRunning = !!state.micRunning || !!state.running;
-      this._speakerRunning = !!state.speakerRunning;
-    }
+    this._applyState(state);
     return state;
   }
 
@@ -523,18 +526,6 @@ export class AudioDriverClient {
   private _registerIpcListeners(): void {
     const r = getIpc();
 
-    this._addIpcListener(r, 'audio-driver:state', (_e: any, state: any) => {
-      if (!state) return;
-      const prevMic = this._micRunning;
-      const prevSpk = this._speakerRunning;
-      this._micRunning = !!state.micRunning || !!state.running;
-      this._speakerRunning = !!state.speakerRunning;
-      if (this._micRunning !== prevMic || this._speakerRunning !== prevSpk) {
-        this._log('IPC state changed', { micRunning: this._micRunning, speakerRunning: this._speakerRunning, message: state.message });
-      }
-      this._emit('stateChange', this._buildState());
-    });
-
     this._addIpcListener(r, 'audio-driver:mic-vad', (_e: any, data: VadEvent) => {
       if (!data) return;
       const prevSpeaking = this._speaking;
@@ -576,11 +567,6 @@ export class AudioDriverClient {
 
     this._addIpcListener(r, 'audio-driver:speaker-device-changed', (_e: any, name: string) => {
       if (name) this._emit('deviceChange', name);
-    });
-
-    this._addIpcListener(r, 'audio-driver:auto-start', () => {
-      this._micRunning = true;
-      this._emit('stateChange', this._buildState());
     });
 
     this._addIpcListener(r, 'gateway-transcript', (_e: any, msg: any) => {
@@ -713,6 +699,21 @@ export class AudioDriverClient {
           console.error(`[AudioDriverClient] Error in ${event} handler:`, err);
         }
       }
+    }
+  }
+
+  // ── Private: State application ──────────────────────────────
+
+  /** Apply state received from the main process controller. */
+  private _applyState(state: any): void {
+    if (!state) return;
+    const prevMic = this._micRunning;
+    const prevSpk = this._speakerRunning;
+    this._micRunning = !!state.micRunning;
+    this._speakerRunning = !!state.speakerRunning;
+    if (this._micRunning !== prevMic || this._speakerRunning !== prevSpk) {
+      this._log('State updated', { micRunning: this._micRunning, speakerRunning: this._speakerRunning, message: state.message });
+      this._emit('stateChange', this._buildState());
     }
   }
 

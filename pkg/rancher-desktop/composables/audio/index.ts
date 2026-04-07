@@ -14,7 +14,7 @@
  * ```ts
  * import { AudioDriverClient } from '@pkg/composables/audio';
  * const client = AudioDriverClient.getInstance();
- * await client.startMic();
+ * await client.startMic('my-feature');
  * ```
  */
 

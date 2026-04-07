@@ -401,7 +401,7 @@ async function toggleSrc(src: Source) {
         micInstances[src.id] = mic;
         await mic.start();
       } else if (src.type === 'system') {
-        await audioDriver.startCapture();
+        await audioDriver.startSpeaker();
       }
     } catch (e: any) {
       console.error(`[CaptureStudio] Failed to acquire ${src.type}:`, e.message || e);
@@ -415,7 +415,7 @@ async function toggleSrc(src: Source) {
     } else if (src.type === 'mic') {
       micInstances[src.id]?.stop();
     } else if (src.type === 'system') {
-      await audioDriver.stopCapture();
+      await audioDriver.stopSpeaker();
     }
   }
 

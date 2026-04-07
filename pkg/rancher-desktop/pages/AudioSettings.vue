@@ -1027,9 +1027,9 @@ function onDriverState(_event: any, state: { running: boolean; micRunning?: bool
 
 async function toggleMicDriver() {
   if (micRunning.value) {
-    await ipc.invoke('audio-driver:stop-mic');
+    await ipc.invoke('audio-driver:stop-mic', 'audio-settings-test');
   } else {
-    await ipc.invoke('audio-driver:start-mic');
+    await ipc.invoke('audio-driver:start-mic', 'audio-settings-test');
   }
   micRunning.value = !micRunning.value;
 }
@@ -1044,13 +1044,13 @@ async function toggleSpeakerDriver() {
       // Don't await — deactivate can take 5-15s (Swift compilation).
       // Update UI immediately so the user isn't stuck.
       speakerRunning.value = false;
-      ipc.invoke('audio-driver:stop-speaker').catch((e: any) => {
+      ipc.invoke('audio-driver:stop-speaker', 'audio-settings-test').catch((e: any) => {
         console.warn('[AudioSettings] stop-speaker error:', e);
       });
       // Give the IPC a moment to dispatch, then clear transitioning
       setTimeout(() => { speakerTransitioning.value = false; }, 500);
     } else {
-      await ipc.invoke('audio-driver:start-speaker');
+      await ipc.invoke('audio-driver:start-speaker', 'audio-settings-test');
       speakerRunning.value = true;
       speakerTransitioning.value = false;
     }
@@ -1216,14 +1216,14 @@ async function toggleWhisperTest() {
   if (whisperTranscribing.value) {
     // Stop whisper + mic
     await ipc.invoke('audio-driver:transcribe-stop');
-    await ipc.invoke('audio-driver:stop-mic');
+    await ipc.invoke('audio-driver:stop-mic', 'whisper-test');
     whisperTranscribing.value = false;
     micRunning.value = false;
   } else {
     // Clear previous results
     whisperTestEntries.value = [];
     // Start mic first, then whisper
-    await ipc.invoke('audio-driver:start-mic');
+    await ipc.invoke('audio-driver:start-mic', 'whisper-test');
     micRunning.value = true;
     const result = await ipc.invoke('audio-driver:transcribe-start', {
       mode: whisperTranscribeMode.value,

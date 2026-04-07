@@ -19,7 +19,9 @@
  */
 
 import { ref, readonly, onUnmounted, type Ref } from 'vue';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+const ipcRenderer = _ipcRenderer as any;
 import type { ChatInterface, ChatMessage } from '../../pages/agent/ChatInterface';
 import { TTSPlayerService } from './TTSPlayerService';
 
@@ -290,13 +292,10 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     accumulatedTranscript = '';
     startDurationTimer();
 
-    // Ensure the audio-driver capture is running (starts mic + VAD in tray panel)
-    const state = await ipcRenderer.invoke('audio-driver:get-state');
-    if (!state?.running) {
-      ipcRenderer.send('audio-driver:toggle');
-    }
+    // Start mic via MicrophoneDriverController (ref-counted)
+    await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat');
 
-    // Listen for audio-driver VAD broadcasts
+    // Listen for VAD data (sent only to holder windows)
     ipcRenderer.on('audio-driver:mic-vad', onMicVad);
   }
 
@@ -327,6 +326,9 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     removeInterimMessage();
     stopDurationTimer();
     audioLevel.value = 0;
+
+    // Release mic via MicrophoneDriverController (ref-counted)
+    ipcRenderer.invoke('audio-driver:stop-mic', 'voice-chat').catch(() => {});
 
     if (pipelineState.value === 'LISTENING') {
       pipelineState.value = 'IDLE';

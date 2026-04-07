@@ -190,6 +190,81 @@ export function openMain() {
       () => window.webContents.send('route', { direction: 'back' }),
       'switch preferences tabs by cycle [back]',
     );
+
+    // ── File menu accelerators ──────────────────────────────────
+    // Electron menu accelerators don't fire when an iframe/webview has
+    // focus (the iframe swallows the keydown). Register them here via
+    // before-input-event so they work regardless of focus target.
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, key: 'N' },
+      () => window.webContents.send('agent-command', { command: 'new-chat-tab' }),
+      'new chat tab',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, key: 'T' },
+      () => window.webContents.send('agent-command', { command: 'new-browser-tab' }),
+      'new browser tab',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, key: '1' },
+      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'chat' }),
+      'open sulla agent',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, key: '2' },
+      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'calendar' }),
+      'open calendar',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, key: '3' },
+      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'integrations' }),
+      'open integrations',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, key: '4' },
+      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'vault' }),
+      'open password manager',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, key: '5' },
+      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'extensions' }),
+      'open extensions',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, key: 'L' },
+      () => openLanguageModelSettings(),
+      'open language model settings',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, shift: true, key: 'U' },
+      () => openAudioSettings(),
+      'open audio settings',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, shift: true, key: 'E' },
+      () => openEditor(),
+      'open agent workbench',
+    );
   }
 
   window.on('closed', () => {

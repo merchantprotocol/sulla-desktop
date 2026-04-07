@@ -109,18 +109,18 @@ export function useAudioDriver() {
     vadDetails:           readonly(vadDetails),
     listening:            readonly(listening),
 
-    // Mic lifecycle
-    startMic:       () => client.startMic(),
-    stopMic:        () => client.stopMic(),
-    toggleMic:      () => client.toggleMic(),
+    // Mic lifecycle (serviceId identifies who is holding the mic open)
+    startMic:       (serviceId: string) => client.startMic(serviceId),
+    stopMic:        (serviceId: string) => client.stopMic(serviceId),
+    toggleMic:      (serviceId: string) => client.toggleMic(serviceId),
     setMicGain:     (v: number) => client.setMicGain(v),
     setMicMuted:    (m: boolean) => client.setMicMuted(m),
     setMicDevice:   (d: string) => client.setMicDevice(d),
 
-    // Speaker lifecycle
-    startSpeaker:       () => client.startSpeaker(),
-    stopSpeaker:        () => client.stopSpeaker(),
-    toggleSpeaker:      () => client.toggleSpeaker(),
+    // Speaker lifecycle (serviceId identifies who is holding the speaker open)
+    startSpeaker:       (serviceId: string) => client.startSpeaker(serviceId),
+    stopSpeaker:        (serviceId: string) => client.stopSpeaker(serviceId),
+    toggleSpeaker:      (serviceId: string) => client.toggleSpeaker(serviceId),
     speakerVolumeUp:    () => client.speakerVolumeUp(),
     speakerVolumeDown:  () => client.speakerVolumeDown(),
     speakerMuteToggle:  () => client.speakerMuteToggle(),
@@ -128,8 +128,8 @@ export function useAudioDriver() {
     setSpeakerDevice:   (d: string) => client.setSpeakerDevice(d),
 
     // Combined
-    startAll: () => client.startAll(),
-    stopAll:  () => client.stopAll(),
+    startAll: (serviceId: string) => client.startAll(serviceId),
+    stopAll:  (serviceId: string) => client.stopAll(serviceId),
 
     // Speech recognition (VAD-driven browser STT)
     startListening: (opts?: { lang?: string }) => {

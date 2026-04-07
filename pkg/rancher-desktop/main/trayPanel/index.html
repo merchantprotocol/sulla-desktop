@@ -43,9 +43,6 @@
           <button class="sidebar-btn" data-panel="status" title="Status">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0"/><path d="M12 8v4l2 2"/></svg>
           </button>
-          <button class="sidebar-btn" data-panel="audio" title="Audio">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/></svg>
-          </button>
           <button class="sidebar-btn" data-panel="extensions" title="Extensions">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>
           </button>
@@ -74,96 +71,6 @@
               <span id="k8s-dot" class="dot off"></span>
               <span class="status-label">Kubernetes</span>
               <span id="k8s-status" class="status-value">Stopped</span>
-            </div>
-          </div>
-
-          <!-- ═══ Audio panel ══════════════════════════════════ -->
-          <div id="panel-audio" class="panel">
-            <div class="header">
-              <span class="title">Audio Capture</span>
-              <label class="toggle">
-                <input type="checkbox" id="audio-enabled-toggle" />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
-            <div class="audio-status-bar">
-              <span id="audio-status-dot" class="dot off"></span>
-              <span id="audio-status-text">Off</span>
-            </div>
-
-            <!-- Microphone section -->
-            <div class="audio-section">
-              <div class="audio-section-header">Microphone</div>
-              <div class="source-row">
-                <span class="source-label">Source</span>
-                <select id="mic-device" class="device-select"></select>
-              </div>
-              <div class="meter-section">
-                <div class="meter-track">
-                  <div id="mic-bar" class="meter-fill mic"></div>
-                  <div id="mic-peak" class="meter-peak"></div>
-                </div>
-                <span id="mic-db" class="meter-db">&mdash;</span>
-              </div>
-              <div id="detection-bar" class="detection-section hidden">
-                <div class="detection-row">
-                  <span class="detection-label">Noise</span>
-                  <div class="meter-track detection-track">
-                    <div id="noise-bar" class="meter-fill noise-low"></div>
-                  </div>
-                  <span id="noise-label" class="detection-value">low</span>
-                </div>
-                <div class="detection-row">
-                  <span class="detection-label">Feedback</span>
-                  <div class="meter-track detection-track">
-                    <div id="feedback-bar" class="meter-fill feedback-fill"></div>
-                  </div>
-                  <span id="feedback-label" class="detection-value">None</span>
-                </div>
-              </div>
-              <div class="icon-controls">
-                <button id="mic-mute-btn" class="icon-btn" title="Mute">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-                </button>
-                <button id="mic-vol-down" class="icon-btn" title="Volume Down">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/></svg>
-                </button>
-                <span id="mic-volume-label" class="volume-pct">100%</span>
-                <button id="mic-vol-up" class="icon-btn" title="Volume Up">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/></svg>
-                </button>
-              </div>
-            </div>
-
-            <div class="section-divider"></div>
-
-            <!-- Speaker section -->
-            <div class="audio-section">
-              <div class="audio-section-header">Speaker</div>
-              <div class="source-row">
-                <span class="source-label">Source</span>
-                <select id="speaker-device" class="device-select"></select>
-              </div>
-              <div class="meter-section">
-                <div class="meter-track">
-                  <div id="speaker-bar" class="meter-fill speaker"></div>
-                  <div id="speaker-peak" class="meter-peak"></div>
-                </div>
-                <span id="speaker-db" class="meter-db">&mdash;</span>
-              </div>
-              <div class="icon-controls">
-                <button id="speaker-mute-btn" class="icon-btn" title="Mute">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/></svg>
-                </button>
-                <button id="speaker-vol-down" class="icon-btn" title="Volume Down">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/></svg>
-                </button>
-                <span id="speaker-volume-label" class="volume-pct">100%</span>
-                <button id="speaker-vol-up" class="icon-btn" title="Volume Up">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/></svg>
-                </button>
-              </div>
             </div>
           </div>
 

@@ -141,6 +141,10 @@ export class SecretaryModeController {
     this.sttLanguage = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     const audioInputDeviceId: string = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
 
+    // Start mic via the MicrophoneDriverController (ref-counted)
+    await ipcRenderer.invoke('audio-driver:start-mic', 'secretary-mode');
+
+    // Also get a local getUserMedia stream for MediaRecorder (gateway mic channel)
     const audioConstraints: boolean | MediaTrackConstraints = audioInputDeviceId
       ? { deviceId: { exact: audioInputDeviceId } }
       : true;
@@ -203,6 +207,11 @@ export class SecretaryModeController {
     if (this.mediaStream) { this.mediaStream.getTracks().forEach(t => t.stop()); this.mediaStream = null; }
     this.mediaRecorder = null;
     this.audioChunks = [];
+
+    // Release mic via the MicrophoneDriverController (ref-counted)
+    ipcRenderer.invoke('audio-driver:stop-mic', 'secretary-mode').catch((err) => {
+      console.warn('[SecretaryMode] stop-mic failed:', err);
+    });
 
     // End the REST-only gateway session (non-gateway modes)
     if (this.gatewaySessionId && this.transcriptionMode !== 'gateway') {
@@ -568,17 +577,16 @@ User: ${text}`;
       throw new Error('No media stream available for gateway streaming');
     }
 
-    // ── Activate audio-driver for system/speaker audio ────────────
-    // The audio-driver is now built into Sulla Desktop. It captures
-    // system audio via CoreAudio+BlackHole (macOS), WASAPI (Windows),
-    // or PulseAudio (Linux). Speaker chunks (channel 1) are forwarded
-    // to the gateway automatically by the main process lifecycle.
+    // ── Activate speaker capture via SpeakerDriverController ──────
+    // Ref-counted: speaker stays active as long as any service holds it.
+    // Speaker chunks (channel 1) are forwarded to the gateway automatically
+    // by the main process lifecycle.
     try {
-      ipcRenderer.send('audio-driver:toggle'); // activates capture lifecycle
+      await ipcRenderer.invoke('audio-driver:start-speaker', 'secretary-mode');
       this.audioDriverConnected = true;
-      console.log('[SecretaryMode] Audio-driver activated for system audio (channel 1)');
+      console.log('[SecretaryMode] Speaker capture activated for system audio (channel 1)');
     } catch (err) {
-      console.log('[SecretaryMode] Audio-driver activation failed:', (err as Error).message);
+      console.log('[SecretaryMode] Speaker capture activation failed:', (err as Error).message);
       this.audioDriverConnected = false;
     }
 
@@ -663,9 +671,9 @@ User: ${text}`;
     }
     this.gatewayStreamRecorder = null;
 
-    // Disconnect from audio-driver (speaker audio, channel 1)
+    // Release speaker capture via SpeakerDriverController (ref-counted)
     if (this.audioDriverConnected) {
-      ipcRenderer.invoke('audio-driver-disconnect').catch(() => {});
+      ipcRenderer.invoke('audio-driver:stop-speaker', 'secretary-mode').catch(() => {});
       this.audioDriverConnected = false;
     }
 

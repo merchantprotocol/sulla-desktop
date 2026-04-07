@@ -36,8 +36,6 @@
  * | Method                    | IPC channel                            | Direction       |
  * |---------------------------|----------------------------------------|-----------------|
  * | getState()                | audio-driver:get-state                 | invoke          |
- * | startCapture()            | audio-driver:start-capture             | invoke          |
- * | stopCapture()             | audio-driver:stop-capture              | invoke          |
  * | setDeviceNames(mic, spk)  | audio-driver:set-device-names          | invoke          |
  * | setSystemOutput(name)     | audio-driver:set-system-output         | invoke          |
  * | setSystemInput(name)      | audio-driver:set-system-input          | invoke          |
@@ -46,7 +44,10 @@
  * | getMicSocketPath()        | audio-driver:get-mic-socket-path       | invoke          |
  * | onGatewayTranscript(cb)   | gateway-transcript                     | on (listener)   |
  * | onGatewayStatus(cb)       | gateway-status                         | on (listener)   |
- * | onAutoStart(cb)           | audio-driver:auto-start                | on (listener)   |
+ * | onStartMic(cb)            | audio-driver:renderer-start-mic        | on (listener)   |
+ * | onStopMic(cb)             | audio-driver:renderer-stop-mic         | on (listener)   |
+ * | ackMicStarted(info)       | audio-driver:mic-started               | send            |
+ * | ackMicStopped()           | audio-driver:mic-stopped               | send            |
  * | onSpeakerLevel(cb)        | audio-driver:speaker-level             | on (listener)   |
  * | broadcastMicVad(data)     | audio-driver:mic-vad-update            | send            |
  * | speakerVolumeUp()         | audio-driver:speaker-volume-up         | invoke          |
@@ -62,8 +63,6 @@ window.__GHOST_AGENT_URL__ = "https://app.dataripple.com";
 
 window.audioDriver = {
   getState: () => ipcRenderer.invoke("audio-driver:get-state"),
-  startCapture: () => ipcRenderer.invoke("audio-driver:start-capture"),
-  stopCapture: () => ipcRenderer.invoke("audio-driver:stop-capture"),
   setDeviceNames: (mic, speaker) => ipcRenderer.invoke("audio-driver:set-device-names", mic, speaker),
   setSystemOutput: (deviceName) => ipcRenderer.invoke("audio-driver:set-system-output", deviceName),
   setSystemInput: (deviceName) => ipcRenderer.invoke("audio-driver:set-system-input", deviceName),
@@ -100,10 +99,12 @@ window.audioDriver = {
   speakerMuteToggle: () => ipcRenderer.invoke("audio-driver:speaker-mute-toggle"),
   speakerVolumeGet: () => ipcRenderer.invoke("audio-driver:speaker-volume-get"),
 
-  onAutoStart: (callback) => ipcRenderer.on("audio-driver:auto-start", () => callback()),
-  onSpeakerLevel: (callback) => ipcRenderer.on("audio-driver:speaker-level", (_e, level) => callback(level)),
-  onSpeakerDeviceChanged: (callback) => ipcRenderer.on("audio-driver:speaker-device-changed", (_e, name) => callback(name)),
-  onVolumeChanged: (callback) => ipcRenderer.on("audio-driver:volume-changed", (_e, state) => callback(state)),
+  // Worker commands from MicrophoneDriverController / SpeakerDriverController (main process)
+  onStartMic: (callback) => ipcRenderer.on("audio-driver:renderer-start-mic", (_e, opts) => callback(opts)),
+  onStopMic: (callback) => ipcRenderer.on("audio-driver:renderer-stop-mic", () => callback()),
+  ackMicStarted: (deviceInfo) => ipcRenderer.send("audio-driver:mic-started", deviceInfo),
+  ackMicStopped: () => ipcRenderer.send("audio-driver:mic-stopped"),
+
 
   // Broadcast mic VAD state to main process for relay to all windows
   broadcastMicVad: (data) => ipcRenderer.send("audio-driver:mic-vad-update", data),

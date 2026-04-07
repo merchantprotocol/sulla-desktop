@@ -1,350 +1,462 @@
 // HeartbeatNode.ts
-// Scans production workflows for heartbeat trigger nodes and executes them.
-// Each heartbeat cycle picks the next pending workflow, spawns a sub-agent
-// that calls execute_workflow, and captures the outcome. The heartbeat graph
-// loops until all workflows are done or max cycles are hit.
-
-import * as fs from 'fs';
-import * as path from 'path';
-
-import yaml from 'yaml';
+// LLM-powered autonomous heartbeat agent. Mirrors AgentNode's execution
+// pattern but uses the dreaming-protocol agent config for its identity
+// and shows desktop notifications instead of WebSocket chat messages.
 
 import { BaseNode } from './BaseNode';
-import type { BaseThreadState, NodeResult, AgentGraphState } from './Graph';
+import type { NodeRunPolicy } from './BaseNode';
+import type { BaseThreadState, NodeResult } from './Graph';
+import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 
 // ============================================================================
-// HEARTBEAT THREAD STATE
+// PROMPT CONSTANTS
 // ============================================================================
 
-export interface HeartbeatThreadState extends BaseThreadState {
-  messages: ChatMessage[];
-  metadata: BaseThreadState['metadata'] & {
-    // Heartbeat tracking
-    heartbeatCycleCount:       number;
-    heartbeatMaxCycles:        number;
-    heartbeatStatus:           'running' | 'done' | 'blocked' | 'idle';
-    heartbeatLastCycleSummary: string;
-
-    // Workflow execution tracking
-    pendingWorkflows:   Array<{ id: string; name: string; description: string }>;
-    completedWorkflows: string[];
-    currentFocus:       string;
-
-    // Environmental context
-    agentsContext: string;
-  };
+async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
+  try {
+    const { getActiveAgentsRegistry } = await import('../services/ActiveAgentsRegistry');
+    const registry = getActiveAgentsRegistry();
+    const block = await registry.buildContextBlock();
+    return `${ block }\n\nYou run on the **${ wsChannel }** WebSocket channel. Your \`sender_id\` and \`sender_channel\` are both \`${ wsChannel }\`.`;
+  } catch {
+    return `## Inter-Agent Communication\n\nYou run on the **${ wsChannel }** WebSocket channel. Agent registry unavailable.`;
+  }
 }
 
+const HEARTBEAT_PROMPT_DIRECTIVE = `## Tool Result Narration
+
+After every tool call, briefly say what you found in your own words. This is how context survives across conversation cycles — your future self reads this to know what happened. For example:
+- "Found the config at /path/file.ts — db host is localhost:5432, pool size 10."
+- "file_search turned up 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
+- "3 modified files on feature/xyz: src/a.ts, src/b.ts, src/c.ts."
+
+## Completion Wrappers
+
+- You MUST end every response with exactly ONE of the three wrapper blocks: DONE, BLOCKED, or CONTINUE.
+- If the task is fully accomplished, output the DONE wrapper.
+- If execution is blocked and you cannot proceed, output the BLOCKED wrapper.
+- If you have made progress but the task is not yet complete, output the CONTINUE wrapper with a one-line status message of what you are working on right now.`;
+
+const HEARTBEAT_PROMPT_COMPLETION_WRAPPERS = `
+CRITICAL CONTINUITY RULES:
+- This is a persistent conversation. Review the entire message history before every action.
+- If you see the same user request again, it means previous actions failed or were incomplete — continue from there using the latest state.
+- Never restart or repeat steps that are already marked complete in memory.
+- Don't use language that would suggest this is a brand new conversation, like: "On it.", "Got it." etc.
+
+DONE wrapper (use when goal fully completed):
+<AGENT_DONE>
+[1-3 sentence summary of what was accomplished]
+Needs user input: [yes/no]
+</AGENT_DONE>
+
+BLOCKED wrapper (use when you need user input, credentials, or a decision before you can continue):
+<AGENT_BLOCKED>
+<BLOCKER_REASON>[one-line concrete blocker]</BLOCKER_REASON>
+<UNBLOCK_REQUIREMENTS>[exact dependency/credential/input needed to proceed]</UNBLOCK_REQUIREMENTS>
+</AGENT_BLOCKED>
+
+IMPORTANT: If you have a question for the user, you MUST use the BLOCKED wrapper. Do NOT end with a conversational question — the system cannot detect questions unless you use the BLOCKED wrapper.
+
+CONTINUE wrapper (use when you made progress but the task is NOT yet complete):
+<AGENT_CONTINUE>
+<STATUS_REPORT>[one-line: what you are actively working on now]</STATUS_REPORT>
+</AGENT_CONTINUE>
+
+You MUST end every response with exactly ONE of these three wrappers. Never end a response without one.
+`;
+
 // ============================================================================
-// CONSTANTS
+// OUTCOME EXTRACTION — XML REGEXES
 // ============================================================================
 
-const MAX_HEARTBEAT_CYCLES = 10;
-const HEARTBEAT_WS_CHANNEL = 'heartbeat';
+const AGENT_DONE_XML_REGEX = /<AGENT_DONE>([\s\S]*?)<\/AGENT_DONE>/i;
+const AGENT_BLOCKED_XML_REGEX = /<AGENT_BLOCKED>([\s\S]*?)<\/AGENT_BLOCKED>/i;
+const BLOCKER_REASON_XML_REGEX = /<BLOCKER_REASON>([\s\S]*?)<\/BLOCKER_REASON>/i;
+const UNBLOCK_REQUIREMENTS_XML_REGEX = /<UNBLOCK_REQUIREMENTS>([\s\S]*?)<\/UNBLOCK_REQUIREMENTS>/i;
+const AGENT_CONTINUE_XML_REGEX = /<AGENT_CONTINUE>([\s\S]*?)<\/AGENT_CONTINUE>/i;
+const STATUS_REPORT_XML_REGEX = /<STATUS_REPORT>([\s\S]*?)<\/STATUS_REPORT>/i;
+const NEEDS_USER_INPUT_REGEX = /Needs user input:\s*(yes|no)/i;
 
 // ============================================================================
 // NODE
 // ============================================================================
 
 /**
- * Heartbeat Node — Scans production workflows for heartbeat triggers and
- * executes them sequentially. Each cycle picks the next pending workflow,
- * spawns a fresh AgentGraph that calls execute_workflow, and captures the
- * outcome. Exits when all workflows are done or max cycles reached.
+ * Heartbeat Node — LLM-powered autonomous agent.
+ *
+ * Mirrors AgentNode's execution pattern:
+ *   1. Builds system prompt with channel awareness + completion wrappers
+ *   2. Enriches with agent identity from dreaming-protocol config
+ *   3. Runs subconscious middleware (memory recall, observations)
+ *   4. Calls LLM, processes tool calls, extracts outcome
+ *   5. Shows desktop notification instead of WebSocket chat
+ *
+ * Loops via the heartbeat graph until DONE or BLOCKED.
  */
 export class HeartbeatNode extends BaseNode {
   constructor() {
     super('heartbeat', 'Heartbeat');
   }
 
-  async execute(state: HeartbeatThreadState): Promise<NodeResult<HeartbeatThreadState>> {
-    const cycleStart = Date.now();
-    const cycleNum = (state.metadata.heartbeatCycleCount || 0) + 1;
-    state.metadata.heartbeatCycleCount = cycleNum;
+  async execute(state: BaseThreadState): Promise<NodeResult<BaseThreadState>> {
+    const startTime = Date.now();
 
-    const maxCycles = state.metadata.heartbeatMaxCycles || MAX_HEARTBEAT_CYCLES;
-    console.log(`[HeartbeatNode] ═══ Cycle ${ cycleNum }/${ maxCycles } ═══`);
-
-    // Check abort signal before starting cycle
+    // Check abort signal
     const abortSignal = (state.metadata as any).abortSignal as AbortSignal | undefined;
     if (abortSignal?.aborted) {
       console.log('[HeartbeatNode] Abort signal received — exiting');
-      state.metadata.heartbeatStatus = 'done';
       return { state, decision: { type: 'end' } };
     }
 
     // ----------------------------------------------------------------
-    // 1. SCAN FOR HEARTBEAT WORKFLOWS (first cycle only)
+    // 1. BUILD SYSTEM PROMPT
     // ----------------------------------------------------------------
-    if (cycleNum === 1) {
-      state.metadata.pendingWorkflows = this.scanHeartbeatWorkflows();
-      state.metadata.completedWorkflows = [];
+    const wsChannel = String(state.metadata.wsChannel || 'heartbeat');
+    const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
 
-      if (state.metadata.pendingWorkflows.length === 0) {
-        console.log('[HeartbeatNode] No workflows with heartbeat triggers found — done');
-        state.metadata.heartbeatStatus = 'done';
-        state.metadata.heartbeatLastCycleSummary = 'No heartbeat-triggered workflows found.';
-        return { state, decision: { type: 'end' } };
+    const baseSystemPrompt = `${ channelAwareness }\n\n${ HEARTBEAT_PROMPT_DIRECTIVE }\n\n${ HEARTBEAT_PROMPT_COMPLETION_WRAPPERS }`;
+
+    // Enrich with agent soul/identity from dreaming-protocol config.
+    // enrichPrompt loads ~/sulla/agents/dreaming-protocol/ or
+    // ~/sulla/resources/agents/dreaming-protocol/ .md files.
+    const enrichedPrompt = await this.enrichPrompt(baseSystemPrompt, state, {
+      includeSoul:        true,
+      includeAwareness:   false,
+      includeEnvironment: false,
+      includeMemory:      false,
+    });
+
+    // ----------------------------------------------------------------
+    // 2. SUBCONSCIOUS MIDDLEWARE (memory recall, observations)
+    // ----------------------------------------------------------------
+    const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
+    await runSubconsciousMiddleware(state, {
+      includeObservations: shouldInjectObservations,
+    });
+
+    // Merge recall context into the last assistant message so the
+    // agent treats it as its own knowledge.
+    const recallContext = (state.metadata as any).recallContext;
+    if (recallContext) {
+      const recallBlock = `\n\n<recall_context>\n${ recallContext }\n</recall_context>`;
+      let merged = false;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        if (state.messages[i].role === 'assistant') {
+          const msg = state.messages[i];
+          if (typeof msg.content === 'string') {
+            msg.content += recallBlock;
+          } else if (Array.isArray(msg.content)) {
+            msg.content.push({ type: 'text', text: recallBlock });
+          } else {
+            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + recallBlock;
+          }
+          merged = true;
+          break;
+        }
       }
-
-      console.log(`[HeartbeatNode] Found ${ state.metadata.pendingWorkflows.length } heartbeat workflow(s): ${ state.metadata.pendingWorkflows.map(w => w.name).join(', ') }`);
-    }
-
-    // ----------------------------------------------------------------
-    // 2. PICK NEXT PENDING WORKFLOW
-    // ----------------------------------------------------------------
-    const nextWorkflow = state.metadata.pendingWorkflows.shift();
-    if (!nextWorkflow) {
-      console.log('[HeartbeatNode] All heartbeat workflows completed — done');
-      state.metadata.heartbeatStatus = 'done';
-      state.metadata.heartbeatLastCycleSummary = `Completed ${ state.metadata.completedWorkflows.length } workflow(s): ${ state.metadata.completedWorkflows.join(', ') }`;
-      return { state, decision: { type: 'end' } };
-    }
-
-    state.metadata.currentFocus = nextWorkflow.name;
-    console.log(`[HeartbeatNode] Executing workflow: "${ nextWorkflow.name }" (${ nextWorkflow.id })`);
-
-    // ----------------------------------------------------------------
-    // 3. LOAD AGENTS CONTEXT (fresh each cycle)
-    // ----------------------------------------------------------------
-    state.metadata.agentsContext = await this.loadActiveAgentsContext();
-
-    // ----------------------------------------------------------------
-    // 4. BUILD WORKFLOW EXECUTION PROMPT
-    // ----------------------------------------------------------------
-    const prompt = this.buildWorkflowPrompt(nextWorkflow, state);
-
-    // ----------------------------------------------------------------
-    // 5. SPAWN AGENT GRAPH to execute the workflow
-    // ----------------------------------------------------------------
-    const { createAgentGraph } = await import('./Graph');
-    const agentGraph = createAgentGraph();
-    const agentState = this.buildAgentState(state, prompt);
-
-    console.log(`[HeartbeatNode] Spawning AgentGraph for workflow "${ nextWorkflow.name }" (threadId=${ agentState.metadata.threadId })`);
-
-    try {
-      await agentGraph.execute(agentState, 'input_handler');
-    } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        console.log('[HeartbeatNode] AgentGraph aborted');
-        state.metadata.heartbeatStatus = 'done';
-        return { state, decision: { type: 'end' } };
+      if (!merged) {
+        const insertIdx = Math.max(0, state.messages.length - 1);
+        state.messages.splice(insertIdx, 0, {
+          role:     'assistant',
+          content:  recallBlock.trim(),
+          metadata: { source: 'recall', _synthetic: true },
+        });
       }
-      console.error(`[HeartbeatNode] Workflow "${ nextWorkflow.name }" execution error:`, err);
-    } finally {
-      await agentGraph.destroy();
     }
 
     // ----------------------------------------------------------------
-    // 6. CAPTURE OUTCOME
+    // 3. EXECUTE — LLM call with tool access
     // ----------------------------------------------------------------
-    const agentMeta = (agentState.metadata as any).agent || {};
-    const agentStatus = String(agentMeta.status || 'done').toLowerCase();
-    const workflowMeta = (agentState.metadata as any).activeWorkflow;
-    const workflowStatus = workflowMeta?.status || 'unknown';
+    const reply = await this.executeHeartbeat(enrichedPrompt, state);
 
-    const lastAssistant = [...agentState.messages]
-      .reverse()
-      .find(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim());
-    const cycleSummary = agentMeta.status_report ||
-      (lastAssistant?.content!)?.slice(0, 500) ||
-      `Workflow "${ nextWorkflow.name }" finished with status: ${ workflowStatus }`;
+    // Abort check after LLM response
+    throwIfAborted(state, 'Heartbeat execution aborted after LLM response');
 
-    state.metadata.heartbeatLastCycleSummary = cycleSummary;
-    state.metadata.completedWorkflows.push(nextWorkflow.name);
+    const resultText = typeof reply === 'string' ? reply : '';
+    const outcome = this.extractAgentOutcome(resultText);
+    const userVisibleText = this.toUserVisibleAgentMessage(resultText, outcome);
 
-    console.log(`[HeartbeatNode] Workflow "${ nextWorkflow.name }" complete — agent: ${ agentStatus }, workflow: ${ workflowStatus }`);
+    // ----------------------------------------------------------------
+    // 4. STORE OUTCOME ON METADATA
+    // ----------------------------------------------------------------
+    const statusNote = this.toOneLineStatusNote(
+      outcome.statusReport ||
+      outcome.blockerReason ||
+      outcome.summary ||
+      '',
+    );
 
-    // If more workflows remain, keep running
-    if (state.metadata.pendingWorkflows.length > 0) {
-      state.metadata.heartbeatStatus = 'running';
-    } else {
-      state.metadata.heartbeatStatus = 'done';
+    (state.metadata as any).agent = {
+      ...((state.metadata as any).agent || {}),
+      status:               outcome.status,
+      status_report:        outcome.statusReport,
+      blocker_reason:       outcome.blockerReason,
+      unblock_requirements: outcome.unblockRequirements,
+      status_note:          statusNote,
+      response:             outcome.status === 'done' ? stripProtocolTags(resultText) : null,
+      updatedAt:            Date.now(),
+    };
+
+    if (outcome.status === 'done') {
+      state.metadata.cycleComplete = true;
     }
 
-    const elapsed = Date.now() - cycleStart;
-    console.log(`[HeartbeatNode] Cycle ${ cycleNum } complete — elapsed: ${ elapsed }ms, remaining workflows: ${ state.metadata.pendingWorkflows.length }`);
+    if (outcome.status === 'blocked') {
+      state.metadata.cycleComplete = true;
+      // Heartbeat is headless — no waitingForUser
+    }
+
+    if (statusNote) {
+      await this.updateAgentStatusNote(state, statusNote);
+    }
+
+    // ----------------------------------------------------------------
+    // 5. DESKTOP NOTIFICATION
+    // ----------------------------------------------------------------
+    if (userVisibleText) {
+      try {
+        const { showHeartbeatNotification } = await import('../../main/heartbeatNotification');
+        const notifTitle = outcome.status === 'blocked' ? 'Sulla — Blocked' : 'Sulla';
+        const notifMessage = statusNote || userVisibleText.slice(0, 200);
+        showHeartbeatNotification(notifTitle, notifMessage);
+      } catch (err) {
+        console.warn('[HeartbeatNode] Failed to show desktop notification:', err);
+      }
+    }
+
+    // ----------------------------------------------------------------
+    // 6. PUSH ASSISTANT MESSAGE TO THREAD
+    // ----------------------------------------------------------------
+    if (userVisibleText) {
+      if (!Array.isArray(state.messages)) {
+        state.messages = [];
+      }
+      const normalized = userVisibleText.trim();
+      const stripWrapperXml = (text: string): string => text
+        .replace(AGENT_DONE_XML_REGEX, '')
+        .replace(AGENT_BLOCKED_XML_REGEX, '')
+        .replace(AGENT_CONTINUE_XML_REGEX, '')
+        .trim();
+
+      const alreadyStored = state.messages.some((msg: any) => {
+        if (msg.role !== 'assistant') return false;
+        if (typeof msg.content === 'string' && stripWrapperXml(msg.content) === normalized) return true;
+        if (Array.isArray(msg.content)) {
+          return msg.content.some((block: any) =>
+            block?.type === 'text' && typeof block.text === 'string' && stripWrapperXml(block.text) === normalized,
+          );
+        }
+        return false;
+      });
+
+      if (normalized && !alreadyStored) {
+        state.messages.push({
+          role:     'assistant',
+          content:  normalized,
+          metadata: {
+            nodeId:    this.id,
+            nodeName:  this.name,
+            kind:      'heartbeat_result',
+            timestamp: Date.now(),
+          },
+        } as ChatMessage);
+        this.bumpStateVersion(state);
+      }
+    }
+
+    // ----------------------------------------------------------------
+    // 7. LOG
+    // ----------------------------------------------------------------
+    const executionTimeMs = Date.now() - startTime;
+    console.log(`[HeartbeatNode] Complete — status: ${ outcome.status } in ${ executionTimeMs }ms`);
 
     return { state, decision: { type: 'next' } };
   }
 
   // ======================================================================
-  // WORKFLOW SCANNER
+  // HEARTBEAT EXECUTION
   // ======================================================================
 
-  private scanHeartbeatWorkflows(): Array<{ id: string; name: string; description: string }> {
+  private async executeHeartbeat(
+    systemPrompt: string,
+    state: BaseThreadState,
+  ): Promise<string | null> {
     try {
-      const { resolveAllWorkflowsProductionDirs } = require('@pkg/agent/utils/sullaPaths');
-      const workflowsDirs: string[] = resolveAllWorkflowsProductionDirs();
-      const results: Array<{ id: string; name: string; description: string }> = [];
+      const policy: Required<NodeRunPolicy> = {
+        messageSource:           'graph',
+        persistAssistantToGraph: true,
+      };
 
-      for (const workflowsDir of workflowsDirs) {
-        if (!fs.existsSync(workflowsDir)) {
-          console.log(`[HeartbeatNode] No workflows dir: ${ workflowsDir }`);
-          continue;
-        }
+      const reply = await this.normalizedChat(state, systemPrompt, {
+        temperature:   0.2,
+        nodeRunPolicy: policy,
+      });
 
-        const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+      if (!reply) return null;
 
-        for (const entry of entries) {
-          if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+      // Process tool calls
+      await this.processPendingToolCalls(state, reply);
 
-          try {
-            const filePath = path.join(workflowsDir, entry.name);
-            const raw = fs.readFileSync(filePath, 'utf-8');
-            const definition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+      return reply.content || null;
+    } catch (error) {
+      if ((error as any)?.name === 'AbortError') throw error;
 
-            if (!definition.enabled) continue;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[HeartbeatNode] Execution failed:', errorMsg);
 
-            const hasHeartbeatTrigger = (definition.nodes || []).some(
-              (node: any) => node.data?.category === 'trigger' && node.data?.subtype === 'heartbeat',
-            );
+      (state.metadata as any).agent = {
+        ...((state.metadata as any).agent || {}),
+        status:         'blocked',
+        blocker_reason: errorMsg,
+        updatedAt:      Date.now(),
+      };
 
-            if (hasHeartbeatTrigger) {
-              results.push({
-                id:          definition.id || entry.name.replace(/\.(yaml|json)$/, ''),
-                name:        definition.name || entry.name,
-                description: definition.description || '',
-              });
-            }
-          } catch (err) {
-            console.warn(`[HeartbeatNode] Failed to parse workflow ${ entry.name }:`, err);
-          }
-        }
-      }
-
-      return results;
-    } catch (err) {
-      console.error('[HeartbeatNode] Failed to scan workflows:', err);
-      return [];
+      return null;
     }
   }
 
   // ======================================================================
-  // PROMPT BUILDER
+  // OUTCOME EXTRACTION
   // ======================================================================
 
-  private buildWorkflowPrompt(
-    workflow: { id: string; name: string; description: string },
-    state: HeartbeatThreadState,
+  private extractAgentOutcome(resultText: string): {
+    status:              'done' | 'blocked' | 'continue' | 'in_progress';
+    summary:             string | null;
+    statusReport:        string | null;
+    blockerReason:       string | null;
+    unblockRequirements: string | null;
+  } {
+    // Check BLOCKED first
+    const blockedMatch = AGENT_BLOCKED_XML_REGEX.exec(resultText);
+    if (blockedMatch) {
+      const blockedBlock = String(blockedMatch[1] || '').trim();
+      const blockerReasonMatch = BLOCKER_REASON_XML_REGEX.exec(blockedBlock);
+      const unblockRequirementsMatch = UNBLOCK_REQUIREMENTS_XML_REGEX.exec(blockedBlock);
+      const blockerReason = String(blockerReasonMatch?.[1] || '').trim() || null;
+      const unblockRequirements = String(unblockRequirementsMatch?.[1] || '').trim() || null;
+      const fallbackSummary = blockedBlock
+        .split('\n')
+        .map(line => line.trim())
+        .find(Boolean) || null;
+
+      return {
+        status:       'blocked',
+        summary:      blockerReason || fallbackSummary,
+        statusReport: null,
+        blockerReason,
+        unblockRequirements,
+      };
+    }
+
+    // Check DONE
+    const doneMatch = AGENT_DONE_XML_REGEX.exec(resultText);
+    if (doneMatch) {
+      const doneBlock = String(doneMatch[1] || '').trim();
+      const summary = doneBlock
+        .replace(NEEDS_USER_INPUT_REGEX, '')
+        .trim()
+        .split('\n').map(l => l.trim()).filter(Boolean).join(' ') || null;
+
+      return {
+        status:              'done',
+        summary,
+        statusReport:        null,
+        blockerReason:       null,
+        unblockRequirements: null,
+      };
+    }
+
+    // Check CONTINUE
+    const continueMatch = AGENT_CONTINUE_XML_REGEX.exec(resultText);
+    if (continueMatch) {
+      const continueBlock = String(continueMatch[1] || '').trim();
+      const statusReportMatch = STATUS_REPORT_XML_REGEX.exec(continueBlock);
+      const statusReport = statusReportMatch
+        ? String(statusReportMatch[1] || '').trim() || null
+        : continueBlock.split('\n').map(l => l.trim()).find(Boolean) || null;
+
+      return {
+        status:              'continue',
+        summary:             statusReport,
+        statusReport,
+        blockerReason:       null,
+        unblockRequirements: null,
+      };
+    }
+
+    // No wrapper — in_progress fallback
+    return {
+      status:              'in_progress',
+      summary:             null,
+      statusReport:        null,
+      blockerReason:       null,
+      unblockRequirements: null,
+    };
+  }
+
+  private toUserVisibleAgentMessage(
+    rawResultText: string,
+    outcome: {
+      status:              'done' | 'blocked' | 'continue' | 'in_progress';
+      summary:             string | null;
+      statusReport:        string | null;
+      blockerReason:       string | null;
+      unblockRequirements: string | null;
+    },
   ): string {
-    const now = new Date();
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const timeStr = now.toLocaleString('en-US', {
-      timeZone: tz,
-      weekday:  'long',
-      year:     'numeric',
-      month:    'long',
-      day:      'numeric',
-      hour:     '2-digit',
-      minute:   '2-digit',
-      hour12:   true,
-    });
+    if (!rawResultText) return '';
 
-    const parts: string[] = [];
+    const proseWithoutWrappers = rawResultText
+      .replace(AGENT_DONE_XML_REGEX, '')
+      .replace(AGENT_BLOCKED_XML_REGEX, '')
+      .replace(AGENT_CONTINUE_XML_REGEX, '')
+      .trim();
 
-    parts.push(`# Heartbeat — Execute Workflow`);
-    parts.push(``);
-    parts.push(`A heartbeat trigger has fired. Execute the following workflow now.`);
-    parts.push(``);
-    parts.push(`## Workflow Details`);
-    parts.push(`- **Name:** ${ workflow.name }`);
-    parts.push(`- **ID:** ${ workflow.id }`);
-    if (workflow.description) {
-      parts.push(`- **Description:** ${ workflow.description }`);
-    }
-    parts.push(`- **Triggered at:** ${ timeStr } (${ tz })`);
-    parts.push(``);
-    parts.push(`## Instructions`);
-    parts.push(``);
-    parts.push(`Use the \`execute_workflow\` tool to run this workflow:`);
-    parts.push(`- workflowId: "${ workflow.id }"`);
-    parts.push(``);
-    parts.push(`After calling execute_workflow, the workflow playbook will take over and orchestrate all the workflow nodes. Follow the playbook's instructions for each node.`);
-
-    // Inter-agent context
-    if (state.metadata.agentsContext) {
-      parts.push(``);
-      parts.push(state.metadata.agentsContext);
+    if (outcome.status === 'done') {
+      return proseWithoutWrappers || outcome.summary || '';
     }
 
-    return parts.join('\n');
+    if (outcome.status === 'continue') {
+      return proseWithoutWrappers || outcome.statusReport || outcome.summary || 'Continuing.';
+    }
+
+    if (outcome.status === 'blocked') {
+      const parts = [
+        proseWithoutWrappers,
+        outcome.blockerReason,
+        outcome.unblockRequirements,
+      ]
+        .filter((part): part is string => Boolean(part && part.trim()))
+        .map(part => part.trim());
+      if (parts.length > 0) return parts.join('\n\n');
+      return 'Blocked.';
+    }
+
+    return proseWithoutWrappers;
   }
 
-  // ======================================================================
-  // CONTEXT LOADERS
-  // ======================================================================
+  private toOneLineStatusNote(value: string): string | null {
+    const normalized = String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 240);
+    return normalized || null;
+  }
 
-  private async loadActiveAgentsContext(): Promise<string> {
+  private async updateAgentStatusNote(state: BaseThreadState, statusNote: string): Promise<void> {
+    const channel = String(state.metadata.wsChannel || '').trim();
+    if (!channel || !statusNote) return;
+
     try {
       const { getActiveAgentsRegistry } = await import('../services/ActiveAgentsRegistry');
       const registry = getActiveAgentsRegistry();
-      return await registry.buildContextBlock();
-    } catch (err) {
-      console.warn('[HeartbeatNode] Failed to load active agents context:', err);
-      return '';
+      await registry.updateStatusNoteByChannel(channel, statusNote);
+    } catch (error) {
+      console.warn('[HeartbeatNode] Failed to update active-agent status note:', error);
     }
-  }
-
-  // ======================================================================
-  // AGENT STATE BUILDER
-  // ======================================================================
-
-  private buildAgentState(parentState: HeartbeatThreadState, prompt: string): AgentGraphState {
-    const now = Date.now();
-    const threadId = `heartbeat_wf_${ now }_${ parentState.metadata.heartbeatCycleCount }`;
-
-    return {
-      messages: [
-        {
-          role:     'user',
-          content:  prompt,
-          metadata: {
-            source: 'heartbeat',
-            type:   'workflow_trigger',
-          },
-        } as ChatMessage,
-      ],
-      metadata: {
-        action:    'use_tools',
-        threadId,
-        wsChannel: parentState.metadata.wsChannel || HEARTBEAT_WS_CHANNEL,
-
-        cycleComplete:  false,
-        waitingForUser: false,
-        isSubAgent:     true,
-        subAgentDepth:  0,
-
-        llmModel: parentState.metadata.llmModel,
-        llmLocal: parentState.metadata.llmLocal,
-        options:  parentState.metadata.options || {},
-
-        currentNodeId:        'input_handler',
-        consecutiveSameNode:  0,
-        iterations:           0,
-        revisionCount:        0,
-        maxIterationsReached: false,
-
-        memory: {
-          knowledgeBaseContext: '',
-          chatSummariesContext: '',
-        },
-        subGraph: {
-          state:    'completed',
-          name:     'hierarchical',
-          prompt:   '',
-          response: '',
-        },
-        finalSummary:         '',
-        finalState:           'running',
-        n8nLiveEventsEnabled: parentState.metadata.n8nLiveEventsEnabled || false,
-        returnTo:             null,
-
-        agent:          undefined,
-        agentLoopCount: 0,
-      },
-    };
   }
 }

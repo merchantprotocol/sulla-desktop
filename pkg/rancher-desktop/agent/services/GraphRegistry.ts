@@ -1,5 +1,4 @@
 import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
-import type { HeartbeatThreadState } from '../nodes/HeartbeatNode';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel, getCurrentMode } from '../languagemodels';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
@@ -11,7 +10,7 @@ import * as path from 'path';
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
 // Back-compat re-export
-export type { HeartbeatThreadState as OverlordThreadState } from '../nodes/HeartbeatNode';
+export type { AgentGraphState as OverlordThreadState } from '../nodes/Graph';
 
 const registry = new Map<string, {
   graph: Graph<any>;
@@ -220,8 +219,8 @@ export const GraphRegistry = {
    * Get or create Heartbeat graph (formerly Overlord).
    */
   getOrCreateOverlordGraph: async function(wsChannel: string, prompt?: string): Promise<{
-    graph: Graph<HeartbeatThreadState>;
-    state: HeartbeatThreadState;
+    graph: Graph<AgentGraphState>;
+    state: AgentGraphState;
   }> {
     if (registry.has(wsChannel)) {
       return Promise.resolve(registry.get(wsChannel) as any);
@@ -538,7 +537,7 @@ export function nextMessageId(): string {
   return `msg_${ Date.now() }_${ ++messageCounter }`;
 }
 
-async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<HeartbeatThreadState> {
+async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<AgentGraphState> {
   const heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
 
   // Resolve provider to model/local flags
@@ -546,7 +545,6 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
   let llmLocal: boolean;
 
   if (heartbeatProvider === 'default' || heartbeatProvider === 'ollama') {
-    // Use primary provider resolution for 'default', or local for 'ollama'
     if (heartbeatProvider === 'default') {
       llmModel = await getCurrentModel();
       llmLocal = (await getCurrentMode()) === 'local';
@@ -555,7 +553,6 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
       llmLocal = true;
     }
   } else {
-    // Remote provider — get model from integration form values
     llmLocal = false;
     try {
       const { getIntegrationService } = await import('./IntegrationService');
@@ -571,7 +568,10 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
   const now = Date.now();
   const threadId = `heartbeat_${ now }`;
 
-  const state: HeartbeatThreadState = {
+  // Load agent config for the heartbeat channel (dreaming-protocol)
+  const agentConfig = await loadAgentConfig(wsChannel);
+
+  const state: AgentGraphState = {
     messages: [{
       role:     'user',
       content:  prompt,
@@ -583,6 +583,8 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
       wsChannel,
       cycleComplete:        false,
       waitingForUser:       false,
+      isSubAgent:           false,
+      subAgentDepth:        0,
       llmModel,
       llmLocal,
       options:              {},
@@ -606,21 +608,8 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
       n8nLiveEventsEnabled: false,
       returnTo:             null,
 
-      // Heartbeat-specific fields
-      heartbeatCycleCount:       0,
-      heartbeatMaxCycles:        10,
-      heartbeatStatus:           'idle',
-      heartbeatLastCycleSummary: '',
-      currentFocus:              '',
-
-      // Workflow execution tracking
-      pendingWorkflows:   [],
-      completedWorkflows: [],
-
-      // Environmental context (loaded each cycle by HeartbeatNode)
-      agentsContext: '',
-      isSubAgent:    false,
-      subAgentDepth: 0,
+      agent:          agentConfig,
+      agentLoopCount: 0,
     },
   };
 
