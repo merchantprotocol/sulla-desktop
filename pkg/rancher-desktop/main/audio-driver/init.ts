@@ -411,17 +411,18 @@ function registerIpcHandlers(): void {
   ipcMain.handle('audio-driver:whisper-install', async() => {
     log.info('IPC', 'whisper-install');
     broadcast('audio-driver:whisper-progress', { phase: 'install', status: 'Installing whisper.cpp via Homebrew...', pct: 0 });
-    const ok = await whisper.install((line: string) => {
+    const result = await whisper.install((line: string) => {
       broadcast('audio-driver:whisper-progress', { phase: 'install', status: line, pct: -1 });
     });
-    if (ok) {
+    if (result.ok) {
       const status = await whisper.detect();
       broadcast('audio-driver:whisper-status', status);
       broadcast('audio-driver:whisper-progress', { phase: 'install', status: 'Installed successfully', pct: 100 });
     } else {
-      broadcast('audio-driver:whisper-progress', { phase: 'install', status: 'Installation failed', pct: -1, error: true });
+      const errMsg = result.error || 'Installation failed';
+      broadcast('audio-driver:whisper-progress', { phase: 'install', status: errMsg, pct: -1, error: true });
     }
-    return { ok };
+    return { ok: result.ok, error: result.error };
   });
 
   ipcMain.handle('audio-driver:whisper-remove', async() => {

@@ -452,6 +452,53 @@ export const volume = {
   },
 };
 
+// ─── Homebrew installer ─────────────────────────────────────────
+
+async function installHomebrew(onProgress?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
+  log.info('Platform', 'Installing Homebrew via official installer...');
+  onProgress?.('Homebrew not found — installing Homebrew (this may take a few minutes)...');
+
+  return new Promise((resolve) => {
+    const proc = spawn('/bin/bash', ['-c', 'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash'], {
+      env:   { ...CHILD_ENV, NONINTERACTIVE: '1' },
+      stdio: 'pipe',
+    });
+
+    proc.stdout?.on('data', (data: Buffer) => {
+      const line = data.toString().trim();
+      if (line && onProgress) onProgress(line);
+      log.debug('Platform', 'homebrew-install stdout', { line });
+    });
+
+    proc.stderr?.on('data', (data: Buffer) => {
+      const line = data.toString().trim();
+      if (line && onProgress) onProgress(line);
+      log.debug('Platform', 'homebrew-install stderr', { line });
+    });
+
+    const timeout = setTimeout(() => {
+      log.error('Platform', 'Homebrew install timed out');
+      proc.kill();
+      resolve({ ok: false, error: 'Homebrew installation timed out.' });
+    }, 600000); // 10 min
+
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        log.info('Platform', 'Homebrew installed');
+        resolve({ ok: true });
+      } else {
+        resolve({ ok: false, error: `Homebrew installer exited with code ${ code }.` });
+      }
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timeout);
+      resolve({ ok: false, error: `Failed to run Homebrew installer: ${ err.message }` });
+    });
+  });
+}
+
 // ─── Whisper.cpp (Local STT Engine) ───────────────────────────
 
 const WHISPER_MODELS_DIR = path.join(
@@ -495,10 +542,29 @@ export const whisper = {
     }
   },
 
-  async install(onProgress?: (line: string) => void): Promise<boolean> {
+  async install(onProgress?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
+    // Pre-check: verify brew is reachable; auto-install Homebrew if missing
+    let brewPath: string;
+    try {
+      brewPath = execSync('which brew', { timeout: 5000, stdio: 'pipe', env: CHILD_ENV }).toString().trim();
+      log.info('Platform', 'brew found', { brewPath });
+    } catch {
+      // brew not found — install Homebrew first
+      const brewResult = await installHomebrew(onProgress);
+      if (!brewResult.ok) return brewResult;
+
+      // Re-check after Homebrew installs
+      try {
+        brewPath = execSync('which brew', { timeout: 5000, stdio: 'pipe', env: CHILD_ENV }).toString().trim();
+        log.info('Platform', 'brew found after Homebrew install', { brewPath });
+      } catch {
+        return { ok: false, error: 'Homebrew installed but brew command not found — try restarting the app.' };
+      }
+    }
+
     log.info('Platform', 'Installing whisper-cpp via Homebrew...');
     return new Promise((resolve) => {
-      const proc = spawn('brew', ['install', 'whisper-cpp'], {
+      const proc = spawn(brewPath, ['install', 'whisper-cpp'], {
         env:   CHILD_ENV,
         stdio: 'pipe',
       });
@@ -518,7 +584,7 @@ export const whisper = {
       const timeout = setTimeout(() => {
         log.error('Platform', 'whisper-cpp install timed out');
         proc.kill();
-        resolve(false);
+        resolve({ ok: false, error: 'Installation timed out after 5 minutes.' });
       }, 300000); // 5 min timeout
 
       proc.on('close', async(code) => {
@@ -528,21 +594,24 @@ export const whisper = {
           const recheck = await whisper.detect();
           if (recheck.available) {
             log.info('Platform', 'whisper-cpp confirmed after install');
-            resolve(true);
+            resolve({ ok: true });
           } else {
-            log.error('Platform', 'whisper-cpp installed but binary not found in PATH');
-            resolve(false);
+            const error = 'whisper-cpp installed but binary not found — try restarting the app.';
+            log.error('Platform', error);
+            resolve({ ok: false, error });
           }
         } else {
+          const error = `Homebrew install exited with code ${ code }. Run 'brew install whisper-cpp' in Terminal for details.`;
           log.error('Platform', 'Failed to install whisper-cpp', { exitCode: code });
-          resolve(false);
+          resolve({ ok: false, error });
         }
       });
 
       proc.on('error', (err) => {
         clearTimeout(timeout);
-        log.error('Platform', 'Failed to spawn brew', { error: err.message });
-        resolve(false);
+        const error = `Failed to run brew: ${ err.message }`;
+        log.error('Platform', error);
+        resolve({ ok: false, error });
       });
     });
   },
