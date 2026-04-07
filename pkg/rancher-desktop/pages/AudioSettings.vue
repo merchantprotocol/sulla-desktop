@@ -683,66 +683,66 @@
             </div>
           </div>
 
-          <!-- ── Engine Status ── -->
-          <div class="setting-section">
-            <h3>whisper.cpp Engine</h3>
-            <div class="status-row">
-              <span class="status-label">Status:</span>
-              <span
-                class="status-badge"
-                :class="whisperInstalled ? 'badge-success' : 'badge-warning'"
-              >
-                {{ whisperInstalled ? 'Installed' : 'Not installed' }}
-              </span>
-            </div>
+          <!-- ── Install gate: shown until whisper.cpp is installed ── -->
+          <div
+            v-if="!whisperInstalled && !whisperBusy"
+            class="setup-gate"
+          >
+            <p class="setup-gate-description">
+              Local transcription requires whisper.cpp. It runs entirely on
+              your machine &mdash; no network, no API keys.
+            </p>
             <div
-              v-if="whisperInstalled && whisperVersion"
+              v-if="whisperError"
+              class="status-banner banner-error"
+              style="margin-bottom: 1rem;"
+            >
+              <span class="banner-text">{{ whisperError }}</span>
+            </div>
+            <button
+              class="action-btn btn-primary btn-lg"
+              @click="installWhisper"
+            >
+              Install whisper.cpp
+            </button>
+            <p class="setup-gate-hint">
+              Installs via Homebrew. Requires
+              <a
+                href="https://brew.sh"
+                target="_blank"
+              >Homebrew</a>.
+            </p>
+          </div>
+
+          <!-- ── Engine Status (installed) ── -->
+          <div
+            v-if="whisperInstalled"
+            class="setting-section"
+          >
+            <h3>whisper.cpp Engine</h3>
+            <div
+              v-if="whisperVersion"
               class="status-row"
             >
               <span class="status-label">Version:</span>
               <span class="status-value">{{ whisperVersion }}</span>
             </div>
             <div
-              v-if="whisperInstalled && whisperBinaryPath"
+              v-if="whisperBinaryPath"
               class="status-row"
             >
               <span class="status-label">Path:</span>
               <span class="status-value status-path">{{ whisperBinaryPath }}</span>
             </div>
-
-            <!-- Install / Uninstall / Refresh -->
             <div class="mic-test-controls">
               <button
-                v-if="!whisperInstalled"
-                class="action-btn btn-primary"
-                :disabled="whisperBusy"
-                @click="installWhisper"
-              >
-                {{ whisperInstalling ? 'Installing...' : 'Install whisper.cpp' }}
-              </button>
-              <button
-                v-if="whisperInstalled"
                 class="action-btn btn-danger"
                 :disabled="whisperBusy"
                 @click="confirmRemoveWhisper"
               >
                 Uninstall
               </button>
-              <button
-                class="action-btn"
-                :disabled="whisperBusy"
-                @click="detectWhisper"
-              >
-                {{ whisperDetecting ? 'Checking...' : 'Refresh' }}
-              </button>
             </div>
-            <p
-              v-if="!whisperInstalled && !whisperBusy"
-              class="description"
-            >
-              Installs whisper.cpp via Homebrew. Requires Homebrew to be
-              installed on your system.
-            </p>
           </div>
 
           <!-- ── Model Management (only when installed) ── -->
@@ -1562,6 +1562,7 @@ const whisperModels = ref<string[]>([]);
 const whisperInstalling = ref(false);
 const whisperDetecting = ref(false);
 const whisperDownloading = ref(false);
+const whisperError = ref<string | null>(null);
 const whisperModelToDownload = ref('base.en');
 const whisperTranscribing = ref(false);
 const whisperTranscribeMode = ref('conversation');
@@ -1665,6 +1666,7 @@ async function detectWhisper() {
 
 async function installWhisper() {
   whisperInstalling.value = true;
+  whisperError.value = null;
   clearWhisperLog();
   whisperProgressPhase.value = 'Installing whisper.cpp';
   whisperProgressPct.value = 0;
@@ -1675,9 +1677,12 @@ async function installWhisper() {
       addWhisperLog('Installation complete.');
       await detectWhisper();
     } else {
-      addWhisperLog('Installation failed. Check that Homebrew is installed.');
+      const msg = result?.error || 'Installation failed. Check that Homebrew is installed.';
+      whisperError.value = msg;
+      addWhisperLog(msg);
     }
   } catch (e: any) {
+    whisperError.value = e.message || String(e);
     addWhisperLog(`Error: ${ e.message }`);
   } finally {
     whisperInstalling.value = false;

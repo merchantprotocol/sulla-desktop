@@ -59,7 +59,22 @@ const OLLAMA_MODELS = [
     name: 'llama3.1:8b', displayName: 'Llama 3.1 8B', size: '4.7GB', minMemoryGB: 6, minCPUs: 2, description: 'Meta\'s latest 8B model, excellent all-around performance',
   },
   {
+    name: 'huihui_ai/foundation-sec-8b-abliterated', displayName: 'Foundation-Sec 8B Abliterated', size: '5.0GB', minMemoryGB: 8, minCPUs: 2, description: 'Cisco\'s security-focused 8B — purpose-built for pentesting and vuln analysis, no refusals',
+  },
+  {
+    name: 'huihui_ai/qwen3-abliterated:8b', displayName: 'Qwen3 8B Abliterated', size: '5.0GB', minMemoryGB: 8, minCPUs: 2, description: 'Qwen3 8B abliterated — strong at code and reasoning, no refusals',
+  },
+  {
+    name: 'dolphin3', displayName: 'Dolphin 3.0 8B', size: '4.9GB', minMemoryGB: 8, minCPUs: 2, description: 'Eric Hartford\'s Dolphin 3.0 — uncensored Llama 3.1 8B, the OG unrestricted model',
+  },
+  {
     name: 'gemma:7b', displayName: 'Gemma 7B', size: '5.0GB', minMemoryGB: 6, minCPUs: 2, description: 'Google\'s larger model, improved capabilities',
+  },
+  {
+    name: 'gemma4:e2b', displayName: 'Gemma 4 E2B', size: '3.1GB', minMemoryGB: 4, minCPUs: 2, description: 'Google\'s Gemma 4 E2B — multimodal (text+image+audio), ultralight',
+  },
+  {
+    name: 'gemma4', displayName: 'Gemma 4 E4B', size: '9.6GB', minMemoryGB: 12, minCPUs: 2, description: 'Google\'s Gemma 4 E4B — multimodal (text+image+audio), recommended default',
   },
   {
     name: 'codellama:7b', displayName: 'Code Llama 7B', size: '3.8GB', minMemoryGB: 5, minCPUs: 2, description: 'Specialized for code generation and understanding',
@@ -72,6 +87,9 @@ const OLLAMA_MODELS = [
   },
   {
     name: 'deepseek-coder:33b', displayName: 'DeepSeek Coder 33B', size: '19GB', minMemoryGB: 24, minCPUs: 6, description: 'Advanced coding model, excellent for development',
+  },
+  {
+    name: 'gemma4:26b', displayName: 'Gemma 4 26B-A4B', size: '18GB', minMemoryGB: 22, minCPUs: 4, description: 'Google\'s Gemma 4 MoE — only 3.8B params active, runs like a 4B at frontier quality',
   },
 ];
 
