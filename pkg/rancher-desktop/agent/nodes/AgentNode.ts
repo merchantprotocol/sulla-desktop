@@ -46,6 +46,11 @@ Your tools are provided as function calls in this conversation. They are already
 
 Use \`file_search\` to find relevant skills, workflows, or integration docs. Use \`load_skill\` to load full skill instructions.
 
+### What you should know
+
+\`read_file\` → \`~/sulla/integrations/environment/tools-api-reference.md\` - Before using any tools, read the full tool reference
+
+
 ### Capabilities
 
 - **Calendar** — schedule, list, update, and cancel events
@@ -55,7 +60,23 @@ Use \`file_search\` to find relevant skills, workflows, or integration docs. Use
 - **Code Execution** — run any shell command via \`exec\` inside the VM
 - **Memory** — store and recall observations across conversations
 
-All capabilities are available through your tools.`;
+All capabilities are available through your tools.
+
+### Tool-First Rule — ALWAYS CHECK YOUR TOOLS BEFORE WRITING CODE
+
+**Before reaching for \`exec\`, \`curl\`, \`npm install\`, or writing a custom script, check whether a built-in tool already does what you need.**
+
+Common mistakes to avoid:
+- **Web requests / scraping** → use \`browse_page\`, \`get_page_text\`, \`get_page_snapshot\` — never \`curl\`, never a custom fetch script
+- **Browser automation** → use \`click_element\`, \`set_field\`, \`browser_tab\`, \`exec_in_page\` — never import or install Playwright yourself; it is already wired in
+- **File reads** → use \`read_file\`, \`file_search\` — not \`cat\` or \`fs.readFileSync\` in a one-off script
+- **Workflows** → use \`run_workflow\` — not a shell script that reimplements one
+- **GitHub** → use the \`github_*\` tools — not raw \`gh\` CLI calls
+- **Slack** → use the \`slack_*\` tools — not a curl to the API
+- **Postgres** → use the \`pg_*\` tools — not a raw \`psql\` invocation
+- **Redis** → use the \`redis_*\` tools — not \`redis-cli\` in exec
+
+If you are not sure what tools exist, call \`browse_tools\` to search by keyword before writing any code.`;
 
 async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
   try {

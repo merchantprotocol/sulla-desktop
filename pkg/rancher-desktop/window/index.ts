@@ -113,6 +113,7 @@ const mainUrl = `${ webRoot }/agent.html`;
 const dockerDashboardUrl = `${ webRoot }/index.html`;
 const languageModelSettingsUrl = `${ webRoot }/lm-settings.html`;
 const audioSettingsUrl = `${ webRoot }/audio-settings.html`;
+const computerUseSettingsUrl = `${ webRoot }/computer-use-settings.html`;
 const editorUrl = `${ webRoot }/editor.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
 const captureStudioUrl = `${ webRoot }/capture-studio.html`;
@@ -257,6 +258,13 @@ export function openMain() {
       { ...CommandOrControl, shift: true, key: 'U' },
       () => openAudioSettings(),
       'open audio settings',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, shift: true, key: 'C' },
+      () => openComputerUseSettings(),
+      'open computer use settings',
     );
 
     Shortcuts.register(
@@ -425,6 +433,43 @@ export function openAudioSettings() {
 
   window.on('closed', () => {
     delete windowMapping['audio-settings'];
+  });
+
+  app.dock?.show();
+
+  return window;
+}
+
+/**
+ * Open the Computer Use Settings window; if it is already open, focus it.
+ */
+export function openComputerUseSettings() {
+  console.log('[openComputerUseSettings] Called.');
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+
+  const defaultWidth = Math.min(Math.trunc(width * 0.7), 1000);
+  const defaultHeight = Math.min(Math.trunc(height * 0.7), 650);
+
+  const window = createWindow(
+    'computer-use-settings',
+    computerUseSettingsUrl,
+    {
+      title:          'Sulla Desktop - Computer Use Settings',
+      width:          defaultWidth,
+      height:         defaultHeight,
+      resizable:      true,
+      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      webPreferences: {
+        devTools:         !app.isPackaged,
+        nodeIntegration:  true,
+        contextIsolation: false,
+        webSecurity:      false,
+      },
+    });
+
+  window.on('closed', () => {
+    delete windowMapping['computer-use-settings'];
   });
 
   app.dock?.show();

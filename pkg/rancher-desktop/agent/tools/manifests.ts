@@ -4,6 +4,7 @@
 
 import { toolRegistry } from './registry';
 
+import { applescriptToolManifests } from './applescript/manifests';
 import { calendarToolManifests } from './calendar/manifests';
 import { dockerToolManifests } from './docker/manifests';
 import { githubToolManifests } from './github/manifests';
@@ -27,6 +28,7 @@ import { skillsToolManifests } from './skills/manifests';
 
 toolRegistry.registerManifests([
   ...agentToolManifests,
+  ...applescriptToolManifests,
   ...bridgeToolManifests,
   ...chromeToolManifests,
   ...computerUseToolManifests,

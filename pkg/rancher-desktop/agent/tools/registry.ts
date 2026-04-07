@@ -49,12 +49,13 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'meta', 'bridge', 'browser', 'calendar', 'computer-use', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
+    'applescript', 'meta', 'bridge', 'browser', 'calendar', 'computer-use', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
 
   private categoryDescriptions: Record<string, string> = {
+    applescript:        'Execute AppleScript to control macOS applications (Calendar, Reminders, Mail, Finder, etc.) that the user has enabled in Computer Use Settings.',
     'computer-use':     'Visual computer use tools — screenshot-based interaction with coordinate clicking, typing, and scrolling. Anthropic-native computer_20250124 protocol.',
     meta:               'Tools for browsing available tools, installing skills, and meta management.',
     bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',

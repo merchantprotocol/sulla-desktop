@@ -5,7 +5,7 @@ import { State } from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
 import Logging from '@pkg/utils/logging';
 import setupUpdate from '@pkg/main/update';
-import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openCaptureStudio, openMain, openEditor, getWindow, openUrlInApp } from '@pkg/window';
+import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openComputerUseSettings, openCaptureStudio, openMain, openEditor, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
@@ -682,6 +682,12 @@ function getMacApplicationMenu(): MenuItem[] {
           accelerator: 'CmdOrCtrl+Shift+U',
           enabled:     userLoggedIn,
           click:       openAudioSettings,
+        },
+        {
+          label:       'Computer Use Settings\u2026',
+          accelerator: 'CmdOrCtrl+Shift+C',
+          enabled:     userLoggedIn,
+          click:       openComputerUseSettings,
         },
         { type: 'separator' },
         { role: 'services' },

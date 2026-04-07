@@ -33,6 +33,7 @@ mac:
   artifactName: Sulla-Desktop-${version}-mac.${ext}
   extendInfo:
     NSMicrophoneUsageDescription: "Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio."
+    NSAppleEventsUsageDescription: "Sulla uses automation to interact with apps on your Mac — like managing your calendar, creating reminders, or controlling music playback. You choose which apps to enable."
 win:
   icon: ./pkg/rancher-desktop/pages/agent/sulla-icon.ico
   target: [ zip ]
