@@ -38,7 +38,7 @@ export function openTeleprompterWindow(): BrowserWindow {
   const display = screen.getDisplayNearestPoint(cursorPoint);
   const { x: workX, y: workY, width: workW } = display.workArea;
   const x = workX + Math.round((workW - WIN_WIDTH) / 2);
-  const y = workY + MARGIN;
+  const y = workY;
 
   prompterWindow = new BrowserWindow({
     width:          WIN_WIDTH,

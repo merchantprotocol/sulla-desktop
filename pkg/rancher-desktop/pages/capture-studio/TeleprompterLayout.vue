@@ -1,5 +1,10 @@
 <template>
   <div class="teleprompter-layout">
+    <!-- Close button -->
+    <button class="tp-close-btn" @click="$emit('close')" title="Close teleprompter">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+
     <div class="tp-immersive-text">
       <div class="tp-preview-text" ref="tpPreviewText" :style="{ fontSize: tpFontSize + 'px' }">
         <span
@@ -28,7 +33,7 @@
       <div class="tp-tb-divider"></div>
 
       <span class="tp-tb-label">Size</span>
-      <button class="tp-tb-btn" @click="tpFontSize = Math.max(18, tpFontSize - 2)">-</button>
+      <button class="tp-tb-btn" @click="tpFontSize = Math.max(8, tpFontSize - 2)">-</button>
       <span class="tp-tb-val">{{ tpFontSize }}</span>
       <button class="tp-tb-btn" @click="tpFontSize = Math.min(72, tpFontSize + 2)">+</button>
 
@@ -112,6 +117,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'toggle-prompter'): void;
+  (e: 'close'): void;
 }>();
 
 // ---- Teleprompter state ----

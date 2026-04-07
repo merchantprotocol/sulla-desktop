@@ -1,6 +1,6 @@
 <template>
   <div class="capture-studio-app">
-    <WindowDragLogo :size="20" class="capture-drag-logo" />
+    <WindowDragLogo :size="20" force-dark class="capture-drag-logo" />
     <!-- Loading screen -->
     <div v-if="loading" class="loading-screen">
       <div class="loading-content">
@@ -37,6 +37,7 @@
         :currentLayout="currentLayout"
         :prompterWindowOpen="prompterEnabled"
         @toggle-prompter="togglePrompter"
+        @close="selectLayout('pip')"
       />
 
       <CameraBubble
@@ -1476,14 +1477,6 @@ html, body {
   z-index: 600;
 }
 
-/* Capture Studio is always dark — force the dark logo variant */
-.capture-drag-logo :deep(.dark\:hidden) {
-  display: none !important;
-}
-.capture-drag-logo :deep(.hidden) {
-  display: block !important;
-}
-
 .capture-studio-app {
   --bg-page:          #0d1117;
   --bg-surface:       #161b22;
@@ -1601,6 +1594,15 @@ html, body {
   flex-direction: column; align-items: center; justify-content: center;
   overflow: hidden; transition: opacity 0.35s ease;
 }
+
+.tp-close-btn {
+  position: absolute; top: 12px; right: 12px; z-index: 30;
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 1px solid var(--border); background: rgba(22,27,34,0.7);
+  color: var(--text-secondary); cursor: pointer; transition: all 0.15s;
+  backdrop-filter: blur(6px);
+}
+.tp-close-btn:hover { background: rgba(248,81,73,0.25); color: #f85149; border-color: #f85149; }
 
 .tp-immersive-text {
   position: absolute; top: 60px; bottom: 70px; left: 60px; right: 60px;
