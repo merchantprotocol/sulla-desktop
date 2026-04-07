@@ -1421,6 +1421,32 @@ export function initSullaEvents(): void {
     }
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // Computer Use — probe AppleScript to trigger macOS TCC dialog
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('computer-use:request-permission', async(_event: unknown, appName: string) => {
+    if (process.platform !== 'darwin') {
+      return { ok: true };
+    }
+    try {
+      const { execFile } = await import('child_process');
+      const script = `tell application "${ appName }" to return name`;
+      await new Promise<void>((resolve, reject) => {
+        execFile('osascript', ['-e', script], { timeout: 10000 }, (err) => {
+          // An error here just means macOS denied or the app isn't running — that's fine.
+          // The TCC prompt will have been shown regardless.
+          void err;
+          resolve();
+        });
+      });
+
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   console.log('[Sulla] IPC event handlers initialized');
 
   // ─────────────────────────────────────────────────────────────

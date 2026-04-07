@@ -135,6 +135,13 @@ async function toggleApp(bundleId: string, event: Event) {
   const target = event.target as HTMLInputElement;
   enabledApps.value = { ...enabledApps.value, [bundleId]: target.checked };
   await saveSettings();
+
+  if (target.checked) {
+    const appEntry = registry.find(a => a.bundleId === bundleId);
+    if (appEntry) {
+      ipcRenderer.invoke('computer-use:request-permission', appEntry.name).catch(() => {});
+    }
+  }
 }
 
 async function selectAll() {
