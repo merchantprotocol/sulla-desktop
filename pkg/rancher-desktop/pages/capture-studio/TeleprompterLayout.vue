@@ -277,6 +277,32 @@ watch(tpCurrentIndex, () => {
   }
 });
 
+// Notify parent on any style change so floating window stays in sync
+let onStyleUpdate: ((style: { fontSize: number; highlightColor: string }) => void) | null = null;
+
+function setOnStyleUpdate(cb: (style: { fontSize: number; highlightColor: string }) => void) {
+  onStyleUpdate = cb;
+}
+
+watch([tpFontSize, tpHighlightColor], () => {
+  if (onStyleUpdate) {
+    onStyleUpdate({ fontSize: tpFontSize.value, highlightColor: tpHighlightColor.value });
+  }
+});
+
+// Also notify when script changes
+let onScriptUpdate: ((data: { words: string[]; currentIndex: number }) => void) | null = null;
+
+function setOnScriptUpdate(cb: (data: { words: string[]; currentIndex: number }) => void) {
+  onScriptUpdate = cb;
+}
+
+watch(tpWords, () => {
+  if (onScriptUpdate) {
+    onScriptUpdate({ words: tpWords.value, currentIndex: tpCurrentIndex.value });
+  }
+});
+
 defineExpose({
   activate,
   deactivate,
@@ -286,6 +312,8 @@ defineExpose({
   tpFontSize,
   tpHighlightColor,
   setOnPositionUpdate,
+  setOnStyleUpdate,
+  setOnScriptUpdate,
 });
 
 onMounted(() => {

@@ -53,7 +53,7 @@
     .tp-text .w { display: inline; }
     .tp-text .w.spoken { opacity: 0.15; }
     .tp-text .w.current {
-      color: #58a6ff;
+      color: var(--highlight-color, #58a6ff);
       font-weight: 600;
     }
     .tp-text .w.near { opacity: 0.9; }
@@ -136,9 +136,7 @@
     ipcRenderer.on('teleprompter:set-style', (_e, data) => {
       if (data.fontSize) textEl.style.fontSize = data.fontSize + 'px';
       if (data.highlightColor) {
-        document.querySelectorAll('.w.current').forEach(el => {
-          el.style.color = data.highlightColor;
-        });
+        document.documentElement.style.setProperty('--highlight-color', data.highlightColor);
       }
     });
   </script>

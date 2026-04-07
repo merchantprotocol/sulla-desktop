@@ -423,30 +423,45 @@ async function togglePrompter() {
   prompterEnabled.value = !prompterEnabled.value;
 
   if (prompterEnabled.value) {
-    // Open the floating window
     await ipcRenderer.invoke('teleprompter:open');
-    // Sync current script to the floating window
-    syncPrompterScript();
+    // Send full state to the floating window
+    syncPrompterFull();
   } else {
     await ipcRenderer.invoke('teleprompter:close');
   }
 }
 
-function syncPrompterScript() {
-  const tp = teleprompterRef.value;
+/** Send everything — script, position, style — to the floating window. */
+function syncPrompterFull() {
+  const tp = teleprompterRef.value as any;
   if (!tp) return;
-  // Access the script words and current index from TeleprompterLayout
-  // We'll use the exposed refs via the component instance
-  const words = (tp as any).tpWords?.value || (tp as any).tpWords || [];
-  const currentIndex = (tp as any).tpCurrentIndex?.value ?? (tp as any).tpCurrentIndex ?? 0;
+
+  const words = tp.tpWords?.value || tp.tpWords || [];
+  const currentIndex = tp.tpCurrentIndex?.value ?? tp.tpCurrentIndex ?? 0;
+  const fontSize = tp.tpFontSize?.value ?? tp.tpFontSize ?? 28;
+  const highlightColor = tp.tpHighlightColor?.value ?? tp.tpHighlightColor ?? '#58a6ff';
+
   if (words.length > 0) {
     ipcRenderer.invoke('teleprompter:set-script', { words, currentIndex });
   }
+  ipcRenderer.invoke('teleprompter:set-style', { fontSize, highlightColor });
 }
 
 function syncPrompterPosition(index: number) {
   if (prompterEnabled.value) {
     ipcRenderer.invoke('teleprompter:update-position', { currentIndex: index });
+  }
+}
+
+function syncPrompterStyle(style: { fontSize: number; highlightColor: string }) {
+  if (prompterEnabled.value) {
+    ipcRenderer.invoke('teleprompter:set-style', style);
+  }
+}
+
+function syncPrompterScriptChange(data: { words: string[]; currentIndex: number }) {
+  if (prompterEnabled.value) {
+    ipcRenderer.invoke('teleprompter:set-script', data);
   }
 }
 
@@ -1284,11 +1299,20 @@ function openSystemPreferences() {
 onMounted(async () => {
   document.addEventListener('keydown', onKeyDown);
 
-  // Hook teleprompter position updates to sync with floating window
+  // Hook teleprompter updates to sync with floating window
   nextTick(() => {
-    teleprompterRef.value?.setOnPositionUpdate?.((index: number) => {
-      syncPrompterPosition(index);
-    });
+    const tp = teleprompterRef.value;
+    if (tp) {
+      tp.setOnPositionUpdate?.((index: number) => {
+        syncPrompterPosition(index);
+      });
+      tp.setOnStyleUpdate?.((style: { fontSize: number; highlightColor: string }) => {
+        syncPrompterStyle(style);
+      });
+      tp.setOnScriptUpdate?.((data: { words: string[]; currentIndex: number }) => {
+        syncPrompterScriptChange(data);
+      });
+    }
   });
 
   // ── Boot sequence with loading screen ──
