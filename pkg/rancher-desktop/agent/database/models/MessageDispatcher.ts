@@ -779,7 +779,7 @@ const TOOL_VERB_MAP: Record<string, string> = {
   // Lima
   lima_shell: 'Running shell', lima_start: 'Starting VM', lima_stop: 'Stopping VM',
   // Channel
-  send_channel_message: 'Messaging',
+  send_notification_to_human: 'Notifying',
 };
 
 function toolNameToVerb(toolName: string): string {

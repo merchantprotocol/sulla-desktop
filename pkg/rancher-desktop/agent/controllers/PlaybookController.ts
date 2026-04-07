@@ -432,7 +432,7 @@ export class PlaybookController<TState = any> {
           `<SUB_AGENT_ESCALATE>Brief explanation of what the user needs to decide</SUB_AGENT_ESCALATE>\n\n` +
           `If the workflow is stuck and cannot continue (repeated failures, unrecoverable errors):\n` +
           `<ABORT_WORKFLOW>Reason the workflow cannot continue</ABORT_WORKFLOW>\n\n` +
-          `Do NOT use send_channel_message — reply directly with one of the XML blocks above.`;
+          `Do NOT use send_notification_to_human — reply directly with one of the XML blocks above.`;
 
         this.injectWorkflowMessage(state, orchestratorPrompt);
         (state as any).metadata._muteWsChat = true;

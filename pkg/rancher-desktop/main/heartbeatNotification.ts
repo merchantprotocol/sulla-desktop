@@ -71,7 +71,8 @@ export function showHeartbeatNotification(title: string, message: string): void 
     },
   });
 
-  // Load the notification HTML from assets
+  // Load the notification HTML from assets — in dev, load from source tree;
+  // in packaged builds, load from dist/app/assets/ (copied by build-utils.copyWindowAssets()).
   const appRoot = app.getAppPath();
   const htmlPath = app.isPackaged
     ? path.join(appRoot, 'assets', 'heartbeat-notification.html')
