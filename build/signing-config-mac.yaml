@@ -17,6 +17,7 @@ entitlements:
     - com.apple.security.cs.allow-unsigned-executable-memory
     - com.apple.security.cs.disable-library-validation
     - com.apple.security.device.audio-input
+    - com.apple.security.automation.apple-events
   - paths:
     - Contents/Resources/resources/darwin/lima/bin/limactl
     entitlements:
