@@ -78,6 +78,7 @@
         :assign="assign"
         :iconMap="iconMap"
         @toggle-src="toggleSrc"
+        @source-menu="showSourceContextMenu"
         @toggle-prompter="prompterEnabled = !prompterEnabled"
         @toggle-tracks="tracksOpen = !tracksOpen"
         @screenshot="doScreenshot"
@@ -311,6 +312,16 @@ const customSources = computed(() => sources.filter(s => !s.builtin));
 
 const colorMap: Record<string, string> = { screen: 'screen', camera: 'cam', mic: 'mic', system: 'sys' };
 
+// ── Mic quality mode ──
+const MIC_QUALITY_MODES = [
+  { id: 'raw',              label: 'Studio Quality — Raw (ASMR)' },
+  { id: 'noise-reduction',  label: 'Studio Quality — Voice' },
+  { id: 'voice-compressed', label: 'Studio Quality — Voice + Compression' },
+  { id: 'streaming',        label: 'Compressed — Streaming' },
+  { id: 'streaming-voice',  label: 'Compressed — Voice' },
+] as const;
+const micQualityMode = ref('raw');
+
 const iconMap: Record<string, string> = {
   screen: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
   camera: '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
@@ -530,37 +541,24 @@ async function toggleRecord() {
     // Gather active streams for recording — check stream.active not just existence
     const streams: Array<{ id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }> = [];
 
-    // Collect active mic audio tracks for muxing into video streams
-    const micAudioTracks: MediaStreamTrack[] = [];
+    // Record mic as standalone audio file (not muxed into video streams)
     for (const [id, mic] of Object.entries(micInstances)) {
       const micStream = mic.stream.value;
       if (micStream && micStream.active && mic.active.value) {
-        // Record mic as standalone audio file
         streams.push({ id, type: 'mic', stream: micStream });
-        // Also collect audio tracks for muxing into video
-        micAudioTracks.push(...micStream.getAudioTracks());
       }
     }
 
+    // Screen — video only, no mic audio muxed in
     const screenVal = mediaSources.screenStream.value;
     if (screenVal && screenVal.active) {
-      // Mux screen video + mic audio into one stream for playback with sound
-      if (micAudioTracks.length > 0) {
-        const muxed = new MediaStream([...screenVal.getVideoTracks(), ...micAudioTracks]);
-        streams.push({ id: 'screen', type: 'screen', stream: muxed, quality: mediaSources.screenQuality.value });
-      } else {
-        streams.push({ id: 'screen', type: 'screen', stream: screenVal, quality: mediaSources.screenQuality.value });
-      }
+      streams.push({ id: 'screen', type: 'screen', stream: screenVal, quality: mediaSources.screenQuality.value });
     }
+
+    // Camera — video only, no mic audio muxed in
     const camVal = mediaSources.cameraStream.value;
     if (camVal && camVal.active) {
-      // Mux camera video + mic audio into one stream for playback with sound
-      if (micAudioTracks.length > 0) {
-        const muxed = new MediaStream([...camVal.getVideoTracks(), ...micAudioTracks]);
-        streams.push({ id: 'cam', type: 'camera', stream: muxed, quality: mediaSources.cameraQuality.value });
-      } else {
-        streams.push({ id: 'cam', type: 'camera', stream: camVal, quality: mediaSources.cameraQuality.value });
-      }
+      streams.push({ id: 'cam', type: 'camera', stream: camVal, quality: mediaSources.cameraQuality.value });
     }
 
     if (streams.length === 0) {
@@ -1018,15 +1016,38 @@ async function showAudioContextMenu(e: MouseEvent) {
       },
     }));
 
+    const qualityChildren: CtxMenuItem[] = MIC_QUALITY_MODES.map(m => ({
+      id: `mq-${m.id}`,
+      label: m.label,
+      active: micQualityMode.value === m.id,
+      action: () => { micQualityMode.value = m.id; },
+    }));
+
     ctxMenu.items = [
       { id: 'sub-mics', label: 'Microphone', children: deviceChildren, action: () => {} },
+      { id: 'divider-quality', label: '', divider: true, action: () => {} },
+      { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
     ];
-    ctxMenu.title = 'Audio Source';
+    ctxMenu.title = 'Audio';
     ctxMenu.x = e.clientX;
     ctxMenu.y = e.clientY;
     ctxMenu.visible = true;
   } catch (err) {
     console.error('[CaptureStudio] Failed to list audio devices:', err);
+  }
+}
+
+// ─── Source context menu dispatcher (right-click from floating controls) ───
+
+function showSourceContextMenu(src: Source, e: MouseEvent) {
+  if (src.type === 'screen') {
+    showScreenContextMenu(e);
+  } else if (src.type === 'camera') {
+    showCameraContextMenu(e);
+  } else if (src.type === 'mic') {
+    showAudioContextMenu(e);
+  } else if (src.type === 'system') {
+    // System audio has no source/quality options yet
   }
 }
 
