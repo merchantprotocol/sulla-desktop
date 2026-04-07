@@ -79,7 +79,7 @@
         :iconMap="iconMap"
         @toggle-src="toggleSrc"
         @source-menu="showSourceContextMenu"
-        @toggle-prompter="prompterEnabled = !prompterEnabled"
+        @toggle-prompter="togglePrompter"
         @toggle-tracks="tracksOpen = !tracksOpen"
         @screenshot="doScreenshot"
         @toggle-record="toggleRecord"
@@ -416,6 +416,39 @@ const timerDisplay = computed(() => {
 // ─── Template refs for child components ───
 const teleprompterRef = ref<InstanceType<typeof TeleprompterLayout> | null>(null);
 const captureCanvasRef = ref<InstanceType<typeof CaptureCanvas> | null>(null);
+
+// ─── Floating teleprompter window ───
+
+async function togglePrompter() {
+  prompterEnabled.value = !prompterEnabled.value;
+
+  if (prompterEnabled.value) {
+    // Open the floating window
+    await ipcRenderer.invoke('teleprompter:open');
+    // Sync current script to the floating window
+    syncPrompterScript();
+  } else {
+    await ipcRenderer.invoke('teleprompter:close');
+  }
+}
+
+function syncPrompterScript() {
+  const tp = teleprompterRef.value;
+  if (!tp) return;
+  // Access the script words and current index from TeleprompterLayout
+  // We'll use the exposed refs via the component instance
+  const words = (tp as any).tpWords?.value || (tp as any).tpWords || [];
+  const currentIndex = (tp as any).tpCurrentIndex?.value ?? (tp as any).tpCurrentIndex ?? 0;
+  if (words.length > 0) {
+    ipcRenderer.invoke('teleprompter:set-script', { words, currentIndex });
+  }
+}
+
+function syncPrompterPosition(index: number) {
+  if (prompterEnabled.value) {
+    ipcRenderer.invoke('teleprompter:update-position', { currentIndex: index });
+  }
+}
 
 // ─── Auto-assign: pick best layout when sources change ───
 function autoAssign() {
@@ -1251,6 +1284,13 @@ function openSystemPreferences() {
 onMounted(async () => {
   document.addEventListener('keydown', onKeyDown);
 
+  // Hook teleprompter position updates to sync with floating window
+  nextTick(() => {
+    teleprompterRef.value?.setOnPositionUpdate?.((index: number) => {
+      syncPrompterPosition(index);
+    });
+  });
+
   // ── Boot sequence with loading screen ──
 
   // 1. Start audio driver — always cycle stop→start so the capture helper
@@ -1262,12 +1302,12 @@ onMounted(async () => {
   try {
     // Stop first to clear any stale capture / mirror state
     await Promise.race([
-      audioDriver.stopCapture(),
+      audioDriver.stopSpeaker(),
       new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout stopping audio')), 5000)),
     ]).catch(() => { /* already stopped — fine */ });
 
     const result = await Promise.race([
-      audioDriver.startCapture(),
+      audioDriver.startSpeaker(),
       new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout starting audio capture')), 15000)),
     ]);
     console.log('[CaptureStudio] Audio driver start result:', JSON.stringify(result));
@@ -1355,7 +1395,7 @@ ipcRenderer.on('app:before-quit', async() => {
 
   // Stop audio driver capture
   try {
-    await audioDriver.stopCapture();
+    await audioDriver.stopSpeaker();
   } catch { /* already stopped */ }
 });
 
@@ -1365,6 +1405,10 @@ onUnmounted(() => {
   stopAudioMeter();
   stopWaveformLoop();
   diskSpace.stopMonitoring();
+  // Close floating teleprompter if open
+  if (prompterEnabled.value) {
+    ipcRenderer.invoke('teleprompter:close').catch(() => {});
+  }
 
   for (const mic of Object.values(micInstances)) {
     mic.stop();

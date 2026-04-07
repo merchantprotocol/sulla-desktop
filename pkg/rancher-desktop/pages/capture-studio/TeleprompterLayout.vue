@@ -104,7 +104,7 @@ const tpHighlightColor = ref('#e6edf3');
 const tpFontSize = ref(42);
 const tpScriptOpen = ref(false);
 let tpPaused = false;
-const voiceTracking = ref(false);
+const voiceTracking = ref(true);
 
 const teleprompterTracker = useTeleprompterTracking((index: number) => {
   tpCurrentIndex.value = index;
@@ -239,7 +239,9 @@ function onKeyDown(e: KeyboardEvent) {
 // Expose methods so the parent can call them when layout changes
 function activate() {
   buildTpWords();
-  if (!voiceTracking.value) {
+  if (voiceTracking.value) {
+    teleprompterTracker.startTracking(tpWords.value, tpCurrentIndex.value);
+  } else {
     startTpScroll();
   }
 }
@@ -252,7 +254,39 @@ function deactivate() {
   }
 }
 
-defineExpose({ activate, deactivate, stopTracking: () => teleprompterTracker.stopTracking() });
+// Callback for parent to receive position updates (for floating window sync)
+let onPositionUpdate: ((index: number) => void) | null = null;
+
+function setOnPositionUpdate(cb: (index: number) => void) {
+  onPositionUpdate = cb;
+}
+
+// Patch renderTpState to also notify parent
+const _origRenderTpState = renderTpState;
+function renderTpStateWithSync() {
+  _origRenderTpState();
+  if (onPositionUpdate) {
+    onPositionUpdate(tpCurrentIndex.value);
+  }
+}
+
+// Override calls that advance the index to use the synced version
+watch(tpCurrentIndex, () => {
+  if (onPositionUpdate) {
+    onPositionUpdate(tpCurrentIndex.value);
+  }
+});
+
+defineExpose({
+  activate,
+  deactivate,
+  stopTracking: () => teleprompterTracker.stopTracking(),
+  tpWords,
+  tpCurrentIndex,
+  tpFontSize,
+  tpHighlightColor,
+  setOnPositionUpdate,
+});
 
 onMounted(() => {
   document.addEventListener('keydown', onKeyDown);
