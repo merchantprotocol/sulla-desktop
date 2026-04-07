@@ -299,6 +299,7 @@ export default {
   async buildMain(): Promise<void> {
     await this.wait(() => this.buildJavaScript(this.webpackConfig));
     this.copyTrayPanelAssets();
+    this.copyWindowAssets();
   },
 
   /**
@@ -330,6 +331,28 @@ export default {
 
     copyDir(src, dest);
     console.log('[build-utils] Copied tray panel assets to dist/app/trayPanel/');
+  },
+
+  /**
+   * Copy standalone HTML window assets (teleprompter, heartbeat notification, etc.)
+   * into dist/app/assets/. These files are loaded at runtime by BrowserWindows
+   * via app.getAppPath() + 'assets/'.
+   */
+  copyWindowAssets(): void {
+    const src = path.join(this.rootDir, 'pkg', 'rancher-desktop', 'assets');
+    const dest = path.join(this.appDir, 'assets');
+
+    if (!fs.existsSync(src)) {
+      return;
+    }
+
+    fs.mkdirSync(dest, { recursive: true });
+    for (const entry of fs.readdirSync(src)) {
+      if (entry.endsWith('.html')) {
+        fs.copyFileSync(path.join(src, entry), path.join(dest, entry));
+      }
+    }
+    console.log('[build-utils] Copied window assets to dist/app/assets/');
   },
 
   /**

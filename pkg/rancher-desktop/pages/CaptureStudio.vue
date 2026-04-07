@@ -1,5 +1,6 @@
 <template>
   <div class="capture-studio-app">
+    <WindowDragLogo :size="20" class="capture-drag-logo" />
     <!-- Loading screen -->
     <div v-if="loading" class="loading-screen">
       <div class="loading-content">
@@ -34,6 +35,8 @@
       <TeleprompterLayout
         ref="teleprompterRef"
         :currentLayout="currentLayout"
+        :prompterWindowOpen="prompterEnabled"
+        @toggle-prompter="togglePrompter"
       />
 
       <CameraBubble
@@ -229,6 +232,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, shallowReactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { useAudioDriver } from './capture-studio/composables/useAudioDriver';
 import { createMicInstance, listAudioDevices, type MicInstance } from './capture-studio/composables/useMicCapture';
 import { useMediaSources, QUALITY_PRESETS, type QualityPreset } from './capture-studio/composables/useMediaSources';
@@ -436,10 +440,11 @@ function syncPrompterFull() {
   const tp = teleprompterRef.value as any;
   if (!tp) return;
 
-  const words = tp.tpWords?.value || tp.tpWords || [];
-  const currentIndex = tp.tpCurrentIndex?.value ?? tp.tpCurrentIndex ?? 0;
-  const fontSize = tp.tpFontSize?.value ?? tp.tpFontSize ?? 28;
-  const highlightColor = tp.tpHighlightColor?.value ?? tp.tpHighlightColor ?? '#58a6ff';
+  const rawWords = tp.tpWords?.value || tp.tpWords || [];
+  const words = [...rawWords]; // unwrap reactive Proxy to plain array
+  const currentIndex = Number(tp.tpCurrentIndex?.value ?? tp.tpCurrentIndex ?? 0);
+  const fontSize = Number(tp.tpFontSize?.value ?? tp.tpFontSize ?? 28);
+  const highlightColor = String(tp.tpHighlightColor?.value ?? tp.tpHighlightColor ?? '#58a6ff');
 
   if (words.length > 0) {
     ipcRenderer.invoke('teleprompter:set-script', { words, currentIndex });
@@ -449,19 +454,19 @@ function syncPrompterFull() {
 
 function syncPrompterPosition(index: number) {
   if (prompterEnabled.value) {
-    ipcRenderer.invoke('teleprompter:update-position', { currentIndex: index });
+    ipcRenderer.invoke('teleprompter:update-position', { currentIndex: Number(index) });
   }
 }
 
 function syncPrompterStyle(style: { fontSize: number; highlightColor: string }) {
   if (prompterEnabled.value) {
-    ipcRenderer.invoke('teleprompter:set-style', style);
+    ipcRenderer.invoke('teleprompter:set-style', { fontSize: Number(style.fontSize), highlightColor: String(style.highlightColor) });
   }
 }
 
 function syncPrompterScriptChange(data: { words: string[]; currentIndex: number }) {
   if (prompterEnabled.value) {
-    ipcRenderer.invoke('teleprompter:set-script', data);
+    ipcRenderer.invoke('teleprompter:set-script', { words: [...data.words], currentIndex: Number(data.currentIndex) });
   }
 }
 
@@ -564,6 +569,11 @@ function selectLayout(layout: string) {
 
   if (layout === 'teleprompter') {
     teleprompterRef.value?.activate();
+    // Auto-open the floating teleprompter window
+    if (!prompterEnabled.value) {
+      prompterEnabled.value = true;
+      ipcRenderer.invoke('teleprompter:open').then(() => syncPrompterFull());
+    }
   } else {
     teleprompterRef.value?.deactivate();
   }
@@ -1457,6 +1467,21 @@ html, body {
 
 #app {
   height: 100%;
+}
+
+.capture-drag-logo {
+  position: fixed;
+  top: 6px;
+  left: 80px;
+  z-index: 600;
+}
+
+/* Capture Studio is always dark — force the dark logo variant */
+.capture-drag-logo :deep(.dark\:hidden) {
+  display: none !important;
+}
+.capture-drag-logo :deep(.hidden) {
+  display: block !important;
 }
 
 .capture-studio-app {

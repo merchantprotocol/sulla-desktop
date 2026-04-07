@@ -33,7 +33,7 @@ type TranscriptCallback = (event: TranscriptEvent) => void;
 
 // ─── Configuration ──────────────────────────────────────────
 
-const SEGMENT_MS          = 5000;   // flush and transcribe every 5 seconds
+const SEGMENT_MS          = 2000;   // flush and transcribe every 2 seconds for responsive tracking
 const SAMPLE_RATE         = 16000;  // whisper expects 16kHz
 const BYTES_PER_SAMPLE    = 2;      // 16-bit signed LE
 const CHANNELS            = 1;      // mono

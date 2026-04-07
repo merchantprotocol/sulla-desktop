@@ -10,15 +10,21 @@
  */
 
 import path from 'path';
-import { BrowserWindow, ipcMain, screen } from 'electron';
+import { BrowserWindow, ipcMain, screen, app } from 'electron';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
 let prompterWindow: BrowserWindow | null = null;
 
+const WIN_WIDTH = 500;
+const WIN_HEIGHT = 180;
+const MARGIN = 16;
+
 /**
  * Create or show the floating teleprompter window.
+ * Uses the same pattern as heartbeatNotification — app.getAppPath() for
+ * reliable HTML resolution in both dev and packaged builds.
  */
 export function openTeleprompterWindow(): BrowserWindow {
   if (prompterWindow && !prompterWindow.isDestroyed()) {
@@ -27,53 +33,62 @@ export function openTeleprompterWindow(): BrowserWindow {
     return prompterWindow;
   }
 
-  const display = screen.getPrimaryDisplay();
-  const { width: screenWidth } = display.size;
-
-  // Size: compact, just wide enough for a comfortable reading column
-  const winWidth = 400;
-  const winHeight = 160;
-
-  // Position: top center, just below the webcam/notch area
-  const x = Math.round((screenWidth - winWidth) / 2);
-  const y = 8; // just below the top bezel/notch
+  // Position: top center of the display the cursor is on
+  const cursorPoint = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursorPoint);
+  const { x: workX, y: workY, width: workW } = display.workArea;
+  const x = workX + Math.round((workW - WIN_WIDTH) / 2);
+  const y = workY + MARGIN;
 
   prompterWindow = new BrowserWindow({
-    width:           winWidth,
-    height:          winHeight,
+    width:          WIN_WIDTH,
+    height:         WIN_HEIGHT,
     x,
     y,
-    frame:           false,
-    transparent:     true,
-    alwaysOnTop:     true,
-    hasShadow:       false,
-    resizable:       true,
-    minimizable:     false,
-    maximizable:     false,
-    fullscreenable:  false,
-    skipTaskbar:     true,
-    roundedCorners:  true,
+    show:           false,
+    frame:          false,
+    transparent:    true,
+    alwaysOnTop:    true,
+    hasShadow:      true,
+    resizable:      true,
+    minimizable:    false,
+    maximizable:    false,
+    fullscreenable: false,
+    skipTaskbar:    true,
+    focusable:      true,
     webPreferences: {
-      nodeIntegration:  true,
       contextIsolation: false,
+      nodeIntegration:  true,
     },
   });
 
-  // Load the teleprompter HTML
-  const htmlPath = path.join(__dirname, '..', 'public', 'teleprompter-float.html');
+  // Load HTML — in dev, load from source; in packaged builds, load from
+  // dist/app/assets/ (copied by build-utils.copyWindowAssets()).
+  const appRoot = app.getAppPath();
+  const htmlPath = app.isPackaged
+    ? path.join(appRoot, 'assets', 'teleprompter-float.html')
+    : path.join(appRoot, 'pkg', 'rancher-desktop', 'assets', 'teleprompter-float.html');
+
+  console.log('[TeleprompterWindow] Loading HTML from:', htmlPath);
+
+  prompterWindow.webContents.on('did-finish-load', () => {
+    if (!prompterWindow || prompterWindow.isDestroyed()) return;
+    prompterWindow.show();
+    console.log('[TeleprompterWindow] Opened', { x, y, width: WIN_WIDTH, height: WIN_HEIGHT });
+  });
+
+  prompterWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error('[TeleprompterWindow] Failed to load:', errorCode, errorDescription, htmlPath);
+  });
+
   prompterWindow.loadFile(htmlPath).catch((err) => {
-    // Fallback: try alternate path (dist builds)
-    const altPath = path.join(__dirname, 'teleprompter-float.html');
-    prompterWindow?.loadFile(altPath).catch((err2) => {
-      console.error('[TeleprompterWindow] Failed to load HTML:', err.message, err2.message);
-    });
+    console.error('[TeleprompterWindow] loadFile error:', err.message);
   });
 
   prompterWindow.on('closed', () => {
     prompterWindow = null;
   });
 
-  console.log('[TeleprompterWindow] Opened', { x, y, width: winWidth, height: winHeight });
   return prompterWindow;
 }
 
@@ -125,8 +140,19 @@ export function sendStyle(opts: { fontSize?: number; highlightColor?: string }):
  * Register IPC handlers for the teleprompter window.
  */
 export function registerTeleprompterIpc(): void {
-  ipcMain.handle('teleprompter:open', () => {
-    openTeleprompterWindow();
+  ipcMain.handle('teleprompter:open', async() => {
+    const win = openTeleprompterWindow();
+
+    // Wait for the HTML to fully load before returning, so the renderer
+    // can safely send script/style data immediately after this resolves.
+    if (win && !win.isDestroyed() && !win.isVisible()) {
+      await new Promise<void>((resolve) => {
+        win.webContents.once('did-finish-load', () => resolve());
+        win.webContents.once('did-fail-load', () => resolve());
+        setTimeout(() => resolve(), 3000);
+      });
+    }
+
     return { ok: true };
   });
 
@@ -151,6 +177,18 @@ export function registerTeleprompterIpc(): void {
 
   ipcMain.handle('teleprompter:set-style', (_event: unknown, data: { fontSize?: number; highlightColor?: string }) => {
     sendStyle(data);
+    return { ok: true };
+  });
+
+  // Forward jump-to from the floating window back to all renderer windows
+  // so the tracking composable can sync its position.
+  ipcMain.handle('teleprompter:jump-to', (_event: unknown, data: { currentIndex: number }) => {
+    // Broadcast to all windows except the floating prompter itself
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win !== prompterWindow && !win.isDestroyed()) {
+        win.webContents.send('teleprompter:jump-to', data);
+      }
+    }
     return { ok: true };
   });
 }

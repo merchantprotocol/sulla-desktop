@@ -32,11 +32,13 @@
       <span class="tp-tb-val">{{ tpFontSize }}</span>
       <button class="tp-tb-btn" @click="tpFontSize = Math.min(72, tpFontSize + 2)">+</button>
 
-      <div class="tp-tb-divider"></div>
+      <template v-if="!voiceTracking">
+        <div class="tp-tb-divider"></div>
 
-      <span class="tp-tb-label">Speed</span>
-      <input type="range" min="6" max="16" step="2" v-model.number="tpSpeed">
-      <span class="tp-tb-val">{{ tpSpeed }}</span>
+        <span class="tp-tb-label">Speed</span>
+        <input type="range" min="6" max="16" step="2" v-model.number="tpSpeed">
+        <span class="tp-tb-val">{{ tpSpeed }}</span>
+      </template>
 
       <div class="tp-tb-divider"></div>
 
@@ -47,6 +49,17 @@
         title="Voice tracking"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+      </button>
+
+      <div class="tp-tb-divider"></div>
+
+      <button
+        class="tp-tb-btn"
+        :class="{ active: prompterWindowOpen }"
+        @click="$emit('toggle-prompter')"
+        title="Floating teleprompter window"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
       </button>
 
       <div class="tp-tb-divider"></div>
@@ -90,8 +103,15 @@
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useTeleprompterTracking } from './composables/useTeleprompterTracking';
 
+const { ipcRenderer: ipc } = require('electron');
+
 const props = defineProps<{
   currentLayout: string;
+  prompterWindowOpen?: boolean;
+}>();
+
+const emit = defineEmits<{
+  (e: 'toggle-prompter'): void;
 }>();
 
 // ---- Teleprompter state ----
@@ -248,10 +268,9 @@ function activate() {
 
 function deactivate() {
   stopTpScroll();
-  if (voiceTracking.value) {
-    voiceTracking.value = false;
-    teleprompterTracker.stopTracking();
-  }
+  // Voice tracking keeps running so the teleprompter continues
+  // tracking speech even when the user switches to another layout.
+  // Only the auto-scroll timer stops.
 }
 
 // Callback for parent to receive position updates (for floating window sync)
@@ -316,13 +335,24 @@ defineExpose({
   setOnScriptUpdate,
 });
 
+// Handle jump-to from the floating teleprompter window (click or scroll)
+function onPrompterJumpTo(_event: any, data: { currentIndex: number }) {
+  const idx = data?.currentIndex;
+  if (typeof idx !== 'number' || idx < 0 || idx >= tpWords.value.length) return;
+  tpCurrentIndex.value = idx;
+  teleprompterTracker.setCurrentIndex(idx);
+  renderTpState();
+}
+
 onMounted(() => {
   document.addEventListener('keydown', onKeyDown);
   buildTpWords();
+  ipc.on('teleprompter:jump-to', onPrompterJumpTo);
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown);
+  ipc.removeListener('teleprompter:jump-to', onPrompterJumpTo);
   stopTpScroll();
   teleprompterTracker.stopTracking();
 });
