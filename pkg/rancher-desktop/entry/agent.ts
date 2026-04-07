@@ -15,7 +15,6 @@ import AgentCalendar from '../pages/AgentCalendar.vue';
 import AgentIntegrations from '../pages/AgentIntegrations.vue';
 import AgentIntegrationDetail from '../pages/AgentIntegrationDetail.vue';
 import AgentExtensions from '../pages/AgentExtensions.vue';
-import AgentAutomations from '../pages/AgentAutomations.vue';
 // BrowserTab is rendered persistently in AgentRouter (outside keep-alive)
 // so iframes are never removed from the DOM.  This stub just lets the
 // router match /Browser/:id for route.path / route.params without
@@ -38,7 +37,6 @@ const router = createRouter({
     { path: '/Integrations', component: AgentIntegrations, name: 'AgentIntegrations' },
     { path: '/Integrations/:id', component: AgentIntegrationDetail, name: 'AgentIntegrationDetail' },
     { path: '/Extensions', component: AgentExtensions, name: 'AgentExtensions' },
-    { path: '/Automations', component: AgentAutomations, name: 'AgentAutomations' },
     { path: '/Browser/:id', component: BrowserTabStub, name: 'BrowserTab' },
 
     { path: '/Extension/:name/:path*', component: ExtensionView, name: 'ExtensionView' },

@@ -204,15 +204,8 @@ export function initialize(): void {
   log.info('Init', 'Audio driver initialized — IPC handlers registered');
   console.log('[Audio Driver] IPC handlers registered');
 
-  // Auto-start speaker capture on boot (always enabled by default)
-  setImmediate(async() => {
-    try {
-      log.info('Init', 'Auto-starting audio capture on boot');
-      await startCapture();
-    } catch (e: any) {
-      log.error('Init', 'Auto-start failed', { error: e.message });
-    }
-  });
+  // Audio capture starts on-demand — mic and speaker are activated only
+  // when a feature needs them (voice chat, secretary mode, test buttons).
 }
 
 /**
@@ -492,23 +485,29 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('audio-driver:whisper-install', async() => {
     log.info('IPC', 'whisper-install');
-    broadcastState({ running: audio.getState().running, message: 'Installing whisper.cpp...' });
-    const ok = await whisper.install();
+    broadcast('audio-driver:whisper-progress', { phase: 'install', status: 'Installing whisper.cpp via Homebrew...', pct: 0 });
+    const ok = await whisper.install((line: string) => {
+      broadcast('audio-driver:whisper-progress', { phase: 'install', status: line, pct: -1 });
+    });
     if (ok) {
       const status = await whisper.detect();
       broadcast('audio-driver:whisper-status', status);
-      broadcastState({ running: audio.getState().running, message: audio.getState().running ? 'Capturing' : 'Off' });
+      broadcast('audio-driver:whisper-progress', { phase: 'install', status: 'Installed successfully', pct: 100 });
     } else {
-      broadcastState({ running: audio.getState().running, message: 'whisper.cpp install failed' });
+      broadcast('audio-driver:whisper-progress', { phase: 'install', status: 'Installation failed', pct: -1, error: true });
     }
     return { ok };
   });
 
   ipcMain.handle('audio-driver:whisper-remove', async() => {
     log.info('IPC', 'whisper-remove');
-    await whisper.remove();
+    broadcast('audio-driver:whisper-progress', { phase: 'uninstall', status: 'Uninstalling whisper.cpp...', pct: 0 });
+    await whisper.remove((line: string) => {
+      broadcast('audio-driver:whisper-progress', { phase: 'uninstall', status: line, pct: -1 });
+    });
     const status = await whisper.detect();
     broadcast('audio-driver:whisper-status', status);
+    broadcast('audio-driver:whisper-progress', { phase: 'uninstall', status: 'Uninstalled', pct: 100 });
     return { ok: true };
   });
 
@@ -518,13 +517,17 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('audio-driver:whisper-download-model', async(_event: unknown, model: string) => {
     log.info('IPC', 'whisper-download-model', { model });
-    broadcastState({ running: audio.getState().running, message: `Downloading model: ${ model }...` });
-    const ok = await whisper.downloadModel(model);
+    broadcast('audio-driver:whisper-progress', { phase: 'download', status: `Downloading model: ${ model }...`, pct: 0, model });
+    const ok = await whisper.downloadModel(model, (pct: number, status: string) => {
+      broadcast('audio-driver:whisper-progress', { phase: 'download', status, pct, model });
+    });
     if (ok) {
       const status = await whisper.detect();
       broadcast('audio-driver:whisper-status', status);
+      broadcast('audio-driver:whisper-progress', { phase: 'download', status: 'Download complete', pct: 100, model });
+    } else {
+      broadcast('audio-driver:whisper-progress', { phase: 'download', status: 'Download failed', pct: -1, model, error: true });
     }
-    broadcastState({ running: audio.getState().running, message: audio.getState().running ? 'Capturing' : 'Off' });
     return { ok };
   });
 
