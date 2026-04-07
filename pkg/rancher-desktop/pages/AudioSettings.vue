@@ -167,6 +167,13 @@
                   <span class="stat-value">{{ vadCentroid }}</span>
                 </div>
               </div>
+
+              <!-- Scrolling waveform -->
+              <canvas
+                ref="micWaveformCanvas"
+                class="waveform-canvas"
+                height="64"
+              />
             </div>
 
             <p
@@ -588,11 +595,12 @@
           >
             <h3>Models</h3>
             <p class="description">
-              Download a model to enable transcription. Larger models are more
-              accurate but use more memory and CPU.
+              Download models to enable local transcription. Select one as
+              the active model. Larger models are more accurate but use more
+              memory and CPU.
             </p>
 
-            <!-- Downloaded models -->
+            <!-- Downloaded models list -->
             <div
               v-if="whisperModels.length > 0"
               class="model-list"
@@ -601,13 +609,30 @@
                 v-for="model in whisperModels"
                 :key="model"
                 class="model-item"
+                :class="{ 'model-active': model === activeWhisperModel }"
               >
-                <span class="model-name">{{ model }}</span>
+                <div class="model-info">
+                  <div class="model-name-row">
+                    <span class="model-name">{{ model }}</span>
+                    <span
+                      v-if="model === activeWhisperModel"
+                      class="status-badge badge-primary"
+                    >Active</span>
+                  </div>
+                  <span class="model-meta">{{ getModelMeta(model) }}</span>
+                </div>
                 <div class="model-actions">
-                  <span class="status-badge badge-success">Downloaded</span>
+                  <button
+                    v-if="model !== activeWhisperModel"
+                    class="action-btn-small"
+                    :disabled="whisperBusy"
+                    @click="setActiveWhisperModel(model)"
+                  >
+                    Use
+                  </button>
                   <button
                     class="action-btn-small btn-danger-text"
-                    :disabled="whisperBusy"
+                    :disabled="whisperBusy || whisperTranscribing"
                     @click="deleteWhisperModel(model)"
                   >
                     Delete
@@ -623,19 +648,22 @@
             </p>
 
             <!-- Download new model -->
-            <div class="voice-select-row">
+            <div
+              v-if="availableWhisperModels.length > 0"
+              class="voice-select-row"
+            >
               <select
                 v-model="whisperModelToDownload"
                 class="setting-select"
                 :disabled="whisperBusy"
               >
-                <option value="base.en">base.en (141 MB, fast, English only)</option>
-                <option value="base">base (141 MB, fast, multilingual)</option>
-                <option value="small.en">small.en (466 MB, balanced, English only)</option>
-                <option value="small">small (466 MB, balanced, multilingual)</option>
-                <option value="medium.en">medium.en (1.5 GB, accurate, English only)</option>
-                <option value="medium">medium (1.5 GB, accurate, multilingual)</option>
-                <option value="large">large (2.9 GB, most accurate, multilingual)</option>
+                <option
+                  v-for="m in availableWhisperModels"
+                  :key="m.id"
+                  :value="m.id"
+                >
+                  {{ m.id }} ({{ m.size }}, {{ m.speed }}, {{ m.lang }})
+                </option>
               </select>
               <button
                 class="action-btn"
@@ -645,6 +673,12 @@
                 {{ whisperDownloading ? 'Downloading...' : 'Download' }}
               </button>
             </div>
+            <p
+              v-if="availableWhisperModels.length === 0 && whisperModels.length > 0"
+              class="description"
+            >
+              All available models are downloaded.
+            </p>
           </div>
 
           <!-- ── Test Transcription (only when installed + has models) ── -->
@@ -666,6 +700,55 @@
               >
                 {{ whisperTranscribing ? 'Stop Test' : 'Test Transcription' }}
               </button>
+            </div>
+
+            <!-- Waveform + meter (visible when transcribing) -->
+            <div
+              v-if="whisperTranscribing"
+              class="pipeline-section"
+              style="margin-top: 0.75rem;"
+            >
+              <div class="pipeline-row">
+                <span
+                  class="pipeline-indicator"
+                  :class="vadSpeaking ? 'indicator-green' : 'indicator-dim'"
+                />
+                <span class="pipeline-label">{{ vadSpeaking ? 'Speaking' : 'Silent' }}</span>
+                <span class="pipeline-value">{{ driverMicDb }} dB</span>
+              </div>
+              <canvas
+                ref="whisperWaveformCanvas"
+                class="waveform-canvas"
+                height="64"
+              />
+            </div>
+
+            <!-- Pipeline status (polled while transcribing) -->
+            <div
+              v-if="whisperTranscribing && transcribeStats"
+              class="pipeline-section"
+              style="margin-top: 0.5rem;"
+            >
+              <div class="pipeline-row">
+                <span
+                  class="pipeline-indicator"
+                  :class="transcribeStats.active ? 'indicator-green' : 'indicator-dim'"
+                />
+                <span class="pipeline-label">Whisper Engine</span>
+                <span class="pipeline-value">{{ transcribeStats.active ? 'Active' : 'Inactive' }}</span>
+              </div>
+              <div class="pipeline-row">
+                <span
+                  class="pipeline-indicator"
+                  :class="transcribeStats.transcribing ? 'indicator-yellow' : 'indicator-dim'"
+                />
+                <span class="pipeline-label">Processing</span>
+                <span class="pipeline-value">{{ transcribeStats.transcribing ? 'Transcribing...' : 'Waiting for audio' }}</span>
+              </div>
+              <div class="pipeline-row">
+                <span class="pipeline-label">Mic data received</span>
+                <span class="pipeline-value">{{ (transcribeStats.micBytesReceived / 1024).toFixed(0) }} KB ({{ transcribeStats.micChunksReceived }} chunks)</span>
+              </div>
             </div>
 
             <!-- Live transcript output -->
@@ -994,8 +1077,13 @@ const vadNoiseFloorDb = computed(() => {
   return db > -100 ? db.toFixed(1) : '-inf';
 });
 
+let vadFrameCount = 0;
 function onMicVad(_event: any, data: { speaking: boolean; level: number; fanNoise: boolean; noiseFloor?: number; zcr?: number; variance?: number; pitch?: number | null; centroid?: number }) {
   if (!data) return;
+  vadFrameCount++;
+  if (vadFrameCount <= 5 || vadFrameCount % 300 === 0) {
+    console.log('[AudioSettings] onMicVad frame', { frame: vadFrameCount, speaking: data.speaking, level: data.level?.toFixed(3) });
+  }
   driverMicLevel.value = data.level;
   vadSpeaking.value = data.speaking;
   vadFanNoise.value = data.fanNoise;
@@ -1004,6 +1092,79 @@ function onMicVad(_event: any, data: { speaking: boolean; level: number; fanNois
   if (data.variance !== undefined) vadVariance.value = data.variance.toFixed(6);
   if (data.pitch !== undefined) vadPitch.value = data.pitch !== null ? `${data.pitch.toFixed(0)} Hz` : '--';
   if (data.centroid !== undefined) vadCentroid.value = data.centroid.toFixed(4);
+
+  // Feed scrolling waveform
+  pushWaveformSample(data.level, data.speaking);
+}
+
+// ─── Scrolling waveform ──────────────────────────────────────────
+
+const micWaveformCanvas = ref<HTMLCanvasElement | null>(null);
+const whisperWaveformCanvas = ref<HTMLCanvasElement | null>(null);
+
+const WAVEFORM_HISTORY = 300; // ~5 seconds at 60fps
+const waveformSamples: Array<{ level: number; speaking: boolean }> = [];
+
+function pushWaveformSample(level: number, speaking: boolean) {
+  waveformSamples.push({ level, speaking });
+  if (waveformSamples.length > WAVEFORM_HISTORY) {
+    waveformSamples.shift();
+  }
+  drawWaveform(micWaveformCanvas.value);
+  drawWaveform(whisperWaveformCanvas.value);
+}
+
+function drawWaveform(canvas: HTMLCanvasElement | null) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  // Match canvas pixel size to layout size
+  const rect = canvas.getBoundingClientRect();
+  if (canvas.width !== rect.width) canvas.width = rect.width;
+  if (canvas.height !== rect.height) canvas.height = rect.height;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  const midY = h / 2;
+  const samples = waveformSamples;
+  const len = samples.length;
+
+  // Clear
+  ctx.clearRect(0, 0, w, h);
+
+  // Center line
+  ctx.strokeStyle = 'rgba(128, 128, 128, 0.2)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, midY);
+  ctx.lineTo(w, midY);
+  ctx.stroke();
+
+  if (len < 2) return;
+
+  // Draw waveform bars (like a DAW track)
+  const barWidth = w / WAVEFORM_HISTORY;
+  const startX = w - (len * barWidth);
+
+  for (let i = 0; i < len; i++) {
+    const s = samples[i];
+    const x = startX + (i * barWidth);
+    // Map level (0-1) to amplitude. Use sqrt for better visual dynamic range
+    const amp = Math.sqrt(s.level) * midY * 0.9;
+
+    if (s.speaking) {
+      ctx.fillStyle = 'rgba(52, 211, 153, 0.8)'; // green when speaking
+    } else if (s.level > 0.01) {
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.5)'; // gray for ambient noise
+    } else {
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.15)'; // dim for silence
+    }
+
+    // Draw mirrored bar (top and bottom from center)
+    const barW = Math.max(1, barWidth - 0.5);
+    ctx.fillRect(x, midY - amp, barW, amp * 2);
+  }
 }
 
 function onSpeakerLevel(_event: any, data: { rms: number }) {
@@ -1079,6 +1240,61 @@ const whisperDownloading = ref(false);
 const whisperModelToDownload = ref('base.en');
 const whisperTranscribing = ref(false);
 const whisperTranscribeMode = ref('conversation');
+const activeWhisperModel = ref('');
+
+// ── Model catalog ──
+
+const WHISPER_MODEL_CATALOG: Array<{ id: string; size: string; speed: string; lang: string }> = [
+  { id: 'tiny.en',   size: '75 MB',  speed: 'fastest',  lang: 'English only' },
+  { id: 'tiny',      size: '75 MB',  speed: 'fastest',  lang: 'multilingual' },
+  { id: 'base.en',   size: '141 MB', speed: 'fast',     lang: 'English only' },
+  { id: 'base',      size: '141 MB', speed: 'fast',     lang: 'multilingual' },
+  { id: 'small.en',  size: '466 MB', speed: 'balanced', lang: 'English only' },
+  { id: 'small',     size: '466 MB', speed: 'balanced', lang: 'multilingual' },
+  { id: 'medium.en', size: '1.5 GB', speed: 'accurate', lang: 'English only' },
+  { id: 'medium',    size: '1.5 GB', speed: 'accurate', lang: 'multilingual' },
+  { id: 'large',     size: '2.9 GB', speed: 'most accurate', lang: 'multilingual' },
+];
+
+const availableWhisperModels = computed(() => {
+  const available = WHISPER_MODEL_CATALOG.filter(m => !whisperModels.value.includes(m.id));
+  // Auto-select first available if current selection is already downloaded
+  if (available.length > 0 && !available.find(m => m.id === whisperModelToDownload.value)) {
+    whisperModelToDownload.value = available[0].id;
+  }
+  return available;
+});
+
+function getModelMeta(modelId: string): string {
+  const m = WHISPER_MODEL_CATALOG.find(c => c.id === modelId);
+  return m ? `${m.size} · ${m.speed} · ${m.lang}` : '';
+}
+
+function setActiveWhisperModel(model: string) {
+  activeWhisperModel.value = model;
+  ipc.invoke('sulla-settings-set', 'audioWhisperModel', model);
+}
+
+// ── Transcribe pipeline stats (polled while transcribing) ──
+const transcribeStats = ref<{ active: boolean; transcribing: boolean; micBytesReceived: number; micChunksReceived: number } | null>(null);
+let transcribeStatsPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function startTranscribeStatsPoll() {
+  transcribeStats.value = null;
+  transcribeStatsPollTimer = setInterval(async () => {
+    try {
+      transcribeStats.value = await ipc.invoke('audio-driver:transcribe-status');
+    } catch { /* ignore */ }
+  }, 500);
+}
+
+function stopTranscribeStatsPoll() {
+  if (transcribeStatsPollTimer) {
+    clearInterval(transcribeStatsPollTimer);
+    transcribeStatsPollTimer = null;
+  }
+  transcribeStats.value = null;
+}
 
 // ── Progress tracking ──
 
@@ -1111,6 +1327,10 @@ async function detectWhisper() {
     whisperVersion.value = status?.version || '';
     whisperBinaryPath.value = status?.binaryPath || '';
     whisperModels.value = status?.models || [];
+    // Auto-select first model if none is active or active model was deleted
+    if (whisperModels.value.length > 0 && (!activeWhisperModel.value || !whisperModels.value.includes(activeWhisperModel.value))) {
+      setActiveWhisperModel(whisperModels.value[0]);
+    }
   } catch (e: any) {
     console.warn('[AudioSettings] whisper detect failed:', e);
   } finally {
@@ -1187,13 +1407,16 @@ async function deleteWhisperModel(model: string) {
   if (!confirm(`Delete model "${ model }"? You can re-download it later.`)) return;
   addWhisperLog(`Deleting model: ${ model }...`);
   try {
-    // Delete the model file directly
     const fs = require('fs') as typeof import('fs');
     const path = require('path') as typeof import('path');
     const modelsDir = `${ process.env.HOME }/.sulla/cache/whisper/models`;
     const modelFile = path.join(modelsDir, `ggml-${ model }.bin`);
     fs.unlinkSync(modelFile);
     addWhisperLog(`Deleted ${ model }.`);
+    // If we deleted the active model, clear it (detectWhisper will auto-select another)
+    if (activeWhisperModel.value === model) {
+      activeWhisperModel.value = '';
+    }
     await detectWhisper();
   } catch (e: any) {
     addWhisperLog(`Failed to delete: ${ e.message }`);
@@ -1213,22 +1436,37 @@ const whisperTestEntries = ref<WhisperTestEntry[]>([]);
  * Stops both when done.
  */
 async function toggleWhisperTest() {
+  console.log('[AudioSettings] toggleWhisperTest', { current: whisperTranscribing.value });
   if (whisperTranscribing.value) {
     // Stop whisper + mic
+    console.log('[AudioSettings] Stopping whisper transcription...');
     await ipc.invoke('audio-driver:transcribe-stop');
+    console.log('[AudioSettings] Stopping mic (whisper-test)...');
     await ipc.invoke('audio-driver:stop-mic', 'whisper-test');
     whisperTranscribing.value = false;
     micRunning.value = false;
+    stopTranscribeStatsPoll();
+    console.log('[AudioSettings] Whisper test stopped');
   } else {
     // Clear previous results
     whisperTestEntries.value = [];
     // Start mic first, then whisper
-    await ipc.invoke('audio-driver:start-mic', 'whisper-test');
+    console.log('[AudioSettings] Starting mic (whisper-test)...');
+    const micResult = await ipc.invoke('audio-driver:start-mic', 'whisper-test', ['pcm-s16le']);
+    console.log('[AudioSettings] start-mic result:', micResult);
     micRunning.value = true;
+    console.log('[AudioSettings] Starting whisper transcription...', { mode: whisperTranscribeMode.value });
     const result = await ipc.invoke('audio-driver:transcribe-start', {
       mode: whisperTranscribeMode.value,
+      model: activeWhisperModel.value || undefined,
     });
+    console.log('[AudioSettings] transcribe-start result:', result);
     whisperTranscribing.value = !!result?.ok;
+    if (result?.ok) {
+      startTranscribeStatsPoll();
+    } else {
+      console.error('[AudioSettings] Whisper transcription failed to start');
+    }
   }
 }
 
@@ -1306,6 +1544,7 @@ async function loadSettings(): Promise<void> {
     transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
     sttLanguage.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
+    activeWhisperModel.value = await ipcRenderer.invoke('sulla-settings-get', 'audioWhisperModel', '');
   } catch (err) {
     console.error('[AudioSettings] Failed to load settings:', err);
   }
@@ -1496,6 +1735,7 @@ onUnmounted(() => {
   ipc.removeAllListeners('audio-driver:whisper-status');
   ipc.removeAllListeners('audio-driver:whisper-progress');
   ipc.removeListener('gateway-transcript', onWhisperTestTranscript);
+  stopTranscribeStatsPoll();
   if (whisperTranscribing.value) {
     ipc.invoke('audio-driver:transcribe-stop').catch(() => {});
   }
@@ -1848,6 +2088,14 @@ onUnmounted(() => {
   background: var(--bg-surface, var(--card-bg, transparent));
 }
 
+.waveform-canvas {
+  width: 100%;
+  height: 64px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.15);
+  margin-top: 0.5rem;
+}
+
 .pipeline-row {
   display: flex;
   align-items: center;
@@ -1968,6 +2216,33 @@ onUnmounted(() => {
   border: 1px solid var(--border-default, var(--input-border));
   border-radius: 6px;
   margin-bottom: 0.5rem;
+
+  &.model-active {
+    border-color: var(--accent, #3b82f6);
+    background: rgba(59, 130, 246, 0.05);
+  }
+}
+
+.model-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.model-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.model-meta {
+  font-size: var(--fs-body-sm, 0.75rem);
+  color: var(--text-secondary, #6b7280);
+}
+
+.badge-primary {
+  background: var(--accent, #3b82f6);
+  color: #fff;
 }
 
 .model-name {

@@ -175,7 +175,8 @@ export class SecretaryModeController {
     if (this.transcriptionMode === 'gateway') {
       await this.startGatewayStreaming();
     } else if (this.transcriptionMode === 'browser') {
-      this.startBrowserRecognition();
+      // Browser mode now uses internal whisper pipeline instead of Google STT
+      await this.startWhisperTranscription();
     } else {
       this.startElevenLabsContinuous();
     }
@@ -197,6 +198,9 @@ export class SecretaryModeController {
       try { this.recognition.stop(); } catch { /* ignore */ }
       this.recognition = null;
     }
+
+    // Stop whisper transcription if it was running
+    this.stopWhisperTranscription();
 
     if (this.transcriptionMode === 'gateway') {
       this.stopGatewayStreaming();
@@ -372,53 +376,44 @@ User: ${text}`;
     if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null; }
   }
 
-  // ─── Browser STT ─────────────────────────────────────────────
+  // ─── Whisper STT (internal transcription) ─────────────────────
 
-  private startBrowserRecognition(): void {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+  private whisperTranscriptHandler: ((_event: any, msg: any) => void) | null = null;
+
+  private async startWhisperTranscription(): Promise<void> {
+    // Start whisper via the internal pipeline (PCM format, VAD-gated)
+    const result = await ipcRenderer.invoke('audio-driver:transcribe-start', {
+      mode: 'conversation',
+      language: this.sttLanguage,
+    });
+
+    if (!result?.ok) {
+      console.warn('[SecretaryMode] Whisper transcription failed to start — falling back to ElevenLabs');
       this.transcriptionMode = 'elevenlabs';
       this.startElevenLabsContinuous();
       return;
     }
 
-    this.recognition = new SpeechRecognition();
-    this.recognition.continuous = true;
-    this.recognition.interimResults = false;
-    this.recognition.lang = this.sttLanguage;
-
-    this.recognition.onresult = (event: any) => {
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          const text = event.results[i][0].transcript.trim();
-          if (text) {
-            this.cb.addEntry(text);
-            this.checkAndHandleWakeWord(text);
-          }
-        }
+    // Listen for transcript events from whisper
+    this.whisperTranscriptHandler = (_event: any, msg: any) => {
+      if (!msg?.text || !this.cb.getIsListening()) return;
+      const text = msg.text.trim();
+      if (!text) return;
+      if (msg.event_type !== 'transcript_partial') {
+        this.cb.addEntry(text);
+        this.checkAndHandleWakeWord(text);
       }
     };
+    ipcRenderer.on('gateway-transcript', this.whisperTranscriptHandler);
+    console.log('[SecretaryMode] Whisper transcription started');
+  }
 
-    this.recognition.onend = () => {
-      if (!this.cb.getIsListening()) return;
-      try { this.recognition?.start(); } catch { /* already started */ }
-    };
-
-    this.recognition.onerror = (event: any) => {
-      if (!this.cb.getIsListening()) return;
-      if (event.error === 'no-speech') {
-        try { this.recognition?.start(); } catch { /* ignore */ }
-      } else if (event.error === 'network' || event.error === 'service-not-allowed' || event.error === 'not-allowed') {
-        try { this.recognition?.stop(); } catch { /* ignore */ }
-        this.recognition = null;
-        this.transcriptionMode = 'elevenlabs';
-        if (this.mediaStream) this.startElevenLabsContinuous();
-      } else if (event.error !== 'aborted') {
-        try { this.recognition?.start(); } catch { /* ignore */ }
-      }
-    };
-
-    this.recognition.start();
+  private stopWhisperTranscription(): void {
+    if (this.whisperTranscriptHandler) {
+      ipcRenderer.removeListener('gateway-transcript', this.whisperTranscriptHandler);
+      this.whisperTranscriptHandler = null;
+    }
+    ipcRenderer.invoke('audio-driver:transcribe-stop').catch(() => {});
   }
 
   // ─── ElevenLabs continuous mode ───────────────────────────────

@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <title>Sulla Heartbeat</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -14,6 +15,11 @@
         user-select: none;
         overflow: hidden;
         -webkit-app-region: drag;
+      }
+
+      body.expanded {
+        overflow: auto;
+        user-select: text;
       }
 
       .notification {
@@ -29,6 +35,32 @@
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
         max-height: 100vh;
         overflow: hidden;
+        cursor: pointer;
+        transition: border-color 0.15s;
+      }
+
+      .notification:hover {
+        border-color: rgba(255, 255, 255, 0.2);
+      }
+
+      body.expanded .notification {
+        cursor: default;
+        overflow: auto;
+        max-height: none;
+        flex-direction: column;
+      }
+
+      .header {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        width: 100%;
+      }
+
+      body.expanded .header {
+        padding-bottom: 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 4px;
       }
 
       .icon {
@@ -69,11 +101,99 @@
         font-size: 12px;
         color: rgba(255, 255, 255, 0.7);
         line-height: 1.4;
+        word-break: break-word;
+      }
+
+      /* Collapsed: clamp to 4 lines */
+      body:not(.expanded) .message {
         display: -webkit-box;
         -webkit-line-clamp: 4;
         -webkit-box-orient: vertical;
         overflow: hidden;
+      }
+
+      /* Expanded: full message below header */
+      .message-expanded {
+        display: none;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.85);
+        line-height: 1.55;
         word-break: break-word;
+        -webkit-app-region: no-drag;
+      }
+
+      body.expanded .message-expanded {
+        display: block;
+      }
+
+      body.expanded .message {
+        display: none;
+      }
+
+      /* Markdown styles */
+      .message-expanded h1, .message-expanded h2, .message-expanded h3 {
+        color: #fff;
+        margin: 12px 0 6px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .message-expanded h1 { font-size: 16px; }
+      .message-expanded h2 { font-size: 14px; }
+      .message-expanded h3 { font-size: 13px; }
+
+      .message-expanded p {
+        margin: 6px 0;
+      }
+
+      .message-expanded ul, .message-expanded ol {
+        padding-left: 18px;
+        margin: 6px 0;
+      }
+
+      .message-expanded li {
+        margin: 3px 0;
+      }
+
+      .message-expanded code {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-family: "SF Mono", Menlo, monospace;
+        font-size: 11px;
+      }
+
+      .message-expanded pre {
+        background: rgba(0, 0, 0, 0.3);
+        padding: 10px 12px;
+        border-radius: 8px;
+        overflow-x: auto;
+        margin: 8px 0;
+        -webkit-app-region: no-drag;
+      }
+
+      .message-expanded pre code {
+        background: none;
+        padding: 0;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+
+      .message-expanded strong {
+        color: #fff;
+        font-weight: 600;
+      }
+
+      .message-expanded a {
+        color: #5a9fcf;
+        text-decoration: none;
+      }
+      .message-expanded a:hover { text-decoration: underline; }
+
+      .message-expanded blockquote {
+        border-left: 3px solid rgba(90, 159, 207, 0.5);
+        padding-left: 12px;
+        margin: 8px 0;
+        color: rgba(255, 255, 255, 0.6);
       }
 
       .dismiss {
@@ -98,23 +218,63 @@
     </style>
   </head>
   <body>
-    <div class="notification">
-      <div class="icon">
-        <!-- Brain/pulse icon -->
-        <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z"/><path d="M9 21h6"/><path d="M10 21v1a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-1"/></svg>
+    <div class="notification" id="notification">
+      <div class="header">
+        <div class="icon">
+          <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z"/><path d="M9 21h6"/><path d="M10 21v1a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-1"/></svg>
+        </div>
+        <div class="content">
+          <div class="title" id="title">Sulla</div>
+          <div class="message" id="message"></div>
+        </div>
+        <button class="dismiss" id="dismiss-btn">&times;</button>
       </div>
-      <div class="content">
-        <div class="title" id="title">Sulla</div>
-        <div class="message" id="message"></div>
-      </div>
-      <button class="dismiss" id="dismiss-btn">&times;</button>
+      <div class="message-expanded" id="message-expanded"></div>
     </div>
     <script>
       const { ipcRenderer } = require("electron");
 
+      let rawMessage = "";
+      let isExpanded = false;
+
+      function renderMarkdown(text) {
+        if (typeof marked !== "undefined" && marked.parse) {
+          return marked.parse(text, { breaks: true, gfm: true });
+        }
+        // Fallback: escape HTML and convert newlines
+        return text
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/\n/g, "<br>");
+      }
+
+      function stripHtml(html) {
+        const tmp = document.createElement("div");
+        tmp.innerHTML = html;
+        return tmp.textContent || tmp.innerText || "";
+      }
+
       ipcRenderer.on("heartbeat-notification-data", (_event, data) => {
         if (data.title) document.getElementById("title").textContent = data.title;
-        if (data.message) document.getElementById("message").textContent = data.message;
+        if (data.message) {
+          rawMessage = data.message;
+          const html = renderMarkdown(rawMessage);
+          // Collapsed preview: plain text snippet
+          document.getElementById("message").textContent = stripHtml(html);
+          // Expanded: full rendered markdown
+          document.getElementById("message-expanded").innerHTML = html;
+        }
+      });
+
+      // Click notification to expand
+      document.getElementById("notification").addEventListener("click", (e) => {
+        // Don't expand if clicking dismiss
+        if (e.target.closest("#dismiss-btn")) return;
+        if (isExpanded) return;
+
+        isExpanded = true;
+        document.body.classList.add("expanded");
+        // Tell main process to resize and cancel auto-hide
+        ipcRenderer.send("heartbeat-notification-expand");
       });
 
       document.getElementById("dismiss-btn").addEventListener("click", () => {

@@ -46,13 +46,20 @@ let instance: MicrophoneDriverController | null = null;
 export class MicrophoneDriverController {
   private static readonly TAG = 'MicDriverController';
 
+  // ── Audio formats ──────────────────────────────────────────────
+  static readonly FORMAT_WEBM_OPUS = 'webm-opus';
+  /** PCM gated by VAD — only delivers audio when speaking is detected. */
+  static readonly FORMAT_PCM_S16LE = 'pcm-s16le';
+  /** Raw PCM — delivers all audio regardless of VAD state (ASMR, music, environment). */
+  static readonly FORMAT_PCM_S16LE_RAW = 'pcm-s16le-raw';
+
   // ── Lifecycle state ───────────────────────────────────────────
 
   private _running = false;
   private _micName = '';
 
-  /** Maps serviceId → the WebContents that requested it (for targeted sends). */
-  private _holders = new Map<string, WebContents>();
+  /** Maps serviceId → holder info (sender WebContents + requested formats). */
+  private _holders = new Map<string, { sender: WebContents | null; formats: string[] }>();
 
   // ── VAD state (from audio driver pipeline) ────────────────────
 
@@ -80,6 +87,7 @@ export class MicrophoneDriverController {
     log.info(MicrophoneDriverController.TAG, 'Initializing singleton');
     this._registerAckListeners();
     this._registerVadListener();
+    this._registerPcmListener();
   }
 
   static getInstance(): MicrophoneDriverController {
@@ -98,21 +106,21 @@ export class MicrophoneDriverController {
    *
    * @param serviceId - Identifies who is requesting the mic
    * @param sender - The WebContents of the requesting window (for targeted VAD sends)
+   * @param opts.formats - Audio formats this service needs: 'webm-opus' (gateway), 'pcm-s16le' (whisper)
    */
-  async start(serviceId: string, sender?: WebContents): Promise<void> {
-    log.info(MicrophoneDriverController.TAG, 'start()', { serviceId, currentHolders: [...this._holders.keys()], running: this._running });
+  async start(serviceId: string, sender?: WebContents, opts?: { formats?: string[] }): Promise<void> {
+    const formats = opts?.formats || [MicrophoneDriverController.FORMAT_WEBM_OPUS];
+    log.info(MicrophoneDriverController.TAG, 'start()', { serviceId, formats, currentHolders: [...this._holders.keys()], running: this._running });
 
-    if (sender && !sender.isDestroyed()) {
-      this._holders.set(serviceId, sender);
-      log.info(MicrophoneDriverController.TAG, 'Holder registered with WebContents', { serviceId });
-    } else {
-      this._holders.set(serviceId, null as any);
-      log.warn(MicrophoneDriverController.TAG, 'Holder registered WITHOUT WebContents (no targeted sends)', { serviceId });
-    }
+    this._holders.set(serviceId, {
+      sender: (sender && !sender.isDestroyed()) ? sender : null,
+      formats,
+    });
 
     if (!this._running) {
-      log.info(MicrophoneDriverController.TAG, 'First holder — sending renderer-start-mic command');
-      const deviceInfo = await this._sendRendererStart();
+      const neededFormats = this._getNeededFormats();
+      log.info(MicrophoneDriverController.TAG, 'First holder — sending renderer-start-mic command', { neededFormats });
+      const deviceInfo = await this._sendRendererStart(undefined, neededFormats);
       log.info(MicrophoneDriverController.TAG, 'Renderer ACK received', { deviceInfo });
       if (deviceInfo) {
         this._micName = deviceInfo.micName || '';
@@ -122,9 +130,11 @@ export class MicrophoneDriverController {
       }
       this._running = true;
       this._persist();
-      log.info(MicrophoneDriverController.TAG, 'Mic pipeline started', { holders: [...this._holders.keys()], micName: this._micName });
+      log.info(MicrophoneDriverController.TAG, 'Mic pipeline started', { holders: [...this._holders.keys()], formats: neededFormats, micName: this._micName });
     } else {
-      log.info(MicrophoneDriverController.TAG, 'Mic already running — added holder only', { serviceId, totalHolders: this._holders.size });
+      // Check if the new holder needs a format that isn't currently running
+      // TODO: could signal renderer to add a new format stream without restarting
+      log.info(MicrophoneDriverController.TAG, 'Mic already running — added holder only', { serviceId, formats, totalHolders: this._holders.size });
     }
   }
 
@@ -270,7 +280,18 @@ export class MicrophoneDriverController {
 
   // ── Private: renderer communication ───────────────────────────
 
-  private _sendRendererStart(deviceId?: string): Promise<any> {
+  /** Compute the union of all formats needed by current holders. */
+  private _getNeededFormats(): string[] {
+    const formats = new Set<string>();
+    for (const holder of this._holders.values()) {
+      for (const fmt of holder.formats) {
+        formats.add(fmt);
+      }
+    }
+    return [...formats];
+  }
+
+  private _sendRendererStart(deviceId?: string, formats?: string[]): Promise<any> {
     return new Promise((resolve) => {
       this._startedResolve = resolve;
 
@@ -293,7 +314,7 @@ export class MicrophoneDriverController {
         origResolve(info);
       };
 
-      this._broadcast('audio-driver:renderer-start-mic', { deviceId });
+      this._broadcast('audio-driver:renderer-start-mic', { deviceId, formats: formats || ['webm-opus'] });
     });
   }
 
@@ -340,15 +361,14 @@ export class MicrophoneDriverController {
   private _sendToHolders(channel: string, data: any): void {
     let sent = 0;
     let skipped = 0;
-    for (const [serviceId, sender] of this._holders) {
-      if (sender && !sender.isDestroyed()) {
-        sender.send(channel, data);
+    for (const [, holder] of this._holders) {
+      if (holder.sender && !holder.sender.isDestroyed()) {
+        holder.sender.send(channel, data);
         sent++;
       } else {
         skipped++;
       }
     }
-    // Log only occasionally to avoid flooding (every 300 frames ~5s at 60fps)
     if (!this._sendCount) this._sendCount = 0;
     this._sendCount++;
     if (this._sendCount <= 3 || this._sendCount % 300 === 0) {
@@ -357,6 +377,49 @@ export class MicrophoneDriverController {
   }
 
   private _sendCount = 0;
+
+  /**
+   * Process a raw PCM chunk from the renderer.
+   * Routes to gated callbacks (speech only) and raw callbacks (everything).
+   */
+  processPcmChunk(chunk: Buffer): void {
+    if (!this._running) return;
+
+    // Raw callbacks get everything (ASMR, music, environment recording)
+    for (const cb of this._pcmRawCallbacks) {
+      cb(chunk);
+    }
+
+    // Gated callbacks only get audio when VAD says speaking
+    if (this._speaking) {
+      for (const cb of this._pcmGatedCallbacks) {
+        cb(chunk);
+      }
+    }
+  }
+
+  // ── PCM subscriber callbacks ──────────────────────────────────
+
+  /** VAD-gated PCM — only fires when speaking is detected. */
+  private _pcmGatedCallbacks: Array<(chunk: Buffer) => void> = [];
+  /** Raw PCM — fires for every chunk regardless of VAD. */
+  private _pcmRawCallbacks: Array<(chunk: Buffer) => void> = [];
+
+  /** Register a callback for VAD-gated PCM (speech only). */
+  onPcmData(cb: (chunk: Buffer) => void): () => void {
+    this._pcmGatedCallbacks.push(cb);
+    return () => {
+      this._pcmGatedCallbacks = this._pcmGatedCallbacks.filter(c => c !== cb);
+    };
+  }
+
+  /** Register a callback for raw PCM (all audio, no VAD gating). */
+  onPcmRawData(cb: (chunk: Buffer) => void): () => void {
+    this._pcmRawCallbacks.push(cb);
+    return () => {
+      this._pcmRawCallbacks = this._pcmRawCallbacks.filter(c => c !== cb);
+    };
+  }
 
   // ── Private ───────────────────────────────────────────────────
 
@@ -392,6 +455,18 @@ export class MicrophoneDriverController {
   private _registerVadListener(): void {
     ipcMain.on('audio-driver:mic-vad-update', (_event: Electron.IpcMainEvent, data: any) => {
       this.processVadUpdate(data);
+    });
+  }
+
+  /**
+   * Receive raw PCM chunks from the renderer (s16le, 16kHz, mono).
+   * Distributes to all registered PCM callbacks (e.g. whisper-transcribe).
+   */
+  private _registerPcmListener(): void {
+    ipcMain.on('audio-driver:mic-pcm', (_event: Electron.IpcMainEvent, buffer: any) => {
+      if (!this._running || !buffer) return;
+      // processPcmChunk routes to gated (speech only) and raw (everything)
+      this.processPcmChunk(Buffer.from(buffer));
     });
   }
 }

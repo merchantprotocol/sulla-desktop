@@ -1,17 +1,17 @@
 /**
  * Composable — voice-tracked teleprompter scrolling.
  *
- * Uses browser SpeechRecognition (webkitSpeechRecognition) with
- * interimResults enabled for responsive tracking. Fuzzy-matches spoken
- * words against a sliding window in the script to advance the position.
+ * Uses the internal whisper transcription pipeline (via MicrophoneDriverController)
+ * for speech-to-text. Fuzzy-matches spoken words against a sliding window in the
+ * script to advance the position.
  *
  * Forgiving matching: handles skipped words, filler words, stuttering,
  * paraphrasing, and imperfect pronunciation.
- *
- * Reference: controllers/SecretaryModeController.ts:366-413
  */
 
-import { ref, type Ref } from 'vue';
+import { ref } from 'vue';
+
+const { ipcRenderer } = require('electron');
 
 const FILLER_WORDS = new Set([
   'um', 'uh', 'uh', 'like', 'you', 'know', 'so', 'well', 'basically',
@@ -141,86 +141,77 @@ export function useTeleprompterTracking(
   const isTracking = ref(false);
   const confidence = ref(0);
 
-  let recognition: any = null;
+  let transcriptHandler: ((_event: any, msg: any) => void) | null = null;
   let scriptWords: string[] = [];
-  let normalizedScriptWords: string[] = [];
   let currentIndex = 0;
 
-  function startTracking(words: string[], startIndex: number = 0) {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      console.warn('[TeleprompterTracking] SpeechRecognition not available');
+  function processTranscript(transcript: string) {
+    if (!transcript) return;
+
+    // Normalize spoken words, filter fillers
+    const spokenRaw = transcript.toLowerCase().replace(/[^a-z0-9'' ]/g, '').split(/\s+/);
+    const spoken = spokenRaw
+      .map(normalize)
+      .filter(w => w.length > 0 && !FILLER_WORDS.has(w));
+
+    if (spoken.length === 0) return;
+
+    // Take the last 5 meaningful words for matching
+    const recentSpoken = spoken.slice(-5);
+
+    const matchPos = findBestMatch(recentSpoken, scriptWords, currentIndex);
+
+    if (matchPos >= 0 && matchPos !== currentIndex) {
+      currentIndex = Math.min(matchPos, scriptWords.length - 1);
+      confidence.value = Math.min(1, recentSpoken.length / 3);
+      onIndexUpdate(currentIndex);
+    }
+  }
+
+  async function startTracking(words: string[], startIndex: number = 0) {
+    scriptWords = words;
+    currentIndex = startIndex;
+
+    // Start mic with PCM format for whisper
+    await ipcRenderer.invoke('audio-driver:start-mic', 'teleprompter', ['pcm-s16le']);
+
+    // Start whisper transcription
+    const result = await ipcRenderer.invoke('audio-driver:transcribe-start', {
+      mode: 'conversation',
+    });
+
+    if (!result?.ok) {
+      console.warn('[TeleprompterTracking] Whisper transcription failed to start');
+      await ipcRenderer.invoke('audio-driver:stop-mic', 'teleprompter').catch(() => {});
       return;
     }
 
-    scriptWords = words;
-    normalizedScriptWords = words.map(normalize);
-    currentIndex = startIndex;
-
-    recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (event: any) => {
-      // Collect the most recent result (interim or final)
-      const result = event.results[event.results.length - 1];
-      const transcript = result[0].transcript.trim();
-      if (!transcript) return;
-
-      // Normalize spoken words, filter fillers
-      const spokenRaw = transcript.toLowerCase().replace(/[^a-z0-9'' ]/g, '').split(/\s+/);
-      const spoken = spokenRaw
-        .map(normalize)
-        .filter(w => w.length > 0 && !FILLER_WORDS.has(w));
-
-      if (spoken.length === 0) return;
-
-      // Take the last 5 meaningful words for matching
-      const recentSpoken = spoken.slice(-5);
-
-      const matchPos = findBestMatch(recentSpoken, scriptWords, currentIndex);
-
-      if (matchPos >= 0 && matchPos !== currentIndex) {
-        currentIndex = Math.min(matchPos, scriptWords.length - 1);
-        confidence.value = Math.min(1, recentSpoken.length / 3);
-        onIndexUpdate(currentIndex);
-      }
+    // Listen for transcript events from whisper
+    transcriptHandler = (_event: any, msg: any) => {
+      if (!isTracking.value || !msg?.text) return;
+      // Use both partial and final transcripts for responsive tracking
+      processTranscript(msg.text.trim());
     };
+    ipcRenderer.on('gateway-transcript', transcriptHandler);
 
-    recognition.onerror = (event: any) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') return;
-      console.warn('[TeleprompterTracking] Recognition error:', event.error);
-
-      // Auto-restart on recoverable errors
-      if (isTracking.value && event.error !== 'not-allowed') {
-        try { recognition?.start(); } catch { /* already started */ }
-      }
-    };
-
-    recognition.onend = () => {
-      // Auto-restart if still tracking
-      if (isTracking.value) {
-        try { recognition?.start(); } catch { /* already started */ }
-      }
-    };
-
-    try {
-      recognition.start();
-      isTracking.value = true;
-    } catch (e) {
-      console.error('[TeleprompterTracking] Failed to start:', e);
-    }
+    isTracking.value = true;
+    console.log('[TeleprompterTracking] Started — whisper pipeline active');
   }
 
   function stopTracking() {
     isTracking.value = false;
     confidence.value = 0;
-    if (recognition) {
-      try { recognition.stop(); } catch { /* already stopped */ }
-      recognition = null;
+
+    if (transcriptHandler) {
+      ipcRenderer.removeListener('gateway-transcript', transcriptHandler);
+      transcriptHandler = null;
     }
+
+    // Stop whisper + release mic
+    ipcRenderer.invoke('audio-driver:transcribe-stop').catch(() => {});
+    ipcRenderer.invoke('audio-driver:stop-mic', 'teleprompter').catch(() => {});
+
+    console.log('[TeleprompterTracking] Stopped');
   }
 
   /**

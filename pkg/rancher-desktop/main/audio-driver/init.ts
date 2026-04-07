@@ -84,10 +84,17 @@ export function initialize(): void {
     },
   });
 
+  // Subscribe whisper to PCM stream from MicrophoneDriverController
+  // (PCM chunks are VAD-gated — only delivered when speaking)
+  const mic = MicrophoneDriverController.getInstance();
+  mic.onPcmData((pcm: Buffer) => {
+    whisperTranscribe.feedMic(pcm);
+  });
+
   micSocket.start((chunk: Buffer) => {
     if (chunk.length > 0) {
+      // WebM/Opus chunks go to gateway (it decodes server-side)
       gateway.sendAudio(chunk, 0);
-      whisperTranscribe.feedMic(chunk);
 
       if (testRecordingActive) {
         testRecordingChunks.push(Buffer.from(chunk));
@@ -148,9 +155,9 @@ function registerIpcHandlers(): void {
 
   // ── Mic lifecycle (ref-counted) ─────────────────────────────────
 
-  ipcMain.handle('audio-driver:start-mic', async(event: Electron.IpcMainInvokeEvent, serviceId?: string) => {
-    log.info('IPC', 'start-mic', { serviceId });
-    await mic.start(serviceId || 'unknown', event.sender);
+  ipcMain.handle('audio-driver:start-mic', async(event: Electron.IpcMainInvokeEvent, serviceId?: string, formats?: string[]) => {
+    log.info('IPC', 'start-mic', { serviceId, formats });
+    await mic.start(serviceId || 'unknown', event.sender, { formats });
     return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
   });
 
@@ -416,10 +423,7 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('audio-driver:transcribe-status', () => {
-    return {
-      active: whisperTranscribe.isActive(),
-      mode:   whisperTranscribe.getMode(),
-    };
+    return whisperTranscribe.getStats();
   });
 
   // ── Test recording ──────────────────────────────────────────────

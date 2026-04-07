@@ -79,9 +79,6 @@ function getIpc(): any {
 
 type Listener<T = any> = (data: T) => void;
 
-// ── Silence debounce for speech recognition ─────────────────────
-
-const STT_SILENCE_DELAY_MS = 1500;
 
 // ── Singleton ───────────────────────────────────────────────────
 
@@ -90,8 +87,7 @@ let instance: AudioDriverClient | null = null;
 /**
  * The canonical API for interacting with Sulla Desktop's audio driver.
  *
- * Manages all IPC communication, state tracking, and optional built-in
- * browser SpeechRecognition driven by the audio driver's VAD.
+ * Manages all IPC communication and state tracking for the audio driver.
  */
 export class AudioDriverClient {
   // ── Logging ─────────────────────────────────────────────────
@@ -131,7 +127,6 @@ export class AudioDriverClient {
   private _fanNoise = false;
   private _noiseFloor = 0;
   private _vadDetails: VadDetails = { zcr: 0, variance: 0, pitch: null, centroid: 0 };
-  private _listening = false;
 
   // ── Event listeners ─────────────────────────────────────────
 
@@ -141,12 +136,6 @@ export class AudioDriverClient {
 
   private _ipcHandlers: Array<{ channel: string; handler: (...args: any[]) => void }> = [];
 
-  // ── Speech recognition state ────────────────────────────────
-
-  private _sttRecognition: any = null;
-  private _sttRunning = false;
-  private _sttSilenceTimer: ReturnType<typeof setTimeout> | null = null;
-  private _sttLang = 'en-US';
 
   // ── Constructor (private — use getInstance) ─────────────────
 
@@ -198,8 +187,6 @@ export class AudioDriverClient {
   /** Detailed VAD analysis metrics: ZCR, variance, pitch, centroid. */
   get vadDetails(): VadDetails { return { ...this._vadDetails }; }
 
-  /** Whether VAD-driven speech recognition is active. */
-  get listening(): boolean { return this._listening; }
 
   // ── Microphone Lifecycle ────────────────────────────────────
 
@@ -397,35 +384,6 @@ export class AudioDriverClient {
     return result;
   }
 
-  // ── Speech Recognition (VAD-driven browser STT) ─────────────
-
-  /**
-   * Start listening for speech using browser SpeechRecognition,
-   * controlled by the audio driver's VAD.
-   *
-   * When VAD detects speech → recognition starts.
-   * When VAD detects silence → recognition stops after debounce,
-   * and a `transcript` event is emitted with the recognized text.
-   *
-   * @param opts.lang - BCP-47 language code (default: 'en-US')
-   */
-  startListening(opts?: { lang?: string }): void {
-    if (this._listening) return;
-    this._sttLang = opts?.lang || 'en-US';
-    this._listening = true;
-    this._log('startListening()', { lang: this._sttLang });
-  }
-
-  /** Stop listening and tear down the SpeechRecognition instance. */
-  stopListening(): void {
-    this._log('stopListening()');
-    this._listening = false;
-    this._stopStt();
-    if (this._sttSilenceTimer) {
-      clearTimeout(this._sttSilenceTimer);
-      this._sttSilenceTimer = null;
-    }
-  }
 
   // ── Socket Paths ────────────────────────────────────────────
 
@@ -497,7 +455,6 @@ export class AudioDriverClient {
     }
     this._ipcHandlers = [];
     this._listeners.clear();
-    this.stopListening();
     instance = null;
   }
 
@@ -548,11 +505,6 @@ export class AudioDriverClient {
         centroid: data.centroid ?? this._vadDetails.centroid,
       };
       this._emit('vad', data);
-
-      // Drive speech recognition if listening
-      if (this._listening) {
-        this._handleVadForStt(data);
-      }
     });
 
     this._addIpcListener(r, 'audio-driver:speaker-level', (_e: any, data: SpeakerLevelEvent) => {
@@ -590,102 +542,6 @@ export class AudioDriverClient {
   }
 
   // ── Private: Speech Recognition ─────────────────────────────
-
-  private _handleVadForStt(data: VadEvent): void {
-    if (data.speaking) {
-      if (this._sttSilenceTimer) {
-        clearTimeout(this._sttSilenceTimer);
-        this._sttSilenceTimer = null;
-      }
-      this._startStt();
-    } else {
-      if (this._sttRunning && !this._sttSilenceTimer) {
-        this._sttSilenceTimer = setTimeout(() => {
-          this._sttSilenceTimer = null;
-          this._stopStt();
-        }, STT_SILENCE_DELAY_MS);
-      }
-    }
-  }
-
-  private _startStt(): void {
-    if (this._sttRunning) return;
-    if (!this._sttRecognition) {
-      this._sttRecognition = this._createSttRecognition();
-      if (!this._sttRecognition) {
-        this._warn('SpeechRecognition not supported in this browser');
-        return;
-      }
-    }
-    try {
-      this._sttRecognition.start();
-      this._sttRunning = true;
-      this._log('STT recognition started', { lang: this._sttLang });
-    } catch {
-      // Already started
-    }
-  }
-
-  private _stopStt(): void {
-    if (!this._sttRecognition) return;
-    try {
-      this._sttRecognition.stop();
-    } catch {
-      // Already stopped
-    }
-    this._sttRunning = false;
-    this._log('STT recognition stopped');
-  }
-
-  private _createSttRecognition(): any {
-    const SR = (globalThis as any).SpeechRecognition || (globalThis as any).webkitSpeechRecognition;
-    if (!SR) return null;
-
-    const rec = new SR();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = this._sttLang;
-
-    rec.onresult = (event: any) => {
-      let interim = '';
-      let final = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          final += result[0].transcript;
-        } else {
-          interim += result[0].transcript;
-        }
-      }
-
-      const text = (final || interim).trim();
-      if (text) {
-        const entry: TranscriptEntry = {
-          speaker:   'You',
-          text,
-          partial:   !final,
-          timestamp: Date.now(),
-        };
-        if (final) {
-          this._log('STT transcript final', { text: text.substring(0, 80) });
-        }
-        this._emit('transcript', entry);
-      }
-    };
-
-    rec.onend = () => {
-      this._sttRunning = false;
-    };
-
-    rec.onerror = (event: any) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') return;
-      console.warn('[AudioDriverClient] SpeechRecognition error:', event.error);
-      this._sttRunning = false;
-    };
-
-    return rec;
-  }
 
   // ── Private: Event emission ─────────────────────────────────
 

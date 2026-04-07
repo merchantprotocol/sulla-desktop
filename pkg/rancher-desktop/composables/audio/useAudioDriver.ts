@@ -42,7 +42,6 @@ export function useAudioDriver() {
   const fanNoise = ref(client.fanNoise);
   const noiseFloor = ref(client.noiseFloor);
   const vadDetails = ref<VadDetails>(client.vadDetails);
-  const listening = ref(client.listening);
 
   // ── Computed (derived) ──────────────────────────────────────
 
@@ -84,8 +83,6 @@ export function useAudioDriver() {
 
   onUnmounted(() => {
     for (const unsub of unsubs) unsub();
-    // Sync listening state (don't stop — other components may still be using it)
-    listening.value = client.listening;
   });
 
   // ── Return ──────────────────────────────────────────────────
@@ -107,8 +104,6 @@ export function useAudioDriver() {
     noiseFloorDb,
     noiseFloorDbFormatted,
     vadDetails:           readonly(vadDetails),
-    listening:            readonly(listening),
-
     // Mic lifecycle (serviceId identifies who is holding the mic open)
     startMic:       (serviceId: string) => client.startMic(serviceId),
     stopMic:        (serviceId: string) => client.stopMic(serviceId),
@@ -130,16 +125,6 @@ export function useAudioDriver() {
     // Combined
     startAll: (serviceId: string) => client.startAll(serviceId),
     stopAll:  (serviceId: string) => client.stopAll(serviceId),
-
-    // Speech recognition (VAD-driven browser STT)
-    startListening: (opts?: { lang?: string }) => {
-      client.startListening(opts);
-      listening.value = true;
-    },
-    stopListening: () => {
-      client.stopListening();
-      listening.value = false;
-    },
 
     // Test recording
     testRecordStart: () => client.testRecordStart(),

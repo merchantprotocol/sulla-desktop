@@ -630,12 +630,17 @@ function showVoiceToast(message: string): void {
 }
 
 // ─── Voice configuration check ──────────────────────────────
-// Voice capture uses browser SpeechRecognition — mic button appears
-// whenever the browser supports it (Electron/Chromium always does).
+// Voice mode uses the internal whisper transcription pipeline.
+// Mic button appears when whisper is installed with a model.
 const isVoiceConfigured = ref(false);
-function checkVoiceConfig() {
-  const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-  isVoiceConfigured.value = !!SR;
+async function checkVoiceConfig() {
+  try {
+    const { ipcRenderer } = require('electron');
+    const status = await ipcRenderer.invoke('audio-driver:whisper-detect');
+    isVoiceConfigured.value = !!(status?.available && status?.models?.length > 0);
+  } catch {
+    isVoiceConfigured.value = false;
+  }
 }
 checkVoiceConfig();
 

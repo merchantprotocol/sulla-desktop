@@ -121,14 +121,27 @@ export function getMode(): TranscribeMode | null {
   return mode;
 }
 
+/** Stats for UI display — shows whether data is flowing and processing. */
+export function getStats(): { active: boolean; mode: TranscribeMode | null; transcribing: boolean; micBytesReceived: number; micChunksReceived: number } {
+  return {
+    active:            mode !== null,
+    mode,
+    transcribing,
+    micBytesReceived:  micBytes,
+    micChunksReceived: micBuffer.length,
+  };
+}
+
 /**
  * Feed microphone PCM data (s16le, 16kHz, mono).
- * Called from the mic-socket callback or renderer audio pipeline.
+ * Called from MicrophoneDriverController.onPcmData() — only when
+ * VAD detects speech. Chunks are accumulated and flushed to
+ * whisper.cpp periodically.
  */
-export function feedMic(pcm: Buffer): void {
+export function feedMic(chunk: Buffer): void {
   if (!mode) return;
-  micBuffer.push(pcm);
-  micBytes += pcm.length;
+  micBuffer.push(chunk);
+  micBytes += chunk.length;
 
   if (micBytes >= MAX_BUFFER_BYTES) flush();
 }

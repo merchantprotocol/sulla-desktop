@@ -106,8 +106,11 @@ window.audioDriver = {
   ackMicStopped: () => ipcRenderer.send("audio-driver:mic-stopped"),
 
 
-  // Broadcast mic VAD state to main process for relay to all windows
+  // Broadcast mic VAD state to main process for relay to holder windows
   broadcastMicVad: (data) => ipcRenderer.send("audio-driver:mic-vad-update", data),
+
+  // Send raw PCM chunk (s16le, 16kHz, mono) to main process
+  sendMicPcm: (buffer) => ipcRenderer.send("audio-driver:mic-pcm", buffer),
 
   log: {
     error: (tag, msg, data) => ipcRenderer.send("audio-driver:log", "error", tag, msg, data),

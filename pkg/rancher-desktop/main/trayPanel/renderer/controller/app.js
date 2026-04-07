@@ -57,6 +57,7 @@ function onMicLevel(micLevel) {
 
 window.audioDriver.onStartMic(async (opts) => {
   log.info("Controller", ">>> renderer-start-mic received", opts);
+  const formats = opts?.formats || ["webm-opus"]; // default: gateway format
   try {
     vad.reset();
     feedbackDetection.reset();
@@ -67,7 +68,37 @@ window.audioDriver.onStartMic(async (opts) => {
       micName: deviceInfo?.micName,
       speakerName: deviceInfo?.speakerName,
       micDeviceId: deviceInfo?.micDeviceId,
+      formats,
     });
+
+    // Start WebM/Opus recording → mic socket (for gateway, test recording)
+    if (formats.includes("webm-opus")) {
+      try {
+        const socketPath = await window.audioDriver.getMicSocketPath();
+        if (socketPath) {
+          micSocket.connect(socketPath);
+          log.info("Controller", "Mic socket connected", { path: socketPath });
+        } else {
+          log.warn("Controller", "No mic socket path available");
+        }
+      } catch (e) {
+        log.warn("Controller", "Mic socket connect failed", { error: e.message });
+      }
+
+      audioCapture.startRecording((buffer) => {
+        micSocket.send(buffer);
+      });
+      log.info("Controller", "WebM/Opus MediaRecorder started");
+    }
+
+    // Start raw PCM capture → IPC (for whisper, local STT, capture studio)
+    if (formats.includes("pcm-s16le") || formats.includes("pcm-s16le-raw")) {
+      audioCapture.startPcmCapture((buffer) => {
+        window.audioDriver.sendMicPcm(buffer);
+      });
+      log.info("Controller", "PCM capture started (s16le 16kHz mono)");
+    }
+
     log.info("Controller", "Sending ackMicStarted to main process");
     window.audioDriver.ackMicStarted(deviceInfo);
   } catch (e) {
@@ -78,6 +109,8 @@ window.audioDriver.onStartMic(async (opts) => {
 
 window.audioDriver.onStopMic(() => {
   log.info("Controller", ">>> renderer-stop-mic received");
+  audioCapture.stopPcmCapture();
+  log.info("Controller", "PCM capture stopped");
   audioCapture.stopRecording();
   log.info("Controller", "MediaRecorder stopped");
   audioCapture.stop();

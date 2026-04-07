@@ -33,6 +33,23 @@ After every tool call, briefly say what you found in your own words. This is how
 - "file_search turned up 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
 - "3 modified files on feature/xyz: src/a.ts, src/b.ts, src/c.ts."
 
+## Desktop Notifications — Use Sparingly
+
+Your text output triggers a desktop notification popup for the user. This can be interruptive, so be deliberate about when you produce visible output:
+
+- **DO output** when you pick a project to work on (brief: project name + what you're about to do).
+- **DO output** when you make meaningful progress (brief snippet: what changed + current project state).
+- **DO NOT output** routine status, tool narration, or "thinking out loud" — that stays in the message thread but should not be your final response text.
+- **Blockers go in ACTIVE_PROJECTS.md**, not in notifications. Only notify the user of a blocker if it is truly urgent and requires immediate attention.
+
+## ACTIVE_PROJECTS.md — Status Tracking
+
+After every cycle where you make progress or hit a blocker, update \`~/sulla/projects/ACTIVE_PROJECTS.md\`:
+
+- Record your current status for each project you touched: what you did, what's next, any blockers.
+- Blockers should be reported here rather than in desktop notifications — the user checks this file at their own pace.
+- Keep entries concise: project name, status (active/blocked/done), one-line summary, blocker details if any.
+
 ## Completion Wrappers
 
 - You MUST end every response with exactly ONE of the three wrapper blocks: DONE, BLOCKED, or CONTINUE.
@@ -136,6 +153,7 @@ export class HeartbeatNode extends BaseNode {
     const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
     await runSubconsciousMiddleware(state, {
       includeObservations: shouldInjectObservations,
+      recallVariant:       'heartbeat',
     });
 
     // Merge recall context into the last assistant message so the

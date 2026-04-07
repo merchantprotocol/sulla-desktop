@@ -85,6 +85,42 @@ Cite file paths for everything you include.
 If a section has no relevant results, skip it entirely.
 When all 5 steps are done, finish immediately.`;
 
+// ── Heartbeat-specific memory recall ──────────────────────────────────────
+
+const HEARTBEAT_RECALL_TOOLS: string[] = [
+  'file_search',           // Search ~/sulla/projects/ for active PRDs
+  'read_file',             // Read PROJECT.md files and identity docs
+  'get_human_presence',    // Check if user is available
+];
+
+const HEARTBEAT_RECALL_PROMPT = `You are a READ-ONLY recall process for the heartbeat agent. You gather active project context so the heartbeat knows what to work on.
+
+## Your checklist
+
+Complete these steps in order, then finish:
+
+### 1. Active Projects
+Search \`~/sulla/projects/\` for all project directories.
+For each project found, read its PROJECT.md (the PRD).
+Include the full PRD content for every active (non-archived) project.
+
+### 2. Identity & Goals
+Read \`~/sulla/identity/agent/goals.md\` and \`~/sulla/identity/human/goals.md\`.
+Include any active goals or priorities.
+
+### 3. Human Presence
+Call \`get_human_presence\` to check if the human is available.
+Include their status.
+
+## Output format
+
+Return your findings organized by section. Paste the actual PRD content — the
+heartbeat agent needs the full details to decide what to work on.
+Cite file paths for everything you include.
+
+If a section has no relevant results, skip it entirely.
+When all steps are done, finish immediately.`;
+
 
 const OBSERVATION_AGENT_PROMPT = `You are the observation process for an AI agent.
 
@@ -386,16 +422,19 @@ export const GraphRegistry = {
    * Create a Memory Recall graph — searches internal systems for relevant
    * skills, tools, resources, projects, and context.
    */
-  createMemoryRecall: async function(parentState: BaseThreadState): Promise<{
+  createMemoryRecall: async function(parentState: BaseThreadState, variant?: 'default' | 'heartbeat'): Promise<{
     graph:    Graph<BaseThreadState>;
     state:    BaseThreadState;
     threadId: string;
   }> {
+    const isHeartbeat = variant === 'heartbeat';
     const graph = createSubconsciousGraph();
     const state = await buildSubconsciousState({
-      systemPrompt:           MEMORY_RECALL_PROMPT,
-      tools:                  MEMORY_RECALL_TOOLS,
-      userMessage:            'Run through the checklist: search resources/skills, resources/workflows, open tabs, vault credentials, and environment docs. Return what is relevant to this conversation.',
+      systemPrompt:           isHeartbeat ? HEARTBEAT_RECALL_PROMPT : MEMORY_RECALL_PROMPT,
+      tools:                  isHeartbeat ? HEARTBEAT_RECALL_TOOLS : MEMORY_RECALL_TOOLS,
+      userMessage:            isHeartbeat
+        ? 'Load all active projects from ~/sulla/projects/, agent and human goals, and human presence. Return the full PRD content for each project.'
+        : 'Run through the checklist: search resources/skills, resources/workflows, open tabs, vault credentials, and environment docs. Return what is relevant to this conversation.',
       messages:               [...parentState.messages],
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'memory-recall',

@@ -5,7 +5,8 @@
  * that shows status updates from the heartbeat agent. Modeled on the
  * call-notification pattern from sulla/audio-driver.
  *
- * The window auto-dismisses after a timeout if not manually closed.
+ * Click to expand — renders full markdown, cancels auto-hide, stays until dismissed.
+ * Auto-dismisses after timeout if not expanded.
  */
 
 import path from 'path';
@@ -17,26 +18,33 @@ const console = Logging.background;
 
 let win: BrowserWindow | null = null;
 let autoHideTimer: ReturnType<typeof setTimeout> | null = null;
+let isExpanded = false;
 
 const AUTO_HIDE_MS = 15_000;
-const WINDOW_WIDTH = 360;
-const WINDOW_HEIGHT = 120;
+const COLLAPSED_WIDTH = 360;
+const COLLAPSED_HEIGHT = 120;
+const EXPANDED_WIDTH = 480;
+const EXPANDED_HEIGHT = 400;
 const MARGIN = 16;
 
 /**
  * Show a heartbeat notification.
  *
  * @param title  — notification title (e.g. "Sulla")
- * @param message — notification body text
+ * @param message — notification body text (markdown supported)
  */
 export function showHeartbeatNotification(title: string, message: string): void {
   if (win && !win.isDestroyed()) {
     // Reuse existing window — update content and re-show
     win.webContents.send('heartbeat-notification-data', { title, message });
-    win.showInactive();
-    _resetAutoHide();
+    if (!isExpanded) {
+      win.showInactive();
+      _resetAutoHide();
+    }
     return;
   }
+
+  isExpanded = false;
 
   // Position in top-right of the display the cursor is on
   const cursorPoint = screen.getCursorScreenPoint();
@@ -45,9 +53,9 @@ export function showHeartbeatNotification(title: string, message: string): void 
   const { width: screenW } = display.workAreaSize;
 
   win = new BrowserWindow({
-    width:       WINDOW_WIDTH,
-    height:      WINDOW_HEIGHT,
-    x:           workX + screenW - WINDOW_WIDTH - MARGIN,
+    width:       COLLAPSED_WIDTH,
+    height:      COLLAPSED_HEIGHT,
+    x:           workX + screenW - COLLAPSED_WIDTH - MARGIN,
     y:           workY + MARGIN,
     show:        false,
     frame:       false,
@@ -79,13 +87,47 @@ export function showHeartbeatNotification(title: string, message: string): void 
 
   win.on('closed', () => {
     _clearAutoHide();
+    _removeIpcListeners();
     win = null;
+    isExpanded = false;
   });
 
-  // Dismiss button
-  ipcMain.once('heartbeat-notification-dismiss', () => {
+  // IPC: dismiss
+  const onDismiss = () => {
     closeHeartbeatNotification();
-  });
+  };
+
+  // IPC: expand — user clicked the notification
+  const onExpand = () => {
+    if (!win || win.isDestroyed() || isExpanded) return;
+
+    isExpanded = true;
+    _clearAutoHide(); // Stay open until manually dismissed
+
+    // Make focusable so user can scroll/select text
+    win.setFocusable(true);
+
+    // Resize and reposition (keep top-right anchor)
+    const cursorNow = screen.getCursorScreenPoint();
+    const displayNow = screen.getDisplayNearestPoint(cursorNow);
+    const workArea = displayNow.workArea;
+    const newX = workArea.x + workArea.width - EXPANDED_WIDTH - MARGIN;
+    const newY = workArea.y + MARGIN;
+
+    win.setBounds({
+      x:      newX,
+      y:      newY,
+      width:  EXPANDED_WIDTH,
+      height: EXPANDED_HEIGHT,
+    }, true); // animate
+
+    win.focus();
+
+    console.log('[HeartbeatNotification] Expanded');
+  };
+
+  ipcMain.on('heartbeat-notification-dismiss', onDismiss);
+  ipcMain.on('heartbeat-notification-expand', onExpand);
 
   _resetAutoHide();
 
@@ -97,11 +139,12 @@ export function showHeartbeatNotification(title: string, message: string): void 
  */
 export function closeHeartbeatNotification(): void {
   _clearAutoHide();
+  _removeIpcListeners();
   if (win && !win.isDestroyed()) {
-    ipcMain.removeAllListeners('heartbeat-notification-dismiss');
     win.close();
     win = null;
   }
+  isExpanded = false;
 }
 
 /**
@@ -125,4 +168,9 @@ function _clearAutoHide(): void {
     clearTimeout(autoHideTimer);
     autoHideTimer = null;
   }
+}
+
+function _removeIpcListeners(): void {
+  ipcMain.removeAllListeners('heartbeat-notification-dismiss');
+  ipcMain.removeAllListeners('heartbeat-notification-expand');
 }

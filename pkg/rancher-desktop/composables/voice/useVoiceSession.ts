@@ -1,17 +1,18 @@
 /**
- * useVoiceSession — Vue composable for voice chat with Sula.
+ * useVoiceSession — Vue composable for voice chat with Sulla.
  *
- * Uses the audio-driver's VAD (broadcast from tray panel) to control
- * browser SpeechRecognition. The audio-driver's sophisticated VAD
- * (ZCR, pitch, spectral, fan noise) decides WHEN speech is happening.
- * Browser SpeechRecognition handles the actual speech-to-text.
+ * Uses the MicrophoneDriverController's PCM pipeline + whisper.cpp for
+ * local speech-to-text. The audio driver's VAD decides WHEN speech is
+ * happening; whisper processes the raw PCM; transcript events arrive
+ * on the gateway-transcript channel.
  *
  * Flow:
  *   1. User clicks mic → enters voice mode
- *   2. audio-driver:mic-vad events arrive with { speaking, level, fanNoise }
- *   3. speaking=true  → start SpeechRecognition (if not already running)
- *   4. speaking=false → after debounce, stop SpeechRecognition, send transcript
- *   5. User clicks mic again → exit voice mode
+ *   2. start-mic with pcm-s16le format → PCM flows to whisper
+ *   3. start transcribe-start → whisper begins processing
+ *   4. gateway-transcript events arrive with text
+ *   5. Silence after speech → send accumulated transcript to chat
+ *   6. User clicks mic again → exit voice mode
  *
  * TTS playback via TTSPlayerService is preserved unchanged.
  *
@@ -62,7 +63,7 @@ function formatDuration(seconds: number): string {
 }
 
 // How long silence must persist before we finalize and send (ms)
-const SILENCE_SEND_DELAY = 1500;
+const SILENCE_SEND_DELAY = 2000;
 
 // ─── Composable ─────────────────────────────────────────────────
 
@@ -77,7 +78,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   const pipelineState = ref<PipelineState>('IDLE');
   const voiceMode = ref<VoiceMode>('voice');
 
-  // ── TTS service (preserved from original) ──
+  // ── TTS service ──
   const ttsPlayer = new TTSPlayerService({
     ipcInvoke: ipcRenderer.invoke.bind(ipcRenderer),
   });
@@ -109,11 +110,10 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     }),
   );
 
-  // ── SpeechRecognition state ──
-  let recognition: SpeechRecognition | null = null;
-  let recognitionRunning = false;
+  // ── Transcript state ──
   let interimMessageId: string | null = null;
   let accumulatedTranscript = '';
+  let lastTranscriptTime = 0;
 
   // ── Silence debounce ──
   let silenceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -166,141 +166,96 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     interimMessageId = null;
   }
 
-  // ── SpeechRecognition lifecycle ──
-
-  function createRecognition(): SpeechRecognition | null {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      _onError?.('SpeechRecognition is not supported in this browser.');
-      return null;
-    }
-
-    const rec = new SR() as SpeechRecognition;
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = 'en-US';
-
-    rec.onresult = (event: SpeechRecognitionEvent) => {
-      let interimText = '';
-      let finalText = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalText += result[0].transcript;
-        } else {
-          interimText += result[0].transcript;
-        }
-      }
-
-      if (finalText.trim()) {
-        accumulatedTranscript += (accumulatedTranscript ? ' ' : '') + finalText.trim();
-        updateInterimMessage(accumulatedTranscript);
-      } else if (interimText.trim()) {
-        updateInterimMessage(accumulatedTranscript + (accumulatedTranscript ? ' ' : '') + interimText.trim());
-      }
-    };
-
-    rec.onend = () => {
-      recognitionRunning = false;
-      // Don't auto-restart — VAD controls the lifecycle
-    };
-
-    rec.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') return;
-      console.warn('[useVoiceSession] SpeechRecognition error:', event.error);
-      recognitionRunning = false;
-
-      if (event.error === 'not-allowed') {
-        _onError?.('Microphone access denied.');
-        stopRecording();
-      }
-    };
-
-    return rec;
-  }
-
-  function startSpeechRecognition() {
-    if (recognitionRunning) return;
-    if (!recognition) {
-      recognition = createRecognition();
-      if (!recognition) return;
-    }
-    try {
-      recognition.start();
-      recognitionRunning = true;
-    } catch {
-      // Already started — ignore
-    }
-  }
-
-  function stopSpeechRecognition() {
-    if (!recognition) return;
-    try {
-      recognition.stop();
-    } catch {
-      // Already stopped
-    }
-    recognitionRunning = false;
-  }
-
   function sendAccumulatedTranscript() {
     const text = accumulatedTranscript.trim();
     accumulatedTranscript = '';
     removeInterimMessage();
 
     if (text) {
+      console.log('[VoiceSession] Sending transcript to chat:', text.substring(0, 80));
       chatController.query.value = text;
       chatController.send({ inputSource: 'voice' });
+      pipelineState.value = 'THINKING';
     }
   }
 
-  // ── VAD event handler ──
+  // ── Whisper transcript handler ──
 
-  const onMicVad = (_event: any, data: { speaking: boolean; level: number; fanNoise: boolean }) => {
-    if (!isRecording.value) return;
+  const onTranscript = (_event: any, msg: any) => {
+    if (!isRecording.value || !msg?.text) return;
 
-    // Update audio level for the meter (scale 0-1 RMS to 0-100 for UI)
-    audioLevel.value = Math.round(Math.min(100, data.level * 100));
+    const text = msg.text.trim();
+    if (!text) return;
 
-    if (data.speaking) {
-      // Clear any pending silence timer
-      if (silenceTimer) {
-        clearTimeout(silenceTimer);
-        silenceTimer = null;
-      }
+    const isPartial = msg.event_type === 'transcript_partial';
 
-      // Start recognition when VAD detects speech
-      startSpeechRecognition();
+    console.log('[VoiceSession] Transcript received:', { text: text.substring(0, 60), partial: isPartial });
+
+    if (isPartial) {
+      // Show partial in the interim message
+      updateInterimMessage(accumulatedTranscript + (accumulatedTranscript ? ' ' : '') + text);
     } else {
-      // VAD says silence — start debounce timer to finalize
-      if (recognitionRunning && !silenceTimer) {
-        silenceTimer = setTimeout(() => {
-          silenceTimer = null;
-          stopSpeechRecognition();
-          sendAccumulatedTranscript();
-        }, SILENCE_SEND_DELAY);
-      }
+      // Final transcript — accumulate
+      accumulatedTranscript += (accumulatedTranscript ? ' ' : '') + text;
+      updateInterimMessage(accumulatedTranscript);
+      lastTranscriptTime = Date.now();
+
+      // Reset silence timer — wait for more speech
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        silenceTimer = null;
+        sendAccumulatedTranscript();
+      }, SILENCE_SEND_DELAY);
     }
+  };
+
+  // ── VAD event handler (for audio level meter only) ──
+
+  const onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
+    if (!isRecording.value) return;
+    audioLevel.value = Math.round(Math.min(100, data.level * 100));
   };
 
   // ── Actions ──
 
   async function startRecording() {
+    console.log('[VoiceSession] startRecording — requesting mic + whisper');
     isRecording.value = true;
     pipelineState.value = 'LISTENING';
     accumulatedTranscript = '';
+    lastTranscriptTime = 0;
     startDurationTimer();
 
-    // Start mic via MicrophoneDriverController (ref-counted)
-    await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat');
+    // Start mic with PCM format for whisper
+    const micResult = await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat', ['pcm-s16le']);
+    console.log('[VoiceSession] start-mic result:', micResult);
 
-    // Listen for VAD data (sent only to holder windows)
+    // Start whisper transcription
+    const whisperResult = await ipcRenderer.invoke('audio-driver:transcribe-start', {
+      mode: 'conversation',
+    });
+    console.log('[VoiceSession] transcribe-start result:', whisperResult);
+
+    if (!whisperResult?.ok) {
+      _onError?.('Failed to start transcription. Check that whisper is installed with a model downloaded.');
+      stopRecording();
+      return;
+    }
+
+    // Listen for transcript events from whisper
+    ipcRenderer.on('gateway-transcript', onTranscript);
+
+    // Listen for VAD data (for audio level meter)
     ipcRenderer.on('audio-driver:mic-vad', onMicVad);
+
+    console.log('[VoiceSession] Voice mode active — whisper pipeline running');
   }
 
   function stopRecording() {
+    console.log('[VoiceSession] stopRecording');
     isRecording.value = false;
+
+    ipcRenderer.removeListener('gateway-transcript', onTranscript);
     ipcRenderer.removeListener('audio-driver:mic-vad', onMicVad);
 
     // Clear silence timer
@@ -309,23 +264,17 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
       silenceTimer = null;
     }
 
-    // Stop recognition and send any remaining transcript
-    stopSpeechRecognition();
+    // Send any remaining transcript
     if (accumulatedTranscript.trim()) {
       sendAccumulatedTranscript();
-    }
-
-    // Clean up recognition instance
-    if (recognition) {
-      recognition.onend = null;
-      recognition.onresult = null;
-      recognition.onerror = null;
-      recognition = null;
     }
 
     removeInterimMessage();
     stopDurationTimer();
     audioLevel.value = 0;
+
+    // Stop whisper transcription
+    ipcRenderer.invoke('audio-driver:transcribe-stop').catch(() => {});
 
     // Release mic via MicrophoneDriverController (ref-counted)
     ipcRenderer.invoke('audio-driver:stop-mic', 'voice-chat').catch(() => {});
