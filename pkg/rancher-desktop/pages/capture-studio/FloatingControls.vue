@@ -8,6 +8,7 @@
       :class="{ on: src.on, off: !src.on, recording: recording && src.on }"
       :title="src.name"
       @click="$emit('toggle-src', src)"
+      @contextmenu.prevent="$emit('source-menu', src, $event)"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="iconMap[src.type]"></svg>
       <div v-if="src.on" class="active-dot"></div>
@@ -24,6 +25,7 @@
       :class="{ on: src.on, off: !src.on }"
       :title="src.name"
       @click="$emit('toggle-src', src)"
+      @contextmenu.prevent="$emit('source-menu', src, $event)"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="iconMap[src.type] || iconMap.mic"></svg>
       <div v-if="src.on" class="active-dot"></div>
@@ -105,6 +107,7 @@ defineProps<{
 
 defineEmits<{
   (e: 'toggle-src', src: Source): void;
+  (e: 'source-menu', src: Source, event: MouseEvent): void;
   (e: 'toggle-prompter'): void;
   (e: 'toggle-tracks'): void;
   (e: 'screenshot'): void;

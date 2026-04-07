@@ -209,8 +209,8 @@ export class HeartbeatService {
       state.metadata.iterations = 0;
       state.metadata.cycleComplete = false;
       state.metadata.waitingForUser = false;
-      (state.metadata as any).heartbeatCycleCount = 0;
-      (state.metadata as any).heartbeatStatus = 'idle';
+      (state.metadata as any).agent = undefined;
+      (state.metadata as any).agentLoopCount = 0;
       (state.metadata as any).abortSignal = signal;
 
       // Inject the prompt as a fresh user message
@@ -228,11 +228,12 @@ export class HeartbeatService {
 
       await graph.execute(state, 'input_handler');
       const durationMs = Date.now() - triggerStart;
-      const cycleCount = (state.metadata as any).heartbeatCycleCount || 0;
-      const status = (state.metadata as any).heartbeatStatus || 'unknown';
-      this.recordEvent('heartbeat_completed', `Completed in ${ Math.round(durationMs / 1000) }s — ${ cycleCount } cycles, status: ${ status }`, {
+      const agentMeta = (state.metadata as any).agent || {};
+      const status = agentMeta.status || 'unknown';
+      const loopCount = (state.metadata as any).agentLoopCount || 0;
+      this.recordEvent('heartbeat_completed', `Completed in ${ Math.round(durationMs / 1000) }s — ${ loopCount } cycles, status: ${ status }`, {
         durationMs,
-        meta: { cycleCount, status, focus: (state.metadata as any).currentFocus || '' },
+        meta: { cycleCount: loopCount, status, focus: agentMeta.status_note || '' },
       });
       console.log('[HeartbeatService] Heartbeat graph execution completed');
     } catch (err) {

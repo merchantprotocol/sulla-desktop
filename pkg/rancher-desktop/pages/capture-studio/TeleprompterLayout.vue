@@ -1,5 +1,10 @@
 <template>
   <div class="teleprompter-layout">
+    <!-- Close button -->
+    <button class="tp-close-btn" @click="$emit('close')" title="Close teleprompter">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+
     <div class="tp-immersive-text">
       <div class="tp-preview-text" ref="tpPreviewText" :style="{ fontSize: tpFontSize + 'px' }">
         <span
@@ -28,15 +33,17 @@
       <div class="tp-tb-divider"></div>
 
       <span class="tp-tb-label">Size</span>
-      <button class="tp-tb-btn" @click="tpFontSize = Math.max(18, tpFontSize - 2)">-</button>
+      <button class="tp-tb-btn" @click="tpFontSize = Math.max(8, tpFontSize - 2)">-</button>
       <span class="tp-tb-val">{{ tpFontSize }}</span>
       <button class="tp-tb-btn" @click="tpFontSize = Math.min(72, tpFontSize + 2)">+</button>
 
-      <div class="tp-tb-divider"></div>
+      <template v-if="!voiceTracking">
+        <div class="tp-tb-divider"></div>
 
-      <span class="tp-tb-label">Speed</span>
-      <input type="range" min="6" max="16" step="2" v-model.number="tpSpeed">
-      <span class="tp-tb-val">{{ tpSpeed }}</span>
+        <span class="tp-tb-label">Speed</span>
+        <input type="range" min="6" max="16" step="2" v-model.number="tpSpeed">
+        <span class="tp-tb-val">{{ tpSpeed }}</span>
+      </template>
 
       <div class="tp-tb-divider"></div>
 
@@ -47,6 +54,17 @@
         title="Voice tracking"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+      </button>
+
+      <div class="tp-tb-divider"></div>
+
+      <button
+        class="tp-tb-btn"
+        :class="{ active: prompterWindowOpen }"
+        @click="$emit('toggle-prompter')"
+        title="Floating teleprompter window"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
       </button>
 
       <div class="tp-tb-divider"></div>
@@ -90,12 +108,20 @@
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useTeleprompterTracking } from './composables/useTeleprompterTracking';
 
+const { ipcRenderer: ipc } = require('electron');
+
 const props = defineProps<{
   currentLayout: string;
+  prompterWindowOpen?: boolean;
+}>();
+
+const emit = defineEmits<{
+  (e: 'toggle-prompter'): void;
+  (e: 'close'): void;
 }>();
 
 // ---- Teleprompter state ----
-const tpScript = ref(`Welcome everyone to today's product demo. I'm really excited to show you what we've been building over the past few weeks. The capture studio is a new feature inside Sulla Desktop that lets you record your screen, your webcam, your microphone, and your system audio all at the same time as completely separate streams. This means you can edit each one independently later. Think of it like having a multi-camera setup but right from your laptop. The key innovation here is the teleprompter. Instead of looking off to the side to read your notes, the text appears right near your camera so you maintain eye contact with your audience. You can adjust the color of the highlighted text, change the font size, and control the scroll speed. It even supports voice-tracked scrolling where it listens to what you're saying and automatically advances the script to match your pace. Let me show you how the layout system works. You can switch between picture-in-picture mode where your camera appears as a small bubble over your screen recording, side-by-side mode for interviews or pair programming, screen-only mode when you just want to show your desktop, and camera-only mode for direct-to-camera content like this. Each video source can be toggled on and off independently. You can add new sources like a phone camera for vertical content or a second screen capture. The system automatically picks the best layout based on which sources are active. If you turn off your screen and only have your camera running it switches to full-screen camera automatically. Now let me walk you through the recording workflow. You hit the record button and all active sources start capturing simultaneously. The audio driver handles microphone and system audio capture separately so you get clean isolated tracks. During recording you can see the track lanes panel which shows waveforms for each active source. After you stop recording everything gets saved as separate files in a capture session folder with a manifest that describes all the timing relationships between the streams. From there you can hand it off to the Remotion editor for composition and export. Questions? Drop them in the chat and I'll answer them at the end.`);
+const tpScript = ref(`Welcome to the teleprompter. Start reading this text aloud and the teleprompter will follow along with you. It listens to what you are saying and compares your words against this script. Only when it recognizes a match does it advance. That means if you pause to think the teleprompter pauses with you. If you speed up it keeps up. Go ahead and keep reading to see it in action. Notice how the current word is highlighted so you always know exactly where you are. The words you have already spoken fade behind you so they do not distract you. After a few sentences the teleprompter learns your natural reading pace and smoothly predicts where you are between updates. You do not need to stay focused on this window for tracking to work. You can switch to any layout or any app on your screen and the teleprompter keeps listening and following your voice in the background. Try clicking the floating window button in the toolbar above. That opens a small always on top window you can drag near your camera so you can maintain eye contact while reading. In that floating window you can click on any word to jump directly to it. You can also use your scroll wheel to move forward or backward through the script. This is handy if you want to go back and retake a section. Back here in the toolbar you can change the highlight color using the color swatches. Try clicking a different color and watch the current word change. You can also adjust the font size with the plus and minus buttons if the text feels too small or too large. When you are ready to use your own script click the edit button in the toolbar to open the script editor. You can type or paste your script directly or load a text file from your computer. The editor shows you a word count and an estimated read time so you can plan your recording. That is everything you need to know. Go ahead and click edit to replace this text with your own script and start recording.`);
 const tpWords = ref<string[]>([]);
 const tpCurrentIndex = ref(0);
 let tpScrollInterval: ReturnType<typeof setInterval> | null = null;
@@ -104,7 +130,7 @@ const tpHighlightColor = ref('#e6edf3');
 const tpFontSize = ref(42);
 const tpScriptOpen = ref(false);
 let tpPaused = false;
-const voiceTracking = ref(false);
+const voiceTracking = ref(true);
 
 const teleprompterTracker = useTeleprompterTracking((index: number) => {
   tpCurrentIndex.value = index;
@@ -239,28 +265,100 @@ function onKeyDown(e: KeyboardEvent) {
 // Expose methods so the parent can call them when layout changes
 function activate() {
   buildTpWords();
-  if (!voiceTracking.value) {
+  if (voiceTracking.value) {
+    teleprompterTracker.startTracking(tpWords.value, tpCurrentIndex.value);
+  } else {
     startTpScroll();
   }
 }
 
 function deactivate() {
   stopTpScroll();
-  if (voiceTracking.value) {
-    voiceTracking.value = false;
-    teleprompterTracker.stopTracking();
+  // Voice tracking keeps running so the teleprompter continues
+  // tracking speech even when the user switches to another layout.
+  // Only the auto-scroll timer stops.
+}
+
+// Callback for parent to receive position updates (for floating window sync)
+let onPositionUpdate: ((index: number) => void) | null = null;
+
+function setOnPositionUpdate(cb: (index: number) => void) {
+  onPositionUpdate = cb;
+}
+
+// Patch renderTpState to also notify parent
+const _origRenderTpState = renderTpState;
+function renderTpStateWithSync() {
+  _origRenderTpState();
+  if (onPositionUpdate) {
+    onPositionUpdate(tpCurrentIndex.value);
   }
 }
 
-defineExpose({ activate, deactivate, stopTracking: () => teleprompterTracker.stopTracking() });
+// Override calls that advance the index to use the synced version
+watch(tpCurrentIndex, () => {
+  if (onPositionUpdate) {
+    onPositionUpdate(tpCurrentIndex.value);
+  }
+});
+
+// Notify parent on any style change so floating window stays in sync
+let onStyleUpdate: ((style: { fontSize: number; highlightColor: string }) => void) | null = null;
+
+function setOnStyleUpdate(cb: (style: { fontSize: number; highlightColor: string }) => void) {
+  onStyleUpdate = cb;
+}
+
+watch([tpFontSize, tpHighlightColor], () => {
+  if (onStyleUpdate) {
+    onStyleUpdate({ fontSize: tpFontSize.value, highlightColor: tpHighlightColor.value });
+  }
+});
+
+// Also notify when script changes
+let onScriptUpdate: ((data: { words: string[]; currentIndex: number }) => void) | null = null;
+
+function setOnScriptUpdate(cb: (data: { words: string[]; currentIndex: number }) => void) {
+  onScriptUpdate = cb;
+}
+
+watch(tpWords, () => {
+  if (onScriptUpdate) {
+    onScriptUpdate({ words: tpWords.value, currentIndex: tpCurrentIndex.value });
+  }
+});
+
+defineExpose({
+  activate,
+  deactivate,
+  stopTracking: () => teleprompterTracker.stopTracking(),
+  tpWords,
+  tpCurrentIndex,
+  tpFontSize,
+  tpHighlightColor,
+  setOnPositionUpdate,
+  setOnStyleUpdate,
+  setOnScriptUpdate,
+});
+
+// Handle jump-to from the floating teleprompter window (click or scroll)
+function onPrompterJumpTo(_event: any, data: { currentIndex: number }) {
+  const idx = data?.currentIndex;
+  if (typeof idx !== 'number' || idx < 0 || idx >= tpWords.value.length) return;
+  tpCurrentIndex.value = idx;
+  teleprompterTracker.setCurrentIndex(idx);
+  renderTpState();
+}
 
 onMounted(() => {
   document.addEventListener('keydown', onKeyDown);
   buildTpWords();
+  ipc.on('teleprompter:jump-to', onPrompterJumpTo);
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown);
+  ipc.removeListener('teleprompter:jump-to', onPrompterJumpTo);
   stopTpScroll();
   teleprompterTracker.stopTracking();
 });

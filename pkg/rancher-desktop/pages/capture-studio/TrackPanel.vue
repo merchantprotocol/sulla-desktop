@@ -12,7 +12,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="iconMap[src.type] || iconMap.mic"></svg>
         </div>
         <span class="track-name" :style="{ opacity: src.on ? 1 : 0.4 }">{{ src.name }}</span>
-        <div class="track-wave">
+        <div class="track-wave" :class="{ recording: recording }">
           <div class="bars">
             <div
               v-for="j in 100"
@@ -21,6 +21,7 @@
               :style="{
                 background: waveColor(src.type),
                 height: getTrackBarHeight(src, j - 1) + 'px',
+                opacity: recording ? barOpacity(j - 1) : 0.4,
               }"
             ></div>
           </div>
@@ -81,6 +82,13 @@ function getTrackBarHeight(src: Source, barIndex: number): number {
   const data = props.waveformData[src.id];
   if (data && data.length > barIndex) return data[barIndex];
   return 2;
+}
+
+// Fade older bars (left) to give a "trail" effect during recording
+function barOpacity(barIndex: number): number {
+  // Bars near the right (newest) are brightest, left (oldest) fades
+  const t = barIndex / 99; // 0 = leftmost, 1 = rightmost
+  return 0.2 + t * 0.7; // range: 0.2 to 0.9
 }
 
 defineEmits<{

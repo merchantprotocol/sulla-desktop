@@ -4,21 +4,7 @@
     style="-webkit-app-region: drag; app-region: drag;"
   >
     <div class="relative flex shrink-0 items-center pb-2">
-      <a
-        aria-label="Home page"
-        href="#/"
-      >
-        <img
-          :src="logoLightUrl"
-          alt="Sulla Desktop"
-          class="h-5 w-auto dark:hidden"
-        >
-        <img
-          :src="logoDarkUrl"
-          alt="Sulla Desktop"
-          class="hidden h-5 w-auto dark:block"
-        >
-      </a>
+      <WindowDragLogo :size="20" />
     </div>
     <!-- Phase 4: Scroll wrapper with chevrons -->
     <div class="tab-scroll-wrapper">
@@ -538,6 +524,7 @@ const knownAssetIds = vueRef(new Set<string>());
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { getExtensionService } from '@pkg/agent';
 import { getAgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
@@ -595,8 +582,6 @@ watch(isHistorySubmenuOpen, async(open) => {
     }
   }
 });
-const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();
-const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark-nobg.png', import.meta.url).toString();
 
 // On initial load, ensure at least one tab exists and handle route recovery
 {

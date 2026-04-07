@@ -462,7 +462,7 @@ const WHISPER_MODELS_DIR = path.join(
 export const whisper = {
   async detect(): Promise<any> {
     try {
-      const stdout = execSync('which whisper-cpp 2>/dev/null || which whisper 2>/dev/null', {
+      const stdout = execSync('which whisper-cli 2>/dev/null || which whisper-cpp 2>/dev/null || which whisper 2>/dev/null', {
         timeout: 5000,
         stdio:   'pipe',
         env:     CHILD_ENV,
@@ -472,16 +472,17 @@ export const whisper = {
 
       const binaryPath = stdout.split('\n')[0];
 
-      // Get version
+      // Get version from brew info (whisper-cli has no --version flag)
       let version = 'unknown';
       try {
-        const vOut = execSync(`"${ binaryPath }" --version 2>&1 || true`, {
-          timeout: 5000,
+        const brewOut = execSync('brew info --json=v2 whisper-cpp 2>/dev/null', {
+          timeout: 10000,
           stdio:   'pipe',
           env:     CHILD_ENV,
         }).toString().trim();
-        const match = vOut.match(/whisper[.\s-]*(cpp)?\s*v?([\d.]+)/i);
-        if (match) version = match[2];
+        const info = JSON.parse(brewOut);
+        const installed = info?.formulae?.[0]?.installed?.[0]?.version;
+        if (installed) version = installed;
       } catch { /* version check optional */ }
 
       // Enumerate downloaded models
@@ -494,34 +495,83 @@ export const whisper = {
     }
   },
 
-  async install(): Promise<boolean> {
+  async install(onProgress?: (line: string) => void): Promise<boolean> {
     log.info('Platform', 'Installing whisper-cpp via Homebrew...');
-    try {
-      execSync('brew install whisper-cpp', { timeout: 180000, stdio: 'pipe', env: CHILD_ENV });
-      log.info('Platform', 'whisper-cpp installed');
+    return new Promise((resolve) => {
+      const proc = spawn('brew', ['install', 'whisper-cpp'], {
+        env:   CHILD_ENV,
+        stdio: 'pipe',
+      });
 
-      // Verify
-      const recheck = await whisper.detect();
-      if (recheck.available) {
-        log.info('Platform', 'whisper-cpp confirmed after install');
-        return true;
-      }
+      proc.stdout?.on('data', (data: Buffer) => {
+        const line = data.toString().trim();
+        if (line && onProgress) onProgress(line);
+        log.debug('Platform', 'brew stdout', { line });
+      });
 
-      log.error('Platform', 'whisper-cpp installed but binary not found in PATH');
-      return false;
-    } catch (e: any) {
-      log.error('Platform', 'Failed to install whisper-cpp', { error: e.message });
-      return false;
-    }
+      proc.stderr?.on('data', (data: Buffer) => {
+        const line = data.toString().trim();
+        if (line && onProgress) onProgress(line);
+        log.debug('Platform', 'brew stderr', { line });
+      });
+
+      const timeout = setTimeout(() => {
+        log.error('Platform', 'whisper-cpp install timed out');
+        proc.kill();
+        resolve(false);
+      }, 300000); // 5 min timeout
+
+      proc.on('close', async(code) => {
+        clearTimeout(timeout);
+        if (code === 0) {
+          log.info('Platform', 'whisper-cpp installed');
+          const recheck = await whisper.detect();
+          if (recheck.available) {
+            log.info('Platform', 'whisper-cpp confirmed after install');
+            resolve(true);
+          } else {
+            log.error('Platform', 'whisper-cpp installed but binary not found in PATH');
+            resolve(false);
+          }
+        } else {
+          log.error('Platform', 'Failed to install whisper-cpp', { exitCode: code });
+          resolve(false);
+        }
+      });
+
+      proc.on('error', (err) => {
+        clearTimeout(timeout);
+        log.error('Platform', 'Failed to spawn brew', { error: err.message });
+        resolve(false);
+      });
+    });
   },
 
-  remove(): void {
-    try {
-      execSync('brew uninstall whisper-cpp 2>/dev/null', { timeout: 30000, stdio: 'pipe', env: CHILD_ENV });
-      log.info('Platform', 'whisper-cpp uninstalled via Homebrew');
-    } catch {
-      // Already gone
-    }
+  async remove(onProgress?: (line: string) => void): Promise<void> {
+    log.info('Platform', 'Uninstalling whisper-cpp...');
+    return new Promise((resolve) => {
+      const proc = spawn('brew', ['uninstall', 'whisper-cpp'], {
+        env:   CHILD_ENV,
+        stdio: 'pipe',
+      });
+
+      proc.stdout?.on('data', (data: Buffer) => {
+        const line = data.toString().trim();
+        if (line && onProgress) onProgress(line);
+      });
+
+      proc.stderr?.on('data', (data: Buffer) => {
+        const line = data.toString().trim();
+        if (line && onProgress) onProgress(line);
+      });
+
+      proc.on('close', () => {
+        log.info('Platform', 'whisper-cpp uninstalled');
+        resolve();
+      });
+
+      proc.on('error', () => resolve());
+    });
   },
 
   listModels(): string[] {
@@ -536,7 +586,7 @@ export const whisper = {
     }
   },
 
-  async downloadModel(model: string): Promise<boolean> {
+  async downloadModel(model: string, onProgress?: (pct: number, status: string) => void): Promise<boolean> {
     const fs = require('fs') as typeof import('fs');
     log.info('Platform', 'Downloading whisper model', { model });
 
@@ -548,24 +598,66 @@ export const whisper = {
     const modelFile = path.join(WHISPER_MODELS_DIR, `ggml-${ model }.bin`);
     if (fs.existsSync(modelFile)) {
       log.info('Platform', 'Model already exists', { model, modelFile });
+      if (onProgress) onProgress(100, 'Already downloaded');
       return true;
     }
 
     const baseUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
     const url = `${ baseUrl }/ggml-${ model }.bin`;
+    const tmpFile = `${ modelFile }.tmp`;
 
-    try {
-      execSync(
-        `curl -L --progress-bar -o "${ modelFile }.tmp" "${ url }" && mv "${ modelFile }.tmp" "${ modelFile }"`,
-        { timeout: 600000, stdio: 'pipe', env: CHILD_ENV },
-      );
-      log.info('Platform', 'Model downloaded', { model, modelFile });
-      return true;
-    } catch (e: any) {
-      log.error('Platform', 'Failed to download model', { model, error: e.message });
-      // Clean up partial download
-      try { fs.unlinkSync(`${ modelFile }.tmp`); } catch { /* ignore */ }
-      return false;
-    }
+    return new Promise((resolve) => {
+      // Use curl with --write-out to get progress info
+      const proc = spawn('curl', ['-L', '--progress-bar', '-o', tmpFile, url], {
+        env:   CHILD_ENV,
+        stdio: 'pipe',
+      });
+
+      // curl writes progress to stderr
+      proc.stderr?.on('data', (data: Buffer) => {
+        const line = data.toString();
+        // Parse curl progress bar: "  % Total    % Received % Xferd  ..."
+        // or the simple progress bar like "###  45.2%"
+        const pctMatch = line.match(/([\d.]+)%/);
+        if (pctMatch && onProgress) {
+          const pct = parseFloat(pctMatch[1]);
+          onProgress(Math.min(99, pct), `Downloading: ${ Math.round(pct) }%`);
+        }
+      });
+
+      const timeout = setTimeout(() => {
+        log.error('Platform', 'Model download timed out', { model });
+        proc.kill();
+        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+        resolve(false);
+      }, 600000); // 10 min timeout
+
+      proc.on('close', (code) => {
+        clearTimeout(timeout);
+        if (code === 0) {
+          // Move tmp to final
+          try {
+            fs.renameSync(tmpFile, modelFile);
+            log.info('Platform', 'Model downloaded', { model, modelFile });
+            if (onProgress) onProgress(100, 'Download complete');
+            resolve(true);
+          } catch (e: any) {
+            log.error('Platform', 'Failed to move model file', { error: e.message });
+            resolve(false);
+          }
+        } else {
+          log.error('Platform', 'curl failed', { model, exitCode: code });
+          try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+          resolve(false);
+        }
+      });
+
+      proc.on('error', (err) => {
+        clearTimeout(timeout);
+        log.error('Platform', 'Failed to spawn curl', { error: err.message });
+        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+        resolve(false);
+      });
+    });
   },
 };

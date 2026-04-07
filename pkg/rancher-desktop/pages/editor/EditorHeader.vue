@@ -3,26 +3,9 @@
     class="editor-header-bar"
     :class="{ dark: isDark }"
   >
-    <!-- Left: Logo -->
+    <!-- Left: Logo (drag handle) -->
     <div class="header-left">
-      <a
-        aria-label="Home page"
-        href="#/"
-        class="logo-link"
-      >
-        <img
-          :src="logoLightUrl"
-          alt="Sulla Desktop"
-          class="logo"
-          :class="{ hidden: isDark }"
-        >
-        <img
-          :src="logoDarkUrl"
-          alt="Sulla Desktop"
-          class="logo"
-          :class="{ hidden: !isDark }"
-        >
-      </a>
+      <WindowDragLogo :size="20" />
     </div>
 
     <!-- Right: Pane toggles + theme -->
@@ -189,14 +172,13 @@ defineProps<{
   rightPaneVisible:  boolean;
 }>();
 
+import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
+
 defineEmits<{
   'toggle-left-pane':   [];
   'toggle-bottom-pane': [];
   'toggle-right-pane':  [];
 }>();
-
-const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();
-const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark-nobg.png', import.meta.url).toString();
 </script>
 
 <style scoped>

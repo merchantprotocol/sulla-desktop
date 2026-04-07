@@ -597,6 +597,7 @@ export class AgentPersonaService {
       toolRunIdToMessageId: this.toolRunIdToMessageId,
       speakListeners:       this.speakListeners,
       setThreadId:          (id: string) => this.setThreadId(id),
+      getThreadId:          () => this.getThreadId(),
       handleTokenInfo:      (...args) => this.handleTokenInfo(...args),
       applyAssetLifecycleUpdate: (data: any, type: string) => this.applyAssetLifecycleUpdate(data, type),
       removeAsset:          (id: string) => this.removeAsset(id),

@@ -32,6 +32,8 @@ const TRIGGER_WINDOW_SIZE = 45;
 export interface SubconsciousMiddlewareOptions {
   /** Whether observations should be managed (false for planning agents) */
   includeObservations: boolean;
+  /** Optional recall variant — changes the recall prompt/tools for specific agents */
+  recallVariant?: 'default' | 'heartbeat';
 }
 
 /**
@@ -55,7 +57,7 @@ export async function runSubconsciousMiddleware(
 
   // 2. Memory Recall — always (awaited: writes to state.metadata.recallContext)
   launched.push('memory-recall');
-  const recallPromise = runMemoryRecall(state);
+  const recallPromise = runMemoryRecall(state, options.recallVariant);
   awaitedTasks.push(recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx; }));
 
   // 3. Observation Agent — fire-and-forget: it only does side-effect tool
@@ -122,11 +124,11 @@ async function runSummarizer(state: BaseThreadState): Promise<void> {
 // MEMORY RECALL
 // ============================================================================
 
-async function runMemoryRecall(state: BaseThreadState): Promise<string | null> {
+async function runMemoryRecall(state: BaseThreadState, variant?: 'default' | 'heartbeat'): Promise<string | null> {
   const startTime = Date.now();
 
   try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createMemoryRecall(state);
+    const { graph, state: subState, threadId } = await GraphRegistry.createMemoryRecall(state, variant);
     console.log(`[SubconsciousMiddleware:MemoryRecall] Started | threadId: ${ threadId }`);
 
     await graph.execute(subState, 'subconscious', { maxIterations: 20 });

@@ -1,5 +1,4 @@
 import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
-import type { HeartbeatThreadState } from '../nodes/HeartbeatNode';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel, getCurrentMode } from '../languagemodels';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
@@ -11,7 +10,7 @@ import * as path from 'path';
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
 // Back-compat re-export
-export type { HeartbeatThreadState as OverlordThreadState } from '../nodes/HeartbeatNode';
+export type { AgentGraphState as OverlordThreadState } from '../nodes/Graph';
 
 const registry = new Map<string, {
   graph: Graph<any>;
@@ -48,41 +47,200 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
 
 const MEMORY_RECALL_PROMPT = `You are a READ-ONLY recall process. You gather context for a primary agent.
 
-CRITICAL: You do NOT execute tasks, call APIs, run commands, or browse websites.
-You search specific locations, read what you find, and return it.
+## First: Decide if memory recall is needed
+
+Read the latest user message in the conversation. If you have all the context you need to respond, return nothing. Do not call any tools.
+If you need more context, proceed with the checklist below.
 
 ## Your checklist
 
 Complete these steps in order, then finish:
 
-### 1. Skills
+### 1. Active Projects
+Search \`~/sulla/projects/\` for all project directories.
+For each project found, read its PROJECT.md (the PRD).
+Also read \`~/sulla/projects/ACTIVE_PROJECTS.md\` for the current status summary.
+Include project names, statuses, blockers, and next actions.
+
+### 2. Skills
 Search \`~/sulla/resources/skills/\` for skills relevant to the current conversation.
 For each match, read the SKILL.md and include the key instructions.
 
-### 2. Workflows
+### 3. Workflows
 Search \`~/sulla/resources/workflows/\` for workflows relevant to the current conversation.
 For each match, read the YAML and include the workflow definition.
 
-### 3. Open Tabs
+### 4. Open Tabs
 Call \`list_tabs\` to see what the human currently has open in the browser.
 Include tab titles and URLs.
 
-### 4. Credentials
+### 5. Credentials
 Call \`vault_list\` to see what integration service accounts are available.
 Include the service names and usernames (never passwords).
 
-### 5. Environment
+### 6. Environment
 Search \`~/sulla/integrations/environment/\` for any environment docs relevant
 to the conversation. Read and include key details from matching files.
 
 ## Output format
 
 Return your findings organized by section. Paste the actual content — skill
-instructions, workflow YAML, tab URLs, credential names, environment details.
+instructions, workflow YAML, project statuses, tab URLs, credential names,
+environment details. Cite file paths for everything you include.
+
+If a section has no relevant results, skip it entirely.
+When all 6 steps are done, finish immediately.`;
+
+// ── Heartbeat-specific memory recall ──────────────────────────────────────
+
+const HEARTBEAT_RECALL_TOOLS: string[] = [
+  'file_search',           // Search ~/sulla/projects/ for active PRDs
+  'read_file',             // Read PROJECT.md files and identity docs
+  'get_human_presence',    // Check if user is available
+];
+
+const HEARTBEAT_RECALL_PROMPT = `You are a READ-ONLY recall process for the heartbeat agent. You gather active project context so the heartbeat knows what to work on.
+
+## Your checklist
+
+Complete these steps in order, then finish:
+
+### 1. Active Projects
+Search \`~/sulla/projects/\` for all project directories.
+For each project found, read its PROJECT.md (the PRD).
+Include the full PRD content for every active (non-archived) project.
+
+### 2. Project Briefing
+Read \`~/sulla/agents/sulla-desktop/projects.md\` — this is the daily planning briefing
+with the current mode (PROPOSE/FOCUS/UNBLOCK) and ranked project proposals.
+Include the full content.
+
+### 3. Identity & Goals
+Read \`~/sulla/identity/agent/goals.md\` and \`~/sulla/identity/human/goals.md\`.
+Include any active goals or priorities.
+
+### 4. Human Presence
+Call \`get_human_presence\` to check if the human is available.
+Include their status.
+
+## Output format
+
+Return your findings organized by section. Paste the actual PRD content — the
+heartbeat agent needs the full details to decide what to work on.
 Cite file paths for everything you include.
 
 If a section has no relevant results, skip it entirely.
-When all 5 steps are done, finish immediately.`;
+When all steps are done, finish immediately.`;
+
+// ── Unstuck: Research Agent ───────────────────────────────────────────────
+
+const UNSTUCK_RESEARCH_TOOLS: string[] = [
+  'file_search',
+  'read_file',
+  'exec',
+  'browse_page',
+  'vault_list',
+  'integration_is_enabled',
+];
+
+const UNSTUCK_RESEARCH_PROMPT = `You are a research agent analyzing why a primary agent got stuck. Your job is to find concrete resources, approaches, and solutions that the agent can execute autonomously.
+
+## Critical Rule — No Deferring to the Human
+
+The primary agent got stuck because it thinks it needs human intervention. Your job is to prove it wrong. Every approach you return MUST be something the agent can do on its own with its available tools. Do not suggest "ask the human," "wait for credentials," or "get approval." Instead:
+- If it needs credentials → check vault_list for existing ones, or find an alternative that doesn't need them
+- If it thinks only a human can do something → find a tool, API, automation, or workaround the agent can use
+- If it needs a decision → make a reasonable default and note it can be revised later
+- If it needs access → find another path that uses what's already available
+
+The agent has: exec, file system, browser automation, docker, integrations, calendar, memory, skills, workflows. That's a lot. Use it.
+
+## Your checklist
+
+1. **Skills & Workflows**: Search ~/sulla/resources/skills/ and ~/sulla/resources/workflows/ for anything relevant to the blocker.
+2. **Integrations**: Check what integrations and credentials are available (vault_list, integration_is_enabled) that could help.
+3. **Documentation**: Search ~/sulla/integrations/ and ~/sulla/docs/ for relevant docs.
+4. **Code**: If the blocker is code-related, use file_search and read_file to find relevant source files.
+5. **External**: If internal resources are insufficient, use browse_page to search for external solutions.
+
+## Output format
+
+Return exactly 3 approaches, ranked by likelihood of success. Every approach must be fully executable by the agent without human involvement:
+
+### Approach 1: [Title]
+**Evidence:** [what you found that supports this]
+**Resources:** [file paths, URLs, tool names]
+**Steps:**
+1. [concrete step the agent can execute]
+2. [concrete step the agent can execute]
+3. [concrete step the agent can execute]
+
+### Approach 2: [Title]
+...
+
+### Approach 3: [Title]
+...
+
+Be concrete. Cite file paths and URLs. The primary agent will use these directly.`;
+
+// ── Unstuck: Constraint Relaxation Agent ──────────────────────────────────
+
+const UNSTUCK_RELAXATION_TOOLS: string[] = [
+  'read_file',
+  'file_search',
+];
+
+const UNSTUCK_RELAXATION_PROMPT = `You are a creative problem-solving consultant. An AI agent tried to accomplish a task and got stuck. Your job is to think laterally about alternative approaches that the agent can execute on its own.
+
+You intentionally have minimal tools. This forces creative thinking rather than falling back on more research.
+
+## Critical Rule — The Agent Must Own This
+
+The agent got stuck and wants to hand it off to the human. That's not an option. Every approach you suggest must be something the agent can do autonomously right now. Common traps to avoid:
+- "Send a message asking the human to..." → No. The agent does this itself.
+- "Wait for the human to provide..." → No. Find an alternative or make a reasonable assumption.
+- "This requires human judgment..." → No. The agent makes the call and notes it for review later.
+
+The agent has shell access, browser automation, docker, file system, integrations, calendar, memory, and a full tool suite. If it thinks it can't do something, it's probably wrong.
+
+## Reframing questions to consider
+- What is the simplest possible way to make progress, even if imperfect?
+- What if you only had 5 minutes — what would you do?
+- What if you ignored the current approach entirely and started fresh?
+- Is there a manual/brute-force approach that bypasses the blocker?
+- Can the goal be decomposed into a smaller first step?
+- Is the agent overcomplicating this? What would a junior developer try?
+- Is there a tool or integration already available that solves this differently?
+- What would you do if you just made a reasonable default choice and moved on?
+
+## Output format
+
+Return exactly 3 alternative approaches, ordered from simplest to most ambitious. Every approach must be fully executable by the agent without human involvement:
+
+### Simple: [Title]
+**Why it might work:** [reasoning]
+**Trade-offs:** [what you give up]
+**Steps:**
+1. [concrete step the agent can execute]
+2. [concrete step the agent can execute]
+
+### Moderate: [Title]
+**Why it might work:** [reasoning]
+**Trade-offs:** [what you give up]
+**Steps:**
+1. [concrete step the agent can execute]
+2. [concrete step the agent can execute]
+3. [concrete step the agent can execute]
+
+### Ambitious: [Title]
+**Why it might work:** [reasoning]
+**Trade-offs:** [what you give up]
+**Steps:**
+1. [concrete step the agent can execute]
+2. [concrete step the agent can execute]
+3. [concrete step the agent can execute]
+
+Be direct and actionable. No hedging. The agent needs concrete next steps, not analysis.`;
 
 
 const OBSERVATION_AGENT_PROMPT = `You are the observation process for an AI agent.
@@ -218,8 +376,8 @@ export const GraphRegistry = {
    * Get or create Heartbeat graph (formerly Overlord).
    */
   getOrCreateOverlordGraph: async function(wsChannel: string, prompt?: string): Promise<{
-    graph: Graph<HeartbeatThreadState>;
-    state: HeartbeatThreadState;
+    graph: Graph<AgentGraphState>;
+    state: AgentGraphState;
   }> {
     if (registry.has(wsChannel)) {
       return Promise.resolve(registry.get(wsChannel) as any);
@@ -385,16 +543,19 @@ export const GraphRegistry = {
    * Create a Memory Recall graph — searches internal systems for relevant
    * skills, tools, resources, projects, and context.
    */
-  createMemoryRecall: async function(parentState: BaseThreadState): Promise<{
+  createMemoryRecall: async function(parentState: BaseThreadState, variant?: 'default' | 'heartbeat'): Promise<{
     graph:    Graph<BaseThreadState>;
     state:    BaseThreadState;
     threadId: string;
   }> {
+    const isHeartbeat = variant === 'heartbeat';
     const graph = createSubconsciousGraph();
     const state = await buildSubconsciousState({
-      systemPrompt:           MEMORY_RECALL_PROMPT,
-      tools:                  MEMORY_RECALL_TOOLS,
-      userMessage:            'Run through the checklist: search resources/skills, resources/workflows, open tabs, vault credentials, and environment docs. Return what is relevant to this conversation.',
+      systemPrompt:           isHeartbeat ? HEARTBEAT_RECALL_PROMPT : MEMORY_RECALL_PROMPT,
+      tools:                  isHeartbeat ? HEARTBEAT_RECALL_TOOLS : MEMORY_RECALL_TOOLS,
+      userMessage:            isHeartbeat
+        ? 'Load all active projects from ~/sulla/projects/, agent and human goals, and human presence. Return the full PRD content for each project.'
+        : 'Run through the checklist: search resources/skills, resources/workflows, open tabs, vault credentials, and environment docs. Return what is relevant to this conversation.',
       messages:               [...parentState.messages],
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'memory-recall',
@@ -425,6 +586,66 @@ export const GraphRegistry = {
       parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
     });
     return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create an Unstuck Research agent — searches skills, workflows, integrations,
+   * docs, and external resources to find concrete solutions for a blocked agent.
+   */
+  createUnstuckResearch: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const agentMeta = (parentState.metadata as any).agent || {};
+    const blockerContext = [
+      agentMeta.blocker_reason ? `Blocker: ${ agentMeta.blocker_reason }` : '',
+      agentMeta.unblock_requirements ? `Requirements: ${ agentMeta.unblock_requirements }` : '',
+      agentMeta.status_note ? `Status: ${ agentMeta.status_note }` : '',
+      `Agent status: ${ agentMeta.status || 'unknown' }`,
+      `Loop count: ${ (parentState.metadata as any).agentLoopCount || 0 }`,
+    ].filter(Boolean).join('\n');
+
+    return this.createSubconscious({
+      systemPrompt:         UNSTUCK_RESEARCH_PROMPT,
+      tools:                UNSTUCK_RESEARCH_TOOLS,
+      userMessage:          `The primary agent is stuck. Here is the context:\n\n${ blockerContext }\n\nResearch solutions using your available tools.`,
+      messages:             [...parentState.messages],
+      parentAbortSignal:    (parentState.metadata as any).abortSignal || (parentState.metadata as any).options?.abort,
+      agentLabel:           'unstuck-research',
+      parentWsChannel:      String(parentState.metadata.wsChannel || ''),
+      parentConversationId: (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+    });
+  },
+
+  /**
+   * Create an Unstuck Constraint Relaxation agent — thinks creatively about
+   * simpler and alternative approaches when the primary agent is stuck.
+   */
+  createUnstuckRelaxation: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const agentMeta = (parentState.metadata as any).agent || {};
+    const blockerContext = [
+      agentMeta.blocker_reason ? `Blocker: ${ agentMeta.blocker_reason }` : '',
+      agentMeta.unblock_requirements ? `Requirements: ${ agentMeta.unblock_requirements }` : '',
+      agentMeta.status_note ? `Status: ${ agentMeta.status_note }` : '',
+      `Agent status: ${ agentMeta.status || 'unknown' }`,
+      `Loop count: ${ (parentState.metadata as any).agentLoopCount || 0 }`,
+    ].filter(Boolean).join('\n');
+
+    return this.createSubconscious({
+      systemPrompt:         UNSTUCK_RELAXATION_PROMPT,
+      tools:                UNSTUCK_RELAXATION_TOOLS,
+      userMessage:          `The primary agent is stuck. Here is the context:\n\n${ blockerContext }\n\nPropose creative alternative approaches.`,
+      messages:             [...parentState.messages],
+      parentAbortSignal:    (parentState.metadata as any).abortSignal || (parentState.metadata as any).options?.abort,
+      agentLabel:           'unstuck-relaxation',
+      parentWsChannel:      String(parentState.metadata.wsChannel || ''),
+      parentConversationId: (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+    });
   },
 
   delete(threadId: string): void {
@@ -536,7 +757,7 @@ export function nextMessageId(): string {
   return `msg_${ Date.now() }_${ ++messageCounter }`;
 }
 
-async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<HeartbeatThreadState> {
+async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<AgentGraphState> {
   const heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
 
   // Resolve provider to model/local flags
@@ -544,7 +765,6 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
   let llmLocal: boolean;
 
   if (heartbeatProvider === 'default' || heartbeatProvider === 'ollama') {
-    // Use primary provider resolution for 'default', or local for 'ollama'
     if (heartbeatProvider === 'default') {
       llmModel = await getCurrentModel();
       llmLocal = (await getCurrentMode()) === 'local';
@@ -553,7 +773,6 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
       llmLocal = true;
     }
   } else {
-    // Remote provider — get model from integration form values
     llmLocal = false;
     try {
       const { getIntegrationService } = await import('./IntegrationService');
@@ -569,7 +788,10 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
   const now = Date.now();
   const threadId = `heartbeat_${ now }`;
 
-  const state: HeartbeatThreadState = {
+  // Load agent config for the heartbeat channel (dreaming-protocol)
+  const agentConfig = await loadAgentConfig(wsChannel);
+
+  const state: AgentGraphState = {
     messages: [{
       role:     'user',
       content:  prompt,
@@ -581,6 +803,8 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
       wsChannel,
       cycleComplete:        false,
       waitingForUser:       false,
+      isSubAgent:           false,
+      subAgentDepth:        0,
       llmModel,
       llmLocal,
       options:              {},
@@ -604,21 +828,8 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<H
       n8nLiveEventsEnabled: false,
       returnTo:             null,
 
-      // Heartbeat-specific fields
-      heartbeatCycleCount:       0,
-      heartbeatMaxCycles:        10,
-      heartbeatStatus:           'idle',
-      heartbeatLastCycleSummary: '',
-      currentFocus:              '',
-
-      // Workflow execution tracking
-      pendingWorkflows:   [],
-      completedWorkflows: [],
-
-      // Environmental context (loaded each cycle by HeartbeatNode)
-      agentsContext: '',
-      isSubAgent:    false,
-      subAgentDepth: 0,
+      agent:          agentConfig,
+      agentLoopCount: 0,
     },
   };
 
@@ -740,6 +951,7 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
       tools:        parsed.tools || [],
       integrations: parsed.integrations || [],
       prompt:       sections.length > 0 ? sections.join('\n\n') : undefined,
+      excludeSoul:  parsed.excludeSoul === true,
     };
   } catch (err) {
     console.error(`[GraphRegistry] Failed to load agent config for ${ agentId }:`, err);

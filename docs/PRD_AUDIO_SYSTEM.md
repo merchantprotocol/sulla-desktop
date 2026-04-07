@@ -12,6 +12,16 @@ The Voice/Audio System enables hands-free interaction with Sulla through microph
 
 ---
 
+## Audio Driver First Policy
+
+> **Canonical reference:** See [`AUDIO_POLICY.md`](./AUDIO_POLICY.md) for the full audio usage guide, IPC channel reference, and integration instructions.
+
+The audio driver is the canonical microphone path for all of sulla-desktop. All microphone audio MUST go through the audio driver pipeline, which provides VAD (with hysteresis, frame counting, silence ratio), noise floor tracking, feedback loop detection, fan noise detection, spectral analysis, pitch detection, zero-crossing rate, temporal variance analysis, and gain/mute control.
+
+Direct `getUserMedia` calls bypass all of this processing and should only be used for raw hardware diagnostics (the "Raw Mic Test" button in Audio Settings). See `AUDIO_POLICY.md` for the current list of bypass points that need migration.
+
+---
+
 ## 2. Current Architecture
 
 ### 2.1 Frontend (`composables/voice/`)
@@ -40,7 +50,23 @@ The Voice/Audio System enables hands-free interaction with Sulla through microph
 
 ### 2.3 Data Flows
 
-**STT Flow (Speech to Text):**
+**STT Flow (Speech to Text) — via Audio Driver Pipeline:**
+```
+Microphone
+  -> getUserMedia (in audio driver's tray panel renderer: audio-capture.js)
+  -> AudioContext → GainNode (volume/mute) → AnalyserNode
+  -> VAD pipeline (speaking detection, noise floor, spectral analysis, pitch, ZCR, variance)
+  -> Broadcasts audio-driver:mic-vad via IPC (all windows receive speaking state)
+  -> MediaRecorder (250ms WebM/Opus chunks)
+  -> Unix socket → main process mic-socket.ts
+  -> Gateway / Whisper STT
+  -> TranscriptionResult { text, words[] with speaker_id }
+  -> main process broadcasts gateway-transcript via IPC
+  -> All windows receive transcript text
+  -> VoicePipeline or consumer feature processes transcript
+```
+
+**Legacy STT Flow (Direct getUserMedia — being migrated):**
 ```
 Microphone
   -> MediaStream (getUserMedia)

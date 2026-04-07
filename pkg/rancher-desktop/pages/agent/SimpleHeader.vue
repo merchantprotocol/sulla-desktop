@@ -1,21 +1,7 @@
 <template>
   <header class="sh-header sticky top-0 z-50 flex flex-none flex-wrap items-center justify-between px-4 py-5 shadow-md transition duration-500 sm:px-6 lg:px-8">
     <div class="relative flex grow basis-0 items-center">
-      <a
-        aria-label="Home page"
-        :href="homeUrl || '#/'"
-      >
-        <img
-          :src="logoLightUrl"
-          alt="Sulla Desktop"
-          class="h-9 w-auto dark:hidden"
-        >
-        <img
-          :src="logoDarkUrl"
-          alt="Sulla Desktop"
-          class="hidden h-9 w-auto dark:block"
-        >
-      </a>
+      <WindowDragLogo :size="28" />
     </div>
     <div class="relative flex basis-0 justify-end gap-6 sm:gap-8">
       <div
@@ -86,22 +72,28 @@
 </template>
 
 <script setup lang="ts">
+import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
+
 defineProps<{
   isDark:      boolean;
   toggleTheme: () => void;
   onStop?:     () => void;
   homeUrl?:    string;
 }>();
-
-const logoLightUrl = new URL('../../../../resources/icons/logo-sulla-desktop-nobg.png', import.meta.url).toString();
-const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark-nobg.png', import.meta.url).toString();
 </script>
 
 <style lang="scss" scoped>
 .sh-header {
+  -webkit-app-region: drag;
+  app-region: drag;
   background: var(--bg-header, var(--body-bg, #ffffff));
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border-default, var(--header-border, #e5e7eb));
+
+  button {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
 }
 
 .sh-theme-toggle {

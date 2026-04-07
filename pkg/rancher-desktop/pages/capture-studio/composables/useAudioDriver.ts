@@ -18,40 +18,40 @@ export function useAudioDriver() {
 
   // ── IPC listeners (registered on mount, removed on unmount to prevent stacking) ──
 
+  let levelCount = 0;
   const onLevel = (_e: any, data: { rms: number }) => {
-    speakerLevel.value = data.rms;
-  };
-
-  const onState = (_e: any, state: { running: boolean; message: string }) => {
-    speakerRunning.value = state.running;
+    speakerLevel.value = typeof data === 'number' ? data : data.rms;
+    levelCount++;
+    if (levelCount <= 5 || (levelCount % 300 === 0)) {
+      console.log('[useAudioDriver] speaker-level', { rms: speakerLevel.value, count: levelCount });
+    }
   };
 
   onMounted(() => {
+    console.log('[useAudioDriver] Registering IPC listeners');
     ipcRenderer.on('audio-driver:speaker-level', onLevel);
-    ipcRenderer.on('audio-driver:state', onState);
   });
 
   onUnmounted(() => {
     ipcRenderer.removeListener('audio-driver:speaker-level', onLevel);
-    ipcRenderer.removeListener('audio-driver:state', onState);
   });
 
   // ── Commands ──
 
-  async function startCapture(): Promise<{ running: boolean; message: string }> {
-    const result = await ipcRenderer.invoke('audio-driver:start-capture');
-    speakerRunning.value = result.running;
-    return result;
+  async function startSpeaker(): Promise<void> {
+    const result = await ipcRenderer.invoke('audio-driver:start-speaker', 'capture-studio');
+    speakerRunning.value = !!result?.speakerRunning;
   }
 
-  async function stopCapture(): Promise<{ running: boolean; message: string }> {
-    const result = await ipcRenderer.invoke('audio-driver:stop-capture');
-    speakerRunning.value = result.running;
-    return result;
+  async function stopSpeaker(): Promise<void> {
+    const result = await ipcRenderer.invoke('audio-driver:stop-speaker', 'capture-studio');
+    speakerRunning.value = !!result?.speakerRunning;
   }
 
-  async function getState(): Promise<{ running: boolean; message: string }> {
-    return ipcRenderer.invoke('audio-driver:get-state');
+  async function getState(): Promise<any> {
+    const state = await ipcRenderer.invoke('audio-driver:get-state');
+    speakerRunning.value = !!state?.speakerRunning;
+    return state;
   }
 
   async function speakerVolumeGet(): Promise<{ ok: boolean; volume: number; muted: boolean }> {
@@ -77,8 +77,8 @@ export function useAudioDriver() {
   return {
     speakerLevel,
     speakerRunning,
-    startCapture,
-    stopCapture,
+    startSpeaker,
+    stopSpeaker,
     getState,
     speakerVolumeGet,
     speakerVolumeUp,

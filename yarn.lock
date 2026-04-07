@@ -1209,6 +1209,11 @@
   resolved "https://registry.npmjs.org/@docker/extension-api-client-types/-/extension-api-client-types-0.4.2.tgz"
   integrity sha512-nsIFZ67B09q9rY0vOnWSTIM8+wcrxjVtKvDxu66WrEOiBQhrObPRUmyXDQuTyR+vSLlU0nunKexLLp2ge+d5vA==
 
+"@echogarden/rnnoise-wasm@^0.2.0":
+  version "0.2.0"
+  resolved "https://registry.yarnpkg.com/@echogarden/rnnoise-wasm/-/rnnoise-wasm-0.2.0.tgz#903881918dbf2129f9e72d0b7255aaeaa4e3ce41"
+  integrity sha512-dND0FKFaLxyqa+rdgcMWc7A3Zh9pu7zzetYd60+2nbwnKL/8HtUXFGf7GAJ4krwTOgtSLETH9REF39gOa4T5UQ==
+
 "@electron/asar@3.4.1", "@electron/asar@^3.3.1":
   version "3.4.1"
   resolved "https://registry.npmjs.org/@electron/asar/-/asar-3.4.1.tgz"

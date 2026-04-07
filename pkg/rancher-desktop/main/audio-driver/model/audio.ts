@@ -1,24 +1,32 @@
 /**
- * Model — audio capture state.
+ * @module audio-driver/model/audio
  *
- * Tracks whether capture is running and which devices are active.
- * Persists the toggle state so the app boots in the same position.
+ * # Audio Driver Persistence
+ *
+ * Persistence-only module for audio driver preferences.
+ * The `enabled` flag is persisted to `audio-driver-preferences.json` in the
+ * Electron userData directory so the app can restore the user's last state.
+ *
+ * All in-memory state is owned by {@link MicrophoneDriverController / SpeakerDriverController}.
+ * This module only handles disk I/O and device name storage.
+ *
+ * Preferences file location:
+ *   `~/Library/Application Support/sulla-desktop/audio-driver-preferences.json`
  */
 
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
 
+/** Path to the JSON file where the enabled/disabled preference is persisted. */
 const PREFS_FILE = path.join(app.getPath('userData'), 'audio-driver-preferences.json');
 
-const state = {
-  running:     false,
-  message:     'Off',
-  micName:     '',
-  speakerName: '',
-};
+/** Device names stored in memory for quick access. */
+let micName = '';
+let speakerName = '';
 
-function loadPrefs(): Record<string, any> {
+/** Load preferences from disk. Returns empty object if file is missing or corrupt. */
+export function loadPrefs(): Record<string, any> {
   try {
     return JSON.parse(fs.readFileSync(PREFS_FILE, 'utf-8'));
   } catch {
@@ -26,7 +34,8 @@ function loadPrefs(): Record<string, any> {
   }
 }
 
-function savePrefs(prefs: Record<string, any>): void {
+/** Persist preferences to disk. Best-effort; failures are silently ignored. */
+export function savePrefs(prefs: Record<string, any>): void {
   try {
     const dir = path.dirname(PREFS_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -34,30 +43,25 @@ function savePrefs(prefs: Record<string, any>): void {
   } catch { /* best effort */ }
 }
 
-export function getState() {
-  return { ...state };
-}
-
-export function start() {
-  state.running = true;
-  state.message = 'Capturing';
-  savePrefs({ ...loadPrefs(), enabled: true });
-  return { ...state };
-}
-
-export function stop() {
-  state.running = false;
-  state.message = 'Off';
-  savePrefs({ ...loadPrefs(), enabled: false });
-  return { ...state };
-}
-
+/**
+ * Check the persisted preference to determine if capture should auto-start.
+ * Defaults to `true` if no preference file exists (first run).
+ */
 export function isEnabled(): boolean {
   const prefs = loadPrefs();
   return prefs.enabled !== false;
 }
 
-export function setDeviceNames(micName: string, speakerName: string): void {
-  state.micName = micName;
-  state.speakerName = speakerName;
+/**
+ * Store the human-readable names of the currently active mic and speaker
+ * devices. Called by the controller after mic starts.
+ */
+export function setDeviceNames(mic: string, speaker: string): void {
+  micName = mic;
+  speakerName = speaker;
+}
+
+/** Get stored device names. */
+export function getDeviceNames(): { micName: string; speakerName: string } {
+  return { micName, speakerName };
 }

@@ -11,7 +11,7 @@ import { getTrainingDataLogger } from '../services/TrainingDataLogger';
 import { InputHandlerNode } from './InputHandlerNode';
 import { AgentNode } from './AgentNode';
 import { SubconsciousAgentNode } from './SubconsciousAgentNode';
-import { HeartbeatNode, type HeartbeatThreadState } from './HeartbeatNode';
+import { HeartbeatNode } from './HeartbeatNode';
 import type { WorkflowPlaybookState } from '../workflow/types';
 import { PlaybookController } from '../controllers/PlaybookController';
 
@@ -175,6 +175,7 @@ export interface AgentGraphState extends BaseThreadState {
       tools?:        string[];         // allowlist of tool names
       integrations?: string[];  // allowlist of integration slugs (empty = none, ["*"] = all)
       prompt?:       string;          // compiled .md files, no variable substitution
+      excludeSoul?:  boolean;         // if true, skip the global soul prompt from settings
 
       // Execution outcomes (set during runtime)
       status?:               'done' | 'blocked' | 'continue' | 'in_progress';
@@ -191,9 +192,9 @@ export interface AgentGraphState extends BaseThreadState {
 // Back-compat alias while callers migrate to AgentGraph naming.
 export type GeneralGraphState = AgentGraphState;
 
-// Back-compat: OverlordThreadState is now HeartbeatThreadState
-export type OverlordThreadState = HeartbeatThreadState;
-export type { HeartbeatThreadState };
+// Back-compat aliases — heartbeat now uses AgentGraphState
+export type HeartbeatThreadState = AgentGraphState;
+export type OverlordThreadState = AgentGraphState;
 
 // ============================================================================
 //
@@ -682,38 +683,51 @@ const MAX_HEARTBEAT_CYCLES = 10;
  * The heartbeat graph is triggered by HeartbeatService on a timer
  * and by BackendGraphWebSocketService for the heartbeat channel.
  */
-export function createHeartbeatGraph(): Graph<HeartbeatThreadState> {
-  const graph = new Graph<HeartbeatThreadState>();
+export function createHeartbeatGraph(): Graph<AgentGraphState> {
+  const graph = new Graph<AgentGraphState>();
 
-  graph.addNode(new InputHandlerNode<HeartbeatThreadState>());
+  graph.addNode(new InputHandlerNode<AgentGraphState>());
   graph.addNode(new HeartbeatNode());
 
   // InputHandler cleans up the initial prompt message, then → heartbeat
   graph.addEdge('input_handler', 'heartbeat');
 
-  // Heartbeat conditional edge: done/blocked → end, otherwise loop
+  // Heartbeat conditional edge: mirrors AgentGraph routing via agent.status
   graph.addConditionalEdge('heartbeat', state => {
-    const hbStatus = state.metadata.heartbeatStatus || 'running';
-    const cycleCount = state.metadata.heartbeatCycleCount || 0;
-    const maxCycles = state.metadata.heartbeatMaxCycles || MAX_HEARTBEAT_CYCLES;
+    const agentMeta = (state.metadata as any).agent || {};
+    const agentStatus = String(agentMeta.status || '').trim().toLowerCase();
 
-    if (hbStatus === 'done') {
-      console.log('[HeartbeatGraph] Agent reported DONE — ending heartbeat');
+    if (agentStatus === 'done') {
+      console.log('[HeartbeatGraph] Agent reported DONE — ending');
       return 'end';
     }
 
-    if (hbStatus === 'blocked') {
-      console.log('[HeartbeatGraph] Agent reported BLOCKED — ending heartbeat');
+    if (agentStatus === 'blocked') {
+      console.log('[HeartbeatGraph] Agent reported BLOCKED — ending');
       return 'end';
     }
 
-    if (cycleCount >= maxCycles) {
-      console.log(`[HeartbeatGraph] Max heartbeat cycles (${ maxCycles }) reached — ending`);
-      return 'end';
+    // Implicit continue for tool calls without wrapper
+    if (agentStatus === 'in_progress' && (state.metadata as any).hadToolCalls) {
+      const newLoopCount = ((state.metadata as any).agentLoopCount || 0) + 1;
+      (state.metadata as any).agentLoopCount = newLoopCount;
+      console.log(`[HeartbeatGraph] Tool calls without wrapper — implicit continue (cycle ${ newLoopCount })`);
+      return 'heartbeat';
     }
 
-    console.log(`[HeartbeatGraph] Cycle ${ cycleCount }/${ maxCycles } — continuing`);
-    return 'heartbeat';
+    // Explicit CONTINUE keeps the loop going
+    if (agentStatus === 'continue') {
+      const newLoopCount = ((state.metadata as any).agentLoopCount || 0) + 1;
+      (state.metadata as any).agentLoopCount = newLoopCount;
+      console.log(`[HeartbeatGraph] Cycle ${ newLoopCount } — continuing`);
+      return 'heartbeat';
+    }
+
+    // Unknown status — default to done
+    console.log(`[HeartbeatGraph] Status '${ agentStatus || 'unknown' }' — defaulting to DONE`);
+    (state.metadata as any).agent = { ...(state.metadata as any).agent, status: 'done' };
+    state.metadata.cycleComplete = true;
+    return 'end';
   });
 
   graph.setEntryPoint('input_handler');
@@ -723,7 +737,7 @@ export function createHeartbeatGraph(): Graph<HeartbeatThreadState> {
 }
 
 // Back-compat alias
-export function createOverlordGraph(): Graph<HeartbeatThreadState> {
+export function createOverlordGraph(): Graph<AgentGraphState> {
   return createHeartbeatGraph();
 }
 

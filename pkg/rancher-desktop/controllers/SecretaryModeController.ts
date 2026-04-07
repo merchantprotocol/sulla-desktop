@@ -141,6 +141,10 @@ export class SecretaryModeController {
     this.sttLanguage = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
     const audioInputDeviceId: string = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
 
+    // Start mic via the MicrophoneDriverController (ref-counted)
+    await ipcRenderer.invoke('audio-driver:start-mic', 'secretary-mode');
+
+    // Also get a local getUserMedia stream for MediaRecorder (gateway mic channel)
     const audioConstraints: boolean | MediaTrackConstraints = audioInputDeviceId
       ? { deviceId: { exact: audioInputDeviceId } }
       : true;
@@ -171,7 +175,8 @@ export class SecretaryModeController {
     if (this.transcriptionMode === 'gateway') {
       await this.startGatewayStreaming();
     } else if (this.transcriptionMode === 'browser') {
-      this.startBrowserRecognition();
+      // Browser mode now uses internal whisper pipeline instead of Google STT
+      await this.startWhisperTranscription();
     } else {
       this.startElevenLabsContinuous();
     }
@@ -194,6 +199,9 @@ export class SecretaryModeController {
       this.recognition = null;
     }
 
+    // Stop whisper transcription if it was running
+    this.stopWhisperTranscription();
+
     if (this.transcriptionMode === 'gateway') {
       this.stopGatewayStreaming();
     }
@@ -203,6 +211,11 @@ export class SecretaryModeController {
     if (this.mediaStream) { this.mediaStream.getTracks().forEach(t => t.stop()); this.mediaStream = null; }
     this.mediaRecorder = null;
     this.audioChunks = [];
+
+    // Release mic via the MicrophoneDriverController (ref-counted)
+    ipcRenderer.invoke('audio-driver:stop-mic', 'secretary-mode').catch((err) => {
+      console.warn('[SecretaryMode] stop-mic failed:', err);
+    });
 
     // End the REST-only gateway session (non-gateway modes)
     if (this.gatewaySessionId && this.transcriptionMode !== 'gateway') {
@@ -363,53 +376,44 @@ User: ${text}`;
     if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null; }
   }
 
-  // ─── Browser STT ─────────────────────────────────────────────
+  // ─── Whisper STT (internal transcription) ─────────────────────
 
-  private startBrowserRecognition(): void {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+  private whisperTranscriptHandler: ((_event: any, msg: any) => void) | null = null;
+
+  private async startWhisperTranscription(): Promise<void> {
+    // Start whisper via the internal pipeline (PCM format, VAD-gated)
+    const result = await ipcRenderer.invoke('audio-driver:transcribe-start', {
+      mode: 'conversation',
+      language: this.sttLanguage,
+    });
+
+    if (!result?.ok) {
+      console.warn('[SecretaryMode] Whisper transcription failed to start — falling back to ElevenLabs');
       this.transcriptionMode = 'elevenlabs';
       this.startElevenLabsContinuous();
       return;
     }
 
-    this.recognition = new SpeechRecognition();
-    this.recognition.continuous = true;
-    this.recognition.interimResults = false;
-    this.recognition.lang = this.sttLanguage;
-
-    this.recognition.onresult = (event: any) => {
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          const text = event.results[i][0].transcript.trim();
-          if (text) {
-            this.cb.addEntry(text);
-            this.checkAndHandleWakeWord(text);
-          }
-        }
+    // Listen for transcript events from whisper
+    this.whisperTranscriptHandler = (_event: any, msg: any) => {
+      if (!msg?.text || !this.cb.getIsListening()) return;
+      const text = msg.text.trim();
+      if (!text) return;
+      if (msg.event_type !== 'transcript_partial') {
+        this.cb.addEntry(text);
+        this.checkAndHandleWakeWord(text);
       }
     };
+    ipcRenderer.on('gateway-transcript', this.whisperTranscriptHandler);
+    console.log('[SecretaryMode] Whisper transcription started');
+  }
 
-    this.recognition.onend = () => {
-      if (!this.cb.getIsListening()) return;
-      try { this.recognition?.start(); } catch { /* already started */ }
-    };
-
-    this.recognition.onerror = (event: any) => {
-      if (!this.cb.getIsListening()) return;
-      if (event.error === 'no-speech') {
-        try { this.recognition?.start(); } catch { /* ignore */ }
-      } else if (event.error === 'network' || event.error === 'service-not-allowed' || event.error === 'not-allowed') {
-        try { this.recognition?.stop(); } catch { /* ignore */ }
-        this.recognition = null;
-        this.transcriptionMode = 'elevenlabs';
-        if (this.mediaStream) this.startElevenLabsContinuous();
-      } else if (event.error !== 'aborted') {
-        try { this.recognition?.start(); } catch { /* ignore */ }
-      }
-    };
-
-    this.recognition.start();
+  private stopWhisperTranscription(): void {
+    if (this.whisperTranscriptHandler) {
+      ipcRenderer.removeListener('gateway-transcript', this.whisperTranscriptHandler);
+      this.whisperTranscriptHandler = null;
+    }
+    ipcRenderer.invoke('audio-driver:transcribe-stop').catch(() => {});
   }
 
   // ─── ElevenLabs continuous mode ───────────────────────────────
@@ -568,17 +572,16 @@ User: ${text}`;
       throw new Error('No media stream available for gateway streaming');
     }
 
-    // ── Activate audio-driver for system/speaker audio ────────────
-    // The audio-driver is now built into Sulla Desktop. It captures
-    // system audio via CoreAudio+BlackHole (macOS), WASAPI (Windows),
-    // or PulseAudio (Linux). Speaker chunks (channel 1) are forwarded
-    // to the gateway automatically by the main process lifecycle.
+    // ── Activate speaker capture via SpeakerDriverController ──────
+    // Ref-counted: speaker stays active as long as any service holds it.
+    // Speaker chunks (channel 1) are forwarded to the gateway automatically
+    // by the main process lifecycle.
     try {
-      ipcRenderer.send('audio-driver:toggle'); // activates capture lifecycle
+      await ipcRenderer.invoke('audio-driver:start-speaker', 'secretary-mode');
       this.audioDriverConnected = true;
-      console.log('[SecretaryMode] Audio-driver activated for system audio (channel 1)');
+      console.log('[SecretaryMode] Speaker capture activated for system audio (channel 1)');
     } catch (err) {
-      console.log('[SecretaryMode] Audio-driver activation failed:', (err as Error).message);
+      console.log('[SecretaryMode] Speaker capture activation failed:', (err as Error).message);
       this.audioDriverConnected = false;
     }
 
@@ -663,9 +666,9 @@ User: ${text}`;
     }
     this.gatewayStreamRecorder = null;
 
-    // Disconnect from audio-driver (speaker audio, channel 1)
+    // Release speaker capture via SpeakerDriverController (ref-counted)
     if (this.audioDriverConnected) {
-      ipcRenderer.invoke('audio-driver-disconnect').catch(() => {});
+      ipcRenderer.invoke('audio-driver:stop-speaker', 'secretary-mode').catch(() => {});
       this.audioDriverConnected = false;
     }
 

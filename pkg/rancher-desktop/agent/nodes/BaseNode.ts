@@ -451,7 +451,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Resolve the agent ID and config from graph state
     const agentId = String(state.metadata.wsChannel || '').trim();
     const agentMeta = (state.metadata as any).agent as {
-      name?: string; prompt?: string; tools?: string[]; integrations?: string[];
+      name?: string; prompt?: string; tools?: string[]; integrations?: string[]; excludeSoul?: boolean;
     } | undefined;
 
     // Use pre-compiled prompt from state if available, otherwise fall back to filesystem
@@ -496,15 +496,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       agentPrompt = agentId ? await loadAgentPromptFiles(agentId) : null;
     }
 
-    if (agentPrompt) {
-      // Agent has its own prompt — use as the identity/soul
-      parts.push(agentPrompt);
-    } else if (options.includeSoul) {
-      // Fall back to global soul prompt from settings
+    // Include the global soul prompt unless the agent explicitly excludes it
+    const excludeSoul = agentMeta?.excludeSoul === true;
+    if (options.includeSoul && !excludeSoul) {
       const soulPrompt = await getSoulPrompt();
       if (soulPrompt.trim()) {
         parts.push(soulPrompt);
       }
+    }
+
+    // Include the agent's own prompt files (additive, layered on top of soul)
+    if (agentPrompt) {
+      parts.push(agentPrompt);
     }
 
     // Trust level directive

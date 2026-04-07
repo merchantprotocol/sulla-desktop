@@ -34,9 +34,33 @@ interface ExternalStreamEntry {
   getBytesWritten: () => number;
 }
 
+export interface CaptureEvent {
+  type: 'click' | 'keystroke' | 'window-focus' | 'scroll';
+  time: number; // ms since session start
+  x?: number;
+  y?: number;
+  button?: string;
+  key?: string;
+  label?: string;
+  app?: string;
+  title?: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+}
+
 function getCapturesDir(): string {
   return path.join(os.homedir(), 'sulla', 'captures');
 }
+
+import type { QualityPreset } from './useMediaSources';
+
+/** Bitrate targets per quality preset (bits per second). */
+const VIDEO_BITRATES: Record<string, number> = {
+  '480p':  1_500_000,   // 1.5 Mbps
+  '720p':  3_000_000,   // 3 Mbps
+  '1080p': 6_000_000,   // 6 Mbps
+  '4k':    20_000_000,  // 20 Mbps
+  'auto':  8_000_000,   // 8 Mbps default
+};
 
 function pickMimeType(kind: 'video' | 'audio'): string {
   if (kind === 'video') {
@@ -67,6 +91,7 @@ export function useRecorder() {
   let sessionDir = '';
   let entries: StreamEntry[] = [];
   let externalEntries: ExternalStreamEntry[] = [];
+  let captureEvents: CaptureEvent[] = [];
   let timerInterval: ReturnType<typeof setInterval> | null = null;
   let sessionStartTime = 0;
 
@@ -77,6 +102,7 @@ export function useRecorder() {
     id: string;
     type: 'screen' | 'camera' | 'mic' | 'system-audio';
     stream: MediaStream;
+    quality?: QualityPreset;
   }>): string {
     if (isRecording.value) stopSession();
 
@@ -120,7 +146,11 @@ export function useRecorder() {
 
       let recorder: MediaRecorder;
       try {
-        recorder = new MediaRecorder(src.stream, { mimeType });
+        const recorderOpts: MediaRecorderOptions = { mimeType };
+        if (hasVideo && src.quality) {
+          recorderOpts.videoBitsPerSecond = VIDEO_BITRATES[src.quality] || VIDEO_BITRATES['auto'];
+        }
+        recorder = new MediaRecorder(src.stream, recorderOpts);
       } catch (e: any) {
         console.error(`[useRecorder] Failed to create MediaRecorder for ${src.type}:`, e.message);
         ws.end();
@@ -160,7 +190,13 @@ export function useRecorder() {
         error.value = `Recording error on ${src.type}: ${e.error?.message || 'unknown'}`;
       };
 
-      recorder.start(250); // 250ms chunks — smoother playback, less keyframe issues
+      try {
+        recorder.start(250); // 250ms chunks — smoother playback, less keyframe issues
+      } catch (e: any) {
+        console.error(`[useRecorder] MediaRecorder.start() failed for ${src.type}:`, e.message);
+        ws.end();
+        continue;
+      }
       entries.push(entry);
     }
 
@@ -172,6 +208,7 @@ export function useRecorder() {
     isRecording.value = true;
     elapsedSeconds.value = 0;
     externalEntries = [];
+    captureEvents = [];
     timerInterval = setInterval(() => { elapsedSeconds.value++; }, 1000);
 
     return id;
@@ -192,6 +229,18 @@ export function useRecorder() {
       ...entry,
       startOffset: performance.now() - sessionStartTime,
     });
+  }
+
+  /**
+   * Log an interaction event with timestamp relative to session start.
+   * Events are written to the manifest for post-production use.
+   */
+  function logEvent(event: Omit<CaptureEvent, 'time'>): void {
+    if (!isRecording.value) return;
+    captureEvents.push({
+      ...event,
+      time: Math.round(performance.now() - sessionStartTime),
+    } as CaptureEvent);
   }
 
   /**
@@ -284,6 +333,7 @@ export function useRecorder() {
       duration: elapsedSeconds.value,
       totalBytes,
       streams: allStreams,
+      events: captureEvents,
     };
 
     try {
@@ -315,6 +365,7 @@ export function useRecorder() {
     startSession,
     stopSession,
     registerExternalStream,
+    logEvent,
     getSessionDir,
   };
 }

@@ -403,8 +403,8 @@ const formatters: Record<string, Formatter> = {
   },
 
   // ── Bridge ───────────────────────────────────────────────────────────────
-  send_channel_message(args) {
-    return { label: 'Bridge', summary: `Messaging ${ str(args.channel) }` };
+  send_notification_to_human(args) {
+    return { label: 'Bridge', summary: `Notifying human` };
   },
   emit_html_message(args) {
     return { label: 'Bridge', summary: `Sending rich message${ args.title ? `: ${ truncate(str(args.title), 40) }` : '' }` };

@@ -1,16 +1,54 @@
 /**
- * Service — local Unix domain socket for mic audio streaming.
+ * @module audio-driver/service/mic-socket
  *
- * Replaces the IPC-based mic audio path. The renderer connects to
- * this socket and writes length-prefixed binary chunks directly,
- * avoiding Electron IPC serialization overhead entirely.
+ * # Mic Audio Unix Domain Socket Server
  *
- * Protocol (per message):
- *   4 bytes (UInt32BE) — payload length
- *   N bytes            — WebM/Opus audio data
+ * Provides a high-performance local transport for microphone audio from the
+ * renderer process to the main process. This replaces the earlier IPC-based
+ * approach (`ipcRenderer.send` with `ArrayBuffer`) which suffered from
+ * Electron's structured-clone serialization overhead on every 250 ms chunk.
  *
- * Follows the same pattern as speaker capture, which streams PCM
- * via a subprocess pipe rather than IPC.
+ * ## Why a Unix socket instead of Electron IPC
+ *
+ * Electron IPC serializes every `ArrayBuffer` through structured clone, which
+ * copies the data and adds GC pressure. At 250 ms intervals with WebM/Opus
+ * chunks, this creates measurable latency and CPU overhead. A Unix domain
+ * socket transfers raw bytes with zero serialization -- just `write()` and
+ * `read()` syscalls.
+ *
+ * ## Wire protocol
+ *
+ * Each message is a length-prefixed binary frame:
+ *
+ * ```
+ * [4 bytes: UInt32BE payload length][N bytes: WebM/Opus audio data]
+ * ```
+ *
+ * The server accumulates incoming data and parses complete frames. Frames
+ * with length 0 or > 1 MB are treated as corrupt and the buffer is reset.
+ *
+ * ## Connection model
+ *
+ * Only one renderer connection is accepted at a time. If a second connection
+ * arrives (e.g. tray panel reloaded), the previous connection is destroyed
+ * and replaced. This prevents duplicate audio streams.
+ *
+ * ## Socket path
+ *
+ * The socket is created at `/tmp/audio-driver-mic-<pid>.sock`. The renderer
+ * obtains this path via the `audio-driver:get-mic-socket-path` IPC handle
+ * and connects using Node's `net.connect()` (available in the renderer
+ * because the tray panel has `nodeIntegration: true`).
+ *
+ * ## Data flow
+ *
+ * ```
+ * Renderer: MediaRecorder.ondataavailable → ArrayBuffer
+ *   → net.Socket.write(lengthPrefix + chunk)
+ *   → Unix domain socket
+ *   → this server's onChunk callback
+ *   → init.ts: gateway.sendAudio(chunk, 0) + whisperTranscribe.feedMic(chunk)
+ * ```
  */
 
 import net from 'net';

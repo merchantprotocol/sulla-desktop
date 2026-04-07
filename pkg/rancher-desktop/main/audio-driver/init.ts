@@ -1,14 +1,36 @@
 /**
- * Audio Driver initialization for Sulla Desktop.
+ * @module audio-driver/init
  *
- * Bridges the audio-driver lifecycle, IPC handlers, and gateway service
- * into sulla-desktop's main process. All communication uses IPC between
- * the main process and renderer windows (tray panel, main window, etc.)
- * via BrowserWindow.getAllWindows() — no specific window reference needed.
+ * # Audio Driver — Main Entry Point
+ *
+ * Registers all `audio-driver:*` IPC handlers and delegates lifecycle
+ * decisions to {@link MicrophoneDriverController} and {@link SpeakerDriverController}.
+ * Each controller is the single source of truth for its subsystem's state
+ * and uses reference-counted ownership so multiple services can hold a
+ * resource open simultaneously.
+ *
+ * ## Audio flow
+ *
+ * ```
+ * Mic flow (renderer → main → gateway):
+ *   getUserMedia → GainNode → AnalyserNode → VAD pipeline
+ *     → MediaRecorder (WebM/Opus, 250 ms chunks)
+ *     → Unix domain socket (length-prefixed binary)
+ *     → main process mic-socket server
+ *     → gateway.sendAudio(chunk, channel=0)
+ *
+ * Speaker flow (CoreAudio → main → gateway):
+ *   BlackHole loopback device → CoreAudio Swift capture helper
+ *     → raw s16le PCM callback in main process
+ *     → gateway.sendAudio(pcmData, channel=1)
+ *     → speaker-socket (for external consumers / capture studio)
+ * ```
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
 import * as lifecycle from './controller/lifecycle';
+import { MicrophoneDriverController } from './controller/MicrophoneDriverController';
+import { SpeakerDriverController } from './controller/SpeakerDriverController';
 import * as audio from './model/audio';
 import * as mirror from './model/mirror';
 import * as whisper from './model/whisper';
@@ -20,7 +42,6 @@ import { log, createLogger } from './model/logger';
 
 const rendererLog = createLogger('renderer');
 
-
 // ── Broadcast to all renderer windows ─────────────────────────────
 
 function broadcast(channel: string, data: any): void {
@@ -31,15 +52,17 @@ function broadcast(channel: string, data: any): void {
   }
 }
 
-function broadcastState(state: { running: boolean; message: string }): void {
-  broadcast('tray-panel:audio-state', state);
-  broadcast('audio-driver:state', state);
-}
-
 // ── Public API ────────────────────────────────────────────────────
 
 let initialized = false;
 
+// Test recording is now handled by MicrophoneDriverController
+// (PCM-based, supports raw + noise-reduction modes)
+
+/**
+ * Initialize the audio driver subsystem.
+ * Called once during app startup.
+ */
 export function initialize(): void {
   if (initialized) {
     log.warn('Init', 'Already initialized — skipping');
@@ -48,11 +71,42 @@ export function initialize(): void {
   initialized = true;
   log.info('Init', 'Audio driver initializing within Sulla Desktop');
 
+  // Wire speaker level/device-change callbacks — targeted to holder windows only
+  const speaker = SpeakerDriverController.getInstance();
+  speaker.setCallbacks({
+    onLevel(data: any) {
+      speaker.sendToHolders('audio-driver:speaker-level', data);
+    },
+    onRebuild({ name }: { name: string }) {
+      speaker.sendToHolders('audio-driver:speaker-device-changed', name);
+    },
+  });
+
+  // Subscribe whisper to PCM stream from MicrophoneDriverController
+  // PCM chunks are VAD-gated and noise-processed.
+  // Audio is at native rate (48kHz). Whisper needs 16kHz — downsample here.
+  const mic = MicrophoneDriverController.getInstance();
+  mic.onPcmData((pcm: Buffer) => {
+    const ratio = Math.round(mic.pcmSampleRate / 16000);
+    if (ratio <= 1) {
+      whisperTranscribe.feedMic(pcm);
+    } else {
+      // Downsample by picking every Nth sample
+      const inputSamples = pcm.length / 2;
+      const outputSamples = Math.floor(inputSamples / ratio);
+      const out = Buffer.alloc(outputSamples * 2);
+      for (let i = 0; i < outputSamples; i++) {
+        out.writeInt16LE(pcm.readInt16LE(i * ratio * 2), i * 2);
+      }
+      whisperTranscribe.feedMic(out);
+    }
+  });
+
   micSocket.start((chunk: Buffer) => {
     if (chunk.length > 0) {
+      // WebM/Opus chunks go to gateway (it decodes server-side)
       gateway.sendAudio(chunk, 0);
-      // Feed mic audio to local whisper transcription if active
-      whisperTranscribe.feedMic(chunk);
+
     }
   });
 
@@ -69,13 +123,13 @@ export function initialize(): void {
   console.log('[Audio Driver] IPC handlers registered');
 }
 
+/**
+ * Gracefully shut down the audio driver.
+ */
 export async function shutdown(): Promise<void> {
   log.info('Init', 'Shutting down audio driver');
-  // Don't remove the loopback driver on shutdown — it lives in /Library/ and
-  // requires sudo to delete, which would prompt for a password the user never
-  // sees.  The driver stays installed between sessions; only the mirror and
-  // capture are torn down.
-  await lifecycle.deactivate({ removeDriver: false });
+  await SpeakerDriverController.getInstance().shutdown();
+  await MicrophoneDriverController.getInstance().shutdown();
   micSocket.stop();
   log.info('Init', 'Audio driver shut down');
 }
@@ -83,65 +137,126 @@ export async function shutdown(): Promise<void> {
 // ── IPC Handlers ──────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
+  const mic = MicrophoneDriverController.getInstance();
+  const speaker = SpeakerDriverController.getInstance();
+
+  // ── State query ─────────────────────────────────────────────────
 
   ipcMain.handle('audio-driver:get-state', async() => {
-    const state = audio.getState();
     const mirrorStatus = await mirror.status();
-    return { ...state, mirrorActive: mirrorStatus.exists, permissions: lifecycle.checkPermissions() };
+    return {
+      micRunning:     mic.running,
+      speakerRunning: speaker.running,
+      running:        mic.running || speaker.running,
+      message:        mic.running || speaker.running ? 'Capturing' : 'Off',
+      mirrorActive:   mirrorStatus.exists,
+      micName:        mic.micName,
+      speakerName:    speaker.speakerName,
+      permissions:    lifecycle.checkPermissions(),
+    };
+  });
+
+  // ── Mic lifecycle (ref-counted) ─────────────────────────────────
+
+  ipcMain.handle('audio-driver:start-mic', async(event: Electron.IpcMainInvokeEvent, serviceId?: string, formats?: string[]) => {
+    log.info('IPC', 'start-mic', { serviceId, formats });
+    await mic.start(serviceId || 'unknown', event.sender, { formats });
+    return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
+  });
+
+  ipcMain.handle('audio-driver:stop-mic', async(_event: unknown, serviceId?: string) => {
+    log.info('IPC', 'stop-mic', { serviceId });
+    await mic.stop(serviceId || 'unknown');
+    return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
+  });
+
+  // ── Speaker lifecycle (ref-counted) ─────────────────────────────
+
+  ipcMain.handle('audio-driver:start-speaker', async(event: Electron.IpcMainInvokeEvent, serviceId?: string) => {
+    log.info('IPC', 'start-speaker', { serviceId });
+    await speaker.start(serviceId || 'unknown', event.sender);
+    return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
+  });
+
+  ipcMain.handle('audio-driver:stop-speaker', async(_event: unknown, serviceId?: string) => {
+    log.info('IPC', 'stop-speaker', { serviceId });
+    await speaker.stop(serviceId || 'unknown');
+    return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
+  });
+
+  // Backward compat: start-capture = start both, stop-capture = stop both
+  ipcMain.handle('audio-driver:start-capture', async(event: Electron.IpcMainInvokeEvent, serviceId?: string) => {
+    log.info('IPC', 'start-capture (both mic + speaker)');
+    const sid = serviceId || 'legacy-capture';
+    await speaker.start(sid, event.sender);
+    await mic.start(sid, event.sender);
+    return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: true };
+  });
+
+  ipcMain.handle('audio-driver:stop-capture', async(_event: unknown, serviceId?: string) => {
+    log.info('IPC', 'stop-capture (both mic + speaker)');
+    const sid = serviceId || 'legacy-capture';
+    await mic.stop(sid);
+    await speaker.stop(sid);
+    return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
   });
 
   ipcMain.on('audio-driver:toggle', async() => {
     log.info('IPC', 'audio-driver:toggle received');
-    const state = audio.getState();
-    if (state.running) {
-      broadcastState({ running: true, message: 'Disabling...' });
-      await stopCapture();
+    const running = mic.running || speaker.running;
+    if (running) {
+      await mic.stop('toggle');
+      await speaker.stop('toggle');
     } else {
-      broadcastState({ running: false, message: 'Enabling...' });
-      await startCapture();
+      await mic.start('toggle');
+      await speaker.start('toggle');
     }
   });
 
-  ipcMain.on('tray-panel:audio-toggle', async(_event: Electron.IpcMainEvent, enabled: boolean) => {
-    log.info('IPC', 'tray-panel:audio-toggle received', { enabled });
-    if (enabled) {
-      broadcastState({ running: false, message: 'Enabling...' });
-      await startCapture();
-    } else {
-      broadcastState({ running: true, message: 'Disabling...' });
-      await stopCapture();
-    }
+  // VAD relay is handled by MicrophoneDriverController._registerVadListener()
+  // — it intercepts mic-vad-update, updates its own state, and re-broadcasts.
+
+  // ── Mic gain/mute forwarding to tray panel renderer ─────────────
+
+  ipcMain.on('audio-driver:mic-gain', (_event: Electron.IpcMainEvent, value: number) => {
+    broadcast('audio-driver:mic-volume', value);
   });
 
-  ipcMain.on('tray-panel:audio-mic-device', async(_event: Electron.IpcMainEvent, deviceId: string) => {
-    log.info('IPC', 'mic device changed', { deviceId });
-    const platform = await import('./platform');
-    await platform.devices.setInput(deviceId);
-  });
-
-  ipcMain.on('tray-panel:audio-speaker-device', async(_event: Electron.IpcMainEvent, deviceId: string) => {
-    log.info('IPC', 'speaker device changed', { deviceId });
-    const platform = await import('./platform');
-    await platform.devices.setOutput(deviceId);
-  });
-
-  ipcMain.on('tray-panel:audio-mic-mute', (_event: Electron.IpcMainEvent, muted: boolean) => {
-    log.info('IPC', 'mic mute', { muted });
+  ipcMain.on('audio-driver:mic-mute', (_event: Electron.IpcMainEvent, muted: boolean) => {
     broadcast('audio-driver:mic-mute', muted);
   });
 
-  ipcMain.on('tray-panel:audio-mic-volume', (_event: Electron.IpcMainEvent, vol: number) => {
-    log.info('IPC', 'mic volume', { vol });
-    broadcast('audio-driver:mic-volume', vol);
+  // ── Device selection ────────────────────────────────────────────
+
+  ipcMain.handle('audio-driver:set-device-names', (_event: unknown, mic: string, speaker: string) => {
+    log.info('IPC', 'set-device-names', { mic, speaker });
+    audio.setDeviceNames(mic, speaker);
   });
 
-  ipcMain.on('tray-panel:audio-speaker-mute', async(_event: Electron.IpcMainEvent, _muted: boolean) => {
-    await lifecycle.speakerMuteToggle();
+  ipcMain.handle('audio-driver:set-system-output', async(_event: unknown, deviceName: string) => {
+    log.info('IPC', 'set-system-output', { deviceName });
+    const platform = await import('./platform');
+    return platform.devices.setOutput(deviceName);
   });
 
-  ipcMain.on('tray-panel:audio-speaker-volume', (_event: Electron.IpcMainEvent, _vol: number) => {
-    // Volume controlled via physical device
+  ipcMain.handle('audio-driver:set-system-input', async(_event: unknown, deviceName: string) => {
+    log.info('IPC', 'set-system-input', { deviceName });
+    const platform = await import('./platform');
+    return platform.devices.setInput(deviceName);
   });
+
+  // ── Volume control ──────────────────────────────────────────────
+
+  ipcMain.handle('audio-driver:speaker-volume-up', () => speaker.volumeUp());
+  ipcMain.handle('audio-driver:speaker-volume-down', () => speaker.volumeDown());
+  ipcMain.handle('audio-driver:speaker-mute-toggle', () => speaker.muteToggle());
+  ipcMain.handle('audio-driver:speaker-volume-get', () => speaker.volumeGet());
+
+  speaker.setOnVolumeChanged((state: any) => {
+    speaker.sendToHolders('audio-driver:volume-changed', state);
+  });
+
+  // ── Gateway streaming ───────────────────────────────────────────
 
   ipcMain.handle('audio-driver:gateway-start', async(_event: unknown, callData: any) => {
     log.info('IPC', 'gateway-start-session', { callId: callData?.callId });
@@ -172,48 +287,12 @@ function registerIpcHandlers(): void {
     return { ok: true };
   });
 
-  // gateway-transcript-subscribe is already registered in sullaEvents.ts
+  // ── Socket paths ────────────────────────────────────────────────
 
   ipcMain.handle('audio-driver:get-mic-socket-path', () => micSocket.getPath());
   ipcMain.handle('audio-driver:get-speaker-socket-path', () => speakerSocket.getPath());
 
-  ipcMain.handle('audio-driver:speaker-volume-up', () => lifecycle.speakerVolumeUp());
-  ipcMain.handle('audio-driver:speaker-volume-down', () => lifecycle.speakerVolumeDown());
-  ipcMain.handle('audio-driver:speaker-mute-toggle', () => lifecycle.speakerMuteToggle());
-  ipcMain.handle('audio-driver:speaker-volume-get', () => lifecycle.speakerVolumeGet());
-
-  lifecycle.setOnVolumeChanged((state: any) => {
-    broadcast('audio-driver:volume-changed', state);
-  });
-
-  // ── Handlers called by the renderer controller via bridge.js ──────
-
-  ipcMain.handle('audio-driver:start-capture', async() => {
-    log.info('IPC', 'start-capture');
-    return await startCapture();
-  });
-
-  ipcMain.handle('audio-driver:stop-capture', async() => {
-    log.info('IPC', 'stop-capture');
-    return await stopCapture();
-  });
-
-  ipcMain.handle('audio-driver:set-device-names', (_event: unknown, mic: string, speaker: string) => {
-    log.info('IPC', 'set-device-names', { mic, speaker });
-    audio.setDeviceNames(mic, speaker);
-  });
-
-  ipcMain.handle('audio-driver:set-system-output', async(_event: unknown, deviceName: string) => {
-    log.info('IPC', 'set-system-output', { deviceName });
-    const platform = await import('./platform');
-    return platform.devices.setOutput(deviceName);
-  });
-
-  ipcMain.handle('audio-driver:set-system-input', async(_event: unknown, deviceName: string) => {
-    log.info('IPC', 'set-system-input', { deviceName });
-    const platform = await import('./platform');
-    return platform.devices.setInput(deviceName);
-  });
+  // ── Auto-launch ─────────────────────────────────────────────────
 
   ipcMain.handle('audio-driver:get-auto-launch', () => {
     const { app } = require('electron') as typeof import('electron');
@@ -226,12 +305,14 @@ function registerIpcHandlers(): void {
     return enabled;
   });
 
+  // ── Session stub ────────────────────────────────────────────────
+
   ipcMain.handle('audio-driver:get-session', () => {
-    // sulla-desktop handles auth — always return logged in
     return { loggedIn: true, user: { name: 'User' }, teams: [], activeTeamId: null };
   });
 
-  // Call notification / transcription stubs — full implementation in future phase
+  // ── Call notification / transcription stubs ──────────────────────
+
   ipcMain.handle('audio-driver:show-call-notification', () => {
     log.info('IPC', 'show-call-notification (stub)');
     return { ok: true };
@@ -254,7 +335,7 @@ function registerIpcHandlers(): void {
     broadcast('audio-driver:call-state', state);
   });
 
-  // ── Whisper.cpp (local STT engine) ─────────────────────────────
+  // ── Whisper.cpp (local STT engine) ──────────────────────────────
 
   ipcMain.handle('audio-driver:whisper-detect', async() => {
     log.info('IPC', 'whisper-detect');
@@ -263,23 +344,29 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('audio-driver:whisper-install', async() => {
     log.info('IPC', 'whisper-install');
-    broadcastState({ running: audio.getState().running, message: 'Installing whisper.cpp...' });
-    const ok = await whisper.install();
+    broadcast('audio-driver:whisper-progress', { phase: 'install', status: 'Installing whisper.cpp via Homebrew...', pct: 0 });
+    const ok = await whisper.install((line: string) => {
+      broadcast('audio-driver:whisper-progress', { phase: 'install', status: line, pct: -1 });
+    });
     if (ok) {
       const status = await whisper.detect();
       broadcast('audio-driver:whisper-status', status);
-      broadcastState({ running: audio.getState().running, message: audio.getState().running ? 'Capturing' : 'Off' });
+      broadcast('audio-driver:whisper-progress', { phase: 'install', status: 'Installed successfully', pct: 100 });
     } else {
-      broadcastState({ running: audio.getState().running, message: 'whisper.cpp install failed' });
+      broadcast('audio-driver:whisper-progress', { phase: 'install', status: 'Installation failed', pct: -1, error: true });
     }
     return { ok };
   });
 
   ipcMain.handle('audio-driver:whisper-remove', async() => {
     log.info('IPC', 'whisper-remove');
-    await whisper.remove();
+    broadcast('audio-driver:whisper-progress', { phase: 'uninstall', status: 'Uninstalling whisper.cpp...', pct: 0 });
+    await whisper.remove((line: string) => {
+      broadcast('audio-driver:whisper-progress', { phase: 'uninstall', status: line, pct: -1 });
+    });
     const status = await whisper.detect();
     broadcast('audio-driver:whisper-status', status);
+    broadcast('audio-driver:whisper-progress', { phase: 'uninstall', status: 'Uninstalled', pct: 100 });
     return { ok: true };
   });
 
@@ -289,13 +376,17 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('audio-driver:whisper-download-model', async(_event: unknown, model: string) => {
     log.info('IPC', 'whisper-download-model', { model });
-    broadcastState({ running: audio.getState().running, message: `Downloading model: ${ model }...` });
-    const ok = await whisper.downloadModel(model);
+    broadcast('audio-driver:whisper-progress', { phase: 'download', status: `Downloading model: ${ model }...`, pct: 0, model });
+    const ok = await whisper.downloadModel(model, (pct: number, status: string) => {
+      broadcast('audio-driver:whisper-progress', { phase: 'download', status, pct, model });
+    });
     if (ok) {
       const status = await whisper.detect();
       broadcast('audio-driver:whisper-status', status);
+      broadcast('audio-driver:whisper-progress', { phase: 'download', status: 'Download complete', pct: 100, model });
+    } else {
+      broadcast('audio-driver:whisper-progress', { phase: 'download', status: 'Download failed', pct: -1, model, error: true });
     }
-    broadcastState({ running: audio.getState().running, message: audio.getState().running ? 'Capturing' : 'Off' });
     return { ok };
   });
 
@@ -303,7 +394,7 @@ function registerIpcHandlers(): void {
     return whisper.getModels();
   });
 
-  // ── Local transcription (whisper.cpp powered) ─────────────────
+  // ── Local transcription (whisper.cpp powered) ───────────────────
 
   ipcMain.handle('audio-driver:transcribe-start', async(_event: unknown, opts: {
     mode: 'conversation' | 'secretary';
@@ -312,7 +403,6 @@ function registerIpcHandlers(): void {
   }) => {
     log.info('IPC', 'transcribe-start', opts);
 
-    // Detect whisper if not yet cached
     if (!whisper.isAvailable()) {
       await whisper.detect();
     }
@@ -322,7 +412,6 @@ function registerIpcHandlers(): void {
       language:     opts.language,
       model:        opts.model,
       onTranscript: (event) => {
-        // Emit on the same channel the gateway uses so existing UI code works
         broadcast('gateway-transcript', event);
       },
     });
@@ -337,48 +426,26 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('audio-driver:transcribe-status', () => {
-    return {
-      active: whisperTranscribe.isActive(),
-      mode:   whisperTranscribe.getMode(),
-    };
+    return whisperTranscribe.getStats();
   });
+
+  // ── Test recording ──────────────────────────────────────────────
+
+  ipcMain.handle('audio-driver:test-record-start', (_event: unknown, mode?: string) => {
+    log.info('IPC', 'test-record-start', { mode });
+    mic.startTestRecording((mode as any) || 'raw');
+    return { ok: true, mode: mode || 'raw' };
+  });
+
+  ipcMain.handle('audio-driver:test-record-stop', () => {
+    log.info('IPC', 'test-record-stop');
+    const result = mic.stopTestRecording();
+    return { ok: true, ...result };
+  });
+
+  // ── Logging relay ───────────────────────────────────────────────
 
   ipcMain.on('audio-driver:log', (_event: Electron.IpcMainEvent, level: string, tag: string, msg: string, data: any) => {
     (rendererLog as any)[level]?.(tag, msg, data);
   });
-}
-
-// ── Internal ──────────────────────────────────────────────────────
-
-async function startCapture(): Promise<any> {
-  log.info('Init', 'Starting audio capture');
-
-  const result = await lifecycle.activate({
-    onLevel: (data: any) => {
-      // Send speaker data to renderers only when the capture helper produces new data.
-      // No polling interval — this callback fires at the Swift helper's native rate.
-      broadcast('audio-driver:speaker-level', data);
-    },
-    onRebuild: ({ name }: { name: string }) => {
-      broadcast('audio-driver:speaker-device-changed', name);
-    },
-  });
-
-  const state = audio.start();
-  broadcastState({ running: true, message: 'Capturing' });
-  log.info('Init', 'Audio capture started', state);
-  return state;
-}
-
-async function stopCapture(): Promise<any> {
-  log.info('Init', 'Stopping audio capture');
-
-  // Send zero levels so meters reset immediately
-  broadcast('audio-driver:speaker-level', { rms: 0, peak: 0, zcr: 0, variance: 0 });
-
-  await lifecycle.deactivate({ removeDriver: false });
-  const state = audio.stop();
-  broadcastState({ running: false, message: 'Off' });
-  log.info('Init', 'Audio capture stopped', state);
-  return state;
 }

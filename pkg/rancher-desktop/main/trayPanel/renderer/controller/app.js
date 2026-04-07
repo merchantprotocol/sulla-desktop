@@ -1,35 +1,127 @@
 /**
- * Controller — wires model to views, handles user actions.
+ * Controller — dumb mic-capture worker + call session management.
  *
- * Adapted for sulla-desktop tray panel.
- * Auth/account management is handled by sulla-desktop separately.
- * Sidebar switching is handled by panel.js.
+ * The MicrophoneDriverController / SpeakerDriverController (main process) owns all lifecycle decisions.
+ * This renderer only:
+ *   1. Starts/stops getUserMedia when commanded via IPC
+ *   2. Runs VAD + feedback detection and broadcasts results
+ *   3. Manages call sessions and gateway streaming
  *
  * Delegates to:
  *   model/audio-capture.js — mic capture, gain, mute
- *   view/meters.js         — meter bar rendering
- *   view/status.js         — status, device selectors
- *   view/controls.js       — mute/volume controls
+ *   model/vad.js           — voice activity detection
+ *   model/speaker-vad.js   — speaker voice detection
+ *   model/feedback-detection.js — audio feedback detection
+ *   model/mic-socket.js    — Unix socket for mic audio chunks
+ *   model/call-session.js  — call detection and state
  */
 
-const { createMeter } = require("../view/meters");
-const { renderState, populateDeviceSelect, onDeviceChange } = require("../view/status");
-const { createMicControl, createSpeakerControl } = require("../view/controls");
 const audioCapture = require("../model/audio-capture");
 const micSocket = require("../model/mic-socket");
 const vad = require("../model/vad");
-const speakerVad = require("../model/speaker-vad");
 const feedbackDetection = require("../model/feedback-detection");
 const callSession = require("../model/call-session");
 
 const log = window.audioDriver.log;
 
-// ─── Create view instances ───────────────────────────────────
+// ─── User identity (for VAD display) ────────────────────────
 
-const micMeter = createMeter("mic-bar", "mic-peak", "mic-db");
-const speakerMeter = createMeter("speaker-bar", "speaker-peak", "speaker-db");
-const micControl = createMicControl();
-const speakerControl = createSpeakerControl();
+let userName = "";
+
+// ─── Mic level callback (shared by start handler + gateway) ─
+
+function onMicLevel(micLevel) {
+  const vadState = vad.process(micLevel, audioCapture.getAnalyser());
+  feedbackDetection.process(audioCapture.getAnalyser());
+
+  // Process call session detection (speaker state not available here)
+  callSession.process(vadState.speaking, false);
+
+  // Push live state to transcription sidebar
+  _pushCallStateToTranscription(vadState.speaking, false);
+
+  // Broadcast mic VAD to all windows (chat, secretary, etc.)
+  window.audioDriver.broadcastMicVad({
+    speaking: vadState.speaking,
+    level: micLevel,
+    fanNoise: vadState.fanNoise,
+    noiseFloor: vadState.amplitude ? vadState.amplitude.noiseFloor : 0,
+    zcr: vadState.zeroCrossing ? vadState.zeroCrossing.smoothedZcr : 0,
+    variance: vadState.temporalVariance ? vadState.temporalVariance.variance : 0,
+    pitch: vadState.pitch ? vadState.pitch.pitch : null,
+    centroid: vadState.spectral ? vadState.spectral.centroid : 0,
+  });
+}
+
+// ─── Mic worker: start/stop on command from main process ────
+
+window.audioDriver.onStartMic(async (opts) => {
+  log.info("Controller", ">>> renderer-start-mic received", opts);
+  const formats = opts?.formats || ["webm-opus"]; // default: gateway format
+  try {
+    vad.reset();
+    feedbackDetection.reset();
+    log.info("Controller", "VAD + feedback detection reset, calling audioCapture.start()");
+
+    const deviceInfo = await audioCapture.start(onMicLevel, opts?.deviceId);
+    log.info("Controller", "audioCapture.start() succeeded", {
+      micName: deviceInfo?.micName,
+      speakerName: deviceInfo?.speakerName,
+      micDeviceId: deviceInfo?.micDeviceId,
+      formats,
+    });
+
+    // Start WebM/Opus recording → mic socket (for gateway, test recording)
+    if (formats.includes("webm-opus")) {
+      try {
+        const socketPath = await window.audioDriver.getMicSocketPath();
+        if (socketPath) {
+          micSocket.connect(socketPath);
+          log.info("Controller", "Mic socket connected", { path: socketPath });
+        } else {
+          log.warn("Controller", "No mic socket path available");
+        }
+      } catch (e) {
+        log.warn("Controller", "Mic socket connect failed", { error: e.message });
+      }
+
+      audioCapture.startRecording((buffer) => {
+        micSocket.send(buffer);
+      });
+      log.info("Controller", "WebM/Opus MediaRecorder started");
+    }
+
+    // Start raw PCM capture → IPC (for whisper, local STT, capture studio)
+    if (formats.includes("pcm-s16le") || formats.includes("pcm-s16le-raw")) {
+      audioCapture.startPcmCapture((buffer) => {
+        window.audioDriver.sendMicPcm(buffer);
+      });
+      log.info("Controller", "PCM capture started (s16le 16kHz mono)");
+    }
+
+    log.info("Controller", "Sending ackMicStarted to main process");
+    window.audioDriver.ackMicStarted({ ...deviceInfo, pcmSampleRate: audioCapture.getPcmSampleRate() });
+  } catch (e) {
+    log.error("Controller", "audioCapture.start() FAILED", { error: e.message, stack: e.stack });
+    window.audioDriver.ackMicStarted(null);
+  }
+});
+
+window.audioDriver.onStopMic(() => {
+  log.info("Controller", ">>> renderer-stop-mic received");
+  audioCapture.stopPcmCapture();
+  log.info("Controller", "PCM capture stopped");
+  audioCapture.stopRecording();
+  log.info("Controller", "MediaRecorder stopped");
+  audioCapture.stop();
+  log.info("Controller", "audioCapture stopped (getUserMedia killed)");
+  micSocket.disconnect();
+  log.info("Controller", "micSocket disconnected");
+  vad.reset();
+  feedbackDetection.reset();
+  log.info("Controller", "VAD + feedback detection reset, sending ackMicStopped");
+  window.audioDriver.ackMicStopped();
+});
 
 // ─── Call session ───────────────────────────────────────────
 
@@ -106,7 +198,6 @@ callSession.onStateChange((session) => {
     if (newCallSection) newCallSection.style.display = "none";
     if (activeCallStatus) activeCallStatus.textContent = session.accepted ? "Call in progress" : "Call detected";
 
-    // Start timer updates
     if (!callTimerInterval) {
       callTimerInterval = setInterval(() => {
         const s = callSession.getState();
@@ -124,7 +215,6 @@ callSession.onStateChange((session) => {
     if (activeCallTimer) activeCallTimer.textContent = "0:00";
   }
 
-  // Render history
   _renderCallHistory();
 });
 
@@ -154,7 +244,6 @@ function _renderCallHistory() {
     `;
   }).join("");
 
-  // Attach click handlers to open transcription sidebar
   callsHistory.querySelectorAll(".call-item").forEach((el, index) => {
     el.addEventListener("click", () => {
       const callId = el.dataset.callId;
@@ -167,10 +256,8 @@ function _renderCallHistory() {
 
 function _openTranscriptionSidebar(callData, gatewaySessionId) {
   window.audioDriver.openTranscription(gatewaySessionId);
-  // Send call object to the transcription window once it's ready
   const data = callData || callSession.getState().call;
   if (data) {
-    // Small delay to let the window load
     setTimeout(() => {
       window.audioDriver.updateCallState({
         ...data,
@@ -183,22 +270,30 @@ function _openTranscriptionSidebar(callData, gatewaySessionId) {
 }
 
 /**
- * Ensure audio capture (including mic) is running. If not, start it.
+ * Push live call state (speaker, timer) to the transcription window.
+ * Called from onMicLevel so it runs every frame when mic is active.
  */
-async function _ensureCaptureRunning() {
-  if (currentState.running && audioCapture.getAnalyser()) return;
-  log.info("Controller", "Auto-starting capture for call");
-  toggle.checked = true;
-  await startWithDevice(selectedMicId);
+function _pushCallStateToTranscription(micSpeaking, callerSpeaking) {
+  const session = callSession.getState();
+  if (session.state === "idle") return;
+
+  window.audioDriver.updateCallState({
+    durationFormatted: session.durationFormatted,
+    micSpeaking,
+    callerSpeaking,
+    userName,
+    state: session.state,
+    accepted: session.accepted,
+  });
 }
 
 /**
- * Start gateway streaming — create session, connect mic socket, begin recording.
- * Mic audio flows over a Unix domain socket (not IPC) for lower overhead.
+ * Start gateway streaming — connect mic socket, begin recording.
+ * The mic must already be running (commanded by MicrophoneDriverController / SpeakerDriverController).
  */
 async function _startGatewayStreaming() {
-  await _ensureCaptureRunning();
-
+  // Ensure mic is running — if not, it will be started by the controller
+  // when the caller (chat, secretary) invokes startMic() before this.
   const call = callSession.getState().call;
   if (!call) return null;
 
@@ -254,392 +349,19 @@ function _stopGatewayStreaming() {
   log.info("Controller", "Gateway streaming stopped");
 }
 
-/**
- * Push live call state (speaker, timer) to the transcription window.
- * Called from updateDetectionUI so it runs every frame.
- */
-function _pushCallStateToTranscription(micSpeaking, callerSpeaking) {
-  const session = callSession.getState();
-  if (session.state === "idle") return;
-
-  window.audioDriver.updateCallState({
-    durationFormatted: session.durationFormatted,
-    micSpeaking,
-    callerSpeaking,
-    userName,
-    state: session.state,
-    accepted: session.accepted,
-  });
-}
-
-// ─── Auto-launch setting ────────────────────────────────────
-
-const autoLaunchToggle = document.getElementById("auto-launch-toggle");
-
-if (autoLaunchToggle) {
-  (async () => {
-    const enabled = await window.audioDriver.getAutoLaunch();
-    autoLaunchToggle.checked = enabled;
-  })();
-
-  autoLaunchToggle.addEventListener("change", () => {
-    window.audioDriver.setAutoLaunch(autoLaunchToggle.checked);
-    log.info("Controller", "Auto-launch toggled", { enabled: autoLaunchToggle.checked });
-  });
-}
-
-// ─── User identity (for VAD display) ────────────────────────
-
-let userName = "";
-
-// ─── Detection UI elements ──────────────────────────────────
-
-const detectionBar = document.getElementById("detection-bar");
-const noiseBar = document.getElementById("noise-bar");
-const noiseLabel = document.getElementById("noise-label");
-const feedbackBar = document.getElementById("feedback-bar");
-const feedbackLabel = document.getElementById("feedback-label");
-const statusDot = document.getElementById("audio-status-dot");
-const statusText = document.getElementById("audio-status-text");
-
-// ─── Detection rendering ────────────────────────────────────
-
-let lastNoiseLevel = "low";
-
-function updateDetectionUI() {
-  const state = vad.getState();
-  const feedback = feedbackDetection.getState();
-
-  // Noise meter: map noise floor to a percentage (0–100)
-  // noiseFloor is typically 0–0.1 range, scale up for visibility
-  const noisePct = Math.min(100, Math.round(state.noiseFloor * 1000));
-  if (noiseBar) noiseBar.style.width = noisePct + "%";
-
-  if (state.noiseLevel !== lastNoiseLevel) {
-    lastNoiseLevel = state.noiseLevel;
-    if (noiseBar) {
-      noiseBar.className = "meter-fill noise-" + state.noiseLevel;
-    }
-  }
-
-  if (noiseLabel) {
-    noiseLabel.textContent = state.isSpeaking ? "Speaking" : state.noiseLevel;
-  }
-
-  // Feedback meter: show intensity when detected
-  if (feedbackBar) {
-    feedbackBar.style.width = feedback.feedbackDetected ? "100%" : "0%";
-  }
-  if (feedbackLabel) {
-    feedbackLabel.textContent = feedback.feedbackDetected
-      ? (feedback.feedbackFrequency + " Hz")
-      : "None";
-  }
-
-  // Update status dot + text based on VAD state (mic + speaker)
-  const spk = speakerVad.getState();
-  const micSpeaking = state.speaking;
-  const callerSpeaking = spk.speaking;
-  const displayName = userName || "You";
-
-  if (statusDot && statusText) {
-    if (state.fanNoise) {
-      statusDot.className = "dot fan-noise";
-      statusText.textContent = "Fan Noise";
-    } else if (micSpeaking && callerSpeaking) {
-      statusDot.className = "dot speaking";
-      statusText.textContent = displayName + " + Caller";
-    } else if (micSpeaking) {
-      statusDot.className = "dot speaking";
-      statusText.textContent = displayName + " Speaking";
-    } else if (callerSpeaking) {
-      statusDot.className = "dot caller-speaking";
-      statusText.textContent = "Caller Speaking";
-    } else {
-      statusDot.className = "dot running";
-      statusText.textContent = "Capturing";
-    }
-  }
-
-  // Feed call session detector with both VAD states
-  callSession.process(micSpeaking, callerSpeaking);
-
-  // Push live state to transcription sidebar
-  _pushCallStateToTranscription(micSpeaking, callerSpeaking);
-}
-
-// ─── State ───────────────────────────────────────────────────
-
-let currentState = {
-  running: false,
-  message: "Off",
-  micName: "",
-  speakerName: "",
-};
-
-let selectedMicId = null;
-let selectedSpeakerId = null;
-
-// ─── Speaker levels from main process (daemon socket) ────────
-
-window.audioDriver.onSpeakerLevel((data) => {
-  const rms = typeof data === "number" ? data : data.rms;
-  speakerMeter.update(rms);
-  speakerVad.process(rms, data);
-});
-
-// ─── Wire controls to model ─────────────────────────────────
-
-micControl.onMute((muted) => {
-  audioCapture.setMicMuted(muted);
-});
-
-micControl.onVolume((value) => {
-  audioCapture.setMicGain(value);
-});
-
-speakerControl.onMute(() => {
-  window.audioDriver.speakerMuteToggle();
-});
-
-speakerControl.onVolumeDown(() => {
-  window.audioDriver.speakerVolumeDown();
-});
-
-speakerControl.onVolumeUp(() => {
-  window.audioDriver.speakerVolumeUp();
-});
-
-// Listen for volume state from main process (keyboard keys or UI)
-window.audioDriver.onVolumeChanged((state) => {
-  if (state && state.ok) {
-    const pct = Math.round(state.volume * 100);
-    speakerControl.setVolume(state.volume);
-    speakerControl.setMuted(state.muted);
-  }
-});
-
-// ─── Device population ──────────────────────────────────────
-
-async function refreshDevices(activeMicId) {
-  try {
-    const { inputs, outputs } = await audioCapture.listDevices();
-    populateDeviceSelect("mic-device", inputs, activeMicId || selectedMicId);
-    populateDeviceSelect("speaker-device", outputs, selectedSpeakerId);
-  } catch (e) {
-    log.warn("Controller", "Failed to list devices", { error: e.message });
-  }
-}
-
-// ─── Start/stop capture ──────────────────────────────────────
-
-async function startWithDevice(micDeviceId) {
-  // 1. Enable mirror FIRST so BlackHole receives system audio
-  currentState = await window.audioDriver.startCapture();
-  renderState(currentState);
-
-  // 2. Now open mic stream (speaker comes from main process via daemon)
-  vad.reset();
-  speakerVad.reset();
-  feedbackDetection.reset();
-
-  const deviceInfo = await audioCapture.start((micLevel) => {
-    micMeter.update(micLevel);
-
-    // Feed VAD pipeline and feedback detector, then update UI
-    vad.process(micLevel, audioCapture.getAnalyser());
-    feedbackDetection.process(audioCapture.getAnalyser());
-    updateDetectionUI();
-  }, micDeviceId);
-
-  currentState.micName = deviceInfo.micName;
-  currentState.speakerName = deviceInfo.speakerName;
-  renderState(currentState);
-  updatePermissionNotice(currentState.permissions);
-
-  // Show detection meters
-  if (detectionBar) detectionBar.classList.remove("hidden");
-
-  // Fetch initial speaker volume
-  const volState = await window.audioDriver.speakerVolumeGet();
-  if (volState && volState.ok) {
-    speakerControl.setVolume(volState.volume);
-    speakerControl.setMuted(volState.muted);
-  }
-
-  await refreshDevices(deviceInfo.micDeviceId);
-}
-
-async function stopAndReset() {
-  audioCapture.stop();
-  vad.reset();
-  speakerVad.reset();
-  feedbackDetection.reset();
-  callSession.reset();
-  micMeter.update(0);
-  speakerMeter.update(0);
-
-  // Hide detection meters
-  if (detectionBar) detectionBar.classList.add("hidden");
-
-  currentState = await window.audioDriver.stopCapture();
-  renderState(currentState);
-  updatePermissionNotice(null);
-}
-
-// ─── Toggle handler ──────────────────────────────────────────
-
-// ─── Permission notice ─────────────────────────────────────
-
-const permissionNotice = document.getElementById("permission-notice");
-const permissionMessage = document.getElementById("permission-message");
-
-function updatePermissionNotice(permissions) {
-  if (!permissionNotice) return;
-
-  if (!permissions) {
-    permissionNotice.classList.add("hidden");
-    return;
-  }
-
-  const issues = [];
-  if (permissions.microphone && permissions.microphone !== "granted") {
-    issues.push("Microphone");
-  }
-  if (permissions.accessibility === false) {
-    issues.push("Accessibility");
-  }
-
-  if (issues.length > 0) {
-    if (permissionMessage) {
-      permissionMessage.textContent =
-        issues.join(" and ") +
-        " permission required. Grant access in System Settings \u2192 Privacy & Security, then restart the app.";
-    }
-    permissionNotice.classList.remove("hidden");
-  } else {
-    permissionNotice.classList.add("hidden");
-  }
-}
-
-// ─── Toggle handler ──────────────────────────────────────
-
-const toggle = document.getElementById("audio-enabled-toggle");
-
-function setTransitioning(label) {
-  if (toggle) toggle.disabled = true;
-  const dot = document.getElementById("audio-status-dot");
-  const text = document.getElementById("audio-status-text");
-  if (dot) dot.className = "dot transitioning";
-  if (text) text.textContent = label;
-}
-
-function clearTransitioning() {
-  if (toggle) toggle.disabled = false;
-}
-
-if (toggle) {
-  toggle.addEventListener("change", async () => {
-    try {
-      if (toggle.checked) {
-        setTransitioning("Enabling\u2026");
-        await startWithDevice(selectedMicId);
-      } else {
-        setTransitioning("Disabling\u2026");
-        await stopAndReset();
-      }
-    } catch (e) {
-      log.error("Controller", "Toggle failed", { error: e.message });
-      console.error("Toggle error:", e);
-      toggle.checked = !toggle.checked;
-    } finally {
-      clearTransitioning();
-    }
-  });
-}
-
-// ─── Device change handlers ──────────────────────────────────
-
-onDeviceChange("mic-device", async (deviceId) => {
-  selectedMicId = deviceId;
-
-  // Change the macOS system input device
-  const select = document.getElementById("mic-device");
-  const selectedOption = select.options[select.selectedIndex];
-  if (selectedOption) {
-    const label = selectedOption.textContent;
-    log.info("Controller", "Changing system input", { deviceId, label });
-    const result = await window.audioDriver.setSystemInput(label);
-    log.info("Controller", "System input changed", result);
-  }
-
-  // Also switch the mic capture stream if running
-  if (currentState.running) {
-    audioCapture.stop();
-    try {
-      await startWithDevice(deviceId);
-    } catch (e) {
-      log.error("Controller", "Failed to switch mic", { error: e.message });
-      await stopAndReset();
-    }
-  }
-});
-
-onDeviceChange("speaker-device", async (deviceId) => {
-  selectedSpeakerId = deviceId;
-
-  // Get the label from the select element to pass the device name to macOS
-  const select = document.getElementById("speaker-device");
-  const selectedOption = select.options[select.selectedIndex];
-  if (selectedOption) {
-    const label = selectedOption.textContent;
-    log.info("Controller", "Changing system output", { deviceId, label });
-    const result = await window.audioDriver.setSystemOutput(label);
-    log.info("Controller", "System output changed", result);
-  }
-});
-
-// ─── Auto-start from main process ────────────────────────────
-
-window.audioDriver.onAutoStart(async () => {
-  log.info("Controller", "Auto-start received from main");
-  if (!currentState.running) {
-    if (toggle) toggle.checked = true;
-    try {
-      await startWithDevice(selectedMicId);
-    } catch (e) {
-      log.error("Controller", "Auto-start failed", { error: e.message });
-      if (toggle) toggle.checked = false;
-    }
-  }
-});
-
-// ─── Auto-refresh device lists when devices change ───────────
-
-navigator.mediaDevices.addEventListener("devicechange", () => {
-  log.info("Controller", "Device list changed — refreshing");
-  refreshDevices();
-});
-
-// ─── Initial state ───────────────────────────────────────────
+// ─── Initial state ──────────────────────────────────────────
 
 (async () => {
   try {
-    log.info("Controller", "Initializing");
-    currentState = await window.audioDriver.getState();
-    renderState(currentState);
-    updatePermissionNotice(currentState.permissions);
-    await refreshDevices();
-    log.info("Controller", "Ready", currentState);
+    log.info("Controller", "Initializing (dumb worker mode)");
+    const state = await window.audioDriver.getState();
+    log.info("Controller", "Ready", state);
   } catch (e) {
     log.error("Controller", "Init failed", { error: e.message });
-    currentState.message = "Error";
-    renderState(currentState);
   }
 })();
 
-// ─── sulla-desktop auth init ─────────────────────────────────
-// sulla-desktop handles auth — unlock all tabs immediately
+// ─── sulla-desktop auth init ────────────────────────────────
 document.querySelectorAll(".sidebar-btn[data-requires-auth]").forEach((btn) => {
   btn.classList.remove("locked");
 });

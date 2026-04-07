@@ -630,15 +630,19 @@ function showVoiceToast(message: string): void {
 }
 
 // ─── Voice configuration check ──────────────────────────────
+// Voice mode uses the internal whisper transcription pipeline.
+// Mic button appears when whisper is installed with a model.
 const isVoiceConfigured = ref(false);
 async function checkVoiceConfig() {
   try {
-    const result = await ipcRenderer.invoke('integration-get-value', 'elevenlabs', 'api_key');
-    isVoiceConfigured.value = !!(result?.value);
+    const { ipcRenderer } = require('electron');
+    const status = await ipcRenderer.invoke('audio-driver:whisper-detect');
+    isVoiceConfigured.value = !!(status?.available && status?.models?.length > 0);
   } catch {
     isVoiceConfigured.value = false;
   }
 }
+checkVoiceConfig();
 
 // ─── Voice Session ───────────────────────────────────────────
 // OOP voice system: VoiceRecorderService + TTSPlayerService + VoicePipeline
@@ -674,7 +678,6 @@ onMounted(async () => {
   if (chatScrollContainer.value) attachScrollListeners(chatScrollContainer.value);
   await modelSelector.start();
   checkFirstChat();
-  checkVoiceConfig();
 
   // Scroll to bottom on initial load if messages exist
   if (chatScrollContainer.value && messages.value.length > 0) {

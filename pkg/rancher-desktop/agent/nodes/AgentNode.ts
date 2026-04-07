@@ -14,7 +14,48 @@ import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware'
 // Works directly with the user message thread and tools.
 // ============================================================================
 
-const AGENT_PROMPT_BASE = ``;
+const AGENT_PROMPT_BASE = `## Environment
+
+You run inside an isolated Lima VM. You do NOT have access to the host machine. All commands via the \`exec\` tool execute inside this sandbox — destructive operations are safe and do not require confirmation.
+
+Your tools are provided as function calls in this conversation. They are already loaded and ready to use.
+
+### Sulla Home — ~/sulla/
+
+\`\`\`
+~/sulla/
+├── resources/                  # Ships with Sulla — curated defaults
+│   ├── skills/                 # Default skill instructions (SKILL.md)
+│   ├── workflows/              # Default workflow definitions (YAML)
+│   ├── agents/                 # Default agent configs
+│   └── integrations/           # Default integration docs
+├── skills/                     # Installation-specific skills
+├── workflows/                  # Installation-specific workflows
+├── agents/                     # Installation-specific agent configs
+├── integrations/               # Installation-specific integration configs & auth
+├── identity/                   # Persistent identity & goals
+│   ├── human/                  # {identity.md, goals.md}
+│   ├── business/               # {identity.md, goals.md}
+│   ├── world/                  # {identity.md, goals.md}
+│   └── agent/                  # {identity.md, goals.md}
+├── projects/                   # Project workspaces and PRDs
+├── logs/                       # Execution logs and change logs
+├── conversations/              # Conversation history
+└── workspaces/                 # Isolated workspaces for tasks
+\`\`\`
+
+Use \`file_search\` to find relevant skills, workflows, or integration docs. Use \`load_skill\` to load full skill instructions.
+
+### Capabilities
+
+- **Calendar** — schedule, list, update, and cancel events
+- **Credential Vault** — all passwords and API keys live here; never hardcode secrets
+- **Browser** — full Playwright and Chrome automation for web interaction
+- **Docker & Extensions** — run containers, install/uninstall extensions, access extension UIs through the browser
+- **Code Execution** — run any shell command via \`exec\` inside the VM
+- **Memory** — store and recall observations across conversations
+
+All capabilities are available through your tools.`;
 
 async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
   try {
@@ -347,15 +388,14 @@ export class AgentNode extends BaseNode {
       if (!reply) return null;
 
       // Emit text to the UI BEFORE tool execution so text appears before tool cards.
-      // Dedup: skip if this response is identical or 85%+ similar to the immediately
+      // Dedup: skip only if this response is 100% identical to the immediately
       // previous assistant message. Prevents duplicate display when AGENT_CONTINUE
-      // causes a second LLM turn that regenerates near-identical text.
+      // causes a second LLM turn that regenerates identical text.
       const agentOutcome = this.extractAgentOutcome(reply.content);
       const userVisibleText = this.toUserVisibleAgentMessage(reply.content, agentOutcome);
       if (userVisibleText?.trim()) {
         const isDuplicate = lastAssistantText !== null &&
-          (lastAssistantText === userVisibleText.trim() ||
-           BaseNode.jaccardSimilarity(lastAssistantText, userVisibleText.trim()) > 0.85);
+          lastAssistantText === userVisibleText.trim();
         if (!isDuplicate) {
           await this.wsChatMessage(state, userVisibleText, 'assistant');
         }
@@ -503,7 +543,7 @@ export class AgentNode extends BaseNode {
       .trim();
 
     if (outcome.status === 'done') {
-      return proseWithoutWrappers || '';
+      return proseWithoutWrappers || outcome.summary || '';
     }
 
     if (outcome.status === 'continue') {

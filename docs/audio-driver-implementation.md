@@ -2,7 +2,9 @@
 
 ## Overview
 
-Merge the standalone `audio-driver` Electron tray app into `sulla-desktop` as a built-in subsystem. The audio-driver's implementation is authoritative — conflicting sulla-desktop code is removed first, then audio-driver code is ported as-is, then wired into sulla-desktop features.
+> **Migration status: COMPLETE.** The audio driver has been fully integrated into sulla-desktop as a built-in subsystem. The audio driver is now the canonical microphone path for all of sulla-desktop. See [`AUDIO_POLICY.md`](./AUDIO_POLICY.md) for the authoritative audio usage guide, IPC channel reference, and integration instructions for new features.
+
+The original goal was to merge the standalone `audio-driver` Electron tray app into `sulla-desktop` as a built-in subsystem. The audio-driver's implementation is authoritative — conflicting sulla-desktop code is removed first, then audio-driver code is ported as-is, then wired into sulla-desktop features.
 
 ## Source Projects
 

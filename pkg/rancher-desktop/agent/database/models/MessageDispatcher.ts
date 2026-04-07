@@ -39,6 +39,7 @@ export interface DispatchContext {
   speakListeners:       SpeakListener[];
 
   setThreadId(threadId: string): void;
+  getThreadId(): string | undefined;
   handleTokenInfo(
     tokens_used: number,
     prompt_tokens: number,
@@ -521,6 +522,15 @@ function handleChatImage(ctx: DispatchContext, agentId: string, msgThreadId: str
 function handleTransferData(ctx: DispatchContext, agentId: string, _threadId: string, msg: WebSocketMessage): void {
   const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
   if (data === 'graph_execution_complete' || data?.content === 'graph_execution_complete') {
+    // Only react to completion events for the active thread — subconscious
+    // agents can complete on the same channel and must not poison main UI state.
+    const eventThreadId = data?.thread_id || data?.threadId;
+    const activeThreadId = ctx.getThreadId();
+    if (eventThreadId && activeThreadId && eventThreadId !== activeThreadId) {
+      console.log('[MessageDispatcher] Ignoring graph_execution_complete for non-active thread:', eventThreadId, '(active:', activeThreadId, ')');
+      return;
+    }
+
     const reason = data?.stopReason || null;
     const waiting = !!(data?.waitingForUser);
     console.log('[MessageDispatcher] Graph execution complete, stopReason:', reason, 'waitingForUser:', waiting);
@@ -769,7 +779,7 @@ const TOOL_VERB_MAP: Record<string, string> = {
   // Lima
   lima_shell: 'Running shell', lima_start: 'Starting VM', lima_stop: 'Stopping VM',
   // Channel
-  send_channel_message: 'Messaging',
+  send_notification_to_human: 'Notifying',
 };
 
 function toolNameToVerb(toolName: string): string {

@@ -1,4 +1,4 @@
-import Electron, { Menu, MenuItem, MenuItemConstructorOptions, shell } from 'electron';
+import Electron, { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions, shell } from 'electron';
 
 import { VMBackend } from '@pkg/backend/backend';
 import { State } from '@pkg/backend/k8s';
@@ -27,6 +27,15 @@ export function setUserLoggedIn(unlocked: boolean): void {
     const tray = Tray.getInstanceIfExists();
     if (tray) tray.setUserLoggedIn(unlocked);
   } catch { /* tray not initialized yet */ }
+
+  // Broadcast to ALL renderer windows so every login/lock screen reacts
+  const channel = unlocked ? 'vault:logged-in' : 'vault:logged-out';
+
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      sendWhenReady(win, channel, {});
+    }
+  }
 }
 
 export default function buildApplicationMenu(): void {
@@ -280,9 +289,35 @@ function getFileMenu(): MenuItem {
       { type: 'separator' },
       {
         label:       'Open Sulla Agent',
-        accelerator: 'CmdOrCtrl+O',
-        click:       openMain,
+        accelerator: 'CmdOrCtrl+1',
+        enabled:     userLoggedIn,
+        click:       () => sendAgentCommand('open-tab', { mode: 'chat' }),
       },
+      {
+        label:       'Open Calendar',
+        accelerator: 'CmdOrCtrl+2',
+        enabled:     userLoggedIn,
+        click:       () => sendAgentCommand('open-tab', { mode: 'calendar' }),
+      },
+      {
+        label:       'Open Integrations',
+        accelerator: 'CmdOrCtrl+3',
+        enabled:     userLoggedIn,
+        click:       () => sendAgentCommand('open-tab', { mode: 'integrations' }),
+      },
+      {
+        label:       'Open Password Manager',
+        accelerator: 'CmdOrCtrl+4',
+        enabled:     userLoggedIn,
+        click:       () => sendAgentCommand('open-tab', { mode: 'vault' }),
+      },
+      {
+        label:       'Open Extensions',
+        accelerator: 'CmdOrCtrl+5',
+        enabled:     userLoggedIn,
+        click:       () => sendAgentCommand('open-tab', { mode: 'extensions' }),
+      },
+      { type: 'separator' },
       {
         label:       'Open Agent Workbench',
         accelerator: 'CmdOrCtrl+Shift+E',
@@ -306,6 +341,16 @@ function getFileMenu(): MenuItem {
         enabled: kubernetesState === State.STARTED && userLoggedIn,
       },
       { type: 'separator' },
+      {
+        label:   'Diagnostics',
+        enabled: userLoggedIn,
+        click:   () => navigateDockerDashboard('/Diagnostics'),
+      },
+      {
+        label:   'Troubleshooting',
+        enabled: userLoggedIn,
+        click:   () => navigateDockerDashboard('/Troubleshooting'),
+      },
       { type: 'separator' },
       {
         id:      'extensions-list',
@@ -336,117 +381,7 @@ function getEditMenu(isMac: boolean): MenuItem {
   });
 }
 
-function getViewMenu(): MenuItem {
-  const devToolsSubmenu: MenuItemConstructorOptions[] = [
-    { role: 'toggleDevTools', label: 'Toggle &Developer Tools' },
-  ];
 
-  return new MenuItem({
-    label:   '&View',
-    submenu: [
-      {
-        label:       '&Actual Size',
-        accelerator: 'CmdOrCtrl+0',
-        click(_item, focusedWindow) {
-          adjustZoomLevel(focusedWindow, 0);
-        },
-      },
-      {
-        label:       'Zoom &In',
-        accelerator: 'CmdOrCtrl+Plus',
-        click(_item, focusedWindow) {
-          adjustZoomLevel(focusedWindow, 0.5);
-        },
-      },
-      {
-        label:       'Zoom &Out',
-        accelerator: 'CmdOrCtrl+-',
-        click(_item, focusedWindow) {
-          adjustZoomLevel(focusedWindow, -0.5);
-        },
-      },
-      { type: 'separator' },
-      { role: 'togglefullscreen', label: 'Toggle Full &Screen' },
-      ...(!Electron.app.isPackaged
-        ? [
-          { type: 'separator' } as MenuItemConstructorOptions,
-          {
-            label:   'Developer Tools',
-            submenu: devToolsSubmenu,
-          } as MenuItemConstructorOptions,
-        ]
-        : []),
-    ],
-  });
-}
-
-function getGoMenu(): MenuItem {
-  return new MenuItem({
-    label:   '&Go',
-    submenu: [
-      {
-        label:       '&Agent',
-        accelerator: 'CmdOrCtrl+1',
-        enabled:     userLoggedIn,
-        click:       () => navigateAgent('/Chat'),
-      },
-      {
-        label:       '&Calendar',
-        accelerator: 'CmdOrCtrl+2',
-        enabled:     userLoggedIn,
-        click:       () => sendAgentCommand('open-tab', { mode: 'calendar' }),
-      },
-      {
-        label:       'A&utomations',
-        accelerator: 'CmdOrCtrl+3',
-        enabled:     userLoggedIn,
-        click:       () => navigateAgent('/Automations'),
-      },
-      {
-        label:       '&Integrations',
-        accelerator: 'CmdOrCtrl+4',
-        enabled:     userLoggedIn,
-        click:       () => sendAgentCommand('open-tab', { mode: 'integrations' }),
-      },
-      {
-        label:       'E&xtensions',
-        accelerator: 'CmdOrCtrl+5',
-        enabled:     userLoggedIn,
-        click:       () => sendAgentCommand('open-tab', { mode: 'extensions' }),
-      },
-      { type: 'separator' },
-      {
-        label:       '&Language Model Settings…',
-        accelerator: 'CmdOrCtrl+L',
-        enabled:     userLoggedIn,
-        click:       openLanguageModelSettings,
-      },
-      {
-        label:       'A&udio Settings…',
-        accelerator: 'CmdOrCtrl+Shift+U',
-        enabled:     userLoggedIn,
-        click:       openAudioSettings,
-      },
-      {
-        label:       'Capture &Studio…',
-        accelerator: 'CmdOrCtrl+Shift+R',
-        enabled:     userLoggedIn,
-        click:       openCaptureStudio,
-      },
-      { type: 'separator' },
-      {
-        label:   '&Diagnostics',
-        enabled: userLoggedIn,
-        click:   () => navigateDockerDashboard('/Diagnostics'),
-      },
-      {
-        label:   '&Troubleshooting',
-        enabled: userLoggedIn,
-        click:   () => navigateDockerDashboard('/Troubleshooting'),
-      },
-    ],
-  });
-}
 
 function getHelpMenu(isMac: boolean): MenuItem {
   const helpMenuItems: MenuItemConstructorOptions[] = [
@@ -736,6 +671,18 @@ function getMacApplicationMenu(): MenuItem[] {
           accelerator: 'CmdOrCtrl+,',
           click:       openPreferences,
         },
+        {
+          label:       'Language Model Settings…',
+          accelerator: 'CmdOrCtrl+L',
+          enabled:     userLoggedIn,
+          click:       openLanguageModelSettings,
+        },
+        {
+          label:       'Audio Settings…',
+          accelerator: 'CmdOrCtrl+Shift+U',
+          enabled:     userLoggedIn,
+          click:       openAudioSettings,
+        },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -753,35 +700,49 @@ function getMacApplicationMenu(): MenuItem[] {
     }),
     getFileMenu(),
     getEditMenu(true),
-    getViewMenu(),
-    getGoMenu(),
     getHistoryMenu(),
     new MenuItem({
       label:   '&Window',
       submenu: [
         { role: 'minimize' },
         { role: 'zoom' },
+        { role: 'togglefullscreen', label: 'Toggle Full &Screen' },
         { type: 'separator' },
         {
-          label:   'Calendar',
-          enabled: userLoggedIn,
-          click:   () => sendAgentCommand('open-tab', { mode: 'calendar' }),
+          label:       '&Actual Size',
+          accelerator: 'CmdOrCtrl+0',
+          click(_item, focusedWindow) {
+            adjustZoomLevel(focusedWindow, 0);
+          },
         },
         {
-          label:   'Password Manager',
-          enabled: userLoggedIn,
-          click:   () => sendAgentCommand('open-tab', { mode: 'vault' }),
+          label:       'Zoom &In',
+          accelerator: 'CmdOrCtrl+Plus',
+          click(_item, focusedWindow) {
+            adjustZoomLevel(focusedWindow, 0.5);
+          },
         },
         {
-          label:   'Extensions',
-          enabled: userLoggedIn,
-          click:   () => sendAgentCommand('open-tab', { mode: 'extensions' }),
+          label:       'Zoom &Out',
+          accelerator: 'CmdOrCtrl+-',
+          click(_item, focusedWindow) {
+            adjustZoomLevel(focusedWindow, -0.5);
+          },
         },
         { type: 'separator' },
         { role: 'front' },
         { type: 'separator' },
         { role: 'reload', label: '&Reload' },
         { role: 'forceReload', label: '&Force Reload' },
+        ...(!Electron.app.isPackaged
+          ? [
+            { type: 'separator' } as MenuItemConstructorOptions,
+            {
+              label:   'Developer Tools',
+              submenu: [{ role: 'toggleDevTools', label: 'Toggle &Developer Tools' }],
+            } as MenuItemConstructorOptions,
+          ]
+          : []),
       ],
     }),
     new MenuItem({
@@ -799,11 +760,8 @@ function getMacApplicationMenu(): MenuItem[] {
           click:       async() => {
             try {
               // UI logout — lock menus and show lock screen, but keep VMK for agent
+              // setUserLoggedIn broadcasts vault:logged-out to all windows
               setUserLoggedIn(false);
-              const existing = getWindow('main-agent');
-              if (existing) {
-                sendWhenReady(existing, 'vault:logged-out', {});
-              }
             } catch (err) {
               console.error('[MainMenu] Logout failed:', err);
             }
@@ -832,36 +790,39 @@ function getWindowsApplicationMenu(): MenuItem[] {
         },
         { type: 'separator' },
         {
-          label:       '&Open Sulla Agent',
-          accelerator: 'CmdOrCtrl+O',
-          click:       openMain,
+          label: 'Open Sulla Agent',
+          click: () => sendAgentCommand('open-tab', { mode: 'chat' }),
         },
         {
-          label:       'Open Agent &Workbench',
+          label: 'Open Calendar',
+          click: () => sendAgentCommand('open-tab', { mode: 'calendar' }),
+        },
+        {
+          label: 'Open Integrations',
+          click: () => sendAgentCommand('open-tab', { mode: 'integrations' }),
+        },
+        {
+          label: 'Open Password Manager',
+          click: () => sendAgentCommand('open-tab', { mode: 'vault' }),
+        },
+        {
+          label: 'Open Extensions',
+          click: () => sendAgentCommand('open-tab', { mode: 'extensions' }),
+        },
+        { type: 'separator' },
+        {
+          label:       'Open Agent Workbench',
           accelerator: 'CmdOrCtrl+Shift+E',
           click:       openEditor,
         },
         {
-          label: 'Open &Docker Dashboard',
+          label: 'Open Docker Dashboard',
           click: openDockerDashboard,
         },
         {
-          label:   'Open C&luster Dashboard',
+          label:   'Open Cluster Dashboard',
           click:   openDashboard,
           enabled: kubernetesState === State.STARTED,
-        },
-        { type: 'separator' },
-        {
-          label: 'Ca&lendar',
-          click: () => sendAgentCommand('open-tab', { mode: 'calendar' }),
-        },
-        {
-          label: '&Integrations',
-          click: () => sendAgentCommand('open-tab', { mode: 'integrations' }),
-        },
-        {
-          label: 'E&xtensions',
-          click: () => sendAgentCommand('open-tab', { mode: 'extensions' }),
         },
         { type: 'separator' },
         {
@@ -888,8 +849,6 @@ function getWindowsApplicationMenu(): MenuItem[] {
       ],
     }),
     getEditMenu(false),
-    getViewMenu(),
-    getGoMenu(),
     getHistoryMenu(),
     getHelpMenu(false),
   ];

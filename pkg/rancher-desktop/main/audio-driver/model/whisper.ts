@@ -32,20 +32,20 @@ export function isAvailable(): boolean {
   return cachedStatus?.available === true;
 }
 
-export async function install(): Promise<boolean> {
-  return platform.whisper.install();
+export async function install(onProgress?: (line: string) => void): Promise<boolean> {
+  return platform.whisper.install(onProgress);
 }
 
-export async function remove(): Promise<void> {
-  return platform.whisper.remove();
+export async function remove(onProgress?: (line: string) => void): Promise<void> {
+  return platform.whisper.remove(onProgress);
 }
 
 /**
  * Download a specific Whisper model (e.g. 'base', 'base.en', 'small', 'medium', 'large').
  * Models are stored in the platform-specific models directory.
  */
-export async function downloadModel(model: string): Promise<boolean> {
-  return platform.whisper.downloadModel(model);
+export async function downloadModel(model: string, onProgress?: (pct: number, status: string) => void): Promise<boolean> {
+  return platform.whisper.downloadModel(model, onProgress);
 }
 
 export function getModels(): string[] {
