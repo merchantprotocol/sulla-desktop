@@ -12,6 +12,8 @@
 
 import { execFile, execSync, spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { log } from '../../model/logger';
 import paths from '@pkg/utils/paths';
@@ -454,13 +456,33 @@ export const volume = {
 
 // ─── Homebrew installer ─────────────────────────────────────────
 
+/**
+ * Create a temporary askpass script that shows a native macOS password dialog.
+ * The Homebrew installer checks for SUDO_ASKPASS and passes -A to sudo when set.
+ */
+function createAskpassScript(): string {
+  const askpass = path.join(os.tmpdir(), `sulla-askpass-${ process.pid }.sh`);
+
+  fs.writeFileSync(askpass, `#!/bin/bash
+osascript -e 'display dialog "Sulla Desktop needs administrator access to install Homebrew." default answer "" with hidden answer buttons {"Cancel","OK"} default button "OK" with title "Sulla Desktop" with icon caution' -e 'text returned of result' 2>/dev/null
+`, { mode: 0o700 });
+
+  return askpass;
+}
+
 async function installHomebrew(onProgress?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
   log.info('Platform', 'Installing Homebrew via official installer...');
   onProgress?.('Homebrew not found — installing Homebrew (this may take a few minutes)...');
 
+  const askpass = createAskpassScript();
+
   return new Promise((resolve) => {
     const proc = spawn('/bin/bash', ['-c', 'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash'], {
-      env:   { ...CHILD_ENV, NONINTERACTIVE: '1' },
+      env: {
+        ...CHILD_ENV,
+        NONINTERACTIVE: '1',
+        SUDO_ASKPASS:   askpass,
+      },
       stdio: 'pipe',
     });
 
@@ -476,14 +498,20 @@ async function installHomebrew(onProgress?: (line: string) => void): Promise<{ o
       log.debug('Platform', 'homebrew-install stderr', { line });
     });
 
+    function cleanup() {
+      try { fs.unlinkSync(askpass); } catch { /* already gone */ }
+    }
+
     const timeout = setTimeout(() => {
       log.error('Platform', 'Homebrew install timed out');
       proc.kill();
+      cleanup();
       resolve({ ok: false, error: 'Homebrew installation timed out.' });
     }, 600000); // 10 min
 
     proc.on('close', (code) => {
       clearTimeout(timeout);
+      cleanup();
       if (code === 0) {
         log.info('Platform', 'Homebrew installed');
         resolve({ ok: true });
@@ -494,6 +522,7 @@ async function installHomebrew(onProgress?: (line: string) => void): Promise<{ o
 
     proc.on('error', (err) => {
       clearTimeout(timeout);
+      cleanup();
       resolve({ ok: false, error: `Failed to run Homebrew installer: ${ err.message }` });
     });
   });
