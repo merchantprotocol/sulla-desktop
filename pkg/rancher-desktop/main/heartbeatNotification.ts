@@ -23,8 +23,8 @@ let isExpanded = false;
 const AUTO_HIDE_MS = 15_000;
 const COLLAPSED_WIDTH = 360;
 const COLLAPSED_HEIGHT = 120;
-const EXPANDED_WIDTH = 480;
-const EXPANDED_HEIGHT = 400;
+const MAX_EXPANDED_WIDTH = 600;
+const MAX_EXPANDED_HEIGHT = 800;
 const MARGIN = 16;
 
 /**
@@ -64,7 +64,7 @@ export function showHeartbeatNotification(title: string, message: string): void 
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow:   true,
-    focusable:   false,
+    focusable:   true,
     webPreferences: {
       contextIsolation: false,
       nodeIntegration:  true,
@@ -97,33 +97,34 @@ export function showHeartbeatNotification(title: string, message: string): void 
     closeHeartbeatNotification();
   };
 
-  // IPC: expand — user clicked the notification
-  const onExpand = () => {
+  // IPC: expand — user clicked the notification, renderer sends content dimensions
+  const onExpand = (_event: any, dims?: { width: number; height: number }) => {
     if (!win || win.isDestroyed() || isExpanded) return;
 
     isExpanded = true;
     _clearAutoHide(); // Stay open until manually dismissed
 
-    // Make focusable so user can scroll/select text
-    win.setFocusable(true);
+    // Use content dimensions, capped to max
+    const expandW = Math.min(dims?.width || 420, MAX_EXPANDED_WIDTH);
+    const expandH = Math.min(dims?.height || 300, MAX_EXPANDED_HEIGHT);
 
-    // Resize and reposition (keep top-right anchor)
+    // Reposition to keep top-right anchor
     const cursorNow = screen.getCursorScreenPoint();
     const displayNow = screen.getDisplayNearestPoint(cursorNow);
     const workArea = displayNow.workArea;
-    const newX = workArea.x + workArea.width - EXPANDED_WIDTH - MARGIN;
+    const newX = workArea.x + workArea.width - expandW - MARGIN;
     const newY = workArea.y + MARGIN;
 
     win.setBounds({
       x:      newX,
       y:      newY,
-      width:  EXPANDED_WIDTH,
-      height: EXPANDED_HEIGHT,
+      width:  expandW,
+      height: expandH,
     }, true); // animate
 
     win.focus();
 
-    console.log('[HeartbeatNotification] Expanded');
+    console.log(`[HeartbeatNotification] Expanded to ${ expandW }x${ expandH }`);
   };
 
   ipcMain.on('heartbeat-notification-dismiss', onDismiss);

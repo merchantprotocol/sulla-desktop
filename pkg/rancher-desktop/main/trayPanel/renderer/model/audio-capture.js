@@ -306,16 +306,16 @@ function isRecording() {
   return mediaRecorder !== null && mediaRecorder.state === "recording";
 }
 
-// ─── Raw PCM capture (s16le, 16kHz, mono) ───────────────────
+// ─── Raw PCM capture (s16le, native sample rate, mono) ──────
 
-const PCM_SAMPLE_RATE = 16000;
 let pcmProcessor = null;
 let pcmCallback = null;
 
 /**
- * Start capturing raw PCM audio (s16le, 16kHz, mono) from the mic.
- * Uses a ScriptProcessorNode to capture float32 samples from the
- * mic source, downsample to 16kHz, and convert to Int16 LE.
+ * Start capturing raw PCM audio (s16le, native sample rate, mono) from the mic.
+ * Uses a ScriptProcessorNode to capture float32 samples and convert to Int16 LE.
+ * No downsampling — audio stays at the AudioContext's native rate (typically 48kHz)
+ * for maximum quality. Downstream consumers handle resampling if needed.
  *
  * Must be called after start(). Chunks are delivered as ArrayBuffer.
  *
@@ -330,38 +330,27 @@ function startPcmCapture(onChunk) {
 
   pcmCallback = onChunk;
 
-  // Use 4096 buffer for ~85ms chunks at 48kHz
+  // 480 samples = 10ms at 48kHz = exactly one RNNoise frame
   const bufferSize = 4096;
   pcmProcessor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
-
-  const inputRate = audioCtx.sampleRate;
-  const ratio = inputRate / PCM_SAMPLE_RATE;
 
   pcmProcessor.onaudioprocess = (e) => {
     if (!pcmCallback) return;
 
     const float32 = e.inputBuffer.getChannelData(0);
+    const int16 = new Int16Array(float32.length);
 
-    // Downsample from inputRate to 16kHz
-    const outputLen = Math.floor(float32.length / ratio);
-    const int16 = new Int16Array(outputLen);
-
-    for (let i = 0; i < outputLen; i++) {
-      const srcIdx = Math.floor(i * ratio);
-      // Clamp and convert float32 (-1..1) to Int16 (-32768..32767)
-      const s = Math.max(-1, Math.min(1, float32[srcIdx]));
+    for (let i = 0; i < float32.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32[i]));
       int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
     }
 
     pcmCallback(int16.buffer);
   };
 
-  // Connect: mic source → pcmProcessor → destination (required for processing)
+  // Connect: mic source → pcmProcessor → silent output
+  // ScriptProcessor requires connection to destination to fire
   const source = audioCtx.createMediaStreamSource(micStream);
-  source.connect(pcmProcessor);
-  pcmProcessor.connect(audioCtx.destination);
-  // Mute the output so we don't hear ourselves
-  // (ScriptProcessor requires connection to destination to fire)
   pcmProcessor._gainSilence = audioCtx.createGain();
   pcmProcessor._gainSilence.gain.value = 0;
   source.connect(pcmProcessor);
@@ -369,11 +358,16 @@ function startPcmCapture(onChunk) {
   pcmProcessor._gainSilence.connect(audioCtx.destination);
 
   log.info("AudioCapture", "PCM capture started", {
-    inputRate,
-    outputRate: PCM_SAMPLE_RATE,
-    ratio: ratio.toFixed(2),
+    sampleRate: audioCtx.sampleRate,
     bufferSize,
   });
+}
+
+/**
+ * Get the current AudioContext sample rate (for consumers that need to know).
+ */
+function getPcmSampleRate() {
+  return audioCtx ? audioCtx.sampleRate : 48000;
 }
 
 /**
@@ -396,4 +390,4 @@ function isPcmCapturing() {
   return pcmProcessor !== null;
 }
 
-module.exports = { start, stop, listDevices, getActiveDeviceId, setMicGain, setMicMuted, getAnalyser, startRecording, stopRecording, isRecording, startPcmCapture, stopPcmCapture, isPcmCapturing };
+module.exports = { start, stop, listDevices, getActiveDeviceId, setMicGain, setMicMuted, getAnalyser, startRecording, stopRecording, isRecording, startPcmCapture, stopPcmCapture, isPcmCapturing, getPcmSampleRate };

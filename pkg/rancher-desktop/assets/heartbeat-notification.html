@@ -18,7 +18,7 @@
       }
 
       body.expanded {
-        overflow: auto;
+        overflow: hidden;
         user-select: text;
       }
 
@@ -37,6 +37,7 @@
         overflow: hidden;
         cursor: pointer;
         transition: border-color 0.15s;
+        -webkit-app-region: no-drag;
       }
 
       .notification:hover {
@@ -45,7 +46,7 @@
 
       body.expanded .notification {
         cursor: default;
-        overflow: auto;
+        overflow: visible;
         max-height: none;
         flex-direction: column;
       }
@@ -120,6 +121,7 @@
         line-height: 1.55;
         word-break: break-word;
         -webkit-app-region: no-drag;
+        padding-top: 6px;
       }
 
       body.expanded .message-expanded {
@@ -273,8 +275,17 @@
 
         isExpanded = true;
         document.body.classList.add("expanded");
-        // Tell main process to resize and cancel auto-hide
-        ipcRenderer.send("heartbeat-notification-expand");
+
+        // Wait a frame for layout to settle, then measure content
+        requestAnimationFrame(() => {
+          const notif = document.getElementById("notification");
+          const contentHeight = notif.scrollHeight + 2; // +2 for border
+          const contentWidth = Math.max(notif.scrollWidth + 2, 420);
+          ipcRenderer.send("heartbeat-notification-expand", {
+            width: contentWidth,
+            height: contentHeight,
+          });
+        });
       });
 
       document.getElementById("dismiss-btn").addEventListener("click", () => {

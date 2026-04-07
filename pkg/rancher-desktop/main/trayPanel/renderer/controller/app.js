@@ -100,7 +100,7 @@ window.audioDriver.onStartMic(async (opts) => {
     }
 
     log.info("Controller", "Sending ackMicStarted to main process");
-    window.audioDriver.ackMicStarted(deviceInfo);
+    window.audioDriver.ackMicStarted({ ...deviceInfo, pcmSampleRate: audioCapture.getPcmSampleRate() });
   } catch (e) {
     log.error("Controller", "audioCapture.start() FAILED", { error: e.message, stack: e.stack });
     window.audioDriver.ackMicStarted(null);

@@ -175,6 +175,7 @@ export interface AgentGraphState extends BaseThreadState {
       tools?:        string[];         // allowlist of tool names
       integrations?: string[];  // allowlist of integration slugs (empty = none, ["*"] = all)
       prompt?:       string;          // compiled .md files, no variable substitution
+      excludeSoul?:  boolean;         // if true, skip the global soul prompt from settings
 
       // Execution outcomes (set during runtime)
       status?:               'done' | 'blocked' | 'continue' | 'in_progress';

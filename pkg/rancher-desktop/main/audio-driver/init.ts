@@ -56,10 +56,8 @@ function broadcast(channel: string, data: any): void {
 
 let initialized = false;
 
-// Test recording buffer
-let testRecordingActive = false;
-let testRecordingChunks: Buffer[] = [];
-const TEST_MAX_CHUNKS = 400;
+// Test recording is now handled by MicrophoneDriverController
+// (PCM-based, supports raw + noise-reduction modes)
 
 /**
  * Initialize the audio driver subsystem.
@@ -85,10 +83,23 @@ export function initialize(): void {
   });
 
   // Subscribe whisper to PCM stream from MicrophoneDriverController
-  // (PCM chunks are VAD-gated — only delivered when speaking)
+  // PCM chunks are VAD-gated and noise-processed.
+  // Audio is at native rate (48kHz). Whisper needs 16kHz — downsample here.
   const mic = MicrophoneDriverController.getInstance();
   mic.onPcmData((pcm: Buffer) => {
-    whisperTranscribe.feedMic(pcm);
+    const ratio = Math.round(mic.pcmSampleRate / 16000);
+    if (ratio <= 1) {
+      whisperTranscribe.feedMic(pcm);
+    } else {
+      // Downsample by picking every Nth sample
+      const inputSamples = pcm.length / 2;
+      const outputSamples = Math.floor(inputSamples / ratio);
+      const out = Buffer.alloc(outputSamples * 2);
+      for (let i = 0; i < outputSamples; i++) {
+        out.writeInt16LE(pcm.readInt16LE(i * ratio * 2), i * 2);
+      }
+      whisperTranscribe.feedMic(out);
+    }
   });
 
   micSocket.start((chunk: Buffer) => {
@@ -96,14 +107,6 @@ export function initialize(): void {
       // WebM/Opus chunks go to gateway (it decodes server-side)
       gateway.sendAudio(chunk, 0);
 
-      if (testRecordingActive) {
-        testRecordingChunks.push(Buffer.from(chunk));
-        if (testRecordingChunks.length >= TEST_MAX_CHUNKS) {
-          testRecordingActive = false;
-          log.info('Init', 'Test recording auto-stopped (max duration)');
-          broadcast('audio-driver:test-recording-stopped', { chunkCount: testRecordingChunks.length });
-        }
-      }
     }
   });
 
@@ -428,20 +431,16 @@ function registerIpcHandlers(): void {
 
   // ── Test recording ──────────────────────────────────────────────
 
-  ipcMain.handle('audio-driver:test-record-start', () => {
-    log.info('IPC', 'test-record-start');
-    testRecordingChunks = [];
-    testRecordingActive = true;
-    return { ok: true };
+  ipcMain.handle('audio-driver:test-record-start', (_event: unknown, mode?: string) => {
+    log.info('IPC', 'test-record-start', { mode });
+    mic.startTestRecording((mode as any) || 'raw');
+    return { ok: true, mode: mode || 'raw' };
   });
 
   ipcMain.handle('audio-driver:test-record-stop', () => {
-    log.info('IPC', 'test-record-stop', { chunks: testRecordingChunks.length });
-    testRecordingActive = false;
-    const combined = Buffer.concat(testRecordingChunks);
-    const result = { ok: true, audio: combined.buffer.slice(combined.byteOffset, combined.byteOffset + combined.byteLength), chunkCount: testRecordingChunks.length };
-    testRecordingChunks = [];
-    return result;
+    log.info('IPC', 'test-record-stop');
+    const result = mic.stopTestRecording();
+    return { ok: true, ...result };
   });
 
   // ── Logging relay ───────────────────────────────────────────────

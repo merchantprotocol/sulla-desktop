@@ -144,7 +144,7 @@
     <div v-if="statusMessage" class="status-toast">{{ statusMessage }}</div>
 
     <!-- Recording saved toast (top-right) -->
-    <div v-if="lastSessionDir && !recording && !playbackFile" class="recording-toast">
+    <div v-if="lastSessionDir && !recording && !playbackOpen" class="recording-toast">
       <div class="recording-toast-content">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         <div class="recording-toast-text">
@@ -165,18 +165,60 @@
       </div>
     </div>
 
-    <!-- Inline playback overlay -->
-    <div v-if="playbackFile" class="playback-overlay">
-      <video
-        ref="playbackVideoEl"
-        :src="'file://' + playbackFile"
-        controls
-        autoplay
-        style="width: 100%; height: 100%; object-fit: contain; background: #000;"
-      ></video>
-      <button class="playback-close-btn" @click="playbackFile = ''">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+    <!-- Tile-based playback overlay -->
+    <div v-if="playbackOpen" class="playback-overlay">
+      <div class="playback-header">
+        <span class="playback-title">Session Playback</span>
+        <div class="playback-header-actions">
+          <button class="playback-action-btn" @click="playAllStreams">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Play All
+          </button>
+          <button class="playback-action-btn" @click="pauseAllStreams">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            Pause All
+          </button>
+          <button class="playback-close-btn" @click="closePlayback">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="playback-grid">
+        <div
+          v-for="stream in playbackStreams"
+          :key="stream.id"
+          class="playback-tile"
+          :class="'tile-' + stream.type"
+        >
+          <div class="tile-label">
+            <span class="tile-dot" :style="{ background: tileColor(stream.type) }"></span>
+            <span>{{ tileName(stream) }}</span>
+          </div>
+          <div class="tile-media">
+            <video
+              v-if="stream.isVideo"
+              :ref="(el) => { if (el) playbackRefs[stream.id] = el as HTMLMediaElement; }"
+              :src="'file://' + stream.filePath"
+              controls
+              style="width: 100%; height: 100%; object-fit: contain; background: #000; border-radius: 6px;"
+            ></video>
+            <div v-else class="tile-audio-wrap">
+              <div class="tile-audio-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" :stroke="tileColor(stream.type)" stroke-width="1.5">
+                  <path v-if="stream.type === 'mic'" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path v-if="stream.type === 'mic'" d="M19 10v2a7 7 0 0 1-14 0v-2"/><line v-if="stream.type === 'mic'" x1="12" y1="19" x2="12" y2="23"/><line v-if="stream.type === 'mic'" x1="8" y1="23" x2="16" y2="23"/>
+                  <path v-if="stream.type === 'system-audio'" d="M11 5L6 9H2v6h4l5 4V5z"/><path v-if="stream.type === 'system-audio'" d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path v-if="stream.type === 'system-audio'" d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                </svg>
+              </div>
+              <audio
+                :ref="(el) => { if (el) playbackRefs[stream.id] = el as HTMLMediaElement; }"
+                :src="'file://' + stream.filePath"
+                controls
+                style="width: 100%;"
+              ></audio>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Flash overlay -->
@@ -232,8 +274,17 @@ const flashActive = ref(false);
 const addPopupOpen = ref(false);
 const statusMessage = ref('');
 const lastSessionDir = ref('');
-const playbackFile = ref('');
-const playbackVideoEl = ref<HTMLVideoElement | null>(null);
+interface PlaybackStream {
+  id: string;
+  type: string;
+  filename: string;
+  format: string;
+  filePath: string;
+  isVideo: boolean;
+}
+const playbackOpen = ref(false);
+const playbackStreams = ref<PlaybackStream[]>([]);
+const playbackRefs = ref<Record<string, HTMLMediaElement | null>>({});
 let sourceCounter = 0;
 
 const assign = reactive({ primary: 'screen', pip: 'cam' });
@@ -574,23 +625,93 @@ async function toggleRecord() {
 
 // ─── Screenshot ───
 // ─── Playback ───
+const TILE_COLORS: Record<string, string> = {
+  screen: '#58a6ff',
+  camera: '#5096b3',
+  mic: '#3fb950',
+  'system-audio': '#e3b341',
+};
+
+function tileColor(type: string): string {
+  return TILE_COLORS[type] || '#8b949e';
+}
+
+function tileName(stream: PlaybackStream): string {
+  const names: Record<string, string> = {
+    screen: 'Screen',
+    camera: 'Camera',
+    mic: 'Microphone',
+    'system-audio': 'System Audio',
+  };
+  return names[stream.type] || stream.id;
+}
+
 function startInlinePlayback() {
   if (!lastSessionDir.value) return;
   const fs = require('fs');
   const path = require('path');
 
   try {
-    const files = fs.readdirSync(lastSessionDir.value);
-    const videoFile = files.find((f: string) => f.endsWith('.webm') && (f.startsWith('screen') || f.startsWith('camera')));
-    const audioFile = files.find((f: string) => f.endsWith('.webm') || f.endsWith('.wav'));
-    const fileToPlay = videoFile || audioFile;
-    if (fileToPlay) {
-      playbackFile.value = path.join(lastSessionDir.value, fileToPlay);
-      console.log('[CaptureStudio] Inline playback:', playbackFile.value);
+    const manifestPath = path.join(lastSessionDir.value, 'manifest.json');
+    if (!fs.existsSync(manifestPath)) {
+      const files = fs.readdirSync(lastSessionDir.value);
+      const mediaFiles = files.filter((f: string) => f.endsWith('.webm') || f.endsWith('.wav'));
+      playbackStreams.value = mediaFiles.map((f: string) => {
+        const isVideo = f.startsWith('screen') || f.startsWith('camera');
+        const type = f.startsWith('screen') ? 'screen' : f.startsWith('camera') ? 'camera' : f.startsWith('mic') ? 'mic' : 'system-audio';
+        return {
+          id: f.replace(/\.\w+$/, ''),
+          type,
+          filename: f,
+          format: f.endsWith('.wav') ? 'wav' : 'webm',
+          filePath: path.join(lastSessionDir.value, f),
+          isVideo,
+        };
+      });
+    } else {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      playbackStreams.value = manifest.streams
+        .filter((s: any) => s.bytes > 0)
+        .map((s: any) => ({
+          id: s.id,
+          type: s.type,
+          filename: s.filename,
+          format: s.format,
+          filePath: path.join(lastSessionDir.value, s.filename),
+          isVideo: s.type === 'screen' || s.type === 'camera',
+        }));
+    }
+
+    if (playbackStreams.value.length > 0) {
+      playbackOpen.value = true;
+      playbackRefs.value = {};
+      console.log('[CaptureStudio] Tile playback opened with', playbackStreams.value.length, 'streams');
     }
   } catch (e: any) {
-    console.error('[CaptureStudio] Failed to find playback file:', e.message);
+    console.error('[CaptureStudio] Failed to open playback:', e.message);
   }
+}
+
+function playAllStreams() {
+  Object.values(playbackRefs.value).forEach(el => {
+    if (el) {
+      el.currentTime = 0;
+      el.play();
+    }
+  });
+}
+
+function pauseAllStreams() {
+  Object.values(playbackRefs.value).forEach(el => {
+    if (el) el.pause();
+  });
+}
+
+function closePlayback() {
+  pauseAllStreams();
+  playbackOpen.value = false;
+  playbackStreams.value = [];
+  playbackRefs.value = {};
 }
 
 function openSessionFolder() {
@@ -1924,21 +2045,96 @@ html, body {
 .playback-btn.dismiss:hover { color: var(--text-primary); }
 
 /* ═══════════════════════════════════════════════
-   INLINE PLAYBACK OVERLAY
+   TILE-BASED PLAYBACK OVERLAY
    ═══════════════════════════════════════════════ */
 .playback-overlay {
-  position: fixed; inset: 0; z-index: 100; background: #000;
-  display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.95);
+  display: flex; flex-direction: column; overflow: hidden;
 }
 
+.playback-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.playback-title {
+  font-size: 14px; font-weight: 600; color: #e6edf3; letter-spacing: 0.02em;
+}
+
+.playback-header-actions {
+  display: flex; align-items: center; gap: 8px;
+}
+
+.playback-action-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06); color: #e6edf3;
+  font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.12s;
+}
+.playback-action-btn:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.2); }
+
 .playback-close-btn {
-  position: absolute; top: 16px; right: 16px; z-index: 101;
   width: 36px; height: 36px; border-radius: 50%; border: none;
-  background: rgba(255,255,255,0.1); color: white; cursor: pointer;
+  background: rgba(255, 255, 255, 0.06); color: white; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.12s;
 }
-.playback-close-btn:hover { background: rgba(255,255,255,0.2); }
+.playback-close-btn:hover { background: rgba(255, 255, 255, 0.15); }
+
+.playback-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.playback-tile {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.playback-tile:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tile-label {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; font-size: 12px; font-weight: 500; color: #8b949e;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.tile-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
+.tile-media {
+  flex: 1; padding: 8px; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.tile-audio-wrap {
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+  width: 100%; padding: 24px 12px;
+}
+
+.tile-audio-icon {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.04);
+  display: flex; align-items: center; justify-content: center;
+}
+
+.tile-audio-wrap audio {
+  width: 100%; max-width: 320px; height: 36px;
+}
 
 .flash-overlay {
   position: fixed; inset: 0; background: white; opacity: 0;

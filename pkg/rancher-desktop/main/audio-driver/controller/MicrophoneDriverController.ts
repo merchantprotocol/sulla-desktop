@@ -38,6 +38,7 @@
 import { BrowserWindow, ipcMain, type WebContents } from 'electron';
 import * as audio from '../model/audio';
 import { log } from '../model/logger';
+import { AudioNoiseProcessor } from './AudioNoiseProcessor';
 
 // ── Singleton ───────────────────────────────────────────────────
 
@@ -57,6 +58,7 @@ export class MicrophoneDriverController {
 
   private _running = false;
   private _micName = '';
+  private _pcmSampleRate = 48000;
 
   /** Maps serviceId → holder info (sender WebContents + requested formats). */
   private _holders = new Map<string, { sender: WebContents | null; formats: string[] }>();
@@ -74,6 +76,10 @@ export class MicrophoneDriverController {
   private _variance = 0;
   private _pitch: number | null = null;
   private _centroid = 0;
+
+  // ── Noise processor ────────────────────────────────────────────
+
+  private _noiseProcessor: AudioNoiseProcessor | null = null;
 
   // ── ACK promise tracking ──────────────────────────────────────
 
@@ -124,12 +130,21 @@ export class MicrophoneDriverController {
       log.info(MicrophoneDriverController.TAG, 'Renderer ACK received', { deviceInfo });
       if (deviceInfo) {
         this._micName = deviceInfo.micName || '';
+        this._pcmSampleRate = deviceInfo.pcmSampleRate || 48000;
         audio.setDeviceNames(this._micName, deviceInfo.speakerName || '');
+        log.info(MicrophoneDriverController.TAG, 'PCM sample rate', { rate: this._pcmSampleRate });
       } else {
         log.warn(MicrophoneDriverController.TAG, 'Renderer returned null deviceInfo — mic may not have started');
       }
       this._running = true;
       this._persist();
+
+      // Init noise processor for gated audio paths
+      this._noiseProcessor = new AudioNoiseProcessor(this._pcmSampleRate);
+      this._noiseProcessor.init().catch((e: any) => {
+        log.warn(MicrophoneDriverController.TAG, 'Noise processor init failed (layers 2-3 may be degraded)', { error: e.message });
+      });
+
       log.info(MicrophoneDriverController.TAG, 'Mic pipeline started', { holders: [...this._holders.keys()], formats: neededFormats, micName: this._micName });
     } else {
       // Check if the new holder needs a format that isn't currently running
@@ -156,6 +171,13 @@ export class MicrophoneDriverController {
       this._running = false;
       this._resetVadState();
       this._persist();
+
+      // Dispose noise processor
+      if (this._noiseProcessor) {
+        this._noiseProcessor.dispose();
+        this._noiseProcessor = null;
+      }
+
       log.info(MicrophoneDriverController.TAG, 'Mic pipeline stopped');
     } else if (this._holders.size > 0) {
       log.info(MicrophoneDriverController.TAG, 'Mic still held by other services', { remaining: [...this._holders.keys()] });
@@ -169,6 +191,7 @@ export class MicrophoneDriverController {
   // Lifecycle
   get running(): boolean { return this._running; }
   get micName(): string { return this._micName; }
+  get pcmSampleRate(): number { return this._pcmSampleRate; }
   get holders(): string[] { return [...this._holders.keys()]; }
 
   // VAD (from audio driver pipeline)
@@ -390,10 +413,32 @@ export class MicrophoneDriverController {
       cb(chunk);
     }
 
-    // Gated callbacks only get audio when VAD says speaking
+    // Gated callbacks get noise-processed audio
+    // Process through all 4 layers (high-pass, RNNoise, spectral sub, crossfade)
+    const processed = this._noiseProcessor
+      ? this._noiseProcessor.process(chunk, this._speaking)
+      : (this._speaking ? chunk : Buffer.alloc(chunk.length));
+
     if (this._speaking) {
       for (const cb of this._pcmGatedCallbacks) {
-        cb(chunk);
+        cb(processed);
+      }
+    }
+
+    // Test recording buffers
+    if (this._testRecordingMode) {
+      const totalRaw = this._testRawChunks.reduce((s, b) => s + b.length, 0);
+      if (totalRaw < this._testMaxBytes) {
+        if (this._testRecordingMode === 'raw' || this._testRecordingMode === 'both') {
+          this._testRawChunks.push(Buffer.from(chunk));
+        }
+        if (this._testRecordingMode === 'noise-reduction' || this._testRecordingMode === 'both') {
+          // Use the noise-processed audio (with crossfade envelope for timeline)
+          this._testGatedChunks.push(Buffer.from(processed));
+        }
+      } else if (this._testRecordingMode) {
+        log.warn(MicrophoneDriverController.TAG, 'Test recording auto-stopped (30s max)');
+        this._testRecordingMode = null;
       }
     }
   }
@@ -419,6 +464,82 @@ export class MicrophoneDriverController {
     return () => {
       this._pcmRawCallbacks = this._pcmRawCallbacks.filter(c => c !== cb);
     };
+  }
+
+  // ── Test Recording (PCM → WAV) ─────────────────────────────────
+
+  private _testRecordingMode: 'raw' | 'noise-reduction' | 'both' | null = null;
+  private _testRawChunks: Buffer[] = [];
+  private _testGatedChunks: Buffer[] = [];
+  private _testMaxBytes = 16000 * 2 * 30; // 30 seconds max
+
+  /**
+   * Start buffering PCM for test recording.
+   * @param mode - 'raw' (all audio), 'noise-reduction' (speech only), 'both' (A/B comparison)
+   */
+  startTestRecording(mode: 'raw' | 'noise-reduction' | 'both' = 'raw'): void {
+    log.info(MicrophoneDriverController.TAG, 'startTestRecording', { mode });
+    this._testRecordingMode = mode;
+    this._testRawChunks = [];
+    this._testGatedChunks = [];
+  }
+
+  /**
+   * Stop buffering, wrap PCM in WAV headers, return playable audio.
+   */
+  stopTestRecording(): { raw?: ArrayBuffer; noiseReduced?: ArrayBuffer } | null {
+    const mode = this._testRecordingMode;
+    this._testRecordingMode = null;
+    log.info(MicrophoneDriverController.TAG, 'stopTestRecording', {
+      mode,
+      rawChunks: this._testRawChunks.length,
+      gatedChunks: this._testGatedChunks.length,
+    });
+
+    const result: { raw?: ArrayBuffer; noiseReduced?: ArrayBuffer } = {};
+
+    if ((mode === 'raw' || mode === 'both') && this._testRawChunks.length > 0) {
+      const wav = this._buildWav(Buffer.concat(this._testRawChunks));
+      result.raw = new Uint8Array(wav).buffer as ArrayBuffer;
+    }
+
+    if ((mode === 'noise-reduction' || mode === 'both') && this._testGatedChunks.length > 0) {
+      const wav = this._buildWav(Buffer.concat(this._testGatedChunks));
+      result.noiseReduced = new Uint8Array(wav).buffer as ArrayBuffer;
+    }
+
+    this._testRawChunks = [];
+    this._testGatedChunks = [];
+
+    return Object.keys(result).length > 0 ? result : null;
+  }
+
+  get testRecording(): boolean {
+    return this._testRecordingMode !== null;
+  }
+
+  /** Build a WAV file from raw PCM (s16le, mono, any sample rate). */
+  private _buildWav(pcm: Buffer): Buffer {
+    const header = Buffer.alloc(44);
+    const dataSize = pcm.length;
+    const sampleRate = this._pcmSampleRate;
+    const byteRate = sampleRate * 2; // mono * 16-bit
+
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + dataSize, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);       // fmt chunk size
+    header.writeUInt16LE(1, 20);        // PCM format
+    header.writeUInt16LE(1, 22);        // channels: mono
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(byteRate, 28);
+    header.writeUInt16LE(2, 32);        // block align
+    header.writeUInt16LE(16, 34);       // bits per sample
+    header.write('data', 36);
+    header.writeUInt32LE(dataSize, 40);
+
+    return Buffer.concat([header, pcm]);
   }
 
   // ── Private ───────────────────────────────────────────────────

@@ -26,28 +26,34 @@ async function buildChannelAwarenessPrompt(wsChannel: string): Promise<string> {
   }
 }
 
-const HEARTBEAT_PROMPT_DIRECTIVE = `## Tool Result Narration
+const HEARTBEAT_PROMPT_DIRECTIVE = `## Output Rules — CRITICAL
 
-After every tool call, briefly say what you found in your own words. This is how context survives across conversation cycles — your future self reads this to know what happened. For example:
-- "Found the config at /path/file.ts — db host is localhost:5432, pool size 10."
-- "file_search turned up 2 matches: 'sulla-recipes' (active) and 'sulla-voice' (completed)."
-- "3 modified files on feature/xyz: src/a.ts, src/b.ts, src/c.ts."
+Your text output triggers a desktop notification. The user does NOT want to see your thinking, reasoning, planning, or tool narration. They want terse status updates only.
 
-## Desktop Notifications — Use Sparingly
+**Your response text must be ONLY one of these:**
 
-Your text output triggers a desktop notification popup for the user. This can be interruptive, so be deliberate about when you produce visible output:
+1. **Picking up a project:**
+   Tell the user where the project stands, where it needs to go, and what your plan is.
+   Example:
+   > **Lead Generation** — Currently: scraper built but no enrichment pipeline. Goal: fully automated lead list with email verification. Plan: wire up the Clearbit integration, add email validation step, test with 50 leads.
 
-- **DO output** when you pick a project to work on (brief: project name + what you're about to do).
-- **DO output** when you make meaningful progress (brief snippet: what changed + current project state).
-- **DO NOT output** routine status, tool narration, or "thinking out loud" — that stays in the message thread but should not be your final response text.
-- **Blockers go in ACTIVE_PROJECTS.md**, not in notifications. Only notify the user of a blocker if it is truly urgent and requires immediate attention.
+2. **Made progress:**
+   Say what you did and what's next.
+   Example:
+   > **Lead Generation**: Wired up Clearbit enrichment, 50 test leads processed. Next: add email verification step.
+
+3. **No projects found:** "No active projects found."
+
+That's it. Nothing else in your response text. No thinking. No "let me check." No "I found 3 projects, let me evaluate." No narration of tool calls. Just the status.
+
+All detailed reasoning, tool results, and decision-making happen silently in your tool calls. Your final text response is the notification.
 
 ## ACTIVE_PROJECTS.md — Status Tracking
 
 After every cycle where you make progress or hit a blocker, update \`~/sulla/projects/ACTIVE_PROJECTS.md\`:
 
 - Record your current status for each project you touched: what you did, what's next, any blockers.
-- Blockers should be reported here rather than in desktop notifications — the user checks this file at their own pace.
+- Blockers go here, not in notifications — the user checks this file at their own pace.
 - Keep entries concise: project name, status (active/blocked/done), one-line summary, blocker details if any.
 
 ## Completion Wrappers
@@ -135,11 +141,18 @@ export class HeartbeatNode extends BaseNode {
     const wsChannel = String(state.metadata.wsChannel || 'heartbeat');
     const channelAwareness = await buildChannelAwarenessPrompt(wsChannel);
 
-    const baseSystemPrompt = `${ channelAwareness }\n\n${ HEARTBEAT_PROMPT_DIRECTIVE }\n\n${ HEARTBEAT_PROMPT_COMPLETION_WRAPPERS }`;
+    // Load the user-editable heartbeat prompt from language model settings
+    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+    const settingsHeartbeatPrompt = await SullaSettingsModel.get('heartbeatPrompt', '');
 
-    // Enrich with agent soul/identity from dreaming-protocol config.
-    // enrichPrompt loads ~/sulla/agents/dreaming-protocol/ or
-    // ~/sulla/resources/agents/dreaming-protocol/ .md files.
+    const baseSystemPrompt = [
+      channelAwareness,
+      settingsHeartbeatPrompt,
+      HEARTBEAT_PROMPT_DIRECTIVE,
+      HEARTBEAT_PROMPT_COMPLETION_WRAPPERS,
+    ].filter(s => s.trim()).join('\n\n');
+
+    // Enrich with global soul prompt + agent identity from dreaming-protocol config.
     const enrichedPrompt = await this.enrichPrompt(baseSystemPrompt, state, {
       includeSoul:        true,
       includeAwareness:   false,

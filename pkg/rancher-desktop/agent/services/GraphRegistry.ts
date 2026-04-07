@@ -104,11 +104,16 @@ Search \`~/sulla/projects/\` for all project directories.
 For each project found, read its PROJECT.md (the PRD).
 Include the full PRD content for every active (non-archived) project.
 
-### 2. Identity & Goals
+### 2. Project Briefing
+Read \`~/sulla/agents/sulla-desktop/projects.md\` — this is the daily planning briefing
+with the current mode (PROPOSE/FOCUS/UNBLOCK) and ranked project proposals.
+Include the full content.
+
+### 3. Identity & Goals
 Read \`~/sulla/identity/agent/goals.md\` and \`~/sulla/identity/human/goals.md\`.
 Include any active goals or priorities.
 
-### 3. Human Presence
+### 4. Human Presence
 Call \`get_human_presence\` to check if the human is available.
 Include their status.
 
@@ -770,6 +775,7 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
       tools:        parsed.tools || [],
       integrations: parsed.integrations || [],
       prompt:       sections.length > 0 ? sections.join('\n\n') : undefined,
+      excludeSoul:  parsed.excludeSoul === true,
     };
   } catch (err) {
     console.error(`[GraphRegistry] Failed to load agent config for ${ agentId }:`, err);

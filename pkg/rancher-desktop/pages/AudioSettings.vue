@@ -174,6 +174,49 @@
                 class="waveform-canvas"
                 height="64"
               />
+
+              <!-- Test recording controls -->
+              <div class="test-recording-section">
+                <div class="test-recording-header">
+                  <label class="toggle-label">
+                    <input
+                      v-model="micTestNoiseReduction"
+                      type="checkbox"
+                      :disabled="micTestRecording"
+                    />
+                    Enable background noise reduction
+                  </label>
+                </div>
+
+                <div class="mic-test-controls">
+                  <button
+                    class="action-btn"
+                    :class="{ 'btn-active-red': micTestRecording }"
+                    @click="toggleMicTestRecording"
+                  >
+                    {{ micTestRecording ? 'Stop Recording' : 'Record Test' }}
+                  </button>
+                  <span
+                    v-if="micTestRecording"
+                    class="recording-timer"
+                  >
+                    {{ micTestDuration }}
+                  </span>
+                </div>
+
+                <!-- Playback: shows whichever mode was recorded -->
+                <div
+                  v-if="micTestRawAudio || micTestReducedAudio"
+                  class="playback-row"
+                >
+                  <span class="playback-label">{{ micTestReducedAudio ? 'Noise-Reduced' : 'Raw Recording' }}</span>
+                  <audio
+                    :src="(micTestReducedAudio || micTestRawAudio) ?? undefined"
+                    controls
+                    class="playback-audio"
+                  />
+                </div>
+              </div>
             </div>
 
             <p
@@ -1188,11 +1231,71 @@ function onDriverState(_event: any, state: { running: boolean; micRunning?: bool
 
 async function toggleMicDriver() {
   if (micRunning.value) {
+    // Stop any active recording first
+    if (micTestRecording.value) {
+      await stopMicTestRecording();
+    }
     await ipc.invoke('audio-driver:stop-mic', 'audio-settings-test');
   } else {
-    await ipc.invoke('audio-driver:start-mic', 'audio-settings-test');
+    // Request both PCM formats so raw + gated are both available
+    await ipc.invoke('audio-driver:start-mic', 'audio-settings-test', ['pcm-s16le', 'pcm-s16le-raw']);
   }
   micRunning.value = !micRunning.value;
+}
+
+// ─── Mic test recording ─────────────────────────────────────────
+
+const micTestRecording = ref(false);
+const micTestNoiseReduction = ref(false);
+const micTestDuration = ref('0:00');
+const micTestRawAudio = ref<string | null>(null);
+const micTestReducedAudio = ref<string | null>(null);
+let micTestTimer: ReturnType<typeof setInterval> | null = null;
+let micTestSeconds = 0;
+
+async function startMicTestRecording() {
+  // Clear previous recordings
+  if (micTestRawAudio.value) { URL.revokeObjectURL(micTestRawAudio.value); micTestRawAudio.value = null; }
+  if (micTestReducedAudio.value) { URL.revokeObjectURL(micTestReducedAudio.value); micTestReducedAudio.value = null; }
+
+  const mode = micTestNoiseReduction.value ? 'noise-reduction' : 'raw';
+  console.log('[AudioSettings] Starting test recording', { mode });
+  await ipc.invoke('audio-driver:test-record-start', mode);
+  micTestRecording.value = true;
+  micTestSeconds = 0;
+  micTestDuration.value = '0:00';
+  micTestTimer = setInterval(() => {
+    micTestSeconds++;
+    const m = Math.floor(micTestSeconds / 60);
+    const s = micTestSeconds % 60;
+    micTestDuration.value = `${m}:${s.toString().padStart(2, '0')}`;
+  }, 1000);
+}
+
+async function stopMicTestRecording() {
+  if (micTestTimer) { clearInterval(micTestTimer); micTestTimer = null; }
+  micTestRecording.value = false;
+
+  console.log('[AudioSettings] Stopping test recording');
+  const result = await ipc.invoke('audio-driver:test-record-stop');
+  console.log('[AudioSettings] test-record-stop result', { hasRaw: !!result?.raw, hasReduced: !!result?.noiseReduced });
+
+  if (result?.raw) {
+    const blob = new Blob([result.raw], { type: 'audio/wav' });
+    micTestRawAudio.value = URL.createObjectURL(blob);
+  }
+  if (result?.noiseReduced) {
+    const blob = new Blob([result.noiseReduced], { type: 'audio/wav' });
+    micTestReducedAudio.value = URL.createObjectURL(blob);
+  }
+}
+
+function toggleMicTestRecording() {
+  if (micTestRecording.value) {
+    stopMicTestRecording();
+  } else {
+    startMicTestRecording();
+  }
 }
 
 const speakerTransitioning = ref(false);
@@ -2094,6 +2197,61 @@ onUnmounted(() => {
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.15);
   margin-top: 0.5rem;
+}
+
+.test-recording-section {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-default, var(--input-border));
+}
+
+.test-recording-header {
+  margin-bottom: 0.75rem;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--fs-body);
+  cursor: pointer;
+
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
+}
+
+.btn-active-red {
+  background: #ef4444 !important;
+  color: #fff !important;
+}
+
+.recording-timer {
+  font-size: var(--fs-body);
+  color: #ef4444;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.playback-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.playback-label {
+  font-size: var(--fs-body-sm, 0.75rem);
+  font-weight: 500;
+  min-width: 100px;
+  color: var(--text-secondary, #6b7280);
+}
+
+.playback-audio {
+  flex: 1;
+  height: 36px;
 }
 
 .pipeline-row {
