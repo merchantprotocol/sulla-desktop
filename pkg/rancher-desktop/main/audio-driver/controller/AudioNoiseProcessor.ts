@@ -84,6 +84,7 @@ export class AudioNoiseProcessor {
   private _sampleRate: number;
   private _fadeInSamples: number;
   private _fadeOutSamples: number;
+  private _holdDuration: number;
 
   // ── Layer 1: High-pass state ──────────────────────────────────
   private _hp: ReturnType<typeof computeHighPassCoeffs>;
@@ -95,7 +96,10 @@ export class AudioNoiseProcessor {
   private _rnnoiseState: number = 0; // pointer
   private _rnnoiseFramePtr: number = 0; // WASM heap pointer for frame data
   private _rnnoiseReady = false;
-  private _rnnoisePendingBuffer: Float32Array = new Float32Array(0);
+  // FIFO buffers: input accumulates raw samples, output stores processed samples.
+  // Output runs one frame behind input to ensure continuous processed audio.
+  private _rnnoiseInputFifo: number[] = [];
+  private _rnnoiseOutputFifo: number[] = [];
 
   // ── Layer 3: Noise profile state ──────────────────────────────
   private _noiseProfile: Float64Array = new Float64Array(FFT_SIZE / 2);
@@ -105,6 +109,7 @@ export class AudioNoiseProcessor {
   // ── Layer 4: Crossfade state ──────────────────────────────────
   private _envelope = 0; // 0 = silence, 1 = full volume
   private _wasSpeaking = false;
+  private _holdSamplesRemaining = 0; // hold envelope open through brief pauses
 
   // ── Init ──────────────────────────────────────────────────────
 
@@ -112,6 +117,7 @@ export class AudioNoiseProcessor {
     this._sampleRate = sampleRate;
     this._fadeInSamples = Math.round(sampleRate * 0.050);   // 50ms
     this._fadeOutSamples = Math.round(sampleRate * 0.150);  // 150ms
+    this._holdDuration = Math.round(sampleRate * 0.300);    // 300ms hold through brief pauses
     this._hp = computeHighPassCoeffs(HP_CUTOFF, sampleRate, HP_Q);
   }
 
@@ -154,26 +160,30 @@ export class AudioNoiseProcessor {
       floats[i] = chunk.readInt16LE(i * 2) / 32768;
     }
 
-    // Layer 1: High-pass filter
+    // ── ISOLATION MODE: all layers disabled to find clicking source ──
+    // Enable one at a time, rebuild, test recording.
+
+    // Layer 1: High-pass filter (80Hz — removes rumble)
     this._applyHighPass(floats);
 
-    // Layer 2: RNNoise — neural noise suppression
-    // Audio is now native 48kHz, matching RNNoise's expected frame size (480 samples = 10ms)
+    // Layer 2: RNNoise (neural noise suppression)
     if (this._rnnoiseReady) {
       this._applyRNNoise(floats);
     }
 
-    // Layer 3: Noise profile subtraction — DISABLED
-    // Needs proper overlap-add windowing (Hann window + 50% overlap) to
-    // avoid click artifacts at chunk boundaries. RNNoise handles broadband
-    // noise removal; this layer can be re-enabled once overlap-add is implemented.
-    // For now, just keep building the noise profile for future use.
-    if (!speaking) {
-      this._updateNoiseProfile(floats);
-    }
+    // Layer 3: Spectral subtraction — disabled pending overlap-add implementation
+    // if (!speaking) {
+    //   this._updateNoiseProfile(floats);
+    // }
 
     // Layer 4: Soft crossfade envelope
-    this._applyCrossfade(floats, speaking);
+    // DISABLED — isolating as click source
+    // this._applyCrossfade(floats, speaking);
+
+    // Simple gate: pass speech, zero silence (no envelope)
+    if (!speaking) {
+      floats.fill(0);
+    }
 
     // Convert back to s16le
     for (let i = 0; i < samples; i++) {
@@ -216,50 +226,44 @@ export class AudioNoiseProcessor {
   private _applyRNNoise(samples: Float64Array): void {
     if (!this._rnnoiseReady) return;
 
-    // Prepend leftover samples from previous chunk
-    const combined = new Float32Array(this._rnnoisePendingBuffer.length + samples.length);
-    combined.set(this._rnnoisePendingBuffer);
+    // Push all input samples into the input FIFO
     for (let i = 0; i < samples.length; i++) {
-      combined[this._rnnoisePendingBuffer.length + i] = samples[i];
+      this._rnnoiseInputFifo.push(samples[i]);
     }
 
-    // Process in 480-sample frames (10ms at 48kHz — native RNNoise frame size)
-    let pos = 0;
-    let outputPos = 0;
+    // Process complete 480-sample frames from the input FIFO
+    const heapF32 = this._rnnoiseModule.HEAPF32 as Float32Array;
+    const heapOffset = this._rnnoiseFramePtr / 4;
 
-    while (pos + RNNOISE_FRAME_SIZE <= combined.length) {
-      const heapF32 = this._rnnoiseModule.HEAPF32 as Float32Array;
-      const heapOffset = this._rnnoiseFramePtr / 4;
-
-      // Copy frame to WASM heap (scaled to int16 range for RNNoise)
+    while (this._rnnoiseInputFifo.length >= RNNOISE_FRAME_SIZE) {
+      // Copy frame to WASM heap (scaled to int16 range)
       for (let i = 0; i < RNNOISE_FRAME_SIZE; i++) {
-        heapF32[heapOffset + i] = combined[pos + i] * 32768;
+        heapF32[heapOffset + i] = this._rnnoiseInputFifo[i] * 32768;
       }
 
-      // Process in place
+      // Remove consumed samples from input FIFO
+      this._rnnoiseInputFifo.splice(0, RNNOISE_FRAME_SIZE);
+
+      // Process
       this._rnnoiseModule._rnnoise_process_frame(
         this._rnnoiseState,
         this._rnnoiseFramePtr,
         this._rnnoiseFramePtr,
       );
 
-      // Read back into combined buffer
+      // Push processed samples into output FIFO
       for (let i = 0; i < RNNOISE_FRAME_SIZE; i++) {
-        combined[pos + i] = heapF32[heapOffset + i] / 32768;
+        this._rnnoiseOutputFifo.push(heapF32[heapOffset + i] / 32768);
       }
-
-      pos += RNNOISE_FRAME_SIZE;
     }
 
-    // Copy processed samples back to output (skip the pending prefix)
-    const pendingLen = this._rnnoisePendingBuffer.length;
-    const processedForOutput = Math.min(samples.length, pos - pendingLen);
-    for (let i = 0; i < processedForOutput; i++) {
-      samples[i] = combined[pendingLen + i];
+    // Read exactly samples.length from the output FIFO
+    // (if not enough yet, pad with zeros — only happens on the very first chunk)
+    for (let i = 0; i < samples.length; i++) {
+      samples[i] = this._rnnoiseOutputFifo.length > 0
+        ? this._rnnoiseOutputFifo.shift()!
+        : 0;
     }
-
-    // Save remaining unprocessed samples for next chunk
-    this._rnnoisePendingBuffer = combined.slice(pos);
   }
 
   // ── Layer 3: Noise profile ────────────────────────────────────
@@ -343,25 +347,21 @@ export class AudioNoiseProcessor {
   // ── Layer 4: Soft crossfade ───────────────────────────────────
 
   private _applyCrossfade(samples: Float64Array, speaking: boolean): void {
-    if (speaking && !this._wasSpeaking) {
-      // Fade in
-      for (let i = 0; i < samples.length; i++) {
+    for (let i = 0; i < samples.length; i++) {
+      if (speaking) {
+        // Speaking — reset hold timer and fade in
+        this._holdSamplesRemaining = this._holdDuration;
         this._envelope = Math.min(1, this._envelope + 1 / this._fadeInSamples);
-        samples[i] *= this._envelope;
-      }
-    } else if (!speaking && this._wasSpeaking) {
-      // Fade out
-      for (let i = 0; i < samples.length; i++) {
+      } else if (this._holdSamplesRemaining > 0) {
+        // Brief pause — hold envelope open (prevents clicks between words)
+        this._holdSamplesRemaining--;
+        // Keep envelope at current level (don't fade, don't boost)
+      } else if (this._envelope > 0) {
+        // Hold expired — fade out
         this._envelope = Math.max(0, this._envelope - 1 / this._fadeOutSamples);
-        samples[i] *= this._envelope;
       }
-    } else if (!speaking) {
-      // Silence
-      this._envelope = 0;
-      samples.fill(0);
-    } else {
-      // Sustained speech
-      this._envelope = 1;
+
+      samples[i] *= this._envelope;
     }
 
     this._wasSpeaking = speaking;

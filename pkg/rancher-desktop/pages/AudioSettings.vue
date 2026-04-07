@@ -178,14 +178,17 @@
               <!-- Test recording controls -->
               <div class="test-recording-section">
                 <div class="test-recording-header">
-                  <label class="toggle-label">
-                    <input
-                      v-model="micTestNoiseReduction"
-                      type="checkbox"
-                      :disabled="micTestRecording"
-                    />
-                    Enable background noise reduction
-                  </label>
+                  <select
+                    v-model="micTestMode"
+                    class="setting-select"
+                    :disabled="micTestRecording"
+                  >
+                    <option value="raw">Studio Quality — Raw (ASMR)</option>
+                    <option value="noise-reduction">Studio Quality — Voice (Noise Reduction)</option>
+                    <option value="voice-compressed">Studio Quality — Voice + Compression</option>
+                    <option value="streaming">Compressed — Streaming</option>
+                    <option value="streaming-voice">Compressed — Voice (Streaming)</option>
+                  </select>
                 </div>
 
                 <div class="mic-test-controls">
@@ -204,14 +207,14 @@
                   </span>
                 </div>
 
-                <!-- Playback: shows whichever mode was recorded -->
+                <!-- Playback -->
                 <div
-                  v-if="micTestRawAudio || micTestReducedAudio"
+                  v-if="micTestAudioUrl"
                   class="playback-row"
                 >
-                  <span class="playback-label">{{ micTestReducedAudio ? 'Noise-Reduced' : 'Raw Recording' }}</span>
+                  <span class="playback-label">{{ micTestModeLabel }}</span>
                   <audio
-                    :src="(micTestReducedAudio || micTestRawAudio) ?? undefined"
+                    :src="micTestAudioUrl"
                     controls
                     class="playback-audio"
                   />
@@ -1245,21 +1248,43 @@ async function toggleMicDriver() {
 
 // ─── Mic test recording ─────────────────────────────────────────
 
+const MIC_TEST_MODES = {
+  'raw':              'Studio Quality — Raw (ASMR)',
+  'noise-reduction':  'Studio Quality — Voice (Noise Reduction)',
+  'voice-compressed': 'Studio Quality — Voice + Compression',
+  'streaming':        'Compressed — Streaming',
+  'streaming-voice':  'Compressed — Voice (Streaming)',
+} as const;
+
+type MicTestModeKey = keyof typeof MIC_TEST_MODES;
+
+const micTestMode = ref<MicTestModeKey>('raw');
 const micTestRecording = ref(false);
-const micTestNoiseReduction = ref(false);
 const micTestDuration = ref('0:00');
-const micTestRawAudio = ref<string | null>(null);
-const micTestReducedAudio = ref<string | null>(null);
+const micTestAudioUrl = ref<string | null>(null);
+const micTestModeLabel = ref('');
 let micTestTimer: ReturnType<typeof setInterval> | null = null;
 let micTestSeconds = 0;
 
-async function startMicTestRecording() {
-  // Clear previous recordings
-  if (micTestRawAudio.value) { URL.revokeObjectURL(micTestRawAudio.value); micTestRawAudio.value = null; }
-  if (micTestReducedAudio.value) { URL.revokeObjectURL(micTestReducedAudio.value); micTestReducedAudio.value = null; }
+/** Map UI mode to the controller recording mode */
+function getRecordingMode(mode: MicTestModeKey): string {
+  switch (mode) {
+  case 'raw':              return 'raw';
+  case 'noise-reduction':  return 'noise-reduction';
+  case 'voice-compressed': return 'noise-reduction'; // same PCM path, compression applied later
+  case 'streaming':        return 'raw';             // TODO: WebM/Opus path
+  case 'streaming-voice':  return 'noise-reduction'; // TODO: WebM/Opus + noise reduction
+  default:                 return 'raw';
+  }
+}
 
-  const mode = micTestNoiseReduction.value ? 'noise-reduction' : 'raw';
-  console.log('[AudioSettings] Starting test recording', { mode });
+async function startMicTestRecording() {
+  // Clear previous
+  if (micTestAudioUrl.value) { URL.revokeObjectURL(micTestAudioUrl.value); micTestAudioUrl.value = null; }
+
+  const mode = getRecordingMode(micTestMode.value);
+  micTestModeLabel.value = MIC_TEST_MODES[micTestMode.value];
+  console.log('[AudioSettings] Starting test recording', { uiMode: micTestMode.value, recordMode: mode });
   await ipc.invoke('audio-driver:test-record-start', mode);
   micTestRecording.value = true;
   micTestSeconds = 0;
@@ -1280,13 +1305,11 @@ async function stopMicTestRecording() {
   const result = await ipc.invoke('audio-driver:test-record-stop');
   console.log('[AudioSettings] test-record-stop result', { hasRaw: !!result?.raw, hasReduced: !!result?.noiseReduced });
 
-  if (result?.raw) {
-    const blob = new Blob([result.raw], { type: 'audio/wav' });
-    micTestRawAudio.value = URL.createObjectURL(blob);
-  }
-  if (result?.noiseReduced) {
-    const blob = new Blob([result.noiseReduced], { type: 'audio/wav' });
-    micTestReducedAudio.value = URL.createObjectURL(blob);
+  // Pick the right audio based on mode
+  const audioData = result?.noiseReduced || result?.raw;
+  if (audioData) {
+    const blob = new Blob([audioData], { type: 'audio/wav' });
+    micTestAudioUrl.value = URL.createObjectURL(blob);
   }
 }
 
