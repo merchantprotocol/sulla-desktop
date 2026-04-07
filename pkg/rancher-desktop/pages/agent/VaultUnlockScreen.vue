@@ -1,5 +1,6 @@
 <template>
   <div class="vault-unlock-screen">
+    <WindowDragLogo :size="20" class="vault-drag-logo" />
     <div class="vault-unlock-card">
       <!-- Lock icon -->
       <div class="vault-unlock-icon">
@@ -88,6 +89,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick } from 'vue';
+import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 
 const emit = defineEmits<{
@@ -159,6 +161,13 @@ function toggleMode() {
   background: var(--bg-page, #0d1117);
   /* Allow window drag on the background */
   -webkit-app-region: drag;
+}
+
+.vault-drag-logo {
+  position: fixed;
+  top: 10px;
+  left: 80px;
+  z-index: 100000;
 }
 
 .vault-unlock-card {

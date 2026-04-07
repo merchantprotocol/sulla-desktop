@@ -167,11 +167,11 @@ Uses `node-schedule` to fire calendar events at their scheduled times. When an e
 
 Probes `ws://localhost:30118/` during app startup. A successful WebSocket connection means the Kubernetes services are running and the startup overlay can be dismissed.
 
-### send_channel_message Tool
+### send_notification_to_human Tool
 
-**File:** `pkg/rancher-desktop/agent/tools/bridge/send_channel_message.ts`
+**File:** `pkg/rancher-desktop/agent/tools/bridge/send_notification_to_human.ts`
 
-An agent tool that lets any AI agent send a `user_message` to any other channel. The tool optionally waits up to 5 seconds for a reply on the sender's channel before returning. This enables inter-agent communication -- agents can collaborate by sending messages to each other's channels.
+An agent tool that displays a desktop notification popup to the human. The notification persists on-screen for 5 minutes past any mouse or keyboard activity, ensuring important messages are not missed.
 
 ## Health Monitoring
 
