@@ -34,6 +34,19 @@ interface ExternalStreamEntry {
   getBytesWritten: () => number;
 }
 
+export interface CaptureEvent {
+  type: 'click' | 'keystroke' | 'window-focus' | 'scroll';
+  time: number; // ms since session start
+  x?: number;
+  y?: number;
+  button?: string;
+  key?: string;
+  label?: string;
+  app?: string;
+  title?: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+}
+
 function getCapturesDir(): string {
   return path.join(os.homedir(), 'sulla', 'captures');
 }
@@ -78,6 +91,7 @@ export function useRecorder() {
   let sessionDir = '';
   let entries: StreamEntry[] = [];
   let externalEntries: ExternalStreamEntry[] = [];
+  let captureEvents: CaptureEvent[] = [];
   let timerInterval: ReturnType<typeof setInterval> | null = null;
   let sessionStartTime = 0;
 
@@ -194,6 +208,7 @@ export function useRecorder() {
     isRecording.value = true;
     elapsedSeconds.value = 0;
     externalEntries = [];
+    captureEvents = [];
     timerInterval = setInterval(() => { elapsedSeconds.value++; }, 1000);
 
     return id;
@@ -214,6 +229,18 @@ export function useRecorder() {
       ...entry,
       startOffset: performance.now() - sessionStartTime,
     });
+  }
+
+  /**
+   * Log an interaction event with timestamp relative to session start.
+   * Events are written to the manifest for post-production use.
+   */
+  function logEvent(event: Omit<CaptureEvent, 'time'>): void {
+    if (!isRecording.value) return;
+    captureEvents.push({
+      ...event,
+      time: Math.round(performance.now() - sessionStartTime),
+    } as CaptureEvent);
   }
 
   /**
@@ -306,6 +333,7 @@ export function useRecorder() {
       duration: elapsedSeconds.value,
       totalBytes,
       streams: allStreams,
+      events: captureEvents,
     };
 
     try {
@@ -337,6 +365,7 @@ export function useRecorder() {
     startSession,
     stopSession,
     registerExternalStream,
+    logEvent,
     getSessionDir,
   };
 }

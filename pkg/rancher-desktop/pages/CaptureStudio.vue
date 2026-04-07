@@ -237,6 +237,7 @@ import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-s
 import { useSettings } from './capture-studio/composables/useSettings';
 import { useDiskSpace } from './capture-studio/composables/useDiskSpace';
 import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
+import { useInputEventTracker } from './capture-studio/composables/useInputEventTracker';
 
 import ContextMenu from './capture-studio/ContextMenu.vue';
 import LayoutBar from './capture-studio/LayoutBar.vue';
@@ -254,6 +255,7 @@ const { shell } = require('electron');
 const audioDriver = useAudioDriver();
 const mediaSources = useMediaSources();
 const recorder = useRecorder();
+const inputTracker = useInputEventTracker(recorder.logEvent);
 const settings = useSettings();
 const diskSpace = useDiskSpace();
 const speakerCapture = useSpeakerCapture();
@@ -321,6 +323,9 @@ const MIC_QUALITY_MODES = [
   { id: 'streaming-voice',  label: 'Compressed — Voice' },
 ] as const;
 const micQualityMode = ref('raw');
+
+// ── Active window tracking (records full screen + logs window bounds) ──
+const activeWindowTracking = ref(false);
 
 const iconMap: Record<string, string> = {
   screen: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
@@ -599,6 +604,9 @@ async function toggleRecord() {
 
     recording.value = true;
 
+    // Start event tracking (mouse clicks, keystrokes, window focus)
+    inputTracker.startTracking();
+
     // Start disk space monitoring
     diskSpace.startMonitoring(() => {
       // Critical: auto-stop recording — guard against infinite recursion
@@ -610,7 +618,8 @@ async function toggleRecord() {
   } else {
     // Capture session dir BEFORE stopSession clears it
     const capturedSessionDir = recorder.getSessionDir();
-    // Stop speaker capture
+    // Stop event tracking + speaker capture
+    inputTracker.stopTracking();
     speakerCapture.stop();
     await recorder.stopSession();
     lastSessionDir.value = capturedSessionDir;
@@ -930,9 +939,26 @@ async function showScreenContextMenu(e: MouseEvent) {
       ['4k', '1080p', '720p', '480p'], 'Auto (native)',
     );
 
+    const trackingChildren: CtxMenuItem[] = [
+      {
+        id: 'track-off',
+        label: 'Full Screen (no tracking)',
+        active: !activeWindowTracking.value,
+        action: () => { activeWindowTracking.value = false; },
+      },
+      {
+        id: 'track-active',
+        label: 'Active Window (auto-zoom in editor)',
+        active: activeWindowTracking.value,
+        action: () => { activeWindowTracking.value = true; },
+      },
+    ];
+
     ctxMenu.items = [
       { id: 'sub-sources', label: 'Sources', children: sourceChildren, action: () => {} },
       { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
+      { id: 'divider-tracking', label: '', divider: true, action: () => {} },
+      { id: 'sub-tracking', label: 'Focus Tracking', children: trackingChildren, action: () => {} },
     ];
     ctxMenu.title = 'Screen';
     ctxMenu.x = e.clientX;

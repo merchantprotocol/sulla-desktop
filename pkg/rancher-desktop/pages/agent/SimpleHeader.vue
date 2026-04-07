@@ -99,9 +99,16 @@ const logoDarkUrl = new URL('../../../../resources/icons/logo-sulla-desktop-dark
 
 <style lang="scss" scoped>
 .sh-header {
+  -webkit-app-region: drag;
+  app-region: drag;
   background: var(--bg-header, var(--body-bg, #ffffff));
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border-default, var(--header-border, #e5e7eb));
+
+  button {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
 }
 
 .sh-theme-toggle {

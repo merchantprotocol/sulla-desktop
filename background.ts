@@ -9,6 +9,7 @@ import _ from 'lodash';
 import semver from 'semver';
 
 import * as audioDriver from '@pkg/main/audio-driver/init';
+import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
 
 import { State } from '@pkg/backend/backend';
 import BackendHelper from '@pkg/backend/backendHelper';
@@ -675,6 +676,8 @@ async function initUI() {
   try {
     audioDriver.initialize();
     console.log('[Audio Driver] Initialized');
+    registerCaptureStudioTracking();
+    console.log('[Capture Studio] Tracking IPC registered');
   } catch (err) {
     console.error('[Audio Driver] Failed to initialize:', err);
   }
