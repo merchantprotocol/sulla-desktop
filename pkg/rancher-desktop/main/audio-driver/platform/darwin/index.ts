@@ -598,23 +598,40 @@ export const whisper = {
         stdio: 'pipe',
       });
 
+      // Use an activity-based timeout: reset the timer whenever brew produces
+      // output, so long-running source builds (e.g. cmake) don't get killed
+      // while they are still actively compiling.
+      const IDLE_TIMEOUT = 600000; // 10 min of *silence* before we give up
+      let timeout = setTimeout(onTimeout, IDLE_TIMEOUT);
+
+      function resetTimeout() {
+        clearTimeout(timeout);
+        timeout = setTimeout(onTimeout, IDLE_TIMEOUT);
+      }
+
+      function onTimeout() {
+        log.error('Platform', 'whisper-cpp install timed out (no output for 10 minutes)');
+        proc.kill();
+        resolve({
+          ok:    false,
+          error: 'Installation timed out — Homebrew produced no output for 10 minutes. '
+               + "Try running 'brew install whisper-cpp' in Terminal instead.",
+        });
+      }
+
       proc.stdout?.on('data', (data: Buffer) => {
         const line = data.toString().trim();
         if (line && onProgress) onProgress(line);
         log.debug('Platform', 'brew stdout', { line });
+        resetTimeout();
       });
 
       proc.stderr?.on('data', (data: Buffer) => {
         const line = data.toString().trim();
         if (line && onProgress) onProgress(line);
         log.debug('Platform', 'brew stderr', { line });
+        resetTimeout();
       });
-
-      const timeout = setTimeout(() => {
-        log.error('Platform', 'whisper-cpp install timed out');
-        proc.kill();
-        resolve({ ok: false, error: 'Installation timed out after 5 minutes.' });
-      }, 300000); // 5 min timeout
 
       proc.on('close', async(code) => {
         clearTimeout(timeout);
@@ -630,7 +647,7 @@ export const whisper = {
             resolve({ ok: false, error });
           }
         } else {
-          const error = `Homebrew install exited with code ${ code }. Run 'brew install whisper-cpp' in Terminal for details.`;
+          const error = `Homebrew install failed (exit code ${ code }). Try running 'brew install whisper-cpp' in Terminal for details.`;
           log.error('Platform', 'Failed to install whisper-cpp', { exitCode: code });
           resolve({ ok: false, error });
         }

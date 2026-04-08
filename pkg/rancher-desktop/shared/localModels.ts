@@ -63,6 +63,14 @@ export const LOCAL_MODELS: LocalModelOption[] = [
     description: "Google's Gemma 4 26B MoE \u2014 only 3.8B params active, runs like a 4B at frontier quality",
   },
   {
+    name:        'glm-4.7-flash',
+    displayName: 'GLM-4.7 Flash',
+    size:        '18.3GB',
+    minMemoryGB: 20,
+    minCPUs:     4,
+    description: "Z.AI's GLM-4.7 Flash \u2014 30B MoE (3B active), best-in-class SWE-Bench & GPQA, 200K context",
+  },
+  {
     name:        'foundation-sec-8b-abliterated',
     displayName: 'Foundation-Sec 8B Abliterated',
     size:        '5.0GB',

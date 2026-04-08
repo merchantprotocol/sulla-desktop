@@ -243,6 +243,16 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Eric Hartford's Dolphin 3.0 — uncensored Llama 3.1 8B, the OG unrestricted model",
   },
+  'glm-4.7-flash': {
+    displayName: 'GLM-4.7 Flash',
+    filename:    'GLM-4.7-Flash-Q4_K_M.gguf',
+    url:         'https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-Q4_K_M.gguf',
+    size:        '18.3GB',
+    sizeBytes:   18_300_000_000,
+    minMemoryGB: 20,
+    minCPUs:     4,
+    description: "Z.AI's GLM-4.7 Flash — 30B MoE (3B active), best-in-class SWE-Bench & GPQA, 200K context",
+  },
 };
 
 /**
