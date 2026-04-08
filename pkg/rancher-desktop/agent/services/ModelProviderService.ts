@@ -64,7 +64,7 @@ class ModelProviderService {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    // Load persisted state
+    // Load persisted state (requires DB to be ready — caller must ensure this)
     await this.loadStateFromDB();
 
     // Register IPC handlers
@@ -72,6 +72,10 @@ class ModelProviderService {
 
     this.initialized = true;
     console.log('[ModelProviderService] Initialized:', JSON.stringify(this.state));
+
+    // Broadcast to any windows that opened before the service was ready,
+    // so they pick up the correct DB-backed state instead of stale fallback data.
+    await this.broadcastChange();
   }
 
   // ── Getters (synchronous — read from in-memory state) ──────────
