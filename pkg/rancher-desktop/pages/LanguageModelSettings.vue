@@ -26,7 +26,7 @@ const navItems = [
   { id: 'heartbeat', name: 'Heartbeat' },
 ];
 
-// Ollama models sorted by resource requirements (smallest to largest)
+// llama.cpp models sorted by resource requirements (smallest to largest)
 const OLLAMA_MODELS = [
   {
     name: 'qwen2:0.5b', displayName: 'Qwen2 0.5B', size: '377MB', minMemoryGB: 1, minCPUs: 1, description: 'Alibaba\'s compact Qwen2 model, very lightweight',
@@ -147,10 +147,10 @@ export default defineComponent({
       modelLoadError:        '' as string,
       remoteRetryCount:      3, // Number of retries before falling back to local LLM
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
-      // Local Ollama settings
-      localTimeoutSeconds:   120, // Local Ollama timeout limit in seconds
-      localRetryCount:       2, // Number of retries for local Ollama
-      // Ollama model status tracking
+      // Local llama.cpp settings
+      localTimeoutSeconds:   120, // Local llama.cpp timeout limit in seconds
+      localRetryCount:       2, // Number of retries for local llama.cpp
+      // Model status tracking
       modelStatuses:         {} as Record<string, 'installed' | 'missing' | 'failed'>,
       checkingModelStatuses: false,
       // Heartbeat settings
@@ -171,7 +171,7 @@ export default defineComponent({
       // Primary / Secondary provider selection
       primaryProvider:      'ollama' as string,
       secondaryProvider:    'ollama' as string,
-      availableProviders:   [{ id: 'ollama', name: 'Ollama (Local)' }] as { id: string; name: string }[],
+      availableProviders:   [{ id: 'ollama', name: 'llama.cpp (Local)' }] as { id: string; name: string }[],
 
       // Activation state
       activating:           false,
@@ -340,7 +340,7 @@ export default defineComponent({
 
       const EXCLUDED_IDS = ['activepieces'];
       const providers: { id: string; name: string }[] = [
-        { id: 'ollama', name: 'Ollama (Local)' },
+        { id: 'ollama', name: 'llama.cpp (Local)' },
       ];
 
       for (const integration of Object.values(integrations)) {
@@ -570,7 +570,7 @@ export default defineComponent({
 
     async fetchContainerStats() {
       try {
-        // Query Ollama API for service status and running models
+        // Query llama.cpp API for service status and running models
         const [tagsRes, psRes] = await Promise.all([
           this.silentFetch('http://127.0.0.1:30114/api/tags', { signal: AbortSignal.timeout(3000) }),
           this.silentFetch('http://127.0.0.1:30114/api/ps', { signal: AbortSignal.timeout(3000) }),
@@ -619,7 +619,7 @@ export default defineComponent({
           }
         }
       } catch (err) {
-        console.warn('[LM Settings] Failed to fetch Ollama stats:', err);
+        console.warn('[LM Settings] Failed to fetch llama.cpp stats:', err);
         this.containerStats.status = 'error';
       }
     },
@@ -810,13 +810,13 @@ export default defineComponent({
       this.activationError = '';
 
       try {
-        // Check if Ollama is running
+        // Check if llama.cpp is running
         const ollamaRes = await this.silentFetch('http://127.0.0.1:30114/api/tags', {
           signal: AbortSignal.timeout(5000),
         });
 
         if (!ollamaRes?.ok) {
-          this.activationError = 'Cannot connect to Ollama. Make sure the service is running.';
+          this.activationError = 'Cannot connect to llama.cpp. Make sure the service is running.';
 
           return;
         }
@@ -840,7 +840,7 @@ export default defineComponent({
         // Emit event for other windows to update
         ipcRenderer.send('model-changed', { model: this.pendingModel, type: 'local' });
       } catch (err) {
-        this.activationError = 'Failed to connect to Ollama. Is the service running?';
+        this.activationError = 'Failed to connect to llama.cpp. Is the service running?';
         console.error('Failed to activate local model:', err);
       } finally {
         this.activating = false;
@@ -978,9 +978,10 @@ export default defineComponent({
 
     async toggleLocalServer() {
       this.togglingLocalServer = true;
+      this.activationError = '';
       try {
         if (this.localServerEnabled) {
-          // Disable — stop the server and save preference
+          // Disable — stop the server, then save preference
           await ipcRenderer.invoke('llama-server:stop');
           await SullaSettingsModel.set('modelMode', 'remote');
           this.localServerEnabled = false;
@@ -988,17 +989,27 @@ export default defineComponent({
           this.activeMode = 'remote';
           console.log('[LM Settings] Local model server disabled');
         } else {
-          // Enable — start the server and save preference
+          // Enable — start the server first, only persist on success
+          const result = await ipcRenderer.invoke('llama-server:start');
+
+          if (!result?.running) {
+            this.activationError = result?.error
+              ? `Local model server failed: ${ result.error }`
+              : 'Local model server failed to start.';
+
+            return;
+          }
           await SullaSettingsModel.set('modelMode', 'local');
-          await ipcRenderer.invoke('llama-server:start');
           this.localServerEnabled = true;
           this.localServerRunning = true;
           this.activeMode = 'local';
           console.log('[LM Settings] Local model server enabled');
         }
-      } catch (err) {
-        console.error('[LM Settings] Failed to toggle local server:', err);
-        this.activationError = `Failed to ${ this.localServerEnabled ? 'stop' : 'start' } local model server.`;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+
+        console.error('[LM Settings] Failed to toggle local server:', msg);
+        this.activationError = `Failed to ${ this.localServerEnabled ? 'stop' : 'start' } local model server: ${ msg }`;
       } finally {
         this.togglingLocalServer = false;
       }
@@ -1007,7 +1018,7 @@ export default defineComponent({
     async checkModelStatuses() {
       this.checkingModelStatuses = true;
       try {
-        // Ollama availability already checked in loadModels(), proceed with model checks
+        // Server availability already checked in loadModels(), proceed with model checks
 
         // Check status of key models by checking against installed models list
         const keyModels = ['nomic-embed-text', this.activeModel].filter((model, index, arr) => arr.indexOf(model) === index);
@@ -1283,9 +1294,9 @@ export default defineComponent({
           v-if="currentNav === 'overview'"
           class="tab-content"
         >
-          <h2>Ollama Container Status</h2>
+          <h2>Local Model Server Status</h2>
           <p class="description">
-            Monitor the resource usage of your local Ollama container.
+            Monitor the resource usage of your local llama.cpp server.
           </p>
 
           <!-- Status Badge -->
@@ -1361,13 +1372,13 @@ export default defineComponent({
             class="not-running-message mb-10"
           >
             <p v-if="containerStats.status === 'offline'">
-              Ollama service is offline. Make sure it's running on port 30114.
+              llama.cpp server is offline. Make sure it's running on port 30114.
             </p>
             <p v-else-if="containerStats.status === 'error'">
-              Unable to connect to Ollama service.
+              Unable to connect to llama.cpp server.
             </p>
             <p v-else>
-              Checking Ollama status...
+              Checking llama.cpp status...
             </p>
           </div>
 
@@ -1376,7 +1387,7 @@ export default defineComponent({
             <h3>Active Configuration</h3>
             <div class="config-item">
               <span class="config-label">Mode:</span>
-              <span class="config-value">{{ activeMode === 'local' ? 'Local (Ollama)' : 'Remote (API)' }}</span>
+              <span class="config-value">{{ activeMode === 'local' ? 'Local (llama.cpp)' : 'Remote (API)' }}</span>
             </div>
             <div
               v-if="activeMode === 'local'"
@@ -1482,7 +1493,7 @@ export default defineComponent({
             class="info-box"
           >
             <p>
-              Only Ollama (local) is available. To add remote providers, go to
+              Only llama.cpp (local) is available. To add remote providers, go to
               <strong>Integrations</strong> and configure an AI provider (e.g. Grok, OpenAI, Anthropic).
             </p>
           </div>
@@ -1675,12 +1686,6 @@ export default defineComponent({
             </p>
           </div>
 
-          <div class="form-group">
-            <p class="setting-description">
-              Soul and heartbeat prompts are now managed via agent config files in <code>~/sulla/agents/</code>.
-              Drop a <code>soul.md</code> or <code>heartbeat.md</code> file into any agent's directory to override that section.
-            </p>
-          </div>
         </div>
 
         <!-- Heartbeat Tab -->
@@ -1752,13 +1757,6 @@ export default defineComponent({
             </p>
           </div>
 
-          <!-- Instructions are now managed via agent config files -->
-          <div class="setting-group">
-            <p class="setting-description">
-              Heartbeat instructions are now managed via agent config files in <code>~/sulla/agents/</code>.
-              Override any prompt section by adding a matching <code>.md</code> file to the agent's directory.
-            </p>
-          </div>
         </div>
       </div>
     </div>

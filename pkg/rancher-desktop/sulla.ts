@@ -754,28 +754,36 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   ipcMain.handle('llama-server:start', async() => {
     console.log('[Background] IPC llama-server:start — starting local server');
-    const llamaCpp = getLlamaCppService();
+    try {
+      const llamaCpp = getLlamaCppService();
 
-    if (llamaCpp.isServerRunning) {
+      if (llamaCpp.isServerRunning) {
+        return { running: true };
+      }
+
+      const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
+      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
+      let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
+
+      if (!(modelKey in GGUF_MODELS)) {
+        const mapped = modelKey.replace(/:/g, '-');
+
+        modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
+      }
+
+      const modelPath = await llamaCpp.downloadModel(modelKey);
+
+      await llamaCpp.startServer(modelPath);
+      console.log(`[Background] llama-server started at ${ llamaCpp.serverBaseUrl }`);
+
       return { running: true };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+
+      console.error('[Background] llama-server:start failed:', message);
+
+      return { running: false, error: message };
     }
-
-    const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
-    const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-    let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
-
-    if (!(modelKey in GGUF_MODELS)) {
-      const mapped = modelKey.replace(/:/g, '-');
-
-      modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
-    }
-
-    const modelPath = await llamaCpp.downloadModel(modelKey);
-
-    await llamaCpp.startServer(modelPath);
-    console.log(`[Background] llama-server started at ${ llamaCpp.serverBaseUrl }`);
-
-    return { running: true };
   });
 
   // ── Vault: export & import ─────────────────────────────────────────────────

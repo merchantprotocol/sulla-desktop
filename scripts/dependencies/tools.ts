@@ -12,6 +12,7 @@ import {
 } from '../lib/download';
 
 import {
+  Dependency,
   DownloadContext,
   findChecksum,
   getPublishedReleaseTagNames,
@@ -456,5 +457,34 @@ export class SpinKubePlugin extends GlobalDependency(GitHubDependency) {
   download(context: DownloadContext): Promise<void> {
     // We don't download anything there; `resources/setup-spin` does the installation.
     return Promise.resolve();
+  }
+}
+
+const WHISPER_CPP_VERSION = 'v1.8.4';
+const WHISPER_CLI_RELEASE_URL = `https://github.com/merchantprotocol/sulla-desktop/releases/download/whisper-cli-${ WHISPER_CPP_VERSION }`;
+
+export class WhisperCLI implements Dependency {
+  readonly name = 'whisperCLI';
+
+  async download(context: DownloadContext): Promise<void> {
+    if (context.platform !== 'darwin') {
+      return;
+    }
+
+    const arch = context.isM1 ? 'arm64' : 'x86_64';
+    const destPath = path.join(context.binDir, 'whisper-cli');
+
+    if (fs.existsSync(destPath)) {
+      console.log(`[whisper-cli] Already exists at ${ destPath }, skipping`);
+
+      return;
+    }
+
+    const url = `${ WHISPER_CLI_RELEASE_URL }/whisper-cli-darwin-${ arch }`;
+
+    console.log(`[whisper-cli] Downloading pre-built binary from ${ url }`);
+    await download(url, destPath, { codesign: true });
+    fs.chmodSync(destPath, 0o755);
+    console.log(`[whisper-cli] Installed to ${ destPath }`);
   }
 }

@@ -212,7 +212,8 @@ export interface IpcMainInvokeEvents {
     clickCount?: number;
   }) => boolean;
   'sulla-settings-get':     (property: string, defaultValue?: any) => any;
-  'sulla-settings-set':     (property: string, value: any) => void;
+  'sulla-settings-set':     (property: string, value: any, cast?: string) => void;
+  'sulla-settings-delete':  (property: string) => void;
   'sulla-settings:get':     (key: string) => any;
   'sulla-settings:set':     (key: string, value: any, cast?: string) => any;
   'capture-studio:get-sources':      () => { id: string; name: string; thumbnailDataUrl: string }[];
@@ -236,7 +237,8 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Computer Use
-  'computer-use:request-permission': (appName: string) => { ok: boolean; error?: string };
+  'computer-use:request-permission': (appName: string) => { ok: boolean; status: 'granted' | 'denied' | 'error'; error?: string };
+  'computer-use:health-check': (appNames: string[]) => Record<string, { ok: boolean; status: string; error?: string }>;
   // #endregion
 
   // #region Filesystem
@@ -354,7 +356,7 @@ export interface IpcMainInvokeEvents {
   'local-model-download': (modelKey: string) => { ok: boolean };
   'llama-server:status':  () => { running: boolean };
   'llama-server:stop':    () => { running: boolean };
-  'llama-server:start':   () => { running: boolean };
+  'llama-server:start':   () => { running: boolean; error?: string };
   // #endregion
 
   // #region main/imageEvents

@@ -515,6 +515,57 @@ k3s-status:
     limactl shell 0 -- sudo systemctl status k3s
 
 
+# Build whisper-cli from source (requires cmake). Builds a static binary with Metal acceleration.
+build-whisper:
+    #!/usr/bin/env bash
+    set -e
+    VERSION="v1.8.4"
+    ARCH=$(uname -m)  # arm64 or x86_64
+    DEST="resources/darwin/bin/whisper-cli"
+    TMP=$(mktemp -d)
+    trap "rm -rf $TMP" EXIT
+
+    echo "Building whisper-cli $VERSION for darwin-$ARCH..."
+    git clone --depth 1 --branch "$VERSION" https://github.com/ggml-org/whisper.cpp.git "$TMP"
+    cmake -B "$TMP/build" -S "$TMP" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DWHISPER_BUILD_TESTS=OFF \
+        -DWHISPER_BUILD_EXAMPLES=ON \
+        -DGGML_METAL=ON
+    cmake --build "$TMP/build" --config Release -j$(sysctl -n hw.ncpu) -- whisper-cli
+
+    mkdir -p resources/darwin/bin
+    cp "$TMP/build/bin/whisper-cli" "$DEST"
+    chmod +x "$DEST"
+    echo "Built: $DEST ($(du -h "$DEST" | cut -f1))"
+
+# Upload pre-built whisper-cli to a GitHub release so `just build` can download it.
+# Run after `just build-whisper` on each architecture (arm64 and x86_64).
+upload-whisper:
+    #!/usr/bin/env bash
+    set -e
+    VERSION="v1.8.4"
+    ARCH=$(uname -m)
+    SRC="resources/darwin/bin/whisper-cli"
+    TAG="whisper-cli-$VERSION"
+    ASSET="whisper-cli-darwin-$ARCH"
+
+    if [ ! -f "$SRC" ]; then
+        echo "No binary at $SRC. Run 'just build-whisper' first."
+        exit 1
+    fi
+
+    # Create the release tag if it doesn't exist yet
+    gh release view "$TAG" &>/dev/null || \
+        gh release create "$TAG" --title "whisper-cli $VERSION" --notes "Pre-built whisper-cli static binaries (Metal + Accelerate)."
+
+    # Upload (overwrite if re-running)
+    cp "$SRC" "/tmp/$ASSET"
+    gh release upload "$TAG" "/tmp/$ASSET" --clobber
+    rm "/tmp/$ASSET"
+    echo "Uploaded $ASSET to release $TAG"
+
 # Build the macOS .app launcher (double-clickable icon, no packaging needed)
 app:
     ./launcher/build-app.sh

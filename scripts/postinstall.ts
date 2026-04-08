@@ -60,6 +60,7 @@ const unixDependencies = [
 const macOSDependencies = [
   new SocketVMNet(),
   new SudoPrompt(),
+  new tools.WhisperCLI(),
 ];
 
 // Dependencies that are specific to windows hosts.
