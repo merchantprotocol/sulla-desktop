@@ -182,7 +182,7 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { /* stateless singleton, no teardown */ },
   );
 
-  lifecycle.register('llama-cpp', [],
+  lifecycle.register('llama-cpp', ['model-provider'],
     async() => {
       const sendProgress = (current: number, max: number, description: string) => {
         window.send('k8s-progress', { current, max, description });
@@ -200,18 +200,19 @@ export async function instantiateSullaStart(): Promise<void> {
 
       sendProgress(20, 100, 'llama.cpp installed');
 
-      // Check if user has set modelMode to 'remote' — skip local server startup
-      const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
-      const modelMode = await Settings.get('modelMode', 'local');
+      // Read from ModelProviderService — the single source of truth for model selection
+      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+      const providerState = getModelProviderService().getState();
 
-      if (modelMode === 'remote') {
-        console.log('[Background] modelMode is "remote" — skipping local llama-server startup');
+      if (providerState.modelMode === 'remote') {
+        console.log('[Background] Local model server disabled by user — skipping llama-server startup');
+        sendProgress(100, 100, 'Local server disabled');
 
         return;
       }
 
       const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-      let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
+      let modelKey = providerState.activeModelId || 'qwen3.5-9b';
 
       if (!(modelKey in GGUF_MODELS)) {
         const mapped = modelKey.replace(/:/g, '-');
@@ -803,9 +804,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         return { running: true };
       }
 
-      const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
+      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
       const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-      let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
+      let modelKey = getModelProviderService().getState().activeModelId || 'qwen3.5-9b';
 
       if (!(modelKey in GGUF_MODELS)) {
         const mapped = modelKey.replace(/:/g, '-');

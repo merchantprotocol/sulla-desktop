@@ -146,7 +146,7 @@ export default defineComponent({
       remoteRetryCount:      3, // Number of retries before falling back to local LLM
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
       // Local llama.cpp settings
-      localTimeoutSeconds:   120, // Local llama.cpp timeout limit in seconds
+      localTimeoutSeconds:   600, // Local llama.cpp timeout limit in seconds
       localRetryCount:       2, // Number of retries for local llama.cpp
       // Model status tracking
       modelStatuses:         {} as Record<string, 'installed' | 'missing' | 'failed'>,
@@ -190,6 +190,7 @@ export default defineComponent({
       localModelDownloading:      null as string | null,
       localModelDownloadProgress: 0,
       localModelError:            '' as string,
+      localContextSize:           0 as number,
       loadingLocalModels:         false,
       activatedLocalModel:        '' as string,
       systemTotalMemoryGB:        0,
@@ -334,7 +335,7 @@ export default defineComponent({
     }
     this.remoteRetryCount = await SullaSettingsModel.get('remoteRetryCount', 3);
     this.remoteTimeoutSeconds = Number(await SullaSettingsModel.get('remoteTimeoutSeconds', 60));
-    this.localTimeoutSeconds = await SullaSettingsModel.get('localTimeoutSeconds', 120);
+    this.localTimeoutSeconds = await SullaSettingsModel.get('localTimeoutSeconds', 600);
     this.localRetryCount = await SullaSettingsModel.get('localRetryCount', 2);
     this.heartbeatEnabled = await SullaSettingsModel.get('heartbeatEnabled', true);
 
@@ -1055,7 +1056,7 @@ export default defineComponent({
           primaryUserName:       String(this.primaryUserName || ''),
           remoteRetryCount:      Number(this.remoteRetryCount) || 3,
           remoteTimeoutSeconds:  Number(this.remoteTimeoutSeconds) || 60,
-          localTimeoutSeconds:   Number(this.localTimeoutSeconds) || 120,
+          localTimeoutSeconds:   Number(this.localTimeoutSeconds) || 600,
           localRetryCount:       Number(this.localRetryCount) || 2,
           heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
@@ -1144,6 +1145,8 @@ export default defineComponent({
         // Use the current active model if it's a local GGUF model
         if (this.activeModel && LOCAL_MODELS.some(m => m.name === this.activeModel)) {
           this.localModelSelected = this.activeModel;
+          // Initialize context slider for the active model
+          await this.selectLocalModel(this.activeModel);
         }
       } catch (err) {
         console.error('[LM Settings] Failed to load local model statuses:', err);
@@ -1156,6 +1159,27 @@ export default defineComponent({
     async selectLocalModel(modelName: string) {
       this.localModelSelected = modelName;
       this.localModelError = '';
+
+      // Calculate max achievable context for this model given available RAM
+      const model = this.localModels.find((m: LocalModelOption) => m.name === modelName);
+      if (model) {
+        const saved = await SullaSettingsModel.get('localContextSize', 0);
+        if (saved > 0) {
+          this.localContextSize = Math.min(Number(saved), this.maxContextForModel(model));
+        } else {
+          this.localContextSize = this.maxContextForModel(model);
+        }
+      }
+    },
+
+    maxContextForModel(model: LocalModelOption): number {
+      const totalRam = this.systemTotalMemoryGB * 1e9;
+      const osOverhead = 2 * 1024 * 1024 * 1024;
+      const available = totalRam - model.sizeBytes - osOverhead;
+      if (available <= 0) return 2048;
+      let ctx = Math.floor(available / model.kvBytesPerToken);
+      ctx = Math.floor(ctx / 1024) * 1024;
+      return Math.max(2048, Math.min(model.nativeCtx, ctx));
     },
 
     async downloadLocalModel(modelName: string) {
@@ -1179,6 +1203,11 @@ export default defineComponent({
       if (!this.localModelSelected) return;
       this.localModelError = '';
       try {
+        // Save the user's context size preference before activating
+        if (this.localContextSize > 0) {
+          await SullaSettingsModel.set('localContextSize', this.localContextSize, 'number');
+        }
+
         // Tell the source of truth — it persists, broadcasts, and manages llama-server
         const newState = await ipcRenderer.invoke('model-provider:select-model', 'ollama', this.localModelSelected);
 
@@ -1188,7 +1217,7 @@ export default defineComponent({
         this.activeModel = newState.activeModelId;
         this.activatedLocalModel = this.localModelSelected;
 
-        console.log(`[LM Settings] Local GGUF model activated: ${ this.localModelSelected }`);
+        console.log(`[LM Settings] Local GGUF model activated: ${ this.localModelSelected } (ctx=${ this.localContextSize })`);
       } catch (err) {
         console.error('[LM Settings] Failed to activate local GGUF model:', err);
         this.localModelError = 'Failed to activate model.';
@@ -1590,6 +1619,32 @@ export default defineComponent({
                   Download Model
                 </button>
               </div>
+            </div>
+          </div>
+
+          <!-- Context Size Slider — visible when a model is selected and downloaded -->
+          <div
+            v-if="localModelSelected && localModelDownloadStatus[localModelSelected] && localContextSize > 0"
+            class="context-size-control"
+          >
+            <label class="form-label">Context Size</label>
+            <div class="context-slider-row">
+              <span class="context-value-min">2K</span>
+              <input
+                v-model.number="localContextSize"
+                type="range"
+                class="context-slider"
+                :min="2048"
+                :max="maxContextForModel(localModels.find(m => m.name === localModelSelected))"
+                step="1024"
+              >
+              <span class="context-value-max">{{ Math.round((maxContextForModel(localModels.find(m => m.name === localModelSelected)) || 0) / 1024) }}K</span>
+            </div>
+            <div class="context-readout">
+              {{ Math.round(localContextSize / 1024) }}K tokens
+              <span class="context-ram-estimate">
+                (~{{ Math.round(localContextSize * (localModels.find(m => m.name === localModelSelected)?.kvBytesPerToken || 0) / 1e6) }}MB KV cache)
+              </span>
             </div>
           </div>
 
@@ -2089,41 +2144,49 @@ export default defineComponent({
 
   .toggle-btn {
     position: relative;
-    width: 44px;
-    height: 24px;
-    border-radius: 12px;
+    display: inline-block;
+    width: 48px;
+    height: 26px;
+    border-radius: 13px;
     border: none;
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background-color 0.2s ease;
     padding: 0;
+    margin: 0;
     flex-shrink: 0;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+    vertical-align: middle;
 
     &.toggle-on {
-      background: var(--accent, #3b82f6);
+      background-color: #34c759;
     }
 
     &.toggle-off {
-      background: var(--text-muted, #6b7280);
+      background-color: #c7c7cc;
     }
 
     &:disabled {
-      opacity: 0.5;
+      opacity: 0.4;
       cursor: not-allowed;
     }
 
     .toggle-knob {
       position: absolute;
-      top: 2px;
-      left: 2px;
+      top: 3px;
+      left: 3px;
       width: 20px;
       height: 20px;
       border-radius: 50%;
       background: #fff;
-      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+      transition: transform 0.2s ease;
+      pointer-events: none;
     }
 
     &.toggle-on .toggle-knob {
-      transform: translateX(20px);
+      transform: translateX(22px);
     }
   }
 }
@@ -2948,6 +3011,67 @@ export default defineComponent({
   .setting-description {
     margin-top: 0.5rem;
   }
+}
+
+// Context size slider
+.context-size-control {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--bg-surface, var(--input-bg));
+  border-radius: 8px;
+  border: 1px solid var(--border-default, var(--input-border));
+}
+
+.context-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.context-slider {
+  flex: 1;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border-default, var(--input-border));
+  border-radius: 3px;
+  outline: none;
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent-color, #0366d6);
+    cursor: pointer;
+    border: 2px solid var(--bg-surface, #fff);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+}
+
+.context-value-min,
+.context-value-max {
+  font-size: var(--fs-body-sm);
+  color: var(--text-muted, var(--muted));
+  white-space: nowrap;
+  min-width: 2.5rem;
+}
+
+.context-value-max {
+  text-align: right;
+}
+
+.context-readout {
+  margin-top: 0.5rem;
+  font-size: var(--fs-body-sm);
+  font-weight: 600;
+  color: var(--text-primary, var(--body-text));
+}
+
+.context-ram-estimate {
+  font-weight: 400;
+  color: var(--text-muted, var(--muted));
 }
 
 </style>

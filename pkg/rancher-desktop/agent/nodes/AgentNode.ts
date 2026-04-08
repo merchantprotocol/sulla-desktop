@@ -65,7 +65,6 @@ export class AgentNode extends BaseNode {
     // All sections (soul, workspace, tooling, voice mode, completion wrappers,
     // channel awareness, etc.) are composed by SystemPromptBuilder.
     let enrichedPrompt = await this.enrichPrompt('', state, {
-      promptMode: 'full',
       chatMode,
     });
 

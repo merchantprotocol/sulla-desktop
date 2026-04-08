@@ -10,6 +10,13 @@ const LOG_PREFIX = '[LlamaCppService]';
 /** Port llama-server listens on (same as old Ollama port) */
 const LLAMA_SERVER_PORT = 30114;
 
+/**
+ * Concurrent inference slots. Observed peak is 3 (main agent + 2 subconscious).
+ * Requests beyond this queue via continuous batching rather than wasting RAM
+ * on idle KV caches.
+ */
+const LLAMA_SERVER_SLOTS = 3;
+
 /** GitHub API endpoint for latest llama.cpp release */
 const GITHUB_API_LATEST = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest';
 
@@ -1549,10 +1556,16 @@ export class LlamaCppService {
       }
     }
 
-    // Calculate context size based on available system RAM, model size, and native context limit
+    // Calculate context size based on available system RAM, model size, and native context limit.
+    // If the user set a preferred context size in settings, use it as the cap.
     const modelFileSize = fs.statSync(modelPath).size;
-    this._contextSize = this.calculateContextSize(modelFileSize, modelEntry?.nativeCtx, modelEntry?.kvBytesPerToken);
-    console.log(`${ LOG_PREFIX } Starting llama-server on port ${ port } with model ${ modelPath } (ctx=${ this._contextSize })`);
+    const ramBasedCtx = this.calculateContextSize(modelFileSize, modelEntry?.nativeCtx, modelEntry?.kvBytesPerToken);
+    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+    const userPref = await SullaSettingsModel.get('localContextSize', 0);
+    const perSlotCtx = (userPref > 0) ? Math.min(Number(userPref), ramBasedCtx) : ramBasedCtx;
+    // --ctx-size is total across all slots, so multiply by slot count
+    this._contextSize = perSlotCtx * LLAMA_SERVER_SLOTS;
+    console.log(`${ LOG_PREFIX } Starting llama-server on port ${ port } with model ${ modelPath } (ctx-total=${ this._contextSize }, per-slot=${ perSlotCtx }, slots=${ LLAMA_SERVER_SLOTS }, ram-max=${ ramBasedCtx }, user-pref=${ userPref })`);
 
     // Slot-save directory for persistent KV cache across restarts
     const slotCacheDir = path.join(getLlmRoot(), 'slot-cache');
@@ -1563,8 +1576,8 @@ export class LlamaCppService {
       '--port', String(port),
       '--host', '127.0.0.1',
       '--ctx-size', String(this._contextSize),
-      // Use a single slot to maximize cache hits for our single-user desktop app
-      '-np', '1',
+      // Multiple slots so subconscious agents and the main agent can run concurrently
+      '-np', String(LLAMA_SERVER_SLOTS),
       // Enable flash attention for better performance and quantized KV cache support
       '--flash-attn', 'on',
       // Quantize KV cache — q8_0 for keys (preserves attention precision), q4_0 for values (saves memory with minimal quality loss)
@@ -1579,6 +1592,8 @@ export class LlamaCppService {
       // Larger batch sizes speed up prompt processing (especially long system prompts)
       '--batch-size', '4096',
       '--ubatch-size', '1024',
+      // Disable reasoning/thinking mode — prevents models from wasting tokens on internal CoT
+      '--reasoning', 'off',
     ];
 
     // SWA models (gemma4, etc.) need --swa-full to enable prompt cache reuse
@@ -1709,9 +1724,10 @@ export class LlamaCppService {
     // Use model-specific KV cache cost when available, otherwise estimate from model file size.
     // Q4_K_M models are roughly 0.5 bytes/param, so sizeBytes / 0.5 ≈ param count.
     // KV cost ≈ 3 bytes per billion params per token is a safe heuristic for q8_0+q4_0 KV cache.
+    // Divide by slot count since each slot needs its own KV cache.
     const bytesPerToken = kvBytesPerToken
       ?? Math.max(1024, Math.round((modelFileSizeBytes / 0.5e9) * 3000));
-    let ctxSize = Math.floor(availableBytes / bytesPerToken);
+    let ctxSize = Math.floor(availableBytes / (bytesPerToken * LLAMA_SERVER_SLOTS));
 
     // Round down to nearest 1024
     ctxSize = Math.floor(ctxSize / 1024) * 1024;

@@ -335,13 +335,15 @@ class ModelProviderService {
       if (newMode === 'remote') {
         console.log('[ModelProviderService] Switching to remote — stopping llama-server');
         try { await llamaCpp.stopServer(); } catch { /* not running */ }
-      } else if (newMode === 'local' && !llamaCpp.isServerRunning) {
-        console.log('[ModelProviderService] Switching to local — starting llama-server');
+      } else if (newMode === 'local') {
         let modelKey = modelId || await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
         if (!(modelKey in GGUF_MODELS)) {
           const mapped = modelKey.replace(/:/g, '-');
           modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
         }
+        // Always (re)start with the selected model — startServer handles
+        // stopping any currently running server automatically.
+        console.log(`[ModelProviderService] Starting llama-server with model ${ modelKey }`);
         const modelPath = await llamaCpp.downloadModel(modelKey);
         await llamaCpp.startServer(modelPath);
         console.log(`[ModelProviderService] llama-server started at ${ llamaCpp.serverBaseUrl }`);

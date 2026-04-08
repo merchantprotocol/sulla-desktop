@@ -111,7 +111,7 @@ export class OllamaService extends BaseLanguageModel {
       // IntegrationService not ready yet — use legacy settings
       model = await SullaSettingsModel.get('sullaModel', '');
     }
-    const timeout = await SullaSettingsModel.get('localTimeoutSeconds', 120);
+    const timeout = 600; // 10 minutes — generous for local models with large prompts
 
     return new OllamaService(model, base, timeout);
   }
