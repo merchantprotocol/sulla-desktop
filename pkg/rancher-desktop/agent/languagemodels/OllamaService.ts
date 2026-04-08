@@ -92,16 +92,35 @@ export class OllamaService extends BaseLanguageModel {
     console.log('[OllamaService] Sending request to llama-server:', JSON.stringify(body).slice(0, 500));
 
     const timeoutMs = this.localTimeoutSeconds * 1000;
-    const signal = this.combinedSignal(options.signal, timeoutMs);
-    const res = await fetch(`${ this.baseUrl }/v1/chat/completions`, this.buildFetchOptions(body, signal));
-    console.log('[OllamaService] Response from llama-server:', res.status);
+    const maxRetries = 3;
+    const modelLoadWaitMs = 5000;
+    let res: Response | null = null;
 
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      throw new Error(`llama-server chat failed: ${ res.status } ${ res.statusText } — ${ errBody }`);
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const signal = this.combinedSignal(options.signal, timeoutMs);
+      res = await fetch(`${ this.baseUrl }/v1/chat/completions`, this.buildFetchOptions(body, signal));
+      console.log('[OllamaService] Response from llama-server:', res.status);
+
+      // 503 "Loading model" — server is up but model isn't ready yet, wait and retry
+      if (res.status === 503) {
+        const errBody = await res.text().catch(() => '');
+        if (errBody.includes('Loading model') && attempt < maxRetries) {
+          console.log(`[OllamaService] Model still loading, waiting ${ modelLoadWaitMs / 1000 }s before retry ${ attempt + 1 }/${ maxRetries }...`);
+          await new Promise(r => setTimeout(r, modelLoadWaitMs));
+          continue;
+        }
+        throw new Error(`llama-server chat failed: ${ res.status } ${ res.statusText } — ${ errBody }`);
+      }
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        throw new Error(`llama-server chat failed: ${ res.status } ${ res.statusText } — ${ errBody }`);
+      }
+
+      break;
     }
 
-    const responseText = await res.text();
+    const responseText = await res!.text();
 
     try {
       const parsed = JSON.parse(responseText);

@@ -216,6 +216,17 @@ export interface IpcMainInvokeEvents {
   'sulla-settings-delete':  (property: string) => void;
   'sulla-settings:get':     (key: string) => any;
   'sulla-settings:set':     (key: string, value: any, cast?: string) => any;
+
+  // #region Model Provider Service (source of truth)
+  'model-provider:get-state':            () => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
+  'model-provider:get-providers':        () => { id: string; name: string; connected: boolean }[];
+  'model-provider:get-models':           (providerId: string) => { id: string; name: string; description?: string }[];
+  'model-provider:select-model':         (providerId: string, modelId: string) => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
+  'model-provider:set-secondary':        (providerId: string) => void;
+  'model-provider:set-heartbeat':        (providerId: string) => void;
+  'model-provider:get-provider-config':  (providerId: string) => Record<string, string>;
+  'model-provider:update-provider-config': (providerId: string, config: Record<string, string>) => void;
+  // #endregion
   'capture-studio:get-sources':      () => { id: string; name: string; thumbnailDataUrl: string }[];
   'capture-studio:check-permissions': () => Record<string, string>;
   'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };
@@ -580,6 +591,10 @@ export interface IpcRendererEvents {
 
   // #region IPC Message Bus
   'message-bus:message': (channelId: string, message: any) => void;
+  // #endregion
+
+  // #region Model Provider Service
+  'model-provider:state-changed': (state: { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' }) => void;
   // #endregion
 
   // #region Agent Configuration

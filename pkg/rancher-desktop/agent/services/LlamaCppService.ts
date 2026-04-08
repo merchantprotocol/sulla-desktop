@@ -1455,7 +1455,7 @@ export class LlamaCppService {
       // Use a single slot to maximize cache hits for our single-user desktop app
       '-np', '1',
       // Enable flash attention for better performance and quantized KV cache support
-      '--flash-attn',
+      '--flash-attn', 'on',
       // Quantize KV cache to q8_0 to reduce memory usage while preserving quality
       '--cache-type-k', 'q8_0',
       '--cache-type-v', 'q8_0',

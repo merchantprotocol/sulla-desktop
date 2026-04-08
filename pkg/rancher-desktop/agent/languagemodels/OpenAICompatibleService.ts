@@ -48,7 +48,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
   }
 
   /**
-   * Send request to remote provider with retry + Ollama fallback.
+   * Send request to remote provider with retry + local LLM fallback.
    */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
     const url = `${ this.baseUrl }${ this.chatEndpoint }`;
@@ -75,13 +75,31 @@ export class OpenAICompatibleService extends BaseLanguageModel {
 
         if (!res.ok) {
           const text = await res.text().catch(() => '');
+
+          // 429 with insufficient_quota is permanent — don't retry
+          if (res.status === 429 && text.includes('insufficient_quota')) {
+            const parsed = this.parseProviderError(text);
+            throw new Error(`Quota exhausted for ${ this.model }: ${ parsed }`);
+          }
+
           if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+            lastError = new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
+            console.warn(`[${ this.constructor.name }] ${ res.status } on attempt ${ attempt + 1 }/${ this.retryCount + 1 }: ${ text || res.statusText }`);
             continue;
           }
           throw new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
         }
 
         const rawResponse = await res.json();
+
+        // Detect empty completions — provider returned 200 but no usable content
+        const choice = rawResponse?.choices?.[0];
+        if (!choice || (!choice.message?.content?.trim() && !choice.message?.tool_calls?.length)) {
+          const finishReason = choice?.finish_reason ?? 'unknown';
+          console.warn(`[${ this.constructor.name }] Provider returned empty response (finish_reason=${ finishReason }, model=${ this.model })`);
+          lastError = new Error(`Provider returned empty completion (finish_reason=${ finishReason }, model=${ this.model }) — possible quota exhaustion, content filter, or model unavailability`);
+          continue;
+        }
 
         return rawResponse;
       } catch (err) {
@@ -105,30 +123,30 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       }
     }
 
-    // Final fallback to Ollama — only if it's actually healthy and has a model
+    // Final fallback to local LLM (llama.cpp) — only if it's actually healthy and has a model
     try {
-      const ollama = await this.getFallbackLocalService();
-      await ollama.initialize();
-      if (ollama.isAvailable()) {
-        console.log(`[${ this.constructor.name }] Falling back to local Ollama (${ ollama.getModel() })`);
-        const localModel = ollama.getModel();
+      const local = await this.getFallbackLocalService();
+      await local.initialize();
+      if (local.isAvailable()) {
+        console.log(`[${ this.constructor.name }] Falling back to local LLM (${ local.getModel() })`);
+        const localModel = local.getModel();
         const fallbackOptions = {
           ...(options ?? {}),
           model: localModel,
         };
 
-        const localResponse = await ollama.chat(messages, fallbackOptions);
+        const localResponse = await local.chat(messages, fallbackOptions);
         if (localResponse) {
           return this.toOpenAiCompatibleRawResponse(localResponse, localModel);
         }
       } else {
-        console.log(`[${ this.constructor.name }] Ollama fallback skipped — not available`);
+        console.log(`[${ this.constructor.name }] Local LLM fallback skipped — not available`);
       }
-    } catch (ollamaErr) {
-      console.warn(`[${ this.constructor.name }] Ollama fallback failed:`, ollamaErr instanceof Error ? ollamaErr.message : String(ollamaErr));
+    } catch (localErr) {
+      console.warn(`[${ this.constructor.name }] Local LLM fallback failed:`, localErr instanceof Error ? localErr.message : String(localErr));
     }
 
-    throw lastError ?? new Error('All retries failed and Ollama unavailable');
+    throw lastError ?? new Error(`All retries failed for ${ this.model } and local LLM unavailable`);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -174,7 +192,14 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         if (!res.ok) {
           const text = await res.text().catch(() => '');
 
+          // 429 with insufficient_quota is permanent — don't retry, throw immediately
+          if (res.status === 429 && text.includes('insufficient_quota')) {
+            const parsed = this.parseProviderError(text);
+            throw new Error(`Quota exhausted for ${ this.model }: ${ parsed }`);
+          }
+
           if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+            console.warn(`[${ this.constructor.name }] Stream ${ res.status } on attempt ${ attempt + 1 }/${ this.retryCount + 1 }: ${ text || res.statusText }`);
             continue;
           }
           throw new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
@@ -554,6 +579,18 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     }
 
     return sanitized;
+  }
+
+  /**
+   * Extract a human-readable error message from a provider JSON error response.
+   */
+  protected parseProviderError(text: string): string {
+    try {
+      const json = JSON.parse(text);
+      return json?.error?.message || json?.message || text;
+    } catch {
+      return text;
+    }
   }
 
   /**

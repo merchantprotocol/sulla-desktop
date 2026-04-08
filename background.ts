@@ -1094,53 +1094,37 @@ ipcMainProxy.handle('start-backend' as any, () => {
 
 await onMainProxyLoad(ipcMainProxy);
 
-ipcMainProxy.on('model-changed', async(_event, data) => {
-  // Relay the model-changed event to all open windows
-  Electron.BrowserWindow.getAllWindows().forEach((win) => {
-    win.webContents.send('model-changed', data);
-  });
+// ── ModelProviderService: single source of truth for LLM provider/model ──
+// Initialize after DB is ready. Handles all model-change IPC, llama-server
+// lifecycle, and broadcasting. Replaces the old model-changed handler.
+try {
+  const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+  const modelProviderService = getModelProviderService();
+  await modelProviderService.initialize();
 
-  // ── Invalidate cached LLM service instances so the next call re-reads settings ──
-  try {
-    const { LLMRegistry } = await import('@pkg/agent/languagemodels');
-    const { resetOllamaService } = await import('@pkg/agent/languagemodels/OllamaService');
+  // Invalidate LLM caches whenever the source of truth changes
+  const { LLMRegistry } = await import('@pkg/agent/languagemodels');
+  const { resetOllamaService } = await import('@pkg/agent/languagemodels/OllamaService');
+  modelProviderService.onChange(() => {
     LLMRegistry.invalidate();
     resetOllamaService();
-    console.log('[Background] LLM service caches invalidated after model change');
+    console.log('[Background] LLM service caches invalidated via ModelProviderService');
+  });
+
+  console.log('[Background] ModelProviderService initialized');
+} catch (err) {
+  console.error('[Background] Failed to initialize ModelProviderService:', err);
+}
+
+// Legacy model-changed from renderers that haven't migrated yet — forward to the service
+ipcMainProxy.on('model-changed', async(_event, data) => {
+  try {
+    const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+    const svc = getModelProviderService();
+    const providerId = data.type === 'local' ? 'ollama' : (data as any).provider || 'ollama';
+    await svc.selectModel(providerId, data.model);
   } catch (err) {
-    console.warn('[Background] Failed to invalidate LLM caches:', err);
-  }
-
-  // Stop or start the local llama-server based on the new mode
-  const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
-  const llamaCpp = getLlamaCppService();
-
-  if (data.type === 'remote') {
-    // Switching to remote — stop local server to free resources
-    console.log('[Background] Model mode changed to remote — stopping local llama-server');
-    try {
-      await llamaCpp.stopServer();
-    } catch { /* not running */ }
-  } else if (data.type === 'local' && !llamaCpp.isServerRunning) {
-    // Switching to local — start server if not already running
-    console.log('[Background] Model mode changed to local — starting local llama-server');
-    try {
-      const { SullaSettingsModel: Settings } = await import('@pkg/agent/database/models/SullaSettingsModel');
-      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-      let modelKey = await Settings.get('sullaModel', 'qwen3.5-9b');
-
-      if (!(modelKey in GGUF_MODELS)) {
-        const mapped = modelKey.replace(/:/g, '-');
-
-        modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
-      }
-      const modelPath = await llamaCpp.downloadModel(modelKey);
-
-      await llamaCpp.startServer(modelPath);
-      console.log(`[Background] llama-server started at ${ llamaCpp.serverBaseUrl }`);
-    } catch (err) {
-      console.error('[Background] Failed to start local llama-server:', err);
-    }
+    console.warn('[Background] Legacy model-changed forwarding failed:', err);
   }
 });
 

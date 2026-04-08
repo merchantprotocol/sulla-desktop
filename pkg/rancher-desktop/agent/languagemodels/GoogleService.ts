@@ -80,12 +80,23 @@ export class GoogleService extends BaseLanguageModel {
         if (!res.ok) {
           const text = await res.text().catch(() => '');
           if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+            lastError = new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
+            console.warn(`[GoogleService] ${ res.status } on attempt ${ attempt + 1 }/${ this.retryCount + 1 }: ${ text || res.statusText }`);
             continue;
           }
           throw new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
         }
 
         const rawResponse = await res.json();
+
+        // Detect empty completions — Gemini uses candidates[].content.parts[]
+        const parts = rawResponse?.candidates?.[0]?.content?.parts;
+        if (!parts?.length || (!parts.some((p: any) => p.text?.trim()) && !parts.some((p: any) => p.functionCall))) {
+          const finishReason = rawResponse?.candidates?.[0]?.finishReason ?? 'unknown';
+          console.warn(`[GoogleService] Provider returned empty response (finishReason=${ finishReason }, model=${ this.model })`);
+          lastError = new Error(`Provider returned empty completion (finishReason=${ finishReason }, model=${ this.model }) — possible quota exhaustion, content filter, or model unavailability`);
+          continue;
+        }
 
         return rawResponse;
       } catch (err) {
@@ -107,14 +118,17 @@ export class GoogleService extends BaseLanguageModel {
       }
     }
 
-    // Fallback to Ollama
-    const ollama = await getOllamaService();
-    await ollama.initialize();
-    if (ollama.isAvailable()) {
-      return ollama.chat(messages, { ...(options ?? {}), model: ollama.getModel() });
+    // Fallback to local LLM (llama.cpp)
+    const local = await getOllamaService();
+    await local.initialize();
+    if (local.isAvailable()) {
+      console.log(`[GoogleService] Falling back to local LLM (${ local.getModel() })`);
+      return local.chat(messages, { ...(options ?? {}), model: local.getModel() });
+    } else {
+      console.log(`[GoogleService] Local LLM fallback skipped — not available`);
     }
 
-    throw lastError ?? new Error('All retries failed and Ollama unavailable');
+    throw lastError ?? new Error(`All retries failed for ${ this.model } and local LLM unavailable`);
   }
 
   /**

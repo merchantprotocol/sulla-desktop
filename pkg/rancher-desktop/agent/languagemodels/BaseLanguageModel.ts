@@ -343,7 +343,7 @@ export abstract class BaseLanguageModel {
         } catch { /* best-effort */ }
       }
       console.error(`[${ this.getProviderName() }] Chat failed:`, error);
-      return null;
+      throw error;
     }
   }
 

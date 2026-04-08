@@ -1,11 +1,18 @@
+/**
+ * AgentModelSelectorController — Thin IPC client of ModelProviderService.
+ *
+ * All provider/model state lives in the main process (ModelProviderService).
+ * This controller only:
+ * - Reads state via IPC on startup
+ * - Sends mutations via IPC when the user selects a model
+ * - Listens for state-changed broadcasts to keep the UI in sync
+ */
+
 import { computed, ref } from 'vue';
 import type { ComputedRef, Ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { integrations } from '@pkg/agent/integrations/catalog';
-import { LOCAL_MODELS } from '@pkg/shared/localModels';
 
 export interface ModelOption {
   providerId:       string;
@@ -23,8 +30,6 @@ export interface ProviderGroup {
   loading:          boolean;
   models:           ModelOption[];
 }
-
-const EXCLUDED_INTEGRATION_IDS = ['activepieces', 'composio', 'ollama'];
 
 export class AgentModelSelectorController {
   readonly showModelMenu = ref(false);
@@ -70,11 +75,16 @@ export class AgentModelSelectorController {
 
   async start(): Promise<void> {
     document.addEventListener('mousedown', this.handleDocumentClick);
+    ipcRenderer.on('model-provider:state-changed', this.handleStateChanged);
+    // Legacy listener for backward compat with windows not yet migrated
+    ipcRenderer.on('model-changed', this.handleLegacyModelChanged);
     await this.loadActiveSettings();
   }
 
   dispose(): void {
     document.removeEventListener('mousedown', this.handleDocumentClick);
+    ipcRenderer.removeListener('model-provider:state-changed', this.handleStateChanged);
+    ipcRenderer.removeListener('model-changed', this.handleLegacyModelChanged);
   }
 
   get showModelMenuValue(): boolean {
@@ -106,62 +116,15 @@ export class AgentModelSelectorController {
   }
 
   /**
-   * Select a model. This:
-   * 1. Sets primaryProvider in SullaSettingsModel
-   * 2. Writes the model choice into the provider's integration settings
-   * 3. Emits model-changed IPC for other windows
+   * Select a model — delegates to ModelProviderService via IPC.
+   * The service writes to DB, manages llama-server, and broadcasts state-changed.
    */
   async selectModel(option: ModelOption): Promise<void> {
     try {
-      const integrationService = getIntegrationService();
+      const newState = await ipcRenderer.invoke('model-provider:select-model', option.providerId, option.modelId);
 
-      // 1. Update primary provider
-      await SullaSettingsModel.set('primaryProvider', option.providerId, 'string');
-      this.activePrimaryProvider.value = option.providerId;
-
-      // 2. Write the model into the integration's form values
-      const accountId = await integrationService.getActiveAccountId(option.providerId);
-
-      await integrationService.setIntegrationValue({
-        integration_id: option.providerId,
-        account_id:     accountId,
-        property:        'model',
-        value:           option.modelId,
-      });
-
-      this.activeModelId.value = option.modelId;
-
-      // Keep legacy settings in sync
-      if (option.providerId === 'ollama') {
-        await SullaSettingsModel.set('modelMode', 'local', 'string');
-        await SullaSettingsModel.set('sullaModel', option.modelId, 'string');
-        this.deps.modelMode.value = 'local';
-      } else {
-        await SullaSettingsModel.set('modelMode', 'remote', 'string');
-        await SullaSettingsModel.set('remoteProvider', option.providerId, 'string');
-        await SullaSettingsModel.set('remoteModel', option.modelId, 'string');
-        this.deps.modelMode.value = 'remote';
-      }
-
-      this.deps.modelName.value = option.modelId;
-
-      // 3. Notify other windows
-      ipcRenderer.send('model-changed',
-        option.providerId === 'ollama'
-          ? { model: option.modelId, type: 'local' as const }
-          : { model: option.modelId, type: 'remote' as const, provider: option.providerId },
-      );
-
-      // Update active flags in providerGroups
-      this.providerGroups.value = this.providerGroups.value.map((group) => ({
-        ...group,
-        isActiveProvider: group.providerId === option.providerId,
-        models:           group.models.map((m) => ({
-          ...m,
-          isActiveProvider: m.providerId === option.providerId,
-          isActiveModel:    m.providerId === option.providerId && m.modelId === option.modelId,
-        })),
-      }));
+      this.applyState(newState);
+      this.updateActiveFlags(option.providerId, option.modelId);
     } finally {
       this.showModelMenu.value = false;
     }
@@ -170,83 +133,30 @@ export class AgentModelSelectorController {
   // ─── Internal ──────────────────────────────────────────────────
 
   private async loadActiveSettings(): Promise<void> {
-    this.activePrimaryProvider.value = await SullaSettingsModel.get('primaryProvider', 'ollama');
-
-    // Read the active model from the provider's integration
     try {
-      const integrationService = getIntegrationService();
-      const formValues = await integrationService.getFormValues(this.activePrimaryProvider.value);
-      const modelVal = formValues.find((v) => v.property === 'model');
-
-      this.activeModelId.value = modelVal?.value || '';
-    } catch {
-      // Fallback to legacy
-      if (this.activePrimaryProvider.value === 'ollama') {
-        this.activeModelId.value = await SullaSettingsModel.get('sullaModel', '');
-      } else {
-        this.activeModelId.value = await SullaSettingsModel.get('remoteModel', '');
-      }
+      const state = await ipcRenderer.invoke('model-provider:get-state');
+      this.applyState(state);
+    } catch (err) {
+      console.warn('[ModelSelector] Failed to load state from ModelProviderService:', err);
     }
-
-    this.deps.modelName.value = this.activeModelId.value;
   }
 
   /**
-   * Build provider groups from local GGUF models + connected AI Infrastructure integrations.
+   * Fetch provider groups from ModelProviderService via IPC.
    */
   private async refreshProviderGroups(): Promise<void> {
     this.loadingProviders.value = true;
 
     try {
-      const integrationService = getIntegrationService();
+      const providers = await ipcRenderer.invoke('model-provider:get-providers');
       const groups: ProviderGroup[] = [];
 
-      // ── Local GGUF models (llama.cpp) ──
-      const isLocalActive = this.activePrimaryProvider.value === 'ollama';
-      let currentLocalModel = '';
-
-      try {
-        currentLocalModel = await SullaSettingsModel.get('sullaModel', '');
-      } catch { /* ignore */ }
-
-      const localGroup: ProviderGroup = {
-        providerId:       'ollama',
-        providerName:     'Local Models',
-        isActiveProvider: isLocalActive,
-        loading:          false,
-        models:           LOCAL_MODELS.map((m) => ({
-          providerId:       'ollama',
-          providerName:     'Local Models',
-          modelId:          m.name,
-          modelLabel:       `${ m.displayName } (${ m.size })`,
-          isActiveProvider: isLocalActive,
-          isActiveModel:    isLocalActive && m.name === currentLocalModel,
-        })),
-      };
-
-      groups.push(localGroup);
-
-      // ── Remote providers from integrations ──
-      for (const integration of Object.values(integrations)) {
-        if (integration.category !== 'AI Infrastructure') continue;
-        if (EXCLUDED_INTEGRATION_IDS.includes(integration.id)) continue;
-
-        const connected = await integrationService.isAnyAccountConnected(integration.id);
-
-        if (!connected) continue;
-
-        const isActive = this.activePrimaryProvider.value === integration.id;
-
-        let currentModel = '';
-
-        try {
-          const vals = await integrationService.getFormValues(integration.id);
-          currentModel = vals.find((v) => v.property === 'model')?.value || '';
-        } catch { /* ignore */ }
+      for (const provider of providers) {
+        const isActive = this.activePrimaryProvider.value === provider.id;
 
         const group: ProviderGroup = {
-          providerId:       integration.id,
-          providerName:     integration.name,
+          providerId:       provider.id,
+          providerName:     provider.name,
           isActiveProvider: isActive,
           loading:          true,
           models:           [],
@@ -254,8 +164,8 @@ export class AgentModelSelectorController {
 
         groups.push(group);
 
-        // Kick off async model fetch (don't block the menu from showing)
-        this.fetchModelsForGroup(group, integration, currentModel);
+        // Async model fetch — don't block the menu from showing
+        this.fetchModelsForGroup(group, isActive);
       }
 
       this.providerGroups.value = groups;
@@ -266,60 +176,71 @@ export class AgentModelSelectorController {
     }
   }
 
-  private async fetchModelsForGroup(
-    group: ProviderGroup,
-    integration: (typeof integrations)[string],
-    currentModel: string,
-  ): Promise<void> {
+  private async fetchModelsForGroup(group: ProviderGroup, isActive: boolean): Promise<void> {
     try {
-      const integrationService = getIntegrationService();
-      const accountId = await integrationService.getActiveAccountId(integration.id);
+      const models = await ipcRenderer.invoke('model-provider:get-models', group.providerId);
 
-      // Build form values map for the select box provider
-      const formVals = await integrationService.getFormValues(integration.id, accountId);
-      const formMap: Record<string, string> = {};
-
-      for (const v of formVals) {
-        formMap[v.property] = v.value;
-      }
-
-      // Find the selectBoxId for the 'model' property
-      const modelProp = integration.properties?.find((p) => p.key === 'model');
-
-      if (!modelProp?.selectBoxId) {
-        group.loading = false;
-        this.providerGroups.value = [...this.providerGroups.value];
-
-        return;
-      }
-
-      const options = await integrationService.getSelectOptions(
-        modelProp.selectBoxId,
-        integration.id,
-        accountId,
-        formMap,
-      );
-
-      const isActive = this.activePrimaryProvider.value === integration.id;
-
-      group.models = options.map((opt) => ({
-        providerId:       integration.id,
-        providerName:     integration.name,
-        modelId:          opt.value,
-        modelLabel:       opt.label,
+      group.models = models.map((m: { id: string; name: string; description?: string }) => ({
+        providerId:       group.providerId,
+        providerName:     group.providerName,
+        modelId:          m.id,
+        modelLabel:       m.name,
         isActiveProvider: isActive,
-        isActiveModel:    isActive && opt.value === currentModel,
+        isActiveModel:    isActive && m.id === this.activeModelId.value,
       }));
       group.loading = false;
 
       // Trigger reactivity
       this.providerGroups.value = [...this.providerGroups.value];
     } catch (err) {
-      console.warn(`[ModelSelector] Failed to fetch models for ${ integration.id }:`, err);
+      console.warn(`[ModelSelector] Failed to fetch models for ${ group.providerId }:`, err);
       group.loading = false;
       this.providerGroups.value = [...this.providerGroups.value];
     }
   }
+
+  private applyState(state: { primaryProvider: string; activeModelId: string; modelMode: 'local' | 'remote' }): void {
+    this.activePrimaryProvider.value = state.primaryProvider;
+    this.activeModelId.value = state.activeModelId;
+    this.deps.modelName.value = state.activeModelId;
+    this.deps.modelMode.value = state.modelMode;
+  }
+
+  private updateActiveFlags(providerId: string, modelId: string): void {
+    this.providerGroups.value = this.providerGroups.value.map((group) => ({
+      ...group,
+      isActiveProvider: group.providerId === providerId,
+      models:           group.models.map((m) => ({
+        ...m,
+        isActiveProvider: m.providerId === providerId,
+        isActiveModel:    m.providerId === providerId && m.modelId === modelId,
+      })),
+    }));
+  }
+
+  // ─── Event handlers ────────────────────────────────────────────
+
+  private readonly handleStateChanged = (
+    _event: Electron.IpcRendererEvent,
+    state: { primaryProvider: string; activeModelId: string; modelMode: 'local' | 'remote' },
+  ) => {
+    this.applyState(state);
+    this.updateActiveFlags(state.primaryProvider, state.activeModelId);
+  };
+
+  /** Backward-compat listener for legacy model-changed events */
+  private readonly handleLegacyModelChanged = (
+    _event: Electron.IpcRendererEvent,
+    data: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string },
+  ) => {
+    const providerId = data.type === 'local' ? 'ollama' : (data as any).provider || 'ollama';
+    this.applyState({
+      primaryProvider: providerId,
+      activeModelId:   data.model,
+      modelMode:       data.type === 'local' ? 'local' : 'remote',
+    });
+    this.updateActiveFlags(providerId, data.model);
+  };
 
   private readonly handleDocumentClick = (ev: MouseEvent) => {
     if (!this.showModelMenu.value) {
