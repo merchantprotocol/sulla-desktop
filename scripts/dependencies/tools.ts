@@ -1,3 +1,4 @@
+import childProcess from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -12,6 +13,7 @@ import {
 } from '../lib/download';
 
 import {
+  Dependency,
   DownloadContext,
   findChecksum,
   getPublishedReleaseTagNames,
@@ -456,5 +458,67 @@ export class SpinKubePlugin extends GlobalDependency(GitHubDependency) {
   download(context: DownloadContext): Promise<void> {
     // We don't download anything there; `resources/setup-spin` does the installation.
     return Promise.resolve();
+  }
+}
+
+const WHISPER_CPP_VERSION = 'v1.8.4';
+
+export class WhisperCLI implements Dependency {
+  readonly name = 'whisperCLI';
+
+  async download(context: DownloadContext): Promise<void> {
+    if (context.platform !== 'darwin') {
+      // whisper-cli is only bundled on macOS for now
+      return;
+    }
+
+    const destPath = path.join(context.binDir, 'whisper-cli');
+
+    if (fs.existsSync(destPath)) {
+      console.log(`[whisper-cli] Already exists at ${ destPath }, skipping build`);
+
+      return;
+    }
+
+    const tmpDir = path.join(os.tmpdir(), `whisper-cpp-build-${ process.pid }`);
+
+    try {
+      // Clone whisper.cpp
+      console.log(`[whisper-cli] Cloning whisper.cpp ${ WHISPER_CPP_VERSION }...`);
+      childProcess.execSync(
+        `git clone --depth 1 --branch ${ WHISPER_CPP_VERSION } https://github.com/ggml-org/whisper.cpp.git ${ tmpDir }`,
+        { stdio: 'inherit' },
+      );
+
+      // Configure static build with Metal acceleration
+      console.log('[whisper-cli] Configuring cmake...');
+      childProcess.execSync(
+        'cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_METAL=ON',
+        { cwd: tmpDir, stdio: 'inherit' },
+      );
+
+      // Build whisper-cli only
+      const cpus = os.cpus().length;
+
+      console.log(`[whisper-cli] Building with ${ cpus } threads...`);
+      childProcess.execSync(
+        `cmake --build build --config Release -j${ cpus } -- whisper-cli`,
+        { cwd: tmpDir, stdio: 'inherit' },
+      );
+
+      // Copy to resources
+      const builtBinary = path.join(tmpDir, 'build', 'bin', 'whisper-cli');
+
+      if (!fs.existsSync(builtBinary)) {
+        throw new Error(`Build succeeded but binary not found at ${ builtBinary }`);
+      }
+
+      fs.copyFileSync(builtBinary, destPath);
+      fs.chmodSync(destPath, 0o755);
+      console.log(`[whisper-cli] Installed to ${ destPath }`);
+    } finally {
+      // Clean up build directory
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   }
 }

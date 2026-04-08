@@ -691,42 +691,8 @@
             </div>
           </div>
 
-          <!-- ── Install gate: shown until whisper.cpp is installed ── -->
-          <div
-            v-if="!whisperInstalled && !whisperBusy"
-            class="setup-gate"
-          >
-            <p class="setup-gate-description">
-              Local transcription requires whisper.cpp. It runs entirely on
-              your machine &mdash; no network, no API keys.
-            </p>
-            <div
-              v-if="whisperError"
-              class="status-banner banner-error"
-              style="margin-bottom: 1rem;"
-            >
-              <span class="banner-text">{{ whisperError }}</span>
-            </div>
-            <button
-              class="action-btn btn-primary btn-lg"
-              @click="installWhisper"
-            >
-              Install whisper.cpp
-            </button>
-            <p class="setup-gate-hint">
-              Installs via Homebrew. Requires
-              <a
-                href="https://brew.sh"
-                target="_blank"
-              >Homebrew</a>.
-            </p>
-          </div>
-
-          <!-- ── Engine Status (installed) ── -->
-          <div
-            v-if="whisperInstalled"
-            class="setting-section"
-          >
+          <!-- ── Engine Status ── -->
+          <div class="setting-section">
             <h3>whisper.cpp Engine</h3>
             <div
               v-if="whisperVersion"
@@ -741,15 +707,6 @@
             >
               <span class="status-label">Path:</span>
               <span class="status-value status-path">{{ whisperBinaryPath }}</span>
-            </div>
-            <div class="mic-test-controls">
-              <button
-                class="action-btn btn-danger"
-                :disabled="whisperBusy"
-                @click="confirmRemoveWhisper"
-              >
-                Uninstall
-              </button>
             </div>
           </div>
 
@@ -1567,10 +1524,8 @@ const whisperInstalled = ref(false);
 const whisperVersion = ref('');
 const whisperBinaryPath = ref('');
 const whisperModels = ref<string[]>([]);
-const whisperInstalling = ref(false);
 const whisperDetecting = ref(false);
 const whisperDownloading = ref(false);
-const whisperError = ref<string | null>(null);
 const whisperModelToDownload = ref('base.en');
 const whisperTranscribing = ref(false);
 const whisperTranscribeMode = ref('conversation');
@@ -1635,7 +1590,7 @@ function stopTranscribeStatsPoll() {
 const whisperProgressPhase = ref('');
 const whisperProgressPct = ref(-1);
 const whisperLogLines = ref<string[]>([]);
-const whisperBusy = computed(() => whisperInstalling.value || whisperDownloading.value || whisperDetecting.value);
+const whisperBusy = computed(() => whisperDownloading.value || whisperDetecting.value);
 
 function addWhisperLog(line: string) {
   whisperLogLines.value.push(line);
@@ -1669,54 +1624,6 @@ async function detectWhisper() {
     console.warn('[AudioSettings] whisper detect failed:', e);
   } finally {
     whisperDetecting.value = false;
-  }
-}
-
-async function installWhisper() {
-  whisperInstalling.value = true;
-  whisperError.value = null;
-  clearWhisperLog();
-  whisperProgressPhase.value = 'Installing whisper.cpp';
-  whisperProgressPct.value = 0;
-  addWhisperLog('Starting Homebrew install...');
-  try {
-    const result = await ipc.invoke('audio-driver:whisper-install');
-    if (result?.ok) {
-      addWhisperLog('Installation complete.');
-      await detectWhisper();
-    } else {
-      const msg = result?.error || 'Installation failed. Check that Homebrew is installed.';
-      whisperError.value = msg;
-      addWhisperLog(msg);
-    }
-  } catch (e: any) {
-    whisperError.value = e.message || String(e);
-    addWhisperLog(`Error: ${ e.message }`);
-  } finally {
-    whisperInstalling.value = false;
-  }
-}
-
-function confirmRemoveWhisper() {
-  if (!confirm('Uninstall whisper.cpp? This will remove the engine and all downloaded models.')) return;
-  removeWhisper();
-}
-
-async function removeWhisper() {
-  whisperInstalling.value = true; // reuse busy state
-  clearWhisperLog();
-  whisperProgressPhase.value = 'Uninstalling whisper.cpp';
-  whisperProgressPct.value = 0;
-  addWhisperLog('Removing via Homebrew...');
-  try {
-    await ipc.invoke('audio-driver:whisper-remove');
-    addWhisperLog('Uninstalled.');
-    await detectWhisper();
-  } catch (e: any) {
-    addWhisperLog(`Error: ${ e.message }`);
-  } finally {
-    whisperInstalling.value = false;
-    setTimeout(clearWhisperLog, 3000);
   }
 }
 

@@ -454,81 +454,10 @@ export const volume = {
   },
 };
 
-// ─── Homebrew installer ─────────────────────────────────────────
-
-/**
- * Create a temporary askpass script that shows a native macOS password dialog.
- * The Homebrew installer checks for SUDO_ASKPASS and passes -A to sudo when set.
- */
-function createAskpassScript(): string {
-  const askpass = path.join(os.tmpdir(), `sulla-askpass-${ process.pid }.sh`);
-
-  fs.writeFileSync(askpass, `#!/bin/bash
-osascript -e 'display dialog "Sulla Desktop needs administrator access to install Homebrew." default answer "" with hidden answer buttons {"Cancel","OK"} default button "OK" with title "Sulla Desktop" with icon caution' -e 'text returned of result' 2>/dev/null
-`, { mode: 0o700 });
-
-  return askpass;
-}
-
-async function installHomebrew(onProgress?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
-  log.info('Platform', 'Installing Homebrew via official installer...');
-  onProgress?.('Homebrew not found — installing Homebrew (this may take a few minutes)...');
-
-  const askpass = createAskpassScript();
-
-  return new Promise((resolve) => {
-    const proc = spawn('/bin/bash', ['-c', 'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash'], {
-      env: {
-        ...CHILD_ENV,
-        NONINTERACTIVE: '1',
-        SUDO_ASKPASS:   askpass,
-      },
-      stdio: 'pipe',
-    });
-
-    proc.stdout?.on('data', (data: Buffer) => {
-      const line = data.toString().trim();
-      if (line && onProgress) onProgress(line);
-      log.debug('Platform', 'homebrew-install stdout', { line });
-    });
-
-    proc.stderr?.on('data', (data: Buffer) => {
-      const line = data.toString().trim();
-      if (line && onProgress) onProgress(line);
-      log.debug('Platform', 'homebrew-install stderr', { line });
-    });
-
-    function cleanup() {
-      try { fs.unlinkSync(askpass); } catch { /* already gone */ }
-    }
-
-    const timeout = setTimeout(() => {
-      log.error('Platform', 'Homebrew install timed out');
-      proc.kill();
-      cleanup();
-      resolve({ ok: false, error: 'Homebrew installation timed out.' });
-    }, 600000); // 10 min
-
-    proc.on('close', (code) => {
-      clearTimeout(timeout);
-      cleanup();
-      if (code === 0) {
-        log.info('Platform', 'Homebrew installed');
-        resolve({ ok: true });
-      } else {
-        resolve({ ok: false, error: `Homebrew installer exited with code ${ code }.` });
-      }
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timeout);
-      cleanup();
-      resolve({ ok: false, error: `Failed to run Homebrew installer: ${ err.message }` });
-    });
-  });
-}
-
 // ─── Whisper.cpp (Local STT Engine) ───────────────────────────
+
+// Bundled whisper-cli binary lives alongside other platform binaries
+const WHISPER_BINARY = path.join(paths.resources, 'darwin', 'bin', 'whisper-cli');
 
 const WHISPER_MODELS_DIR = path.join(
   process.env.HOME || '/tmp',
@@ -538,145 +467,37 @@ const WHISPER_MODELS_DIR = path.join(
 export const whisper = {
   async detect(): Promise<any> {
     try {
-      const stdout = execSync('which whisper-cli 2>/dev/null || which whisper-cpp 2>/dev/null || which whisper 2>/dev/null', {
-        timeout: 5000,
-        stdio:   'pipe',
-        env:     CHILD_ENV,
-      }).toString().trim();
+      if (!fs.existsSync(WHISPER_BINARY)) {
+        log.error('Platform', 'Bundled whisper-cli not found', { expected: WHISPER_BINARY });
+        return { available: false };
+      }
 
-      if (!stdout) return { available: false };
-
-      const binaryPath = stdout.split('\n')[0];
-
-      // Get version from brew info (whisper-cli has no --version flag)
-      let version = 'unknown';
-      try {
-        const brewOut = execSync('brew info --json=v2 whisper-cpp 2>/dev/null', {
-          timeout: 10000,
-          stdio:   'pipe',
-          env:     CHILD_ENV,
-        }).toString().trim();
-        const info = JSON.parse(brewOut);
-        const installed = info?.formulae?.[0]?.installed?.[0]?.version;
-        if (installed) version = installed;
-      } catch { /* version check optional */ }
-
-      // Enumerate downloaded models
       const models = whisper.listModels();
 
-      log.info('Platform', 'whisper.cpp detected', { binaryPath, version, models });
-      return { available: true, version, binaryPath, modelsPath: WHISPER_MODELS_DIR, models };
+      log.info('Platform', 'whisper.cpp detected (bundled)', { binaryPath: WHISPER_BINARY, models });
+      return { available: true, version: '1.8.4', binaryPath: WHISPER_BINARY, modelsPath: WHISPER_MODELS_DIR, models };
     } catch {
       return { available: false };
     }
   },
 
-  async install(onProgress?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
-    // Pre-check: verify brew is reachable; auto-install Homebrew if missing
-    let brewPath: string;
-    try {
-      brewPath = execSync('which brew', { timeout: 5000, stdio: 'pipe', env: CHILD_ENV }).toString().trim();
-      log.info('Platform', 'brew found', { brewPath });
-    } catch {
-      // brew not found — install Homebrew first
-      const brewResult = await installHomebrew(onProgress);
-      if (!brewResult.ok) return brewResult;
-
-      // Re-check after Homebrew installs
-      try {
-        brewPath = execSync('which brew', { timeout: 5000, stdio: 'pipe', env: CHILD_ENV }).toString().trim();
-        log.info('Platform', 'brew found after Homebrew install', { brewPath });
-      } catch {
-        return { ok: false, error: 'Homebrew installed but brew command not found — try restarting the app.' };
-      }
-    }
-
-    log.info('Platform', 'Installing whisper-cpp via Homebrew...');
-    return new Promise((resolve) => {
-      const proc = spawn(brewPath, ['install', 'whisper-cpp'], {
-        env:   CHILD_ENV,
-        stdio: 'pipe',
-      });
-
-      // Homebrew runs source builds inside a sandbox that swallows all
-      // compilation output, so cmake can compile for 15-30 min with zero
-      // stdout/stderr reaching us.  Use a generous wall-clock timeout.
-      const timeout = setTimeout(() => {
-        log.error('Platform', 'whisper-cpp install timed out');
-        proc.kill();
-        resolve({
-          ok:    false,
-          error: 'Installation timed out after 30 minutes. '
-               + "Try running 'brew install whisper-cpp' in Terminal instead.",
-        });
-      }, 1800000); // 30 min
-
-      proc.stdout?.on('data', (data: Buffer) => {
-        const line = data.toString().trim();
-        if (line && onProgress) onProgress(line);
-        log.debug('Platform', 'brew stdout', { line });
-      });
-
-      proc.stderr?.on('data', (data: Buffer) => {
-        const line = data.toString().trim();
-        if (line && onProgress) onProgress(line);
-        log.debug('Platform', 'brew stderr', { line });
-      });
-
-      proc.on('close', async(code) => {
-        clearTimeout(timeout);
-        if (code === 0) {
-          log.info('Platform', 'whisper-cpp installed');
-          const recheck = await whisper.detect();
-          if (recheck.available) {
-            log.info('Platform', 'whisper-cpp confirmed after install');
-            resolve({ ok: true });
-          } else {
-            const error = 'whisper-cpp installed but binary not found — try restarting the app.';
-            log.error('Platform', error);
-            resolve({ ok: false, error });
-          }
-        } else {
-          const error = `Homebrew install failed (exit code ${ code }). Try running 'brew install whisper-cpp' in Terminal for details.`;
-          log.error('Platform', 'Failed to install whisper-cpp', { exitCode: code });
-          resolve({ ok: false, error });
-        }
-      });
-
-      proc.on('error', (err) => {
-        clearTimeout(timeout);
-        const error = `Failed to run brew: ${ err.message }`;
-        log.error('Platform', error);
-        resolve({ ok: false, error });
-      });
-    });
+  async install(_onProgress?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
+    // whisper-cli is bundled — nothing to install
+    log.info('Platform', 'whisper-cli is bundled, no installation needed');
+    return { ok: true };
   },
 
-  async remove(onProgress?: (line: string) => void): Promise<void> {
-    log.info('Platform', 'Uninstalling whisper-cpp...');
-    return new Promise((resolve) => {
-      const proc = spawn('brew', ['uninstall', 'whisper-cpp'], {
-        env:   CHILD_ENV,
-        stdio: 'pipe',
-      });
-
-      proc.stdout?.on('data', (data: Buffer) => {
-        const line = data.toString().trim();
-        if (line && onProgress) onProgress(line);
-      });
-
-      proc.stderr?.on('data', (data: Buffer) => {
-        const line = data.toString().trim();
-        if (line && onProgress) onProgress(line);
-      });
-
-      proc.on('close', () => {
-        log.info('Platform', 'whisper-cpp uninstalled');
-        resolve();
-      });
-
-      proc.on('error', () => resolve());
-    });
+  async remove(_onProgress?: (line: string) => void): Promise<void> {
+    // Bundled binary cannot be removed; only clean up downloaded models
+    log.info('Platform', 'Removing downloaded whisper models...');
+    try {
+      if (fs.existsSync(WHISPER_MODELS_DIR)) {
+        fs.rmSync(WHISPER_MODELS_DIR, { recursive: true, force: true });
+        log.info('Platform', 'Whisper models removed');
+      }
+    } catch (err: any) {
+      log.error('Platform', 'Failed to remove whisper models', { error: err.message });
+    }
   },
 
   listModels(): string[] {
