@@ -167,17 +167,19 @@ export class OllamaService extends BaseLanguageModel {
         // Only pass role + content (strip internal metadata fields)
         const msg: Record<string, any> = { role: m.role, content: '' };
         if (Array.isArray(m.content)) {
-          // Extract base64 images for Ollama vision models — check both
-          // top-level image blocks and images nested inside tool_result blocks
+          // Convert Anthropic-style content blocks to OpenAI-compatible format
+          // for llama-server's /v1/chat/completions endpoint.
           const images: string[] = [];
           const textParts: string[] = [];
           for (const c of m.content as any[]) {
             if (c?.type === 'image' && c?.source?.type === 'base64') {
-              images.push(c.source.data);
+              const mediaType = c.source.media_type || 'image/png';
+              images.push(`data:${ mediaType };base64,${ c.source.data }`);
             } else if (c?.type === 'tool_result' && Array.isArray(c.content)) {
               for (const inner of c.content) {
                 if (inner?.type === 'image' && inner?.source?.type === 'base64') {
-                  images.push(inner.source.data);
+                  const mediaType = inner.source.media_type || 'image/png';
+                  images.push(`data:${ mediaType };base64,${ inner.source.data }`);
                 } else if (inner?.type === 'text') {
                   textParts.push(inner.text);
                 }
@@ -191,8 +193,19 @@ export class OllamaService extends BaseLanguageModel {
               textParts.push(JSON.stringify(c));
             }
           }
-          msg.content = textParts.join('\n');
-          if (images.length > 0) msg.images = images;
+          if (images.length > 0) {
+            // Use OpenAI vision format: content is an array of text + image_url parts
+            const contentParts: any[] = [];
+            if (textParts.length > 0) {
+              contentParts.push({ type: 'text', text: textParts.join('\n') });
+            }
+            for (const dataUri of images) {
+              contentParts.push({ type: 'image_url', image_url: { url: dataUri } });
+            }
+            msg.content = contentParts;
+          } else {
+            msg.content = textParts.join('\n');
+          }
         } else {
           msg.content = m.content;
         }
@@ -226,9 +239,10 @@ export class OllamaService extends BaseLanguageModel {
     const cleanMessages = [...systemMsgs, ...trimmed];
 
     const body: Record<string, any> = {
-      model:    options.model ?? this.model,
-      messages: cleanMessages,
-      stream:   false,
+      model:            options.model ?? this.model,
+      messages:         cleanMessages,
+      stream:           false,
+      enable_thinking:  false,
     };
 
     if (options.format === 'json') {
