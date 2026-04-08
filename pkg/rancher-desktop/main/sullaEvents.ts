@@ -51,10 +51,16 @@ export function initSullaEvents(): void {
     return SullaSettingsModel.get(property, defaultValue);
   });
 
-  ipcMainProxy.handle('sulla-settings-set', async(_event: unknown, property: string, value: any) => {
+  ipcMainProxy.handle('sulla-settings-set', async(_event: unknown, property: string, value: any, cast?: string) => {
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
 
-    await SullaSettingsModel.set(property, value);
+    await SullaSettingsModel.set(property, value, cast);
+  });
+
+  ipcMainProxy.handle('sulla-settings-delete', async(_event: unknown, property: string) => {
+    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+
+    await SullaSettingsModel.delete(property);
   });
 
   // ─────────────────────────────────────────────────────────────

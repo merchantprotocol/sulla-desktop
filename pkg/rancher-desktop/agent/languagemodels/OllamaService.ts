@@ -252,3 +252,8 @@ export async function getOllamaService(): Promise<OllamaService> {
   }
   return ollamaInstance;
 }
+
+/** Clear the cached singleton so the next getOllamaService() re-reads settings */
+export function resetOllamaService(): void {
+  ollamaInstance = null;
+}

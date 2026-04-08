@@ -212,7 +212,8 @@ export interface IpcMainInvokeEvents {
     clickCount?: number;
   }) => boolean;
   'sulla-settings-get':     (property: string, defaultValue?: any) => any;
-  'sulla-settings-set':     (property: string, value: any) => void;
+  'sulla-settings-set':     (property: string, value: any, cast?: string) => void;
+  'sulla-settings-delete':  (property: string) => void;
   'sulla-settings:get':     (key: string) => any;
   'sulla-settings:set':     (key: string, value: any, cast?: string) => any;
   'capture-studio:get-sources':      () => { id: string; name: string; thumbnailDataUrl: string }[];
