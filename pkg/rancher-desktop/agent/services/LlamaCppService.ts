@@ -10,6 +10,13 @@ const LOG_PREFIX = '[LlamaCppService]';
 /** Port llama-server listens on (same as old Ollama port) */
 const LLAMA_SERVER_PORT = 30114;
 
+/**
+ * Concurrent inference slots. Observed peak is 3 (main agent + 2 subconscious).
+ * Requests beyond this queue via continuous batching rather than wasting RAM
+ * on idle KV caches.
+ */
+const LLAMA_SERVER_SLOTS = 3;
+
 /** GitHub API endpoint for latest llama.cpp release */
 const GITHUB_API_LATEST = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest';
 
@@ -46,6 +53,15 @@ export interface GGUFModelEntry {
   swaModel?:     boolean;
   /** Native context window size for this model. Used to clamp --ctx-size and avoid wasteful RoPE extrapolation. */
   nativeCtx?:    number;
+  /** Key in GGUF_MODELS for the speculative decoding draft model (same tokenizer family, much smaller). */
+  draftModelKey?: string;
+  /**
+   * KV cache cost per token in bytes when using q8_0 keys + q4_0 values.
+   * Formula: n_layers * n_heads * head_dim * 1.5 (1 byte q8_0 + 0.5 byte q4_0) * 2 (K+V).
+   * Used by calculateContextSize() to prevent over-allocating context and causing OOM.
+   * If omitted, falls back to a size-based heuristic.
+   */
+  kvBytesPerToken?: number;
 }
 
 export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
@@ -60,6 +76,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     description:  'Qwen3.5 9B — latest generation, strong reasoning default',
     trainingRepo: 'unsloth/Qwen3.5-9B',
     nativeCtx:    32768,
+    draftModelKey: 'qwen3.5-0.8b',
+    kvBytesPerToken: 15360,  // 40L × 128d × 8kv_heads × 1.5 × 2
   },
   'qwen3.5-4b': {
     displayName:  'Qwen3.5 4B',
@@ -72,6 +90,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     description:  'Qwen3.5 4B — balanced performance and speed',
     trainingRepo: 'unsloth/Qwen3.5-4B',
     nativeCtx:    32768,
+    draftModelKey: 'qwen3.5-0.8b',
+    kvBytesPerToken: 9216,  // 36L × 128d × 4kv_heads × 1.5 × 2
   },
   'qwen3.5-0.8b': {
     displayName:  'Qwen3.5 0.8B',
@@ -84,6 +104,19 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     description:  'Qwen3.5 0.8B — fast and lightweight',
     trainingRepo: 'unsloth/Qwen3.5-0.8B',
     nativeCtx:    32768,
+    kvBytesPerToken: 3072,  // 24L × 128d × 2kv_heads × 1.5 × 2
+  },
+  'qwen2-0.5b': {
+    displayName: 'Qwen2 0.5B',
+    filename:    'qwen2-0_5b-instruct-q4_k_m.gguf',
+    url:         'https://huggingface.co/Qwen/Qwen2-0.5B-Instruct-GGUF/resolve/main/qwen2-0_5b-instruct-q4_k_m.gguf',
+    size:        '380MB',
+    sizeBytes:   380_000_000,
+    minMemoryGB: 1,
+    minCPUs:     1,
+    description: 'Qwen2 0.5B — speculative decoding draft model for Qwen2 family',
+    nativeCtx:   32768,
+    kvBytesPerToken: 2304,  // 24L × 128d × 2kv_heads × 1.5 × 2
   },
   'qwen2-1.5b': {
     displayName: 'Qwen2 1.5B',
@@ -95,6 +128,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Alibaba's Qwen2 model, efficient for basic tasks",
     nativeCtx:   32768,
+    draftModelKey: 'qwen2-0.5b',
+    kvBytesPerToken: 5760,  // 28L × 128d × 4kv_heads × 1.5 × 2
   },
   'phi3-mini': {
     displayName: 'Phi-3 Mini',
@@ -106,6 +141,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Microsoft's efficient 3.8B model, great reasoning capabilities",
     nativeCtx:   4096,
+    kvBytesPerToken: 11520,  // 32L × 128d × 8kv_heads × 1.5 × 2
   },
   'gemma-2b': {
     displayName: 'Gemma 2B',
@@ -117,6 +153,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Google's lightweight model, good general performance",
     nativeCtx:   8192,
+    kvBytesPerToken: 4608,  // 18L × 256d × 1kv_head × 1.5 × 2 (MQA)
   },
   'llama3.2-1b': {
     displayName: 'Llama 3.2 1B',
@@ -128,6 +165,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Meta's smallest Llama 3.2, efficient and capable",
     nativeCtx:   131072,
+    kvBytesPerToken: 6144,  // 16L × 128d × 8kv_heads × 1.5 × 2 (GQA)
   },
   'llama3.2-3b': {
     displayName: 'Llama 3.2 3B',
@@ -139,6 +177,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Meta's compact Llama 3.2, balanced performance",
     nativeCtx:   131072,
+    draftModelKey: 'llama3.2-1b',
+    kvBytesPerToken: 9216,  // 28L × 128d × 8kv_heads × 1.5 × 2 (GQA)
   },
   'mistral-7b': {
     displayName: 'Mistral 7B',
@@ -150,6 +190,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: 'Excellent 7B model, strong coding and reasoning',
     nativeCtx:   32768,
+    kvBytesPerToken: 15360,  // 32L × 128d × 8kv_heads × 1.5 × 2 (GQA)
   },
   'qwen2-7b': {
     displayName: 'Qwen2 7B',
@@ -161,6 +202,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Alibaba's Qwen2 7B model, strong performance",
     nativeCtx:   32768,
+    draftModelKey: 'qwen2-0.5b',
+    kvBytesPerToken: 10752,  // 28L × 128d × 4kv_heads × 1.5 × 2
   },
   'llama3.1-8b': {
     displayName: 'Llama 3.1 8B',
@@ -172,6 +215,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Meta's latest 8B model, excellent all-around performance",
     nativeCtx:   131072,
+    draftModelKey: 'llama3.2-1b',
+    kvBytesPerToken: 15360,  // 32L × 128d × 8kv_heads × 1.5 × 2 (GQA)
   },
   'gemma-7b': {
     displayName: 'Gemma 7B',
@@ -183,6 +228,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Google's larger model, improved capabilities",
     nativeCtx:   8192,
+    draftModelKey: 'gemma-2b',
+    kvBytesPerToken: 16128,  // 28L × 256d × 1kv_head × 1.5 × 2 (MQA with wider head)
   },
   'gemma4-e2b': {
     displayName: 'Gemma 4 E2B',
@@ -195,6 +242,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     description: "Google's Gemma 4 E2B — multimodal (text+image+audio), ultralight",
     swaModel:    true,
     nativeCtx:   8192,
+    kvBytesPerToken: 7680,  // 26L × 128d × 4kv_heads × 1.5 × 2
   },
   'gemma4-e4b': {
     displayName: 'Gemma 4 E4B',
@@ -207,6 +255,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     description: "Google's Gemma 4 E4B — multimodal (text+image+audio), recommended for most laptops",
     swaModel:    true,
     nativeCtx:   8192,
+    draftModelKey: 'gemma4-e2b',
+    kvBytesPerToken: 11520,  // 34L × 128d × 4kv_heads × 1.5 × 2
   },
   'gemma4-26b': {
     displayName: 'Gemma 4 26B-A4B',
@@ -219,6 +269,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     description: "Google's Gemma 4 26B MoE — only 3.8B params active, runs like a 4B at frontier quality",
     swaModel:    true,
     nativeCtx:   8192,
+    draftModelKey: 'gemma4-e2b',
+    kvBytesPerToken: 23040,  // 48L × 128d × 8kv_heads × 1.5 × 2
   },
   'codellama-7b': {
     displayName: 'Code Llama 7B',
@@ -230,6 +282,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: 'Specialized for code generation and understanding',
     nativeCtx:   16384,
+    kvBytesPerToken: 15360,  // 32L × 128d × 8kv_heads × 1.5 × 2 (GQA)
   },
   'foundation-sec-8b-abliterated': {
     displayName: 'Foundation-Sec 8B Abliterated',
@@ -241,6 +294,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Cisco's security-focused 8B model, abliterated — purpose-built for pentesting and vuln analysis",
     nativeCtx:   131072,
+    draftModelKey: 'llama3.2-1b',
+    kvBytesPerToken: 15360,  // 32L × 128d × 8kv_heads × 1.5 × 2 (GQA, Llama arch)
   },
   'qwen3-8b-abliterated': {
     displayName: 'Qwen3 8B Abliterated',
@@ -252,6 +307,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: 'Qwen3 8B abliterated — strong at code and reasoning, no refusals (Qwen3-Coder has no 8B variant)',
     nativeCtx:   32768,
+    draftModelKey: 'qwen3.5-0.8b',
+    kvBytesPerToken: 15360,  // 36L × 128d × 8kv_heads × 1.5 × 2
   },
   'dolphin3-8b': {
     displayName: 'Dolphin 3.0 8B',
@@ -263,6 +320,8 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Eric Hartford's Dolphin 3.0 — uncensored Llama 3.1 8B, the OG unrestricted model",
     nativeCtx:   131072,
+    draftModelKey: 'llama3.2-1b',
+    kvBytesPerToken: 15360,  // 32L × 128d × 8kv_heads × 1.5 × 2 (GQA, Llama arch)
   },
   'glm-4.7-flash': {
     displayName: 'GLM-4.7 Flash',
@@ -274,6 +333,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     4,
     description: "Z.AI's GLM-4.7 Flash — 30B MoE (3B active), best-in-class SWE-Bench & GPQA, 200K context",
     nativeCtx:   131072,
+    kvBytesPerToken: 23040,  // 48L × 128d × 8kv_heads × 1.5 × 2
   },
 };
 
@@ -1408,27 +1468,42 @@ export class LlamaCppService {
 
     const destPath = path.join(getModelsDir(), entry.filename);
 
-    if (fs.existsSync(destPath)) {
+    if (!fs.existsSync(destPath)) {
+      // Pre-flight disk space check (model size + tmp file headroom)
+      assertDiskSpace(getModelsDir(), entry.sizeBytes * 1.1, `model download (${ entry.displayName })`);
+
+      console.log(`${ LOG_PREFIX } Downloading model ${ entry.displayName } from ${ entry.url } ...`);
+
+      // Stream to a temp file then rename — avoids partial files on crash
+      const tmpPath = destPath + '.tmp';
+      try {
+        await httpGetToFile(entry.url, tmpPath, onProgress);
+        fs.renameSync(tmpPath, destPath);
+        const stat = fs.statSync(destPath);
+        console.log(`${ LOG_PREFIX } Model ${ entry.displayName } downloaded (${ (stat.size / 1024 / 1024).toFixed(1) } MB)`);
+      } catch (err) {
+        try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
+        throw err;
+      }
+    } else {
       const stat = fs.statSync(destPath);
       console.log(`${ LOG_PREFIX } Model ${ entry.displayName } already exists (${ (stat.size / 1024 / 1024).toFixed(1) } MB)`);
-      return destPath;
     }
 
-    // Pre-flight disk space check (model size + tmp file headroom)
-    assertDiskSpace(getModelsDir(), entry.sizeBytes * 1.1, `model download (${ entry.displayName })`);
-
-    console.log(`${ LOG_PREFIX } Downloading model ${ entry.displayName } from ${ entry.url } ...`);
-
-    // Stream to a temp file then rename — avoids partial files on crash
-    const tmpPath = destPath + '.tmp';
-    try {
-      await httpGetToFile(entry.url, tmpPath, onProgress);
-      fs.renameSync(tmpPath, destPath);
-      const stat = fs.statSync(destPath);
-      console.log(`${ LOG_PREFIX } Model ${ entry.displayName } downloaded (${ (stat.size / 1024 / 1024).toFixed(1) } MB)`);
-    } catch (err) {
-      try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
-      throw err;
+    // Ensure the draft model for speculative decoding is also downloaded (non-fatal)
+    if (entry.draftModelKey) {
+      const draftEntry = GGUF_MODELS[entry.draftModelKey];
+      if (draftEntry) {
+        const draftPath = path.join(getModelsDir(), draftEntry.filename);
+        if (!fs.existsSync(draftPath)) {
+          console.log(`${ LOG_PREFIX } Also downloading draft model ${ draftEntry.displayName } for speculative decoding...`);
+          try {
+            await this.downloadModel(entry.draftModelKey);
+          } catch (err) {
+            console.warn(`${ LOG_PREFIX } Draft model download failed (non-fatal):`, err);
+          }
+        }
+      }
     }
 
     return destPath;
@@ -1460,10 +1535,37 @@ export class LlamaCppService {
     const modelBasename = path.basename(modelPath);
     const modelEntry = Object.values(GGUF_MODELS).find(e => e.filename === modelBasename);
 
-    // Calculate context size based on available system RAM, model size, and native context limit
+    // Speculative decoding: resolve draft model if configured for this model family
+    let draftModelPath: string | null = null;
+    if (modelEntry?.draftModelKey) {
+      const draftEntry = GGUF_MODELS[modelEntry.draftModelKey];
+      if (draftEntry) {
+        const draftPath = path.join(getModelsDir(), draftEntry.filename);
+        if (!fs.existsSync(draftPath)) {
+          console.log(`${ LOG_PREFIX } Downloading draft model ${ draftEntry.displayName } for speculative decoding...`);
+          try {
+            await this.downloadModel(modelEntry.draftModelKey);
+          } catch (err) {
+            console.warn(`${ LOG_PREFIX } Draft model download failed (continuing without speculative decoding):`, err);
+          }
+        }
+        if (fs.existsSync(draftPath)) {
+          draftModelPath = draftPath;
+          console.log(`${ LOG_PREFIX } Speculative decoding enabled with draft model: ${ draftEntry.displayName }`);
+        }
+      }
+    }
+
+    // Calculate context size based on available system RAM, model size, and native context limit.
+    // If the user set a preferred context size in settings, use it as the cap.
     const modelFileSize = fs.statSync(modelPath).size;
-    this._contextSize = this.calculateContextSize(modelFileSize, modelEntry?.nativeCtx);
-    console.log(`${ LOG_PREFIX } Starting llama-server on port ${ port } with model ${ modelPath } (ctx=${ this._contextSize })`);
+    const ramBasedCtx = this.calculateContextSize(modelFileSize, modelEntry?.nativeCtx, modelEntry?.kvBytesPerToken);
+    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+    const userPref = await SullaSettingsModel.get('localContextSize', 0);
+    const perSlotCtx = (userPref > 0) ? Math.min(Number(userPref), ramBasedCtx) : ramBasedCtx;
+    // --ctx-size is total across all slots, so multiply by slot count
+    this._contextSize = perSlotCtx * LLAMA_SERVER_SLOTS;
+    console.log(`${ LOG_PREFIX } Starting llama-server on port ${ port } with model ${ modelPath } (ctx-total=${ this._contextSize }, per-slot=${ perSlotCtx }, slots=${ LLAMA_SERVER_SLOTS }, ram-max=${ ramBasedCtx }, user-pref=${ userPref })`);
 
     // Slot-save directory for persistent KV cache across restarts
     const slotCacheDir = path.join(getLlmRoot(), 'slot-cache');
@@ -1474,8 +1576,8 @@ export class LlamaCppService {
       '--port', String(port),
       '--host', '127.0.0.1',
       '--ctx-size', String(this._contextSize),
-      // Use a single slot to maximize cache hits for our single-user desktop app
-      '-np', '1',
+      // Multiple slots so subconscious agents and the main agent can run concurrently
+      '-np', String(LLAMA_SERVER_SLOTS),
       // Enable flash attention for better performance and quantized KV cache support
       '--flash-attn', 'on',
       // Quantize KV cache — q8_0 for keys (preserves attention precision), q4_0 for values (saves memory with minimal quality loss)
@@ -1487,6 +1589,11 @@ export class LlamaCppService {
       '--mlock',
       // Enable continuous batching for better throughput
       '--cont-batching',
+      // Larger batch sizes speed up prompt processing (especially long system prompts)
+      '--batch-size', '4096',
+      '--ubatch-size', '1024',
+      // Disable reasoning/thinking mode — prevents models from wasting tokens on internal CoT
+      '--reasoning', 'off',
     ];
 
     // SWA models (gemma4, etc.) need --swa-full to enable prompt cache reuse
@@ -1495,9 +1602,19 @@ export class LlamaCppService {
       console.log(`${ LOG_PREFIX } SWA model detected — enabling --swa-full for cache reuse`);
     }
 
+    // Speculative decoding: use draft model for faster token generation
+    if (draftModelPath) {
+      args.push('--model-draft', draftModelPath);
+      args.push('--draft-max', '24');
+      args.push('--draft-p-min', '0.5');
+    }
+
     // Only offload to GPU if we have a GPU-accelerated build
     if (_isGpuBuild) {
       args.push('--n-gpu-layers', '999');
+      if (draftModelPath) {
+        args.push('-ngld', '999');
+      }
     }
 
     const proc = spawn(serverBin, args, {
@@ -1590,10 +1707,11 @@ export class LlamaCppService {
      *
      * Formula:
      *   availableForContext = totalRAM - modelFileSize - 2GB (OS/app overhead)
-     *   Each token of context costs ~2 bytes of KV cache for Q4 models (rough heuristic).
+     *   KV cache cost per token uses the model-specific kvBytesPerToken field when available,
+     *   or falls back to a size-based heuristic: ~3 bytes per billion parameters per token.
      *   Clamp result between 2048 and 131072 tokens, rounded down to nearest 1024.
      */
-  private calculateContextSize(modelFileSizeBytes: number, nativeCtx?: number): number {
+  private calculateContextSize(modelFileSizeBytes: number, nativeCtx?: number, kvBytesPerToken?: number): number {
     const totalRamBytes = os.totalmem();
     const osOverhead = 2 * 1024 * 1024 * 1024; // 2 GB reserved for OS + app
     const availableBytes = totalRamBytes - modelFileSizeBytes - osOverhead;
@@ -1603,9 +1721,13 @@ export class LlamaCppService {
       return 2048;
     }
 
-    // KV cache cost: ~2 bytes per token for Q4_K_M quants (conservative estimate)
-    const bytesPerToken = 2;
-    let ctxSize = Math.floor(availableBytes / bytesPerToken);
+    // Use model-specific KV cache cost when available, otherwise estimate from model file size.
+    // Q4_K_M models are roughly 0.5 bytes/param, so sizeBytes / 0.5 ≈ param count.
+    // KV cost ≈ 3 bytes per billion params per token is a safe heuristic for q8_0+q4_0 KV cache.
+    // Divide by slot count since each slot needs its own KV cache.
+    const bytesPerToken = kvBytesPerToken
+      ?? Math.max(1024, Math.round((modelFileSizeBytes / 0.5e9) * 3000));
+    let ctxSize = Math.floor(availableBytes / (bytesPerToken * LLAMA_SERVER_SLOTS));
 
     // Round down to nearest 1024
     ctxSize = Math.floor(ctxSize / 1024) * 1024;
@@ -1615,7 +1737,7 @@ export class LlamaCppService {
     const maxCtx = nativeCtx ?? 131072;
     ctxSize = Math.max(MIN_CTX, Math.min(maxCtx, ctxSize));
 
-    console.log(`${ LOG_PREFIX } RAM: ${ (totalRamBytes / 1e9).toFixed(1) }GB, model: ${ (modelFileSizeBytes / 1e9).toFixed(1) }GB, native-ctx: ${ maxCtx }, calculated ctx-size: ${ ctxSize }`);
+    console.log(`${ LOG_PREFIX } RAM: ${ (totalRamBytes / 1e9).toFixed(1) }GB, model: ${ (modelFileSizeBytes / 1e9).toFixed(1) }GB, kv-cost: ${ bytesPerToken }B/tok, native-ctx: ${ maxCtx }, calculated ctx-size: ${ ctxSize }`);
     return ctxSize;
   }
 

@@ -897,6 +897,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           llmTools = llmTools.filter((t: any) => !subAgentBlockedTools.has(t?.function?.name));
         }
 
+        // Block sub-agent spawning on local models — slots are limited
+        if (this.llm?.getProviderName?.() === 'ollama') {
+          const localBlockedTools = new Set(['spawn_agent', 'check_agent_jobs']);
+          llmTools = llmTools.filter((t: any) => !localBlockedTools.has(t?.function?.name));
+        }
+
         // Block browser/playwright tools when caller has no visible browser
         if ((state.metadata as any).userVisibleBrowser === false) {
           const browserTools = new Set([

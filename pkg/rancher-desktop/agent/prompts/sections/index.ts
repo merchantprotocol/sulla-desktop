@@ -36,18 +36,18 @@ SystemPromptBuilder.register('safety',              buildSafetySection,         
 SystemPromptBuilder.register('execution_bias',      buildExecutionBiasSection,       ['full', 'local']);
 SystemPromptBuilder.register('tooling',             buildToolingSection,             ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('narration_policy',    buildNarrationPolicySection,     ['full', 'local']);
-SystemPromptBuilder.register('environment',         buildEnvironmentSection,         ['full']);
+SystemPromptBuilder.register('environment',         buildEnvironmentSection,         ['full', 'local']);
 SystemPromptBuilder.register('skills',              buildSkillsSection,              ['full', 'local']);
 SystemPromptBuilder.register('workspace',           buildWorkspaceSection,           ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('trust',               buildTrustSection,               ['full', 'minimal', 'local']);
-SystemPromptBuilder.register('voice_mode',          buildVoiceModeSection,           ['full']);
+SystemPromptBuilder.register('voice_mode',          buildVoiceModeSection,           ['full', 'local']);
 SystemPromptBuilder.register('completion_wrappers', buildCompletionWrappersSection,  ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('agent_prompt',        buildAgentPromptSection,         ['full', 'minimal', 'local']);
 
 // Dynamic sections (change per turn — after cache boundary)
-SystemPromptBuilder.register('channel_awareness',   buildChannelAwarenessSection,    ['full']);
-SystemPromptBuilder.register('heartbeat',           buildHeartbeatSection,           ['full']);
-SystemPromptBuilder.register('silent_reply',        buildSilentReplySection,         ['full']);
+SystemPromptBuilder.register('channel_awareness',   buildChannelAwarenessSection,    ['full', 'local']);
+SystemPromptBuilder.register('heartbeat',           buildHeartbeatSection,           ['full', 'local']);
+SystemPromptBuilder.register('silent_reply',        buildSilentReplySection,         ['full', 'local']);
 SystemPromptBuilder.register('runtime',             buildRuntimeSection,             ['full', 'minimal', 'local']);
 
 /** All registered section IDs — useful for matching agent .md file overrides */

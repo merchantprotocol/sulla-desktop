@@ -1094,27 +1094,8 @@ ipcMainProxy.handle('start-backend' as any, () => {
 
 await onMainProxyLoad(ipcMainProxy);
 
-// ── ModelProviderService: single source of truth for LLM provider/model ──
-// Initialize after DB is ready. Handles all model-change IPC, llama-server
-// lifecycle, and broadcasting. Replaces the old model-changed handler.
-try {
-  const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
-  const modelProviderService = getModelProviderService();
-  await modelProviderService.initialize();
-
-  // Invalidate LLM caches whenever the source of truth changes
-  const { LLMRegistry } = await import('@pkg/agent/languagemodels');
-  const { resetOllamaService } = await import('@pkg/agent/languagemodels/OllamaService');
-  modelProviderService.onChange(() => {
-    LLMRegistry.invalidate();
-    resetOllamaService();
-    console.log('[Background] LLM service caches invalidated via ModelProviderService');
-  });
-
-  console.log('[Background] ModelProviderService initialized');
-} catch (err) {
-  console.error('[Background] Failed to initialize ModelProviderService:', err);
-}
+// ModelProviderService is initialized via the service lifecycle in sulla.ts
+// (depends on 'database-manager' + 'redis' to guarantee DB is ready before loading state).
 
 // Legacy model-changed from renderers that haven't migrated yet — forward to the service
 ipcMainProxy.on('model-changed', async(_event, data) => {
