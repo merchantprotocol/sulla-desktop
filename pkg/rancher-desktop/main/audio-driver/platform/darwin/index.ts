@@ -593,7 +593,7 @@ export const whisper = {
 
     log.info('Platform', 'Installing whisper-cpp via Homebrew...');
     return new Promise((resolve) => {
-      const proc = spawn(brewPath, ['install', 'whisper-cpp'], {
+      const proc = spawn(brewPath, ['install', '--verbose', 'whisper-cpp'], {
         env:   CHILD_ENV,
         stdio: 'pipe',
       });
