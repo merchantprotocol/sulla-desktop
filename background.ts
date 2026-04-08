@@ -1100,6 +1100,17 @@ ipcMainProxy.on('model-changed', async(_event, data) => {
     win.webContents.send('model-changed', data);
   });
 
+  // ── Invalidate cached LLM service instances so the next call re-reads settings ──
+  try {
+    const { LLMRegistry } = await import('@pkg/agent/languagemodels');
+    const { resetOllamaService } = await import('@pkg/agent/languagemodels/OllamaService');
+    LLMRegistry.invalidate();
+    resetOllamaService();
+    console.log('[Background] LLM service caches invalidated after model change');
+  } catch (err) {
+    console.warn('[Background] Failed to invalidate LLM caches:', err);
+  }
+
   // Stop or start the local llama-server based on the new mode
   const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
   const llamaCpp = getLlamaCppService();
