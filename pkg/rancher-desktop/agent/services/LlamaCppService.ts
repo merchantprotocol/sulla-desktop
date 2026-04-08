@@ -44,6 +44,8 @@ export interface GGUFModelEntry {
   trainingRepo?: string;
   /** True for models with Sliding Window Attention (gemma4, etc.) that need --swa-full for cache reuse. */
   swaModel?:     boolean;
+  /** Native context window size for this model. Used to clamp --ctx-size and avoid wasteful RoPE extrapolation. */
+  nativeCtx?:    number;
 }
 
 export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
@@ -57,6 +59,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:      4,
     description:  'Qwen3.5 9B — latest generation, strong reasoning default',
     trainingRepo: 'unsloth/Qwen3.5-9B',
+    nativeCtx:    32768,
   },
   'qwen3.5-4b': {
     displayName:  'Qwen3.5 4B',
@@ -68,6 +71,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:      2,
     description:  'Qwen3.5 4B — balanced performance and speed',
     trainingRepo: 'unsloth/Qwen3.5-4B',
+    nativeCtx:    32768,
   },
   'qwen3.5-0.8b': {
     displayName:  'Qwen3.5 0.8B',
@@ -79,6 +83,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:      1,
     description:  'Qwen3.5 0.8B — fast and lightweight',
     trainingRepo: 'unsloth/Qwen3.5-0.8B',
+    nativeCtx:    32768,
   },
   'qwen2-1.5b': {
     displayName: 'Qwen2 1.5B',
@@ -89,6 +94,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 2,
     minCPUs:     2,
     description: "Alibaba's Qwen2 model, efficient for basic tasks",
+    nativeCtx:   32768,
   },
   'phi3-mini': {
     displayName: 'Phi-3 Mini',
@@ -99,6 +105,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 4,
     minCPUs:     2,
     description: "Microsoft's efficient 3.8B model, great reasoning capabilities",
+    nativeCtx:   4096,
   },
   'gemma-2b': {
     displayName: 'Gemma 2B',
@@ -109,6 +116,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 4,
     minCPUs:     2,
     description: "Google's lightweight model, good general performance",
+    nativeCtx:   8192,
   },
   'llama3.2-1b': {
     displayName: 'Llama 3.2 1B',
@@ -119,6 +127,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 4,
     minCPUs:     2,
     description: "Meta's smallest Llama 3.2, efficient and capable",
+    nativeCtx:   131072,
   },
   'llama3.2-3b': {
     displayName: 'Llama 3.2 3B',
@@ -129,6 +138,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 4,
     minCPUs:     2,
     description: "Meta's compact Llama 3.2, balanced performance",
+    nativeCtx:   131072,
   },
   'mistral-7b': {
     displayName: 'Mistral 7B',
@@ -139,6 +149,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 5,
     minCPUs:     2,
     description: 'Excellent 7B model, strong coding and reasoning',
+    nativeCtx:   32768,
   },
   'qwen2-7b': {
     displayName: 'Qwen2 7B',
@@ -149,6 +160,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 5,
     minCPUs:     2,
     description: "Alibaba's Qwen2 7B model, strong performance",
+    nativeCtx:   32768,
   },
   'llama3.1-8b': {
     displayName: 'Llama 3.1 8B',
@@ -159,6 +171,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 6,
     minCPUs:     2,
     description: "Meta's latest 8B model, excellent all-around performance",
+    nativeCtx:   131072,
   },
   'gemma-7b': {
     displayName: 'Gemma 7B',
@@ -169,6 +182,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 6,
     minCPUs:     2,
     description: "Google's larger model, improved capabilities",
+    nativeCtx:   8192,
   },
   'gemma4-e2b': {
     displayName: 'Gemma 4 E2B',
@@ -180,6 +194,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Google's Gemma 4 E2B — multimodal (text+image+audio), ultralight",
     swaModel:    true,
+    nativeCtx:   8192,
   },
   'gemma4-e4b': {
     displayName: 'Gemma 4 E4B',
@@ -191,6 +206,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     2,
     description: "Google's Gemma 4 E4B — multimodal (text+image+audio), recommended for most laptops",
     swaModel:    true,
+    nativeCtx:   8192,
   },
   'gemma4-26b': {
     displayName: 'Gemma 4 26B-A4B',
@@ -202,6 +218,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minCPUs:     4,
     description: "Google's Gemma 4 26B MoE — only 3.8B params active, runs like a 4B at frontier quality",
     swaModel:    true,
+    nativeCtx:   8192,
   },
   'codellama-7b': {
     displayName: 'Code Llama 7B',
@@ -212,6 +229,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 5,
     minCPUs:     2,
     description: 'Specialized for code generation and understanding',
+    nativeCtx:   16384,
   },
   'foundation-sec-8b-abliterated': {
     displayName: 'Foundation-Sec 8B Abliterated',
@@ -222,6 +240,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 8,
     minCPUs:     2,
     description: "Cisco's security-focused 8B model, abliterated — purpose-built for pentesting and vuln analysis",
+    nativeCtx:   131072,
   },
   'qwen3-8b-abliterated': {
     displayName: 'Qwen3 8B Abliterated',
@@ -232,6 +251,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 8,
     minCPUs:     2,
     description: 'Qwen3 8B abliterated — strong at code and reasoning, no refusals (Qwen3-Coder has no 8B variant)',
+    nativeCtx:   32768,
   },
   'dolphin3-8b': {
     displayName: 'Dolphin 3.0 8B',
@@ -242,6 +262,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 8,
     minCPUs:     2,
     description: "Eric Hartford's Dolphin 3.0 — uncensored Llama 3.1 8B, the OG unrestricted model",
+    nativeCtx:   131072,
   },
   'glm-4.7-flash': {
     displayName: 'GLM-4.7 Flash',
@@ -252,6 +273,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
     minMemoryGB: 20,
     minCPUs:     4,
     description: "Z.AI's GLM-4.7 Flash — 30B MoE (3B active), best-in-class SWE-Bench & GPQA, 200K context",
+    nativeCtx:   131072,
   },
 };
 
@@ -1434,14 +1456,14 @@ export class LlamaCppService {
       throw new Error(`${ LOG_PREFIX } Model file not found: ${ modelPath }`);
     }
 
-    // Calculate context size based on available system RAM and model file size
-    const modelFileSize = fs.statSync(modelPath).size;
-    this._contextSize = this.calculateContextSize(modelFileSize);
-    console.log(`${ LOG_PREFIX } Starting llama-server on port ${ port } with model ${ modelPath } (ctx=${ this._contextSize })`);
-
-    // Look up the model entry to check for SWA and other per-model flags
+    // Look up the model entry to check for SWA, native context, and other per-model flags
     const modelBasename = path.basename(modelPath);
     const modelEntry = Object.values(GGUF_MODELS).find(e => e.filename === modelBasename);
+
+    // Calculate context size based on available system RAM, model size, and native context limit
+    const modelFileSize = fs.statSync(modelPath).size;
+    this._contextSize = this.calculateContextSize(modelFileSize, modelEntry?.nativeCtx);
+    console.log(`${ LOG_PREFIX } Starting llama-server on port ${ port } with model ${ modelPath } (ctx=${ this._contextSize })`);
 
     // Slot-save directory for persistent KV cache across restarts
     const slotCacheDir = path.join(getLlmRoot(), 'slot-cache');
@@ -1455,12 +1477,16 @@ export class LlamaCppService {
       // Use a single slot to maximize cache hits for our single-user desktop app
       '-np', '1',
       // Enable flash attention for better performance and quantized KV cache support
-      '--flash-attn',
-      // Quantize KV cache to q8_0 to reduce memory usage while preserving quality
+      '--flash-attn', 'on',
+      // Quantize KV cache — q8_0 for keys (preserves attention precision), q4_0 for values (saves memory with minimal quality loss)
       '--cache-type-k', 'q8_0',
-      '--cache-type-v', 'q8_0',
+      '--cache-type-v', 'q4_0',
       // Persistent slot save path for KV cache across server restarts
       '--slot-save-path', slotCacheDir,
+      // Lock model weights in RAM — prevents OS from paging to disk on idle
+      '--mlock',
+      // Enable continuous batching for better throughput
+      '--cont-batching',
     ];
 
     // SWA models (gemma4, etc.) need --swa-full to enable prompt cache reuse
@@ -1567,7 +1593,7 @@ export class LlamaCppService {
      *   Each token of context costs ~2 bytes of KV cache for Q4 models (rough heuristic).
      *   Clamp result between 2048 and 131072 tokens, rounded down to nearest 1024.
      */
-  private calculateContextSize(modelFileSizeBytes: number): number {
+  private calculateContextSize(modelFileSizeBytes: number, nativeCtx?: number): number {
     const totalRamBytes = os.totalmem();
     const osOverhead = 2 * 1024 * 1024 * 1024; // 2 GB reserved for OS + app
     const availableBytes = totalRamBytes - modelFileSizeBytes - osOverhead;
@@ -1584,12 +1610,12 @@ export class LlamaCppService {
     // Round down to nearest 1024
     ctxSize = Math.floor(ctxSize / 1024) * 1024;
 
-    // Clamp
+    // Clamp to model's native context window to avoid wasteful RoPE extrapolation
     const MIN_CTX = 2048;
-    const MAX_CTX = 131072;
-    ctxSize = Math.max(MIN_CTX, Math.min(MAX_CTX, ctxSize));
+    const maxCtx = nativeCtx ?? 131072;
+    ctxSize = Math.max(MIN_CTX, Math.min(maxCtx, ctxSize));
 
-    console.log(`${ LOG_PREFIX } RAM: ${ (totalRamBytes / 1e9).toFixed(1) }GB, model: ${ (modelFileSizeBytes / 1e9).toFixed(1) }GB, calculated ctx-size: ${ ctxSize }`);
+    console.log(`${ LOG_PREFIX } RAM: ${ (totalRamBytes / 1e9).toFixed(1) }GB, model: ${ (modelFileSizeBytes / 1e9).toFixed(1) }GB, native-ctx: ${ maxCtx }, calculated ctx-size: ${ ctxSize }`);
     return ctxSize;
   }
 

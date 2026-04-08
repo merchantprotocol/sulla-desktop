@@ -10,8 +10,6 @@ import { heartbeatPrompt } from '../agent/prompts/heartbeat';
 import { SullaSettingsModel } from '../agent/database/models/SullaSettingsModel';
 import { REMOTE_PROVIDERS } from '../shared/remoteProviders';
 import { getSupportedProviders, fetchModelsForProvider, clearModelCache } from '../agent/languagemodels';
-import { getIntegrationService } from '../agent/services/IntegrationService';
-import { integrations } from '../agent/integrations/catalog';
 import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { LOCAL_MODELS } from '../shared/localModels';
 import type { LocalModelOption } from '../shared/localModels';
@@ -288,7 +286,9 @@ export default defineComponent({
 
     this.activeMode = await SullaSettingsModel.get('activeMode', 'local');
 
-    // Listen for model changes from other windows
+    // Listen for state changes from ModelProviderService (source of truth)
+    ipcRenderer.on('model-provider:state-changed', this.handleProviderStateChanged);
+    // Legacy listener for backward compat
     ipcRenderer.on('model-changed', this.handleModelChanged);
 
     // Load all settings from database
@@ -300,23 +300,43 @@ export default defineComponent({
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
-    this.activeMode = (await SullaSettingsModel.get('modelMode', 'local')) as 'local' | 'remote';
-    // Strip quotes if present (in case of malformed storage)
-    const mode = typeof this.activeMode === 'string' ? this.activeMode.replace(/^"|"$/g, '') : this.activeMode;
-    this.activeMode = (mode === 'local' || mode === 'remote') ? mode : 'local';
-    this.viewingTab = this.activeMode;
-    this.selectedProvider = await SullaSettingsModel.get('remoteProvider', 'grok');
-    this.selectedRemoteModel = await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning');
-    this.apiKey = await SullaSettingsModel.get('remoteApiKey', '');
+    // Load provider/model state from ModelProviderService (source of truth)
+    try {
+      const mpsState = await ipcRenderer.invoke('model-provider:get-state');
+      this.activeMode = mpsState.modelMode;
+      this.viewingTab = mpsState.modelMode;
+      this.primaryProvider = mpsState.primaryProvider;
+      this.secondaryProvider = mpsState.secondaryProvider;
+      this.activeModel = mpsState.activeModelId;
+      this.pendingModel = mpsState.activeModelId;
+
+      // Load the provider-specific config (API key, selected model, etc.)
+      if (mpsState.primaryProvider !== 'ollama') {
+        const config = await ipcRenderer.invoke('model-provider:get-provider-config', mpsState.primaryProvider);
+        this.selectedProvider = mpsState.primaryProvider;
+        this.selectedRemoteModel = mpsState.activeModelId;
+        this.apiKey = config.api_key || '';
+      } else {
+        // Load remote provider config separately for when user switches tabs
+        this.selectedProvider = await SullaSettingsModel.get('remoteProvider', 'grok');
+        this.selectedRemoteModel = await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning');
+        this.apiKey = await SullaSettingsModel.get('remoteApiKey', '');
+      }
+    } catch (err) {
+      console.warn('[LM Settings] Failed to load from ModelProviderService, falling back:', err);
+      this.activeMode = (await SullaSettingsModel.get('modelMode', 'local')) as 'local' | 'remote';
+      const mode = typeof this.activeMode === 'string' ? this.activeMode.replace(/^"|"$/g, '') : this.activeMode;
+      this.activeMode = (mode === 'local' || mode === 'remote') ? mode : 'local';
+      this.viewingTab = this.activeMode;
+      this.selectedProvider = await SullaSettingsModel.get('remoteProvider', 'grok');
+      this.selectedRemoteModel = await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning');
+      this.apiKey = await SullaSettingsModel.get('remoteApiKey', '');
+    }
     this.remoteRetryCount = await SullaSettingsModel.get('remoteRetryCount', 3);
     this.remoteTimeoutSeconds = Number(await SullaSettingsModel.get('remoteTimeoutSeconds', 60));
     this.localTimeoutSeconds = await SullaSettingsModel.get('localTimeoutSeconds', 120);
     this.localRetryCount = await SullaSettingsModel.get('localRetryCount', 2);
     this.heartbeatEnabled = await SullaSettingsModel.get('heartbeatEnabled', true);
-
-    // Load model from database
-    this.activeModel = await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
-    this.pendingModel = this.activeModel;
 
     console.log('Loaded settings values:', {
       activeMode:           this.activeMode,
@@ -329,32 +349,12 @@ export default defineComponent({
       localRetryCount:      this.localRetryCount,
     });
 
-    // Load primary/secondary provider settings
-    this.primaryProvider = await SullaSettingsModel.get('primaryProvider', 'ollama');
-    this.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'ollama');
-
-    // Build available providers list from connected integrations
+    // Build available providers list from ModelProviderService
     try {
-      const integrationService = getIntegrationService();
-      await integrationService.initialize();
-
-      const EXCLUDED_IDS = ['activepieces'];
-      const providers: { id: string; name: string }[] = [
-        { id: 'ollama', name: 'llama.cpp (Local)' },
-      ];
-
-      for (const integration of Object.values(integrations)) {
-        if (integration.category !== 'AI Infrastructure') continue;
-        if (EXCLUDED_IDS.includes(integration.id)) continue;
-        if (integration.id === 'ollama') continue;
-
-        const connected = await integrationService.isAnyAccountConnected(integration.id);
-        if (connected) {
-          providers.push({ id: integration.id, name: integration.name });
-        }
-      }
-
-      this.availableProviders = providers;
+      const providers = await ipcRenderer.invoke('model-provider:get-providers');
+      this.availableProviders = providers.map((p: { id: string; name: string }) => ({
+        id: p.id, name: p.id === 'ollama' ? 'llama.cpp (Local)' : p.name,
+      }));
     } catch (err) {
       console.warn('[LM Settings] Failed to load available providers:', err);
     }
@@ -394,10 +394,8 @@ export default defineComponent({
     this.loadSystemResources();
 
     // Load which local model is currently activated
-    const currentLocalModel = await SullaSettingsModel.get('sullaModel', '');
-
-    if (currentLocalModel && LOCAL_MODELS.some(m => m.name === currentLocalModel)) {
-      this.activatedLocalModel = currentLocalModel;
+    if (this.activeModel && LOCAL_MODELS.some(m => m.name === this.activeModel)) {
+      this.activatedLocalModel = this.activeModel;
     }
 
     ipcRenderer.send('dialog/ready');
@@ -418,7 +416,7 @@ export default defineComponent({
       }
     },
 
-    // Watch for primary provider changes — persist immediately and notify other windows
+    // Watch for primary provider changes — delegate to ModelProviderService
     async primaryProvider(newProvider: string, oldProvider: string) {
       if (!newProvider || newProvider === oldProvider) return;
       if (this._suppressProviderWatch) {
@@ -426,57 +424,31 @@ export default defineComponent({
         return;
       }
 
-      // Persist the new primary provider
-      await SullaSettingsModel.set('primaryProvider', newProvider, 'string');
-
-      // Read the preferred model for this provider from its integration settings
-      let preferredModel = '';
       try {
-        const integrationService = getIntegrationService();
-        const formValues = await integrationService.getFormValues(newProvider);
-        const modelVal = formValues.find((v: { property: string; value: string }) => v.property === 'model');
-        preferredModel = modelVal?.value || '';
-      } catch {
-        // Fallback to legacy settings
-        if (newProvider === 'ollama') {
-          preferredModel = await SullaSettingsModel.get('sullaModel', '');
-        } else {
-          preferredModel = await SullaSettingsModel.get('remoteModel', '');
-        }
-      }
+        // Read the current model for this provider from the service
+        const config = await ipcRenderer.invoke('model-provider:get-provider-config', newProvider);
+        const preferredModel = config.model || '';
 
-      // Keep legacy settings in sync
-      if (newProvider === 'ollama') {
-        await SullaSettingsModel.set('modelMode', 'local', 'string');
-        if (preferredModel) {
-          await SullaSettingsModel.set('sullaModel', preferredModel, 'string');
-        }
-        this.activeMode = 'local';
-        this.viewingTab = 'local';
-      } else {
-        await SullaSettingsModel.set('modelMode', 'remote', 'string');
-        await SullaSettingsModel.set('remoteProvider', newProvider, 'string');
-        if (preferredModel) {
-          await SullaSettingsModel.set('remoteModel', preferredModel, 'string');
-        }
-        this.activeMode = 'remote';
-        this.viewingTab = 'remote';
-        this.selectedProvider = newProvider;
-        this.selectedRemoteModel = preferredModel;
-      }
+        // Tell the source of truth — it persists, broadcasts, and manages llama-server
+        const newState = await ipcRenderer.invoke('model-provider:select-model', newProvider, preferredModel);
 
-      // Notify other windows (Agent page model selector)
-      ipcRenderer.send('model-changed',
-        newProvider === 'ollama'
-          ? { model: preferredModel, type: 'local' }
-          : { model: preferredModel, type: 'remote', provider: newProvider },
-      );
+        this.activeMode = newState.modelMode;
+        this.viewingTab = newState.modelMode;
+        this.activeModel = newState.activeModelId;
+        if (newProvider !== 'ollama') {
+          this.selectedProvider = newProvider;
+          this.selectedRemoteModel = newState.activeModelId;
+        }
+      } catch (err) {
+        console.error('[LM Settings] Failed to change primary provider via service:', err);
+      }
     },
   },
 
   beforeUnmount() {
     // Clean up IPC listeners
     ipcRenderer.removeAllListeners('settings-write-error');
+    ipcRenderer.removeAllListeners('model-provider:state-changed');
     ipcRenderer.removeAllListeners('model-changed');
     ipcRenderer.removeAllListeners('local-model-download-progress');
   },
@@ -828,17 +800,15 @@ export default defineComponent({
           return;
         }
 
-        // Save settings
-        await this.writeExperimentalSettings({ modelMode: 'local' });
+        // Tell the source of truth — it persists, broadcasts, and manages llama-server
+        const newState = await ipcRenderer.invoke('model-provider:select-model', 'ollama', this.pendingModel);
+        // Save non-model settings (timeouts, retry counts, etc.)
+        await this.writeExperimentalSettings();
 
-        this.activeMode = 'local';
+        this.activeMode = newState.modelMode;
         this.viewingTab = 'local';
-        console.log('Activated local model, activeMode and viewingTab set to local');
-        this.activeModel = this.pendingModel;
-        console.log(`[LM Settings] Local model activated: ${ this.pendingModel }`);
-
-        // Emit event for other windows to update
-        ipcRenderer.send('model-changed', { model: this.pendingModel, type: 'local' });
+        this.activeModel = newState.activeModelId;
+        console.log(`[LM Settings] Local model activated: ${ newState.activeModelId }`);
       } catch (err) {
         this.activationError = 'Failed to connect to llama.cpp. Is the service running?';
         console.error('Failed to activate local model:', err);
@@ -957,17 +927,21 @@ export default defineComponent({
           return;
         }
 
-        // Save settings
-        await this.writeExperimentalSettings({ modelMode: 'remote' });
+        // Save provider config (API key, model) via the source of truth
+        await ipcRenderer.invoke('model-provider:update-provider-config', this.selectedProvider, {
+          api_key:  this.apiKey,
+          model:    this.selectedRemoteModel,
+        });
 
-        this.activeMode = 'remote';
+        // Tell the source of truth — it persists, broadcasts, and manages llama-server
+        const newState = await ipcRenderer.invoke('model-provider:select-model', this.selectedProvider, this.selectedRemoteModel);
+        // Save non-model settings (timeouts, retry counts, etc.)
+        await this.writeExperimentalSettings();
+
+        this.activeMode = newState.modelMode;
         this.viewingTab = 'remote';
-        console.log('Activated remote model, activeMode and viewingTab set to remote');
-        this.activeModel = this.pendingModel;
+        this.activeModel = newState.activeModelId;
         console.log(`[LM Settings] Remote model activated: ${ this.selectedProvider }/${ this.selectedRemoteModel }`);
-
-        // Emit event for other windows to update
-        ipcRenderer.send('model-changed', { model: this.selectedRemoteModel, type: 'remote', provider: this.selectedProvider });
       } catch (err) {
         this.activationError = 'Failed to save remote settings.';
         console.error('Failed to activate remote model:', err);
@@ -1074,15 +1048,11 @@ export default defineComponent({
 
     async writeExperimentalSettings(extra: Record<string, unknown> = {}) {
       try {
-        // Save all settings to database
+        // Save non-model settings to database.
+        // Model/provider settings are owned by ModelProviderService.
         const settingsToSave = {
           botName:               String(this.botName || ''),
           primaryUserName:       String(this.primaryUserName || ''),
-          primaryProvider:       String(this.primaryProvider || 'ollama'),
-          secondaryProvider:     String(this.secondaryProvider || 'ollama'),
-          remoteProvider:        String(this.selectedProvider || ''),
-          remoteModel:           String(this.selectedRemoteModel || ''),
-          remoteApiKey:          String(this.apiKey || ''),
           remoteRetryCount:      Number(this.remoteRetryCount) || 3,
           remoteTimeoutSeconds:  Number(this.remoteTimeoutSeconds) || 60,
           localTimeoutSeconds:   Number(this.localTimeoutSeconds) || 120,
@@ -1171,10 +1141,9 @@ export default defineComponent({
         const status: Record<string, boolean> = await ipcRenderer.invoke('local-models-status');
         this.localModelDownloadStatus = status;
 
-        // Load current sullaModel as the selected local model
-        const currentModel = await SullaSettingsModel.get('sullaModel', '');
-        if (currentModel && LOCAL_MODELS.some(m => m.name === currentModel)) {
-          this.localModelSelected = currentModel;
+        // Use the current active model if it's a local GGUF model
+        if (this.activeModel && LOCAL_MODELS.some(m => m.name === this.activeModel)) {
+          this.localModelSelected = this.activeModel;
         }
       } catch (err) {
         console.error('[LM Settings] Failed to load local model statuses:', err);
@@ -1210,26 +1179,14 @@ export default defineComponent({
       if (!this.localModelSelected) return;
       this.localModelError = '';
       try {
-        // Save sullaModel setting
-        await SullaSettingsModel.set('sullaModel', this.localModelSelected, 'string');
+        // Tell the source of truth — it persists, broadcasts, and manages llama-server
+        const newState = await ipcRenderer.invoke('model-provider:select-model', 'ollama', this.localModelSelected);
 
-        // Update the ollama integration model property
-        const integrationService = getIntegrationService();
-        await integrationService.setFormValues([{
-          integration_id: 'ollama',
-          property:       'model',
-          value:          this.localModelSelected,
-        }]);
-
-        // Also set primary provider to ollama
-        this.primaryProvider = 'ollama';
-        await this.writeExperimentalSettings();
-
-        // Track the activated model for visual indicator
+        this._suppressProviderWatch = true;
+        this.primaryProvider = newState.primaryProvider;
+        this.activeMode = newState.modelMode;
+        this.activeModel = newState.activeModelId;
         this.activatedLocalModel = this.localModelSelected;
-
-        // Emit event for other windows
-        ipcRenderer.send('model-changed', { model: this.localModelSelected, type: 'local' });
 
         console.log(`[LM Settings] Local GGUF model activated: ${ this.localModelSelected }`);
       } catch (err) {
@@ -1242,17 +1199,34 @@ export default defineComponent({
       window.close();
     },
 
-    // Handle model changes from other windows
-    async handleModelChanged(event: IpcRendererEvent, data: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string }) {
+    // Handle state changes from ModelProviderService (source of truth)
+    handleProviderStateChanged(
+      _event: IpcRendererEvent,
+      state: { primaryProvider: string; activeModelId: string; modelMode: 'local' | 'remote' },
+    ) {
+      this.activeModel = state.activeModelId;
+      this.activeMode = state.modelMode;
+      this.pendingModel = state.activeModelId;
+      if (state.modelMode === 'remote') {
+        this.selectedProvider = state.primaryProvider;
+        this.selectedRemoteModel = state.activeModelId;
+      }
+      // Suppress watcher to avoid IPC loop
+      if (this.primaryProvider !== state.primaryProvider) {
+        this._suppressProviderWatch = true;
+        this.primaryProvider = state.primaryProvider;
+      }
+    },
+
+    // Legacy handler for backward compat
+    handleModelChanged(_event: IpcRendererEvent, data: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string }) {
       this.activeModel = data.model;
       this.activeMode = data.type;
-      if (data.type === 'remote' && data.provider) {
-        this.selectedProvider = data.provider;
+      if (data.type === 'remote' && (data as any).provider) {
+        this.selectedProvider = (data as any).provider;
         this.selectedRemoteModel = data.model;
       }
       this.pendingModel = this.activeModel;
-
-      // Sync primary provider from the model selector (suppress watcher to avoid IPC loop)
       const newPrimary = data.type === 'local' ? 'ollama' : (data as any).provider || 'ollama';
       if (this.primaryProvider !== newPrimary) {
         this._suppressProviderWatch = true;

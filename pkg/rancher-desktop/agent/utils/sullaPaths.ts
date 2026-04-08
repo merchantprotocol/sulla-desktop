@@ -228,6 +228,14 @@ export async function bootstrapSullaHome(): Promise<void> {
   for (const { dir, repo } of BOOTSTRAP_REPOS) {
     const target = dir();
     if (fs.existsSync(path.join(target, '.git'))) {
+      try {
+        console.log(`[Sulla] Fetching latest for ${ target }`);
+        await execFileAsync('git', ['-C', target, 'fetch', 'origin']);
+        await execFileAsync('git', ['-C', target, 'reset', '--hard', '@{u}']);
+        console.log(`[Sulla] Updated ${ target } successfully`);
+      } catch (err) {
+        console.error(`[Sulla] Failed to update ${ target }:`, err);
+      }
       continue;
     }
     try {

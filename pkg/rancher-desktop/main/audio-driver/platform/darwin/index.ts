@@ -467,15 +467,31 @@ const WHISPER_MODELS_DIR = path.join(
 export const whisper = {
   async detect(): Promise<any> {
     try {
-      if (!fs.existsSync(WHISPER_BINARY)) {
-        log.error('Platform', 'Bundled whisper-cli not found', { expected: WHISPER_BINARY });
-        return { available: false };
+      // Prefer the bundled binary; fall back to PATH (e.g. brew install)
+      let binaryPath = WHISPER_BINARY;
+
+      if (!fs.existsSync(binaryPath)) {
+        log.info('Platform', 'Bundled whisper-cli not found, checking PATH...', { expected: binaryPath });
+        try {
+          binaryPath = execSync('which whisper-cli 2>/dev/null || which whisper-cpp 2>/dev/null || which whisper 2>/dev/null', {
+            timeout: 5000,
+            stdio:   'pipe',
+            env:     CHILD_ENV,
+          }).toString().trim().split('\n')[0];
+        } catch {
+          binaryPath = '';
+        }
+        if (!binaryPath) {
+          log.error('Platform', 'whisper-cli not found (bundled or PATH)');
+          return { available: false };
+        }
+        log.info('Platform', 'whisper-cli found on PATH', { binaryPath });
       }
 
       const models = whisper.listModels();
 
-      log.info('Platform', 'whisper.cpp detected (bundled)', { binaryPath: WHISPER_BINARY, models });
-      return { available: true, version: '1.8.4', binaryPath: WHISPER_BINARY, modelsPath: WHISPER_MODELS_DIR, models };
+      log.info('Platform', 'whisper.cpp detected', { binaryPath, models });
+      return { available: true, version: '1.8.4', binaryPath, modelsPath: WHISPER_MODELS_DIR, models };
     } catch {
       return { available: false };
     }

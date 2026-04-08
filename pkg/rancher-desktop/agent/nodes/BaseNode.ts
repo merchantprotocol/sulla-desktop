@@ -1042,7 +1042,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         console.error(`[${ this.name }:BaseNode] Secondary provider fallback failed:`, fallbackErr);
       }
 
-      return null;
+      // Propagate the error so the chat UI can display it to the user
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`[${ this.name }] LLM provider failed: ${ message }`);
     } finally {
       this.currentNodeRunContext = previousRunContext;
       (state.metadata as any).__toolAccessPolicy = previousToolAccessPolicy;

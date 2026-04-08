@@ -7,8 +7,8 @@
  * - getLocalModel() / getRemoteModel()
  * - getHeartbeatLLM() — respects heartbeatProvider → primary provider fallback
  *
- * Resolves provider-specific service classes from IntegrationService credentials.
- * Falls back to SullaSettingsModel for legacy settings.
+ * Reads provider/model state from ModelProviderService (source of truth).
+ * Falls back to SullaSettingsModel when the service isn't initialized yet.
  * All services lazy-init / reconfigure on demand.
  */
 
@@ -30,6 +30,18 @@ const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   alibaba:   async() => { const { getAlibabaService } = await import('./AlibabaService'); return getAlibabaService() },
   custom:    async() => { const { getCustomService } = await import('./CustomService'); return getCustomService() },
 };
+
+// ── Helper: resolve provider from ModelProviderService or fallback ──
+
+function tryGetModelProviderService(): any | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getModelProviderService } = require('../services/ModelProviderService');
+    return getModelProviderService();
+  } catch {
+    return null;
+  }
+}
 
 class LLMRegistryImpl {
   private services = new Map<string, BaseLanguageModel>();
@@ -65,13 +77,9 @@ class LLMRegistryImpl {
   }
 
   /**
-   * Resolve the active remote provider from IntegrationService and create
-   * the appropriate provider-specific service class.
-   *
-   * Falls back to SullaSettingsModel.remoteProvider for legacy compat.
+   * Resolve the active remote provider and create the appropriate service.
    */
   async getRemoteService(overrideModel?: string): Promise<BaseLanguageModel> {
-    // Determine which remote provider is active
     const remoteProvider = await this.getActiveRemoteProviderId();
     const key = `remote:${ remoteProvider }`;
     let svc = this.services.get(key);
@@ -81,7 +89,6 @@ class LLMRegistryImpl {
       if (factory) {
         svc = await factory();
       } else {
-        // Unknown provider — try custom OpenAI-compatible
         console.warn(`[LLMRegistry] Unknown provider '${ remoteProvider }', falling back to custom`);
         const { getCustomService } = await import('./CustomService');
         svc = await getCustomService();
@@ -115,35 +122,40 @@ class LLMRegistryImpl {
   }
 
   // ============================================================================
-  // PRIMARY / SECONDARY PROVIDER (new canonical API)
+  // PRIMARY / SECONDARY PROVIDER — reads from ModelProviderService (sync)
   // ============================================================================
 
   /**
-   * Get the primary LLM service. Reads `primaryProvider` from settings,
-   * defaults to 'ollama'. Returns a fully instantiated, ready-to-call service.
+   * Get the primary LLM service. Reads from ModelProviderService if available,
+   * falls back to SullaSettingsModel.
    */
   async getPrimaryService(): Promise<BaseLanguageModel> {
-    const providerId = await SullaSettingsModel.get('primaryProvider', 'ollama');
+    const mps = tryGetModelProviderService();
+    const providerId = mps
+      ? mps.getPrimaryProvider()
+      : await SullaSettingsModel.get('primaryProvider', 'ollama');
     return this.getServiceByProvider(providerId);
   }
 
   /**
-   * Get the secondary (fallback) LLM service. Reads `secondaryProvider` from
-   * settings, defaults to 'ollama'. Used when the primary provider is
-   * inaccessible.
+   * Get the secondary (fallback) LLM service.
    */
   async getSecondaryService(): Promise<BaseLanguageModel> {
-    const providerId = await SullaSettingsModel.get('secondaryProvider', 'ollama');
+    const mps = tryGetModelProviderService();
+    const providerId = mps
+      ? mps.getSecondaryProvider()
+      : await SullaSettingsModel.get('secondaryProvider', 'ollama');
     return this.getServiceByProvider(providerId);
   }
 
   /**
    * Heartbeat-aware service.
-   * Reads `heartbeatProvider` from settings — 'default' delegates to primary provider,
-   * otherwise resolves the specific provider by ID.
    */
   async getHeartbeatLLM(): Promise<BaseLanguageModel> {
-    const heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
+    const mps = tryGetModelProviderService();
+    const heartbeatProvider = mps
+      ? mps.getHeartbeatProvider()
+      : await SullaSettingsModel.get('heartbeatProvider', 'default');
 
     if (heartbeatProvider === 'default') return this.getPrimaryService();
     return this.getServiceByProvider(heartbeatProvider);
@@ -169,12 +181,17 @@ class LLMRegistryImpl {
 
   /**
    * Determine which remote provider is active.
-   * Checks connected integrations first, falls back to legacy settings.
+   * Reads from ModelProviderService first, falls back to legacy.
    */
   private async getActiveRemoteProviderId(): Promise<string> {
+    const mps = tryGetModelProviderService();
+    if (mps) {
+      return mps.getPrimaryProvider();
+    }
+
+    // Legacy fallback
     try {
       const integrationService = getIntegrationService();
-      // Check each AI provider in priority order for a connected integration
       for (const providerId of ['grok', 'anthropic', 'openai', 'google', 'kimi', 'nvidia', 'alibaba', 'custom']) {
         const connected = await integrationService.isAnyAccountConnected(providerId);
         if (connected) {
@@ -185,11 +202,13 @@ class LLMRegistryImpl {
       // IntegrationService not ready
     }
 
-    // Fallback to legacy setting
     return SullaSettingsModel.get('remoteProvider', 'grok');
   }
 
   async getCurrentModel(): Promise<string> {
+    const mps = tryGetModelProviderService();
+    if (mps) return mps.getActiveModelId();
+
     const mode = await SullaSettingsModel.get('modelMode', 'local');
     if (mode === 'remote') {
       return this.getRemoteModel();
@@ -197,11 +216,27 @@ class LLMRegistryImpl {
     return this.getLocalModel();
   }
 
-  getCurrentMode(): Promise<'local' | 'remote'> {
+  getCurrentMode(): Promise<'local' | 'remote'> | 'local' | 'remote' {
+    const mps = tryGetModelProviderService();
+    if (mps) return mps.getModelMode();
+
     return SullaSettingsModel.get('modelMode', 'local');
   }
 
   async getCurrentConfig(): Promise<any> {
+    const mps = tryGetModelProviderService();
+    if (mps) {
+      const state = mps.getState();
+      return {
+        mode:           state.modelMode,
+        localModel:     state.modelMode === 'local' ? state.activeModelId : await this.getLocalModel(),
+        remoteModel:    state.modelMode === 'remote' ? state.activeModelId : '',
+        remoteProvider: state.primaryProvider,
+        remoteApiKey:   '',
+      };
+    }
+
+    // Legacy fallback
     const mode = await SullaSettingsModel.get('modelMode', 'local');
     const localModel = await this.getLocalModel();
     const remoteProviderId = await this.getActiveRemoteProviderId();
@@ -258,10 +293,6 @@ class LLMRegistryImpl {
   // DYNAMIC MODEL DISCOVERY
   // ============================================================================
 
-  /**
-   * Fetch available models for a specific provider.
-   * Pulls API key from IntegrationService, falls back to provided apiKey param.
-   */
   async fetchModelsForProvider(providerId: string, apiKey?: string): Promise<ModelInfo[]> {
     let key = apiKey || '';
 
@@ -273,7 +304,6 @@ class LLMRegistryImpl {
         for (const v of values) valMap[v.property] = v.value;
         key = valMap.api_key || '';
       } catch {
-        // Fallback
         key = await SullaSettingsModel.get('remoteApiKey', '');
       }
     }
@@ -285,10 +315,6 @@ class LLMRegistryImpl {
     return await modelDiscoveryService.fetchModelsForProvider(providerId, key);
   }
 
-  /**
-   * Fetch available models from all configured providers.
-   * Pulls API keys from IntegrationService.
-   */
   async fetchAllAvailableModels(): Promise<ModelInfo[]> {
     const providers: Record<string, string> = {};
     const supportedProviders = modelDiscoveryService.getSupportedProviders();
@@ -311,9 +337,6 @@ class LLMRegistryImpl {
     return await modelDiscoveryService.fetchAllAvailableModels(providers);
   }
 
-  /**
-   * Get currently configured remote models (for backwards compatibility)
-   */
   async getCurrentRemoteModels(): Promise<ModelInfo[]> {
     const remoteProvider = await this.getActiveRemoteProviderId();
     const svc = await this.getRemoteService();
