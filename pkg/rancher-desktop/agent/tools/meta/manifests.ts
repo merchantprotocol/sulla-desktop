@@ -61,4 +61,15 @@ export const metaToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./read_file'),
   },
+  {
+    name:        'browse_tools',
+    description: 'Search available tools by category or keyword. Returns formatted sulla CLI usage for each tool with descriptions, parameters, and exec examples. Use this to discover what tools are available before calling them.',
+    category:    'meta',
+    schemaDef:   {
+      category: { type: 'string', optional: true, description: 'Tool category to list (e.g. docker, github, slack, redis, pg, playwright, calendar, n8n, kubectl, lima, chrome, vault, extensions, rdctl, meta, agents, skills, bridge).' },
+      query:    { type: 'string', optional: true, description: 'Keyword to search tool names and descriptions across all categories.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./browse_tools'),
+  },
 ];

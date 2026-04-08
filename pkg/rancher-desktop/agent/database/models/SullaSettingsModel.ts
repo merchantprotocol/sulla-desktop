@@ -12,6 +12,28 @@ interface SettingsAttributes {
   cast?:    string;
 }
 
+// ──────────────────────────────────────────────
+// IPC Proxy: renderer processes delegate to main
+// ──────────────────────────────────────────────
+
+function isRendererProcess(): boolean {
+  try {
+    return typeof process !== 'undefined' && process.type === 'renderer';
+  } catch {
+    return false;
+  }
+}
+
+let _ipcRenderer: any = null;
+
+function getIpcRenderer(): any {
+  if (!_ipcRenderer) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _ipcRenderer = require('electron').ipcRenderer;
+  }
+  return _ipcRenderer;
+}
+
 export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   protected readonly tableName = 'sulla_settings';
   protected get tableRef(): string {
@@ -266,22 +288,22 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   }
 
   /**
-   * Public API
-   * @param property
-   * @param defaultValue
-   * @returns
+   * Public API — renderer processes proxy through IPC to main
    */
   public static async get(property: string, defaultValue: any = null): Promise<any> {
+    if (isRendererProcess()) {
+      return getIpcRenderer().invoke('sulla-settings-get', property, defaultValue);
+    }
     return this.getSetting(property, defaultValue);
   }
 
   /**
-   * Public API
-   * @param property
-   * @param value
-   * @returns
+   * Public API — renderer processes proxy through IPC to main
    */
   public static async set(property: string, value: any, cast?: string): Promise<void> {
+    if (isRendererProcess()) {
+      return getIpcRenderer().invoke('sulla-settings-set', property, value, cast);
+    }
     return this.setSetting(property, value, cast);
   }
 
@@ -290,6 +312,9 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   // ──────────────────────────────────────────────
 
   public static async delete(property: string): Promise<void> {
+    if (isRendererProcess()) {
+      return getIpcRenderer().invoke('sulla-settings-delete', property);
+    }
     if (!this.isReady) {
       const filePath = this.getFallbackFilePath();
       let data: Record<string, any> = {};

@@ -236,7 +236,8 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Computer Use
-  'computer-use:request-permission': (appName: string) => { ok: boolean; error?: string };
+  'computer-use:request-permission': (appName: string) => { ok: boolean; status: 'granted' | 'denied' | 'error'; error?: string };
+  'computer-use:health-check': (appNames: string[]) => Record<string, { ok: boolean; status: string; error?: string }>;
   // #endregion
 
   // #region Filesystem
@@ -354,7 +355,7 @@ export interface IpcMainInvokeEvents {
   'local-model-download': (modelKey: string) => { ok: boolean };
   'llama-server:status':  () => { running: boolean };
   'llama-server:stop':    () => { running: boolean };
-  'llama-server:start':   () => { running: boolean };
+  'llama-server:start':   () => { running: boolean; error?: string };
   // #endregion
 
   // #region main/imageEvents

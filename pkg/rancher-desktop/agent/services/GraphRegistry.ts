@@ -24,13 +24,14 @@ const registry = new Map<string, {
 /** Summarizer: no tools — pure text analysis and XML output */
 const SUMMARIZER_TOOLS: string[] = [];
 
-/** Memory Recall: targeted searches for resources, tabs, credentials, environment */
+/** Memory Recall: targeted searches for resources, tabs, credentials, environment, tools */
 const MEMORY_RECALL_TOOLS: string[] = [
   'file_search',           // Search ~/sulla/resources/ for skills & workflows
   'read_file',             // Read SKILL.md, workflow YAML, environment docs
   'list_tabs',             // See what browser tabs are open
   'vault_list',            // List available integration service credentials
   'get_human_presence',    // Check if user is available
+  'browse_tools',          // Search tool catalog by category or keyword
 ];
 
 /** Observation Agent: manage observational memory and update identity files */
@@ -82,14 +83,22 @@ Include the service names and usernames (never passwords).
 Search \`~/sulla/integrations/environment/\` for any environment docs relevant
 to the conversation. Read and include key details from matching files.
 
+### 7. Tools & Connected Accounts
+Use \`browse_tools\` to search for tools relevant to this conversation.
+Start with a keyword query, then drill into specific categories if needed.
+For each relevant tool you find, call \`vault_list\` to check for connected
+accounts in that tool's category (e.g. if citing GitHub tools, check for
+GitHub credentials; if citing Slack tools, check for Slack credentials).
+Include the formatted tool entries and any connected account usernames.
+
 ## Output format
 
 Return your findings organized by section. Paste the actual content — skill
 instructions, workflow YAML, project statuses, tab URLs, credential names,
-environment details. Cite file paths for everything you include.
+environment details, tool entries. Cite file paths for everything you include.
 
 If a section has no relevant results, skip it entirely.
-When all 6 steps are done, finish immediately.`;
+When all 7 steps are done, finish immediately.`;
 
 // ── Heartbeat-specific memory recall ──────────────────────────────────────
 

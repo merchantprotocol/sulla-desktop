@@ -26,6 +26,13 @@
         >
           Deselect All
         </button>
+        <button
+          class="action-btn action-btn--health"
+          :disabled="healthCheckRunning"
+          @click="runHealthCheck"
+        >
+          {{ healthCheckRunning ? 'Checking...' : 'Test Permissions' }}
+        </button>
       </div>
 
       <!-- Loading state -->
@@ -60,6 +67,25 @@
               <div class="app-info">
                 <div class="app-name">
                   {{ app.name }}
+                  <span
+                    v-if="permissionStatus[app.bundleId] === 'granted'"
+                    class="permission-badge permission-badge--granted"
+                    title="Permission granted"
+                  >Granted</span>
+                  <span
+                    v-else-if="permissionStatus[app.bundleId] === 'denied'"
+                    class="permission-badge permission-badge--denied"
+                    title="Permission denied — open System Settings > Privacy & Security > Automation to allow"
+                  >Denied</span>
+                  <span
+                    v-else-if="permissionStatus[app.bundleId] === 'error'"
+                    class="permission-badge permission-badge--error"
+                    :title="permissionError[app.bundleId] || 'Probe failed'"
+                  >Error</span>
+                  <span
+                    v-else-if="permissionStatus[app.bundleId] === 'checking'"
+                    class="permission-badge permission-badge--checking"
+                  >Checking...</span>
                 </div>
                 <div class="app-description">
                   {{ app.description }}
@@ -69,6 +95,12 @@
                   class="not-installed-label"
                 >
                   Not Installed
+                </div>
+                <div
+                  v-if="permissionStatus[app.bundleId] === 'denied'"
+                  class="denied-hint"
+                >
+                  Open System Settings &gt; Privacy &amp; Security &gt; Automation to grant access.
                 </div>
               </div>
               <label class="toggle-switch">
@@ -104,7 +136,10 @@ useTheme();
 
 const enabledApps = ref<Record<string, boolean>>({});
 const installedApps = ref<string[]>([]);
+const permissionStatus = ref<Record<string, 'granted' | 'denied' | 'error' | 'checking'>>({});
+const permissionError = ref<Record<string, string>>({});
 const loading = ref(true);
+const healthCheckRunning = ref(false);
 const categories = APP_CATEGORIES;
 const registry = APP_REGISTRY;
 
@@ -131,6 +166,19 @@ async function saveSettings() {
   await SullaSettingsModel.set('computerUse.enabledApps', JSON.stringify(enabledApps.value), 'string');
 }
 
+async function probePermission(bundleId: string, appName: string) {
+  permissionStatus.value = { ...permissionStatus.value, [bundleId]: 'checking' };
+  try {
+    const result = await ipcRenderer.invoke('computer-use:request-permission', appName);
+    permissionStatus.value = { ...permissionStatus.value, [bundleId]: result.status };
+    if (result.error) {
+      permissionError.value = { ...permissionError.value, [bundleId]: result.error };
+    }
+  } catch {
+    permissionStatus.value = { ...permissionStatus.value, [bundleId]: 'error' };
+  }
+}
+
 async function toggleApp(bundleId: string, event: Event) {
   const target = event.target as HTMLInputElement;
   enabledApps.value = { ...enabledApps.value, [bundleId]: target.checked };
@@ -139,9 +187,51 @@ async function toggleApp(bundleId: string, event: Event) {
   if (target.checked) {
     const appEntry = registry.find(a => a.bundleId === bundleId);
     if (appEntry) {
-      ipcRenderer.invoke('computer-use:request-permission', appEntry.name).catch(() => {});
+      await probePermission(bundleId, appEntry.name);
+    }
+  } else {
+    // Clear status when disabled
+    const updated = { ...permissionStatus.value };
+    delete updated[bundleId];
+    permissionStatus.value = updated;
+  }
+}
+
+async function runHealthCheck() {
+  const enabledEntries = registry.filter(a => enabledApps.value[a.bundleId]);
+  if (enabledEntries.length === 0) {
+    return;
+  }
+
+  healthCheckRunning.value = true;
+
+  // Mark all as checking
+  const checking: Record<string, 'checking'> = {};
+  for (const app of enabledEntries) {
+    checking[app.bundleId] = 'checking';
+  }
+  permissionStatus.value = { ...permissionStatus.value, ...checking };
+
+  try {
+    const appNames = enabledEntries.map(a => a.name);
+    const results = await ipcRenderer.invoke('computer-use:health-check', appNames);
+
+    for (const app of enabledEntries) {
+      const r = results[app.name];
+      if (r) {
+        permissionStatus.value = { ...permissionStatus.value, [app.bundleId]: r.status };
+        if (r.error) {
+          permissionError.value = { ...permissionError.value, [app.bundleId]: r.error };
+        }
+      }
+    }
+  } catch {
+    for (const app of enabledEntries) {
+      permissionStatus.value = { ...permissionStatus.value, [app.bundleId]: 'error' };
     }
   }
+
+  healthCheckRunning.value = false;
 }
 
 async function selectAll() {
@@ -157,6 +247,8 @@ async function selectAll() {
 
 async function deselectAll() {
   enabledApps.value = {};
+  permissionStatus.value = {};
+  permissionError.value = {};
   await saveSettings();
 }
 
@@ -247,6 +339,15 @@ onMounted(async() => {
   &:hover {
     background: var(--bg-surface-hover, var(--nav-active));
   }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &--health {
+    margin-left: auto;
+  }
 }
 
 .loading-state {
@@ -307,6 +408,9 @@ onMounted(async() => {
   font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text-primary, var(--body-text));
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .app-description {
@@ -319,6 +423,44 @@ onMounted(async() => {
   font-size: var(--fs-body-sm, 0.75rem);
   font-style: italic;
   color: var(--status-warning, #f59e0b);
+}
+
+.denied-hint {
+  font-size: var(--fs-body-sm, 0.75rem);
+  color: var(--status-warning, #f59e0b);
+  margin-top: 0.2rem;
+}
+
+// ─── Permission badges ────────────────────────────────────────
+
+.permission-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  white-space: nowrap;
+
+  &--granted {
+    background: rgba(34, 197, 94, 0.15);
+    color: #16a34a;
+  }
+
+  &--denied {
+    background: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+  }
+
+  &--error {
+    background: rgba(245, 158, 11, 0.15);
+    color: #d97706;
+  }
+
+  &--checking {
+    background: rgba(59, 130, 246, 0.15);
+    color: #2563eb;
+  }
 }
 
 // ─── Toggle switch ─────────────────────────────────────────────

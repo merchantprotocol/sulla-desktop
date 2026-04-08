@@ -1427,24 +1427,74 @@ export function initSullaEvents(): void {
 
   ipcMainProxy.handle('computer-use:request-permission', async(_event: unknown, appName: string) => {
     if (process.platform !== 'darwin') {
-      return { ok: true };
+      return { ok: true, status: 'granted' as const };
     }
     try {
       const { execFile } = await import('child_process');
+      // Use a meaningful probe that forces an Apple Event to the target app.
+      // This triggers the macOS TCC dialog if permission hasn't been decided yet.
       const script = `tell application "${ appName }" to return name`;
-      await new Promise<void>((resolve, reject) => {
-        execFile('osascript', ['-e', script], { timeout: 10000 }, (err) => {
-          // An error here just means macOS denied or the app isn't running — that's fine.
-          // The TCC prompt will have been shown regardless.
-          void err;
-          resolve();
+      const result = await new Promise<{ ok: boolean; stderr: string }>((resolve) => {
+        execFile('osascript', ['-e', script], { timeout: 15000 }, (err, _stdout, stderr) => {
+          if (err) {
+            resolve({ ok: false, stderr: (stderr || err.message || '').trim() });
+          } else {
+            resolve({ ok: true, stderr: '' });
+          }
         });
       });
 
-      return { ok: true };
+      if (result.ok) {
+        console.log(`[ComputerUse] Permission probe succeeded for "${ appName }"`);
+
+        return { ok: true, status: 'granted' as const };
+      }
+
+      // macOS returns "not allowed assistive access" or similar on TCC denial
+      const denied = /not allowed|assistive access|not permitted|errAEEventNotPermitted/i.test(result.stderr);
+
+      console.warn(`[ComputerUse] Permission probe for "${ appName }": ${ result.stderr }`);
+
+      return {
+        ok:     false,
+        status: denied ? 'denied' as const : 'error' as const,
+        error:  result.stderr,
+      };
     } catch (err: any) {
-      return { ok: false, error: err.message };
+      console.error(`[ComputerUse] Permission probe exception for "${ appName }":`, err);
+
+      return { ok: false, status: 'error' as const, error: err.message };
     }
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Computer Use — batch health check for all enabled apps
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('computer-use:health-check', async(_event: unknown, appNames: string[]) => {
+    if (process.platform !== 'darwin') {
+      return Object.fromEntries(appNames.map(n => [n, { ok: true, status: 'granted' }]));
+    }
+    const { execFile } = await import('child_process');
+    const results: Record<string, { ok: boolean; status: string; error?: string }> = {};
+
+    await Promise.all(appNames.map(appName => new Promise<void>((done) => {
+      const script = `tell application "${ appName }" to return name`;
+
+      execFile('osascript', ['-e', script], { timeout: 15000 }, (err, _stdout, stderr) => {
+        if (!err) {
+          results[appName] = { ok: true, status: 'granted' };
+        } else {
+          const msg = (stderr || err.message || '').trim();
+          const denied = /not allowed|assistive access|not permitted|errAEEventNotPermitted/i.test(msg);
+
+          results[appName] = { ok: false, status: denied ? 'denied' : 'error', error: msg };
+        }
+        done();
+      });
+    })));
+
+    return results;
   });
 
   console.log('[Sulla] IPC event handlers initialized');
