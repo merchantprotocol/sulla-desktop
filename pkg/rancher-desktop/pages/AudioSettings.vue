@@ -658,18 +658,26 @@
               <div class="whisper-activity-header">
                 <span class="whisper-activity-title">{{ whisperProgressPhase }}</span>
                 <span
-                  v-if="whisperProgressPct >= 0"
+                  v-if="whisperProgressPct > 0"
                   class="whisper-activity-pct"
                 >{{ Math.round(whisperProgressPct) }}%</span>
               </div>
+              <!-- Determinate progress bar (download with known %) -->
               <div
-                v-if="whisperProgressPct >= 0"
+                v-if="whisperProgressPct > 0"
                 class="mic-meter-track"
               >
                 <div
                   class="mic-meter-fill meter-blue"
                   :style="{ width: whisperProgressPct + '%' }"
                 />
+              </div>
+              <!-- Indeterminate progress bar (brew install, no known %) -->
+              <div
+                v-if="whisperProgressPct <= 0"
+                class="mic-meter-track"
+              >
+                <div class="mic-meter-fill meter-blue meter-indeterminate" />
               </div>
               <div class="whisper-log">
                 <div
@@ -2472,6 +2480,17 @@ onUnmounted(() => {
 
 .meter-red {
   background: var(--status-error, #ef4444);
+}
+
+.meter-indeterminate {
+  width: 30%;
+  animation: indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes indeterminate {
+  0%   { margin-left: 0;   width: 30%; }
+  50%  { margin-left: 40%; width: 30%; }
+  100% { margin-left: 0;   width: 30%; }
 }
 
 .mic-meter-db {
