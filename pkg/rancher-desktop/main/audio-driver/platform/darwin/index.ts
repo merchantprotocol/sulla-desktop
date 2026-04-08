@@ -593,44 +593,34 @@ export const whisper = {
 
     log.info('Platform', 'Installing whisper-cpp via Homebrew...');
     return new Promise((resolve) => {
-      const proc = spawn(brewPath, ['install', '--verbose', 'whisper-cpp'], {
+      const proc = spawn(brewPath, ['install', 'whisper-cpp'], {
         env:   CHILD_ENV,
         stdio: 'pipe',
       });
 
-      // Use an activity-based timeout: reset the timer whenever brew produces
-      // output, so long-running source builds (e.g. cmake) don't get killed
-      // while they are still actively compiling.
-      const IDLE_TIMEOUT = 600000; // 10 min of *silence* before we give up
-      let timeout = setTimeout(onTimeout, IDLE_TIMEOUT);
-
-      function resetTimeout() {
-        clearTimeout(timeout);
-        timeout = setTimeout(onTimeout, IDLE_TIMEOUT);
-      }
-
-      function onTimeout() {
-        log.error('Platform', 'whisper-cpp install timed out (no output for 10 minutes)');
+      // Homebrew runs source builds inside a sandbox that swallows all
+      // compilation output, so cmake can compile for 15-30 min with zero
+      // stdout/stderr reaching us.  Use a generous wall-clock timeout.
+      const timeout = setTimeout(() => {
+        log.error('Platform', 'whisper-cpp install timed out');
         proc.kill();
         resolve({
           ok:    false,
-          error: 'Installation timed out — Homebrew produced no output for 10 minutes. '
+          error: 'Installation timed out after 30 minutes. '
                + "Try running 'brew install whisper-cpp' in Terminal instead.",
         });
-      }
+      }, 1800000); // 30 min
 
       proc.stdout?.on('data', (data: Buffer) => {
         const line = data.toString().trim();
         if (line && onProgress) onProgress(line);
         log.debug('Platform', 'brew stdout', { line });
-        resetTimeout();
       });
 
       proc.stderr?.on('data', (data: Buffer) => {
         const line = data.toString().trim();
         if (line && onProgress) onProgress(line);
         log.debug('Platform', 'brew stderr', { line });
-        resetTimeout();
       });
 
       proc.on('close', async(code) => {
