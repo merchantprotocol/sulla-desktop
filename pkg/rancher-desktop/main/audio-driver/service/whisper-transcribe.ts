@@ -79,6 +79,15 @@ export function start(opts: {
     return false;
   }
 
+  // If already running, just update the callback — don't reset buffers or
+  // create duplicate flush timers. Multiple services (teleprompter, secretary)
+  // share the same whisper instance.
+  if (mode !== null && flushTimer) {
+    log.info('WhisperTranscribe', 'Already running — updating callback only', { mode: opts.mode });
+    onTranscript = opts.onTranscript;
+    return true;
+  }
+
   // Use requested model if available, otherwise first available model
   modelName = models.includes(requestedModel) ? requestedModel : models[0];
   mode = opts.mode;
@@ -138,10 +147,16 @@ export function getStats(): { active: boolean; mode: TranscribeMode | null; tran
  * VAD detects speech. Chunks are accumulated and flushed to
  * whisper.cpp periodically.
  */
+let feedMicCount = 0;
+
 export function feedMic(chunk: Buffer): void {
   if (!mode) return;
   micBuffer.push(chunk);
   micBytes += chunk.length;
+  feedMicCount++;
+  if (feedMicCount <= 3 || feedMicCount % 100 === 0) {
+    log.debug('WhisperTranscribe', 'feedMic', { chunkBytes: chunk.length, totalBytes: micBytes, count: feedMicCount });
+  }
 
   if (micBytes >= MAX_BUFFER_BYTES) flush();
 }
@@ -255,7 +270,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
     '-t', String(threads),
   ];
 
-  log.debug('WhisperTranscribe', 'Running whisper', { channel, wavPath, model: modelName, threads });
+  log.debug('WhisperTranscribe', 'Running whisper', { channel, wavPath, model: modelName, threads, pcmBytes: pcm.length });
 
   // 10-second timeout — if whisper hangs (CPU contention with LlamaCpp),
   // release the mutex so the next flush can try again with fresh audio.

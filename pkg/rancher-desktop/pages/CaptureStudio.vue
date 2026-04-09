@@ -1387,24 +1387,40 @@ onMounted(async () => {
   loading.value = false;
 });
 
-// ── Graceful shutdown when app is quitting ──
-ipcRenderer.on('app:before-quit', async() => {
-  console.log('[CaptureStudio] Received app:before-quit — stopping capture');
+// ── Full cleanup — shared by before-quit and onUnmounted ──
+async function cleanupCaptureStudio() {
+  console.log('[CaptureStudio] Cleaning up...');
 
   // Stop recording if active
   if (recording.value) {
+    micRecording.stop();
     speakerCapture.stop();
+    inputTracker.stopTracking();
     await recorder.stopSession();
     recording.value = false;
+    diskSpace.stopMonitoring();
+  }
+
+  // Stop teleprompter tracking
+  teleprompterRef.value?.stopTracking?.();
+
+  // Close floating teleprompter
+  if (prompterEnabled.value) {
+    ipcRenderer.invoke('teleprompter:close').catch(() => {});
+    prompterEnabled.value = false;
   }
 
   // Release all media streams (screen + camera)
   mediaSources.releaseScreen();
   mediaSources.releaseCamera();
 
-  // Stop audio driver
+  // Disconnect from controllers
   try { await audioDriver.stopMic(); } catch { /* already stopped */ }
   try { await audioDriver.stopSpeaker(); } catch { /* already stopped */ }
+}
+
+ipcRenderer.on('app:before-quit', () => {
+  cleanupCaptureStudio();
 });
 
 onUnmounted(() => {
@@ -1413,12 +1429,7 @@ onUnmounted(() => {
   stopAudioMeter();
   stopWaveformLoop();
   diskSpace.stopMonitoring();
-  // Close floating teleprompter if open
-  if (prompterEnabled.value) {
-    ipcRenderer.invoke('teleprompter:close').catch(() => {});
-  }
-
-  audioDriver.stopMic().catch(() => {});
+  cleanupCaptureStudio();
 });
 </script>
 
