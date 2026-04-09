@@ -344,8 +344,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     ctx.currentActivity.value = toolNameToVerb(toolName);
 
     // Skip chat-only tools
-    if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image'
-      || toolName === 'load_skill') {
+    if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image') {
       return;
     }
 
@@ -783,7 +782,7 @@ const TOOL_VERB_MAP: Record<string, string> = {
   // Memory
   add_observational_memory: 'Remembering', remove_observational_memory: 'Forgetting',
   // Skills / Projects
-  load_skill: 'Loading skill', create_skill: 'Creating skill',
+  create_skill: 'Creating skill',
   // Lima
   lima_shell: 'Running shell', lima_start: 'Starting VM', lima_stop: 'Stopping VM',
   // Channel

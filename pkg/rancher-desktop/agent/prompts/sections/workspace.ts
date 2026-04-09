@@ -17,7 +17,7 @@ You run inside an isolated Lima VM. Commands via \`exec\` execute in this sandbo
 Sulla Home: ${ sullaHome }/
 Key dirs: resources/ (defaults), skills/, workflows/, agents/, integrations/, identity/ (human/business/agent goals), projects/, logs/
 
-Use \`file_search\` to find skills/workflows. Use \`load_skill\` to load instructions.
+Use \`file_search\` to find skills/workflows. Use \`read_file\` to load instructions.
 
 Session start — read these before acting:
 1. \`~/sulla/resources/environment/discover-and-call-integrations.md\` — tool reference
@@ -61,7 +61,7 @@ ${ sullaHome }/
 └── workspaces/                 # Isolated workspaces for tasks
 \`\`\`
 
-Use \`file_search\` to find relevant skills, workflows, or integration docs. Use \`load_skill\` to load full skill instructions.
+Use \`file_search\` to find relevant skills, workflows, or integration docs. Use \`read_file\` to load full skill instructions.
 
 ### Session Start — Import context when needed
 
