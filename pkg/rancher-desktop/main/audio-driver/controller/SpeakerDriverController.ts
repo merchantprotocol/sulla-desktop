@@ -43,6 +43,9 @@ export class SpeakerDriverController {
   /** Maps serviceId → the WebContents that requested it (for targeted sends). */
   private _holders = new Map<string, WebContents>();
 
+  /** Cleanup listeners keyed by serviceId — removes holder when its WebContents is destroyed. */
+  private _destroyListeners = new Map<string, () => void>();
+
   // ── Level/rebuild callbacks (set by init.ts for broadcasting) ─
 
   private _onLevel: ((data: any) => void) | null = null;
@@ -88,12 +91,26 @@ export class SpeakerDriverController {
   async start(serviceId: string, sender?: WebContents): Promise<void> {
     log.info(SpeakerDriverController.TAG, 'start()', { serviceId, currentHolders: [...this._holders.keys()], running: this._running });
 
+    // Remove any previous destroy listener for this serviceId (re-registration)
+    this._removeDestroyListener(serviceId);
+
     if (sender && !sender.isDestroyed()) {
       this._holders.set(serviceId, sender);
-      log.info(SpeakerDriverController.TAG, 'Holder registered with WebContents', { serviceId });
+
+      // Auto-remove holder when its renderer is destroyed (window closed, navigated away, crashed)
+      const onDestroyed = () => {
+        log.info(SpeakerDriverController.TAG, 'WebContents destroyed — auto-releasing holder', { serviceId });
+        this.stop(serviceId).catch((e: any) => {
+          log.error(SpeakerDriverController.TAG, 'Auto-release stop() failed', { serviceId, error: e.message });
+        });
+      };
+      sender.once('destroyed', onDestroyed);
+      this._destroyListeners.set(serviceId, onDestroyed);
+
+      log.info(SpeakerDriverController.TAG, 'Holder registered with WebContents + destroy listener', { serviceId });
     } else {
       this._holders.set(serviceId, null as any);
-      log.warn(SpeakerDriverController.TAG, 'Holder registered WITHOUT WebContents', { serviceId });
+      log.warn(SpeakerDriverController.TAG, 'Holder registered WITHOUT WebContents (no auto-cleanup)', { serviceId });
     }
 
     if (!this._running) {
@@ -124,6 +141,7 @@ export class SpeakerDriverController {
 
     const wasHolder = this._holders.has(serviceId);
     this._holders.delete(serviceId);
+    this._removeDestroyListener(serviceId);
     log.info(SpeakerDriverController.TAG, 'Holder removed', { serviceId, wasHolder, remainingHolders: [...this._holders.keys()] });
 
     if (this._running && this._holders.size === 0) {
@@ -169,6 +187,9 @@ export class SpeakerDriverController {
       await lifecycle.deactivate({ removeDriver: false });
     }
     this._running = false;
+    for (const sid of this._destroyListeners.keys()) {
+      this._removeDestroyListener(sid);
+    }
     this._holders.clear();
     instance = null;
   }
@@ -186,6 +207,18 @@ export class SpeakerDriverController {
 
   private _persist(): void {
     audio.savePrefs({ ...audio.loadPrefs(), speakerEnabled: this._running });
+  }
+
+  /** Remove the WebContents 'destroyed' listener for a serviceId, if one exists. */
+  private _removeDestroyListener(serviceId: string): void {
+    const listener = this._destroyListeners.get(serviceId);
+    if (listener) {
+      const sender = this._holders.get(serviceId);
+      if (sender && !sender.isDestroyed()) {
+        sender.removeListener('destroyed', listener);
+      }
+      this._destroyListeners.delete(serviceId);
+    }
   }
 
 }

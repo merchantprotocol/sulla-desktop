@@ -759,22 +759,13 @@ export async function getAgentIdForTrigger(triggerType: string): Promise<string>
     const agentDir = findAgentDir(assigned);
     const exists = !!agentDir;
     console.log(`[GraphRegistry] getAgentIdForTrigger() — trigger "${ triggerType }" mapped to "${ assigned }", dir exists=${ exists }`);
-    if (exists) return assigned;
-    console.warn(`[GraphRegistry] getAgentIdForTrigger() — agent dir not found for "${ assigned }"`);
-  } else {
-    console.log(`[GraphRegistry] getAgentIdForTrigger() — no mapping for "${ triggerType }"`);
+    // Return the mapped ID whether or not the dir exists — buildAgentState
+    // gracefully handles missing agent dirs (runs with default prompts/tools).
+    return assigned;
   }
 
-  // Hardcode fallback to 'sulla-desktop' - don't use settings
-  const sullaDesktopDir = findAgentDir('sulla-desktop');
-  if (sullaDesktopDir) {
-    console.log(`[GraphRegistry] getAgentIdForTrigger() — falling back to 'sulla-desktop'`);
-    return 'sulla-desktop';
-  }
-
-  // Return empty if nothing works - caller should handle this
-  console.warn(`[GraphRegistry] getAgentIdForTrigger() — 'sulla-desktop' not found, returning empty`);
-  return '';
+  console.log(`[GraphRegistry] getAgentIdForTrigger() — no mapping for "${ triggerType }", using triggerType as agentId`);
+  return triggerType || 'sulla-desktop';
 }
 
 let threadCounter = 0;
