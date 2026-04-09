@@ -79,6 +79,22 @@ Include project names, statuses, blockers, and next actions.
 Search \`~/sulla/resources/skills/\` for skills relevant to the request.
 For each match, read the SKILL.md and include the key instructions.
 
+**Trigger matching** — When the user's message expresses intent to *do*
+something, *create* something, *manage* something, or asks Sulla to perform
+a task, scan the **Triggers** line in each SKILL.md to find skills whose
+trigger phrases match or overlap with the user's intent. A skill is relevant
+if:
+- The user's words closely match one of the skill's trigger phrases, OR
+- The user describes an activity that falls within the skill's category/tags,
+  OR
+- Completing the user's request would require the tools or procedures the
+  skill defines.
+
+When a matching skill is found, include its full trigger list, the file path
+to the SKILL.md (e.g. \`~/sulla/resources/skills/<slug>/SKILL.md\`), and the
+key instructions so the primary agent knows the skill is available, where to
+find it, and how to invoke it.
+
 ### 3. Workflows
 Search \`~/sulla/resources/workflows/\` for workflows relevant to the request.
 For each match, read the YAML and include the workflow definition.

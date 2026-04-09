@@ -133,7 +133,7 @@ import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracke
 
 const route = useRoute();
 const router = useRouter();
-const { tabs: browserTabs, createTab, restoreClosedTab } = useBrowserTabs();
+const { tabs: browserTabs, createTab, ensureOneTab, restoreClosedTab } = useBrowserTabs();
 const { loggedIn, vaultSetUp, tryAutoLogin } = useVaultUnlock();
 const { showOverlay: startupOverlayVisible } = useStartupProgress();
 
@@ -249,7 +249,7 @@ function onAgentCommand(_event: any, args: any) {
     break;
   }
   case 'new-browser-tab': {
-    const tab = createTab('about:blank');
+    const tab = createTab('https://www.google.com');
 
     router.push(`/Browser/${ tab.id }`);
     break;
@@ -309,6 +309,12 @@ function onHistoryNavigate(_event: any, ...args: any[]) {
 const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
+  // Ensure at least one tab exists and navigate to it on fresh start
+  const initialTab = ensureOneTab();
+  if (!route.path.startsWith('/Browser/')) {
+    router.replace(`/Browser/${ initialTab.id }`);
+  }
+
   // Attempt vault auto-unlock via safeStorage before anything else
   await tryAutoLogin();
 

@@ -10,7 +10,6 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 import './agent-tailwind.css';
 
 import AgentRouter from '../pages/AgentRouter.vue';
-import Agent from '../pages/Agent.vue';
 import AgentCalendar from '../pages/AgentCalendar.vue';
 import AgentIntegrations from '../pages/AgentIntegrations.vue';
 import AgentIntegrationDetail from '../pages/AgentIntegrationDetail.vue';
@@ -31,8 +30,6 @@ initHostBridgeIpc();
 const router = createRouter({
   history: createWebHashHistory(),
   routes:  [
-    { path: '/', redirect: '/Chat' },
-    { path: '/Chat', component: Agent, name: 'AgentChat' },
     { path: '/Calendar', component: AgentCalendar, name: 'AgentCalendar' },
     { path: '/Integrations', component: AgentIntegrations, name: 'AgentIntegrations' },
     { path: '/Integrations/:id', component: AgentIntegrationDetail, name: 'AgentIntegrationDetail' },
@@ -40,9 +37,6 @@ const router = createRouter({
     { path: '/Browser/:id', component: BrowserTabStub, name: 'BrowserTab' },
 
     { path: '/Extension/:name/:path*', component: ExtensionView, name: 'ExtensionView' },
-
-    // Catch-all: redirect unknown routes to /Chat to prevent white screens
-    { path: '/:pathMatch(.*)*', redirect: '/Chat' },
   ],
 });
 
