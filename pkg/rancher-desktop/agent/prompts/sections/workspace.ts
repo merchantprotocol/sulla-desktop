@@ -20,8 +20,8 @@ Key dirs: resources/ (defaults), skills/, workflows/, agents/, integrations/, id
 Use \`file_search\` to find skills/workflows. Use \`load_skill\` to load instructions.
 
 Session start — read these before acting:
-1. \`~/sulla/integrations/environment/tools-api-reference.md\` — tool reference
-2. \`~/sulla/integrations/environment/agent.md\` — agent principles
+1. \`~/sulla/resources/environment/discover-and-call-integrations.md\` — tool reference
+2. \`~/sulla/resources/environment/agent.md\` — agent principles
 3. \`~/sulla/identity/human/identity.md\` — who you work for
 4. \`~/sulla/projects/ACTIVE_PROJECTS.md\` — current projects`;
 
@@ -67,9 +67,9 @@ Use \`file_search\` to find relevant skills, workflows, or integration docs. Use
 
 At the start of every session, read the following files in order before doing anything else:
 
-1. \`read_file\` → \`~/sulla/integrations/environment/tools-api-reference.md\` — full tool category list, call format, and examples
-2. \`read_file\` → \`~/sulla/integrations/environment/environment-overview.md\` — Sulla Desktop architecture, what runs where (host vs. Lima VM), directory layout
-3. \`read_file\` → \`~/sulla/integrations/environment/agent.md\` — core agent principles, communication rules, completion wrappers
+1. \`read_file\` → \`~/sulla/resources/environment/discover-and-call-integrations.md\` — full tool category list, call format, and examples
+2. \`read_file\` → \`~/sulla/resources/environment/environment-overview.md\` — Sulla Desktop architecture, what runs where (host vs. Lima VM), directory layout
+3. \`read_file\` → \`~/sulla/resources/environment/agent.md\` — core agent principles, communication rules, completion wrappers
 4. \`read_file\` → \`~/sulla/identity/human/identity.md\` — who you are working for, their operating model and priorities
 5. \`read_file\` → \`~/sulla/identity/business/identity.md\` — business model, revenue structure, active deadlines
 6. \`read_file\` → \`~/sulla/identity/human/goals.md\` — 13-week arc, financial targets, operating rules

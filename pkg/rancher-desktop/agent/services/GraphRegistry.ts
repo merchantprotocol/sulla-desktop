@@ -39,7 +39,7 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
   'add_observational_memory',     // Store new observations
   'remove_observational_memory',  // Clean up stale observations
   'file_search',                  // Search identity/observation files
-  'exec',                         // Read/write identity files
+  'write_file',                   // Write updates to identity/observation files
 ];
 
 // ============================================================================
@@ -155,7 +155,7 @@ When all steps are done, finish immediately.`;
 const UNSTUCK_RESEARCH_TOOLS: string[] = [
   'file_search',
   'read_file',
-  'exec',
+  'browse_tools',
   'browse_page',
   'vault_list',
   'integration_is_enabled',
@@ -573,7 +573,7 @@ export const GraphRegistry = {
       tools:                  isHeartbeat ? HEARTBEAT_RECALL_TOOLS : MEMORY_RECALL_TOOLS,
       userMessage:            isHeartbeat
         ? 'Load all active projects from ~/sulla/projects/, agent and human goals, and human presence. Return the full PRD content for each project.'
-        : 'Run through the checklist: search resources/skills, resources/workflows, open tabs, vault credentials, and environment docs. Return what is relevant to this conversation.',
+        : 'Read the latest user message in the conversation and decide what context is needed. Only search relevant categories — or return nothing if the message is casual.',
       messages:               [...parentState.messages],
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'memory-recall',
@@ -714,7 +714,7 @@ const DEFAULT_AGENT_FALLBACK = 'chat-controller';
  */
 export async function getDefaultAgentId(): Promise<string> {
   console.log(`[GraphRegistry] getDefaultAgentId() — resolving...`);
-  const id = await SullaSettingsModel.get('defaultAgentId', '');
+  const id = await SullaSettingsModel.get('defaultAgentId', 'sulla-desktop');
   if (id) {
     console.log(`[GraphRegistry] getDefaultAgentId() — found setting: "${ id }"`);
     return id;
@@ -748,20 +748,33 @@ export async function getDefaultAgentId(): Promise<string> {
  * Checks triggerAgentMap first, then falls back to getDefaultAgentId().
  */
 export async function getAgentIdForTrigger(triggerType: string): Promise<string> {
-  console.log(`[GraphRegistry] getAgentIdForTrigger("${ triggerType }") — resolving...`);
-  const triggerMap = await SullaSettingsModel.get('triggerAgentMap', {} as Record<string, string>);
-  console.log(`[GraphRegistry] getAgentIdForTrigger() — triggerMap:`, JSON.stringify(triggerMap));
+  const triggerMap: Record<string, string> = {
+    'sulla-desktop': 'sulla-desktop',
+    'workbench': 'sulla-desktop',
+    'heartbeat': 'dreaming-protocol',
+  };
+
   const assigned = triggerMap[triggerType];
   if (assigned) {
     const agentDir = findAgentDir(assigned);
     const exists = !!agentDir;
     console.log(`[GraphRegistry] getAgentIdForTrigger() — trigger "${ triggerType }" mapped to "${ assigned }", dir exists=${ exists }`);
     if (exists) return assigned;
-    console.warn(`[GraphRegistry] getAgentIdForTrigger() — agent dir not found for "${ assigned }", falling back to default`);
+    console.warn(`[GraphRegistry] getAgentIdForTrigger() — agent dir not found for "${ assigned }"`);
   } else {
-    console.log(`[GraphRegistry] getAgentIdForTrigger() — no mapping for "${ triggerType }", falling back to default`);
+    console.log(`[GraphRegistry] getAgentIdForTrigger() — no mapping for "${ triggerType }"`);
   }
-  return getDefaultAgentId();
+
+  // Hardcode fallback to 'sulla-desktop' - don't use settings
+  const sullaDesktopDir = findAgentDir('sulla-desktop');
+  if (sullaDesktopDir) {
+    console.log(`[GraphRegistry] getAgentIdForTrigger() — falling back to 'sulla-desktop'`);
+    return 'sulla-desktop';
+  }
+
+  // Return empty if nothing works - caller should handle this
+  console.warn(`[GraphRegistry] getAgentIdForTrigger() — 'sulla-desktop' not found, returning empty`);
+  return '';
 }
 
 let threadCounter = 0;

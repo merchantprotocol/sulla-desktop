@@ -237,6 +237,16 @@ export class BackendGraphWebSocketService {
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<void> {
     const agentId = overrideAgentId || await getAgentIdForTrigger(triggerType);
 
+    if (!agentId) {
+      console.error(`[BackendGraphWS] No agent found for trigger "${triggerType}" and override not provided`);
+      this.emitMessage(channelId, 'assistant_message', {
+        content: `No agent configured for this channel. Please ensure the 'sulla-desktop' agent exists.`,
+        role: 'assistant',
+        thread_id: threadIdFromMsg || 'unknown',
+      });
+      return;
+    }
+
     // Use the frontend's threadId if provided (maintains conversation).
     // Otherwise create a new one and notify the frontend via thread_created.
     const isNewThread = !threadIdFromMsg;

@@ -261,7 +261,7 @@ export const GGUF_MODELS: Record<string, GGUFModelEntry> = {
   'gemma4-26b': {
     displayName: 'Gemma 4 26B-A4B',
     filename:    'gemma-4-26B-A4B-it-Q4_K_M.gguf',
-    url:         'https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q4_K_M.gguf',
+    url:         'https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf',
     size:        '17GB',
     sizeBytes:   17_000_000_000,
     minMemoryGB: 20,
