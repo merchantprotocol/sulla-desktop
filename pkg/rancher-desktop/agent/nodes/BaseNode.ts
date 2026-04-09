@@ -6,10 +6,10 @@ import { getCurrentMode, getLocalService, getService, getPrimaryService, getSeco
 import { parseJson } from '../services/JsonParseService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { BaseLanguageModel, ChatMessage, NormalizedResponse, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
+import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { throwIfAborted } from '../services/AbortService';
 import { toolRegistry } from '../tools/registry';
-import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir } from '../utils/sullaPaths';
+import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir } from '../utils/sullaPaths';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
@@ -112,7 +112,7 @@ async function getSoulPrompt(): Promise<string> {
  */
 async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<string> {
   if (!allowedIntegrations || allowedIntegrations.length === 0) {
-    return '_No integrations configured for this agent._';
+    return '';
   }
 
   const allowAll = allowedIntegrations.includes('*');
@@ -143,7 +143,7 @@ async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<s
     ).sort();
 
     if (filteredSlugs.length === 0) {
-      return '_No matching integrations found._';
+      return '';
     }
 
     // Group by category
@@ -197,7 +197,7 @@ async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<s
     return lines.join('\n');
   } catch (err) {
     console.error('[BaseNode] Failed to build integrations index:', err);
-    return '_Integrations index unavailable._';
+    return '';
   }
 }
 
@@ -270,7 +270,7 @@ async function getTemplateVariables(): Promise<Record<string, string>> {
     '{{timeZone}}':             timeZone,
     '{{primaryUserName}}':      primaryUserName || '',
     '{{botName}}':              botName,
-    '{{sulla_home}}':           path.dirname(agentsDir),
+    '{{sulla_home}}':           resolveSullaHomeDir(),
     '{{codebase_dir}}':         resolveSullaCodebaseDir(),
     '{{projects_dir}}':         projectsDir,
     '{{skills_dir}}':           skillsDir,
@@ -780,6 +780,23 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const callToolAccessPolicy = this.buildToolAccessPolicyForCall(options);
     const messages = [...nodeRunContext.messages];
 
+    // Check if the last non-system message is from the assistant.
+    // This indicates the agent has already responded and the graph should be done.
+    const lastNonSystemMessage = messages.filter(m => m.role !== 'system').pop();
+    if (lastNonSystemMessage?.role === 'assistant') {
+      console.log(`[${ this.name }] Last message is from assistant — skipping LLM call and marking as done`);
+      // Return a done response that signals the graph should complete
+      return {
+        content:  lastNonSystemMessage.content as string || '',
+        metadata: {
+          tokens_used:       0,
+          time_spent:        0,
+          finish_reason:     FinishReason.Stop,
+          rawProviderContent: lastNonSystemMessage.content,
+        },
+      };
+    }
+
     // Pre-flight context check: trim messages to fit the active model's context window
     const contextWindow = this.llm.getContextWindow();
     const responseReserve = Math.floor(contextWindow * 0.20);
@@ -895,6 +912,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             'git_push', 'git_stash', 'git_checkout',
           ]);
           llmTools = llmTools.filter((t: any) => !subAgentBlockedTools.has(t?.function?.name));
+        }
+
+        // Block sub-agent spawning on local models — slots are limited
+        if ((state.metadata as any).llmLocal) {
+          const localBlockedTools = new Set(['spawn_agent', 'check_agent_jobs']);
+          llmTools = llmTools.filter((t: any) => !localBlockedTools.has(t?.function?.name));
         }
 
         // Block browser/playwright tools when caller has no visible browser

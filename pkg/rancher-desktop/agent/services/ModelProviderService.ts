@@ -64,7 +64,7 @@ class ModelProviderService {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    // Load persisted state
+    // Load persisted state (requires DB to be ready — caller must ensure this)
     await this.loadStateFromDB();
 
     // Register IPC handlers
@@ -72,6 +72,10 @@ class ModelProviderService {
 
     this.initialized = true;
     console.log('[ModelProviderService] Initialized:', JSON.stringify(this.state));
+
+    // Broadcast to any windows that opened before the service was ready,
+    // so they pick up the correct DB-backed state instead of stale fallback data.
+    await this.broadcastChange();
   }
 
   // ── Getters (synchronous — read from in-memory state) ──────────
@@ -324,6 +328,13 @@ class ModelProviderService {
   ): Promise<void> {
     if (oldMode === newMode && newMode === 'remote') return;
 
+    // Respect the explicit localServerEnabled preference
+    const localServerEnabled = await SullaSettingsModel.get('localServerEnabled', '');
+    if (localServerEnabled === 'false') {
+      console.log('[ModelProviderService] localServerEnabled=false — skipping llama-server management');
+      return;
+    }
+
     try {
       const { getLlamaCppService, GGUF_MODELS } = await import('./LlamaCppService');
       const llamaCpp = getLlamaCppService();
@@ -331,13 +342,15 @@ class ModelProviderService {
       if (newMode === 'remote') {
         console.log('[ModelProviderService] Switching to remote — stopping llama-server');
         try { await llamaCpp.stopServer(); } catch { /* not running */ }
-      } else if (newMode === 'local' && !llamaCpp.isServerRunning) {
-        console.log('[ModelProviderService] Switching to local — starting llama-server');
+      } else if (newMode === 'local') {
         let modelKey = modelId || await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
         if (!(modelKey in GGUF_MODELS)) {
           const mapped = modelKey.replace(/:/g, '-');
           modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
         }
+        // Always (re)start with the selected model — startServer handles
+        // stopping any currently running server automatically.
+        console.log(`[ModelProviderService] Starting llama-server with model ${ modelKey }`);
         const modelPath = await llamaCpp.downloadModel(modelKey);
         await llamaCpp.startServer(modelPath);
         console.log(`[ModelProviderService] llama-server started at ${ llamaCpp.serverBaseUrl }`);

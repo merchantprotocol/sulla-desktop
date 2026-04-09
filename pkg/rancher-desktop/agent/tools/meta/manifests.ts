@@ -4,7 +4,7 @@ export const metaToolManifests: ToolManifest[] = [
   {
     name:        'add_observational_memory',
     description: 'Use this tool to store the observations you make into long-term memory.',
-    category:    'meta',
+    category:    'observation',
     schemaDef:   {
       priority: { type: 'enum', enum: ['🔴', '🟡', '⚪'], default: '🟡' },
       content:  { type: 'string', description: 'One sentence only — extremely concise, always include the context' },
@@ -14,7 +14,7 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'exec',
-    description: 'Execute a shell command inside the isolated Lima VM and return output. Commands run in a sandboxed virtual machine — NOT on the host OS — so destructive operations are safe. You have full root-level freedom: install packages (apt, apk, npm, pip, etc.), delete files/directories (rm -rf), manage services (systemctl, supervisord), mount filesystems, configure networking, compile software, run database migrations, and any other system-level operation. No command is blocked. Use cwd to set working directory, timeout for long-running operations, and stdin to pipe input.',
+    description: 'Run any shell command inside a fully isolated sandboxed Linux VM with root access. Safe to install packages, compile code, delete files, manage services, or run any system command. Access all other tools through sulla cli here.',
     category:    'meta',
     schemaDef:   {
       command: { type: 'string', optional: true, description: 'The exact shell command to run' },
@@ -29,7 +29,7 @@ export const metaToolManifests: ToolManifest[] = [
   {
     name:        'remove_observational_memory',
     description: 'Remove a specific observational memory by its ID to delete it from long-term memory.',
-    category:    'meta',
+    category:    'observation',
     schemaDef:   {
       id: { type: 'string', description: 'The 4-character ID of the memory to remove.' },
     },
@@ -60,6 +60,17 @@ export const metaToolManifests: ToolManifest[] = [
     },
     operationTypes: ['read'],
     loader:         () => import('./read_file'),
+  },
+  {
+    name:        'write_file',
+    description: 'Write or overwrite file contents. Creates parent directories if needed. Restricted to the home directory.',
+    category:    'observation',
+    schemaDef:   {
+      path:    { type: 'string', description: 'Path to the file to write. Supports ~ for home directory.' },
+      content: { type: 'string', description: 'The full content to write to the file.' },
+    },
+    operationTypes: ['create', 'update'],
+    loader:         () => import('./write_file'),
   },
   {
     name:        'browse_tools',

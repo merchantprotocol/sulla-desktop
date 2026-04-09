@@ -367,6 +367,12 @@ export class OpenAICompatibleService extends BaseLanguageModel {
   }
 
   protected async getFallbackLocalService() {
+    // If the user disabled the local server, don't try to fall back to it
+    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+    const modelMode = await SullaSettingsModel.get('modelMode', 'local');
+    if (modelMode === 'remote') {
+      throw new Error('Local model server disabled by user');
+    }
     return getOllamaService();
   }
 

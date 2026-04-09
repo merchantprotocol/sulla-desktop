@@ -17,9 +17,9 @@ export async function buildChannelAwarenessSection(ctx: PromptBuildContext): Pro
     const { getActiveAgentsRegistry } = await import('../../services/ActiveAgentsRegistry');
     const registry = getActiveAgentsRegistry();
     const block = await registry.buildContextBlock();
-    content = `${ block }\n\nYou run on the **${ wsChannel }** WebSocket channel. Your \`sender_id\` and \`sender_channel\` are both \`${ wsChannel }\`.`;
+    content = `${ block }\n\nYou run on the **${ wsChannel }** channel. Your \`sender_id\` and \`sender_channel\` are both \`${ wsChannel }\`.`;
   } catch {
-    content = `## Inter-Agent Communication\n\nYou run on the **${ wsChannel }** WebSocket channel. Agent registry unavailable.`;
+    content = `## Inter-Agent Communication\n\nYou run on the **${ wsChannel }** channel.`;
   }
 
   return {

@@ -154,7 +154,7 @@ export const defaultSettings = {
     remoteRetryCount:          3,
     remoteTimeoutSeconds:      60,
     /** Local Ollama timeout in seconds */
-    localTimeoutSeconds:       120,
+    localTimeoutSeconds:       600,
     /** Local Ollama retry count */
     localRetryCount:           2,
     /** Heartbeat settings */

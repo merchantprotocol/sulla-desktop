@@ -66,7 +66,6 @@ export class HeartbeatNode extends BaseNode {
     // All sections (soul, workspace, tooling, heartbeat, completion wrappers,
     // channel awareness, etc.) are composed by SystemPromptBuilder.
     const enrichedPrompt = await this.enrichPrompt('', state, {
-      promptMode:  'full',
       isHeartbeat: true,
     });
 

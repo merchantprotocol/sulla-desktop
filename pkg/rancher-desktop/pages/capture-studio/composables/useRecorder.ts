@@ -119,10 +119,13 @@ export function useRecorder() {
       return '';
     }
 
-    sessionStartTime = performance.now();
     entries = [];
     bytesWritten.value = 0;
     diskDisplay.value = '0 B';
+
+    // Phase 1: Create all write streams, MediaRecorders, and wire handlers BEFORE starting any.
+    // This ensures all .start() calls happen in the same tick with zero stagger.
+    const prepared: Array<{ entry: StreamEntry; recorder: MediaRecorder; ws: any }> = [];
 
     for (const src of streams) {
       const hasVideo = src.stream.getVideoTracks().length > 0;
@@ -157,8 +160,6 @@ export function useRecorder() {
         continue;
       }
 
-      const startOffset = performance.now() - sessionStartTime;
-
       const entry: StreamEntry = {
         id: src.id,
         type: src.type,
@@ -166,7 +167,7 @@ export function useRecorder() {
         stream: src.stream,
         recorder,
         writeStream: ws,
-        startOffset,
+        startOffset: 0,
         bytesWritten: 0,
       };
 
@@ -190,14 +191,20 @@ export function useRecorder() {
         error.value = `Recording error on ${src.type}: ${e.error?.message || 'unknown'}`;
       };
 
+      prepared.push({ entry, recorder, ws });
+    }
+
+    // Phase 2: Start all recorders in one tight loop — same JS tick, zero offset
+    sessionStartTime = performance.now();
+    for (const { entry, recorder, ws } of prepared) {
       try {
         recorder.start(250); // 250ms chunks — smoother playback, less keyframe issues
+        entry.startOffset = performance.now() - sessionStartTime;
+        entries.push(entry);
       } catch (e: any) {
-        console.error(`[useRecorder] MediaRecorder.start() failed for ${src.type}:`, e.message);
+        console.error(`[useRecorder] MediaRecorder.start() failed for ${entry.type}:`, e.message);
         ws.end();
-        continue;
       }
-      entries.push(entry);
     }
 
     if (entries.length === 0) {

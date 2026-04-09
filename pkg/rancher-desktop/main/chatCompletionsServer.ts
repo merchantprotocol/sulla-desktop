@@ -727,7 +727,6 @@ export class ChatCompletionsServer {
       // Individual stateless tools from mixed categories (where the rest of the category uses state).
       // These are tools whose parent category is NOT fully internal — only specific tools are exposed.
       const INTERNAL_INDIVIDUAL_TOOLS = [
-        { toolName: 'validate_sulla_workflow', slug: 'workflow' },
         { toolName: 'add_observational_memory', slug: 'memory' },
         { toolName: 'remove_observational_memory', slug: 'memory' },
         { toolName: 'check_agent_jobs', slug: 'agents' },

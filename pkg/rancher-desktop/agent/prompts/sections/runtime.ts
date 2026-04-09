@@ -15,10 +15,7 @@ export function buildRuntimeSection(ctx: PromptBuildContext): PromptSection | nu
 
   const parts = [
     `agent=${ ctx.agentId || 'sulla-desktop' }`,
-    `host=${ os.hostname() }`,
-    `os=${ os.platform() }`,
-    `arch=${ os.arch() }`,
-    `channel=${ ctx.wsChannel || 'workbench' }`,
+    `channel=${ ctx.wsChannel || 'sulla-desktop' }`,
     `time="${ formattedTime }"`,
     `tz=${ timeZone }`,
   ];

@@ -140,7 +140,7 @@ export default class SettingsValidator {
         remoteApiKey:              this.checkString,
         remoteRetryCount:          this.checkNumber(0, 10),
         remoteTimeoutSeconds:      this.checkNumber(1, 300),
-        localTimeoutSeconds:       this.checkNumber(1, 300),
+        localTimeoutSeconds:       this.checkNumber(1, 600),
         localRetryCount:           this.checkNumber(0, 10),
         heartbeatEnabled:          this.checkBoolean,
         heartbeatDelayMinutes:     this.checkNumber(1, 1440),

@@ -39,7 +39,7 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
   'add_observational_memory',     // Store new observations
   'remove_observational_memory',  // Clean up stale observations
   'file_search',                  // Search identity/observation files
-  'exec',                         // Read/write identity files
+  'write_file',                   // Write updates to identity/observation files
 ];
 
 // ============================================================================
@@ -48,48 +48,57 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
 
 const MEMORY_RECALL_PROMPT = `You are a READ-ONLY recall process. You gather context for a primary agent.
 
-## First: Decide if memory recall is needed
+## Your job
 
-Read the latest user message in the conversation. If you have all the context you need to respond, return nothing. Do not call any tools.
-If you need more context, proceed with the checklist below.
+Read the latest user message in the conversation. Based on what the human is
+asking about, decide which (if any) of the resource categories below are
+relevant. Only search categories that could plausibly contain useful context
+for the request.
 
-## Your checklist
+If the message is casual (a greeting, small talk, a simple question that
+doesn't reference any project, tool, workflow, or task), return nothing.
+Do not call any tools. Finish immediately.
 
-Complete these steps in order, then finish:
+If the message references a specific topic, project, tool, or task — search
+only the categories that relate to it. For example:
+- Mentions a project name or task → search Active Projects
+- Asks to use a tool or integration → search Tools & Credentials
+- Asks about a workflow or process → search Workflows & Skills
+- Asks about the environment or infra → search Environment
+
+Never search all categories by default. Be selective.
+
+## Resource categories
 
 ### 1. Active Projects
-Search \`~/sulla/projects/\` for all project directories.
-For each project found, read its PROJECT.md (the PRD).
-Also read \`~/sulla/projects/ACTIVE_PROJECTS.md\` for the current status summary.
+Search \`~/sulla/projects/\` for project directories matching the topic.
+Read the relevant PROJECT.md and \`~/sulla/projects/ACTIVE_PROJECTS.md\`.
 Include project names, statuses, blockers, and next actions.
 
 ### 2. Skills
-Search \`~/sulla/resources/skills/\` for skills relevant to the current conversation.
+Search \`~/sulla/resources/skills/\` for skills relevant to the request.
 For each match, read the SKILL.md and include the key instructions.
 
 ### 3. Workflows
-Search \`~/sulla/resources/workflows/\` for workflows relevant to the current conversation.
+Search \`~/sulla/resources/workflows/\` for workflows relevant to the request.
 For each match, read the YAML and include the workflow definition.
 
 ### 4. Open Tabs
 Call \`list_tabs\` to see what the human currently has open in the browser.
-Include tab titles and URLs.
+Only do this when the conversation references browser activity or current work.
 
 ### 5. Credentials
-Call \`vault_list\` to see what integration service accounts are available.
-Include the service names and usernames (never passwords).
+Call \`vault_list\` to check for credentials related to a specific service
+the human is asking about. Never list all credentials unprompted.
 
 ### 6. Environment
-Search \`~/sulla/integrations/environment/\` for any environment docs relevant
+Search \`~/sulla/integrations/environment/\` for environment docs relevant
 to the conversation. Read and include key details from matching files.
 
 ### 7. Tools & Connected Accounts
 Use \`browse_tools\` to search for tools relevant to this conversation.
-Start with a keyword query, then drill into specific categories if needed.
-For each relevant tool you find, call \`vault_list\` to check for connected
-accounts in that tool's category (e.g. if citing GitHub tools, check for
-GitHub credentials; if citing Slack tools, check for Slack credentials).
-Include the formatted tool entries and any connected account usernames.
+Only search when the human is asking about an integration or tool by name.
+For relevant tools, call \`vault_list\` to check for connected accounts.
 
 ## Output format
 
@@ -97,8 +106,8 @@ Return your findings organized by section. Paste the actual content — skill
 instructions, workflow YAML, project statuses, tab URLs, credential names,
 environment details, tool entries. Cite file paths for everything you include.
 
-If a section has no relevant results, skip it entirely.
-When all 7 steps are done, finish immediately.`;
+Skip any section you did not search or that had no relevant results.
+When done, finish immediately.`;
 
 // ── Heartbeat-specific memory recall ──────────────────────────────────────
 
@@ -146,7 +155,7 @@ When all steps are done, finish immediately.`;
 const UNSTUCK_RESEARCH_TOOLS: string[] = [
   'file_search',
   'read_file',
-  'exec',
+  'browse_tools',
   'browse_page',
   'vault_list',
   'integration_is_enabled',
@@ -564,7 +573,7 @@ export const GraphRegistry = {
       tools:                  isHeartbeat ? HEARTBEAT_RECALL_TOOLS : MEMORY_RECALL_TOOLS,
       userMessage:            isHeartbeat
         ? 'Load all active projects from ~/sulla/projects/, agent and human goals, and human presence. Return the full PRD content for each project.'
-        : 'Run through the checklist: search resources/skills, resources/workflows, open tabs, vault credentials, and environment docs. Return what is relevant to this conversation.',
+        : 'Read the latest user message in the conversation and decide what context is needed. Only search relevant categories — or return nothing if the message is casual.',
       messages:               [...parentState.messages],
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'memory-recall',
@@ -705,7 +714,7 @@ const DEFAULT_AGENT_FALLBACK = 'chat-controller';
  */
 export async function getDefaultAgentId(): Promise<string> {
   console.log(`[GraphRegistry] getDefaultAgentId() — resolving...`);
-  const id = await SullaSettingsModel.get('defaultAgentId', '');
+  const id = await SullaSettingsModel.get('defaultAgentId', 'sulla-desktop');
   if (id) {
     console.log(`[GraphRegistry] getDefaultAgentId() — found setting: "${ id }"`);
     return id;
@@ -739,9 +748,12 @@ export async function getDefaultAgentId(): Promise<string> {
  * Checks triggerAgentMap first, then falls back to getDefaultAgentId().
  */
 export async function getAgentIdForTrigger(triggerType: string): Promise<string> {
-  console.log(`[GraphRegistry] getAgentIdForTrigger("${ triggerType }") — resolving...`);
-  const triggerMap = await SullaSettingsModel.get('triggerAgentMap', {} as Record<string, string>);
-  console.log(`[GraphRegistry] getAgentIdForTrigger() — triggerMap:`, JSON.stringify(triggerMap));
+  const triggerMap: Record<string, string> = {
+    'sulla-desktop': 'sulla-desktop',
+    'workbench': 'sulla-desktop',
+    'heartbeat': 'dreaming-protocol',
+  };
+
   const assigned = triggerMap[triggerType];
   if (assigned) {
     const agentDir = findAgentDir(assigned);
