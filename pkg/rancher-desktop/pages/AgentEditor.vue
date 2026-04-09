@@ -1509,7 +1509,7 @@ export default defineComponent({
       STARTED:  'Running',
       STOPPING: 'Shutting down…',
       ERROR:    'Error',
-      DISABLED: 'Disabled',
+      DISABLED: 'Connected',
     };
 
     const backendStateLabel = computed(() => STATE_LABELS[backendState.value] || backendState.value);
@@ -2007,7 +2007,11 @@ export default defineComponent({
       // Listen for backend state and progress
       ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
       ipcRenderer.on('k8s-progress' as any, onK8sProgress);
-      // Fetch initial progress
+      // Fetch initial state and progress
+      try {
+        const initialState = ipcRenderer.sendSync('k8s-state' as any) as string | undefined;
+        if (initialState) backendState.value = initialState;
+      } catch { /* ignore */ }
       ipcRenderer.invoke('k8s-progress').then((p: any) => {
         if (p?.description) backendProgressDesc.value = p.description;
       }).catch(() => {});
