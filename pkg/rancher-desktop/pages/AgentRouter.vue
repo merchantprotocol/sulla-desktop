@@ -47,6 +47,13 @@
     <footer class="agent-footer">
       <div class="agent-footer-left">
         <span
+          v-if="appVersion"
+          class="footer-item footer-version"
+          :title="`Sulla Desktop v${appVersion}`"
+        >
+          v{{ appVersion }}
+        </span>
+        <span
           class="footer-item"
           :title="`${formatBytes(footerStats.availableBytes)} free on disk`"
         >
@@ -139,6 +146,9 @@ watch(sidePanelBlocked, (blocked) => {
 });
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
+
+// ── App version ──
+const appVersion = ref('');
 
 // ── Footer state ──
 const footerStats = reactive({ availableBytes: 0, unprocessedTrainingBytes: 0 });
@@ -308,6 +318,11 @@ onMounted(async() => {
   presenceTracker.setActiveChannel('sulla-desktop');
   presenceTracker.start();
 
+  ipcRenderer.on('get-app-version', (_event: any, version: string) => {
+    appVersion.value = version;
+  });
+  ipcRenderer.send('get-app-version');
+
   refreshFooterStats();
   footerStatsTimer = setInterval(refreshFooterStats, 30_000);
 
@@ -404,6 +419,11 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.footer-version {
+  font-weight: var(--weight-semibold);
+  opacity: 0.7;
 }
 
 .footer-item svg {
