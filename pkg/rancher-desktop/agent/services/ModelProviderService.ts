@@ -328,6 +328,13 @@ class ModelProviderService {
   ): Promise<void> {
     if (oldMode === newMode && newMode === 'remote') return;
 
+    // Respect the explicit localServerEnabled preference
+    const localServerEnabled = await SullaSettingsModel.get('localServerEnabled', '');
+    if (localServerEnabled === 'false') {
+      console.log('[ModelProviderService] localServerEnabled=false — skipping llama-server management');
+      return;
+    }
+
     try {
       const { getLlamaCppService, GGUF_MODELS } = await import('./LlamaCppService');
       const llamaCpp = getLlamaCppService();

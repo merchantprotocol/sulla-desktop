@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'applescript', 'meta', 'memory', 'observation', 'bridge', 'browser', 'calendar', 'computer-use', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'chrome', 'computer-use', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'observation', 'pg', 'playwright', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -73,9 +73,13 @@ export class ToolRegistry {
     redis:              'Redis key/value store operations.',
     pg:                 'PostgreSQL database queries and transactions.',
     rdctl:              'Sulla Desktop / rdctl management commands.',
+    agents:             'Sub-agent spawning and job management — run parallel background agents and check their results.',
     integrations:       'Tools for checking integration status and retrieving integration credentials.',
     chrome:             'Browser extension-style APIs — browsing history search/modification, conversation history search, persistent key-value storage, cookie management, desktop notifications, background browsing, network monitoring, and scheduled alarms.',
     lima:               'Lima VM instance management.',
+    n8n:                'n8n workflow automation — list, execute, create, and manage n8n workflows and their executions.',
+    vault:              'Credential vault — list saved credentials, check integration connection status, read secrets, and autofill login forms.',
+    workflow:           'Workflow management — execute, validate, and manage Sulla workflow definitions.',
     playwright:         'Browser automation suite with two interaction modes: (1) DOM tools — click_element, set_field, browse_page for simple actions; (2) exec_in_page + window.__sulla helpers for multi-step workflows in one call. Also includes visual tools — take_screenshot with coordinate grid, click_at/type_at for pixel-precise interaction, get_page_snapshot(mode: "dehydrated") for compressed DOM overview. Load the web-research-playwright skill for full docs.',
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
     projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',
@@ -415,10 +419,24 @@ export class ToolRegistry {
   }
 
   getCategories(): string[] {
-    return this.categoriesList.filter(cat => {
+    // Return every category that actually has registered tools — not just the hardcoded list.
+    // Prefer the hardcoded ordering for known categories, then append any dynamically-registered ones.
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const cat of this.categoriesList) {
       const tools = this.categories.get(cat);
-      return tools && tools.length > 0;
-    });
+      if (tools && tools.length > 0) {
+        result.push(cat);
+        seen.add(cat);
+      }
+    }
+    // Catch any categories registered at runtime but not in categoriesList
+    for (const [cat, tools] of this.categories) {
+      if (!seen.has(cat) && tools.length > 0) {
+        result.push(cat);
+      }
+    }
+    return result;
   }
 
   getToolNamesForCategory(category: string): string[] {
