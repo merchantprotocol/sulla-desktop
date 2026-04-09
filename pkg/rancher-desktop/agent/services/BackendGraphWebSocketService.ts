@@ -235,7 +235,7 @@ export class BackendGraphWebSocketService {
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<void> {
-    const agentId = overrideAgentId || await getAgentIdForTrigger(triggerType);
+    const agentId = overrideAgentId || await getAgentIdForTrigger(triggerType) || channelId;
 
     // Use the frontend's threadId if provided (maintains conversation).
     // Otherwise create a new one and notify the frontend via thread_created.

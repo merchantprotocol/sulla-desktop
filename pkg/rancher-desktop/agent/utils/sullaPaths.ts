@@ -238,6 +238,11 @@ export async function bootstrapSullaHome(): Promise<void> {
       }
       continue;
     }
+    // Clear any non-git contents so clone can succeed
+    if (fs.existsSync(target)) {
+      console.log(`[Sulla] Clearing non-repo directory ${ target } before clone`);
+      fs.rmSync(target, { recursive: true, force: true });
+    }
     try {
       console.log(`[Sulla] Cloning ${ repo } into ${ target }`);
       await execFileAsync('git', ['clone', repo, target]);

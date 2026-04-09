@@ -63,6 +63,9 @@ export class MicrophoneDriverController {
   /** Maps serviceId → holder info (sender WebContents + requested formats). */
   private _holders = new Map<string, { sender: WebContents | null; formats: string[] }>();
 
+  /** Cleanup listeners keyed by serviceId — removes holder when its WebContents is destroyed. */
+  private _destroyListeners = new Map<string, () => void>();
+
   // ── VAD state (from audio driver pipeline) ────────────────────
 
   private _speaking = false;
@@ -118,10 +121,26 @@ export class MicrophoneDriverController {
     const formats = opts?.formats || [MicrophoneDriverController.FORMAT_WEBM_OPUS];
     log.info(MicrophoneDriverController.TAG, 'start()', { serviceId, formats, currentHolders: [...this._holders.keys()], running: this._running });
 
+    // Remove any previous destroy listener for this serviceId (re-registration)
+    this._removeDestroyListener(serviceId);
+
+    const senderAlive = sender && !sender.isDestroyed();
     this._holders.set(serviceId, {
-      sender: (sender && !sender.isDestroyed()) ? sender : null,
+      sender: senderAlive ? sender : null,
       formats,
     });
+
+    // Auto-remove holder when its renderer is destroyed (window closed, navigated away, crashed)
+    if (senderAlive) {
+      const onDestroyed = () => {
+        log.info(MicrophoneDriverController.TAG, 'WebContents destroyed — auto-releasing holder', { serviceId });
+        this.stop(serviceId).catch((e: any) => {
+          log.error(MicrophoneDriverController.TAG, 'Auto-release stop() failed', { serviceId, error: e.message });
+        });
+      };
+      sender!.once('destroyed', onDestroyed);
+      this._destroyListeners.set(serviceId, onDestroyed);
+    }
 
     if (!this._running) {
       const neededFormats = this._getNeededFormats();
@@ -163,6 +182,7 @@ export class MicrophoneDriverController {
 
     const wasHolder = this._holders.has(serviceId);
     this._holders.delete(serviceId);
+    this._removeDestroyListener(serviceId);
     log.info(MicrophoneDriverController.TAG, 'Holder removed', { serviceId, wasHolder, remainingHolders: [...this._holders.keys()] });
 
     if (this._running && this._holders.size === 0) {
@@ -238,6 +258,9 @@ export class MicrophoneDriverController {
       await this._sendRendererStop();
     }
     this._running = false;
+    for (const sid of this._destroyListeners.keys()) {
+      this._removeDestroyListener(sid);
+    }
     this._holders.clear();
     this._resetVadState();
     instance = null;
@@ -398,6 +421,18 @@ export class MicrophoneDriverController {
   /** Count non-destroyed windows. */
   private _countWindows(): number {
     return BrowserWindow.getAllWindows().filter(w => !w.isDestroyed()).length;
+  }
+
+  /** Remove the WebContents 'destroyed' listener for a serviceId, if one exists. */
+  private _removeDestroyListener(serviceId: string): void {
+    const listener = this._destroyListeners.get(serviceId);
+    if (listener) {
+      const holder = this._holders.get(serviceId);
+      if (holder?.sender && !holder.sender.isDestroyed()) {
+        holder.sender.removeListener('destroyed', listener);
+      }
+      this._destroyListeners.delete(serviceId);
+    }
   }
 
   /** Send only to windows that are holding the mic open. */
