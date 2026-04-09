@@ -241,6 +241,10 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
 
   transcribing = true;
 
+  // Use 2 threads max — whisper shares CPU with LlamaCpp and other services.
+  // 4 threads caused whisper-cli to hang under contention.
+  const threads = Math.min(os.cpus().length, 2);
+
   const args = [
     '-m', modelPath,
     '-f', wavPath,
@@ -248,17 +252,24 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
     '--no-timestamps',
     '-nt',             // no-timestamps shorthand
     '--print-special', 'false',
-    '-t', String(Math.min(os.cpus().length, 4)), // thread count capped at 4
+    '-t', String(threads),
   ];
 
-  log.debug('WhisperTranscribe', 'Running whisper', { channel, wavPath, model: modelName });
+  log.debug('WhisperTranscribe', 'Running whisper', { channel, wavPath, model: modelName, threads });
 
-  execFile(status.binaryPath, args, { timeout: 30000 }, (err, stdout, stderr) => {
+  // 10-second timeout — if whisper hangs (CPU contention with LlamaCpp),
+  // release the mutex so the next flush can try again with fresh audio.
+  execFile(status.binaryPath, args, { timeout: 10000 }, (err, stdout, stderr) => {
     transcribing = false;
     cleanupFile(wavPath);
 
     if (err) {
-      log.error('WhisperTranscribe', 'whisper-cpp failed', { error: err.message, stderr });
+      const isTimeout = (err as any).killed || err.message?.includes('TIMEOUT');
+      if (isTimeout) {
+        log.warn('WhisperTranscribe', 'whisper-cpp timed out (10s) — skipping chunk', { channel });
+      } else {
+        log.error('WhisperTranscribe', 'whisper-cpp failed', { error: err.message, stderr });
+      }
       return;
     }
 
@@ -267,6 +278,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
       .trim();
 
     if (!text || text === '[BLANK_AUDIO]' || text.length < 2) {
+      log.debug('WhisperTranscribe', 'Blank/empty transcript — skipping', { channel, text: text || '(empty)' });
       return;
     }
 

@@ -312,7 +312,7 @@ export function onVadUpdate(data: { speaking?: boolean }): void {
 
 // ─── IPC ──────────────────────────────────────────────────────────
 
-async function handleStart(): Promise<{ ok: boolean }> {
+async function handleStart(): Promise<{ ok: boolean; error?: string }> {
   if (isTracking) {
     // Already running — restart cleanly
     handleStop();
@@ -324,16 +324,25 @@ async function handleStart(): Promise<{ ok: boolean }> {
 
   const mic = MicrophoneDriverController.getInstance();
 
-  // Start mic (reference-counted — safe to call if already running)
+  // Start mic (reference-counted — safe to call if already running).
+  // The capture studio already holds the mic with webm-opus + pcm-s16le,
+  // so this just adds another holder — the tray panel mic stays running.
   await mic.start(SERVICE_ID, undefined, { formats: ['pcm-s16le'] });
 
   // Start whisper if not already running
   if (!whisperTranscribe.isActive()) {
     if (!whisper.isAvailable()) {
+      console.log('[TeleprompterTracking] Whisper not cached — running detect()');
       await whisper.detect();
     }
 
-    whisperTranscribe.start({
+    if (!whisper.isAvailable()) {
+      console.error('[TeleprompterTracking] Whisper is not installed — cannot start voice tracking');
+      await mic.stop(SERVICE_ID).catch(() => {});
+      return { ok: false, error: 'whisper-not-available' };
+    }
+
+    const whisperStarted = whisperTranscribe.start({
       mode:         'conversation',
       onTranscript: (event) => {
         // Broadcast to renderers (voice session, secretary, etc.)
@@ -346,6 +355,16 @@ async function handleStart(): Promise<{ ok: boolean }> {
         onWhisperTranscript(event);
       },
     });
+
+    if (!whisperStarted) {
+      console.error('[TeleprompterTracking] whisperTranscribe.start() returned false — no models?');
+      await mic.stop(SERVICE_ID).catch(() => {});
+      return { ok: false, error: 'whisper-start-failed' };
+    }
+
+    console.log('[TeleprompterTracking] Whisper started successfully');
+  } else {
+    console.log('[TeleprompterTracking] Whisper already active — reusing');
   }
   // If whisper was already active (started by another service), we
   // receive transcripts via the onWhisperTranscript() hook in init.ts.
