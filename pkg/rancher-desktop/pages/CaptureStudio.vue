@@ -232,16 +232,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, shallowReactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { useAudioDriver } from './capture-studio/composables/useAudioDriver';
-import { createMicInstance, listAudioDevices, type MicInstance } from './capture-studio/composables/useMicCapture';
+import { listAudioDevices } from './capture-studio/composables/useMicCapture';
 import { useMediaSources, QUALITY_PRESETS, type QualityPreset } from './capture-studio/composables/useMediaSources';
 import { useRecorder } from './capture-studio/composables/useRecorder';
 import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-studio/composables/useWaveform';
 import { useSettings } from './capture-studio/composables/useSettings';
 import { useDiskSpace } from './capture-studio/composables/useDiskSpace';
 import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
+import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
 import { useInputEventTracker } from './capture-studio/composables/useInputEventTracker';
 
 import ContextMenu from './capture-studio/ContextMenu.vue';
@@ -264,9 +265,7 @@ const inputTracker = useInputEventTracker(recorder.logEvent);
 const settings = useSettings();
 const diskSpace = useDiskSpace();
 const speakerCapture = useSpeakerCapture();
-
-// Mic instances keyed by source id (created on first use, not at module level)
-const micInstances = shallowReactive<Record<string, MicInstance>>({});
+const micRecording = useMicRecording();
 
 // Loading state
 const loading = ref(true);
@@ -515,9 +514,7 @@ async function toggleSrc(src: Source) {
         console.log('[CaptureStudio] Camera acquired, stream:', mediaSources.cameraStream.value ? 'active' : 'null', 'tracks:', mediaSources.cameraStream.value?.getVideoTracks().length);
         updateStreamAssignments();
       } else if (src.type === 'mic') {
-        const mic = micInstances[src.id] || createMicInstance();
-        micInstances[src.id] = mic;
-        await mic.start();
+        await audioDriver.startMic(['webm-opus', 'pcm-s16le']);
       } else if (src.type === 'system') {
         await audioDriver.startSpeaker();
       }
@@ -531,7 +528,7 @@ async function toggleSrc(src: Source) {
     } else if (src.type === 'camera') {
       mediaSources.releaseCamera();
     } else if (src.type === 'mic') {
-      micInstances[src.id]?.stop();
+      await audioDriver.stopMic();
     } else if (src.type === 'system') {
       await audioDriver.stopSpeaker();
     }
@@ -551,7 +548,7 @@ async function toggleSrc(src: Source) {
 }
 
 // ─── Layout selection ───
-function selectLayout(layout: string) {
+async function selectLayout(layout: string) {
   const vids = videoSources.value;
 
   if (layout === 'camonly') {
@@ -566,7 +563,7 @@ function selectLayout(layout: string) {
   currentLayout.value = layout;
 
   if (layout === 'teleprompter') {
-    teleprompterRef.value?.activate();
+    await teleprompterRef.value?.activate();
     // Auto-open the floating teleprompter window
     if (!prompterEnabled.value) {
       prompterEnabled.value = true;
@@ -602,13 +599,8 @@ async function toggleRecord() {
     // Gather active streams for recording — check stream.active not just existence
     const streams: Array<{ id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }> = [];
 
-    // Record mic as standalone audio file (not muxed into video streams)
-    for (const [id, mic] of Object.entries(micInstances)) {
-      const micStream = mic.stream.value;
-      if (micStream && micStream.active && mic.active.value) {
-        streams.push({ id, type: 'mic', stream: micStream });
-      }
-    }
+    // Mic recording is handled by useMicRecording via the controller's
+    // mic-pcm-socket (PCM) or mic-socket (WebM). Not a MediaRecorder stream.
 
     // Screen — video only, no mic audio muxed in
     const screenVal = mediaSources.screenStream.value;
@@ -622,7 +614,7 @@ async function toggleRecord() {
       streams.push({ id: 'cam', type: 'camera', stream: camVal, quality: mediaSources.cameraQuality.value });
     }
 
-    if (streams.length === 0) {
+    if (streams.length === 0 && !audioDriver.micRunning.value && !audioDriver.speakerRunning.value) {
       statusMessage.value = 'Enable at least one source to record';
       setTimeout(() => { statusMessage.value = ''; }, 3000);
       return;
@@ -658,6 +650,22 @@ async function toggleRecord() {
       });
     }
 
+    // Start mic recording via controller socket if mic is running
+    if (audioDriver.micRunning.value) {
+      const path = require('path');
+      const isCompressed = micQualityMode.value === 'streaming' || micQualityMode.value === 'streaming-voice';
+      const ext = isCompressed ? 'webm' : 'wav';
+      const micPath = path.join(recorder.getSessionDir(), `mic.${ext}`);
+      await micRecording.start(micPath, micQualityMode.value as MicQualityMode);
+      recorder.registerExternalStream({
+        id:              'mic',
+        type:            'mic',
+        filename:        `mic.${ext}`,
+        format:          ext,
+        getBytesWritten: () => micRecording.bytesWritten.value,
+      });
+    }
+
     recording.value = true;
 
     // Start event tracking (mouse clicks, keystrokes, window focus)
@@ -674,8 +682,9 @@ async function toggleRecord() {
   } else {
     // Capture session dir BEFORE stopSession clears it
     const capturedSessionDir = recorder.getSessionDir();
-    // Stop event tracking + speaker capture
+    // Stop event tracking + mic/speaker capture
     inputTracker.stopTracking();
+    micRecording.stop();
     speakerCapture.stop();
     await recorder.stopSession();
     lastSessionDir.value = capturedSessionDir;
@@ -805,14 +814,15 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
   };
   sources.push(newSrc);
 
-  // Create mic instance for new mic sources
+  // Start mic via controller for new mic sources
   if (payload.type === 'mic') {
-    const mic = createMicInstance();
-    micInstances[id] = mic;
     try {
-      // Resolve real browser deviceId from label (AddSourceDialog passes labels)
-      const realDeviceId = deviceIdMap[payload.deviceId] || undefined;
-      await mic.start(realDeviceId);
+      // Switch to the selected device via the controller
+      const deviceLabel = payload.deviceId;
+      if (deviceLabel && deviceLabel !== 'default') {
+        await audioDriver.setMicDevice(deviceLabel);
+      }
+      await audioDriver.startMic(['webm-opus', 'pcm-s16le']);
     } catch (e: any) {
       console.error('[CaptureStudio] Failed to start mic for new source:', e.message);
       newSrc.on = false;
@@ -831,10 +841,10 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
 }
 
 function removeSource(id: string) {
-  // Stop mic instance if exists
-  if (micInstances[id]) {
-    micInstances[id].stop();
-    delete micInstances[id];
+  // Stop mic via controller if this was a mic source
+  const src = sources.find(s => s.id === id);
+  if (src?.type === 'mic') {
+    audioDriver.stopMic().catch(() => {});
   }
   const idx = sources.findIndex(s => s.id === id);
   if (idx > -1) sources.splice(idx, 1);
@@ -883,22 +893,16 @@ function startAudioMeter() {
       }
       const bars = container.children;
 
-      // Combine all active mic levels + speaker level
+      // Combine mic level (from controller VAD) + speaker level
       const spActive = speakerCapture && speakerCapture.active ? speakerCapture.active.value : false;
       const speakerLvl = spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
-      let combinedLevel = speakerLvl;
-      for (const mic of Object.values(micInstances)) {
-        if (mic && mic.active && mic.active.value && mic.level) {
-          combinedLevel = Math.max(combinedLevel, mic.level.value);
-        }
-      }
+      const micLvl = audioDriver.micRunning.value ? audioDriver.micLevel.value : 0;
+      const combinedLevel = Math.max(speakerLvl, micLvl);
 
       // Log occasionally to debug
       meterLogCount++;
       if (meterLogCount <= 5 || meterLogCount % 300 === 0) {
-        const micKeys = Object.keys(micInstances);
-        const activeMics = micKeys.filter(k => micInstances[k]?.active?.value);
-        console.log('[AudioMeter]', { combinedLevel: combinedLevel.toFixed(3), speakerLvl: speakerLvl.toFixed(3), speakerRunning: audioDriver.speakerRunning.value, spActive, activeMics, bars: bars.length });
+        console.log('[AudioMeter]', { combinedLevel: combinedLevel.toFixed(3), micLvl: micLvl.toFixed(3), speakerLvl: speakerLvl.toFixed(3), micRunning: audioDriver.micRunning.value, bars: bars.length });
       }
 
       for (let i = 0; i < bars.length; i++) {
@@ -1070,23 +1074,15 @@ async function showAudioContextMenu(e: MouseEvent) {
     }
 
     const micSrc = sources.find(s => s.id === 'mic');
-    const currentMic = micInstances['mic'];
-    // Determine which deviceId is currently active (default = 'default')
-    const activeMicDeviceId = currentMic?.stream.value?.getAudioTracks()[0]?.getSettings()?.deviceId || 'default';
 
     const deviceChildren: CtxMenuItem[] = inputs.map(d => ({
       id: d.deviceId,
       label: d.label,
-      active: d.deviceId === activeMicDeviceId,
+      active: false, // TODO: track active device name from controller state
       action: async () => {
-        // Switch the builtin mic to the selected device
-        if (currentMic) {
-          currentMic.stop();
-        }
-        const mic = createMicInstance();
-        micInstances['mic'] = mic;
+        // Switch the mic device via the controller
         try {
-          await mic.start(d.deviceId === 'default' ? undefined : d.deviceId);
+          await audioDriver.setMicDevice(d.label);
           if (micSrc) {
             micSrc.on = true;
             micSrc.name = d.label;
@@ -1102,7 +1098,12 @@ async function showAudioContextMenu(e: MouseEvent) {
       id: `mq-${m.id}`,
       label: m.label,
       active: micQualityMode.value === m.id,
-      action: () => { micQualityMode.value = m.id; },
+      action: () => {
+        micQualityMode.value = m.id;
+        // Tell the controller which PCM mode to use
+        const pcmMode = m.id === 'raw' ? 'raw' : 'noise-reduction';
+        audioDriver.setMicPcmMode(pcmMode).catch(() => {});
+      },
     }));
 
     ctxMenu.items = [
@@ -1142,16 +1143,8 @@ const WAVEFORM_SCROLL_INTERVAL = 80; // ms between scrolls — gives a steady DA
 
 function getCurrentLevel(src: { id: string; type: string; on: boolean }): number {
   if (src.type === 'mic') {
-    const mic = micInstances[src.id];
-    const analyserNode = mic && mic.analyser ? mic.analyser.value : null;
-    if (analyserNode) {
-      const data = new Uint8Array(analyserNode.frequencyBinCount);
-      analyserNode.getByteFrequencyData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) sum += data[i];
-      return sum / data.length / 255; // 0-1 RMS-like average
-    }
-    return (mic && mic.level) ? mic.level.value : 0;
+    // Mic level comes from the controller's VAD pipeline
+    return audioDriver.micRunning.value ? audioDriver.micLevel.value : 0;
   } else if (src.type === 'system') {
     const spActive = speakerCapture && speakerCapture.active ? speakerCapture.active.value : false;
     return spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
@@ -1204,20 +1197,11 @@ function startWaveformLoop() {
         // Live spectrum mode (not recording)
         const bars: number[] = [];
         if (src.type === 'mic') {
-          const mic = micInstances[src.id];
-          const analyserNode = mic && mic.analyser ? mic.analyser.value : null;
-          if (analyserNode) {
-            const data = new Uint8Array(analyserNode.frequencyBinCount);
-            analyserNode.getByteFrequencyData(data);
-            const binSize = Math.max(1, Math.floor(data.length / 100));
-            for (let i = 0; i < 100; i++) {
-              let sum = 0;
-              for (let j = 0; j < binSize; j++) sum += data[i * binSize + j];
-              bars.push(Math.max(2, (sum / binSize / 255) * 18));
-            }
-          } else {
-            const lvl = level;
-            for (let i = 0; i < 100; i++) bars.push(Math.max(2, lvl * 14 + 2));
+          // Level-based bars from controller VAD (no local analyser needed)
+          const lvl = level;
+          for (let i = 0; i < 100; i++) {
+            const jitter = lvl > 0.01 ? (Math.random() - 0.5) * lvl * 6 : 0;
+            bars.push(Math.max(2, lvl * 14 + 2 + jitter));
           }
         } else if (src.type === 'system') {
           for (let i = 0; i < 100; i++) {
@@ -1403,30 +1387,40 @@ onMounted(async () => {
   loading.value = false;
 });
 
-// ── Graceful shutdown when app is quitting ──
-ipcRenderer.on('app:before-quit', async() => {
-  console.log('[CaptureStudio] Received app:before-quit — stopping capture');
+// ── Full cleanup — shared by before-quit and onUnmounted ──
+async function cleanupCaptureStudio() {
+  console.log('[CaptureStudio] Cleaning up...');
 
   // Stop recording if active
   if (recording.value) {
+    micRecording.stop();
     speakerCapture.stop();
+    inputTracker.stopTracking();
     await recorder.stopSession();
     recording.value = false;
+    diskSpace.stopMonitoring();
+  }
+
+  // Stop teleprompter tracking
+  teleprompterRef.value?.stopTracking?.();
+
+  // Close floating teleprompter
+  if (prompterEnabled.value) {
+    ipcRenderer.invoke('teleprompter:close').catch(() => {});
+    prompterEnabled.value = false;
   }
 
   // Release all media streams (screen + camera)
   mediaSources.releaseScreen();
   mediaSources.releaseCamera();
 
-  // Stop all mic instances
-  for (const mic of Object.values(micInstances)) {
-    mic.stop();
-  }
+  // Disconnect from controllers
+  try { await audioDriver.stopMic(); } catch { /* already stopped */ }
+  try { await audioDriver.stopSpeaker(); } catch { /* already stopped */ }
+}
 
-  // Stop audio driver capture
-  try {
-    await audioDriver.stopSpeaker();
-  } catch { /* already stopped */ }
+ipcRenderer.on('app:before-quit', () => {
+  cleanupCaptureStudio();
 });
 
 onUnmounted(() => {
@@ -1435,14 +1429,7 @@ onUnmounted(() => {
   stopAudioMeter();
   stopWaveformLoop();
   diskSpace.stopMonitoring();
-  // Close floating teleprompter if open
-  if (prompterEnabled.value) {
-    ipcRenderer.invoke('teleprompter:close').catch(() => {});
-  }
-
-  for (const mic of Object.values(micInstances)) {
-    mic.stop();
-  }
+  cleanupCaptureStudio();
 });
 </script>
 

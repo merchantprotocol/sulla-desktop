@@ -2,6 +2,65 @@
 
 All notable changes to Sulla Desktop will be documented in this file.
 
+## [1.3.0] - 2026-04-09
+
+### New Features
+
+- **Capture Studio** — full audio/video capture studio with multi-source recording, scene management, source context menus, loading screen, permissions UX, disk warnings, and keyboard shortcuts
+- **Audio driver integration** — built-in audio subsystem with independent mic/speaker lifecycle, 48kHz native PCM pipeline, RNNoise noise reduction, VAD-driven voice chat, and mic recording mode selector
+- **Local LLM overhaul** — section-based prompt composition (OpenClaw parity), streaming, caching, speculative decoding, native context clamping, KV cache optimization, and Gemma 4 support
+- **ModelProviderService** — centralized model provider management with cache invalidation on model change and local server toggle persistence
+- **GLM-4.7 Flash** — new local model option for fast inference
+- **Bundled whisper-cli** — pre-built whisper binary removes Homebrew dependency; auto-install fallback when bundled binary is missing
+- **Computer Use** — TCC permission probe for macOS dialogs, AppleScript app automation settings, and Computer Use Settings panel
+- **Teleprompter** — floating window near webcam for eye-contact reading, VAD-gated speech tracking with Jaccard fuzzy matching, main process tracking, close button, and style sync to floating window
+- **Agent session context** — agent reads identity, goals, and tool reference at session start; thinking bubble collapses on stream start
+- **write_file tool** — new agent tool for file creation
+- **browse_tools catalog** — completed and promoted to meta tools
+- **ServiceLifecycleManager** — dependency-aware startup/shutdown ordering
+- **HeartbeatNode** — expanded GraphRegistry for agent orchestration
+- **Tray panel** — custom tray panel UI with vault password verification and graceful shutdown
+- **Settings IPC** — cast/delete support and resetOllamaService helper
+- **Editor chat** — multi-tab system, chat history, scroll-to-bottom, chat options, and focus management
+- **Version in footer** — app version now displayed in the workbench status bar
+
+### Improvements
+
+- Audio permission gates and chat injection improvements
+- Capture event logging and window focus tracking
+- Open all URLs inside Sulla Desktop instead of external browser
+- Raised loop detection threshold with detached start/stop
+- Condensed local LLM prompts with llama.cpp auto-update on startup
+- Simplified agent and editor headers with shared WindowDragLogo
+- Split CaptureStudio.vue into 8 sub-components for maintainability
+
+### Bug Fixes
+
+- Fixed agent requirement blocking initial install
+- Fixed llama-server 503 retry and performance tuning
+- Fixed local LLM agent reliability — correct model, context, timeouts, and prompt mode
+- Fixed RNNoise FIFO buffer eliminating clicking artifacts
+- Stopped muxing mic audio into screen/camera recordings
+- Fixed camera preview showing live video and streams following source assignment
+- Fixed audio driver boot timeout and camera stream flickering
+- Fixed audio meters, inline playback, and muxed audio in video files
+- Fixed auto-start audio driver when Capture Studio opens
+- Comprehensive reliability audit — fixed 55 identified issues across capture pipeline
+- Defensive null guards on all composable ref accesses
+- Wrapped capture studio IPC handlers in try-catch to prevent main crash
+- Fixed vault initialization before integrations to ensure Slack tokens are decrypted
+- Fixed RedisClient reconnect loop blocking exit on shutdown
+- Fixed guarded-attribute filter logic in BaseModel save()
+- Fixed uncontrolled data used in path expression (security scan alert #4514)
+- Fixed teleprompter style sync to floating window
+- Fixed whisper-cpp brew install with proper timeout handling
+
+### Refactoring
+
+- Removed `load_skill` tool — `read_file` covers the same use case
+- Refactored audio driver into MicrophoneDriverController and SpeakerDriverController
+- Replaced Ollama references with llama.cpp throughout documentation
+
 ## [1.2.0] - 2026-04-02
 
 ### New Features

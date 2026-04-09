@@ -133,7 +133,7 @@
             <div v-if="isListening && transcript.length === 0" class="dt-turn">
               <div class="dt-turn-bar" style="background: var(--text-dim, #6e7681);" />
               <div class="dt-turn-content">
-                <div class="dt-turn-text dt-dim">Listening...</div>
+                <div class="dt-turn-text dt-dim">{{ listeningStatus }}</div>
               </div>
             </div>
           </div>
@@ -209,7 +209,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onUnmounted, nextTick } from 'vue';
+import { ref, watch, onUnmounted, nextTick } from 'vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { ChatInterface } from './agent/ChatInterface';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -232,6 +232,7 @@ const isMac = navigator.platform.toUpperCase().includes('MAC');
 const hasSessionEnded = ref(false);
 const transcript = ref<TranscriptEntry[]>([]);
 const isListening = ref(false);
+const listeningStatus = ref('Starting...');
 const wakeWordActive = ref(false);
 const audioLevel = ref(0);
 const sessionDuration = ref('0:00');
@@ -435,6 +436,7 @@ async function startSession(): Promise<void> {
   try {
     isListening.value = true;
     hasSessionEnded.value = false;
+    listeningStatus.value = 'Starting microphone...';
     actionItems.value = [];
     decisions.value = [];
     insights.value = [];
@@ -442,11 +444,21 @@ async function startSession(): Promise<void> {
     updateTab(props.tabId, { title: 'Secretary - Recording' });
 
     await controller.startSession();
+    listeningStatus.value = 'Listening...';
   } catch (err) {
     console.error('[SecretaryMode] Failed to start session:', err);
+    listeningStatus.value = 'Failed to start';
     isListening.value = false;
   }
 }
+
+// Update status based on audio activity
+watch(audioLevel, (level) => {
+  if (!isListening.value || transcript.value.length > 0) return;
+  if (level > 10) {
+    listeningStatus.value = 'Hearing you — transcribing...';
+  }
+});
 
 function endSession(): void {
   isListening.value = false;

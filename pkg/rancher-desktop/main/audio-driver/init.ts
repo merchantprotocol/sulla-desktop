@@ -37,6 +37,7 @@ import * as whisper from './model/whisper';
 import * as gateway from './service/gateway';
 import * as speakerSocket from './service/speaker-socket';
 import * as micSocket from './service/mic-socket';
+import * as micPcmSocket from './service/mic-pcm-socket';
 import * as whisperTranscribe from './service/whisper-transcribe';
 import { log, createLogger } from './model/logger';
 
@@ -55,6 +56,10 @@ function broadcast(channel: string, data: any): void {
 // ── Public API ────────────────────────────────────────────────────
 
 let initialized = false;
+
+// Mic PCM recording quality mode — controls which callback feeds mic-pcm-socket.
+// 'raw' = all audio (onPcmRawData), 'noise-reduction' = VAD-gated (onPcmData).
+let micPcmMode: string = 'raw';
 
 // Test recording is now handled by MicrophoneDriverController
 // (PCM-based, supports raw + noise-reduction modes)
@@ -102,11 +107,23 @@ export function initialize(): void {
     }
   });
 
+  // Mic PCM output socket — broadcasts raw PCM to capture studio for recording.
+  // Quality mode controls which callback feeds it:
+  //   'raw'             → onPcmRawData (all audio, no VAD gating)
+  //   'noise-reduction' → onPcmData (VAD-gated, noise-processed)
+  micPcmSocket.start();
+
+  mic.onPcmRawData((pcm: Buffer) => {
+    if (micPcmMode === 'raw') micPcmSocket.writeChunk(pcm);
+  });
+  mic.onPcmData((pcm: Buffer) => {
+    if (micPcmMode === 'noise-reduction') micPcmSocket.writeChunk(pcm);
+  });
+
   micSocket.start((chunk: Buffer) => {
     if (chunk.length > 0) {
       // WebM/Opus chunks go to gateway (it decodes server-side)
       gateway.sendAudio(chunk, 0);
-
     }
   });
 
@@ -131,6 +148,7 @@ export async function shutdown(): Promise<void> {
   await SpeakerDriverController.getInstance().shutdown();
   await MicrophoneDriverController.getInstance().shutdown();
   micSocket.stop();
+  micPcmSocket.stop();
   log.info('Init', 'Audio driver shut down');
 }
 
@@ -145,14 +163,15 @@ function registerIpcHandlers(): void {
   ipcMain.handle('audio-driver:get-state', async() => {
     const mirrorStatus = await mirror.status();
     return {
-      micRunning:     mic.running,
-      speakerRunning: speaker.running,
-      running:        mic.running || speaker.running,
-      message:        mic.running || speaker.running ? 'Capturing' : 'Off',
-      mirrorActive:   mirrorStatus.exists,
-      micName:        mic.micName,
-      speakerName:    speaker.speakerName,
-      permissions:    lifecycle.checkPermissions(),
+      micRunning:      mic.running,
+      micSampleRate:   mic.pcmSampleRate,
+      speakerRunning:  speaker.running,
+      running:         mic.running || speaker.running,
+      message:         mic.running || speaker.running ? 'Capturing' : 'Off',
+      mirrorActive:    mirrorStatus.exists,
+      micName:         mic.micName,
+      speakerName:     speaker.speakerName,
+      permissions:     lifecycle.checkPermissions(),
     };
   });
 
@@ -356,7 +375,23 @@ function registerIpcHandlers(): void {
   // ── Socket paths ────────────────────────────────────────────────
 
   ipcMain.handle('audio-driver:get-mic-socket-path', () => micSocket.getPath());
+  ipcMain.handle('audio-driver:get-mic-pcm-socket-path', () => micPcmSocket.getPath());
   ipcMain.handle('audio-driver:get-speaker-socket-path', () => speakerSocket.getPath());
+
+  // Quality mode for mic PCM recording — controls whether the mic-pcm-socket
+  // receives raw (all audio) or noise-reduced (VAD-gated) PCM.
+  ipcMain.handle('audio-driver:set-mic-pcm-mode', (_event: unknown, mode: string) => {
+    if (mode === 'raw' || mode === 'noise-reduction') {
+      micPcmMode = mode;
+      log.info('IPC', 'set-mic-pcm-mode', { mode });
+      return { ok: true, mode };
+    }
+    return { ok: false, error: 'invalid mode' };
+  });
+
+  ipcMain.handle('audio-driver:get-mic-pcm-mode', () => {
+    return { mode: micPcmMode };
+  });
 
   // ── Auto-launch ─────────────────────────────────────────────────
 

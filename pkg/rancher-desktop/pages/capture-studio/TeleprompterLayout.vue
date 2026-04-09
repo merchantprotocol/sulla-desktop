@@ -272,10 +272,10 @@ function onKeyDown(e: KeyboardEvent) {
 }
 
 // Expose methods so the parent can call them when layout changes
-function activate() {
+async function activate() {
   buildTpWords();
   if (voiceTracking.value) {
-    teleprompterTracker.startTracking(tpWords.value, tpCurrentIndex.value);
+    await teleprompterTracker.startTracking(tpWords.value, tpCurrentIndex.value);
   } else {
     startTpScroll();
   }
@@ -319,7 +319,7 @@ watch(tpWords, () => {
   // Keep the main-process tracker in sync when the script changes mid-session
   if (teleprompterTracker.isTracking.value) {
     ipc.invoke('teleprompter-tracking:set-script', {
-      words:        tpWords.value,
+      words:        [...tpWords.value],
       currentIndex: tpCurrentIndex.value,
     }).catch(() => {});
   }

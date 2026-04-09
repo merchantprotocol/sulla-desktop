@@ -42,9 +42,10 @@ export function useTeleprompterTracking(
       await stopTracking();
     }
 
-    // Send script to the main process
+    // Send script to the main process (spread to plain array — Vue reactive
+    // proxies can't be serialized through Electron structured clone)
     await ipcRenderer.invoke('teleprompter-tracking:set-script', {
-      words,
+      words: Array.isArray(words) ? [...words] : words,
       currentIndex: startIndex,
     });
 
@@ -52,7 +53,7 @@ export function useTeleprompterTracking(
     const result = await ipcRenderer.invoke('teleprompter-tracking:start');
 
     if (!result?.ok) {
-      console.warn('[TeleprompterTracking] Main-process tracker failed to start');
+      console.warn('[TeleprompterTracking] Main-process tracker failed to start', result?.error);
       return;
     }
 
