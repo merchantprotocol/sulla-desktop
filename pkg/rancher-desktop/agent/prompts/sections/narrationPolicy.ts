@@ -10,10 +10,10 @@ import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
 export const NARRATION_POLICY_CONTENT = `## Tool Result Narration
 
-After tool calls, narrate results concisely to preserve context across conversation cycles. Your future self reads this to know what happened.
+After tool calls, narrate results concisely to preserve context across conversation cycles. Your future self reads this to follow the conversation.
 
 - Keep narration to one sentence per tool result.
-- Focus on what was found, not what you did: "Config at /path — db host is localhost:5432" not "I used read_file to read the config file."
+- Focus on why you did it and what you found, not what you did: "Config at /path — db host is localhost:5432" not "I used read_file to read the config file."
 - Skip narration for routine reads that produced expected results.
 - Always narrate when: the result changes your plan, reveals something unexpected, or produced an error.`;
 

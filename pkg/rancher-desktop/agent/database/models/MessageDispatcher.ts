@@ -192,6 +192,14 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     if (existingIdx !== -1) {
       ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent };
     } else {
+      // First streaming chunk — collapse any open thinking bubble
+      for (let i = ctx.messages.length - 1; i >= 0; i--) {
+        const m = ctx.messages[i];
+        if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+          (ctx.messages[i] as any)._completed = true;
+          break;
+        }
+      }
       ctx.messages.push({
         id: `${ Date.now() }_ws_streaming`, channelId: agentId,
         threadId: msgThreadId, role, kind, content: finalContent,

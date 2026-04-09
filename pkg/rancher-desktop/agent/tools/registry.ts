@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'applescript', 'meta', 'bridge', 'browser', 'calendar', 'computer-use', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
+    'applescript', 'meta', 'memory', 'observation', 'bridge', 'browser', 'calendar', 'computer-use', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'playwright', 'projects', 'skills', 'slack', 'workspace', 'redis', 'pg', 'rdctl', 'lima',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -58,6 +58,8 @@ export class ToolRegistry {
     applescript:        'Execute AppleScript to control macOS applications (Calendar, Reminders, Mail, Finder, etc.) that the user has enabled in Computer Use Settings.',
     'computer-use':     'Visual computer use tools — screenshot-based interaction with coordinate clicking, typing, and scrolling. Anthropic-native computer_20250124 protocol.',
     meta:               'Tools for browsing available tools, installing skills, and meta management.',
+    memory:             'Tools for the memory recall subconscious agent — tool discovery and catalog browsing.',
+    observation:        'Observational memory tools for the subconscious observation curator agent.',
     bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',
     browser:            'Web search tools like Brave and DuckDuckGo.',
     calendar:           'Tools for managing calendar events.',

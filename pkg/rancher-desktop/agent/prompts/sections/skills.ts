@@ -17,18 +17,13 @@ export function buildSkillsSection(ctx: PromptBuildContext): PromptSection | nul
   if (ctx.mode === 'local') {
     return {
       id:             'skills',
-      content:        `## Skills\nCheck these before acting. If one matches, use \`load_skill\` first.\n${ skillsIndex }`,
+      content:        ``,
       priority:       55,
       cacheStability: 'stable',
     };
   }
 
-  const content = `## Skills (mandatory scan)
-
-Before replying to a user request, scan the available skills below. If a matching skill exists, load it with \`load_skill\` and follow its instructions before proceeding with your own approach.
-
-### Available Skills
-${ skillsIndex }`;
+  const content = ``;
 
   return {
     id:             'skills',
