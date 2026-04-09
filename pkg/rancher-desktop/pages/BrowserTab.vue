@@ -256,6 +256,12 @@ const tabContent = computed(() => getTab(props.tabId)?.content || '');
 
 function onSetMode(mode: BrowserTabMode) {
   updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
+  if (mode === 'browser') {
+    const url = 'https://www.google.com';
+    addressBarUrl.value = url;
+    loading.value = true;
+    ensureView(url);
+  }
 }
 
 // ── Vault sub-navigation state ──
