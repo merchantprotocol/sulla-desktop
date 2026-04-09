@@ -279,9 +279,11 @@ export class SecretaryModeController {
   private whisperTranscriptHandler: ((_event: any, msg: any) => void) | null = null;
 
   private async startWhisperTranscription(): Promise<void> {
-    // Start whisper via the internal pipeline (PCM format, VAD-gated)
+    // Start whisper in secretary mode so both mic (channel 0) and speaker
+    // (channel 1) audio are transcribed. The speaker pipeline feeds
+    // whisperTranscribe.feedSpeaker() from lifecycle.ts.
     const result = await ipcRenderer.invoke('audio-driver:transcribe-start', {
-      mode: 'conversation',
+      mode: 'secretary',
       language: this.sttLanguage,
     });
 
@@ -290,18 +292,20 @@ export class SecretaryModeController {
       return;
     }
 
-    // Listen for transcript events from whisper
+    // Listen for transcript events from whisper — both mic and speaker channels
     this.whisperTranscriptHandler = (_event: any, msg: any) => {
       if (!msg?.text || !this.cb.getIsListening()) return;
       const text = msg.text.trim();
       if (!text) return;
       if (msg.event_type !== 'transcript_partial') {
-        this.cb.addEntry(text);
+        // Speaker label: 'Mic' = you, 'Speaker' = caller/system audio
+        const speaker = msg.speaker === 'Speaker' ? 'Caller' : 'You';
+        this.cb.addEntry(text, 'transcript', speaker);
         this.checkAndHandleWakeWord(text);
       }
     };
     ipcRenderer.on('gateway-transcript', this.whisperTranscriptHandler);
-    console.log('[SecretaryMode] Whisper transcription started');
+    console.log('[SecretaryMode] Whisper transcription started (secretary mode — mic + speaker)');
   }
 
   private stopWhisperTranscription(): void {
