@@ -1,15 +1,40 @@
 import { BaseTool, ToolResponse } from '../base';
 import { toolRegistry } from '../registry';
+import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * BrowseToolsWorker — read-only tool discovery.
  *
- * Returns a formatted markdown document listing tools as `sulla` CLI
- * invocations. Designed for the memory-recall subconscious agent to
- * surface relevant tools to the primary agent.
+ * Returns a flat list of ALL registered tools (minus internal meta tools)
+ * grouped by category, like running `sulla --help`.
  *
- * Does NOT modify state.llmTools or state.foundTools — purely read-only.
+ * For categories that correspond to integrations, notes whether credentials
+ * are connected in the vault.
  */
+
+/** Tools excluded from the listing — internal plumbing the agent already has */
+const EXCLUDED_TOOLS = new Set([
+  'exec',
+  'file_search',
+  'read_file',
+  'write_file',
+  'browse_tools',
+]);
+
+/**
+ * Categories that map 1:1 to an integration slug in the vault.
+ * Key = tool category, value = integration slug (if different).
+ */
+const CATEGORY_TO_INTEGRATION: Record<string, string> = {
+  slack:    'slack',
+  github:   'github',
+  calendar: 'google-calendar',
+  n8n:      'n8n',
+  pg:       'postgresql',
+  redis:    'redis',
+  chrome:   'chrome',
+};
+
 export class BrowseToolsWorker extends BaseTool {
   name = '';
   description = '';
@@ -18,12 +43,6 @@ export class BrowseToolsWorker extends BaseTool {
   // Formatting helpers
   // ────────────────────────────────────────────────────────────────
 
-  /**
-   * Convert a tool name to its `sulla category/endpoint` CLI form.
-   * e.g. "docker_ps" in category "docker" → "docker/ps"
-   *      "exec" in category "meta" → "meta/exec"
-   *      "git_commit" in category "github" → "github/git_commit"
-   */
   private toCliName(toolName: string, category: string): string {
     const endpoint = toolName.startsWith(`${ category }_`)
       ? toolName.slice(category.length + 1)
@@ -31,43 +50,6 @@ export class BrowseToolsWorker extends BaseTool {
     return `${ category }/${ endpoint }`;
   }
 
-  /**
-   * Build a sample JSON argument string from the schemaDef.
-   * Only includes required params with placeholder values.
-   */
-  private buildSampleArgs(schemaDef: Record<string, any>): string {
-    const sample: Record<string, any> = {};
-    for (const [key, spec] of Object.entries(schemaDef)) {
-      if (spec.optional) continue;
-      switch (spec.type) {
-      case 'string':
-        sample[key] = spec.description
-          ? `<${ key }>`
-          : `<${ key }>`;
-        break;
-      case 'number':
-        sample[key] = 0;
-        break;
-      case 'boolean':
-        sample[key] = true;
-        break;
-      case 'enum':
-        sample[key] = spec.enum?.[0] ?? `<${ key }>`;
-        break;
-      case 'array':
-        sample[key] = [`<${ key }>`];
-        break;
-      case 'object':
-        sample[key] = {};
-        break;
-      }
-    }
-    return JSON.stringify(sample);
-  }
-
-  /**
-   * Format the params line: "Params: image (required, string), name (optional, string)"
-   */
   private formatParams(schemaDef: Record<string, any>): string {
     const parts: string[] = [];
     for (const [key, spec] of Object.entries(schemaDef)) {
@@ -80,74 +62,34 @@ export class BrowseToolsWorker extends BaseTool {
     return parts.join(', ');
   }
 
-  /**
-   * Build a sample `sulla meta/exec` wrapper command showing how to call
-   * the tool from within exec.
-   */
-  private buildExecExample(cliName: string, schemaDef: Record<string, any>): string {
-    // Build a more realistic sample with the first required string param filled in
-    const sample: Record<string, any> = {};
-    for (const [key, spec] of Object.entries(schemaDef)) {
-      if (spec.optional) continue;
-      switch (spec.type) {
-      case 'string':
-        sample[key] = spec.enum?.[0] ?? `<${ key }>`;
-        break;
-      case 'number':
-        sample[key] = 1;
-        break;
-      case 'boolean':
-        sample[key] = true;
-        break;
-      case 'enum':
-        sample[key] = spec.enum?.[0] ?? `<${ key }>`;
-        break;
-      case 'array':
-        sample[key] = [`<${ key }>`];
-        break;
-      case 'object':
-        sample[key] = {};
-        break;
-      }
-    }
-    const innerJson = JSON.stringify(sample);
-    // Escape inner quotes for the nested JSON-in-shell pattern
-    const escaped = innerJson.replace(/"/g, '\\"');
-    return `sulla meta/exec '{"command":"sulla ${ cliName } ${ escaped }"}'`;
-  }
-
-  /**
-   * Format a single tool entry as a markdown block.
-   */
-  private formatTool(toolName: string, category: string): string {
+  private formatToolLine(toolName: string, category: string): string {
     const description = toolRegistry.getToolDescription(toolName);
     const schemaDef = toolRegistry.getSchemaDef(toolName);
     const cliName = this.toCliName(toolName, category);
-    const lines: string[] = [];
+    const parts: string[] = [];
 
-    // Primary sulla command with sample args
-    const sampleArgs = schemaDef && Object.keys(schemaDef).length > 0
-      ? this.buildSampleArgs(schemaDef)
-      : '{}';
-    lines.push(`sulla ${ cliName } '${ sampleArgs }'`);
-
-    // Description
+    parts.push(`  sulla ${ cliName }`);
     if (description) {
-      lines.push(`  ${ description }`);
+      parts.push(`    ${ description }`);
     }
-
-    // Params
     if (schemaDef && Object.keys(schemaDef).length > 0) {
-      lines.push(`  Params: ${ this.formatParams(schemaDef) }`);
-
-      // Exec example only for tools with required params (skip trivial ones)
-      const hasRequired = Object.values(schemaDef).some((spec: any) => !spec.optional);
-      if (hasRequired && category !== 'meta') {
-        lines.push(`  Example: ${ this.buildExecExample(cliName, schemaDef) }`);
-      }
+      parts.push(`    Params: ${ this.formatParams(schemaDef) }`);
     }
+    return parts.join('\n');
+  }
 
-    return lines.join('\n');
+  // ────────────────────────────────────────────────────────────────
+  // Credential status
+  // ────────────────────────────────────────────────────────────────
+
+  private async getConnectedIntegrations(): Promise<Set<string>> {
+    try {
+      const svc = getIntegrationService();
+      const enabled = await svc.getEnabledIntegrations();
+      return new Set(enabled.map(e => e.integrationId));
+    } catch {
+      return new Set();
+    }
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -158,96 +100,92 @@ export class BrowseToolsWorker extends BaseTool {
     const { category, query } = input;
 
     const allCategories = toolRegistry.getCategories();
+    const connectedIntegrations = await this.getConnectedIntegrations();
 
-    // No args → list categories
-    if (!category && !query) {
-      const catDescriptions = toolRegistry.getCategoriesWithDescriptions();
-      const lines = ['## Available Tool Categories', ''];
-      for (const { category: cat, description } of catDescriptions) {
-        const toolCount = toolRegistry.getToolNamesForCategory(cat).length;
-        lines.push(`${ cat } — ${ description } (${ toolCount } tools)`);
-      }
-      lines.push('');
-      lines.push('Call browse_tools with a category or query to see tool details.');
-      return { successBoolean: true, responseString: lines.join('\n') };
-    }
-
-    // Validate category if provided
-    if (category && !allCategories.includes(category)) {
-      return {
-        successBoolean: false,
-        responseString: `Invalid category "${ category }". Available: ${ allCategories.join(', ') }`,
-      };
-    }
-
-    // Determine which tools to show
-    let toolNames: string[];
-    let matchedCategories: string[];
-
-    if (category) {
-      toolNames = toolRegistry.getToolNamesForCategory(category);
-      matchedCategories = [category];
-    } else {
-      // Search across all categories by query
-      toolNames = [];
-      matchedCategories = [];
-      const q = (query || '').toLowerCase();
+    // ── Query mode: filter tools by keyword ──
+    if (query) {
+      const q = (query as string).toLowerCase();
+      const matchedLines: string[] = [];
+      let matchCount = 0;
       for (const cat of allCategories) {
-        const namesInCat = toolRegistry.getToolNamesForCategory(cat);
-        const matches = namesInCat.filter((name) => {
+        const names = toolRegistry.getToolNamesForCategory(cat)
+          .filter(n => !EXCLUDED_TOOLS.has(n));
+        const matches = names.filter((name) => {
           if (name.toLowerCase().includes(q)) return true;
           const desc = toolRegistry.getToolDescription(name);
           return desc?.toLowerCase().includes(q);
         });
         if (matches.length > 0) {
-          toolNames.push(...matches);
-          if (!matchedCategories.includes(cat)) {
-            matchedCategories.push(cat);
+          matchedLines.push('');
+          matchedLines.push(`## ${ cat }`);
+          for (const name of matches) {
+            matchedLines.push(this.formatToolLine(name, cat));
           }
+          matchCount += matches.length;
         }
       }
-    }
-
-    if (toolNames.length === 0) {
+      if (matchCount === 0) {
+        return { successBoolean: false, responseString: `No tools matching "${ query }".` };
+      }
       return {
-        successBoolean: false,
-        responseString: `No tools found${ category ? ` in category "${ category }"` : '' }${ query ? ` matching "${ query }"` : '' }.\n\nAvailable categories: ${ allCategories.join(', ') }`,
+        successBoolean: true,
+        responseString: `Found ${ matchCount } tools matching "${ query }":\n${ matchedLines.join('\n') }`,
       };
     }
 
-    // Build output grouped by category
-    const lines: string[] = [];
+    // ── Category mode: show one category in detail ──
+    if (category) {
+      if (!allCategories.includes(category)) {
+        return {
+          successBoolean: false,
+          responseString: `Unknown category "${ category }". Available: ${ allCategories.join(', ') }`,
+        };
+      }
+      const names = toolRegistry.getToolNamesForCategory(category)
+        .filter(n => !EXCLUDED_TOOLS.has(n));
+      const catDescs = toolRegistry.getCategoriesWithDescriptions();
+      const catDesc = catDescs.find(c => c.category === category)?.description || '';
+      const integSlug = CATEGORY_TO_INTEGRATION[category];
+      const connected = integSlug && connectedIntegrations.has(integSlug);
 
-    if (query && !category) {
-      lines.push(`Found ${ toolNames.length } tools matching "${ query }":`);
+      const lines: string[] = [];
+      lines.push(`## ${ category }${ connected ? ' ✓ credentials connected' : '' }`);
+      if (catDesc) lines.push(catDesc);
       lines.push('');
+      for (const name of names) {
+        lines.push(this.formatToolLine(name, category));
+      }
+      return { successBoolean: true, responseString: lines.join('\n').trim() };
     }
 
-    for (const cat of matchedCategories) {
-      const catDescription = toolRegistry.getCategoriesWithDescriptions()
-        .find(c => c.category === cat)?.description || '';
-      lines.push(`## ${ cat }`);
-      if (catDescription) {
-        lines.push(catDescription);
-      }
+    // ── Default: full flat listing of ALL tools ──
+    const lines: string[] = [];
+    let totalTools = 0;
+
+    for (const cat of allCategories) {
+      const names = toolRegistry.getToolNamesForCategory(cat)
+        .filter(n => !EXCLUDED_TOOLS.has(n));
+      if (names.length === 0) continue;
+
+      const catDescs = toolRegistry.getCategoriesWithDescriptions();
+      const catDesc = catDescs.find(c => c.category === cat)?.description || '';
+      const integSlug = CATEGORY_TO_INTEGRATION[cat];
+      const connected = integSlug && connectedIntegrations.has(integSlug);
+
+      lines.push('');
+      lines.push(`## ${ cat } (${ names.length } tools)${ connected ? ' ✓ credentials connected' : '' }`);
+      if (catDesc) lines.push(catDesc);
       lines.push('');
 
-      const namesInCat = category
-        ? toolNames
-        : toolNames.filter((name) => {
-          const toolCatNames = toolRegistry.getToolNamesForCategory(cat);
-          return toolCatNames.includes(name);
-        });
-
-      for (const name of namesInCat) {
-        lines.push(this.formatTool(name, cat));
-        lines.push('');
+      for (const name of names) {
+        lines.push(this.formatToolLine(name, cat));
       }
+      totalTools += names.length;
     }
 
     return {
       successBoolean: true,
-      responseString: lines.join('\n').trim(),
+      responseString: `# Sulla Tool Catalog — ${ totalTools } tools\n${ lines.join('\n') }`,
     };
   }
 }

@@ -463,7 +463,7 @@ export class SkillsRegistry {
         this.cachedSummaries = this.buildSummariesFromCurrentMap();
       }
 
-      return `Skill '${ name }' created/updated successfully.\nSkill directory: ${ skillDir }\nSkill file: ${ skillFile }\nYou can now load it anytime with load_skill.`;
+      return `Skill '${ name }' created/updated successfully.\nSkill directory: ${ skillDir }\nSkill file: ${ skillFile }\nYou can now load it anytime with read_file.`;
     } catch (error: any) {
       return `Failed to create skill '${ name }': ${ error.message }`;
     }

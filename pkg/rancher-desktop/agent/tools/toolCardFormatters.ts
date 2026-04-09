@@ -452,9 +452,6 @@ const formatters: Record<string, Formatter> = {
   },
 
   // ── Skills ───────────────────────────────────────────────────────────────
-  load_skill(args) {
-    return { label: 'Skills', summary: `Loading skill: ${ str(args.skill_name) }` };
-  },
   create_skill(args) {
     return { label: 'Skills', summary: `Creating skill: ${ str(args.skill_name) }` };
   },

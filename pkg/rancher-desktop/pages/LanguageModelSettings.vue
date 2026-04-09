@@ -377,16 +377,21 @@ export default defineComponent({
       }
     });
 
-    // Load local server state
-    this.localServerEnabled = this.activeMode !== 'remote';
+    // Load persisted local server enabled preference
+    try {
+      const savedEnabled = await SullaSettingsModel.get('localServerEnabled', '');
+      if (savedEnabled === 'true' || savedEnabled === 'false') {
+        this.localServerEnabled = savedEnabled === 'true';
+      } else {
+        // No saved preference — derive from current mode
+        this.localServerEnabled = this.activeMode !== 'remote';
+      }
+    } catch {
+      this.localServerEnabled = this.activeMode !== 'remote';
+    }
     try {
       const status = await ipcRenderer.invoke('llama-server:status');
-
       this.localServerRunning = status?.running ?? false;
-      // If server is running, it's enabled regardless of mode
-      if (this.localServerRunning) {
-        this.localServerEnabled = true;
-      }
     } catch {
       this.localServerRunning = false;
     }
@@ -958,10 +963,9 @@ export default defineComponent({
         if (this.localServerEnabled) {
           // Disable — stop the server, then save preference
           await ipcRenderer.invoke('llama-server:stop');
-          await SullaSettingsModel.set('modelMode', 'remote');
+          await SullaSettingsModel.set('localServerEnabled', 'false', 'string');
           this.localServerEnabled = false;
           this.localServerRunning = false;
-          this.activeMode = 'remote';
           console.log('[LM Settings] Local model server disabled');
         } else {
           // Enable — start the server first, only persist on success
@@ -974,10 +978,9 @@ export default defineComponent({
 
             return;
           }
-          await SullaSettingsModel.set('modelMode', 'local');
+          await SullaSettingsModel.set('localServerEnabled', 'true', 'string');
           this.localServerEnabled = true;
           this.localServerRunning = true;
-          this.activeMode = 'local';
           console.log('[LM Settings] Local model server enabled');
         }
       } catch (err: unknown) {

@@ -204,8 +204,11 @@ export async function instantiateSullaStart(): Promise<void> {
       const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
       const providerState = getModelProviderService().getState();
 
-      if (providerState.modelMode === 'remote') {
-        console.log('[Background] Local model server disabled by user — skipping llama-server startup');
+      // Check the explicit localServerEnabled preference first, then fall back to modelMode
+      const localServerEnabled = await SullaSettingsModel.get('localServerEnabled', '');
+
+      if (localServerEnabled === 'false' || (localServerEnabled === '' && providerState.modelMode === 'remote')) {
+        console.log('[Background] Local model server disabled — skipping llama-server startup');
         sendProgress(100, 100, 'Local server disabled');
 
         return;
