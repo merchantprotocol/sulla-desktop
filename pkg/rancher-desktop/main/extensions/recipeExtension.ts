@@ -471,6 +471,7 @@ export class RecipeExtensionImpl implements Extension {
         const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolvedCommand], {
           stdio: 'pipe',
           cwd:   resolvedCwd,
+          env:   this.spawnEnv,
         });
 
         if (stdout?.trim()) {
@@ -840,6 +841,24 @@ export class RecipeExtensionImpl implements Extension {
   }
 
   /**
+   * Build a spawn environment with PATH augmented to include directories where
+   * the docker CLI is likely to live.  On macOS, Electron apps launched from
+   * the Dock inherit a minimal PATH that often lacks /usr/local/bin and
+   * ~/.rd/bin, causing "command not found" (exit 127) for docker commands.
+   */
+  protected get spawnEnv(): Record<string, string> {
+    const extraDirs = [
+      paths.integration,                                  // ~/.rd/bin
+      path.join(paths.resources, process.platform, 'bin'), // bundled binaries
+      '/usr/local/bin',                                   // common on macOS
+    ];
+    const existing = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+    const combined = [...new Set([...existing, ...extraDirs])];
+
+    return { ...process.env as Record<string, string>, PATH: combined.join(path.delimiter) };
+  }
+
+  /**
    * Collapse repetitive command output into a compact, readable summary.
    */
   protected summarizeCommandOutput(output: string, maxLines = 30): string {
@@ -888,7 +907,7 @@ export class RecipeExtensionImpl implements Extension {
     sullaLog({ topic: 'extensions', level: 'info', message: `Starting ${ this.id }`, data: { command: resolved, cwd: this.dir } });
 
     try {
-      const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir });
+      const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir, env: this.spawnEnv });
 
       if (stdout) {
         const summarizedStdout = this.summarizeCommandOutput(stdout);
@@ -928,17 +947,27 @@ export class RecipeExtensionImpl implements Extension {
     const resolved = this.resolveCommand(cmd);
 
     sullaLog({ topic: 'extensions', level: 'info', message: `Stopping ${ this.id }`, data: { command: resolved, cwd: this.dir } });
-    const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir });
 
-    if (stdout) {
-      sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } stop stdout] ${ stdout.trim() }` });
-    }
-    if (stderr) {
-      sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } stop stderr] ${ stderr.trim() }` });
-    }
-    sullaLog({ topic: 'extensions', level: 'info', message: `Stopped ${ this.id } successfully` });
+    try {
+      const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir, env: this.spawnEnv });
 
-    // Persist stopped state so we don't auto-start on app restart
+      if (stdout) {
+        sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } stop stdout] ${ stdout.trim() }` });
+      }
+      if (stderr) {
+        sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } stop stderr] ${ stderr.trim() }` });
+      }
+      sullaLog({ topic: 'extensions', level: 'info', message: `Stopped ${ this.id } successfully` });
+    } catch (err: any) {
+      const stderr = err?.stderr || '';
+
+      sullaLog({ topic: 'extensions', level: 'warn', message: `Stop command for ${ this.id } failed (exit code ${ err?.code ?? '?' }): ${ err.message || err }${ stderr ? `\n${ stderr }` : '' }` });
+    }
+
+    // Persist stopped state so we don't auto-start on app restart.
+    // This runs even if the stop command failed — the user's intent was to
+    // stop, and a missing docker CLI (code 127) means the container engine
+    // isn't running anyway.
     await this.saveRunningState('stopped');
   }
 
@@ -956,7 +985,7 @@ export class RecipeExtensionImpl implements Extension {
     const resolved = this.resolveCommand(cmd);
 
     sullaLog({ topic: 'extensions', level: 'info', message: `Restarting ${ this.id }`, data: { command: resolved, cwd: this.dir } });
-    const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir });
+    const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir, env: this.spawnEnv });
 
     if (stdout) {
       sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } restart stdout] ${ stdout.trim() }` });
@@ -978,7 +1007,7 @@ export class RecipeExtensionImpl implements Extension {
     const resolved = this.resolveCommand(cmd);
 
     try {
-      const result = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir });
+      const result = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir, env: this.spawnEnv });
 
       return (result as any).stdout?.toString?.() ?? 'running';
     } catch {
@@ -1010,7 +1039,7 @@ export class RecipeExtensionImpl implements Extension {
       const composePath = path.join(this.dir, composeFile);
       const removeImagesCmd = `docker compose -f ${ this.shellQuote(composePath) } down --rmi all --remove-orphans`;
 
-      const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', removeImagesCmd], { stdio: 'pipe', cwd: this.dir });
+      const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', removeImagesCmd], { stdio: 'pipe', cwd: this.dir, env: this.spawnEnv });
 
       if (stdout?.trim()) {
         sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id } uninstall image cleanup stdout] ${ stdout.trim() }` });
@@ -1029,7 +1058,7 @@ export class RecipeExtensionImpl implements Extension {
         const composeFile = this._manifest?.compose?.composeFile || 'docker-compose.yml';
         const composePath = path.join(this.dir, composeFile);
 
-        await spawnFile('/bin/sh', ['-c', `docker compose -f ${ this.shellQuote(composePath) } down -v`], { stdio: 'pipe' });
+        await spawnFile('/bin/sh', ['-c', `docker compose -f ${ this.shellQuote(composePath) } down -v`], { stdio: 'pipe', env: this.spawnEnv });
         sullaLog({ topic: 'extensions', level: 'info', message: `Removed docker volumes for ${ this.id }` });
       } catch (ex) {
         sullaLog({ topic: 'extensions', level: 'warn', message: `Failed to remove docker volumes for ${ this.id }`, error: ex });
