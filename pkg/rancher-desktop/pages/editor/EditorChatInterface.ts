@@ -82,7 +82,8 @@ export class EditorChatInterface {
   constructor(tabId?: string) {
     // Use provided tabId or default to workbench channel
     this.tabId = tabId || WORKBENCH_CHANNEL;
-    
+    console.log(`[EditorChatInterface] Constructor called with tabId: ${this.tabId}`);
+
     // Create a minimal registry just for the persona service's internal needs
     this.registry = new AgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(WORKBENCH_CHANNEL, this.tabId);
@@ -92,6 +93,7 @@ export class EditorChatInterface {
 
     // Set up storage key for persistence - scoped by tabId
     this.messagesStorageKey = `chat_messages_${ this.tabId }`;
+    console.log(`[EditorChatInterface] Storage key: ${this.messagesStorageKey}`);
     if (!this.persona.getThreadId()) {
       this.persona.setThreadId(`thread_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`);
     }
@@ -198,8 +200,13 @@ export class EditorChatInterface {
   private restoreMessages(): void {
     try {
       const raw = localStorage.getItem(this.messagesStorageKey);
-      if (!raw) return;
+      console.log(`[EditorChatInterface] restoreMessages - raw data exists: ${!!raw}, key: ${this.messagesStorageKey}`);
+      if (!raw) {
+        console.log(`[EditorChatInterface] No messages found in localStorage for key: ${this.messagesStorageKey}`);
+        return;
+      }
       const parsed = JSON.parse(raw) as ChatMessage[];
+      console.log(`[EditorChatInterface] Parsed ${parsed.length} messages, persona.messages.length: ${this.persona.messages.length}`);
       if (Array.isArray(parsed) && parsed.length > 0 && this.persona.messages.length === 0) {
         // Mark any stale running tool cards as failed
         for (const m of parsed) {
@@ -210,8 +217,12 @@ export class EditorChatInterface {
         }
         this.persona.messages.push(...parsed);
         console.log(`[EditorChatInterface] Restored ${ parsed.length } messages from localStorage`);
+      } else {
+        console.log(`[EditorChatInterface] Skipped restore: isArray=${Array.isArray(parsed)}, parsed.length=${parsed?.length}, persona.messages.length=${this.persona.messages.length}`);
       }
-    } catch { /* corrupt data — start fresh */ }
+    } catch (e) {
+      console.error(`[EditorChatInterface] Error restoring messages:`, e);
+    }
   }
 
   private updateMessages(): void {
