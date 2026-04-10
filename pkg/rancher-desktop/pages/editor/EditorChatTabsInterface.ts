@@ -282,45 +282,50 @@ export class EditorChatTabsInterface {
   private restoreTabs(): void {
     try {
       const raw = localStorage.getItem(TABS_STORAGE_KEY);
+      console.log(`[EditorChatTabsInterface] restoreTabs - TABS_STORAGE_KEY has data: ${!!raw}`);
       if (!raw) {
         // Create default tab if no saved state
+        console.log('[EditorChatTabsInterface] No saved tabs, creating default tab');
         this.createTab('New Chat');
         return;
       }
-      
+
       const parsed: StoredTabsState = JSON.parse(raw);
       const savedTabs: TabData[] = parsed.tabs || [];
-      
+      console.log(`[EditorChatTabsInterface] Found ${savedTabs.length} saved tabs:`, savedTabs.map(t => t.id));
+
       if (savedTabs.length === 0) {
         this.createTab('New Chat');
         return;
       }
-      
+
       // Restore each tab by creating new interfaces
       for (const data of savedTabs) {
+        console.log(`[EditorChatTabsInterface] Restoring tab ${data.id}...`);
         const chatInterface = new EditorChatInterface(data.id);
         this.interfaces.set(data.id, chatInterface);
-        
+        console.log(`[EditorChatTabsInterface] Tab ${data.id} restored with ${chatInterface.messages.value.length} messages`);
+
         // Mark as auto-named if it has messages (to prevent re-naming)
         if (chatInterface.messages.value.length > 0) {
           this.autoNamedTabs.add(data.id);
         }
-        
+
         // Setup auto-naming watcher for restored tabs (in case they have no messages yet)
         this.setupAutoNaming(data.id, chatInterface);
-        
+
         this.tabData.value.push({
           id: data.id,
           label: data.label,
           createdAt: data.createdAt,
         });
       }
-      
+
       // Restore active tab or default to first
       const validActiveId = this.interfaces.has(parsed.activeTabId) ? parsed.activeTabId : null;
       this.activeTabId.value = validActiveId || this.tabData.value[0]?.id || '';
-      
-      console.log(`[EditorChatTabsInterface] Restored ${this.tabData.value.length} tabs`);
+
+      console.log(`[EditorChatTabsInterface] Restored ${this.tabData.value.length} tabs, active: ${this.activeTabId.value}`);
     } catch (err) {
       console.error('[EditorChatTabsInterface] Failed to restore tabs:', err);
       // Create default tab on error

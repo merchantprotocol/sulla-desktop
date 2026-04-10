@@ -1791,11 +1791,11 @@ onMounted(() => {
 }
 
 .chat-history-popup {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
+  position: fixed;
+  top: 44px;
+  right: 12px;
   width: 320px;
-  max-height: 350px;
+  max-height: min(350px, calc(100vh - 60px));
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: 10px;
