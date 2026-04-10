@@ -25,11 +25,13 @@ files:
   - '!**/node_modules/*/prebuilds/!(${platform}*)/*.node'
 mac:
   darkModeSupport: true
-  hardenedRuntime: true
+  hardenedRuntime: false  # Re-enable when we have an Apple Developer certificate for notarization
   gatekeeperAssess: false
   icon: ./resources/icons/sulla-app-icon.png
   target: [ dmg, zip ]
   identity: ~ # We sign in a separate step
+  entitlements: ./packaging/entitlements.mac.plist
+  entitlementsInherit: ./packaging/entitlements.mac.plist
   artifactName: Sulla-Desktop-${version}-mac.${ext}
   extendInfo:
     NSMicrophoneUsageDescription: "Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio."

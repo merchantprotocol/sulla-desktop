@@ -109,6 +109,17 @@ install-mac:
     # Copy using ditto (preserves symlinks, resource forks, HFS metadata)
     ditto "dist/mac-arm64/Sulla Desktop.app" "/Applications/Sulla Desktop.app"
     xattr -rd com.apple.quarantine "/Applications/Sulla Desktop.app" 2>/dev/null || true
+    # Ad-hoc sign with entitlements (required for screen capture, mic, camera with hardened runtime)
+    ENT="packaging/entitlements.mac.plist"
+    if [ -f "$ENT" ]; then
+        echo "Signing helpers with entitlements..."
+        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app/Contents/Frameworks/Sulla Desktop Helper.app" 2>/dev/null || true
+        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app/Contents/Frameworks/Sulla Desktop Helper (Renderer).app" 2>/dev/null || true
+        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app/Contents/Frameworks/Sulla Desktop Helper (Plugin).app" 2>/dev/null || true
+        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app/Contents/Frameworks/Sulla Desktop Helper (GPU).app" 2>/dev/null || true
+        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app"
+        echo "Signed with entitlements"
+    fi
     echo "Installed to /Applications/Sulla Desktop.app"
 
 # Stop Sulla Desktop, remove from Applications, and eject the DMG

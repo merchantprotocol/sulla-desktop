@@ -19,6 +19,7 @@ import { getWindow } from '@pkg/window';
 const console = Logging.background;
 
 let win: BrowserWindow | null = null;
+let showGuard = false;  // prevents spurious blur during initial show
 
 const MENU_WIDTH = 200;
 const MENU_HEIGHT = 210;  // main view with 5 items + separator
@@ -37,17 +38,25 @@ export function registerMoreMenuIpc(): void {
 
 // ─── IPC handlers ───────────────────────────────────────────────
 
+function _showAndFocus(): void {
+  if (!win || win.isDestroyed()) return;
+  showGuard = true;
+  win.show();        // show + focus in one step (avoids macOS blur race)
+  win.focus();       // ensure focus even if show() didn't grant it
+  setTimeout(() => { showGuard = false; }, 200);
+}
+
 function onShow(
   _event: Electron.IpcMainEvent,
   payload: { screenX: number; screenY: number },
 ): void {
   const { screenX, screenY } = payload;
+  console.log('[MoreMenu] onShow', { screenX, screenY, existingWindow: !!win });
 
   if (win && !win.isDestroyed()) {
     win.setBounds({ x: screenX, y: screenY, width: MENU_WIDTH, height: MENU_HEIGHT });
     win.webContents.send('more-menu:show');
-    win.showInactive();
-    setTimeout(() => { if (win && !win.isDestroyed()) win.focus(); }, 50);
+    _showAndFocus();
     return;
   }
 
@@ -78,18 +87,22 @@ function onShow(
   win.loadFile(htmlPath);
 
   win.once('ready-to-show', () => {
-    if (!win || win.isDestroyed()) return;
-    win.showInactive();
-    setTimeout(() => { if (win && !win.isDestroyed()) win.focus(); }, 50);
+    _showAndFocus();
   });
 
-  win.on('blur', () => _close());
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error('[MoreMenu] Failed to load HTML:', errorCode, errorDescription, htmlPath);
+  });
+
+  win.on('blur', () => {
+    if (!showGuard) _close();
+  });
 
   win.on('closed', () => {
     win = null;
   });
 
-  console.log('[MoreMenu] Opened popup');
+  console.log('[MoreMenu] Created popup window, loading:', htmlPath);
 }
 
 function onAction(
