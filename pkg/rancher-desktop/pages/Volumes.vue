@@ -1,6 +1,5 @@
 <template>
   <div class="volumes">
-    <PostHogTracker page-name="Volumes" />
     <banner
       v-if="errorMessage"
       color="error"
@@ -82,7 +81,6 @@ import type { Settings } from '@pkg/config/settings';
 import { mapTypedGetters, mapTypedState } from '@pkg/entry/store';
 import type { Volume } from '@pkg/store/container-engine';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 
 const MAX_PATH_LENGTH = 40;
 
@@ -105,7 +103,7 @@ interface RowItem extends Volume {
 export default defineComponent({
   name:       'Volumes',
   title:      'Volumes',
-  components: { SortableTable, Banner, PostHogTracker },
+  components: { SortableTable, Banner },
   data() {
     return {
       settings:       undefined as Settings | undefined,

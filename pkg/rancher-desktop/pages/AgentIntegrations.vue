@@ -3,7 +3,6 @@
     class="text-sm font-sans page-root"
     :class="[{ dark: isDark }, 'h-full']"
   >
-    <PostHogTracker page-name="AgentIntegrations" />
     <div class="flex flex-col h-full">
       <AgentHeader
         v-if="!embedded"
@@ -381,8 +380,6 @@
 
 <script setup lang="ts">
 import AgentHeader from './agent/AgentHeader.vue';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
-
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
 const emit = defineEmits<{ 'back-to-vault': []; 'create-account': [data: { integrationId: string }] }>();
 import type { Integration } from '@pkg/agent/integrations/types';

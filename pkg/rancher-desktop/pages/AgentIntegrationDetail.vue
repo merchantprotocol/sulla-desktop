@@ -3,7 +3,6 @@
     class="h-full text-sm font-sans page-root overflow-y-auto"
     :class="{ dark: isDark }"
   >
-    <PostHogTracker page-name="AgentIntegrationDetail" />
     <div class="flex min-h-full flex-col">
       <AgentHeader
         v-if="!embedded"
@@ -831,7 +830,6 @@
 
 <script setup lang="ts">
 import AgentHeader from './agent/AgentHeader.vue';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { integrations, type Integration } from '@pkg/agent/integrations/catalog';
 import YouTubePlayer from '@pkg/components/YouTubePlayer.vue';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';

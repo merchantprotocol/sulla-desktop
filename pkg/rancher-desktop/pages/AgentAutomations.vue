@@ -3,7 +3,6 @@
     class="h-full overflow-y-auto font-sans page-root"
     :class="{ dark: isDark }"
   >
-    <PostHogTracker page-name="AgentAutomations" />
     <div class="flex min-h-full flex-col">
       <AgentHeader
         :is-dark="isDark"
@@ -274,7 +273,6 @@
 <script setup lang="ts">
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import AgentHeader from './agent/AgentHeader.vue';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 
 const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
