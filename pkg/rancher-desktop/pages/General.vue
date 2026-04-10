@@ -1,6 +1,5 @@
 <template>
   <div class="general">
-    <PostHogTracker page-name="General" />
     <div>
       <ul>
         <li>Project Discussions: <b>#sulla-desktop</b> in <a href="https://github.com/merchantprotocol/sulla-desktop/discussions">Sulla Desktop</a> Github</li>
@@ -41,13 +40,12 @@ import TelemetryOptIn from '@pkg/components/TelemetryOptIn.vue';
 import UpdateStatus from '@pkg/components/UpdateStatus.vue';
 import { defaultSettings } from '@pkg/config/settings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 
 export default {
   name:       'General',
   title:      'General',
   components: {
-    NetworkStatus, TelemetryOptIn, UpdateStatus, PostHogTracker,
+    NetworkStatus, TelemetryOptIn, UpdateStatus,
   },
   data() {
     return {

@@ -3,7 +3,6 @@
     class="min-h-screen text-sm font-sans overflow-y-auto page-root"
     :class="{ dark: isDark }"
   >
-    <PostHogTracker page-name="Extension" />
     <div class="flex flex-col min-h-screen">
       <AgentHeader
         :is-dark="isDark"
@@ -46,7 +45,6 @@
 
 <script setup lang="ts">
 import AgentHeader from './agent/AgentHeader.vue';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getExtensionService, LocalExtensionMetadata } from '@pkg/agent';

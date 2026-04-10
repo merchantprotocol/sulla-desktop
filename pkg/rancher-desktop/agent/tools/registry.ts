@@ -95,7 +95,7 @@ export class ToolRegistry {
     finance:            'Payments, invoicing, accounting, and subscriptions — Stripe, QuickBooks, Xero, PayPal, Chargebee, and more.',
     file_storage:       'Cloud storage, file transfer, and object storage — Dropbox, Box, S3, Google Cloud Storage, SFTP, and more.',
     ecommerce:          'Online store management, orders, products, and fulfillment — Shopify, WooCommerce, BigCommerce, Etsy, and more.',
-    analytics:          'Web analytics, product analytics, dashboards, and BI — Google Analytics, Mixpanel, PostHog, Metabase, Snowflake, and more.',
+    analytics:          'Web analytics, product analytics, dashboards, and BI — Google Analytics, Mixpanel, Metabase, Snowflake, and more.',
     automation:         'Webhooks, queues, scheduling, code execution, and file conversion — HTTP, RSS, RabbitMQ, Amazon SQS, CloudConvert, and more.',
     database:           'SQL, NoSQL, vector, and serverless databases — MySQL, PostgreSQL, MongoDB, Redis, Supabase, Pinecone, and more.',
     design:             'Image editing, asset generation, and design collaboration — Figma, Canva, Cloudinary, Miro, Bannerbear, and more.',

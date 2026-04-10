@@ -14,13 +14,12 @@ import type { ServerState } from '@pkg/main/commandServer/httpCommandServer';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 import { preferencesNavItems } from '@pkg/window/preferenceConstants';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 
 export default defineComponent({
   name:       'preferences-modal',
   components: {
-    PreferencesHeader, PreferencesNav, PreferencesBody, PreferencesFooter, EmptyState, PostHogTracker,
+    PreferencesHeader, PreferencesNav, PreferencesBody, PreferencesFooter, EmptyState,
   },
   layout: 'preferences',
   setup() {

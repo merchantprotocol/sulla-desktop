@@ -3,7 +3,6 @@
     class="h-full overflow-hidden font-sans page-root"
     :class="{ dark: isDark }"
   >
-    <PostHogTracker page-name="FirstRun" />
     <div class="flex h-full flex-col">
       <SimpleHeader
         :is-dark="isDark"
@@ -109,7 +108,6 @@
 import { ref, provide, computed } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { defaultSettings, Settings } from '@pkg/config/settings';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 
 import FirstRunResources from './FirstRunResources.vue';

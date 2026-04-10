@@ -3,7 +3,6 @@
     class="font-sans page-root"
     :class="{ dark: isDark }"
   >
-    <PostHogTracker page-name="AgentFilesystem" />
     <EditorHeader
       :is-dark="isDark"
       :toggle-theme="toggleTheme"
@@ -1332,7 +1331,6 @@ import { ipcRenderer } from 'electron';
 
 import { useTheme } from '@pkg/composables/useTheme';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import EditorHeader from './editor/EditorHeader.vue';
 import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
 import CodeEditor from './filesystem/CodeEditor.vue';
@@ -1461,7 +1459,6 @@ export default defineComponent({
   name: 'AgentFilesystem',
 
   components: {
-    PostHogTracker,
     EditorHeader,
     FileTreeSidebar,
     CodeEditor,

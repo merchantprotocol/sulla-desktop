@@ -10,7 +10,6 @@ import { heartbeatPrompt } from '../agent/prompts/heartbeat';
 import { SullaSettingsModel } from '../agent/database/models/SullaSettingsModel';
 import { REMOTE_PROVIDERS } from '../shared/remoteProviders';
 import { getSupportedProviders, fetchModelsForProvider, clearModelCache } from '../agent/languagemodels';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { LOCAL_MODELS } from '../shared/localModels';
 import type { LocalModelOption } from '../shared/localModels';
 import { useTheme } from '../composables/useTheme';
@@ -1272,7 +1271,6 @@ export default defineComponent({
 
 <template>
   <div class="lm-settings">
-    <PostHogTracker page-name="LanguageModelSettings" />
     <!-- Header -->
     <div class="lm-header">
       <h1>Language Model Settings</h1>

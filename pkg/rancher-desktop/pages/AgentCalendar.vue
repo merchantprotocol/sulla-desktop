@@ -3,7 +3,6 @@
     class="overflow-hidden font-sans flex flex-col page-root"
     :class="[{ dark: isDark }, 'h-full']"
   >
-    <PostHogTracker page-name="AgentCalendar" />
     <div class="flex flex-1 min-h-0 flex-col">
       <AgentHeader
         v-if="!embedded"
@@ -357,7 +356,6 @@
 
 <script setup lang="ts">
 import AgentHeader from './agent/AgentHeader.vue';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });

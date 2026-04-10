@@ -613,8 +613,6 @@ urn:shemas-jetbrains-com
 # kubernetes crd patterns
 ^\s*pattern: .*$
 
-# posthog secrets
-([`'"])phc_[^"',]+\g{-1}
 
 # xcode
 

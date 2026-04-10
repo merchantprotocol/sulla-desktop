@@ -1,6 +1,5 @@
 <template>
   <div>
-    <PostHogTracker page-name="PortForwarding" />
     <PortForwarding
       class="content"
       :services="services"
@@ -29,11 +28,9 @@ import type { ServiceEntry } from '@pkg/backend/k8s';
 import PortForwarding from '@pkg/components/PortForwarding.vue';
 import { defaultSettings, Settings } from '@pkg/config/settings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import PostHogTracker from '@pkg/components/PostHogTracker.vue';
-
 export default defineComponent({
   name:       'port-forwarding',
-  components: { PortForwarding, PostHogTracker },
+  components: { PortForwarding },
   data() {
     return {
       state:              ipcRenderer.sendSync('k8s-state'),
