@@ -3,7 +3,7 @@
     class="app-titlebar relative flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500 z-99"
     style="-webkit-app-region: drag; app-region: drag;"
   >
-    <div class="relative flex shrink-0 items-center pb-2">
+    <div class="relative flex shrink-0 items-center pb-1">
       <WindowDragLogo :size="20" />
     </div>
     <!-- Phase 4: Scroll wrapper with chevrons -->
