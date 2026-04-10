@@ -1,19 +1,19 @@
 <template>
   <div
-    class="text-sm font-sans page-root h-full"
+    class="text-sm font-sans page-root h-full history-page"
     :class="{ dark: isDark }"
   >
     <div class="flex flex-col h-full">
       <!-- Hero header -->
-      <div class="overflow-hidden bg-slate-900">
+      <div class="overflow-hidden history-header">
         <div class="py-12 sm:px-2 lg:relative lg:px-0 lg:py-16">
           <div class="mx-auto max-w-6xl px-4 md:px-6 lg:px-8">
             <div class="flex items-center justify-between gap-8">
               <div>
-                <p class="inline bg-linear-to-r from-indigo-200 via-sky-400 to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
+                <p class="inline bg-linear-to-r from-indigo-500 via-sky-500 to-indigo-500 dark:from-indigo-200 dark:via-sky-400 dark:to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
                   History.
                 </p>
-                <p class="mt-3 text-2xl tracking-tight text-slate-400">
+                <p class="mt-3 text-2xl tracking-tight text-slate-500 dark:text-slate-400">
                   Your conversations and browsing activity.
                 </p>
               </div>
@@ -40,7 +40,7 @@
                 <!-- Filter -->
                 <select
                   v-model="filterType"
-                  class="h-10 rounded-lg bg-slate-800/75 px-3 text-sm text-slate-100 ring-1 ring-white/5 focus:outline-none focus:ring-2 focus:ring-sky-300/50"
+                  class="h-10 rounded-lg bg-white border border-slate-300 px-3 text-sm text-slate-700 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-1 dark:ring-white/5 dark:border-none focus:outline-none focus:ring-2 focus:ring-sky-300/50"
                   @change="loadHistory"
                 >
                   <option value="">
@@ -60,7 +60,7 @@
                 <!-- Clear History -->
                 <button
                   type="button"
-                  class="h-10 px-4 rounded-lg border border-red-800/50 hover:border-red-600 text-red-400 hover:text-red-300 text-sm font-medium transition-colors"
+                  class="h-10 px-4 rounded-lg border border-red-300 hover:border-red-400 text-red-600 hover:text-red-700 dark:border-red-800/50 dark:hover:border-red-600 dark:text-red-400 dark:hover:text-red-300 text-sm font-medium transition-colors"
                   @click="showClearConfirm = true"
                 >
                   Clear History
@@ -110,7 +110,7 @@
             v-else
             :key="group.label"
           >
-            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 mt-6 first:mt-0">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-500 mb-3 mt-6 first:mt-0">
               {{ group.label }}
             </h3>
             <div class="space-y-1 mb-4">
@@ -172,27 +172,27 @@
 
                 <!-- Title and URL -->
                 <div class="flex-1 min-w-0">
-                  <p class="text-sm text-slate-200 truncate">
+                  <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
                     {{ entry.title || 'Untitled' }}
                   </p>
                   <p
                     v-if="entry.url && entry.url !== 'about:blank'"
-                    class="text-xs text-slate-500 truncate mt-0.5"
+                    class="text-xs text-slate-500 dark:text-slate-500 truncate mt-0.5"
                   >
                     {{ entry.url }}
                   </p>
                 </div>
 
                 <!-- Time -->
-                <span class="flex-shrink-0 text-xs text-slate-600">
+                <span class="flex-shrink-0 text-xs text-slate-500 dark:text-slate-600">
                   {{ formatTime(entry.last_active_at || entry.created_at) }}
                 </span>
 
                 <!-- Pin button -->
                 <button
                   type="button"
-                  class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-700"
-                  :class="entry.pinned ? 'opacity-100 text-sky-400' : 'text-slate-500'"
+                  class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700"
+                  :class="entry.pinned ? 'opacity-100 text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
                   title="Pin"
                   @click.stop="togglePin(entry)"
                 >
@@ -210,7 +210,7 @@
                 <!-- Delete button -->
                 <button
                   type="button"
-                  class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-700 text-slate-500 hover:text-red-400"
+                  class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400"
                   title="Delete"
                   @click.stop="deleteEntry(entry)"
                 >
@@ -233,42 +233,42 @@
       <!-- Clear confirmation dialog -->
       <div
         v-if="showClearConfirm"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-black/60"
         @click.self="showClearConfirm = false"
       >
-        <div class="bg-slate-800 rounded-xl p-6 w-96 shadow-2xl border border-slate-700">
-          <h3 class="text-lg font-semibold text-slate-100 mb-2">
+        <div class="bg-white dark:bg-slate-800 rounded-xl p-6 w-96 shadow-2xl border border-slate-200 dark:border-slate-700">
+          <h3 class="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-2">
             Clear History
           </h3>
-          <p class="text-sm text-slate-400 mb-4">
+          <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">
             This will permanently delete conversation history and associated log files from disk.
           </p>
-          <label class="flex items-center gap-2 mb-4 text-sm text-slate-400 cursor-pointer select-none">
+          <label class="flex items-center gap-2 mb-4 text-sm text-slate-600 dark:text-slate-400 cursor-pointer select-none">
             <input
               v-model="includeTrainingData"
               type="checkbox"
-              class="rounded border-slate-600 bg-slate-700 text-red-500 focus:ring-red-500/30"
+              class="rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-red-500 focus:ring-red-500/30"
             >
-            <span>Also delete training data files <span class="text-red-400">(irreversible)</span></span>
+            <span>Also delete training data files <span class="text-red-500 dark:text-red-400">(irreversible)</span></span>
           </label>
           <div class="flex flex-col gap-2 mb-4">
             <button
               type="button"
-              class="w-full px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm text-left transition-colors"
+              class="w-full px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-sm text-left transition-colors"
               @click="clearHistory('hour')"
             >
               Clear last hour
             </button>
             <button
               type="button"
-              class="w-full px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm text-left transition-colors"
+              class="w-full px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-sm text-left transition-colors"
               @click="clearHistory('today')"
             >
               Clear today
             </button>
             <button
               type="button"
-              class="w-full px-4 py-2 rounded-lg bg-red-900/50 hover:bg-red-800/60 text-red-300 text-sm text-left transition-colors"
+              class="w-full px-4 py-2 rounded-lg bg-red-100 hover:bg-red-200 dark:bg-red-900/50 dark:hover:bg-red-800/60 text-red-700 dark:text-red-300 text-sm text-left transition-colors"
               @click="clearHistory('all')"
             >
               Clear all history
@@ -276,7 +276,7 @@
           </div>
           <button
             type="button"
-            class="w-full px-4 py-2 rounded-lg border border-slate-600 hover:border-slate-500 text-slate-300 text-sm transition-colors"
+            class="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500 text-slate-600 dark:text-slate-300 text-sm transition-colors"
             @click="showClearConfirm = false"
           >
             Cancel
@@ -487,10 +487,33 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.history-page {
+  background: var(--bg-page, #ffffff);
+  color: var(--text-primary, #0d0d0d);
+}
+
+.history-page.dark {
+  background: var(--bg-page, #0f172a);
+  color: var(--text-primary, #e0e0e0);
+}
+
+.history-header {
+  background: var(--bg-surface, #f8fafc);
+}
+
+.history-page.dark .history-header {
+  background: #0f172a;
+}
+
 .history-entry {
   background: transparent;
 }
+
 .history-entry:hover {
-  background: var(--bg-surface-hover, rgba(255, 255, 255, 0.03));
+  background: var(--bg-surface-hover, rgba(0, 0, 0, 0.04));
+}
+
+.history-page.dark .history-entry:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 </style>
