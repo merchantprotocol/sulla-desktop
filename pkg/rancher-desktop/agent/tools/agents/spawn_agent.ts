@@ -44,7 +44,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Options ───────────────────────────────────────────────────
     const parallel: boolean = input.parallel !== false; // default true
-    const async_: boolean = input.async === true;       // default false
+    const async_: boolean = input.async !== false;       // default true
 
     // ── Depth guard ─────────────────────────────────────────────
     const parentDepth: number = (this.state as any)?.metadata?.subAgentDepth ?? 0;
