@@ -30,6 +30,8 @@ mac:
   icon: ./resources/icons/sulla-app-icon.png
   target: [ dmg, zip ]
   identity: ~ # We sign in a separate step
+  entitlements: ./packaging/entitlements.mac.plist
+  entitlementsInherit: ./packaging/entitlements.mac.plist
   artifactName: Sulla-Desktop-${version}-mac.${ext}
   extendInfo:
     NSMicrophoneUsageDescription: "Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio."

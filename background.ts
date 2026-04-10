@@ -1202,7 +1202,7 @@ ipcMainProxy.handle('capture-studio:get-sources', async() => {
       thumbnailDataUrl: s.thumbnail.toDataURL(),
     }));
   } catch (e: any) {
-    console.warn('[capture-studio:get-sources] Failed:', e.message);
+    console.warn('[capture-studio:get-sources] Failed:', e?.message || e?.name || String(e));
     return [];
   }
 });

@@ -29,3 +29,4 @@ log/*
 llm/
 training/__pycache__/validate_training_data.cpython-313.pyc
 resources/browserTabPreload.js.map
+logs/background-web-requests.log
