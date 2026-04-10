@@ -81,6 +81,30 @@
       .tp-text .w.upcoming { opacity: 0.7; }
       .tp-text .w.far { opacity: 0.4; }
 
+      /* Close button */
+      .close-btn {
+        position: absolute;
+        top: 6px;
+        right: 8px;
+        width: 22px;
+        height: 22px;
+        border: none;
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.5);
+        border-radius: 6px;
+        font-size: 14px;
+        line-height: 22px;
+        text-align: center;
+        cursor: pointer;
+        z-index: 10;
+        -webkit-app-region: no-drag;
+        transition: background 0.15s, color 0.15s;
+      }
+      .close-btn:hover {
+        background: rgba(255, 80, 80, 0.6);
+        color: #fff;
+      }
+
       /* Gradient fade at bottom */
       .tp-scroll-area::after {
         content: '';
@@ -100,11 +124,16 @@
       <div class="tp-scroll-area">
         <div class="tp-text" id="tp-text"></div>
       </div>
+      <button class="close-btn" id="close-btn">&times;</button>
     </div>
 
     <script>
       const { ipcRenderer } = require('electron');
       const textEl = document.getElementById('tp-text');
+
+      document.getElementById('close-btn').addEventListener('click', () => {
+        ipcRenderer.invoke('teleprompter:close');
+      });
 
       let words = [];
       let currentIndex = 0;

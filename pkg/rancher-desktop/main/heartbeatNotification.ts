@@ -75,7 +75,7 @@ export function showHeartbeatNotification(title: string, message: string): void 
   // in packaged builds, load from dist/app/assets/ (copied by build-utils.copyWindowAssets()).
   const appRoot = app.getAppPath();
   const htmlPath = app.isPackaged
-    ? path.join(appRoot, 'assets', 'heartbeat-notification.html')
+    ? path.join(appRoot, 'dist', 'app', 'assets', 'heartbeat-notification.html')
     : path.join(appRoot, 'pkg', 'rancher-desktop', 'assets', 'heartbeat-notification.html');
 
   win.loadFile(htmlPath);

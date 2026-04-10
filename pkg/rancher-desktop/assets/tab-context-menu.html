@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Tab Context Menu</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      html, body {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        background: transparent;
+        color: #e0e0e0;
+        user-select: none;
+        overflow: hidden;
+      }
+
+      .menu {
+        min-width: 240px;
+        background: rgba(30, 30, 30, 0.96);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px rgba(63, 185, 80, 0.15);
+        padding: 6px 0;
+        animation: fadeIn 0.12s ease-out;
+      }
+
+      @keyframes fadeIn {
+        from { opacity: 0; transform: scale(0.96); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+
+      .menu-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 7px 14px;
+        border: none;
+        background: transparent;
+        color: #e0e0e0;
+        font-size: 13px;
+        font-family: inherit;
+        cursor: pointer;
+        text-align: left;
+        transition: background 0.1s;
+      }
+
+      .menu-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: #3fb950;
+      }
+
+      .menu-item:hover .menu-icon {
+        opacity: 1;
+        stroke: #3fb950;
+      }
+
+      .menu-icon {
+        width: 14px;
+        height: 14px;
+        opacity: 0.6;
+        flex-shrink: 0;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.5;
+        stroke-linecap: round;
+      }
+
+      .separator {
+        height: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        margin: 4px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="menu" id="menu"></div>
+    <script>
+      const { ipcRenderer } = require("electron");
+
+      /** Menu item definitions — each has an action key, label, SVG paths, and optional group separator */
+      const ALL_ITEMS = {
+        close: {
+          label: "Close Tab",
+          paths: ['<path d="M18 6L6 18M6 6l12 12" />'],
+        },
+        closeOther: {
+          label: "Close Other Tabs",
+          paths: [
+            '<path d="M9 3H5a2 2 0 0 0-2 2v4" />',
+            '<path d="M15 3h4a2 2 0 0 1 2 2v4" />',
+            '<path d="M9 21H5a2 2 0 0 1-2-2v-4" />',
+            '<path d="M15 21h4a2 2 0 0 0 2-2v-4" />',
+            '<path d="M14 10l-4 4M10 10l4 4" />',
+          ],
+        },
+        closeRight: {
+          label: "Close Tabs to the Right",
+          paths: [
+            '<path d="M9 18l6-6-6-6" />',
+            '<path d="M18 6L18 18" />',
+          ],
+        },
+        duplicate: {
+          label: "Duplicate Tab",
+          paths: [
+            '<rect x="8" y="8" width="13" height="13" rx="2" />',
+            '<path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />',
+          ],
+        },
+        moveStart: {
+          label: "Move to Start",
+          paths: [
+            '<path d="M11 17l-5-5 5-5" />',
+            '<path d="M18 17l-5-5 5-5" />',
+          ],
+        },
+        moveEnd: {
+          label: "Move to End",
+          paths: [
+            '<path d="M13 7l5 5-5 5" />',
+            '<path d="M6 7l5 5-5 5" />',
+          ],
+        },
+        reload: {
+          label: "Reload",
+          paths: [
+            '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />',
+            '<path d="M3 3v5h5" />',
+            '<path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />',
+            '<path d="M16 16h5v5" />',
+          ],
+        },
+        copyUrl: {
+          label: "Copy URL",
+          paths: [
+            '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />',
+            '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />',
+          ],
+        },
+      };
+
+      function buildMenu(items) {
+        const menu = document.getElementById("menu");
+        menu.innerHTML = "";
+
+        items.forEach((entry) => {
+          if (entry === "---") {
+            const sep = document.createElement("div");
+            sep.className = "separator";
+            menu.appendChild(sep);
+            return;
+          }
+
+          const def = ALL_ITEMS[entry];
+          if (!def) return;
+
+          const btn = document.createElement("button");
+          btn.className = "menu-item";
+          btn.innerHTML =
+            '<svg viewBox="0 0 24 24" class="menu-icon">' +
+            def.paths.join("") +
+            "</svg>" +
+            def.label;
+          btn.addEventListener("click", () => {
+            ipcRenderer.send("tab-context-menu:action", entry);
+          });
+          menu.appendChild(btn);
+        });
+      }
+
+      ipcRenderer.on("tab-context-menu:data", (_event, data) => {
+        buildMenu(data.items || []);
+      });
+
+      // Dismiss on Escape
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          ipcRenderer.send("tab-context-menu:dismiss");
+        }
+      });
+    </script>
+  </body>
+</html>

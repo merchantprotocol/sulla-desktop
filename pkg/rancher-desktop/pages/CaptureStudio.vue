@@ -119,25 +119,6 @@
       @close="ctxMenu.visible = false"
     />
 
-    <!-- Permission denied modal -->
-    <div v-if="permissionDenied" class="add-popup-overlay open">
-      <div class="add-popup">
-        <div class="popup-header">
-          <h3>Permission Required</h3>
-          <button class="popup-close" @click="permissionDenied = ''">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-        <div style="padding: 18px; font-size: 12px; color: var(--text-secondary); line-height: 1.6;">
-          <p>Screen recording permission is required to capture your screen.</p>
-          <p style="margin-top: 8px; color: var(--text-muted);">Open System Preferences and enable screen recording for Sulla Desktop.</p>
-        </div>
-        <div class="popup-actions" style="display: flex;">
-          <button class="popup-btn secondary" @click="permissionDenied = ''">Cancel</button>
-          <button class="popup-btn primary" @click="openSystemPreferences">Open System Preferences</button>
-        </div>
-      </div>
-    </div>
 
     <!-- Disk space warning -->
     <div v-if="diskSpace.isLow.value && recording" class="info-badge" style="position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 50; background: rgba(227, 179, 65, 0.15); border-color: var(--warning); color: var(--warning);">
@@ -502,10 +483,6 @@ async function toggleSrc(src: Source) {
   if (src.on) {
     try {
       if (src.type === 'screen') {
-        // Check macOS permission before attempting screen capture
-        const hasPermission = await checkScreenPermission();
-        console.log('[CaptureStudio] Screen permission check:', hasPermission);
-        if (!hasPermission) { src.on = false; return; }
         await mediaSources.acquireScreen();
         console.log('[CaptureStudio] Screen acquired, stream:', mediaSources.screenStream.value ? 'active' : 'null', 'tracks:', mediaSources.screenStream.value?.getVideoTracks().length);
         updateStreamAssignments();
@@ -1269,24 +1246,6 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-// ─── Permission check ───
-const permissionDenied = ref('');
-
-async function checkScreenPermission(): Promise<boolean> {
-  try {
-    const perms = await ipcRenderer.invoke('capture-studio:check-permissions');
-    if (perms.screen === 'denied' || perms.screen === 'restricted') {
-      permissionDenied.value = 'screen';
-      return false;
-    }
-  } catch {}
-  return true;
-}
-
-function openSystemPreferences() {
-  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
-  permissionDenied.value = '';
-}
 
 onMounted(async () => {
   document.addEventListener('keydown', onKeyDown);

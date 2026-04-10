@@ -219,13 +219,13 @@
           </svg>
         </button>
       </div>
-      <!-- Three-dot menu -->
+      <!-- Three-dot menu (rendered in a popup BrowserWindow via IPC — see moreMenuWindow.ts) -->
       <div class="relative hidden lg:flex">
         <button
           type="button"
           class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
           aria-label="More options"
-          @click="isMoreMenuOpen = !isMoreMenuOpen"
+          @click="openMoreMenu"
         >
           <svg
             aria-hidden="true"
@@ -238,93 +238,6 @@
             <circle cx="12" cy="19" r="2.5" />
           </svg>
         </button>
-        <Teleport to="body">
-          <div
-            v-if="isMoreMenuOpen"
-            class="more-menu-overlay"
-            @click="isMoreMenuOpen = false"
-          />
-          <div
-            v-if="isMoreMenuOpen && !isHistorySubmenuOpen"
-            class="more-menu"
-          >
-            <button
-              class="more-menu-item"
-              @click="openNewBrowserTab(); isMoreMenuOpen = false"
-            >
-              New Tab
-            </button>
-            <button
-              class="more-menu-item"
-              @click="openModeTab('integrations')"
-            >
-              Integrations
-            </button>
-            <button
-              class="more-menu-item"
-              @click="openModeTab('extensions')"
-            >
-              Extensions
-            </button>
-            <button
-              class="more-menu-item"
-              @click="openModeTab('secretary')"
-            >
-              Secretary Mode
-            </button>
-            <div class="more-menu-separator" />
-            <button
-              class="more-menu-item more-menu-item-arrow"
-              @click="isHistorySubmenuOpen = true"
-            >
-              History
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="more-menu-arrow-icon">
-                <path d="M9 18l6-6-6-6" />
-              </svg>
-            </button>
-          </div>
-          <!-- History submenu -->
-          <div
-            v-if="isMoreMenuOpen && isHistorySubmenuOpen"
-            class="more-menu more-menu-history"
-          >
-            <button
-              class="more-menu-item more-menu-item-back"
-              @click="isHistorySubmenuOpen = false"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="more-menu-arrow-icon">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-              History
-            </button>
-            <div class="more-menu-separator" />
-            <div
-              v-if="historyEntries.length === 0"
-              class="more-menu-empty"
-            >
-              No history
-            </div>
-            <button
-              v-for="entry in historyEntries"
-              :key="entry.id"
-              class="more-menu-item more-menu-history-item"
-              :title="entry.url || entry.title"
-              @click="onOpenHistoryEntry(entry)"
-            >
-              <span class="more-menu-history-label">{{ entry.type === 'chat' ? '💬' : '🌐' }} {{ entry.title || entry.url || 'Untitled' }}</span>
-              <span class="more-menu-history-time">{{ formatTimeAgo(new Date(entry.last_active_at || entry.created_at).getTime()) }}</span>
-            </button>
-            <template v-if="historyEntries.length > 0">
-              <div class="more-menu-separator" />
-              <button
-                class="more-menu-item"
-                @click="onOpenHistoryTab()"
-              >
-                Show All History
-              </button>
-            </template>
-          </div>
-        </Teleport>
       </div>
       <!-- Hamburger menu: right side, visible on mobile -->
       <div class="flex lg:hidden">
@@ -349,112 +262,8 @@
     </div>
   </header>
 
-  <!-- Tab context menu -->
-  <Teleport to="body">
-    <div
-      v-if="ctxMenu.visible"
-      class="tab-ctx-overlay"
-      @click="closeCtxMenu"
-      @contextmenu.prevent="closeCtxMenu"
-    />
-    <div
-      v-if="ctxMenu.visible"
-      class="tab-ctx-menu"
-      ref="ctxMenuEl"
-      :style="ctxMenuStyle"
-    >
-      <button
-        v-if="ctxMenu.tab?.closeable"
-        class="tab-ctx-item"
-        @click="ctxCloseTab"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
-          <path d="M18 6L6 18M6 6l12 12" />
-        </svg>
-        Close Tab
-      </button>
-      <button
-        class="tab-ctx-item"
-        @click="ctxCloseOtherTabs"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
-          <path d="M9 3H5a2 2 0 0 0-2 2v4" />
-          <path d="M15 3h4a2 2 0 0 1 2 2v4" />
-          <path d="M9 21H5a2 2 0 0 1-2-2v-4" />
-          <path d="M15 21h4a2 2 0 0 0 2-2v-4" />
-          <path d="M14 10l-4 4M10 10l4 4" />
-        </svg>
-        Close Other Tabs
-      </button>
-      <button
-        class="tab-ctx-item"
-        @click="ctxCloseTabsToRight"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
-          <path d="M9 18l6-6-6-6" />
-          <path d="M18 6L18 18" />
-        </svg>
-        Close Tabs to the Right
-      </button>
-      <div class="tab-ctx-separator" />
-      <button
-        class="tab-ctx-item"
-        @click="ctxDuplicateTab"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
-          <rect x="8" y="8" width="13" height="13" rx="2" />
-          <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
-        </svg>
-        Duplicate Tab
-      </button>
-      <div class="tab-ctx-separator" />
-      <button
-        class="tab-ctx-item"
-        @click="ctxMoveToStart"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
-          <path d="M11 17l-5-5 5-5" />
-          <path d="M18 17l-5-5 5-5" />
-        </svg>
-        Move to Start
-      </button>
-      <button
-        class="tab-ctx-item"
-        @click="ctxMoveToEnd"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
-          <path d="M13 7l5 5-5 5" />
-          <path d="M6 7l5 5-5 5" />
-        </svg>
-        Move to End
-      </button>
-      <template v-if="ctxMenu.tab?.browserId">
-        <div class="tab-ctx-separator" />
-        <button
-          class="tab-ctx-item"
-          @click="ctxReloadTab"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
-            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-            <path d="M16 16h5v5" />
-          </svg>
-          Reload
-        </button>
-        <button
-          class="tab-ctx-item"
-          @click="ctxCopyUrl"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="tab-ctx-icon">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-          </svg>
-          Copy URL
-        </button>
-      </template>
-    </div>
-  </Teleport>
+  <!-- Tab context menu is now rendered in a separate popup BrowserWindow via IPC.
+       See tabContextMenuWindow.ts in the main process. -->
 
   <!-- Mobile Menu Dropdown (appears below header) -->
   <div
@@ -516,9 +325,42 @@
 
 <script lang="ts">
 import { ref as vueRef } from 'vue';
+import { ipcRenderer as moduleIpcRenderer } from '@pkg/utils/ipcRenderer';
 
 // Module-level state: shared across all AgentHeader instances (one per keep-alive'd page)
 const knownAssetIds = vueRef(new Set<string>());
+
+// Module-level IPC listeners — registered once regardless of how many
+// AgentHeader instances are mounted (each page has its own instance).
+// Action callbacks are set by the active (most recent) instance.
+let _ipcMountCount = 0;
+let _onTabCtxAction:  ((...args: any[]) => void) | null = null;
+let _onMoreAction:    ((...args: any[]) => void) | null = null;
+let _onMoreFetchHist: ((...args: any[]) => void) | null = null;
+
+function _tabCtxBridge(...args: any[]) { _onTabCtxAction?.(...args); }
+function _moreBridge(...args: any[])   { _onMoreAction?.(...args); }
+function _moreHistBridge(...args: any[]) { _onMoreFetchHist?.(...args); }
+
+function _mountIpcListeners() {
+  if (_ipcMountCount++ === 0) {
+    moduleIpcRenderer.on('tab-context-menu:selected' as any, _tabCtxBridge as any);
+    moduleIpcRenderer.on('more-menu:selected' as any, _moreBridge as any);
+    moduleIpcRenderer.on('more-menu:fetch-history' as any, _moreHistBridge as any);
+  }
+}
+
+function _unmountIpcListeners() {
+  if (--_ipcMountCount <= 0) {
+    _ipcMountCount = 0;
+    moduleIpcRenderer.removeListener('tab-context-menu:selected' as any, _tabCtxBridge as any);
+    moduleIpcRenderer.removeListener('more-menu:selected' as any, _moreBridge as any);
+    moduleIpcRenderer.removeListener('more-menu:fetch-history' as any, _moreHistBridge as any);
+    _onTabCtxAction = null;
+    _onMoreAction = null;
+    _onMoreFetchHist = null;
+  }
+}
 </script>
 
 <script setup lang="ts">
@@ -564,24 +406,6 @@ const extensionMenuItems = computed(() => extensionService.getHeaderMenuItems())
 
 const route = useRoute();
 const isMobileMenuOpen = ref(false);
-const isMoreMenuOpen = ref(false);
-const isHistorySubmenuOpen = ref(false);
-const historyEntries = ref<HistoryRecord[]>([]);
-
-// Reset submenu when main menu closes; load history when submenu opens
-watch(isMoreMenuOpen, (open) => {
-  if (!open) isHistorySubmenuOpen.value = false;
-});
-
-watch(isHistorySubmenuOpen, async(open) => {
-  if (open) {
-    try {
-      historyEntries.value = await ipcRenderer.invoke('conversation-history:get-recent' as any, 25);
-    } catch {
-      historyEntries.value = [];
-    }
-  }
-});
 
 // On initial load, ensure at least one tab exists and handle route recovery
 {
@@ -601,7 +425,6 @@ watch(isHistorySubmenuOpen, async(open) => {
 }
 
 function openModeTab(mode: BrowserTabMode) {
-  isMoreMenuOpen.value = false;
   const tab = createTab('about:blank', { mode });
 
   router.push(`/Browser/${ tab.id }`);
@@ -698,6 +521,13 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeyboardShortcuts);
   window.addEventListener('sulla:navigate-tab', handleNavigateTab);
 
+  // Point the module-level IPC bridges at THIS instance's handlers.
+  // The last-mounted instance wins — which is the currently visible page.
+  _onTabCtxAction  = handleTabContextMenuAction;
+  _onMoreAction    = handleMoreMenuAction;
+  _onMoreFetchHist = handleMoreMenuFetchHistory;
+  _mountIpcListeners();
+
   // Set up ResizeObserver for scroll chevron visibility
   const el = getScrollEl();
   if (el) {
@@ -710,6 +540,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
+  _unmountIpcListeners();
 
   if (scrollObserver) {
     scrollObserver.disconnect();
@@ -722,44 +553,70 @@ onUnmounted(() => {
 function onRestoreClosedTab(index: number) {
   const tab = restoreClosedTab(index);
 
-  isMoreMenuOpen.value = false;
   if (tab) {
     router.push(`/Browser/${ tab.id }`);
   }
 }
 
-function onOpenHistoryEntry(entry: HistoryRecord) {
-  isMoreMenuOpen.value = false;
-  let tab;
+// ── More menu (popup window via IPC) ──
 
-  if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
-    tab = createTab(entry.url);
-  } else {
-    tab = createTab('about:blank', { mode: 'chat' as BrowserTabMode });
+function openMoreMenu(event: MouseEvent) {
+  ipcRenderer.send('more-menu:show' as any, {
+    screenX: event.screenX,
+    screenY: event.screenY,
+  });
+}
+
+/** Handle actions from the more-menu popup window. */
+function handleMoreMenuAction(
+  _event: Electron.IpcRendererEvent,
+  action: string,
+  extra: Record<string, unknown> | null,
+): void {
+  switch (action) {
+    case 'newTab':
+      openNewBrowserTab();
+      break;
+    case 'integrations':
+      openModeTab('integrations');
+      break;
+    case 'extensions':
+      openModeTab('extensions');
+      break;
+    case 'secretary':
+      openModeTab('secretary');
+      break;
+    case 'history-entry': {
+      if (!extra) break;
+      const entry = extra as unknown as HistoryRecord;
+      let tab;
+
+      if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
+        tab = createTab(entry.url);
+      } else {
+        tab = createTab('about:blank', { mode: 'chat' as BrowserTabMode });
+      }
+      router.push(`/Browser/${ tab.id }`);
+      break;
+    }
+    case 'showAllHistory': {
+      const tab = createTab('about:blank', { mode: 'history' as BrowserTabMode });
+
+      router.push(`/Browser/${ tab.id }`);
+      break;
+    }
   }
-
-  router.push(`/Browser/${ tab.id }`);
 }
 
-function onOpenHistoryTab() {
-  isMoreMenuOpen.value = false;
-  const tab = createTab('about:blank', { mode: 'history' as BrowserTabMode });
+/** The popup requested history entries — fetch and push them back via IPC. */
+async function handleMoreMenuFetchHistory(): Promise<void> {
+  try {
+    const entries = await ipcRenderer.invoke('conversation-history:get-recent' as any, 25);
 
-  router.push(`/Browser/${ tab.id }`);
-}
-
-function formatTimeAgo(ts: number): string {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60_000);
-
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${ mins }m ago`;
-  const hrs = Math.floor(mins / 60);
-
-  if (hrs < 24) return `${ hrs }h ago`;
-  const days = Math.floor(hrs / 24);
-
-  return `${ days }d ago`;
+    ipcRenderer.send('more-menu:push-history' as any, entries ?? []);
+  } catch {
+    ipcRenderer.send('more-menu:push-history' as any, []);
+  }
 }
 
 const toggleMobileMenu = () => {
@@ -1058,167 +915,132 @@ function onAuxClick(e: MouseEvent, tab: HeaderTab) {
   }
 }
 
-// ── Tab context menu ──
-
-const ctxMenuEl = ref<HTMLElement | null>(null);
-const ctxMenuPos = ref<{ x: number; y: number }>({ x: 0, y: 0 });
-
-const ctxMenu = ref<{ visible: boolean; x: number; y: number; tab: HeaderTab | null; index: number }>({
-  visible: false, x: 0, y: 0, tab: null, index: -1,
-});
-
-const ctxMenuStyle = computed(() => ({
-  top:  `${ ctxMenuPos.value.y }px`,
-  left: `${ ctxMenuPos.value.x }px`,
-}));
+// ── Tab context menu (popup window via IPC) ──
 
 function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
-  ctxMenu.value = { visible: true, x: event.clientX, y: event.clientY, tab, index };
-  // Start at click position, then adjust after render
-  ctxMenuPos.value = { x: event.clientX, y: event.clientY };
-  nextTick(() => {
-    if (!ctxMenuEl.value) return;
-    const rect = ctxMenuEl.value.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let { x, y } = ctxMenuPos.value;
+  // Build the list of menu items for this tab
+  const items: string[] = [];
 
-    // Flip left if overflowing right edge
-    if (x + rect.width > vw) {
-      x = Math.max(0, x - rect.width);
-    }
-    // Flip up if overflowing bottom edge
-    if (y + rect.height > vh) {
-      y = Math.max(0, y - rect.height);
-    }
-    ctxMenuPos.value = { x, y };
-  });
-}
-
-function closeCtxMenu() {
-  ctxMenu.value = { visible: false, x: 0, y: 0, tab: null, index: -1 };
-}
-
-function ctxCloseTab() {
-  const tab = ctxMenu.value.tab;
-
-  closeCtxMenu();
-  if (tab) {
-    closeAnyTab(tab);
-  }
-}
-
-function ctxCloseOtherTabs() {
-  const keepId = ctxMenu.value.tab?.id;
-
-  closeCtxMenu();
-  if (!keepId) return;
-
-  // Close all closeable browser tabs except the one we right-clicked
-  for (const bt of [...browserTabs]) {
-    const tabId = `browser-${ bt.id }`;
-
-    if (tabId !== keepId) {
-      closeBrowserTab(bt.id);
-    }
-  }
-
-}
-
-function ctxCloseTabsToRight() {
-  const idx = ctxMenu.value.index;
-
-  closeCtxMenu();
-  const tabs = orderedTabs.value;
-
-  // Close all closeable tabs to the right of the clicked index
-  for (let i = tabs.length - 1; i > idx; i--) {
-    const t = tabs[i];
-
-    if (t.closeable) {
-      closeAnyTab(t);
-    }
-  }
-}
-
-function ctxDuplicateTab() {
-  const tab = ctxMenu.value.tab;
-
-  closeCtxMenu();
-  if (!tab) return;
-
+  if (tab.closeable) items.push('close');
+  items.push('closeOther', 'closeRight');
+  items.push('---');
+  items.push('duplicate');
+  items.push('---');
+  items.push('moveStart', 'moveEnd');
   if (tab.browserId) {
-    // Duplicate browser tab: open a new browser tab (it starts at about:blank)
-    const newTab = createTab();
-
-    router.push(`/Browser/${ newTab.id }`);
-  } else {
-    // For static/extension tabs, just navigate (can't truly "duplicate")
-    router.push(tab.route);
+    items.push('---');
+    items.push('reload', 'copyUrl');
   }
-}
 
-function ctxMoveToStart() {
-  const idx = ctxMenu.value.index;
-
-  closeCtxMenu();
-  if (idx <= 0) return;
-
-  const ids = [...tabOrder.value];
-  const [moved] = ids.splice(idx, 1);
-
-  ids.unshift(moved);
-  tabOrder.value = ids;
-}
-
-function ctxMoveToEnd() {
-  const idx = ctxMenu.value.index;
-
-  closeCtxMenu();
-  if (idx < 0 || idx >= tabOrder.value.length - 1) return;
-
-  const ids = [...tabOrder.value];
-  const [moved] = ids.splice(idx, 1);
-
-  ids.push(moved);
-  tabOrder.value = ids;
-}
-
-function ctxReloadTab() {
-  const tab = ctxMenu.value.tab;
-
-  closeCtxMenu();
-  if (!tab?.browserId) return;
-
-  // Navigate away and back to force iframe reload
-  const currentRoute = tab.route;
-
-  router.push('/Chat').then(() => {
-    router.push(currentRoute);
+  ipcRenderer.send('tab-context-menu:show' as any, {
+    screenX:  event.screenX,
+    screenY:  event.screenY,
+    items,
+    tabData:  {
+      id:        tab.id,
+      browserId: tab.browserId || null,
+      route:     tab.route,
+      closeable: tab.closeable || false,
+      index,
+    },
   });
 }
 
-async function ctxCopyUrl() {
-  const tab = ctxMenu.value.tab;
+/** Handle a context-menu action forwarded back from the popup window via IPC. */
+function handleTabContextMenuAction(
+  _event: Electron.IpcRendererEvent,
+  action: string,
+  tabData: Record<string, unknown>,
+): void {
+  const tabId     = tabData.id as string;
+  const browserId = tabData.browserId as string | null;
+  const tabRoute  = tabData.route as string;
+  const closeable = tabData.closeable as boolean;
+  const index     = tabData.index as number;
 
-  closeCtxMenu();
-  if (!tab?.browserId) return;
+  // Resolve the full HeaderTab from orderedTabs (it may have changed since the menu was opened)
+  const headerTab = orderedTabs.value.find(t => t.id === tabId);
 
-  const bt = browserTabs.find((t: { id: string }) => t.id === tab.browserId);
+  switch (action) {
+    case 'close':
+      if (headerTab && closeable) closeAnyTab(headerTab);
+      break;
 
-  if (bt?.url) {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(bt.url);
-    } else {
-      const ta = document.createElement('textarea');
-      ta.value = bt.url;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+    case 'closeOther':
+      for (const bt of [...browserTabs]) {
+        if (`browser-${ bt.id }` !== tabId) closeBrowserTab(bt.id);
+      }
+      break;
+
+    case 'closeRight': {
+      const tabs = orderedTabs.value;
+      for (let i = tabs.length - 1; i > index; i--) {
+        if (tabs[i].closeable) closeAnyTab(tabs[i]);
+      }
+      break;
     }
+
+    case 'duplicate':
+      if (browserId) {
+        // Look up the source tab's current URL so the duplicate loads the same page
+        const srcTab = browserTabs.find((t: { id: string }) => t.id === browserId);
+        const dupUrl = srcTab?.url && srcTab.url !== 'about:blank' ? srcTab.url : undefined;
+        const newTab = createTab(dupUrl);
+
+        router.push(`/Browser/${ newTab.id }`);
+      } else {
+        router.push(tabRoute);
+      }
+      break;
+
+    case 'moveStart': {
+      // Use tabId to find position in tabOrder (index from orderedTabs may differ)
+      const ids = [...tabOrder.value];
+      const orderIdx = ids.indexOf(tabId);
+
+      if (orderIdx <= 0) break;
+      const [moved] = ids.splice(orderIdx, 1);
+
+      ids.unshift(moved);
+      tabOrder.value = ids;
+      break;
+    }
+
+    case 'moveEnd': {
+      const ids = [...tabOrder.value];
+      const orderIdx = ids.indexOf(tabId);
+
+      if (orderIdx < 0 || orderIdx >= ids.length - 1) break;
+      const [moved] = ids.splice(orderIdx, 1);
+
+      ids.push(moved);
+      tabOrder.value = ids;
+      break;
+    }
+
+    case 'reload':
+      if (browserId) {
+        router.push('/Chat').then(() => router.push(tabRoute));
+      }
+      break;
+
+    case 'copyUrl':
+      if (browserId) {
+        const bt = browserTabs.find((t: { id: string }) => t.id === browserId);
+        if (bt?.url) {
+          navigator.clipboard?.writeText(bt.url).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = bt.url;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          });
+        }
+      }
+      break;
   }
 }
 </script>
@@ -1503,185 +1325,4 @@ async function ctxCopyUrl() {
   transition: transform 200ms ease;
 }
 
-/* Context menu — unscoped because it's teleported to body */
-@keyframes tabCtxFadeIn {
-  from { opacity: 0; transform: scale(0.96); }
-  to   { opacity: 1; transform: scale(1); }
-}
-
-.tab-ctx-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-}
-
-.tab-ctx-menu {
-  position: fixed;
-  z-index: 10000;
-  min-width: 240px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px rgba(63, 185, 80, 0.15);
-  padding: 6px 0;
-  animation: tabCtxFadeIn 0.15s ease-out;
-  font-family: var(--ifm-font-family-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
-}
-
-.tab-ctx-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 14px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s;
-}
-
-.tab-ctx-item:hover {
-  background: var(--bg-surface-hover);
-  color: var(--accent-primary);
-}
-
-.tab-ctx-item:hover .tab-ctx-icon {
-  opacity: 1;
-  stroke: var(--accent-primary);
-}
-
-.tab-ctx-icon {
-  width: 14px;
-  height: 14px;
-  opacity: 0.6;
-  flex-shrink: 0;
-}
-
-.tab-ctx-separator {
-  height: 1px;
-  background: var(--border-default);
-  margin: 4px 0;
-}
-
-/* More menu (three-dot) — unscoped because it's teleported to body */
-.more-menu-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-}
-
-.more-menu {
-  position: fixed;
-  top: 40px;
-  right: 12px;
-  z-index: 10000;
-  min-width: 180px;
-  background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px color-mix(in srgb, var(--accent-primary) 15%, transparent);
-  padding: 6px 0;
-  animation: tabCtxFadeIn 0.15s ease-out;
-  font-family: var(--ifm-font-family-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
-}
-
-.more-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 14px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s;
-}
-
-.more-menu-item:hover {
-  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
-  color: var(--accent-primary);
-}
-
-.more-menu-item-arrow,
-.more-menu-item-back {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.more-menu-item-back {
-  gap: 6px;
-  justify-content: flex-start;
-  font-weight: 600;
-}
-
-.more-menu-arrow-icon {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-}
-
-.more-menu-separator {
-  height: 1px;
-  background: #21262d;
-  margin: 4px 0;
-}
-
-.more-menu-history {
-  max-height: 400px;
-  max-width: min(360px, calc(100vw - 24px));
-  overflow-y: auto;
-}
-
-.more-menu-history-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.more-menu-favicon {
-  width: 14px;
-  height: 14px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.more-menu-history-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.more-menu-history-time {
-  font-size: 11px;
-  color: #8b949e;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-.more-menu-empty {
-  padding: 7px 14px;
-  color: #8b949e;
-  font-size: 13px;
-  font-style: italic;
-}
-
-.more-menu-clear {
-  color: #f85149 !important;
-}
-
-.more-menu-clear:hover {
-  background: rgba(248, 81, 73, 0.1) !important;
-  color: #f85149 !important;
-}
 </style>

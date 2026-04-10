@@ -151,6 +151,26 @@ export interface IpcMainEvents {
   // #region In-app browser
   'open-url-in-app': (url: string) => void;
   // #endregion
+
+  // #region Tab context menu (popup window)
+  'tab-context-menu:show': (payload: {
+    screenX:  number;
+    screenY:  number;
+    items:    string[];
+    tabData:  Record<string, unknown>;
+  }) => void;
+  'tab-context-menu:action':  (action: string) => void;
+  'tab-context-menu:dismiss': () => void;
+  // #endregion
+
+  // #region More menu (popup window)
+  'more-menu:show': (payload: { screenX: number; screenY: number }) => void;
+  'more-menu:action':          (action: string, extra?: Record<string, unknown>) => void;
+  'more-menu:dismiss':         () => void;
+  'more-menu:request-history': () => void;
+  'more-menu:resize':          (dims: { width: number; height: number }) => void;
+  'more-menu:push-history':    (entries: unknown[]) => void;
+  // #endregion
 }
 
 /**
@@ -463,6 +483,9 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'tab-context-menu:selected': (action: string, tabData: Record<string, unknown>) => void;
+  'more-menu:selected':        (action: string, extra: Record<string, unknown> | null) => void;
+  'more-menu:fetch-history':   () => void;
   'browser-context-menu:ai-action': (payload: {
     tabId:   string;
     action:  string;

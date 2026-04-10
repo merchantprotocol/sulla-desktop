@@ -44,9 +44,7 @@ export function createTrayPanel(): BrowserWindow {
   // require() in panel.js can resolve relative paths to renderer modules.
   // This matches how the standalone audio-driver loads its renderer.
   const appRoot = app.getAppPath();
-  const trayPanelDir = app.isPackaged
-    ? path.join(appRoot, 'trayPanel')
-    : path.join(appRoot, 'dist', 'app', 'trayPanel');
+  const trayPanelDir = path.join(appRoot, 'dist', 'app', 'trayPanel');
   panelWindow.loadFile(path.join(trayPanelDir, 'index.html'));
 
   // Open DevTools with Cmd+Shift+I (debug the tray panel renderer)

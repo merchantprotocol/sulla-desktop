@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>More Menu</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      html, body {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        background: transparent;
+        color: #e0e0e0;
+        user-select: none;
+        overflow: hidden;
+      }
+
+      .menu {
+        min-width: 180px;
+        background: rgba(30, 30, 30, 0.96);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px rgba(63, 185, 80, 0.15);
+        padding: 6px 0;
+        animation: fadeIn 0.12s ease-out;
+      }
+
+      @keyframes fadeIn {
+        from { opacity: 0; transform: scale(0.96); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+
+      .menu-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 7px 14px;
+        border: none;
+        background: transparent;
+        color: #e0e0e0;
+        font-size: 13px;
+        font-family: inherit;
+        cursor: pointer;
+        text-align: left;
+        transition: background 0.1s;
+      }
+
+      .menu-item:hover {
+        background: rgba(63, 185, 80, 0.1);
+        color: #3fb950;
+      }
+
+      .menu-item-arrow {
+        justify-content: space-between;
+      }
+
+      .menu-item-back {
+        gap: 6px;
+        font-weight: 600;
+      }
+
+      .arrow-icon {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+      }
+
+      .separator {
+        height: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        margin: 4px 0;
+      }
+
+      /* History submenu */
+      .history-view {
+        max-height: 400px;
+        overflow-y: auto;
+      }
+
+      .history-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .history-label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .history-time {
+        font-size: 11px;
+        color: #8b949e;
+        flex-shrink: 0;
+        margin-left: auto;
+      }
+
+      .empty {
+        padding: 7px 14px;
+        color: #8b949e;
+        font-size: 13px;
+        font-style: italic;
+      }
+
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="menu" id="main-view">
+      <button class="menu-item" data-action="newTab">New Tab</button>
+      <button class="menu-item" data-action="integrations">Integrations</button>
+      <button class="menu-item" data-action="extensions">Extensions</button>
+      <button class="menu-item" data-action="secretary">Secretary Mode</button>
+      <div class="separator"></div>
+      <button class="menu-item menu-item-arrow" id="history-btn">
+        History
+        <svg viewBox="0 0 24 24" class="arrow-icon"><path d="M9 18l6-6-6-6" /></svg>
+      </button>
+    </div>
+    <div class="menu history-view hidden" id="history-view">
+      <button class="menu-item menu-item-back" id="back-btn">
+        <svg viewBox="0 0 24 24" class="arrow-icon"><path d="M15 18l-6-6 6-6" /></svg>
+        History
+      </button>
+      <div class="separator"></div>
+      <div id="history-list"></div>
+    </div>
+    <script>
+      const { ipcRenderer } = require("electron");
+
+      const mainView = document.getElementById("main-view");
+      const historyView = document.getElementById("history-view");
+      const historyList = document.getElementById("history-list");
+
+      let historyEntries = [];
+
+      // ── Main menu actions ──
+      mainView.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-action]");
+        if (btn) {
+          ipcRenderer.send("more-menu:action", btn.dataset.action);
+        }
+      });
+
+      // ── History button ──
+      document.getElementById("history-btn").addEventListener("click", () => {
+        ipcRenderer.send("more-menu:request-history");
+      });
+
+      // ── Back button ──
+      document.getElementById("back-btn").addEventListener("click", () => {
+        historyView.classList.add("hidden");
+        mainView.classList.remove("hidden");
+        ipcRenderer.send("more-menu:resize", { width: 200, height: mainView.scrollHeight + 2 });
+      });
+
+      // ── Receive history data ──
+      ipcRenderer.on("more-menu:history-data", (_event, entries) => {
+        historyEntries = entries || [];
+        renderHistory();
+        mainView.classList.add("hidden");
+        historyView.classList.remove("hidden");
+        // Resize window to fit history
+        const h = Math.min(historyView.scrollHeight + 2, 420);
+        const w = Math.min(Math.max(historyView.scrollWidth + 2, 280), 360);
+        ipcRenderer.send("more-menu:resize", { width: w, height: h });
+      });
+
+      function formatTimeAgo(ts) {
+        const diff = Date.now() - ts;
+        const mins = Math.floor(diff / 60000);
+        if (mins < 1) return "just now";
+        if (mins < 60) return mins + "m ago";
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return hrs + "h ago";
+        const days = Math.floor(hrs / 24);
+        if (days < 7) return days + "d ago";
+        return new Date(ts).toLocaleDateString();
+      }
+
+      function renderHistory() {
+        historyList.innerHTML = "";
+
+        if (historyEntries.length === 0) {
+          const d = document.createElement("div");
+          d.className = "empty";
+          d.textContent = "No history";
+          historyList.appendChild(d);
+          return;
+        }
+
+        historyEntries.forEach((entry) => {
+          const btn = document.createElement("button");
+          btn.className = "menu-item history-item";
+          btn.title = entry.url || entry.title || "";
+
+          const icon = entry.type === "chat" ? "\u{1F4AC}" : "\u{1F310}";
+          const label = document.createElement("span");
+          label.className = "history-label";
+          label.textContent = icon + " " + (entry.title || entry.url || "Untitled");
+
+          const time = document.createElement("span");
+          time.className = "history-time";
+          const ts = new Date(entry.last_active_at || entry.created_at).getTime();
+          time.textContent = formatTimeAgo(ts);
+
+          btn.appendChild(label);
+          btn.appendChild(time);
+          btn.addEventListener("click", () => {
+            ipcRenderer.send("more-menu:action", "history-entry", entry);
+          });
+          historyList.appendChild(btn);
+        });
+
+        // "Show All History" button
+        const sep = document.createElement("div");
+        sep.className = "separator";
+        historyList.appendChild(sep);
+
+        const showAll = document.createElement("button");
+        showAll.className = "menu-item";
+        showAll.textContent = "Show All History";
+        showAll.addEventListener("click", () => {
+          ipcRenderer.send("more-menu:action", "showAllHistory");
+        });
+        historyList.appendChild(showAll);
+      }
+
+      // ── Show main view on init ──
+      ipcRenderer.on("more-menu:show", () => {
+        historyView.classList.add("hidden");
+        mainView.classList.remove("hidden");
+      });
+
+      // Dismiss on Escape
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          ipcRenderer.send("more-menu:dismiss");
+        }
+      });
+    </script>
+  </body>
+</html>

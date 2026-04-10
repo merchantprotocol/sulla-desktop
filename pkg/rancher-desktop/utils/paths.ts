@@ -114,8 +114,10 @@ export class WindowsPaths implements Paths {
 export function getRdctlPath(): string | null {
   let basePath: string;
 
-  // If we are running as a script (i.e. yarn postinstall), electron.app is undefined
-  if (electron.app?.isPackaged) {
+  // If we are running as a script (i.e. yarn postinstall), electron.app is undefined.
+  // In renderer processes, electron.app is not available, but process.resourcesPath
+  // is still set when packaged — check it directly.
+  if (electron.app?.isPackaged || (process.type === 'renderer' && process.resourcesPath)) {
     basePath = process.resourcesPath;
   } else if (process.env.SULLA_PROJECT_DIR) {
     basePath = process.env.SULLA_PROJECT_DIR;
@@ -136,28 +138,90 @@ export function getRdctlPath(): string | null {
   return rdctlPath;
 }
 
+/**
+ * Build default paths without rdctl. Used as a fallback when rdctl is
+ * unavailable (e.g. in renderer processes).
+ */
+function getDefaultPaths(): Partial<Paths> {
+  const home = os.homedir();
+
+  switch (process.platform) {
+  case 'darwin': {
+    const appHome = path.join(home, 'Library', 'Application Support', 'rancher-desktop');
+    // In a packaged app, process.resourcesPath points to Contents/Resources;
+    // extraResources are nested under a 'resources' subdirectory there.
+    // In dev, fall back to the project's resources directory.
+    const resources = process.resourcesPath
+      ? path.join(process.resourcesPath, 'resources')
+      : path.join(process.cwd(), 'resources');
+
+    return {
+      appHome,
+      altAppHome:                path.join(home, '.rd'),
+      config:                    path.join(home, 'Library', 'Preferences', 'rancher-desktop'),
+      logs:                      path.join(home, 'Library', 'Logs', 'rancher-desktop'),
+      cache:                     path.join(home, 'Library', 'Caches', 'rancher-desktop'),
+      resources,
+      lima:                      path.join(appHome, 'lima'),
+      integration:               path.join(home, '.rd', 'bin'),
+      deploymentProfileSystem:   '/Library/Managed Preferences',
+      altDeploymentProfileSystem: '/Library/Preferences',
+      deploymentProfileUser:     path.join(home, 'Library', 'Preferences'),
+      extensionRoot:             path.join(appHome, 'extensions'),
+      snapshots:                 path.join(appHome, 'snapshots'),
+      containerdShims:           path.join(appHome, 'containerd-shims'),
+    };
+  }
+  case 'linux': {
+    const dataHome = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
+    const configHome = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+    const cacheHome = process.env.XDG_CACHE_HOME || path.join(home, '.cache');
+    const appHome = path.join(dataHome, 'rancher-desktop');
+    const resources = process.resourcesPath
+      ? path.join(process.resourcesPath, 'resources')
+      : path.join(process.cwd(), 'resources');
+
+    return {
+      appHome,
+      altAppHome:                path.join(home, '.rd'),
+      config:                    path.join(configHome, 'rancher-desktop'),
+      logs:                      path.join(dataHome, 'rancher-desktop', 'logs'),
+      cache:                     path.join(cacheHome, 'rancher-desktop'),
+      resources,
+      lima:                      path.join(dataHome, 'rancher-desktop', 'lima'),
+      integration:               path.join(home, '.rd', 'bin'),
+      deploymentProfileSystem:   '',
+      altDeploymentProfileSystem: '',
+      deploymentProfileUser:     '',
+      extensionRoot:             path.join(appHome, 'extensions'),
+      snapshots:                 path.join(appHome, 'snapshots'),
+      containerdShims:           path.join(appHome, 'containerd-shims'),
+    };
+  }
+  default:
+    return {};
+  }
+}
+
 function getPaths(): Paths {
   const rdctlPath = getRdctlPath();
   let pathsData: Partial<Paths> | undefined;
-  let errorMsg = '';
 
   if (rdctlPath) {
     const result = spawnSync(rdctlPath, ['paths'], { encoding: 'utf8' });
 
     if (result.status === 0 && result.stdout.length > 0) {
       pathsData = JSON.parse(result.stdout);
-    } else {
-      errorMsg = `rdctl paths failed: ${ JSON.stringify(result) }`;
     }
   }
-  if (!pathsData) {
-    const processType = process.type;
 
-    errorMsg ||= `Internal error: attempting to load the paths module from a ${ processType } process. (rdctl: ${ rdctlPath })`;
-    if (processType === 'renderer') {
-      alert(errorMsg);
-    }
-    throw new Error(errorMsg);
+  // Fallback to default paths when rdctl is unavailable (e.g. renderer processes)
+  if (!pathsData) {
+    pathsData = getDefaultPaths();
+  }
+
+  if (!pathsData || Object.keys(pathsData).length === 0) {
+    throw new Error(`Platform "${ process.platform }" is not supported.`);
   }
 
   switch (process.platform) {
