@@ -99,6 +99,7 @@
         <AgentIntegrations
           embedded
           @switch-to-vault="onSetMode('vault')"
+          @create-account="onIntegrationsCreateAccount"
         />
       </div>
     </template>
@@ -347,6 +348,12 @@ function onUseGeneratedPassword(password: string) {
   } else {
     returnToVaultList();
   }
+}
+
+/** Handle "Connect Now" from the standalone Integrations tab — switch to vault flow */
+function onIntegrationsCreateAccount(data: { integrationId: string }) {
+  onSetMode('vault');
+  showNewAccountEditor(data);
 }
 
 function onHistoryNavigate(entry: { id: string; type: string; url?: string }) {
