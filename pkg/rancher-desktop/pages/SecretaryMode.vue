@@ -409,6 +409,17 @@ const controller = new SecretaryModeController({
       }
     });
   },
+  updateLastEntry(text: string) {
+    const last = transcript.value[transcript.value.length - 1];
+    if (last) {
+      last.text = text;
+      nextTick(() => {
+        if (transcriptScrollEl.value) {
+          transcriptScrollEl.value.scrollTop = transcriptScrollEl.value.scrollHeight;
+        }
+      });
+    }
+  },
   setWakeWordActive:  (v) => { wakeWordActive.value = v; },
   getWakeWordActive:  () => wakeWordActive.value,
   setAudioLevel:      (v) => { audioLevel.value = v; },

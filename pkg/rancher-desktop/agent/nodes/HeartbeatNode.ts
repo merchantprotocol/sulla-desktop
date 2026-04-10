@@ -71,12 +71,16 @@ export class HeartbeatNode extends BaseNode {
 
     // ----------------------------------------------------------------
     // 2. SUBCONSCIOUS MIDDLEWARE (memory recall, observations)
+    // Skip during tool-call loops — only run on fresh turns.
     // ----------------------------------------------------------------
-    const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
-    await runSubconsciousMiddleware(state, {
-      includeObservations: shouldInjectObservations,
-      recallVariant:       'heartbeat',
-    });
+    const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
+    if (!isToolCallLoop) {
+      const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
+      await runSubconsciousMiddleware(state, {
+        includeObservations: shouldInjectObservations,
+        recallVariant:       'heartbeat',
+      });
+    }
 
     // Merge recall context into the last assistant message so the
     // agent treats it as its own knowledge.
