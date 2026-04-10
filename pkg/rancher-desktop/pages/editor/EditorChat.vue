@@ -1594,6 +1594,7 @@ onMounted(() => {
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
 }
 
@@ -1795,6 +1796,7 @@ onMounted(() => {
   top: 44px;
   right: 12px;
   width: 320px;
+  max-width: calc(100vw - 24px);
   max-height: min(350px, calc(100vh - 60px));
   background: var(--bg-surface);
   border: 1px solid var(--border-default);

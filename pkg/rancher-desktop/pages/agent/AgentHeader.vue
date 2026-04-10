@@ -3,7 +3,7 @@
     class="app-titlebar relative flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500 z-99"
     style="-webkit-app-region: drag; app-region: drag;"
   >
-    <div class="relative flex shrink-0 items-center pb-2">
+    <div class="relative flex shrink-0 items-center pb-1">
       <WindowDragLogo :size="20" />
     </div>
     <!-- Phase 4: Scroll wrapper with chevrons -->
@@ -561,9 +561,20 @@ function onRestoreClosedTab(index: number) {
 // ── More menu (popup window via IPC) ──
 
 function openMoreMenu(event: MouseEvent) {
+  const button = event.currentTarget as HTMLElement;
+  const rect = button.getBoundingClientRect();
+
+  // Get current theme from document class
+  const themeClass = Array.from(document.documentElement.classList)
+    .find(c => c.startsWith('theme-')) ?? 'theme-protocol-dark';
+  const themeId = themeClass.replace('theme-', '');
+
   ipcRenderer.send('more-menu:show' as any, {
-    screenX: event.screenX,
-    screenY: event.screenY,
+    screenX: rect.left + window.screenX,
+    screenY: rect.bottom + window.screenY,
+    buttonWidth: rect.width,
+    buttonHeight: rect.height,
+    theme: themeId,
   });
 }
 

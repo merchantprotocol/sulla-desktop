@@ -1387,7 +1387,7 @@ export default defineComponent({
           </div>
 
           <!-- Active Model Info -->
-          <div class="active-model-section">
+          <div class="active-model-section mb-10">
             <h3>Active Configuration</h3>
             <div class="config-item">
               <span class="config-label">Mode:</span>
@@ -1410,7 +1410,7 @@ export default defineComponent({
           </div>
 
           <!-- Local Model Server Toggle -->
-          <div class="active-model-section">
+          <div class="active-model-section mb-10">
             <h3>Local Model Server</h3>
             <p class="description">
               The local llama-server runs a GGUF model on your Mac for offline inference.

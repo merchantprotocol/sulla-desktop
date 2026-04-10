@@ -82,9 +82,9 @@
 
               <div v-else-if="m.kind === 'streaming'" class="max-w-[min(760px,92%)]">
                 <div class="flex gap-3">
-                  <div class="sulla-avatar dark:text-slate-400" aria-hidden="true">S</div>
+                  <img :src="botLogoUrl" alt="" class="h-8 w-8 rounded-full" aria-hidden="true" />
                   <div>
-                    <div class="sulla-name dark:text-slate-400">Sulla</div>
+                    <div class="sulla-name dark:text-slate-400">{{ botName }}</div>
                     <div class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert" v-html="renderMarkdown(m.content)" /><span class="streaming-cursor" />
                   </div>
                 </div>
@@ -92,9 +92,9 @@
 
               <div v-else-if="m.kind === 'html'" class="max-w-[min(760px,92%)]">
                 <div class="flex gap-3">
-                  <div class="sulla-avatar dark:text-slate-400" aria-hidden="true">S</div>
+                  <img :src="botLogoUrl" alt="" class="h-8 w-8 rounded-full" aria-hidden="true" />
                   <div class="flex-1 min-w-0">
-                    <div class="sulla-name dark:text-slate-400">Sulla</div>
+                    <div class="sulla-name dark:text-slate-400">{{ botName }}</div>
                     <HtmlMessageRenderer :content="m.content" :is-dark="isDark" />
                   </div>
                 </div>
@@ -106,9 +106,9 @@
                   <div v-if="m.image.alt" class="text-xs text-content-secondary">{{ m.image.alt }}</div>
                 </div>
                 <div v-else class="flex gap-3">
-                  <div class="sulla-avatar dark:text-slate-400" aria-hidden="true">S</div>
+                  <img :src="botLogoUrl" alt="" class="h-8 w-8 rounded-full" aria-hidden="true" />
                   <div>
-                    <div class="sulla-name dark:text-slate-400">Sulla</div>
+                    <div class="sulla-name dark:text-slate-400">{{ botName }}</div>
                     <div class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert" v-html="renderMarkdown(m.content)" />
                   </div>
                 </div>
@@ -214,7 +214,7 @@
                   <path class="sulla-wave sulla-wave-1" d="M15.54 8.46a5 5 0 0 1 0 7.07" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
                   <path class="sulla-wave sulla-wave-2" d="M18.07 5.93a9 9 0 0 1 0 12.73" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
                 </svg>
-                <span>Sulla is speaking...</span>
+                <span>{{ botName }} is speaking...</span>
               </div>
             </div>
             <div v-if="showContinueButton" class="flex justify-end mb-3">
@@ -322,6 +322,9 @@ import { AgentModelSelectorController } from './agent/AgentModelSelectorControll
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+
+const botLogoUrl = new URL('../../../resources/icons/logo-tray-Template@2x-blue.png', import.meta.url).toString();
 
 const props = defineProps<{
   tabId: string;
@@ -445,7 +448,12 @@ const injectQueuedMessage = (messageId: string) => {
 
 // If the tab was created with a content field (e.g. from an AI context menu action),
 // use it as the initial prompt and auto-send, then clear it.
-onMounted(() => {
+const botName = ref('Sulla');
+
+onMounted(async () => {
+  // Load bot name from settings
+  botName.value = await SullaSettingsModel.get('botName', 'Sulla');
+
   const tab = getTab(props.tabId);
 
   if (tab?.content && tab.content.trim()) {
@@ -496,7 +504,7 @@ function startOnboarding(): void {
 
 function startBusinessOnboarding(): void {
   showBusinessOnboarding.value = false;
-  query.value = 'I want to put Sulla to work on my business.';
+  query.value = `I want to put ${ botName.value } to work on my business.`;
   nextTick(() => send());
 }
 

@@ -306,6 +306,7 @@ const localQuery = computed({
   grid-template-columns: repeat(2, 1fr);
   gap: 0.75rem;
   width: 100%;
+  margin-bottom: 2.5rem;
 }
 
 .vb-card {
