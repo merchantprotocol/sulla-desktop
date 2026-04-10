@@ -26,7 +26,7 @@ export const agentToolManifests: ToolManifest[] = [
       async: {
         type:        'boolean',
         optional:    true,
-        description: 'When true, launches agents in the background and returns immediately with a jobId. Use check_agent_jobs to poll for results. Default: false (synchronous — blocks until all agents complete).',
+        description: 'When true (default), launches agents in the background and returns immediately with a jobId. Use check_agent_jobs to poll for results. Set to false to block until all agents complete.',
       },
     },
     operationTypes: ['execute'],

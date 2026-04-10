@@ -20,6 +20,7 @@ import * as path from 'path';
 import { app, webContents } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import Logging from '@pkg/utils/logging';
@@ -414,7 +415,21 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return app.getPath('userData');
   });
 
-  // First-chat detection — returns true if the user has never chatted before
+  // Onboarding card visibility — each card hides only when its specific
+  // onboarding-created file exists (NOT the general identity files that
+  // daily workflows create independently).
+  const sullaHome = path.join(os.homedir(), 'sulla');
+  const goalsOnboardingPath = path.join(sullaHome, 'identity', 'onboarding.md');
+  const businessOnboardingPath = path.join(sullaHome, 'identity', 'business', 'onboarding.md');
+
+  ipcMainProxy.handle('check-goals-onboarding', async() => {
+    return !fs.existsSync(goalsOnboardingPath);
+  });
+  ipcMainProxy.handle('check-business-onboarding', async() => {
+    return !fs.existsSync(businessOnboardingPath);
+  });
+
+  // Legacy — still used by some code paths to mark first chat complete
   const firstChatLockPath = path.join(app.getPath('userData'), 'first-chat.lock');
   ipcMainProxy.handle('check-first-chat', async() => {
     return !fs.existsSync(firstChatLockPath);

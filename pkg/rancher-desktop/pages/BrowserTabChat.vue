@@ -273,6 +273,8 @@
           :voice-configured="isVoiceConfigured"
           :model-selector="modelSelector"
           :is-first-chat="isFirstChat"
+          :show-goals-onboarding="showGoalsOnboarding"
+          :show-business-onboarding="showBusinessOnboarding"
           @send="send"
           @stop="stop"
           @primary-action="handlePrimaryAction"
@@ -280,6 +282,7 @@
           @stop-tts="voice.stopTTS()"
           @pick="(mode: string) => emit('set-mode', mode as BrowserTabMode)"
           @start-onboarding="startOnboarding"
+          @start-business-onboarding="startBusinessOnboarding"
         />
       </div>
     </div>
@@ -466,20 +469,34 @@ const modelSelector = new AgentModelSelectorController({
   isRunning,
 });
 
-// First-chat detection — show onboarding card when user has never chatted
-const isFirstChat = ref(false);
+// Onboarding card visibility — each card hides once its identity file exists
+const showGoalsOnboarding = ref(false);
+const showBusinessOnboarding = ref(false);
+const isFirstChat = computed(() => showGoalsOnboarding.value || showBusinessOnboarding.value);
+
 async function checkFirstChat(): Promise<void> {
   try {
-    isFirstChat.value = await ipcRenderer.invoke('check-first-chat');
+    const [goals, business] = await Promise.all([
+      ipcRenderer.invoke('check-goals-onboarding'),
+      ipcRenderer.invoke('check-business-onboarding'),
+    ]);
+    showGoalsOnboarding.value = goals;
+    showBusinessOnboarding.value = business;
   } catch {
-    isFirstChat.value = false;
+    showGoalsOnboarding.value = false;
+    showBusinessOnboarding.value = false;
   }
 }
 
 function startOnboarding(): void {
-  isFirstChat.value = false;
-  ipcRenderer.invoke('mark-first-chat-complete');
+  showGoalsOnboarding.value = false;
   query.value = 'I\'m new here — help me set my goals and get to know how I work best.';
+  nextTick(() => send());
+}
+
+function startBusinessOnboarding(): void {
+  showBusinessOnboarding.value = false;
+  query.value = 'I want to put Sulla to work on my business.';
   nextTick(() => send());
 }
 
@@ -602,8 +619,8 @@ const send = (metadata?: Record<string, unknown>) => {
     return;
   }
   if (isFirstChat.value) {
-    isFirstChat.value = false;
-    ipcRenderer.invoke('mark-first-chat-complete');
+    showGoalsOnboarding.value = false;
+    showBusinessOnboarding.value = false;
   }
   chatController.send(metadata);
 };
@@ -616,8 +633,8 @@ const sendWithAttachments = () => {
     return;
   }
   if (isFirstChat.value) {
-    isFirstChat.value = false;
-    ipcRenderer.invoke('mark-first-chat-complete');
+    showGoalsOnboarding.value = false;
+    showBusinessOnboarding.value = false;
   }
   const attachments = composerRef.value?.consumeAttachments?.() || [];
   chatController.send(undefined, attachments.length > 0 ? attachments : undefined);

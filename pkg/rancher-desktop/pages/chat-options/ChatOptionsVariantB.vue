@@ -90,9 +90,9 @@
       </button>
     </div>
 
-    <!-- Onboarding card — shown only on user's very first chat -->
+    <!-- Goals onboarding card — hidden once human identity file exists -->
     <div
-      v-if="isFirstChat"
+      v-if="showGoalsOnboarding"
       class="vb-onboarding"
     >
       <button
@@ -102,8 +102,27 @@
       >
         <div class="vb-onboarding-accent" />
         <div class="vb-onboarding-body">
-          <span class="vb-onboarding-title">Start Onboarding for Maximum Effectiveness</span>
-          <span class="vb-onboarding-desc">Tell Sulla about your goals and working style so it can deliver the best results from day one.</span>
+          <span class="vb-onboarding-title">Tell Sulla About Your Goals</span>
+          <span class="vb-onboarding-desc">Sulla will align herself with your goals to help you better accomplish them.</span>
+        </div>
+        <span class="vb-card-arrow">&rarr;</span>
+      </button>
+    </div>
+
+    <!-- Business onboarding card — hidden once business identity file exists -->
+    <div
+      v-if="showBusinessOnboarding"
+      class="vb-onboarding"
+    >
+      <button
+        type="button"
+        class="vb-onboarding-btn vb-onboarding-btn--business"
+        @click="$emit('start-business-onboarding')"
+      >
+        <div class="vb-onboarding-accent vb-onboarding-accent--business" />
+        <div class="vb-onboarding-body">
+          <span class="vb-onboarding-title">Put Sulla to Work on Your Business</span>
+          <span class="vb-onboarding-desc">Whether you're starting fresh or already running, Sulla can help you build, grow, and automate your business from day one.</span>
         </div>
         <span class="vb-card-arrow">&rarr;</span>
       </button>
@@ -127,6 +146,8 @@ const props = defineProps<{
   voiceConfigured?: boolean;
   modelSelector: any;
   isFirstChat?: boolean;
+  showGoalsOnboarding?: boolean;
+  showBusinessOnboarding?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -138,6 +159,7 @@ const emit = defineEmits<{
   'stop-tts': [];
   pick: [mode: string];
   'start-onboarding': [];
+  'start-business-onboarding': [];
 }>();
 
 const localQuery = computed({
@@ -205,6 +227,10 @@ const localQuery = computed({
 }
 
 /* ── Onboarding card ── */
+.vb-onboarding:first-of-type {
+  margin-top: 1.5rem;
+}
+
 .vb-onboarding {
   width: 100%;
   margin-bottom: 1.25rem;
@@ -263,6 +289,15 @@ const localQuery = computed({
   font-size: 0.75rem;
   font-weight: 400;
   color: var(--text-dim);
+}
+
+.vb-onboarding-accent--business {
+  background: var(--text-success, #4ade80);
+}
+
+.vb-onboarding-btn--business:hover {
+  border-color: var(--text-success, #4ade80);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(74, 222, 128, 0.2);
 }
 
 /* ── Card grid ── */
