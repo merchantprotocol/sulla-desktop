@@ -112,28 +112,24 @@
             <div
               v-for="entry in transcript"
               :key="entry.id"
-              class="dt-turn"
-              :class="{ 'dt-turn-wake': entry.type === 'wake-command' }"
+              class="dt-bubble-row"
+              :class="{
+                'dt-bubble-right': entry.speaker === 'You',
+                'dt-bubble-left': entry.speaker !== 'You',
+                'dt-bubble-wake': entry.type === 'wake-command',
+              }"
             >
-              <div
-                class="dt-turn-bar"
-                :style="{ background: getSpeakerColor(entry.speaker || 'Unknown') }"
-              />
-              <div class="dt-turn-content">
-                <div class="dt-turn-header">
-                  <span
-                    class="dt-turn-speaker"
-                    :style="{ color: getSpeakerColor(entry.speaker || 'Unknown') }"
-                  >{{ entry.speaker || 'Speaker' }}</span>
-                  <span class="dt-turn-time">{{ formatTime(entry.timestamp) }}</span>
+              <div class="dt-bubble" :class="entry.speaker === 'You' ? 'dt-bubble-you' : 'dt-bubble-caller'">
+                <div class="dt-bubble-header">
+                  <span class="dt-bubble-speaker">{{ entry.speaker || 'Speaker' }}</span>
+                  <span class="dt-bubble-time">{{ formatTime(entry.timestamp) }}</span>
                 </div>
-                <div class="dt-turn-text">{{ entry.text }}</div>
+                <div class="dt-bubble-text">{{ entry.text }}</div>
               </div>
             </div>
-            <div v-if="isListening && transcript.length === 0" class="dt-turn">
-              <div class="dt-turn-bar" style="background: var(--text-dim, #6e7681);" />
-              <div class="dt-turn-content">
-                <div class="dt-turn-text dt-dim">{{ listeningStatus }}</div>
+            <div v-if="isListening && transcript.length === 0" class="dt-bubble-row dt-bubble-left">
+              <div class="dt-bubble dt-bubble-caller">
+                <div class="dt-bubble-text dt-dim">{{ listeningStatus }}</div>
               </div>
             </div>
           </div>
@@ -357,18 +353,12 @@ function formatTimeNowFull(): string {
 
 // ── Speaker color assignment (up to 12 distinct colors) ──────
 const SPEAKER_COLORS = [
-  '#58a6ff', // blue
-  '#3fb950', // green
-  '#d2a8ff', // purple
-  '#f0883e', // orange
-  '#f778ba', // pink
-  '#79c0ff', // light blue
-  '#7ee787', // light green
-  '#d29922', // yellow
-  '#ff7b72', // red
-  '#a5d6ff', // sky
-  '#ffa657', // peach
-  '#bc8cff', // lavender
+  '#8b949e', // muted grey-blue (caller)
+  '#7c8a99', // slate
+  '#9a8fad', // muted lavender
+  '#a08c7a', // warm taupe
+  '#8a9a8f', // sage
+  '#9b8e85', // warm grey
 ];
 const speakerColorMap = new Map<string, string>();
 
@@ -408,6 +398,17 @@ const controller = new SecretaryModeController({
         transcriptScrollEl.value.scrollTop = transcriptScrollEl.value.scrollHeight;
       }
     });
+  },
+  updateLastEntry(text: string) {
+    const last = transcript.value[transcript.value.length - 1];
+    if (last) {
+      last.text = text;
+      nextTick(() => {
+        if (transcriptScrollEl.value) {
+          transcriptScrollEl.value.scrollTop = transcriptScrollEl.value.scrollHeight;
+        }
+      });
+    }
   },
   setWakeWordActive:  (v) => { wakeWordActive.value = v; },
   getWakeWordActive:  () => wakeWordActive.value,
@@ -814,59 +815,69 @@ onUnmounted(() => {
 .dt-timeline {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-}
-
-.dt-turn {
-  display: flex;
   gap: 0.5rem;
-  padding: 0.375rem 0;
-  border-bottom: 1px solid var(--border-muted, #21262d);
+  padding: 0.5rem;
 }
 
-.dt-turn:last-child {
-  border-bottom: none;
+.dt-bubble-row {
+  display: flex;
+  width: 100%;
 }
 
-.dt-turn-wake {
-  background: rgba(80, 150, 179, 0.06);
+.dt-bubble-left {
+  justify-content: flex-start;
 }
 
-.dt-turn-bar {
-  width: 3px;
-  min-width: 3px;
-  border-radius: 2px;
-  flex-shrink: 0;
+.dt-bubble-right {
+  justify-content: flex-end;
 }
 
-.dt-turn-content {
-  flex: 1;
-  min-width: 0;
+.dt-bubble {
+  max-width: 80%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 12px;
+  word-wrap: break-word;
+  white-space: pre-wrap;
 }
 
-.dt-turn-header {
+.dt-bubble-caller {
+  background: rgba(130, 140, 155, 0.1);
+  border-bottom-left-radius: 4px;
+}
+
+.dt-bubble-you {
+  background: rgba(88, 120, 160, 0.12);
+  border-bottom-right-radius: 4px;
+}
+
+.dt-bubble-wake {
+  opacity: 0.85;
+}
+
+.dt-bubble-header {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
-  margin-bottom: 0.125rem;
+  gap: 0.4rem;
+  margin-bottom: 0.2rem;
 }
 
-.dt-turn-speaker {
+.dt-bubble-speaker {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
+  color: var(--text-dim, #8b949e);
 }
 
-.dt-turn-time {
+.dt-bubble-time {
   font-size: 9px;
   color: var(--text-dim, #6e7681);
 }
 
-.dt-turn-text {
-  font-size: 11px;
-  color: var(--text-muted, #8b949e);
-  line-height: 1.6;
+.dt-bubble-text {
+  font-size: 13px;
+  color: var(--text-primary, #c9d1d9);
+  line-height: 1.55;
 }
 
 /* ── Right pane sections ─────────────────────────────────── */

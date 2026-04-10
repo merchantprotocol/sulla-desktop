@@ -72,10 +72,15 @@ export class AgentNode extends BaseNode {
     // memory recall, and observation management.
     // Recall context is merged into the last assistant message so the
     // primary agent treats it as its own knowledge, not external info.
-    const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
-    await runSubconsciousMiddleware(state, {
-      includeObservations: shouldInjectObservations,
-    });
+    // Skip during tool-call loops (consecutiveSameNode > 0) — only run
+    // on fresh user turns to avoid redundant LLM calls.
+    const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
+    if (!isToolCallLoop) {
+      const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
+      await runSubconsciousMiddleware(state, {
+        includeObservations: shouldInjectObservations,
+      });
+    }
 
     // Merge recall context into the last assistant message (or create one)
     // so the primary agent sees it as information it already has.

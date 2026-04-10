@@ -47,6 +47,7 @@ export interface AgentMessage {
 
 export interface SecretaryCallbacks {
   addEntry: (text: string, type?: TranscriptEntry['type'], speaker?: string) => void;
+  updateLastEntry: (text: string) => void;
   setWakeWordActive: (active: boolean) => void;
   getWakeWordActive: () => boolean;
   setAudioLevel: (level: number) => void;
@@ -274,6 +275,43 @@ export class SecretaryModeController {
     if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null; }
   }
 
+  // ─── Turn-taking accumulator ───────────────────────────────────
+  // Combines consecutive transcripts from the same speaker into a
+  // single entry. A new entry is created when:
+  //   - The speaker changes (mic → speaker or vice versa)
+  //   - A long pause occurs (>5 seconds between transcripts)
+
+  private currentTurnSpeaker: string | null = null;
+  private lastTranscriptTime = 0;
+  private static readonly PAUSE_THRESHOLD_MS = 5000;
+
+  private appendOrCreateEntry(text: string, speaker: string): void {
+    const now = Date.now();
+    const pauseMs = now - this.lastTranscriptTime;
+    this.lastTranscriptTime = now;
+
+    const sameSpeaker = speaker === this.currentTurnSpeaker;
+    const longPause = pauseMs > SecretaryModeController.PAUSE_THRESHOLD_MS;
+
+    if (sameSpeaker && !longPause) {
+      // Same speaker, no long pause — append to current entry
+      const transcript = this.cb.getTranscript();
+      const last = transcript[transcript.length - 1];
+      if (last && last.speaker === speaker && last.type === 'transcript') {
+        // Add paragraph break on moderate pauses (>2s), otherwise space
+        const separator = pauseMs > 2000 ? '\n\n' : ' ';
+        last.text += separator + text;
+        // Trigger reactivity by replacing the entry
+        this.cb.updateLastEntry(last.text);
+        return;
+      }
+    }
+
+    // New speaker or long pause — create new entry
+    this.currentTurnSpeaker = speaker;
+    this.cb.addEntry(text, 'transcript', speaker);
+  }
+
   // ─── Whisper STT (internal transcription) ─────────────────────
 
   private whisperTranscriptHandler: ((_event: any, msg: any) => void) | null = null;
@@ -298,9 +336,8 @@ export class SecretaryModeController {
       const text = msg.text.trim();
       if (!text) return;
       if (msg.event_type !== 'transcript_partial') {
-        // Speaker label: 'Mic' = you, 'Speaker' = caller/system audio
         const speaker = msg.speaker === 'Speaker' ? 'Caller' : 'You';
-        this.cb.addEntry(text, 'transcript', speaker);
+        this.appendOrCreateEntry(text, speaker);
         this.checkAndHandleWakeWord(text);
       }
     };

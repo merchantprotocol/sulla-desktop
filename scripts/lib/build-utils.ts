@@ -371,8 +371,9 @@ export default {
     fs.mkdirSync(dest, { recursive: true });
 
     for (const entry of fs.readdirSync(src)) {
-      // Copy .swift scripts, .c source, and compiled binaries (not .ts files)
-      if (entry.endsWith('.swift') || entry.endsWith('.c') || entry === 'create-mirror') {
+      // Copy .swift scripts, .c/.cpp source, and compiled binaries (not .ts files)
+      if (entry.endsWith('.swift') || entry.endsWith('.c') || entry.endsWith('.cpp')
+          || entry === 'create-mirror' || entry === 'capture-loopback') {
         fs.copyFileSync(path.join(src, entry), path.join(dest, entry));
       }
     }

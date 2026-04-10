@@ -12,7 +12,7 @@ set -euo pipefail
 AUDIO_DARWIN_DIR="pkg/rancher-desktop/main/audio-driver/platform/darwin"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  echo "[audio-native] Building create-mirror for macOS..."
+  echo "[audio-native] Building native binaries for macOS..."
 
   if [[ -f "$AUDIO_DARWIN_DIR/create-mirror.c" ]]; then
     clang \
@@ -24,6 +24,18 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     echo "[audio-native] create-mirror compiled successfully"
   else
     echo "[audio-native] create-mirror.c not found — skipping"
+  fi
+
+  if [[ -f "$AUDIO_DARWIN_DIR/capture-loopback.cpp" ]]; then
+    clang++ -std=c++17 -O2 \
+      -framework CoreAudio \
+      -framework AudioToolbox \
+      -framework CoreFoundation \
+      -o "$AUDIO_DARWIN_DIR/capture-loopback" \
+      "$AUDIO_DARWIN_DIR/capture-loopback.cpp"
+    echo "[audio-native] capture-loopback compiled successfully"
+  else
+    echo "[audio-native] capture-loopback.cpp not found — skipping"
   fi
 else
   echo "[audio-native] Not macOS — skipping native audio build"
