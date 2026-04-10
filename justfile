@@ -80,21 +80,36 @@ rebuild: clean build
 # Full rebuild - wipes everything including VM and cached images
 rebuild-hard: clean-hard install build
 
-build-mac:
+build-mac: build
+    #!/bin/sh
+    set -e
     yarn package
-    @echo "DMG built in dist/"
+    echo "DMG built in dist/"
+    just install-mac
 
-# Open the DMG so you can drag Sulla Desktop into Applications
+# Install the built app to /Applications (without rebuilding)
 install-mac:
     #!/bin/sh
     set -e
-    dmg=$(ls -t dist/*.dmg 2>/dev/null | head -1)
-    if [ -z "$dmg" ]; then
-        echo "No DMG found in dist/. Run 'just build-mac' first."
+    if [ ! -d "dist/mac-arm64/Sulla Desktop.app" ]; then
+        echo "No build found. Run 'just build-mac' first."
         exit 1
     fi
-    echo "Opening $dmg ..."
-    open "$dmg"
+    # Quit the running app and wait for it to fully exit
+    osascript -e 'quit app "Sulla Desktop"' 2>/dev/null || true
+    sleep 2
+    # Force-kill any lingering processes
+    pkill -f "Sulla Desktop" 2>/dev/null || true
+    sleep 1
+    # Remove old install (retry with sudo if permission denied)
+    if [ -d "/Applications/Sulla Desktop.app" ]; then
+        rm -rf "/Applications/Sulla Desktop.app" 2>/dev/null || \
+            sudo rm -rf "/Applications/Sulla Desktop.app"
+    fi
+    # Copy using ditto (preserves symlinks, resource forks, HFS metadata)
+    ditto "dist/mac-arm64/Sulla Desktop.app" "/Applications/Sulla Desktop.app"
+    xattr -rd com.apple.quarantine "/Applications/Sulla Desktop.app" 2>/dev/null || true
+    echo "Installed to /Applications/Sulla Desktop.app"
 
 # Stop Sulla Desktop, remove from Applications, and eject the DMG
 uninstall-mac:

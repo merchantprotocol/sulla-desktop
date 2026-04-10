@@ -102,7 +102,8 @@ class Builder {
 
   /**
    * Edit the application's `Info.plist` file to remove the UsageDescription
-   * keys; there is no reason for the application to get any of those permissions.
+   * keys that Electron adds by default, while preserving any that were
+   * explicitly declared in extendInfo.
    */
   protected async removeMacUsageDescriptions(context: AfterPackContext) {
     const { MacPackager } = await import('app-builder-lib/out/macPackager');
@@ -113,6 +114,7 @@ class Builder {
       return;
     }
 
+    const extendInfo = config.extendInfo ?? {};
     const { productFilename } = packager.appInfo;
     const appPath = path.join(context.appOutDir, `${ productFilename }.app`);
     const plistPath = path.join(appPath, 'Contents', 'Info.plist');
@@ -125,7 +127,7 @@ class Builder {
     const plistCopy: Record<string, plist.PlistValue> = structuredClone(plistData);
 
     for (const key in plistData) {
-      if (/^NS.*UsageDescription$/.test(key)) {
+      if (/^NS.*UsageDescription$/.test(key) && !(key in extendInfo)) {
         delete plistCopy[key];
       }
     }

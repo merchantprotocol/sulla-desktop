@@ -66,10 +66,13 @@ export function openTeleprompterWindow(): BrowserWindow {
   // dist/app/assets/ (copied by build-utils.copyWindowAssets()).
   const appRoot = app.getAppPath();
   const htmlPath = app.isPackaged
-    ? path.join(appRoot, 'assets', 'teleprompter-float.html')
+    ? path.join(appRoot, 'dist', 'app', 'assets', 'teleprompter-float.html')
     : path.join(appRoot, 'pkg', 'rancher-desktop', 'assets', 'teleprompter-float.html');
 
   console.log('[TeleprompterWindow] Loading HTML from:', htmlPath);
+
+  // Exclude this window from screen capture so it doesn't appear in recordings
+  prompterWindow.setContentProtection(true);
 
   prompterWindow.webContents.on('did-finish-load', () => {
     if (!prompterWindow || prompterWindow.isDestroyed()) return;

@@ -10,6 +10,8 @@ import semver from 'semver';
 
 import * as audioDriver from '@pkg/main/audio-driver/init';
 import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
+import { registerMoreMenuIpc } from '@pkg/main/moreMenuWindow';
+import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
 import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
 import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
 
@@ -309,13 +311,17 @@ function getSullaProjectDir(): string {
     return process.env.SULLA_PROJECT_DIR;
   }
   try {
-    return process.cwd();
-  } catch {
-    return Electron.app.getAppPath();
-  }
+    const cwd = process.cwd();
+
+    // In packaged apps, cwd is '/' — not a usable project dir
+    if (cwd !== '/') {
+      return cwd;
+    }
+  } catch { /* fall through */ }
+  return path.join(Electron.app.getPath('home'), 'sulla');
 }
 
-const SULLA_WEB_REQUEST_LOG_DIR = path.join(getSullaProjectDir(), 'log');
+const SULLA_WEB_REQUEST_LOG_DIR = path.join(getSullaProjectDir(), 'logs');
 const SULLA_WEB_REQUEST_LOG_FILE = path.join(SULLA_WEB_REQUEST_LOG_DIR, 'background-web-requests.log');
 
 function writeSullaWebRequestEvent(event: SullaWebRequestLogEvent): void {
@@ -681,7 +687,9 @@ async function initUI() {
     registerCaptureStudioTracking();
     registerTeleprompterIpc();
     registerTeleprompterTrackingIpc();
-    console.log('[Capture Studio] Tracking + Teleprompter IPC registered');
+    registerTabContextMenuIpc();
+    registerMoreMenuIpc();
+    console.log('[Capture Studio] Tracking + Teleprompter + TabContextMenu + MoreMenu IPC registered');
   } catch (err) {
     console.error('[Audio Driver] Failed to initialize:', err);
   }
