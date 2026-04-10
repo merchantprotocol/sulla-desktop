@@ -11,7 +11,7 @@
  */
 
 import path from 'path';
-import { BrowserWindow, ipcMain, app } from 'electron';
+import { BrowserWindow, ipcMain, app, screen } from 'electron';
 
 import Logging from '@pkg/utils/logging';
 import { getWindow } from '@pkg/window';
@@ -39,32 +39,56 @@ export function registerMoreMenuIpc(): void {
 
 function onShow(
   _event: Electron.IpcMainEvent,
-  payload: { screenX: number; screenY: number },
+  payload: { screenX: number; screenY: number; buttonWidth?: number; buttonHeight?: number; theme?: string },
 ): void {
-  const { screenX, screenY } = payload;
+  const { screenX, screenY, theme = 'protocol-dark' } = payload;
+  const isDark = !theme.includes('light');
+
+  // Get the display where the click occurred and ensure menu stays on screen
+  const display = screen.getDisplayNearestPoint({ x: screenX, y: screenY });
+  const { workArea } = display;
+
+  // Menu appears BELOW the button (screenY is already bottom of button)
+  // Add a small gap of 4px between button and menu
+  const GAP = 4;
+
+  // Calculate adjusted position to keep menu within screen bounds
+  let adjustedX = screenX;
+  let adjustedY = screenY + GAP;
+
+  // If menu would go off the right edge, align it to the right edge
+  if (adjustedX + MENU_WIDTH > workArea.x + workArea.width) {
+    adjustedX = workArea.x + workArea.width - MENU_WIDTH - 8; // 8px margin
+  }
+
+  // If menu would go off the bottom edge, show it above the button instead
+  if (adjustedY + MENU_HEIGHT > workArea.y + workArea.height) {
+    adjustedY = screenY - MENU_HEIGHT - GAP;
+  }
 
   if (win && !win.isDestroyed()) {
-    win.setBounds({ x: screenX, y: screenY, width: MENU_WIDTH, height: MENU_HEIGHT });
-    win.webContents.send('more-menu:show');
+    win.setBounds({ x: adjustedX, y: adjustedY, width: MENU_WIDTH, height: MENU_HEIGHT });
+    win.webContents.send('more-menu:show', { theme });
     win.showInactive();
     setTimeout(() => { if (win && !win.isDestroyed()) win.focus(); }, 50);
     return;
   }
 
   win = new BrowserWindow({
-    width:       MENU_WIDTH,
-    height:      MENU_HEIGHT,
-    x:           screenX,
-    y:           screenY,
-    show:        false,
-    frame:       false,
-    transparent: true,
-    resizable:   false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    hasShadow:   true,
-    focusable:   true,
-    webPreferences: {
+    width:             MENU_WIDTH,
+    height:            MENU_HEIGHT,
+    x:                 adjustedX,
+    y:                 adjustedY,
+    show:              false,
+    frame:             false,
+    transparent:       true,
+    resizable:         false,
+    alwaysOnTop:       true,
+    skipTaskbar:       true,
+    hasShadow:         false,
+    focusable:         true,
+    backgroundColor:   '#00000000',
+    webPreferences:    {
       contextIsolation: false,
       nodeIntegration:  true,
     },
@@ -75,7 +99,8 @@ function onShow(
     ? path.join(appRoot, 'dist', 'app', 'assets', 'more-menu.html')
     : path.join(appRoot, 'pkg', 'rancher-desktop', 'assets', 'more-menu.html');
 
-  win.loadFile(htmlPath);
+  // Pass theme as query param
+  win.loadFile(htmlPath, { query: { theme } });
 
   win.once('ready-to-show', () => {
     if (!win || win.isDestroyed()) return;
@@ -108,11 +133,40 @@ function onAction(
   _close();
 }
 
-function onRequestHistory(): void {
+function onRequestHistory(
+  _event: Electron.IpcMainEvent,
+  data?: { currentWidth?: number },
+): void {
   // Ask the renderer for history entries, then forward them to the popup
   const mainWindow = getWindow('main-agent') ?? getWindow('main');
 
   if (mainWindow && !mainWindow.isDestroyed()) {
+    // Store current popup position for later repositioning
+    if (win && !win.isDestroyed()) {
+      const bounds = win.getBounds();
+      const display = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y });
+      const { workArea } = display;
+
+      // Target width for history view
+      const targetWidth = 280;
+      const rightEdge = bounds.x + targetWidth;
+      const screenRightEdge = workArea.x + workArea.width;
+
+      // If expanding right would go off screen, shift left
+      let newX = bounds.x;
+      if (rightEdge > screenRightEdge - 8) { // 8px margin
+        newX = screenRightEdge - targetWidth - 8;
+        if (newX < workArea.x) {
+          newX = workArea.x;
+        }
+        // Pre-emptively move window to new position
+        win.setBounds({ x: newX, y: bounds.y, width: bounds.width, height: bounds.height });
+      }
+
+      // Store target width for when history data comes back
+      (win as any).__historyTargetWidth = targetWidth;
+    }
+
     mainWindow.webContents.send('more-menu:fetch-history');
   }
 }
@@ -124,6 +178,8 @@ function onResize(
   if (!win || win.isDestroyed()) return;
   const bounds = win.getBounds();
 
+  // If shrinking back to main menu (width 200), keep position
+  // If expanding, check if we need to shift left (already done in onRequestHistory)
   win.setBounds({
     x:      bounds.x,
     y:      bounds.y,
@@ -139,7 +195,11 @@ function onDismiss(): void {
 /** Renderer pushed history entries back — forward them to the popup. */
 function onPushHistory(_event: Electron.IpcMainEvent, entries: unknown[]): void {
   if (win && !win.isDestroyed()) {
-    win.webContents.send('more-menu:history-data', entries);
+    // Get the target width we calculated earlier
+    const targetWidth = (win as any).__historyTargetWidth || 280;
+    win.webContents.send('more-menu:history-data', entries, targetWidth);
+    // Clear stored value
+    delete (win as any).__historyTargetWidth;
   }
 }
 
