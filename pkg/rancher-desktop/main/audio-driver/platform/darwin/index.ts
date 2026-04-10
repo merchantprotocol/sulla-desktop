@@ -26,7 +26,7 @@ log.info('Platform', 'Script directory', { scriptDir });
 const SCRIPTS = {
   detect:        path.join(scriptDir, 'detect-loopback.swift'),
   mirror:        path.join(scriptDir, 'create-multi-output.swift'),
-  capture:       path.join(scriptDir, 'capture-loopback.swift'),
+  capture:       path.join(scriptDir, 'capture-loopback'),  // compiled C++ binary
   watch:         path.join(scriptDir, 'watch-output.swift'),
   setDevice:     path.join(scriptDir, 'set-system-device.swift'),
   resetOutput:   path.join(scriptDir, 'reset-default-output.swift'),
@@ -275,7 +275,7 @@ export const capture = {
     captureAudioCallback = opts?.onAudio || null;
     log.info('Platform', 'Starting capture helper');
 
-    captureChild = spawn('swift', [SCRIPTS.capture], {
+    captureChild = spawn(SCRIPTS.capture, [], {
       stdio: ['ignore', 'pipe', 'pipe', 'pipe'], // fd 3 = raw PCM pipe
       env:   CHILD_ENV,
     });
