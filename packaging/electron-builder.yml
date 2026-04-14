@@ -25,7 +25,7 @@ files:
   - '!**/node_modules/*/prebuilds/!(${platform}*)/*.node'
 mac:
   darkModeSupport: true
-  hardenedRuntime: false  # Re-enable when we have an Apple Developer certificate for notarization
+  hardenedRuntime: true
   gatekeeperAssess: false
   icon: ./resources/icons/sulla-app-icon.png
   target: [ dmg, zip ]

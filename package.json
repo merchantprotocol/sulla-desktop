@@ -19,7 +19,7 @@
     "artifactName": "Sulla-Desktop-${version}-${arch}.${ext}",
     "mac": {
       "identity": null,
-      "hardenedRuntime": false,
+      "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": null,
       "entitlementsInherit": null,
