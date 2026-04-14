@@ -38,6 +38,9 @@ mac:
     NSCameraUsageDescription: "Sulla Desktop uses your camera for the capture studio face-cam overlay."
     NSScreenCaptureUsageDescription: "Sulla Desktop needs screen recording access for the capture studio to record your screen."
     NSAppleEventsUsageDescription: "Sulla uses automation to interact with apps on your Mac — like managing your calendar, creating reminders, or controlling music playback. You choose which apps to enable."
+  extraFiles:
+    - build/signing-config-mac.yaml
+    - { from: dist/electron-builder.yaml, to: electron-builder.yml }
 win:
   icon: ./pkg/rancher-desktop/pages/agent/sulla-icon.ico
   target: [ zip ]
