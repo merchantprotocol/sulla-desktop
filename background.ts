@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -935,8 +935,10 @@ Electron.app.on('before-quit', async(event) => {
   event.preventDefault();
   console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');
 
-  // ── Safety-net: force-exit if graceful shutdown exceeds 30 seconds ──
-  const SHUTDOWN_DEADLINE_MS = 30_000;
+  // ── Safety-net: force-exit if graceful shutdown exceeds 90 seconds ──
+  // Increased from 30s to 90s to allow database containers (MySQL, Postgres)
+  // enough time to flush buffers and shut down cleanly.
+  const SHUTDOWN_DEADLINE_MS = 90_000;
   const forceExitTimer = setTimeout(() => {
     sullaLog({ topic: 'shutdown', level: 'error', message: `Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting` });
     console.error(`[Shutdown] Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting`);
@@ -1002,6 +1004,29 @@ Electron.app.on('before-quit', async(event) => {
 
   const shutdownMode = isRestarting ? 'RESTART' : 'FULL QUIT';
 
+  // ── Graceful container stop ──
+  // Stop all running Docker containers with a 30-second grace period BEFORE
+  // shutting down the container engine.  This gives databases (MySQL, Postgres)
+  // time to flush InnoDB/WAL buffers instead of being SIGKILL'd when the
+  // Docker daemon or VM is torn down.
+  if (!isRestarting) {
+    await withTimeout('docker-containers-stop', 45_000, (async() => {
+      try {
+        const ids = execFileSync('docker', ['ps', '-q'], { timeout: 5_000 }).toString().trim();
+
+        if (ids) {
+          const containerIds = ids.split('\n').filter(Boolean);
+
+          sullaLog({ topic: 'shutdown', level: 'info', message: `Gracefully stopping ${ containerIds.length } container(s) with 30s timeout` });
+          execFileSync('docker', ['stop', '-t', '30', ...containerIds], { timeout: 40_000 });
+          sullaLog({ topic: 'shutdown', level: 'info', message: 'All containers stopped gracefully' });
+        }
+      } catch (err: any) {
+        sullaLog({ topic: 'shutdown', level: 'warn', message: `Container graceful stop failed: ${ err.message }` });
+      }
+    })());
+  }
+
   sullaLog({ topic: 'shutdown', level: 'info', message: `${ shutdownMode } PATH — stopping k8smanager, extensions, integrations` });
   console.log(`[Shutdown] ${ shutdownMode } — stopping k8smanager, extensions, integrations`);
   try {
@@ -1010,7 +1035,7 @@ Electron.app.on('before-quit', async(event) => {
     if (isRestarting) {
       sullaLog({ topic: 'shutdown', level: 'info', message: 'RESTART — skipping k8smanager.stop() (VM stays alive)' });
     } else {
-      await withTimeout('k8smanager.stop', 10_000, k8smanager?.stop() ?? Promise.resolve());
+      await withTimeout('k8smanager.stop', 60_000, k8smanager?.stop() ?? Promise.resolve());
     }
 
     await withTimeout('shutdown-integrations', 10_000, mainEvents.tryInvoke('shutdown-integrations') ?? Promise.resolve());
@@ -1029,15 +1054,15 @@ Electron.app.on('before-quit', async(event) => {
     }
     Electron.app.quit();
 
-    // Replace the 30s deadline with a tighter post-quit backstop.
-    // If app.quit() doesn't terminate the process within 5s (lingering
+    // Replace the overall deadline with a post-quit backstop.
+    // If app.quit() doesn't terminate the process within 15s (lingering
     // handles from postgres/redis/k8s), force-exit cleanly.
     clearTimeout(forceExitTimer);
     const postQuitTimer = setTimeout(() => {
-      sullaLog({ topic: 'shutdown', level: 'warn', message: 'Post-quit backstop: process still alive after 5s — force-exiting' });
-      console.warn('[Shutdown] Post-quit backstop: process still alive after 5s — force-exiting');
+      sullaLog({ topic: 'shutdown', level: 'warn', message: 'Post-quit backstop: process still alive after 15s — force-exiting' });
+      console.warn('[Shutdown] Post-quit backstop: process still alive after 15s — force-exiting');
       process.exit(0);
-    }, 5_000);
+    }, 15_000);
 
     postQuitTimer.unref();
   }
