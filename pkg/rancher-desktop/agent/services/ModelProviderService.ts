@@ -62,11 +62,17 @@ class ModelProviderService {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    // Load persisted state (requires DB to be ready — caller must ensure this)
-    await this.loadStateFromDB();
-
-    // Register IPC handlers
+    // Register IPC handlers FIRST so the UI can always query providers,
+    // even if DB-backed state loading fails.
     this.registerIpcHandlers();
+
+    // Load persisted state. If this throws, the service still responds to
+    // IPC with sensible defaults from the initial state object.
+    try {
+      await this.loadStateFromDB();
+    } catch (err) {
+      console.warn('[ModelProviderService] loadStateFromDB failed — using defaults:', err);
+    }
 
     this.initialized = true;
     console.log('[ModelProviderService] Initialized:', JSON.stringify(this.state));
