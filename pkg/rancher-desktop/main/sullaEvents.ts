@@ -529,44 +529,6 @@ export function initSullaEvents(): void {
     return target;
   });
 
-  ipcMainProxy.handle('training-run', async(_event: unknown, modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => {
-    const tc = await import('./trainingController');
-    return tc.runTraining(modelKey, sources);
-  });
-
-  ipcMainProxy.handle('training-status', async() => {
-    const tc = await import('./trainingController');
-    return tc.getTrainingStatus();
-  });
-
-  ipcMainProxy.handle('training-history', async() => {
-    const tc = await import('./trainingController');
-    return tc.getTrainingHistory();
-  });
-
-  ipcMainProxy.handle('training-log-read', async(_event: unknown, filename: string) => {
-    const tc = await import('./trainingController');
-    return tc.readTrainingLog(filename);
-  });
-
-  ipcMainProxy.handle('training-schedule-get', async() => {
-    const tc = await import('./trainingController');
-    return tc.getSchedule();
-  });
-
-  ipcMainProxy.handle('training-models-downloaded', async() => {
-    const tc = await import('./trainingController');
-    return tc.getDownloadedTrainingModels();
-  });
-
-  ipcMainProxy.handle('training-schedule-set', async(_event: unknown, opts: { enabled: boolean; hour: number; minute: number }) => {
-    const tc = await import('./trainingController');
-    return tc.setSchedule(opts);
-  });
-
-  // On startup, load the schedule and arm the timer + auto-preprocessing
-  import('./trainingController').then(tc => tc.initScheduleOnStartup()).catch(() => {});
-
   /**
    * Return system resource info for the renderer's fitness indicators.
    */
@@ -599,80 +561,6 @@ export function initSullaEvents(): void {
     return { totalMemoryGB, availableMemoryGB: freeMemoryGB, availableDiskGB };
   });
 
-  /**
-   * Check which LOCAL_MODELS keys have their GGUF file downloaded on disk.
-   * Returns a Record<modelKey, boolean>.
-   */
-  ipcMainProxy.handle('local-models-status', async() => {
-    const { GGUF_MODELS, getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
-    const svc = getLlamaCppService();
-    const { LOCAL_MODELS } = await import('@pkg/shared/localModels');
-    const status: Record<string, boolean> = {};
-
-    for (const model of LOCAL_MODELS) {
-      status[model.name] = svc.getModelPath(model.name) !== null;
-    }
-
-    return status;
-  });
-
-  /**
-   * Download a GGUF model by key. Returns { ok: true } on success.
-   * Sends 'local-model-download-progress' events to the renderer during download.
-   */
-  ipcMainProxy.handle('local-model-download', async(event: unknown, modelKey: string) => {
-    const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
-    const svc = getLlamaCppService();
-
-    const sender = (event as { sender?: Electron.WebContents })?.sender;
-    let lastReportedPercent = -1;
-    const onProgress = (received: number, total: number) => {
-      const percent = Math.round((received / total) * 100);
-
-      if (percent !== lastReportedPercent && sender) {
-        lastReportedPercent = percent;
-        sender.send('local-model-download-progress', { modelKey, received, total, percent });
-      }
-    };
-
-    await svc.downloadModel(modelKey, onProgress);
-
-    return { ok: true };
-  });
-
-  // ── Document Processing Config ──────────────────────────────────────
-
-  ipcMainProxy.handle('training-docs-config-exists', async() => {
-    const tc = await import('./trainingController');
-    return tc.docsConfigExists();
-  });
-
-  ipcMainProxy.handle('training-docs-config-load', async() => {
-    const tc = await import('./trainingController');
-    return tc.docsConfigLoad();
-  });
-
-  ipcMainProxy.handle('training-docs-list-dir', async(_event: unknown, dirPath: string) => {
-    const tc = await import('./trainingController');
-    return tc.docsListDir(dirPath);
-  });
-
-  ipcMainProxy.handle('training-content-tree', async(_event: unknown, dirPath?: string) => {
-    const tc = await import('./trainingController');
-    return tc.contentTree(dirPath);
-  });
-
-  ipcMainProxy.handle('training-docs-config-save', async(_event: unknown, folders: string[], files: string[], fileTypes: string[]) => {
-    const tc = await import('./trainingController');
-    return tc.docsConfigSave(folders, files, fileTypes);
-  });
-
-  // ── Training Environment Installation ────────────────────────────
-
-  ipcMainProxy.handle('training-install-status', async() => {
-    const tc = await import('./trainingController');
-    return tc.getFullInstallStatus();
-  });
 
   /**
    * Lightweight stats for the editor footer:
@@ -718,78 +606,6 @@ export function initSullaEvents(): void {
     return { availableBytes, unprocessedTrainingBytes };
   });
 
-  ipcMainProxy.handle('training-data-files', async() => {
-    const tc = await import('./trainingController');
-    return tc.listTrainingDataFiles();
-  });
-
-  ipcMainProxy.handle('training-preprocess', async() => {
-    const tc = await import('./trainingController');
-    return tc.preprocessNow();
-  });
-
-  ipcMainProxy.handle('training-prepare-docs', async(_event: unknown, folders: string[], files: string[], options?: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => {
-    const tc = await import('./trainingController');
-    return tc.prepareDocs(folders, files, options);
-  });
-
-  // ─── Training Queue IPC ───
-
-  ipcMainProxy.handle('training-queue-add', async(_event: unknown, entries: { filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }[]) => {
-    const tc = await import('./trainingController');
-    return tc.addToQueue(entries);
-  });
-
-  ipcMainProxy.handle('training-queue-process-now', async() => {
-    const tc = await import('./trainingController');
-    return tc.processQueueNow();
-  });
-
-  ipcMainProxy.handle('training-queue-status', async() => {
-    const tc = await import('./trainingController');
-    return tc.getQueueStatus();
-  });
-
-  // ─── Train on Conversations Now ───
-
-  ipcMainProxy.handle('training-train-conversations-now', async() => {
-    const tc = await import('./trainingController');
-    return tc.trainConversationsNow();
-  });
-
-  // ─── Scheduled Training Configs ───
-
-  ipcMainProxy.handle('training-scheduled-configs-list', async() => {
-    const tc = await import('./trainingController');
-    return tc.listScheduledConfigs();
-  });
-
-  ipcMainProxy.handle('training-scheduled-configs-add', async(_event: unknown, config: { name: string; source: string; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => {
-    const tc = await import('./trainingController');
-    return tc.addScheduledConfig(config);
-  });
-
-  ipcMainProxy.handle('training-scheduled-configs-remove', async(_event: unknown, id: string) => {
-    const tc = await import('./trainingController');
-    return tc.removeScheduledConfig(id);
-  });
-
-  // ─── Wizard Settings Persistence ───
-
-  ipcMainProxy.handle('training-wizard-settings-save', async(_event: unknown, wizard: 'create' | 'train', settings: Record<string, unknown>) => {
-    const tc = await import('./trainingController');
-    return tc.saveWizardSettings(wizard, settings);
-  });
-
-  ipcMainProxy.handle('training-wizard-settings-load', async(_event: unknown, wizard: 'create' | 'train') => {
-    const tc = await import('./trainingController');
-    return tc.loadWizardSettings(wizard);
-  });
-
-  ipcMainProxy.handle('training-install', async() => {
-    const tc = await import('./trainingController');
-    return tc.installTrainingEnv();
-  });
 
   // ─────────────────────────────────────────────────────────────
   // QMD Search handlers
@@ -1548,6 +1364,3 @@ export function initSullaEvents(): void {
     }
   })();
 }
-
-// Nightly training schedule, auto-preprocessing, and related timers
-// have been moved to trainingController.ts

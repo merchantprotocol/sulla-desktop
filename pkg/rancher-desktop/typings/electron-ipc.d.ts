@@ -339,34 +339,8 @@ export interface IpcMainInvokeEvents {
   'filesystem-upload':         (destDir: string, fileName: string, base64Data: string) => string;
   // #endregion
 
-  // #region Training
-  'training-install-status':           () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string; requiredBytes: number; availableBytes: number };
-  'training-install':                  () => { logFilename: string };
-  'training-run':                      (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
-  'training-status':                   () => { running: boolean; logFilename: string };
-  'training-docs-config-exists':       () => boolean;
-  'training-history':                  () => { filename: string; size: number; createdAt: string; modifiedAt: string; model?: string; durationMs?: number; conversationsProcessed?: number; status: 'completed' | 'running' | 'failed' }[];
-  'training-log-read':                 (filename: string) => string;
-  'training-schedule-get':             () => { enabled: boolean; hour: number; minute: number };
-  'training-schedule-set':             (opts: { enabled: boolean; hour: number; minute: number }) => { ok: boolean };
-  'training-models-downloaded':        () => { key: string; displayName: string; trainingRepo: string }[];
-  'training-docs-config-load':         () => { folders: string[]; files: string[]; fileTypes: string[] };
-  'training-docs-list-dir':            (dirPath: string) => { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }[];
-  'training-docs-config-save':         (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
-  'training-content-tree':             (dirPath?: string) => { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string }[];
+  // #region Editor
   'editor-footer-stats':               () => { availableBytes: number; unprocessedTrainingBytes: number };
-  'training-data-files':               () => { filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }[];
-  'training-preprocess':               () => { conversations: number; filesProcessed: number; filesSkipped: number };
-  'training-prepare-docs':             (folders: string[], files: string[], options: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => { filesProcessed: number; pairsGenerated: number };
-  'training-queue-add':                (entries: { filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }[]) => { queued: number };
-  'training-queue-process-now':        () => { ok: boolean };
-  'training-queue-status':             () => { pending: number; processing: boolean };
-  'training-train-conversations-now':  () => { logFilename: string; logPath: string };
-  'training-scheduled-configs-list':   () => { id: string; name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; createdAt: string; files?: string[] }[];
-  'training-scheduled-configs-add':    (config: { name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => { id: string };
-  'training-scheduled-configs-remove': (id: string) => { ok: boolean };
-  'training-wizard-settings-save':     (wizard: 'create' | 'train', settings: Record<string, unknown>) => { ok: boolean };
-  'training-wizard-settings-load':     (wizard: 'create' | 'train') => Record<string, unknown>;
   // #endregion
 
   // #region QMD Search
@@ -381,13 +355,8 @@ export interface IpcMainInvokeEvents {
   }[];
   // #endregion
 
-  // #region Local Models
+  // #region System Resources
   'system-resources':     () => { totalMemoryGB: number; availableMemoryGB: number; availableDiskGB: number };
-  'local-models-status':  () => Record<string, boolean>;
-  'local-model-download': (modelKey: string) => { ok: boolean };
-  'llama-server:status':  () => { running: boolean };
-  'llama-server:stop':    () => { running: boolean };
-  'llama-server:start':   () => { running: boolean; error?: string };
   // #endregion
 
   // #region main/imageEvents
@@ -511,7 +480,6 @@ export interface IpcRendererEvents {
   ) => void;
   'settings-read':        (settings: import('@pkg/config/settings').Settings) => void;
   'settings-write-error': (error: any) => void;
-  'local-model-download-progress': (data: { modelKey: string; received: number; total: number; percent: number }) => void;
   'get-app-version':      (version: string) => void;
   'update-state':         (state: import('@pkg/main/update').UpdateState) => void;
   'always-debugging':     (status: boolean) => void;

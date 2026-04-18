@@ -3,8 +3,6 @@
  *
  * Checks available space every 10 seconds during recording.
  * Warns when low (< 1 GB), auto-stops when critical (< 200 MB).
- *
- * Reference: agent/services/LlamaCppService.ts:268-294
  */
 
 import { ref, onUnmounted } from 'vue';

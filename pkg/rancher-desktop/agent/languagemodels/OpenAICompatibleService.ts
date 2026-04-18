@@ -1,6 +1,5 @@
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, type LLMServiceConfig, FinishReason } from './BaseLanguageModel';
 import { readSSEEvents } from './SSEStreamReader';
-import { getOllamaService } from './OllamaService';
 
 /**
  * OpenAI-compatible remote LLM provider base class.
@@ -366,14 +365,8 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     };
   }
 
-  protected async getFallbackLocalService() {
-    // If the user disabled the local server, don't try to fall back to it
-    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-    const modelMode = await SullaSettingsModel.get('modelMode', 'local');
-    if (modelMode === 'remote') {
-      throw new Error('Local model server disabled by user');
-    }
-    return getOllamaService();
+  protected async getFallbackLocalService(): Promise<never> {
+    throw new Error('Local model fallback not available — configure a remote provider');
   }
 
   /**

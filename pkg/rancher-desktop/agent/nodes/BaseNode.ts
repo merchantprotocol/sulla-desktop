@@ -2,7 +2,7 @@ import type { BaseThreadState, NodeResult } from './Graph';
 import type { ToolResult, ThreadState } from '../types';
 import path from 'node:path'; // used by enrichPrompt for active_projects_file
 import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
-import { getCurrentMode, getLocalService, getService, getPrimaryService, getSecondaryService } from '../languagemodels';
+import { getPrimaryService, getSecondaryService } from '../languagemodels';
 import { parseJson } from '../services/JsonParseService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
@@ -77,8 +77,8 @@ export interface PromptEnrichmentOptions {
   includeEnvironment?: boolean;
   includeMemory?:      boolean;
   includeTools?:       boolean;
-  /** Prompt mode for section-based builder: full (main agent), minimal (subagents), local (condensed for local LLMs), none (pass-through) */
-  promptMode?:         'full' | 'minimal' | 'local' | 'none';
+  /** Prompt mode for section-based builder: full (main agent), minimal (subagents), none (pass-through) */
+  promptMode?:         'full' | 'minimal' | 'none';
   /** Whether this is the heartbeat (autonomous) agent */
   isHeartbeat?:        boolean;
   /** Chat mode override for voice section injection */
@@ -661,9 +661,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const llm = await getPrimaryService();
     const providerName = llm?.getProviderName?.() || 'anthropic';
 
-    // Determine prompt mode — auto-select 'local' for local LLMs (ollama/llama-server)
-    // to use condensed prompts that fit in smaller context windows.
-    const mode = options.promptMode || (providerName === 'ollama' ? 'local' : 'full');
+    const mode = options.promptMode || 'full';
 
     // Build prompt context
     const buildCtx: PromptBuildContext = {
@@ -760,7 +758,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
      * - Replaces last system prompt (or appends new one)
      * - Appends user message
      * - Calls primary LLM
-     * - On any error/failure → fallback to local Ollama if remote
+     * - On any error/failure → fallback to secondary provider
      * - Appends assistant response to state.messages
      * - Parses JSON if format='json'
      * - No raw response logging
@@ -912,12 +910,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             'git_push', 'git_stash', 'git_checkout',
           ]);
           llmTools = llmTools.filter((t: any) => !subAgentBlockedTools.has(t?.function?.name));
-        }
-
-        // Block sub-agent spawning on local models — slots are limited
-        if ((state.metadata as any).llmLocal) {
-          const localBlockedTools = new Set(['spawn_agent', 'check_agent_jobs']);
-          llmTools = llmTools.filter((t: any) => !localBlockedTools.has(t?.function?.name));
         }
 
         // Block browser/playwright tools when caller has no visible browser

@@ -2,9 +2,9 @@
  * LLM Registry - Central access point for LLM services
  *
  * Provides:
- * - getLLMService('local' | 'remote' | modelName)
- * - getLocalService() / getRemoteService()
- * - getLocalModel() / getRemoteModel()
+ * - getLLMService('remote' | modelName)
+ * - getRemoteService()
+ * - getRemoteModel()
  * - getHeartbeatLLM() — respects heartbeatProvider → primary provider fallback
  *
  * Reads provider/model state from ModelProviderService (source of truth).
@@ -13,14 +13,12 @@
  */
 
 import { BaseLanguageModel } from './BaseLanguageModel';
-import { getOllamaService } from './OllamaService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { modelDiscoveryService, type ModelInfo } from './ModelDiscoveryService';
 import { getIntegrationService } from '../services/IntegrationService';
 
 // Provider factory map — lazy-loaded to avoid circular imports
 const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
-  ollama:    async() => { return getOllamaService() },
   grok:      async() => { const { getGrokService } = await import('./GrokService'); return getGrokService() },
   openai:    async() => { const { getOpenAIService } = await import('./OpenAIService'); return getOpenAIService() },
   anthropic: async() => { const { getAnthropicService } = await import('./AnthropicService'); return getAnthropicService() },
@@ -49,31 +47,10 @@ class LLMRegistryImpl {
   /**
    * Get service by mode or model name
    */
-  async getService(specifier: 'local' | 'remote' | string): Promise<BaseLanguageModel> {
-    if (specifier === 'local') return this.getLocalService();
+  async getService(specifier: string): Promise<BaseLanguageModel> {
     if (specifier === 'remote') return this.getRemoteService();
-
-    // By model name
-    if (this.isLikelyLocalModel(specifier)) {
-      return this.getLocalService(specifier);
-    }
+    // Treat any specifier as a remote model request
     return this.getRemoteService(specifier);
-  }
-
-  async getLocalService(overrideModel?: string): Promise<BaseLanguageModel> {
-    const key = 'local';
-    let svc = this.services.get(key);
-
-    if (!svc) {
-      svc = await getOllamaService();
-      if (overrideModel) {
-        console.warn('[LLMRegistry] Local model override requested — using global Ollama instance');
-      }
-      this.services.set(key, svc);
-      svc.initialize().catch(console.error);
-    }
-
-    return svc;
   }
 
   /**
@@ -133,7 +110,7 @@ class LLMRegistryImpl {
     const mps = tryGetModelProviderService();
     const providerId = mps
       ? mps.getPrimaryProvider()
-      : await SullaSettingsModel.get('primaryProvider', 'ollama');
+      : await SullaSettingsModel.get('primaryProvider', 'grok');
     return this.getServiceByProvider(providerId);
   }
 
@@ -144,7 +121,7 @@ class LLMRegistryImpl {
     const mps = tryGetModelProviderService();
     const providerId = mps
       ? mps.getSecondaryProvider()
-      : await SullaSettingsModel.get('secondaryProvider', 'ollama');
+      : await SullaSettingsModel.get('secondaryProvider', 'grok');
     return this.getServiceByProvider(providerId);
   }
 
@@ -161,22 +138,9 @@ class LLMRegistryImpl {
     return this.getServiceByProvider(heartbeatProvider);
   }
 
-  async getLocalModel(): Promise<string> {
-    const svc = await this.getLocalService();
-    return svc.getModel();
-  }
-
   async getRemoteModel(): Promise<string> {
     const svc = await this.getRemoteService();
     return svc.getModel();
-  }
-
-  private isLikelyLocalModel(name: string): boolean {
-    return (
-      name.includes(':') ||
-      !!(/^\d+b$/.exec(name)) ||
-      /^(llama|phi|qwen|gemma|mistral|deepseek|ollama)/i.test(name)
-    );
   }
 
   /**
@@ -208,19 +172,7 @@ class LLMRegistryImpl {
   async getCurrentModel(): Promise<string> {
     const mps = tryGetModelProviderService();
     if (mps) return mps.getActiveModelId();
-
-    const mode = await SullaSettingsModel.get('modelMode', 'local');
-    if (mode === 'remote') {
-      return this.getRemoteModel();
-    }
-    return this.getLocalModel();
-  }
-
-  getCurrentMode(): Promise<'local' | 'remote'> | 'local' | 'remote' {
-    const mps = tryGetModelProviderService();
-    if (mps) return mps.getModelMode();
-
-    return SullaSettingsModel.get('modelMode', 'local');
+    return this.getRemoteModel();
   }
 
   async getCurrentConfig(): Promise<any> {
@@ -228,19 +180,14 @@ class LLMRegistryImpl {
     if (mps) {
       const state = mps.getState();
       return {
-        mode:           state.modelMode,
-        localModel:     state.modelMode === 'local' ? state.activeModelId : await this.getLocalModel(),
-        remoteModel:    state.modelMode === 'remote' ? state.activeModelId : '',
+        mode:           'remote',
+        remoteModel:    state.activeModelId,
         remoteProvider: state.primaryProvider,
         remoteApiKey:   '',
       };
     }
 
-    // Legacy fallback
-    const mode = await SullaSettingsModel.get('modelMode', 'local');
-    const localModel = await this.getLocalModel();
     const remoteProviderId = await this.getActiveRemoteProviderId();
-
     let remoteModel = '';
     let remoteApiKey = '';
     try {
@@ -256,22 +203,11 @@ class LLMRegistryImpl {
     }
 
     return {
-      mode,
-      localModel,
+      mode: 'remote',
       remoteModel,
       remoteProvider: remoteProviderId,
       remoteApiKey,
     };
-  }
-
-  /**
-   * Explicit context-based service access
-   */
-  async getServiceForContext(context: 'local' | 'remote', model?: string): Promise<BaseLanguageModel> {
-    if (context === 'local') {
-      return this.getLocalService(model);
-    }
-    return this.getRemoteService(model);
   }
 
   /**
@@ -363,16 +299,11 @@ class LLMRegistryImpl {
 
 export const LLMRegistry = new LLMRegistryImpl();
 
-export const getLLMService = async(spec: 'local' | 'remote' | string) => await LLMRegistry.getService(spec);
-export const getLocalService = async(model?: string) => await LLMRegistry.getLocalService(model);
+export const getLLMService = async(spec: string) => await LLMRegistry.getService(spec);
 export const getRemoteService = async(model?: string) => await LLMRegistry.getRemoteService(model);
 export const getHeartbeatLLM = async() => await LLMRegistry.getHeartbeatLLM();
-export const getLocalModel = async() => await LLMRegistry.getLocalModel();
 export const getRemoteModel = async() => await LLMRegistry.getRemoteModel();
-export const getService = async(context: 'local' | 'remote', model?: string) =>
-  await LLMRegistry.getServiceForContext(context, model);
 export const getCurrentModel = async() => await LLMRegistry.getCurrentModel();
-export const getCurrentMode = async() => await LLMRegistry.getCurrentMode();
 
 // Primary / Secondary / Heartbeat provider exports
 export const getPrimaryService = async() => await LLMRegistry.getPrimaryService();

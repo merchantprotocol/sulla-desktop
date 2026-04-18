@@ -15,7 +15,6 @@ import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
-import { getLlamaCppService } from '@pkg/agent/services/LlamaCppService';
 import * as path from 'path';
 import { app, webContents } from 'electron';
 import { execSync } from 'child_process';
@@ -183,75 +182,6 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { /* stateless singleton, no teardown */ },
   );
 
-  lifecycle.register('llama-cpp', ['model-provider'],
-    async() => {
-      const sendProgress = (current: number, max: number, description: string) => {
-        window.send('k8s-progress', { current, max, description });
-      };
-
-      sendProgress(0, 100, 'Installing llama.cpp...');
-      const llamaCppService = getLlamaCppService();
-
-      await llamaCppService.ensure();
-      console.log('[Background] LlamaCppService initialized - llama.cpp ready:', llamaCppService.isReady);
-
-      if (!llamaCppService.isReady) {
-        return;
-      }
-
-      sendProgress(20, 100, 'llama.cpp installed');
-
-      // Read from ModelProviderService — the single source of truth for model selection
-      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
-      const providerState = getModelProviderService().getState();
-
-      // Check the explicit localServerEnabled preference first, then fall back to modelMode
-      const localServerEnabled = await SullaSettingsModel.get('localServerEnabled', '');
-
-      if (localServerEnabled === 'false' || (localServerEnabled === '' && providerState.modelMode === 'remote')) {
-        console.log('[Background] Local model server disabled — skipping llama-server startup');
-        sendProgress(100, 100, 'Local server disabled');
-
-        return;
-      }
-
-      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-      let modelKey = providerState.activeModelId || 'qwen3.5-9b';
-
-      if (!(modelKey in GGUF_MODELS)) {
-        const mapped = modelKey.replace(/:/g, '-');
-
-        if (mapped in GGUF_MODELS) {
-          console.log(`[Background] Mapped legacy model key '${ modelKey }' -> '${ mapped }'`);
-          modelKey = mapped;
-        } else {
-          console.warn(`[Background] Unknown model key '${ modelKey }', falling back to qwen3.5-9b`);
-          modelKey = 'qwen3.5-9b';
-        }
-      }
-      console.log(`[Background] User selected model: ${ modelKey }`);
-
-      const entry = GGUF_MODELS[modelKey];
-
-      sendProgress(25, 100, `Downloading model ${ entry?.displayName ?? modelKey }...`);
-      const modelPath = await llamaCppService.downloadModel(modelKey, (received, total) => {
-        const pct = total > 0 ? Math.round((received / total) * 40) + 25 : -1;
-
-        sendProgress(pct, 100, `Downloading ${ entry?.displayName ?? modelKey }... ${ Math.round(received / 1e6) }MB / ${ Math.round(total / 1e6) }MB`);
-      });
-      console.log(`[Background] Model ready at: ${ modelPath }`);
-
-      sendProgress(70, 100, 'Starting local AI server...');
-      await llamaCppService.startServer(modelPath);
-      sendProgress(100, 100, 'Local AI server ready');
-      console.log(`[Background] llama-server running at ${ llamaCppService.serverBaseUrl }`);
-    },
-    async() => {
-      try { await getLlamaCppService().stopServer(); } catch { /* not started */ }
-    },
-    { persistOnRestart: true },
-  );
-
   // ── Connection readiness gates ─────────────────────────────────────────
 
   lifecycle.register('postgres', [],
@@ -338,11 +268,9 @@ export async function instantiateSullaStart(): Promise<void> {
 
       // Invalidate LLM caches whenever the source of truth changes
       const { LLMRegistry } = await import('@pkg/agent/languagemodels');
-      const { resetOllamaService } = await import('@pkg/agent/languagemodels/OllamaService');
 
       svc.onChange(() => {
         LLMRegistry.invalidate();
-        resetOllamaService();
         console.log('[Background] LLM service caches invalidated via ModelProviderService');
       });
 
@@ -792,68 +720,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       ready:        lm.isAllReady(),
       shuttingDown: lm.isShuttingDown(),
     };
-  });
-
-  // ── Local llama-server control ─────────────────────────────────────────────
-
-  ipcMain.handle('llama-server:status', async() => {
-    return { running: getLlamaCppService().isServerRunning };
-  });
-
-  ipcMain.handle('llama-server:stop', async() => {
-    console.log('[Background] IPC llama-server:stop — stopping local server');
-    try {
-      await getLlamaCppService().stopServer();
-    } catch { /* not running */ }
-
-    return { running: false };
-  });
-
-  ipcMain.handle('llama-server:start', async() => {
-    console.log('[Background] IPC llama-server:start — starting local server');
-    try {
-      const sendProgress = (current: number, max: number, description: string) => {
-        window.send('k8s-progress', { current, max, description });
-      };
-
-      const llamaCpp = getLlamaCppService();
-
-      if (llamaCpp.isServerRunning) {
-        return { running: true };
-      }
-
-      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
-      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-      let modelKey = getModelProviderService().getState().activeModelId || 'qwen3.5-9b';
-
-      if (!(modelKey in GGUF_MODELS)) {
-        const mapped = modelKey.replace(/:/g, '-');
-
-        modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
-      }
-
-      const entry = GGUF_MODELS[modelKey];
-
-      sendProgress(10, 100, `Downloading model ${ entry?.displayName ?? modelKey }...`);
-      const modelPath = await llamaCpp.downloadModel(modelKey, (received, total) => {
-        const pct = total > 0 ? Math.round((received / total) * 60) + 10 : -1;
-
-        sendProgress(pct, 100, `Downloading ${ entry?.displayName ?? modelKey }... ${ Math.round(received / 1e6) }MB / ${ Math.round(total / 1e6) }MB`);
-      });
-
-      sendProgress(75, 100, 'Starting local AI server...');
-      await llamaCpp.startServer(modelPath);
-      sendProgress(100, 100, 'Local AI server ready');
-      console.log(`[Background] llama-server started at ${ llamaCpp.serverBaseUrl }`);
-
-      return { running: true };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-
-      console.error('[Background] llama-server:start failed:', message);
-
-      return { running: false, error: message };
-    }
   });
 
   // ── Vault: export & import ─────────────────────────────────────────────────

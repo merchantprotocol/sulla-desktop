@@ -117,21 +117,6 @@ export class AgentNode extends BaseNode {
       }
     }
 
-    // Training data: capture the full assembled system prompt (once per session)
-    const trainingConvId = (state.metadata as any).conversationId;
-    if (trainingConvId) {
-      try {
-        const { getTrainingDataLogger } = await import('../services/TrainingDataLogger');
-        const tl = getTrainingDataLogger();
-        if (tl.hasSession(trainingConvId)) {
-          const existing = tl.getSessionMessages(trainingConvId);
-          if (!existing?.some(m => m.role === 'system')) {
-            tl.logSystemPrompt(trainingConvId, enrichedPrompt);
-          }
-        }
-      } catch { /* best-effort */ }
-    }
-
     // ----------------------------------------------------------------
     // 2. EXECUTE — LLM reads conversation, calls tools, responds
     // ----------------------------------------------------------------

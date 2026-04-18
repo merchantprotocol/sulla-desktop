@@ -28,39 +28,6 @@
         />
       </rd-fieldset>
 
-      <div class="mt-10" />
-
-      <rd-fieldset
-        legend-text="AI Model"
-        legend-tooltip="Select the LLM model to use. Models are filtered based on your allocated resources."
-        class="mb-6 mt-6 fr-fieldset"
-      >
-        <select
-          v-model="sullaModel"
-          class="w-full p-2 border rounded-md mb-2 fr-input"
-          :class="{ 'fr-border-error': !!modelError }"
-        >
-          <option
-            v-for="model in availableModels"
-            :key="model.name"
-            :value="model.name"
-            :disabled="!model.available"
-            :class="{ 'model-disabled': !model.available }"
-          >
-            {{ model.displayName }} ({{ model.size }}) {{ !model.available ? '- Requires more resources' : '' }}
-          </option>
-        </select>
-        <p class="text-sm italic fr-muted">
-          {{ selectedModelDescription }}
-        </p>
-        <p
-          v-if="modelError"
-          class="text-sm mt-1 fr-error"
-        >
-          {{ modelError }}
-        </p>
-      </rd-fieldset>
-
       <div
         v-if="resourceError"
         class="my-4 p-3 border rounded-md fr-error-box"
@@ -138,7 +105,6 @@ import { PathManagementStrategy } from '@pkg/integrations/pathManager';
 import { highestStableVersion, VersionEntry } from '@pkg/utils/kubeVersions';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import { LOCAL_MODELS } from '@pkg/shared/localModels';
 
 const settings = inject<Ref<Settings>>('settings')!;
 const commitChanges = inject<(settings: RecursivePartial<Settings>) => Promise<void>>('commitChanges')!;
@@ -151,9 +117,6 @@ const props = defineProps<{
   showBack?: boolean;
 }>();
 
-// Reactive ref for sullaModel
-const sullaModel = ref<string>('');
-
 // Reactive ref for telemetry
 const enableTelemetry = ref(false);
 
@@ -162,9 +125,6 @@ const enableKubernetes = ref(false);
 
 // Reactive ref for options accordion
 const isOptionsOpen = ref(false);
-
-// Reactive ref for model error
-const modelError = ref('');
 
 // Reactive ref for resource error
 const resourceError = ref('');
@@ -192,10 +152,6 @@ onMounted(async() => {
     });
   });
 
-  // Load sullaModel from SullaSettingsModel
-  const loadedModel = await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
-  sullaModel.value = loadedModel;
-
   ipcRenderer.send('k8s-versions');
   ipcRenderer.on('k8s-versions', (event, versions: VersionEntry[]) => {
     const recommendedVersions = versions.filter((v: VersionEntry) => !!v.channels);
@@ -211,56 +167,16 @@ onMounted(async() => {
   });
 });
 
-// GGUF models sorted by resource requirements (smallest to largest)
-// Shared with LanguageModelSettings — single source of truth
-const GGUF_MODELS = LOCAL_MODELS;
-
 // Dynamic system resources
 const availMemoryInGB = computed(() => Math.ceil(os.totalmem() / 2 ** 30));
 const availNumCPUs = computed(() => os.cpus().length);
-const allocatedMemoryGB = computed(() => settings.value.virtualMachine.memoryInGB);
-const allocatedCPUs = computed(() => settings.value.virtualMachine.numberCPUs);
-
-// llama.cpp runs on bare metal — use ~70% of VM memory and ~75% of CPUs for model budget
-const modelMemoryGB = computed(() => Math.floor(allocatedMemoryGB.value * 0.7));
-const modelCPUs = computed(() => Math.floor(allocatedCPUs.value * 0.75));
-
-const availableModels = computed(() =>
-  GGUF_MODELS.map(model => ({
-    ...model,
-    available: modelMemoryGB.value >= model.minMemoryGB && modelCPUs.value >= model.minCPUs,
-  })),
-);
-
-const selectedModelDescription = computed(() =>
-  availableModels.value.find(m => m.name === sullaModel.value)?.description || '',
-);
 
 const onMemoryChange = (value: number) => {
   settings.value.virtualMachine.memoryInGB = value;
-  autoSelectBestModel();
 };
 
 const onCpuChange = (value: number) => {
   settings.value.virtualMachine.numberCPUs = value;
-  autoSelectBestModel();
-};
-
-const autoSelectBestModel = () => {
-  // If current selection is no longer available, select the best available model
-  const currentModel = availableModels.value.find(m => m.name === sullaModel.value);
-
-  if (!currentModel?.available) {
-    // Find the best (largest) available model
-    const available = availableModels.value.filter(m => m.available);
-
-    if (available.length > 0) {
-      sullaModel.value = available[available.length - 1].name;
-    } else {
-      // Fallback to smallest model
-      sullaModel.value = 'qwen3.5-9b';
-    }
-  }
 };
 
 const onKubernetesChange = async() => {
@@ -275,38 +191,24 @@ const onTelemetryChange = async() => {
   });
 };
 
-const validateModel = () => {
-  if (!sullaModel.value || sullaModel.value.trim() === '') {
-    modelError.value = 'Please select an AI model.';
-    return false;
-  }
-  modelError.value = '';
-  return true;
-};
-
 const handleNext = async() => {
-  validateModel();  // Always validate to set error
-
   if ((settings.value as any).virtualMachine.memoryInGB <= 4 || (settings.value as any).virtualMachine.numberCPUs <= 2) {
     resourceError.value = 'Please allocate at least 5GB memory and 3 CPUs for the AI services.';
   } else {
     resourceError.value = '';
   }
 
-  if (modelError.value || resourceError.value) {
+  if (resourceError.value) {
     return;
   }
 
-  // Save the VM resources and model choice
+  // Save the VM resources
   await commitChanges({
     virtualMachine: {
       memoryInGB: (settings.value as any).virtualMachine.memoryInGB,
       numberCPUs: (settings.value as any).virtualMachine.numberCPUs,
     },
   });
-
-  // Save sullaModel to SullaSettingsModel
-  await SullaSettingsModel.set('sullaModel', sullaModel.value, 'string');
 
   emit('next');
 };

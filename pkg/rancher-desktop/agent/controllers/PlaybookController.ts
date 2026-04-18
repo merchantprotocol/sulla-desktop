@@ -14,7 +14,6 @@
 import { throwIfAborted } from '../services/AbortService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { getConversationLogger } from '../services/ConversationLogger';
-import { getTrainingDataLogger } from '../services/TrainingDataLogger';
 import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
 import {
   processNextStep,
@@ -1621,9 +1620,6 @@ export class PlaybookController<TState = any> {
 
     subState.messages.push({ role: 'user', content: prompt });
 
-    const trainingLogger = getTrainingDataLogger();
-    trainingLogger.startSession(threadId, { agentId: agentConfigChannel });
-
     subState.metadata.isSubAgent = true;
 
     const parentChannel = (_state as any).metadata?.wsChannel || 'workbench';
@@ -1631,12 +1627,6 @@ export class PlaybookController<TState = any> {
     subState.metadata.workflowParentChannel = parentChannel;
 
     const finalState = await graph.execute(subState);
-
-    const parentConvId = (_state as any).metadata?.conversationId;
-    if (parentConvId && trainingLogger.hasSession(parentConvId)) {
-      const subNodeLabel = config.agentName as string || agentId || nodeId;
-      trainingLogger.embedSubAgentConversation(parentConvId, threadId, subNodeLabel);
-    }
 
     const agentMeta = (finalState.metadata)?.agent || {};
     const agentStatus = String(agentMeta.status || '').toLowerCase();

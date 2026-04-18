@@ -1,6 +1,6 @@
 import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { getCurrentModel, getCurrentMode } from '../languagemodels';
+import { getCurrentModel } from '../languagemodels';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
 import { toolRegistry } from '../tools/registry';
 import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
@@ -803,13 +803,8 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
   let llmLocal: boolean;
 
   if (heartbeatProvider === 'default' || heartbeatProvider === 'ollama') {
-    if (heartbeatProvider === 'default') {
-      llmModel = await getCurrentModel();
-      llmLocal = (await getCurrentMode()) === 'local';
-    } else {
-      llmModel = await SullaSettingsModel.get('sullaModel', '');
-      llmLocal = true;
-    }
+    llmModel = await getCurrentModel();
+    llmLocal = false;
   } else {
     llmLocal = false;
     try {
@@ -879,7 +874,7 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
 
   console.log(`[GraphRegistry] buildAgentState() — wsChannel="${ wsChannel }", threadId="${ id }"`);
 
-  const mode = await SullaSettingsModel.get('modelMode', 'local');
+  const mode = await SullaSettingsModel.get('modelMode', 'remote');
   const llmModel = mode === 'remote'
     ? await SullaSettingsModel.get('remoteModel', '')
     : await SullaSettingsModel.get('sullaModel', '');
@@ -1017,7 +1012,7 @@ async function buildSubconsciousState(opts: {
 }): Promise<BaseThreadState> {
   const threadId = `subconscious_${ Date.now() }_${ ++threadCounter }`;
 
-  const mode = await SullaSettingsModel.get('modelMode', 'local');
+  const mode = await SullaSettingsModel.get('modelMode', 'remote');
   const llmModel = mode === 'remote'
     ? await SullaSettingsModel.get('remoteModel', '')
     : await SullaSettingsModel.get('sullaModel', '');

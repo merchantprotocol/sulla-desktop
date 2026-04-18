@@ -7,7 +7,6 @@ import { getWebSocketClientService } from '../services/WebSocketClientService';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getConversationLogger } from '../services/ConversationLogger';
-import { getTrainingDataLogger } from '../services/TrainingDataLogger';
 import { InputHandlerNode } from './InputHandlerNode';
 import { AgentNode } from './AgentNode';
 import { SubconsciousAgentNode } from './SubconsciousAgentNode';
@@ -382,11 +381,6 @@ export class Graph<TState = BaseThreadState> {
         }
       }
 
-      // Training data capture
-      getTrainingDataLogger().startSession(convId, {
-        agentId: (state as any).metadata.wsChannel,
-        model:   (state as any).metadata.llmModel,
-      });
     }
 
     (state as any).metadata.iterations ??= 0;
@@ -460,12 +454,10 @@ export class Graph<TState = BaseThreadState> {
         (state as any).metadata.cycleComplete = true;
         if (convId) {
           getConversationLogger().logGraphCompleted(convId, 'aborted');
-          if (!isReentry) getTrainingDataLogger().endSession(convId);
         }
       } else {
         if (convId) {
           getConversationLogger().logGraphCompleted(convId, 'failed', { error: error?.message || String(error) });
-          if (!isReentry) getTrainingDataLogger().endSession(convId);
         }
         // Re-throw non-abort errors
         throw error;
@@ -499,7 +491,6 @@ export class Graph<TState = BaseThreadState> {
         iterations:  (state as any).metadata.iterations,
         agentStatus: (state as any).metadata.agent?.status,
       });
-      getTrainingDataLogger().endSession(convId);
     }
 
     // Send completion signal (skip on playbook re-entry to avoid duplicate signals)
