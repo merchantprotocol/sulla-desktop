@@ -122,30 +122,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       }
     }
 
-    // Final fallback to local LLM (llama.cpp) — only if it's actually healthy and has a model
-    try {
-      const local = await this.getFallbackLocalService();
-      await local.initialize();
-      if (local.isAvailable()) {
-        console.log(`[${ this.constructor.name }] Falling back to local LLM (${ local.getModel() })`);
-        const localModel = local.getModel();
-        const fallbackOptions = {
-          ...(options ?? {}),
-          model: localModel,
-        };
-
-        const localResponse = await local.chat(messages, fallbackOptions);
-        if (localResponse) {
-          return this.toOpenAiCompatibleRawResponse(localResponse, localModel);
-        }
-      } else {
-        console.log(`[${ this.constructor.name }] Local LLM fallback skipped — not available`);
-      }
-    } catch (localErr) {
-      console.warn(`[${ this.constructor.name }] Local LLM fallback failed:`, localErr instanceof Error ? localErr.message : String(localErr));
-    }
-
-    throw lastError ?? new Error(`All retries failed for ${ this.model } and local LLM unavailable`);
+    throw lastError ?? new Error(`All retries failed for ${ this.model }`);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -363,10 +340,6 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         rawProviderContent,
       },
     };
-  }
-
-  protected async getFallbackLocalService(): Promise<never> {
-    throw new Error('Local model fallback not available — configure a remote provider');
   }
 
   /**
