@@ -1,11 +1,19 @@
 /**
  * Claude Code OAuth handler.
  *
- * Runs `claude setup-token` inside the Lima VM via PTY, intercepts the
- * OAuth URL that Claude CLI prints, opens it in the host's default browser,
- * and captures the long-lived OAuth token from stdout when Claude prints it.
+ * Runs `claude setup-token` inside the Lima VM via PTY, opens the OAuth
+ * URL in an embedded BrowserWindow, intercepts the callback to extract
+ * the authorization code, feeds it back to the CLI, and captures the
+ * long-lived OAuth token when Claude CLI prints it.
+ *
+ * After a token is captured, writes it to /etc/claude-env in the VM
+ * so Claude Code can pick it up immediately without a VM restart.
  */
 
+import * as childProcess from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import * as pty from 'node-pty';
 import { BrowserWindow } from 'electron';
 import { resolveLimactlPath, resolveLimaHome } from '@pkg/agent/tools/util/CommandRunner';
@@ -14,36 +22,41 @@ import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
-// Recognizes both plain-token strings (claude-...) and OAuth-style tokens.
-// claude setup-token prints the token on its own line when complete.
-const TOKEN_PATTERNS = [
-  /^(sk-ant-oat01-[A-Za-z0-9_-]{40,})\s*$/m,
-  /^(sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{40,})\s*$/m,
-];
+// Claude CLI emits the token on its own line after completion.
+const TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})/;
 
-// Match the full OAuth URL even when it's hard-wrapped across lines by the terminal.
-// Matches https://{claude.com|claude.ai|anthropic.com}/... and eats whitespace inside.
-const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai|console\.anthropic\.com|anthropic\.com)\/[\s\S]+?state=[A-Za-z0-9_-]+)/;
+// Match the OAuth URL even when the terminal wraps it across lines.
+const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai)\/[\s\S]+?state=[A-Za-z0-9_-]+)/;
+
+// Claude CLI prints this after a bad code; we could retry but for now we bail.
+const INVALID_CODE_PATTERN = /OAuth error: Invalid code/i;
 
 interface OAuthSession {
-  ptyProcess: pty.IPty;
+  ptyProcess:   pty.IPty;
   stdoutBuffer: string;
-  authWindow:  BrowserWindow | null;
+  authWindow:   BrowserWindow | null;
 }
 
 let activeSession: OAuthSession | null = null;
 
-function extractToken(text: string): string | null {
-  for (const pattern of TOKEN_PATTERNS) {
-    const match = pattern.exec(text);
-    if (match) return match[1];
-  }
-  return null;
-}
-
 function stripAnsi(text: string): string {
   // eslint-disable-next-line no-control-regex
   return text.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+}
+
+/** Redact sensitive OAuth params so they never hit disk. */
+function redactUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    for (const key of ['code', 'state', 'code_challenge', 'access_token']) {
+      if (parsed.searchParams.has(key)) {
+        parsed.searchParams.set(key, '(redacted)');
+      }
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
 }
 
 function killActiveSession() {
@@ -55,14 +68,78 @@ function killActiveSession() {
 }
 
 /**
+ * Quick check that the Lima VM is running. Runs `limactl list --json` and
+ * looks for instance '0' with status 'Running'. Returns false if we can't
+ * reach limactl at all.
+ */
+async function isVMRunning(): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const limactlPath = resolveLimactlPath({});
+    const limaHome = resolveLimaHome({});
+    const proc = childProcess.spawn(limactlPath, ['list', '--json'], {
+      env: { ...process.env, LIMA_HOME: limaHome },
+    });
+    let out = '';
+    proc.stdout.on('data', (d) => { out += d.toString(); });
+    proc.on('close', () => {
+      try {
+        // `limactl list --json` outputs one JSON object per line
+        for (const line of out.split('\n')) {
+          if (!line.trim()) continue;
+          const entry = JSON.parse(line) as { name?: string; status?: string };
+          if (entry.name === '0' && entry.status === 'Running') {
+            resolve(true);
+            return;
+          }
+        }
+        resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+    proc.on('error', () => resolve(false));
+  });
+}
+
+/**
+ * Write the OAuth token into the running VM's /etc/claude-env so that
+ * Claude Code can pick it up without a VM restart.
+ */
+async function injectTokenIntoVM(token: string): Promise<void> {
+  const limactlPath = resolveLimactlPath({});
+  const limaHome = resolveLimaHome({});
+  const env = { ...process.env, LIMA_HOME: limaHome };
+
+  // Write the token to a temp file on the host, copy into VM, then move to /etc.
+  const tmpPath = path.join(os.tmpdir(), `sulla-claude-env-${ Date.now() }`);
+  await fs.promises.writeFile(tmpPath, `CLAUDE_CODE_OAUTH_TOKEN=${ token }\n`, { mode: 0o600 });
+
+  const run = (args: string[]) => new Promise<void>((resolve, reject) => {
+    const proc = childProcess.spawn(limactlPath, args, { env });
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`limactl ${ args.join(' ') } exited ${ code }: ${ stderr }`));
+    });
+    proc.on('error', reject);
+  });
+
+  try {
+    await run(['copy', tmpPath, '0:/tmp/claude-env']);
+    await run(['shell', '0', '--', 'sudo', 'mv', '/tmp/claude-env', '/etc/claude-env']);
+    await run(['shell', '0', '--', 'sudo', 'chmod', '600', '/etc/claude-env']);
+    console.log('[ClaudeOAuth] Token injected into VM at /etc/claude-env');
+  } finally {
+    fs.promises.unlink(tmpPath).catch(() => { /* ignore */ });
+  }
+}
+
+/**
  * Open the OAuth URL in an Electron BrowserWindow and intercept the
- * callback to extract the authorization code.
- * Returns a promise that resolves with the code when Anthropic redirects
- * to the callback URL.
+ * callback to extract the authorization code and state.
  */
 function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Promise<string | null> } {
-  console.log('[ClaudeOAuth] Creating BrowserWindow for:', url);
-
   const window = new BrowserWindow({
     width:  720,
     height: 800,
@@ -74,35 +151,6 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
     },
   });
 
-  // ── Log EVERY request going through this window ────────────────
-  const session = window.webContents.session;
-
-  session.webRequest.onBeforeRequest((details, callback) => {
-    console.log(`[ClaudeOAuth][req] ${ details.method } ${ details.url }`, {
-      resourceType: details.resourceType,
-      referrer:     details.referrer,
-    });
-    callback({});
-  });
-
-  session.webRequest.onBeforeSendHeaders((details, callback) => {
-    console.log(`[ClaudeOAuth][headers] ${ details.method } ${ details.url }`, {
-      headers: details.requestHeaders,
-    });
-    callback({ requestHeaders: details.requestHeaders });
-  });
-
-  session.webRequest.onHeadersReceived((details, callback) => {
-    console.log(`[ClaudeOAuth][response] ${ details.statusCode } ${ details.url }`, {
-      responseHeaders: details.responseHeaders,
-    });
-    callback({});
-  });
-
-  session.webRequest.onBeforeRedirect((details) => {
-    console.log(`[ClaudeOAuth][redirect] ${ details.statusCode } ${ details.url } -> ${ details.redirectURL }`);
-  });
-
   const codePromise = new Promise<string | null>((resolve) => {
     let resolved = false;
     const doResolve = (code: string | null) => {
@@ -111,42 +159,29 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
       resolve(code);
     };
 
-    const handleUrl = (source: string, targetUrl: string) => {
-      console.log(`[ClaudeOAuth][${ source }] ${ targetUrl }`);
+    const handleUrl = (targetUrl: string) => {
       try {
         const parsed = new URL(targetUrl);
-        console.log(`[ClaudeOAuth][parse] host=${ parsed.hostname } path=${ parsed.pathname } params=${ parsed.search }`);
         if (parsed.hostname.endsWith('claude.com') && parsed.pathname.includes('/oauth/code/callback')) {
           const code = parsed.searchParams.get('code');
           const state = parsed.searchParams.get('state');
-          // Claude CLI expects the code in "code#state" format (matches what the
-          // /cai/oauth page shows the user when the browser can't redirect back).
+          // Claude CLI expects "code#state" format.
           const combined = code && state ? `${ code }#${ state }` : code;
-          console.log(`[ClaudeOAuth] Intercepted callback, code=${ code ? '(present)' : '(missing)' }, state=${ state ? '(present)' : '(missing)' }, combined=${ combined ? `${ combined.length } chars` : '(none)' }`);
+          console.log(`[ClaudeOAuth] Intercepted callback, combined=${ combined ? `${ combined.length } chars` : '(missing)' }`);
           doResolve(combined);
         }
       } catch { /* not a URL */ }
     };
 
-    window.webContents.on('will-redirect', (_event, redirectUrl) => {
-      handleUrl('will-redirect', redirectUrl);
-    });
-    window.webContents.on('will-navigate', (_event, navUrl) => {
-      handleUrl('will-navigate', navUrl);
-    });
-    window.webContents.on('did-navigate', (_event, navUrl) => {
-      handleUrl('did-navigate', navUrl);
-    });
-    window.webContents.on('did-navigate-in-page', (_event, navUrl) => {
-      handleUrl('did-navigate-in-page', navUrl);
-    });
+    window.webContents.on('will-redirect', (_event, u) => handleUrl(u));
+    window.webContents.on('will-navigate', (_event, u) => handleUrl(u));
+    window.webContents.on('did-navigate', (_event, u) => handleUrl(u));
+    window.webContents.on('did-navigate-in-page', (_event, u) => handleUrl(u));
 
-    window.on('closed', () => {
-      console.log('[ClaudeOAuth] Auth window closed');
-      doResolve(null);
-    });
+    window.on('closed', () => doResolve(null));
   });
 
+  console.log(`[ClaudeOAuth] Opening auth window: ${ redactUrl(url) }`);
   window.loadURL(url);
   return { window, codePromise };
 }
@@ -155,14 +190,14 @@ export function initClaudeOAuthEvents(): void {
   const ipcMainProxy = getIpcMainProxy(console);
 
   /**
-   * Start the OAuth flow. Returns a promise that resolves with the token
-   * when Claude CLI prints it. The renderer should listen for
-   * 'claude-oauth:url' to know when to prompt the user (though we open
-   * the browser ourselves via shell.openExternal).
+   * Start the OAuth flow. Returns the captured token, or an error message.
    */
   ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent): Promise<{ token?: string; error?: string }> => {
-    if (activeSession) {
-      killActiveSession();
+    if (activeSession) killActiveSession();
+
+    // Bail out early with a clear message if the VM isn't ready.
+    if (!await isVMRunning()) {
+      return { error: 'The Lima VM is not running yet. Wait for Sulla Desktop to finish starting up, then try again.' };
     }
 
     return await new Promise((resolve) => {
@@ -184,6 +219,8 @@ export function initClaudeOAuthEvents(): void {
       activeSession = session;
 
       let urlOpened = false;
+      let codeSent = false;
+      let enterSent = false;
       let resolved = false;
 
       const doResolve = (result: { token?: string; error?: string }) => {
@@ -192,6 +229,13 @@ export function initClaudeOAuthEvents(): void {
         try { ptyProcess.kill(); } catch { /* dead */ }
         try { session.authWindow?.close(); } catch { /* closed */ }
         if (activeSession === session) activeSession = null;
+
+        // Persist the token to /etc/claude-env so Claude Code picks it up now.
+        if (result.token) {
+          injectTokenIntoVM(result.token).catch((err) => {
+            console.warn('[ClaudeOAuth] Failed to inject token into VM:', err);
+          });
+        }
         resolve(result);
       };
 
@@ -199,33 +243,31 @@ export function initClaudeOAuthEvents(): void {
         doResolve({ error: 'OAuth flow timed out after 5 minutes' });
       }, 5 * 60 * 1000);
 
-      console.log('[ClaudeOAuth] Spawning claude setup-token in VM');
+      console.log('[ClaudeOAuth] Starting OAuth flow');
 
       ptyProcess.onData((data: string) => {
-        // Dump raw bytes exactly as received from the PTY — no stripping, no truncation
-        console.log(`[ClaudeOAuth][pty-raw bytes=${ data.length }] ${ JSON.stringify(data) }`);
-
         const clean = stripAnsi(data);
         session.stdoutBuffer += clean;
 
-        if (clean.trim().length > 0) {
-          console.log(`[ClaudeOAuth][pty-clean] ${ JSON.stringify(clean) }`);
-        }
-
-        // Forward raw output to the renderer so it can show progress
+        // Stream progress to the renderer (UI status line)
         try {
           event.sender.send('claude-oauth:progress', clean);
         } catch { /* window closed */ }
 
-        // Look for the OAuth URL — open it in an embedded BrowserWindow
-        // and intercept the callback code when Anthropic redirects.
+        // Early exit on explicit OAuth error
+        if (INVALID_CODE_PATTERN.test(session.stdoutBuffer)) {
+          clearTimeout(timeout);
+          doResolve({ error: 'OAuth error: Invalid code. Try again.' });
+          return;
+        }
+
+        // 1) Detect the auth URL and open our embedded window
         if (!urlOpened) {
           const urlMatch = URL_PATTERN.exec(session.stdoutBuffer);
           if (urlMatch) {
             urlOpened = true;
-            // Strip whitespace that the terminal inserted to wrap the URL across lines
             const url = urlMatch[1].replace(/\s+/g, '');
-            console.log(`[ClaudeOAuth] Opening auth URL in embedded window: ${ url }`);
+
             try {
               event.sender.send('claude-oauth:url', url);
             } catch { /* window closed */ }
@@ -235,54 +277,55 @@ export function initClaudeOAuthEvents(): void {
 
             codePromise.then((code) => {
               if (!code) {
-                console.warn('[ClaudeOAuth] Auth window closed without a code');
+                console.log('[ClaudeOAuth] Auth window closed without a code');
                 return;
               }
-              console.log(`[ClaudeOAuth] Got code (${ code.length } chars), sending to CLI`);
+              console.log(`[ClaudeOAuth] Writing ${ code.length } chars to PTY`);
               try { session.authWindow?.close(); } catch { /* closed */ }
               session.authWindow = null;
-              // Claude CLI is waiting at "Paste code here if prompted >"
-              // Ink's TextInput buffers paste vs Enter differently. Write the code,
-              // pause briefly to let the terminal process it, then send Enter (CR).
               try {
                 ptyProcess.write(code);
-                console.log(`[ClaudeOAuth] Code written to PTY (${ code.length } chars)`);
-                setTimeout(() => {
-                  try {
-                    ptyProcess.write('\r');
-                    console.log('[ClaudeOAuth] Enter (\\r) sent');
-                  } catch (err) {
-                    console.warn('[ClaudeOAuth] Failed to send Enter:', err);
-                  }
-                }, 200);
+                codeSent = true;
               } catch (err) {
                 console.warn('[ClaudeOAuth] Failed to write code to PTY:', err);
               }
             });
           }
+          return;
         }
 
-        // Check for token in output
-        const token = extractToken(session.stdoutBuffer);
-        if (token) {
+        // 2) Wait until the PTY echoes back asterisks confirming the code was
+        // buffered, then send Enter to submit it. This is more reliable than
+        // a fixed timeout.
+        if (codeSent && !enterSent && /\*{20,}/.test(session.stdoutBuffer)) {
+          enterSent = true;
+          console.log('[ClaudeOAuth] Code echoed — sending Enter');
+          try {
+            ptyProcess.write('\r');
+          } catch (err) {
+            console.warn('[ClaudeOAuth] Failed to send Enter:', err);
+          }
+        }
+
+        // 3) Look for the final token
+        const tokenMatch = TOKEN_PATTERN.exec(session.stdoutBuffer);
+        if (tokenMatch) {
           clearTimeout(timeout);
           console.log('[ClaudeOAuth] Token captured');
-          doResolve({ token });
+          doResolve({ token: tokenMatch[1] });
         }
       });
 
       ptyProcess.onExit(({ exitCode, signal }) => {
         clearTimeout(timeout);
         console.log(`[ClaudeOAuth] PTY exited code=${ exitCode } signal=${ signal }`);
-        console.log(`[ClaudeOAuth] Full stdout buffer:\n${ session.stdoutBuffer }`);
         if (!resolved) {
-          // If we never got a token, check the buffer one more time
-          const token = extractToken(session.stdoutBuffer);
-          if (token) {
-            doResolve({ token });
+          const tokenMatch = TOKEN_PATTERN.exec(session.stdoutBuffer);
+          if (tokenMatch) {
+            doResolve({ token: tokenMatch[1] });
           } else {
             doResolve({
-              error: `Claude setup-token exited (code=${ exitCode }, signal=${ signal }) without producing a token`,
+              error: `Claude setup-token exited without producing a token (code=${ exitCode })`,
             });
           }
         }
@@ -290,19 +333,9 @@ export function initClaudeOAuthEvents(): void {
     });
   });
 
-  /**
-   * Cancel an in-progress OAuth flow.
-   */
+  /** Cancel an in-progress OAuth flow. */
   ipcMainProxy.handle('claude-oauth:cancel', async() => {
+    console.log('[ClaudeOAuth] Flow cancelled by user');
     killActiveSession();
-  });
-
-  /**
-   * Send user input to the Claude CLI (for pasting the auth code if needed).
-   */
-  ipcMainProxy.handle('claude-oauth:send-input', async(_event: unknown, input: string) => {
-    if (activeSession) {
-      activeSession.ptyProcess.write(input);
-    }
   });
 }

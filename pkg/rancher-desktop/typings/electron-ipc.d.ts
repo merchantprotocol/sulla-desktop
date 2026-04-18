@@ -238,9 +238,8 @@ export interface IpcMainInvokeEvents {
   'sulla-settings:set':     (key: string, value: any, cast?: string) => any;
 
   /** Claude Code OAuth flow */
-  'claude-oauth:start':      () => { token?: string; error?: string };
-  'claude-oauth:cancel':     () => void;
-  'claude-oauth:send-input': (input: string) => void;
+  'claude-oauth:start':  () => { token?: string; error?: string };
+  'claude-oauth:cancel': () => void;
 
   // #region Model Provider Service (source of truth)
   'model-provider:get-state':            () => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
