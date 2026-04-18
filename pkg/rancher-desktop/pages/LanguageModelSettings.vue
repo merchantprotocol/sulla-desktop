@@ -1095,28 +1095,6 @@ export default defineComponent({
               <p class="setting-description">
                 {{ claudeOAuthStatus }}
               </p>
-              <p
-                v-if="claudeOAuthUrl"
-                class="setting-description"
-              >
-                If the browser didn't open,
-                <a href="#" @click.prevent="copyAuthUrl">copy the sign-in URL</a>.
-              </p>
-              <div class="claude-oauth-paste-row">
-                <input
-                  v-model="claudeOAuthCode"
-                  class="input-field claude-input-field"
-                  placeholder="Paste the code from the browser here..."
-                  @keyup.enter="submitClaudeOAuthCode"
-                >
-                <button
-                  class="btn role-primary"
-                  :disabled="!claudeOAuthCode.trim()"
-                  @click="submitClaudeOAuthCode"
-                >
-                  Submit
-                </button>
-              </div>
               <button
                 class="btn role-secondary"
                 @click="cancelClaudeOAuth"

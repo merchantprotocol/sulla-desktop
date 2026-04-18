@@ -118,8 +118,12 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
         console.log(`[ClaudeOAuth][parse] host=${ parsed.hostname } path=${ parsed.pathname } params=${ parsed.search }`);
         if (parsed.hostname.endsWith('claude.com') && parsed.pathname.includes('/oauth/code/callback')) {
           const code = parsed.searchParams.get('code');
-          console.log(`[ClaudeOAuth] Intercepted callback, code=${ code ? '(present)' : '(missing)' }`);
-          doResolve(code);
+          const state = parsed.searchParams.get('state');
+          // Claude CLI expects the code in "code#state" format (matches what the
+          // /cai/oauth page shows the user when the browser can't redirect back).
+          const combined = code && state ? `${ code }#${ state }` : code;
+          console.log(`[ClaudeOAuth] Intercepted callback, code=${ code ? '(present)' : '(missing)' }, state=${ state ? '(present)' : '(missing)' }, combined=${ combined ? `${ combined.length } chars` : '(none)' }`);
+          doResolve(combined);
         }
       } catch { /* not a URL */ }
     };
@@ -198,8 +202,15 @@ export function initClaudeOAuthEvents(): void {
       console.log('[ClaudeOAuth] Spawning claude setup-token in VM');
 
       ptyProcess.onData((data: string) => {
+        // Dump raw bytes exactly as received from the PTY — no stripping, no truncation
+        console.log(`[ClaudeOAuth][pty-raw bytes=${ data.length }] ${ JSON.stringify(data) }`);
+
         const clean = stripAnsi(data);
         session.stdoutBuffer += clean;
+
+        if (clean.trim().length > 0) {
+          console.log(`[ClaudeOAuth][pty-clean] ${ JSON.stringify(clean) }`);
+        }
 
         // Forward raw output to the renderer so it can show progress
         try {
@@ -227,13 +238,23 @@ export function initClaudeOAuthEvents(): void {
                 console.warn('[ClaudeOAuth] Auth window closed without a code');
                 return;
               }
-              console.log('[ClaudeOAuth] Got code, sending to CLI');
+              console.log(`[ClaudeOAuth] Got code (${ code.length } chars), sending to CLI`);
               try { session.authWindow?.close(); } catch { /* closed */ }
               session.authWindow = null;
               // Claude CLI is waiting at "Paste code here if prompted >"
-              // Send the code followed by CR.
+              // Ink's TextInput buffers paste vs Enter differently. Write the code,
+              // pause briefly to let the terminal process it, then send Enter (CR).
               try {
-                ptyProcess.write(code + '\r');
+                ptyProcess.write(code);
+                console.log(`[ClaudeOAuth] Code written to PTY (${ code.length } chars)`);
+                setTimeout(() => {
+                  try {
+                    ptyProcess.write('\r');
+                    console.log('[ClaudeOAuth] Enter (\\r) sent');
+                  } catch (err) {
+                    console.warn('[ClaudeOAuth] Failed to send Enter:', err);
+                  }
+                }, 200);
               } catch (err) {
                 console.warn('[ClaudeOAuth] Failed to write code to PTY:', err);
               }
@@ -252,6 +273,8 @@ export function initClaudeOAuthEvents(): void {
 
       ptyProcess.onExit(({ exitCode, signal }) => {
         clearTimeout(timeout);
+        console.log(`[ClaudeOAuth] PTY exited code=${ exitCode } signal=${ signal }`);
+        console.log(`[ClaudeOAuth] Full stdout buffer:\n${ session.stdoutBuffer }`);
         if (!resolved) {
           // If we never got a token, check the buffer one more time
           const token = extractToken(session.stdoutBuffer);
