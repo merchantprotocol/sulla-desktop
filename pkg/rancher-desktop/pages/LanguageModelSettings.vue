@@ -926,8 +926,6 @@ export default defineComponent({
           </div>
 
         </div>
-      </div>
-    </div>
 
         <!-- Claude Code Tab -->
         <div
@@ -943,7 +941,7 @@ export default defineComponent({
           <!-- Auth Mode Selection -->
           <div class="setting-group">
             <label class="setting-label">Authentication Method</label>
-            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+            <div class="claude-auth-buttons">
               <button
                 class="btn"
                 :class="claudeAuthMode === 'api-key' ? 'role-primary' : 'role-secondary'"
@@ -970,16 +968,15 @@ export default defineComponent({
             class="setting-group"
           >
             <label class="setting-label">Anthropic API Key</label>
-            <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <div class="claude-input-row">
               <input
                 v-model="claudeApiKey"
                 :type="claudeApiKeyVisible ? 'text' : 'password'"
-                class="input-field"
+                class="input-field claude-input-field"
                 placeholder="sk-ant-..."
-                style="flex: 1;"
               >
               <button
-                class="btn role-secondary btn-sm"
+                class="btn role-secondary"
                 @click="claudeApiKeyVisible = !claudeApiKeyVisible"
               >
                 {{ claudeApiKeyVisible ? 'Hide' : 'Show' }}
@@ -1000,16 +997,15 @@ export default defineComponent({
             class="setting-group"
           >
             <label class="setting-label">OAuth Token</label>
-            <p class="setting-description" style="margin-bottom: 0.5rem;">
+            <p class="setting-description claude-oauth-instructions">
               Run <code>claude setup-token</code> in your terminal, then paste the token here.
               This generates a one-year token from your Claude Max/Pro subscription.
             </p>
             <textarea
               v-model="claudeOAuthToken"
-              class="input-field"
+              class="input-field claude-oauth-textarea"
               placeholder="Paste your OAuth token here..."
               rows="3"
-              style="font-family: var(--font-mono); font-size: 12px; resize: vertical;"
             />
           </div>
 
@@ -1032,14 +1028,16 @@ export default defineComponent({
             v-if="claudeAuthMode !== 'none' && (claudeApiKey || claudeOAuthToken)"
             class="setting-group"
           >
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--status-success, #3fb950);" />
-              <span class="setting-description" style="margin: 0;">
+            <div class="claude-status">
+              <span class="claude-status-dot" />
+              <span class="setting-description claude-status-text">
                 Claude Code credentials configured. They will be injected into the VM on next boot.
               </span>
             </div>
           </div>
         </div>
+      </div>
+    </div>
 
     <!-- Footer -->
     <div class="lm-footer">
@@ -1225,6 +1223,50 @@ export default defineComponent({
   margin-bottom: 1rem;
   color: var(--text-error, var(--status-error, #ef4444));
   font-size: var(--fs-body);
+}
+
+.claude-auth-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.claude-input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.claude-input-field {
+  flex: 1;
+}
+
+.claude-oauth-instructions {
+  margin-bottom: 0.5rem;
+}
+
+.claude-oauth-textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  resize: vertical;
+  width: 100%;
+}
+
+.claude-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.claude-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-success, #3fb950);
+}
+
+.claude-status-text {
+  margin: 0;
 }
 
 .tab-content {
