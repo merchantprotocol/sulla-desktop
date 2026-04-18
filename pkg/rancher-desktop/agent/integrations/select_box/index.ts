@@ -6,7 +6,6 @@ import { KimiModels } from './KimiModels';
 import { AlibabaModels } from './AlibabaModels';
 import { NvidiaModels } from './NvidiaModels';
 import { CustomModels } from './CustomModels';
-import { OllamaModels, OllamaEmbedTextModels } from './OllamaModels';
 import { ElevenLabsVoices } from './ElevenLabsVoices';
 import { VaultLlmAccess } from './VaultLlmAccess';
 
@@ -21,7 +20,5 @@ registerSelectBoxProvider(new KimiModels());
 registerSelectBoxProvider(new AlibabaModels());
 registerSelectBoxProvider(new NvidiaModels());
 registerSelectBoxProvider(new CustomModels());
-registerSelectBoxProvider(new OllamaModels());
-registerSelectBoxProvider(new OllamaEmbedTextModels());
 registerSelectBoxProvider(new ElevenLabsVoices());
 registerSelectBoxProvider(new VaultLlmAccess());

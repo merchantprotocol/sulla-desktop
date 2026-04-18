@@ -26,7 +26,6 @@
           :agent-mode="agentMode"
           :integrations-mode="integrationsMode"
           :workflow-mode="workflowMode"
-          :training-mode="trainingMode"
           :monitor-mode="monitorMode"
           @toggle-file-tree="toggleFileTree"
           @toggle-search="toggleSearch"
@@ -35,7 +34,6 @@
           @toggle-integrations="toggleIntegrations"
           @toggle-agent="toggleAgent"
           @toggle-workflow="toggleWorkflow"
-          @toggle-training="toggleTraining"
           @toggle-monitor="toggleMonitor"
         />
       </div>
@@ -115,15 +113,6 @@
             @workflow-files-changed="onWorkflowFilesChanged"
           />
 
-          <!-- Training file tree -->
-          <TrainingFileTreePane
-            v-show="trainingMode"
-            :is-dark="isDark"
-            :current-step="trainingStep"
-            @close="leftPaneVisible = false"
-            @step-change="trainingStep = $event"
-          />
-
           <!-- Monitor pane -->
           <MonitorPane
             v-show="monitorMode"
@@ -136,7 +125,7 @@
 
           <!-- File tree -->
           <FileTreeSidebar
-            v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !trainingMode && !monitorMode"
+            v-show="!searchMode && !gitMode && !dockerMode && !agentMode && !integrationsMode && !workflowMode && !monitorMode"
             ref="fileTreeRef"
             :root-path="rootPath"
             :highlight-path="highlightPath"
@@ -169,17 +158,6 @@
           :active-section="monitorSection"
           @refresh="monitorDashboardRef?.refreshAll?.()"
           @open-detail="openMonitorDetail"
-        />
-        <!-- Training full-screen (replaces everything when training mode is active) -->
-        <TrainingPane
-          v-if="trainingMode"
-          ref="trainingPaneRef"
-          :is-dark="isDark"
-          :current-step="trainingStep"
-          @env-ready="leftPaneVisible = true"
-          @step-change="trainingStep = $event"
-          @content-scale="trainingContentScale = $event"
-          @open-training-log="openTrainingLog"
         />
         <!-- Workflow canvas (replaces tabbed editor when workflow mode is active) -->
         <WorkflowEditor
@@ -350,7 +328,7 @@
 
         <!-- Top editor area -->
         <div
-          v-show="!workflowMode && !trainingMode && !monitorMode"
+          v-show="!workflowMode && !monitorMode"
           class="editor-top"
         >
           <!-- Tab bar (always visible) -->
@@ -792,70 +770,6 @@
                 </svg>
               </button>
             </div>
-            <!-- Training log tab -->
-            <div
-              v-if="trainingLogFilename"
-              class="terminal-tab"
-              :class="{ active: bottomPaneTab === 'training', dark: isDark }"
-              @click="bottomPaneTab = 'training'"
-            >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                style="margin-right: 3px; flex-shrink: 0;"
-              >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line
-                  x1="16"
-                  y1="13"
-                  x2="8"
-                  y2="13"
-                />
-                <line
-                  x1="16"
-                  y1="17"
-                  x2="8"
-                  y2="17"
-                />
-              </svg>
-              <span>Training Log</span>
-              <button
-                class="terminal-tab-close"
-                :class="{ dark: isDark }"
-                @click.stop="trainingLogFilename = ''; bottomPaneTab = 'terminal'"
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <line
-                    x1="18"
-                    y1="6"
-                    x2="6"
-                    y2="18"
-                  />
-                  <line
-                    x1="6"
-                    y1="6"
-                    x2="18"
-                    y2="18"
-                  />
-                </svg>
-              </button>
-            </div>
             <button
               class="terminal-tab-add"
               :class="{ dark: isDark }"
@@ -954,18 +868,6 @@
                 :initial-slug="atab.slug"
               />
             </div>
-          </div>
-
-          <!-- Training Log -->
-          <div
-            v-show="bottomPaneTab === 'training'"
-            class="terminal-content"
-          >
-            <TrainingLogViewer
-              v-if="trainingLogFilename"
-              :is-dark="isDark"
-              :log-filename="trainingLogFilename"
-            />
           </div>
 
           <!-- Monitor Detail Panels -->
@@ -1094,70 +996,6 @@
           @update-trigger="() => {}"
           @update-node-config="onWorkflowNodeConfigUpdate"
         />
-        <!-- Training mode: tabbed right pane (Chat / Help) -->
-        <template v-else-if="trainingMode">
-          <div
-            class="rp-tabs"
-            :class="{ dark: isDark }"
-          >
-            <button
-              class="rp-tab"
-              :class="{ active: rightPaneTab === 'chat', dark: isDark }"
-              @click="rightPaneTab = 'chat'"
-            >
-              Chat
-            </button>
-            <button
-              class="rp-tab"
-              :class="{ active: rightPaneTab === 'help', dark: isDark }"
-              @click="rightPaneTab = 'help'"
-            >
-              Help
-            </button>
-          </div>
-          <EditorChat
-            v-show="rightPaneTab === 'chat'"
-            :is-dark="isDark"
-            :messages="chatMessages"
-            :query="chatQuery"
-            :loading="chatLoading"
-            :graph-running="chatGraphRunning"
-            :model-loading="editorModelLoading"
-            :waiting-for-user="chatWaitingForUser"
-            :current-activity="chatCurrentActivity"
-            :model-selector="modelSelector"
-            :agent-registry="agentRegistry"
-            :hide-agent-selector="false"
-            :total-tokens-used="chatTotalTokensUsed"
-            :queued-messages="chatQueueMessages"
-            :has-queued-messages="chatHasQueuedMessages"
-            :queued-message-count="chatQueuedMessageCount"
-            :tabs="chatTabsList"
-            :active-tab-id="activeChatTabId"
-            :chat-history="chatHistory"
-            @update:query="chatUpdateQuery"
-            @send="chatSend()"
-            @stop="chatStop()"
-            @close="rightPaneVisible = false"
-            @remove="chatRemoveQueuedMessage"
-            @clear-queue="chatClearQueue"
-            @move-up="chatMoveQueuedMessageUp"
-            @move-down="chatMoveQueuedMessageDown"
-            @create-tab="onCreateChatTab"
-            @switch-tab="onSwitchChatTab"
-            @close-tab="onCloseChatTab"
-            @rename-tab="onRenameChatTab"
-            @load-history="onLoadHistory"
-            @remove-history="onRemoveHistory"
-            @clear-history="onClearHistory"
-          />
-          <TrainingHelpPane
-            v-show="rightPaneTab === 'help'"
-            :is-dark="isDark"
-            :current-step="trainingStep"
-            :content-scale="trainingContentScale"
-          />
-        </template>
         <!-- Chat (default / workflow mode) -->
         <EditorChat
           v-else
@@ -1346,10 +1184,6 @@ import IntegrationsPane from './editor/IntegrationsPane.vue';
 import ApiTestPanel from './editor/ApiTestPanel.vue';
 import AgentFormTab from './editor/AgentFormTab.vue';
 import WorkflowPane from './editor/WorkflowPane.vue';
-import TrainingPane from './editor/TrainingPane.vue';
-import TrainingFileTreePane from './editor/TrainingFileTreePane.vue';
-import TrainingHelpPane from './editor/TrainingHelpPane.vue';
-import TrainingLogViewer from './editor/TrainingLogViewer.vue';
 import MonitorPane from './editor/MonitorPane.vue';
 import MonitorDashboard from './editor/MonitorDashboard.vue';
 import MonitorDetailPanel from './editor/MonitorDetailPanel.vue';
@@ -1473,13 +1307,10 @@ export default defineComponent({
     ApiTestPanel,
     AgentFormTab,
     WorkflowPane,
-    TrainingPane,
     WorkflowEditor,
     WorkflowNodePanel,
     EditorChat,
     DiffEditor,
-    TrainingFileTreePane,
-    TrainingHelpPane,
     MonitorPane,
     MonitorDashboard,
     MonitorDetailPanel,
@@ -1580,20 +1411,13 @@ export default defineComponent({
     const centerPaneVisible = ref(true);
     const rightPaneVisible = ref(true);
     const bottomPaneVisible = ref(true);
-    const bottomPaneTab = ref<'terminal' | 'api' | 'monitor' | 'training'>('terminal');
-    const trainingLogFilename = ref('');
+    const bottomPaneTab = ref<'terminal' | 'api' | 'monitor'>('terminal');
     const apiTabs = ref<{ id: string; slug: string }[]>([]);
     const monitorTabs = ref<{ id: string; type: 'ws' | 'service' | 'agent' | 'error'; tabId: string; label: string; errorData?: any }[]>([]);
     const activeMonitorTab = ref('');
     let monitorTabCounter = 0;
     const activeApiTab = ref('');
     let apiTabCounter = 0;
-
-    function openTrainingLog(logFilename: string) {
-      trainingLogFilename.value = logFilename;
-      bottomPaneVisible.value = true;
-      bottomPaneTab.value = 'training';
-    }
 
     function openApiTest(slug: string) {
       // Check if a tab for this slug already exists
@@ -1877,14 +1701,9 @@ export default defineComponent({
     const agentMode = ref(false);
     const integrationsMode = ref(false);
     const workflowMode = ref(false);
-    const trainingMode = ref(false);
-    const trainingStep = ref(-1);
-    const trainingContentScale = ref({ size: 0, scale: 'poor', label: 'Not enough', pct: 0 });
-    const rightPaneTab = ref<'chat' | 'help'>('chat');
     const monitorMode = ref(false);
     const monitorSection = ref('health');
     const monitorDashboardRef = ref<any>(null);
-    const trainingPaneRef = ref<InstanceType<typeof TrainingPane> | null>(null);
     const selectedWorkflowNode = ref<{ id: string; label: string; type?: string; data?: any } | null>(null);
     const workflowEditorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null);
     const workflowPaneRef = ref<InstanceType<typeof WorkflowPane> | null>(null);
@@ -2024,8 +1843,8 @@ export default defineComponent({
     let savedRightPaneVisible = false;
 
     function clearModes() {
-      // Restore panes if leaving workflow, training, or monitor mode
-      if (workflowMode.value || trainingMode.value || monitorMode.value) {
+      // Restore panes if leaving workflow or monitor mode
+      if (workflowMode.value || monitorMode.value) {
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
       }
@@ -2039,7 +1858,6 @@ export default defineComponent({
       agentMode.value = false;
       integrationsMode.value = false;
       workflowMode.value = false;
-      trainingMode.value = false;
       monitorMode.value = false;
     }
 
@@ -2047,7 +1865,7 @@ export default defineComponent({
       if (!leftPaneVisible.value) {
         leftPaneVisible.value = true;
         clearModes();
-      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || integrationsMode.value || workflowMode.value || trainingMode.value || monitorMode.value) {
+      } else if (searchMode.value || gitMode.value || dockerMode.value || agentMode.value || integrationsMode.value || workflowMode.value || monitorMode.value) {
         clearModes();
       } else {
         leftPaneVisible.value = false;
@@ -2140,25 +1958,6 @@ export default defineComponent({
       } else {
         leftPaneVisible.value = false;
         workflowMode.value = false;
-        bottomPaneVisible.value = savedBottomPaneVisible;
-        rightPaneVisible.value = savedRightPaneVisible;
-      }
-    }
-
-    function toggleTraining() {
-      if (!trainingMode.value) {
-        clearModes();
-        trainingMode.value = true;
-        trainingStep.value = -1;
-        savedBottomPaneVisible = bottomPaneVisible.value;
-        savedRightPaneVisible = rightPaneVisible.value;
-        leftPaneVisible.value = true;
-        bottomPaneVisible.value = false;
-        rightPaneVisible.value = true;
-        rightPaneTab.value = 'help';
-      } else {
-        trainingMode.value = false;
-        leftPaneVisible.value = true;
         bottomPaneVisible.value = savedBottomPaneVisible;
         rightPaneVisible.value = savedRightPaneVisible;
       }
@@ -3189,11 +2988,6 @@ export default defineComponent({
       integrationsMode,
       toggleIntegrations,
       workflowMode,
-      trainingMode,
-      trainingStep,
-      trainingContentScale,
-      rightPaneTab,
-      toggleTraining,
       monitorMode,
       monitorSection,
       monitorDashboardRef,
@@ -3247,8 +3041,6 @@ export default defineComponent({
       activeApiTab,
       openApiTest,
       closeApiTab,
-      trainingLogFilename,
-      openTrainingLog,
       monitorTabs,
       activeMonitorTab,
       openMonitorDetail,
@@ -3304,7 +3096,6 @@ export default defineComponent({
       extToLanguage,
       footerStats,
       formatBytes,
-      trainingPaneRef,
       backendState,
       backendProgressDesc,
       backendProgressActive,
@@ -3543,34 +3334,6 @@ html, body, #app {
   background: var(--bg-surface);
   display: flex;
   flex-direction: column;
-}
-
-/* Right pane tabs (training mode) */
-.rp-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--border-default);
-  flex-shrink: 0;
-}
-.rp-tab {
-  flex: 1;
-  padding: 8px 0;
-  font-size: var(--fs-body-sm);
-  font-weight: var(--weight-semibold);
-  text-align: center;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  color: var(--text-secondary);
-  transition: all 0.15s;
-}
-.rp-tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-surface-alt);
-}
-.rp-tab.active {
-  color: var(--accent-primary);
-  border-bottom-color: var(--accent-primary);
 }
 
 .empty-state {
