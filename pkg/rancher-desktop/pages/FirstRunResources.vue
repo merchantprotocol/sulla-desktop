@@ -5,7 +5,7 @@
         Specify AI Resources
       </h2>
       <p class="mb-6 fr-body">
-        Choose the resources allocated to your AI Agent and the local language model. Your agent and the model and all resources they manage will not be allowed to use more than the allocated resources.
+        Choose the resources allocated to your AI Agent. Your agent and all resources it manages will not be allowed to use more than the allocated resources.
       </p>
 
       <div class="mt-10" />
