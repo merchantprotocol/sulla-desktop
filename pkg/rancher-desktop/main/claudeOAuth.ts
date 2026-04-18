@@ -7,7 +7,7 @@
  */
 
 import * as pty from 'node-pty';
-import { shell } from 'electron';
+import { BrowserWindow } from 'electron';
 import { resolveLimactlPath, resolveLimaHome } from '@pkg/agent/tools/util/CommandRunner';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -21,11 +21,14 @@ const TOKEN_PATTERNS = [
   /^(sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{40,})\s*$/m,
 ];
 
-const URL_PATTERN = /(https?:\/\/[^\s]+)/;
+// Match the full OAuth URL even when it's hard-wrapped across lines by the terminal.
+// Matches https://{claude.com|claude.ai|anthropic.com}/... and eats whitespace inside.
+const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai|console\.anthropic\.com|anthropic\.com)\/[\s\S]+?state=[A-Za-z0-9_-]+)/;
 
 interface OAuthSession {
   ptyProcess: pty.IPty;
   stdoutBuffer: string;
+  authWindow:  BrowserWindow | null;
 }
 
 let activeSession: OAuthSession | null = null;
@@ -46,8 +49,102 @@ function stripAnsi(text: string): string {
 function killActiveSession() {
   if (activeSession) {
     try { activeSession.ptyProcess.kill(); } catch { /* already dead */ }
+    try { activeSession.authWindow?.close(); } catch { /* already closed */ }
     activeSession = null;
   }
+}
+
+/**
+ * Open the OAuth URL in an Electron BrowserWindow and intercept the
+ * callback to extract the authorization code.
+ * Returns a promise that resolves with the code when Anthropic redirects
+ * to the callback URL.
+ */
+function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Promise<string | null> } {
+  console.log('[ClaudeOAuth] Creating BrowserWindow for:', url);
+
+  const window = new BrowserWindow({
+    width:  720,
+    height: 800,
+    title:  'Sign in with Claude',
+    webPreferences: {
+      nodeIntegration:  false,
+      contextIsolation: true,
+      sandbox:          true,
+    },
+  });
+
+  // ── Log EVERY request going through this window ────────────────
+  const session = window.webContents.session;
+
+  session.webRequest.onBeforeRequest((details, callback) => {
+    console.log(`[ClaudeOAuth][req] ${ details.method } ${ details.url }`, {
+      resourceType: details.resourceType,
+      referrer:     details.referrer,
+    });
+    callback({});
+  });
+
+  session.webRequest.onBeforeSendHeaders((details, callback) => {
+    console.log(`[ClaudeOAuth][headers] ${ details.method } ${ details.url }`, {
+      headers: details.requestHeaders,
+    });
+    callback({ requestHeaders: details.requestHeaders });
+  });
+
+  session.webRequest.onHeadersReceived((details, callback) => {
+    console.log(`[ClaudeOAuth][response] ${ details.statusCode } ${ details.url }`, {
+      responseHeaders: details.responseHeaders,
+    });
+    callback({});
+  });
+
+  session.webRequest.onBeforeRedirect((details) => {
+    console.log(`[ClaudeOAuth][redirect] ${ details.statusCode } ${ details.url } -> ${ details.redirectURL }`);
+  });
+
+  const codePromise = new Promise<string | null>((resolve) => {
+    let resolved = false;
+    const doResolve = (code: string | null) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(code);
+    };
+
+    const handleUrl = (source: string, targetUrl: string) => {
+      console.log(`[ClaudeOAuth][${ source }] ${ targetUrl }`);
+      try {
+        const parsed = new URL(targetUrl);
+        console.log(`[ClaudeOAuth][parse] host=${ parsed.hostname } path=${ parsed.pathname } params=${ parsed.search }`);
+        if (parsed.hostname.endsWith('claude.com') && parsed.pathname.includes('/oauth/code/callback')) {
+          const code = parsed.searchParams.get('code');
+          console.log(`[ClaudeOAuth] Intercepted callback, code=${ code ? '(present)' : '(missing)' }`);
+          doResolve(code);
+        }
+      } catch { /* not a URL */ }
+    };
+
+    window.webContents.on('will-redirect', (_event, redirectUrl) => {
+      handleUrl('will-redirect', redirectUrl);
+    });
+    window.webContents.on('will-navigate', (_event, navUrl) => {
+      handleUrl('will-navigate', navUrl);
+    });
+    window.webContents.on('did-navigate', (_event, navUrl) => {
+      handleUrl('did-navigate', navUrl);
+    });
+    window.webContents.on('did-navigate-in-page', (_event, navUrl) => {
+      handleUrl('did-navigate-in-page', navUrl);
+    });
+
+    window.on('closed', () => {
+      console.log('[ClaudeOAuth] Auth window closed');
+      doResolve(null);
+    });
+  });
+
+  window.loadURL(url);
+  return { window, codePromise };
 }
 
 export function initClaudeOAuthEvents(): void {
@@ -79,7 +176,7 @@ export function initClaudeOAuthEvents(): void {
         } as Record<string, string>,
       });
 
-      const session: OAuthSession = { ptyProcess, stdoutBuffer: '' };
+      const session: OAuthSession = { ptyProcess, stdoutBuffer: '', authWindow: null };
       activeSession = session;
 
       let urlOpened = false;
@@ -89,6 +186,7 @@ export function initClaudeOAuthEvents(): void {
         if (resolved) return;
         resolved = true;
         try { ptyProcess.kill(); } catch { /* dead */ }
+        try { session.authWindow?.close(); } catch { /* closed */ }
         if (activeSession === session) activeSession = null;
         resolve(result);
       };
@@ -96,6 +194,8 @@ export function initClaudeOAuthEvents(): void {
       const timeout = setTimeout(() => {
         doResolve({ error: 'OAuth flow timed out after 5 minutes' });
       }, 5 * 60 * 1000);
+
+      console.log('[ClaudeOAuth] Spawning claude setup-token in VM');
 
       ptyProcess.onData((data: string) => {
         const clean = stripAnsi(data);
@@ -106,19 +206,38 @@ export function initClaudeOAuthEvents(): void {
           event.sender.send('claude-oauth:progress', clean);
         } catch { /* window closed */ }
 
-        // Look for an OAuth URL — open it in the host browser once
+        // Look for the OAuth URL — open it in an embedded BrowserWindow
+        // and intercept the callback code when Anthropic redirects.
         if (!urlOpened) {
           const urlMatch = URL_PATTERN.exec(session.stdoutBuffer);
-          if (urlMatch && urlMatch[1].includes('anthropic.com')) {
+          if (urlMatch) {
             urlOpened = true;
-            const url = urlMatch[1];
-            console.log(`[ClaudeOAuth] Opening auth URL: ${ url }`);
-            shell.openExternal(url).catch((err) => {
-              console.warn('[ClaudeOAuth] Failed to open browser:', err);
-            });
+            // Strip whitespace that the terminal inserted to wrap the URL across lines
+            const url = urlMatch[1].replace(/\s+/g, '');
+            console.log(`[ClaudeOAuth] Opening auth URL in embedded window: ${ url }`);
             try {
               event.sender.send('claude-oauth:url', url);
             } catch { /* window closed */ }
+
+            const { window, codePromise } = openAuthWindow(url);
+            session.authWindow = window;
+
+            codePromise.then((code) => {
+              if (!code) {
+                console.warn('[ClaudeOAuth] Auth window closed without a code');
+                return;
+              }
+              console.log('[ClaudeOAuth] Got code, sending to CLI');
+              try { session.authWindow?.close(); } catch { /* closed */ }
+              session.authWindow = null;
+              // Claude CLI is waiting at "Paste code here if prompted >"
+              // Send the code followed by CR.
+              try {
+                ptyProcess.write(code + '\r');
+              } catch (err) {
+                console.warn('[ClaudeOAuth] Failed to write code to PTY:', err);
+              }
+            });
           }
         }
 

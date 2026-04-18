@@ -90,6 +90,8 @@ export default defineComponent({
       claudeOAuthRunning: false,
       claudeOAuthStatus: 'Starting...',
       claudeOAuthError:  '',
+      claudeOAuthUrl:    '',
+      claudeOAuthCode:   '',
     };
   },
 
@@ -565,16 +567,18 @@ export default defineComponent({
 
     async startClaudeOAuth() {
       this.claudeOAuthError = '';
-      this.claudeOAuthStatus = 'Opening browser for authentication...';
+      this.claudeOAuthStatus = 'Starting claude setup-token in the VM...';
+      this.claudeOAuthUrl = '';
+      this.claudeOAuthCode = '';
       this.claudeOAuthRunning = true;
 
-      // Listen for progress updates from main process
       const onProgress = (_event: unknown, text: string) => {
         const trimmed = text.trim();
         if (trimmed) this.claudeOAuthStatus = trimmed.split('\n').pop() || this.claudeOAuthStatus;
       };
-      const onUrl = () => {
-        this.claudeOAuthStatus = 'Waiting for you to authorize in your browser...';
+      const onUrl = (_event: unknown, url: string) => {
+        this.claudeOAuthUrl = url;
+        this.claudeOAuthStatus = 'Sign in in your browser, then paste the code below.';
       };
       ipcRenderer.on('claude-oauth:progress', onProgress);
       ipcRenderer.on('claude-oauth:url', onUrl);
@@ -596,6 +600,28 @@ export default defineComponent({
         ipcRenderer.removeListener('claude-oauth:progress', onProgress);
         ipcRenderer.removeListener('claude-oauth:url', onUrl);
         this.claudeOAuthRunning = false;
+        this.claudeOAuthUrl = '';
+      }
+    },
+
+    async submitClaudeOAuthCode() {
+      const code = this.claudeOAuthCode.trim();
+      if (!code) return;
+      try {
+        // Send the code followed by newline to feed the CLI's stdin
+        await ipcRenderer.invoke('claude-oauth:send-input', code + '\r');
+        this.claudeOAuthCode = '';
+        this.claudeOAuthStatus = 'Code submitted, waiting for token...';
+      } catch (err) {
+        console.warn('Failed to submit OAuth code:', err);
+      }
+    },
+
+    async copyAuthUrl() {
+      const { clipboard } = require('electron');
+      if (this.claudeOAuthUrl) {
+        clipboard.writeText(this.claudeOAuthUrl);
+        this.claudeOAuthStatus = 'URL copied to clipboard. Paste it into your browser.';
       }
     },
 
@@ -605,6 +631,8 @@ export default defineComponent({
       } catch { /* ignore */ }
       this.claudeOAuthRunning = false;
       this.claudeOAuthStatus = 'Starting...';
+      this.claudeOAuthUrl = '';
+      this.claudeOAuthCode = '';
     },
 
     async disconnectClaudeOAuth() {
@@ -1062,11 +1090,33 @@ export default defineComponent({
             </button>
             <div
               v-if="claudeOAuthRunning"
-              class="claude-oauth-progress"
+              class="claude-oauth-progress-container"
             >
               <p class="setting-description">
                 {{ claudeOAuthStatus }}
               </p>
+              <p
+                v-if="claudeOAuthUrl"
+                class="setting-description"
+              >
+                If the browser didn't open,
+                <a href="#" @click.prevent="copyAuthUrl">copy the sign-in URL</a>.
+              </p>
+              <div class="claude-oauth-paste-row">
+                <input
+                  v-model="claudeOAuthCode"
+                  class="input-field claude-input-field"
+                  placeholder="Paste the code from the browser here..."
+                  @keyup.enter="submitClaudeOAuthCode"
+                >
+                <button
+                  class="btn role-primary"
+                  :disabled="!claudeOAuthCode.trim()"
+                  @click="submitClaudeOAuthCode"
+                >
+                  Submit
+                </button>
+              </div>
               <button
                 class="btn role-secondary"
                 @click="cancelClaudeOAuth"
@@ -1355,11 +1405,17 @@ export default defineComponent({
   margin: 0;
 }
 
-.claude-oauth-progress {
+.claude-oauth-progress-container {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 0.75rem;
   margin-top: 0.5rem;
+}
+
+.claude-oauth-paste-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
 }
 
 .claude-oauth-signed-in {
