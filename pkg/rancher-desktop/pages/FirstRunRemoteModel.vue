@@ -198,7 +198,7 @@ const emit = defineEmits<{
 }>();
 
 // IDs that are AI providers but not remote LLM providers
-const EXCLUDED_IDS = ['activepieces', 'ollama'];
+const EXCLUDED_IDS = ['activepieces'];
 
 // Filter the catalog to only AI Infrastructure integrations suitable for remote LLM
 const aiProviders = computed<Integration[]>(() => {

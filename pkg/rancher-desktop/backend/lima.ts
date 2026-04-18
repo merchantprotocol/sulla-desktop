@@ -2451,11 +2451,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const sullaDataDir = path.join(paths.appHome, 'data');
 
     await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
-    await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-redis'), { recursive: true });
 
-    // Ensure data directories are writable by container users (postgres=UID 70, redis=UID 999)
+    // Ensure data directory is writable by container user (postgres=UID 70)
     await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);
-    await fs.promises.chmod(path.join(sullaDataDir, 'sulla-redis'), 0o777);
 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
@@ -2471,7 +2469,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const sullaDataDir = path.join(paths.appHome, 'data');
     const migrations = [
       { src: '/var/lib/sulla/postgres', dest: path.join(sullaDataDir, 'sulla-postgres') },
-      { src: '/var/lib/sulla/redis', dest: path.join(sullaDataDir, 'sulla-redis') },
     ];
 
     for (const { src, dest } of migrations) {

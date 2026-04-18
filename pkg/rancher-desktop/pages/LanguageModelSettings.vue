@@ -193,7 +193,6 @@ export default defineComponent({
     try {
       const providers = await ipcRenderer.invoke('model-provider:get-providers');
       this.availableProviders = providers
-        .filter((p: { id: string; name: string }) => p.id !== 'ollama')
         .map((p: { id: string; name: string; connected?: boolean }) => ({
           id: p.id, name: p.connected === false ? `${ p.name } (not connected)` : p.name,
         }));

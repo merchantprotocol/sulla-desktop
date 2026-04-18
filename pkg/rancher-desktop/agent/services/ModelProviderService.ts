@@ -114,7 +114,6 @@ class ModelProviderService {
     for (const integration of Object.values(integrations)) {
       if (integration.category !== 'AI Infrastructure') continue;
       if (EXCLUDED_PROVIDER_IDS.includes(integration.id)) continue;
-      if (integration.id === 'ollama') continue;
 
       let connected = false;
       try {
