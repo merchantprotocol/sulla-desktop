@@ -720,6 +720,16 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       script: pythonNodeScript,
     });
 
+    // Install Claude Code CLI (idempotent — skips if already installed)
+    const claudeCodeScript = '#!/bin/sh\nset -o errexit\ncommand -v claude >/dev/null 2>&1 || npm install -g @anthropic-ai/claude-code';
+    config.provision = config.provision.filter((p: { script?: string }) => {
+      return !(p.script ?? '').includes('@anthropic-ai/claude-code');
+    });
+    config.provision.push({
+      mode:   'system',
+      script: claudeCodeScript,
+    });
+
     this.updateConfigPortForwards(config);
     if (currentConfig) {
       // update existing configuration
@@ -1907,6 +1917,63 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   }
 
   /**
+   * Install Claude Code auth credentials into the VM.
+   *
+   * Supports two auth modes:
+   * 1. OAuth token (Claude Max/Pro subscribers) — stored as CLAUDE_CODE_OAUTH_TOKEN
+   * 2. API key (pay-per-token) — stored as ANTHROPIC_API_KEY
+   *
+   * Credentials are read from:
+   * - SullaSettingsModel ('claudeOAuthToken' or 'claudeApiKey')
+   * - Anthropic integration form values (api_key)
+   *
+   * Written to /etc/claude-env and sourced by the sulla-daemon.
+   */
+  protected async installClaudeCode() {
+    try {
+      const envLines: string[] = [];
+
+      // 1. Check for OAuth token (Max/Pro subscribers)
+      const oauthToken = await SullaSettingsModel.get('claudeOAuthToken', '');
+      if (oauthToken) {
+        envLines.push(`CLAUDE_CODE_OAUTH_TOKEN=${ oauthToken }`);
+      }
+
+      // 2. Check for API key (from Anthropic integration or direct setting)
+      let apiKey = await SullaSettingsModel.get('claudeApiKey', '');
+      if (!apiKey) {
+        try {
+          const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+          const integrationService = getIntegrationService();
+          const values = await integrationService.getFormValues('anthropic');
+          const keyVal = values.find((v: { property: string }) => v.property === 'api_key');
+          apiKey = keyVal?.value || '';
+        } catch {
+          // IntegrationService not ready
+        }
+      }
+      if (apiKey) {
+        envLines.push(`ANTHROPIC_API_KEY=${ apiKey }`);
+      }
+
+      if (envLines.length === 0) {
+        console.log('[Lima] No Claude credentials configured — skipping claude-env');
+        return;
+      }
+
+      await this.writeFile('/etc/claude-env', envLines.join('\n') + '\n', 0o600);
+
+      // Source the env in the user's profile so Claude Code picks it up
+      await this.execCommand({ root: false }, 'sh', '-c',
+        'grep -q claude-env ~/.profile 2>/dev/null || echo ". /etc/claude-env" >> ~/.profile');
+
+      console.log(`[Lima] Claude Code credentials installed (${ oauthToken ? 'OAuth' : 'API key' })`);
+    } catch (error) {
+      console.warn('[Lima] Failed to install Claude Code credentials:', error);
+    }
+  }
+
+  /**
    * Start the VM.  If the machine is already started, this does nothing.
    * Note that this does not start k3s.
    * @precondition The VM configuration is correct.
@@ -2153,6 +2220,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
           this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
           this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli()),
+          this.progressTracker.action('Configuring Claude Code', 50, this.installClaudeCode()),
         ];
         if (kubernetesVersion) {
           tasks.push(this.kubeBackend.install(config, kubernetesVersion, this.#adminAccess));

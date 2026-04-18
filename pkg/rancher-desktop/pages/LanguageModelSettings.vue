@@ -16,6 +16,7 @@ import { useTheme } from '../composables/useTheme';
 const navItems = [
   { id: 'overview', name: 'Overview' },
   { id: 'models', name: 'Models' },
+  { id: 'claude-code', name: 'Claude Code' },
   { id: 'soul', name: 'Soul' },
   { id: 'heartbeat', name: 'Heartbeat' },
 ];
@@ -80,6 +81,12 @@ export default defineComponent({
       // Guard flag to prevent feedback loop between primaryProvider watcher and IPC handler
       _suppressProviderWatch: false,
 
+      // Claude Code auth
+      claudeAuthMode:    'none' as 'none' | 'api-key' | 'oauth',
+      claudeApiKey:      '',
+      claudeOAuthToken:  '',
+      claudeApiKeyVisible: false,
+      claudeSaving:      false,
     };
   },
 
@@ -128,6 +135,9 @@ export default defineComponent({
     });
 
     this.activeMode = await SullaSettingsModel.get('activeMode', 'remote');
+
+    // Load Claude Code credentials
+    await this.loadClaudeCredentials();
 
     // Listen for state changes from ModelProviderService (source of truth)
     ipcRenderer.on('model-provider:state-changed', this.handleProviderStateChanged);
@@ -551,6 +561,47 @@ export default defineComponent({
       }
     },
 
+    async saveClaudeCredentials() {
+      this.claudeSaving = true;
+      try {
+        if (this.claudeAuthMode === 'api-key' && this.claudeApiKey) {
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeApiKey', this.claudeApiKey, 'string');
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', '', 'string');
+        } else if (this.claudeAuthMode === 'oauth' && this.claudeOAuthToken) {
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', this.claudeOAuthToken.trim(), 'string');
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeApiKey', '', 'string');
+        }
+        console.log('[LM Settings] Claude credentials saved');
+      } catch (err) {
+        console.error('Failed to save Claude credentials:', err);
+      } finally {
+        this.claudeSaving = false;
+      }
+    },
+
+    async loadClaudeCredentials() {
+      try {
+        const apiKey = await ipcRenderer.invoke('sulla-settings-get', 'claudeApiKey', '');
+        const oauthToken = await ipcRenderer.invoke('sulla-settings-get', 'claudeOAuthToken', '');
+        this.claudeApiKey = apiKey || '';
+        this.claudeOAuthToken = oauthToken || '';
+        if (oauthToken) {
+          this.claudeAuthMode = 'oauth';
+        } else if (apiKey) {
+          this.claudeAuthMode = 'api-key';
+        } else {
+          this.claudeAuthMode = 'none';
+        }
+      } catch {
+        // Settings not available yet
+      }
+    },
+
+    openExternal(url: string) {
+      const { shell } = require('electron');
+      shell.openExternal(url);
+    },
+
     async saveSettings() {
       if (this.savingSettings) {
         return;
@@ -870,6 +921,118 @@ export default defineComponent({
         </div>
       </div>
     </div>
+
+        <!-- Claude Code Tab -->
+        <div
+          v-if="currentNav === 'claude-code'"
+          class="tab-content"
+        >
+          <h2>Claude Code</h2>
+          <p class="description">
+            Claude Code runs inside the virtual machine with full access to your projects.
+            Connect your Anthropic account to enable it.
+          </p>
+
+          <!-- Auth Mode Selection -->
+          <div class="setting-group">
+            <label class="setting-label">Authentication Method</label>
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+              <button
+                class="btn"
+                :class="claudeAuthMode === 'api-key' ? 'role-primary' : 'role-secondary'"
+                @click="claudeAuthMode = 'api-key'"
+              >
+                API Key
+              </button>
+              <button
+                class="btn"
+                :class="claudeAuthMode === 'oauth' ? 'role-primary' : 'role-secondary'"
+                @click="claudeAuthMode = 'oauth'"
+              >
+                Claude Max (OAuth)
+              </button>
+            </div>
+            <p class="setting-description">
+              Use an API key for pay-per-token billing, or sign in with your Claude Max/Pro subscription.
+            </p>
+          </div>
+
+          <!-- API Key Input -->
+          <div
+            v-if="claudeAuthMode === 'api-key'"
+            class="setting-group"
+          >
+            <label class="setting-label">Anthropic API Key</label>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <input
+                v-model="claudeApiKey"
+                :type="claudeApiKeyVisible ? 'text' : 'password'"
+                class="input-field"
+                placeholder="sk-ant-..."
+                style="flex: 1;"
+              >
+              <button
+                class="btn role-secondary btn-sm"
+                @click="claudeApiKeyVisible = !claudeApiKeyVisible"
+              >
+                {{ claudeApiKeyVisible ? 'Hide' : 'Show' }}
+              </button>
+            </div>
+            <p class="setting-description">
+              Get your API key from
+              <a
+                href="#"
+                @click.prevent="openExternal('https://console.anthropic.com/settings/keys')"
+              >console.anthropic.com</a>
+            </p>
+          </div>
+
+          <!-- OAuth Token Input -->
+          <div
+            v-if="claudeAuthMode === 'oauth'"
+            class="setting-group"
+          >
+            <label class="setting-label">OAuth Token</label>
+            <p class="setting-description" style="margin-bottom: 0.5rem;">
+              Run <code>claude setup-token</code> in your terminal, then paste the token here.
+              This generates a one-year token from your Claude Max/Pro subscription.
+            </p>
+            <textarea
+              v-model="claudeOAuthToken"
+              class="input-field"
+              placeholder="Paste your OAuth token here..."
+              rows="3"
+              style="font-family: var(--font-mono); font-size: 12px; resize: vertical;"
+            />
+          </div>
+
+          <!-- Save Button -->
+          <div
+            v-if="claudeAuthMode !== 'none'"
+            class="setting-group"
+          >
+            <button
+              class="btn role-primary"
+              :disabled="claudeSaving"
+              @click="saveClaudeCredentials"
+            >
+              {{ claudeSaving ? 'Saving...' : 'Save Claude Credentials' }}
+            </button>
+          </div>
+
+          <!-- Status -->
+          <div
+            v-if="claudeAuthMode !== 'none' && (claudeApiKey || claudeOAuthToken)"
+            class="setting-group"
+          >
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--status-success, #3fb950);" />
+              <span class="setting-description" style="margin: 0;">
+                Claude Code credentials configured. They will be injected into the VM on next boot.
+              </span>
+            </div>
+          </div>
+        </div>
 
     <!-- Footer -->
     <div class="lm-footer">
