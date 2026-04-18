@@ -107,7 +107,8 @@ class ModelProviderService {
   async getAvailableProviders(): Promise<ProviderInfo[]> {
     const providers: ProviderInfo[] = [];
 
-    // Remote providers from connected integrations
+    // All AI Infrastructure integrations — marked with connected state.
+    // UI decides whether to gate on connection or prompt the user to connect.
     const integrationService = getIntegrationService();
 
     for (const integration of Object.values(integrations)) {
@@ -120,9 +121,7 @@ class ModelProviderService {
         connected = await integrationService.isAnyAccountConnected(integration.id);
       } catch { /* not ready */ }
 
-      if (connected) {
-        providers.push({ id: integration.id, name: integration.name, connected });
-      }
+      providers.push({ id: integration.id, name: integration.name, connected });
     }
 
     return providers;
