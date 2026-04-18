@@ -24,7 +24,7 @@ services:
     container_name: sulla_redis
     ports:
       - "30117:6379"
-    command: redis-server --appendonly yes --save 60 1
+    command: redis-server --appendonly yes --save 60 1 --stop-writes-on-bgsave-error no
     volumes:
       - "sulla_redis_data:/data"
     restart: unless-stopped
