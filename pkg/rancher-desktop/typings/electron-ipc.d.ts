@@ -237,6 +237,11 @@ export interface IpcMainInvokeEvents {
   'sulla-settings:get':     (key: string) => any;
   'sulla-settings:set':     (key: string, value: any, cast?: string) => any;
 
+  /** Claude Code OAuth flow */
+  'claude-oauth:start':      () => { token?: string; error?: string };
+  'claude-oauth:cancel':     () => void;
+  'claude-oauth:send-input': (input: string) => void;
+
   // #region Model Provider Service (source of truth)
   'model-provider:get-state':            () => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
   'model-provider:get-providers':        () => { id: string; name: string; connected: boolean }[];
@@ -452,6 +457,8 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'claude-oauth:progress': (text: string) => void;
+  'claude-oauth:url':      (url: string) => void;
   'tab-context-menu:selected': (action: string, tabData: Record<string, unknown>) => void;
   'more-menu:selected':        (action: string, extra: Record<string, unknown> | null) => void;
   'more-menu:fetch-history':   () => void;

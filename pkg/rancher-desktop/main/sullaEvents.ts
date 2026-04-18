@@ -11,6 +11,7 @@ import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
 import { initSullaDebugEvents } from './sullaDebugEvents';
 import { initMessageBusIpc } from './messageBusIpc';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
+import { initClaudeOAuthEvents } from './claudeOAuth';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -40,6 +41,7 @@ function assertInsideSullaHome(targetPath: string): string {
 export function initSullaEvents(): void {
   initMessageBusIpc();
   initConversationHistoryIpc();
+  initClaudeOAuthEvents();
 
   // ─────────────────────────────────────────────────────────────
   // Settings handlers

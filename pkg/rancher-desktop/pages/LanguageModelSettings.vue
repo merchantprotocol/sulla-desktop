@@ -87,6 +87,9 @@ export default defineComponent({
       claudeOAuthToken:  '',
       claudeApiKeyVisible: false,
       claudeSaving:      false,
+      claudeOAuthRunning: false,
+      claudeOAuthStatus: 'Starting...',
+      claudeOAuthError:  '',
     };
   },
 
@@ -560,6 +563,55 @@ export default defineComponent({
       }
     },
 
+    async startClaudeOAuth() {
+      this.claudeOAuthError = '';
+      this.claudeOAuthStatus = 'Opening browser for authentication...';
+      this.claudeOAuthRunning = true;
+
+      // Listen for progress updates from main process
+      const onProgress = (_event: unknown, text: string) => {
+        const trimmed = text.trim();
+        if (trimmed) this.claudeOAuthStatus = trimmed.split('\n').pop() || this.claudeOAuthStatus;
+      };
+      const onUrl = () => {
+        this.claudeOAuthStatus = 'Waiting for you to authorize in your browser...';
+      };
+      ipcRenderer.on('claude-oauth:progress', onProgress);
+      ipcRenderer.on('claude-oauth:url', onUrl);
+
+      try {
+        const result = await ipcRenderer.invoke('claude-oauth:start');
+        if (result.token) {
+          this.claudeOAuthToken = result.token;
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', result.token, 'string');
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeApiKey', '', 'string');
+          this.claudeApiKey = '';
+          this.claudeOAuthStatus = 'Signed in';
+        } else if (result.error) {
+          this.claudeOAuthError = result.error;
+        }
+      } catch (err: any) {
+        this.claudeOAuthError = err?.message || 'OAuth flow failed';
+      } finally {
+        ipcRenderer.removeListener('claude-oauth:progress', onProgress);
+        ipcRenderer.removeListener('claude-oauth:url', onUrl);
+        this.claudeOAuthRunning = false;
+      }
+    },
+
+    async cancelClaudeOAuth() {
+      try {
+        await ipcRenderer.invoke('claude-oauth:cancel');
+      } catch { /* ignore */ }
+      this.claudeOAuthRunning = false;
+      this.claudeOAuthStatus = 'Starting...';
+    },
+
+    async disconnectClaudeOAuth() {
+      this.claudeOAuthToken = '';
+      await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', '', 'string');
+    },
+
     async saveClaudeCredentials() {
       this.claudeSaving = true;
       try {
@@ -991,27 +1043,61 @@ export default defineComponent({
             </p>
           </div>
 
-          <!-- OAuth Token Input -->
+          <!-- OAuth Sign-In -->
           <div
             v-if="claudeAuthMode === 'oauth'"
             class="setting-group"
           >
-            <label class="setting-label">OAuth Token</label>
+            <label class="setting-label">Claude Max / Pro Subscription</label>
             <p class="setting-description claude-oauth-instructions">
-              Run <code>claude setup-token</code> in your terminal, then paste the token here.
-              This generates a one-year token from your Claude Max/Pro subscription.
+              Sign in with your Anthropic account to use your Claude Max or Pro subscription.
+              We'll open a browser window for you to authorize.
             </p>
-            <textarea
-              v-model="claudeOAuthToken"
-              class="input-field claude-oauth-textarea"
-              placeholder="Paste your OAuth token here..."
-              rows="3"
-            />
+            <button
+              v-if="!claudeOAuthToken && !claudeOAuthRunning"
+              class="btn role-primary"
+              @click="startClaudeOAuth"
+            >
+              Sign in with Claude
+            </button>
+            <div
+              v-if="claudeOAuthRunning"
+              class="claude-oauth-progress"
+            >
+              <p class="setting-description">
+                {{ claudeOAuthStatus }}
+              </p>
+              <button
+                class="btn role-secondary"
+                @click="cancelClaudeOAuth"
+              >
+                Cancel
+              </button>
+            </div>
+            <div
+              v-if="claudeOAuthToken && !claudeOAuthRunning"
+              class="claude-oauth-signed-in"
+            >
+              <span class="claude-status-dot" />
+              <span class="setting-description claude-status-text">Signed in</span>
+              <button
+                class="btn role-secondary"
+                @click="disconnectClaudeOAuth"
+              >
+                Sign out
+              </button>
+            </div>
+            <p
+              v-if="claudeOAuthError"
+              class="setting-description claude-oauth-error"
+            >
+              {{ claudeOAuthError }}
+            </p>
           </div>
 
-          <!-- Save Button -->
+          <!-- Save Button (API key only) -->
           <div
-            v-if="claudeAuthMode !== 'none'"
+            v-if="claudeAuthMode === 'api-key'"
             class="setting-group"
           >
             <button
@@ -1019,7 +1105,7 @@ export default defineComponent({
               :disabled="claudeSaving"
               @click="saveClaudeCredentials"
             >
-              {{ claudeSaving ? 'Saving...' : 'Save Claude Credentials' }}
+              {{ claudeSaving ? 'Saving...' : 'Save API Key' }}
             </button>
           </div>
 
@@ -1267,6 +1353,25 @@ export default defineComponent({
 
 .claude-status-text {
   margin: 0;
+}
+
+.claude-oauth-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.claude-oauth-signed-in {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.claude-oauth-error {
+  color: var(--status-error, #f85149);
+  margin-top: 0.5rem;
 }
 
 .tab-content {
