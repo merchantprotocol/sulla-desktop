@@ -1,15 +1,27 @@
 /**
  * Sulla Cloud authentication handler.
  *
- * Signs in to the same sulla-workers account used by Sulla Mobile, via phone
- * OTP. On success, stores the JWT access + refresh tokens in macOS Keychain
- * (via Electron safeStorage) and auto-pairs the DesktopRelay client using the
- * authenticated contractor_id (JWT sub).
+ * Signs in to the same sulla-workers account used by Sulla Mobile. Session
+ * tokens + profile data are stored as an IntegrationService account under
+ * integration_id="sulla-cloud", which means they're vault-encrypted at rest
+ * alongside every other integration's credentials.
+ *
+ * User vs contractor:
+ *   - `userId` is the stable identity we use to pair with the mobile app
+ *     over the DesktopRelay. It does not change when the user switches
+ *     businesses.
+ *   - `activeContractorId` is the business currently selected. One user may
+ *     belong to multiple contractors (future — today the server returns only
+ *     a single contractor, so `userId === activeContractorId`).
+ *
+ * Three sign-in methods feed the same storage:
+ *   - Phone OTP ............... sulla-cloud:send-otp / verify-otp
+ *   - Email + password ........ sulla-cloud:email-login / email-register
+ *   - Sign in with Apple ...... sulla-cloud:apple-sign-in (takes identity token)
  */
 
-import { safeStorage } from 'electron';
-
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -18,9 +30,12 @@ import { getDesktopRelayClient } from './desktopRelay';
 const console = Logging.background;
 
 const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
-const SETTINGS_KEY_ENCRYPTED_TOKENS = 'sullaCloudTokensEncrypted';
-const SETTINGS_KEY_USER_ID = 'sullaCloudUserId';
-const SETTINGS_KEY_PHONE = 'sullaCloudPhone';
+const INTEGRATION_ID = 'sulla-cloud';
+
+// Legacy setting keys — cleared on first migration pass.
+const LEGACY_ENCRYPTED_TOKENS = 'sullaCloudTokensEncrypted';
+const LEGACY_USER_ID = 'sullaCloudUserId';
+const LEGACY_PHONE = 'sullaCloudPhone';
 
 interface StoredTokens {
   accessToken:  string;
@@ -32,13 +47,28 @@ interface CloudContractor {
   phone:        string;
   businessName: string | null;
   name:         string | null;
+  email:        string | null;
+}
+
+/**
+ * Normalized sign-in result. Maps both today's `contractor`-only server response
+ * and the future `{userId, contractors[]}` response into the same shape.
+ */
+interface CloudSession {
+  userId:             string;            // Stable identity — used for relay pairing
+  activeContractorId: string;            // Currently selected business
+  contractors:        CloudContractor[]; // All businesses this user can access (today: 1)
+  tokens:             StoredTokens;
 }
 
 interface AuthStatus {
-  signedIn:   boolean;
-  userId:     string;
-  phone:      string;
-  lastError?: string;
+  signedIn:           boolean;
+  userId:             string;
+  activeContractorId: string;
+  phone:              string;
+  name:               string;
+  contractorCount:    number;
+  lastError?:         string;
 }
 
 interface AuthResult {
@@ -47,47 +77,99 @@ interface AuthResult {
   status:     AuthStatus;
 }
 
-// ── Token storage (Keychain via safeStorage) ────────────────
+// ── Session storage (IntegrationService, vault-encrypted) ──────
 
-async function saveTokens(tokens: StoredTokens, contractor: CloudContractor): Promise<void> {
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('Secure storage unavailable on this system');
-  }
-  const encrypted = safeStorage.encryptString(JSON.stringify(tokens)).toString('base64');
-  await SullaSettingsModel.set(SETTINGS_KEY_ENCRYPTED_TOKENS, encrypted, 'string');
-  await SullaSettingsModel.set(SETTINGS_KEY_USER_ID, contractor.id, 'string');
-  await SullaSettingsModel.set(SETTINGS_KEY_PHONE, contractor.phone ?? '', 'string');
+async function saveSession(session: CloudSession): Promise<void> {
+  const svc = getIntegrationService();
+  const accountId = session.userId;
+
+  await svc.setMultipleValues([
+    { integration_id: INTEGRATION_ID, account_id: accountId, property: 'access_token', value: session.tokens.accessToken },
+    { integration_id: INTEGRATION_ID, account_id: accountId, property: 'refresh_token', value: session.tokens.refreshToken },
+    { integration_id: INTEGRATION_ID, account_id: accountId, property: 'user_id', value: session.userId },
+    { integration_id: INTEGRATION_ID, account_id: accountId, property: 'active_contractor_id', value: session.activeContractorId },
+    { integration_id: INTEGRATION_ID, account_id: accountId, property: 'contractors_json', value: JSON.stringify(session.contractors) },
+  ]);
+  await svc.setConnectionStatus(INTEGRATION_ID, true, accountId);
+
+  // Clear any legacy settings left over from the safeStorage era.
+  await clearLegacySettings();
 }
 
-async function loadTokens(): Promise<StoredTokens | null> {
-  const encrypted = await SullaSettingsModel.get(SETTINGS_KEY_ENCRYPTED_TOKENS, '');
-  if (!encrypted) return null;
-  if (!safeStorage.isEncryptionAvailable()) return null;
+async function loadSession(): Promise<CloudSession | null> {
+  const svc = getIntegrationService();
+  const accounts = await svc.getAccounts(INTEGRATION_ID);
+  if (accounts.length === 0) return null;
+
+  // We only ever have one signed-in user account; use the first (active) one.
+  const accountId = accounts.find(a => a.active)?.account_id ?? accounts[0].account_id;
+
+  const [accessTokenV, refreshTokenV, userIdV, activeContractorIdV, contractorsJsonV] = await Promise.all([
+    svc.getIntegrationValue(INTEGRATION_ID, 'access_token', accountId),
+    svc.getIntegrationValue(INTEGRATION_ID, 'refresh_token', accountId),
+    svc.getIntegrationValue(INTEGRATION_ID, 'user_id', accountId),
+    svc.getIntegrationValue(INTEGRATION_ID, 'active_contractor_id', accountId),
+    svc.getIntegrationValue(INTEGRATION_ID, 'contractors_json', accountId),
+  ]);
+
+  if (!accessTokenV?.value || !userIdV?.value) return null;
+
+  let contractors: CloudContractor[] = [];
   try {
-    const plain = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
-    return JSON.parse(plain) as StoredTokens;
-  } catch (err) {
-    console.warn('[SullaCloudAuth] Failed to decrypt tokens:', err);
-    return null;
+    contractors = contractorsJsonV?.value ? JSON.parse(contractorsJsonV.value) as CloudContractor[] : [];
+  } catch {
+    contractors = [];
   }
+
+  return {
+    userId:             userIdV.value,
+    activeContractorId: activeContractorIdV?.value || userIdV.value,
+    contractors,
+    tokens:             {
+      accessToken:  accessTokenV.value,
+      refreshToken: refreshTokenV?.value ?? '',
+    },
+  };
 }
 
-async function clearTokens(): Promise<void> {
-  await SullaSettingsModel.delete(SETTINGS_KEY_ENCRYPTED_TOKENS);
-  await SullaSettingsModel.delete(SETTINGS_KEY_USER_ID);
-  await SullaSettingsModel.delete(SETTINGS_KEY_PHONE);
+async function clearSession(): Promise<void> {
+  const svc = getIntegrationService();
+  const accounts = await svc.getAccounts(INTEGRATION_ID);
+  for (const acc of accounts) {
+    await svc.deleteAccount(INTEGRATION_ID, acc.account_id);
+  }
+  await clearLegacySettings();
+}
+
+async function clearLegacySettings(): Promise<void> {
+  try {
+    await SullaSettingsModel.delete(LEGACY_ENCRYPTED_TOKENS);
+    await SullaSettingsModel.delete(LEGACY_USER_ID);
+    await SullaSettingsModel.delete(LEGACY_PHONE);
+  } catch { /* ignore */ }
 }
 
 // ── Status ──────────────────────────────────────────────────
 
+function findActiveContractor(session: CloudSession): CloudContractor | null {
+  return session.contractors.find(c => c.id === session.activeContractorId)
+    ?? session.contractors[0]
+    ?? null;
+}
+
 async function buildStatus(lastError?: string): Promise<AuthStatus> {
-  const tokens = await loadTokens();
-  const userId = (await SullaSettingsModel.get(SETTINGS_KEY_USER_ID, '')) ?? '';
-  const phone = (await SullaSettingsModel.get(SETTINGS_KEY_PHONE, '')) ?? '';
+  const session = await loadSession();
+  if (!session) {
+    return { signedIn: false, userId: '', activeContractorId: '', phone: '', name: '', contractorCount: 0, lastError };
+  }
+  const active = findActiveContractor(session);
   return {
-    signedIn: !!tokens && !!userId,
-    userId,
-    phone,
+    signedIn:           true,
+    userId:             session.userId,
+    activeContractorId: session.activeContractorId,
+    phone:              active?.phone ?? '',
+    name:               active?.name ?? '',
+    contractorCount:    session.contractors.length,
     lastError,
   };
 }
@@ -111,6 +193,25 @@ interface VerifyResponse {
   contractor:    CloudContractor;
   accessToken:   string;
   refreshToken:  string;
+  /** Reserved for future multi-contractor support. Today the server does not
+   * return a distinct userId — we alias to contractor.id. */
+  userId?:       string;
+  /** Reserved for future multi-contractor support. Today the server returns a
+   * single `contractor` field which we wrap into this list. */
+  contractors?:  CloudContractor[];
+}
+
+function responseToSession(data: VerifyResponse): CloudSession {
+  const contractors = data.contractors?.length ? data.contractors : [data.contractor];
+  return {
+    userId:             data.userId ?? data.contractor.id,
+    activeContractorId: data.contractor.id,
+    contractors,
+    tokens:             {
+      accessToken:  data.accessToken,
+      refreshToken: data.refreshToken,
+    },
+  };
 }
 
 async function verifyOtp(phone: string, code: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse }> {
@@ -194,18 +295,18 @@ export function initSullaCloudAuthEvents(): void {
     return { ok: true, status: await buildStatus() };
   });
 
-  // Shared success path: persist tokens, auto-pair relay, return status.
+  // Shared success path: persist session, auto-pair relay, return status.
   const completeSignIn = async(data: VerifyResponse): Promise<AuthResult> => {
-    await saveTokens(
-      { accessToken: data.accessToken, refreshToken: data.refreshToken },
-      data.contractor,
-    );
+    const session = responseToSession(data);
+    await saveSession(session);
     try {
-      await getDesktopRelayClient().setPairedUserId(data.contractor.id);
+      // Relay room is the stable userId, not the active contractor — so
+      // switching businesses later doesn't drop the mobile connection.
+      await getDesktopRelayClient().setPairedUserId(session.userId);
     } catch (err) {
       console.warn('[SullaCloudAuth] Auto-pair failed:', err);
     }
-    console.log(`[SullaCloudAuth] Signed in as ${ data.contractor.id }`);
+    console.log(`[SullaCloudAuth] Signed in — user=${ session.userId }, active contractor=${ session.activeContractorId }`);
     return { ok: true, status: await buildStatus() };
   };
 
@@ -263,7 +364,7 @@ export function initSullaCloudAuthEvents(): void {
   });
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
-    await clearTokens();
+    await clearSession();
     try {
       await getDesktopRelayClient().setPairedUserId('');
     } catch { /* ignore */ }
@@ -271,14 +372,13 @@ export function initSullaCloudAuthEvents(): void {
     return buildStatus();
   });
 
-  // Auto-pair relay on startup if we have valid tokens
+  // Auto-pair relay on startup if we have a signed-in session
   (async() => {
     try {
-      const tokens = await loadTokens();
-      const userId = (await SullaSettingsModel.get(SETTINGS_KEY_USER_ID, '')) ?? '';
-      if (tokens && userId) {
-        await getDesktopRelayClient().setPairedUserId(userId);
-        console.log(`[SullaCloudAuth] Restored session: ${ userId }`);
+      const session = await loadSession();
+      if (session) {
+        await getDesktopRelayClient().setPairedUserId(session.userId);
+        console.log(`[SullaCloudAuth] Restored session: user=${ session.userId }`);
       }
     } catch (err) {
       console.warn('[SullaCloudAuth] Startup restore failed:', err);

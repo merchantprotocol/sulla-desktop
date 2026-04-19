@@ -247,20 +247,6 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { await getChatCompletionsServer().stop() },
   );
 
-  lifecycle.register('cloudflare-relay', ['chat-server'],
-    async() => {
-      const { getCloudflareRelayService } = await import('@pkg/agent/services/CloudflareRelayService');
-
-      await getCloudflareRelayService().start();
-      console.log('[Background] Cloudflare relay service started');
-    },
-    async() => {
-      const { getCloudflareRelayService } = await import('@pkg/agent/services/CloudflareRelayService');
-
-      await getCloudflareRelayService().stop();
-    },
-  );
-
   lifecycle.register('vault', ['database-manager'],
     async() => {
       const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');

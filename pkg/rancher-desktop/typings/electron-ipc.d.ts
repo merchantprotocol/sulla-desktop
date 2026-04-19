@@ -243,13 +243,13 @@ export interface IpcMainInvokeEvents {
   'claude-oauth:cancel': () => void;
 
   /** Sulla Cloud account auth (phone OTP / email / Apple) */
-  'sulla-cloud:get-status':      () => { signedIn: boolean; userId: string; phone: string; lastError?: string };
-  'sulla-cloud:send-otp':        (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:verify-otp':      (phone: string, code: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:email-login':     (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:email-register':  (email: string, password: string, name?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:apple-sign-in':   (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:logout':          () => { signedIn: boolean; userId: string; phone: string; lastError?: string };
+  'sulla-cloud:get-status':      () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
+  'sulla-cloud:send-otp':        (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:verify-otp':      (phone: string, code: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-login':     (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-register':  (email: string, password: string, name?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:apple-sign-in':   (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:logout':          () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
 
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };
