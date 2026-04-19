@@ -273,13 +273,78 @@ async function appleSignIn(identityToken: string, fullName?: string, email?: str
 // ── Public helpers ─────────────────────────────────────────
 
 /**
+ * Parse the `exp` claim from a JWT without verifying its signature. We only
+ * need the timestamp locally to decide whether to refresh. Returns 0 if
+ * the token is malformed — callers treat that as "expired, refresh".
+ */
+function readJwtExpSeconds(jwt: string): number {
+  try {
+    const parts = jwt.split('.');
+    if (parts.length !== 3) return 0;
+    const payloadJson = Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
+    const payload = JSON.parse(payloadJson) as { exp?: number };
+    return typeof payload.exp === 'number' ? payload.exp : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Exchange the stored refresh token for a new access token. On success, the
+ * session's accessToken (and refreshToken, if rotated) are written back to
+ * storage. Returns the new access token, or empty string on failure — the
+ * caller should surface a re-auth prompt at that point.
+ */
+async function refreshAccessToken(): Promise<string> {
+  const session = await loadSession();
+  if (!session?.tokens.refreshToken) return '';
+
+  try {
+    const res = await fetch(`${ API_BASE }/auth/refresh`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ refreshToken: session.tokens.refreshToken }),
+    });
+    if (!res.ok) {
+      console.warn(`[sullaCloudAuth] Refresh failed: HTTP ${ res.status }`);
+      return '';
+    }
+    const data = await res.json() as { accessToken: string; refreshToken?: string };
+    const refreshed: CloudSession = {
+      ...session,
+      tokens: {
+        accessToken:  data.accessToken,
+        refreshToken: data.refreshToken ?? session.tokens.refreshToken,
+      },
+    };
+    await saveSession(refreshed);
+    return data.accessToken;
+  } catch (err: any) {
+    console.warn('[sullaCloudAuth] Refresh error:', err?.message || err);
+    return '';
+  }
+}
+
+/**
  * Returns the currently-signed-in access token, or empty string if not
- * signed in. Used by subsystems that need to call authenticated Sulla
- * backend endpoints (e.g. the relay WebSocket) without going through IPC.
+ * signed in. Automatically refreshes the token when it is within 60s of
+ * expiry (or already expired), so callers never need to handle 401s.
+ *
+ * Used by subsystems that need to call authenticated Sulla backend
+ * endpoints (e.g. the relay WebSocket) without going through IPC.
  */
 export async function getCurrentAccessToken(): Promise<string> {
   const session = await loadSession();
-  return session?.tokens.accessToken ?? '';
+  const current = session?.tokens.accessToken ?? '';
+  if (!current) return '';
+
+  const exp = readJwtExpSeconds(current);
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (exp === 0 || exp - nowSec <= 60) {
+    const refreshed = await refreshAccessToken();
+    return refreshed || current;
+  }
+  return current;
 }
 
 // ── IPC handlers ───────────────────────────────────────────
