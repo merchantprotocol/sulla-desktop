@@ -14,6 +14,7 @@
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -25,10 +26,11 @@ const RECONNECT_MAX_MS  = 30_000;
 type Role = 'desktop' | 'mobile';
 
 interface IncomingMessage {
-  type:      string;
-  messages?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
-  role?:     Role;
-  reason?:   string;
+  type:            string;
+  messages?:       Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
+  conversationId?: string;
+  role?:           Role;
+  reason?:         string;
 }
 
 interface Status {
@@ -86,7 +88,9 @@ class DesktopRelayClient {
     this.intentionallyClosed = false;
     this.currentRoom = room;
     this.reconnectDelay = RECONNECT_BASE_MS;
-    this.openSocket();
+    this.openSocket().catch((err) => {
+      console.warn('[DesktopRelay] openSocket failed:', err);
+    });
   }
 
   private disconnect() {
@@ -104,12 +108,24 @@ class DesktopRelayClient {
     this.broadcastStatus();
   }
 
-  private openSocket() {
+  private async openSocket() {
     if (!this.currentRoom) return;
     const room = this.currentRoom;
-    const url = `${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop`;
 
-    console.log(`[DesktopRelay] Connecting: ${ url }`);
+    const token = await getCurrentAccessToken();
+    if (!token) {
+      this.lastError = 'Not signed in — relay cannot authenticate';
+      console.warn('[DesktopRelay] No access token — skipping connect. Sign in first.');
+      this.broadcastStatus();
+      // Retry later; a successful sign-in will re-trigger via setPairedUserId.
+      this.scheduleReconnect();
+      return;
+    }
+
+    const url = `${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop&token=${ encodeURIComponent(token) }`;
+
+    // Log without the token to avoid leaking into local log files.
+    console.log(`[DesktopRelay] Connecting: ${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop`);
 
     const ws = new WebSocket(url);
     this.ws = ws;
@@ -147,7 +163,9 @@ class DesktopRelayClient {
     console.log(`[DesktopRelay] Reconnecting in ${ delay }ms`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.openSocket();
+      this.openSocket().catch((err) => {
+        console.warn('[DesktopRelay] openSocket failed:', err);
+      });
     }, delay);
   }
 
@@ -180,17 +198,26 @@ class DesktopRelayClient {
 
   private async handleChatRequest(msg: IncomingMessage) {
     const messages = msg.messages ?? [];
-    console.log(`[DesktopRelay] Chat request — ${ messages.length } messages`);
+    // Prefer the per-thread conversation id from mobile; fall back to the room
+    // (= user id) so older mobile clients still work, but sessions collide.
+    const conversationId = msg.conversationId ?? this.currentRoom ?? undefined;
+    console.log(`[DesktopRelay] Chat request — ${ messages.length } messages, conversationId=${ conversationId ?? '(none)' }`);
 
     try {
       const { getClaudeCodeService } = await import('@pkg/agent/languagemodels/ClaudeCodeService');
       const svc = getClaudeCodeService();
 
-      // Use chatStream for consistency even though we only need the final text.
+      // Stream each text delta to mobile as it arrives, then emit a final
+      // `done` with the full content so clients that missed chunks still get
+      // the whole reply.
       const result = await svc.chatStream(
         messages as any,
-        { onToken: () => { /* no-op for relay — we send the whole reply at the end */ } },
-        { conversationId: this.currentRoom ?? undefined },
+        {
+          onToken: (delta: string) => {
+            if (delta) this.send({ type: 'chunk', delta });
+          },
+        },
+        { conversationId },
       );
 
       const content = result?.content ?? '';

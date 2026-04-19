@@ -270,6 +270,18 @@ async function appleSignIn(identityToken: string, fullName?: string, email?: str
   return { ok: true, data };
 }
 
+// ── Public helpers ─────────────────────────────────────────
+
+/**
+ * Returns the currently-signed-in access token, or empty string if not
+ * signed in. Used by subsystems that need to call authenticated Sulla
+ * backend endpoints (e.g. the relay WebSocket) without going through IPC.
+ */
+export async function getCurrentAccessToken(): Promise<string> {
+  const session = await loadSession();
+  return session?.tokens.accessToken ?? '';
+}
+
 // ── IPC handlers ───────────────────────────────────────────
 
 export function initSullaCloudAuthEvents(): void {
