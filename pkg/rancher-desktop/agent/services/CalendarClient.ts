@@ -1,8 +1,8 @@
 // src/services/CalendarClient.ts
 // PostgreSQL-backed calendar client — singleton wrapper for LLM/agent use
 
-import { CalendarEvent } from '../database/models/CalendarEvent';
 import { getWebSocketClientService } from './WebSocketClientService';
+import { CalendarEvent } from '../database/models/CalendarEvent';
 
 export interface CalendarEventData {
   id:           number;

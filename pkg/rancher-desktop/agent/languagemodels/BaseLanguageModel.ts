@@ -153,10 +153,10 @@ export interface LLMConfig {
  * @see {@link LLMConfig} - Constructor config shapes
  */
 export abstract class BaseLanguageModel {
-  protected config:  LLMServiceConfig | LLMConfig | RemoteProviderConfig;
-  protected model:   string;
-  protected baseUrl: string;
-  protected apiKey?: string;
+  protected config:      LLMServiceConfig | LLMConfig | RemoteProviderConfig;
+  protected model:       string;
+  protected baseUrl:     string;
+  protected apiKey?:     string;
   protected providerId?: string;
   protected isInitialized = false;
   protected isHealthy = false;

@@ -1,17 +1,29 @@
 <template>
-  <div class="flex h-full flex-col" style="background: var(--bg, #0d1117);">
+  <div
+    class="flex h-full flex-col"
+    style="background: var(--bg, #0d1117);"
+  >
     <!-- ════════════════════════════════════════════════════════════
          WELCOME — shown before any session starts
          ════════════════════════════════════════════════════════════ -->
     <template v-if="!isListening && !hasSessionEnded">
       <div class="welcome-scroll">
         <div class="welcome-inner">
-          <h1 class="welcome-title">Secretary Mode</h1>
-          <p class="welcome-subtitle">Click below or press <kbd class="dt-kbd">{{ isMac ? '⌘' : 'Ctrl' }}+Shift+S</kbd> to start recording.</p>
-          <p class="welcome-subtitle">Say <strong>"Hey Sulla"</strong> during a session to interact.</p>
+          <h1 class="welcome-title">
+            Secretary Mode
+          </h1>
+          <p class="welcome-subtitle">
+            Click below or press <kbd class="dt-kbd">{{ isMac ? '⌘' : 'Ctrl' }}+Shift+S</kbd> to start recording.
+          </p>
+          <p class="welcome-subtitle">
+            Say <strong>"Hey Sulla"</strong> during a session to interact.
+          </p>
 
           <!-- Terminal preview card (clickable) -->
-          <div class="welcome-card" @click="startSession">
+          <div
+            class="welcome-card"
+            @click="startSession"
+          >
             <div class="dt-header">
               <div class="dt-traffic">
                 <span class="dt-dot-w dt-dot-red" />
@@ -26,23 +38,47 @@
             </div>
             <div class="dt-body">
               <div class="dt-left">
-                <div class="dt-line"><span class="dt-ts">12:30:01</span> We need to finalize the API contract before Friday.</div>
-                <div class="dt-line"><span class="dt-ts">12:30:18</span> Sarah will handle the auth endpoints.</div>
-                <div class="dt-line"><span class="dt-ts">12:30:45</span> Let's use JWT with short-lived tokens.</div>
-                <div class="dt-line dt-dim"><span class="dt-ts">12:31:02</span> Listening...</div>
+                <div class="dt-line">
+                  <span class="dt-ts">12:30:01</span> We need to finalize the API contract before Friday.
+                </div>
+                <div class="dt-line">
+                  <span class="dt-ts">12:30:18</span> Sarah will handle the auth endpoints.
+                </div>
+                <div class="dt-line">
+                  <span class="dt-ts">12:30:45</span> Let's use JWT with short-lived tokens.
+                </div>
+                <div class="dt-line dt-dim">
+                  <span class="dt-ts">12:31:02</span> Listening...
+                </div>
               </div>
               <div class="dt-divider" />
               <div class="dt-right">
-                <div class="dt-section-hdr">ACTION ITEMS</div>
-                <div class="dt-item"><span class="dt-bullet" /> Sarah: auth endpoints by Friday</div>
-                <div class="dt-item"><span class="dt-bullet" /> Finalize API contract</div>
-                <div class="dt-section-hdr">DECISIONS</div>
-                <div class="dt-item dt-decision">JWT with short-lived tokens</div>
-                <div class="dt-section-hdr">INSIGHTS</div>
-                <div class="dt-item dt-insight">Deadline pressure — Friday target mentioned</div>
+                <div class="dt-section-hdr">
+                  ACTION ITEMS
+                </div>
+                <div class="dt-item">
+                  <span class="dt-bullet" /> Sarah: auth endpoints by Friday
+                </div>
+                <div class="dt-item">
+                  <span class="dt-bullet" /> Finalize API contract
+                </div>
+                <div class="dt-section-hdr">
+                  DECISIONS
+                </div>
+                <div class="dt-item dt-decision">
+                  JWT with short-lived tokens
+                </div>
+                <div class="dt-section-hdr">
+                  INSIGHTS
+                </div>
+                <div class="dt-item dt-insight">
+                  Deadline pressure — Friday target mentioned
+                </div>
               </div>
             </div>
-            <div class="welcome-card-cta">Click to start session</div>
+            <div class="welcome-card-cta">
+              Click to start session
+            </div>
           </div>
         </div>
       </div>
@@ -62,7 +98,10 @@
         <span class="dt-title">sulla — secretary</span>
         <div class="dt-header-right">
           <!-- Audio level bars -->
-          <div v-if="isListening" class="dt-level-bars">
+          <div
+            v-if="isListening"
+            class="dt-level-bars"
+          >
             <div
               v-for="i in 5"
               :key="i"
@@ -70,11 +109,17 @@
               :class="{ active: audioLevel >= i * 20 }"
             />
           </div>
-          <div v-if="isListening" class="dt-rec">
+          <div
+            v-if="isListening"
+            class="dt-rec"
+          >
             <span class="dt-rec-dot" />
             REC {{ sessionDuration }}
           </div>
-          <span v-if="wakeWordActive" class="dt-wake-indicator">WAKE</span>
+          <span
+            v-if="wakeWordActive"
+            class="dt-wake-indicator"
+          >WAKE</span>
           <button
             v-if="isListening"
             class="dt-btn"
@@ -108,7 +153,10 @@
             <span>MEETING TRANSCRIPT</span>
             <span class="dt-pane-count">{{ transcript.length }}</span>
           </div>
-          <div ref="transcriptScrollEl" class="dt-pane-scroll dt-timeline">
+          <div
+            ref="transcriptScrollEl"
+            class="dt-pane-scroll dt-timeline"
+          >
             <div
               v-for="entry in transcript"
               :key="entry.id"
@@ -119,17 +167,27 @@
                 'dt-bubble-wake': entry.type === 'wake-command',
               }"
             >
-              <div class="dt-bubble" :class="entry.speaker === 'You' ? 'dt-bubble-you' : 'dt-bubble-caller'">
+              <div
+                class="dt-bubble"
+                :class="entry.speaker === 'You' ? 'dt-bubble-you' : 'dt-bubble-caller'"
+              >
                 <div class="dt-bubble-header">
                   <span class="dt-bubble-speaker">{{ entry.speaker || 'Speaker' }}</span>
                   <span class="dt-bubble-time">{{ formatTime(entry.timestamp) }}</span>
                 </div>
-                <div class="dt-bubble-text">{{ entry.text }}</div>
+                <div class="dt-bubble-text">
+                  {{ entry.text }}
+                </div>
               </div>
             </div>
-            <div v-if="isListening && transcript.length === 0" class="dt-bubble-row dt-bubble-left">
+            <div
+              v-if="isListening && transcript.length === 0"
+              class="dt-bubble-row dt-bubble-left"
+            >
               <div class="dt-bubble dt-bubble-caller">
-                <div class="dt-bubble-text dt-dim">{{ listeningStatus }}</div>
+                <div class="dt-bubble-text dt-dim">
+                  {{ listeningStatus }}
+                </div>
               </div>
             </div>
           </div>
@@ -141,40 +199,75 @@
         <div class="dt-pane-right">
           <div class="dt-pane-hdr">
             <span>SULLA'S NOTES</span>
-            <span v-if="isAnalyzing" class="dt-analyzing">
-              <span class="dt-rec-dot" style="background: var(--accent-primary, #5096b3);" />
+            <span
+              v-if="isAnalyzing"
+              class="dt-analyzing"
+            >
+              <span
+                class="dt-rec-dot"
+                style="background: var(--accent-primary, #5096b3);"
+              />
               ANALYZING
             </span>
           </div>
-          <div ref="analysisScrollEl" class="dt-pane-scroll">
+          <div
+            ref="analysisScrollEl"
+            class="dt-pane-scroll"
+          >
             <template v-if="actionItems.length === 0 && decisions.length === 0 && insights.length === 0 && agentMessages.length === 0">
-              <div class="dt-empty">Waiting for conversation...</div>
+              <div class="dt-empty">
+                Waiting for conversation...
+              </div>
             </template>
 
             <template v-if="actionItems.length > 0">
-              <div class="dt-section-hdr">ACTION ITEMS</div>
-              <div v-for="(item, idx) in actionItems" :key="'a' + idx" class="dt-item">
+              <div class="dt-section-hdr">
+                ACTION ITEMS
+              </div>
+              <div
+                v-for="(item, idx) in actionItems"
+                :key="'a' + idx"
+                class="dt-item"
+              >
                 <span class="dt-bullet" /> {{ item }}
               </div>
             </template>
 
             <template v-if="decisions.length > 0">
-              <div class="dt-section-hdr">DECISIONS</div>
-              <div v-for="(item, idx) in decisions" :key="'d' + idx" class="dt-item dt-decision">
+              <div class="dt-section-hdr">
+                DECISIONS
+              </div>
+              <div
+                v-for="(item, idx) in decisions"
+                :key="'d' + idx"
+                class="dt-item dt-decision"
+              >
                 {{ item }}
               </div>
             </template>
 
             <template v-if="insights.length > 0">
-              <div class="dt-section-hdr">INSIGHTS</div>
-              <div v-for="(item, idx) in insights" :key="'i' + idx" class="dt-item dt-insight">
+              <div class="dt-section-hdr">
+                INSIGHTS
+              </div>
+              <div
+                v-for="(item, idx) in insights"
+                :key="'i' + idx"
+                class="dt-item dt-insight"
+              >
                 <span class="dt-insight-time">{{ item.time }}</span> {{ item.text }}
               </div>
             </template>
 
             <template v-if="agentMessages.length > 0">
-              <div class="dt-section-hdr">COMMENTARY</div>
-              <div v-for="msg in agentMessages" :key="msg.id" class="dt-item dt-insight">
+              <div class="dt-section-hdr">
+                COMMENTARY
+              </div>
+              <div
+                v-for="msg in agentMessages"
+                :key="msg.id"
+                class="dt-item dt-insight"
+              >
                 <span class="dt-insight-time">{{ msg.time }}</span> {{ msg.text }}
               </div>
             </template>
@@ -206,15 +299,17 @@
 
 <script setup lang="ts">
 import { ref, watch, onUnmounted, nextTick } from 'vue';
-import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+
 import { ChatInterface } from './agent/ChatInterface';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import {
   SecretaryModeController,
   type TranscriptEntry,
   type InsightEntry,
   type AgentMessage,
 } from '@pkg/controllers/SecretaryModeController';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{ tabId: string }>();
 const emit = defineEmits<{ 'set-mode': [mode: BrowserTabMode] }>();
@@ -284,16 +379,16 @@ async function playTTS(text: string): Promise<void> {
       const audio = new Audio(url);
       activeTTSAudio = audio;
       controller?.setTTSActive(true);
-      audio.onended = () => { URL.revokeObjectURL(url); activeTTSAudio = null; controller?.setTTSActive(false); };
-      audio.onerror = () => { URL.revokeObjectURL(url); activeTTSAudio = null; controller?.setTTSActive(false); };
-      await audio.play().catch(() => { activeTTSAudio = null; controller?.setTTSActive(false); });
+      audio.onended = () => { URL.revokeObjectURL(url); activeTTSAudio = null; controller?.setTTSActive(false) };
+      audio.onerror = () => { URL.revokeObjectURL(url); activeTTSAudio = null; controller?.setTTSActive(false) };
+      await audio.play().catch(() => { activeTTSAudio = null; controller?.setTTSActive(false) });
     }
   } catch {
     if (window.speechSynthesis) {
       const utterance = new SpeechSynthesisUtterance(text);
       activeTTSUtterance = utterance;
       controller?.setTTSActive(true);
-      utterance.onend = () => { activeTTSUtterance = null; controller?.setTTSActive(false); };
+      utterance.onend = () => { activeTTSUtterance = null; controller?.setTTSActive(false) };
       window.speechSynthesis.speak(utterance);
     }
   }
@@ -322,25 +417,25 @@ async function sendToChat(prompt: string, inputSource: string): Promise<string |
   return new Promise<string | null>((resolve) => {
     const msgCountBefore = ci.messages.value.length;
     const stopWatch = setInterval(() => {
-      if (!chatInterface) { clearInterval(stopWatch); resolve(null); return; }
+      if (!chatInterface) { clearInterval(stopWatch); resolve(null); return }
       const msgs = chatInterface.messages.value;
       if (msgs.length > msgCountBefore) {
         const lastMsg = msgs[msgs.length - 1];
-        if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content && !chatInterface.graphRunning.value) {
+        if (lastMsg?.role === 'assistant' && lastMsg.content && !chatInterface.graphRunning.value) {
           clearInterval(stopWatch);
           resolve(lastMsg.content);
         }
       }
     }, 500);
 
-    setTimeout(() => { clearInterval(stopWatch); resolve(null); }, 60_000);
+    setTimeout(() => { clearInterval(stopWatch); resolve(null) }, 60_000);
   });
 }
 
 // ── View helpers ────────────────────────────────────────────────
 
 function generateEntryId(): string {
-  return `se_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  return `se_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 6) }`;
 }
 
 function formatTime(date: Date): string {
@@ -410,21 +505,21 @@ const controller = new SecretaryModeController({
       });
     }
   },
-  setWakeWordActive:  (v) => { wakeWordActive.value = v; },
+  setWakeWordActive:  (v) => { wakeWordActive.value = v },
   getWakeWordActive:  () => wakeWordActive.value,
-  setAudioLevel:      (v) => { audioLevel.value = v; },
-  setSessionDuration: (v) => { sessionDuration.value = v; },
-  setIsListening:     (v) => { isListening.value = v; },
+  setAudioLevel:      (v) => { audioLevel.value = v },
+  setSessionDuration: (v) => { sessionDuration.value = v },
+  setIsListening:     (v) => { isListening.value = v },
   getIsListening:     () => isListening.value,
-  setIsAnalyzing:     (v) => { isAnalyzing.value = v; },
+  setIsAnalyzing:     (v) => { isAnalyzing.value = v },
   getIsMuted:         () => isMuted.value,
   getTranscript:      () => transcript.value,
-  addActionItem:      (item) => { actionItems.value.push(item); },
+  addActionItem:      (item) => { actionItems.value.push(item) },
   getActionItems:     () => actionItems.value,
-  addDecision:        (item) => { decisions.value.push(item); },
+  addDecision:        (item) => { decisions.value.push(item) },
   getDecisions:       () => decisions.value,
-  addInsight:         (entry) => { insights.value.push(entry); },
-  addAgentMessage:    (msg) => { agentMessages.value.push(msg); },
+  addInsight:         (entry) => { insights.value.push(entry) },
+  addAgentMessage:    (msg) => { agentMessages.value.push(msg) },
   scrollAnalysis,
   playTTS,
   stopTTS,
@@ -465,7 +560,7 @@ function endSession(): void {
   isListening.value = false;
   hasSessionEnded.value = true;
   controller.endSession();
-  updateTab(props.tabId, { title: `Secretary - ${sessionDuration.value}` });
+  updateTab(props.tabId, { title: `Secretary - ${ sessionDuration.value }` });
 }
 
 async function sendChatMessage(): Promise<void> {

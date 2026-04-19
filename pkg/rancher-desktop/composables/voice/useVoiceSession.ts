@@ -20,11 +20,14 @@
  */
 
 import { ref, readonly, onUnmounted, type Ref } from 'vue';
+
+import { TTSPlayerService } from './TTSPlayerService';
+
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-const ipcRenderer = _ipcRenderer as any;
 import type { ChatInterface, ChatMessage } from '../../pages/agent/ChatInterface';
-import { TTSPlayerService } from './TTSPlayerService';
+
+const ipcRenderer = _ipcRenderer as any;
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -33,18 +36,18 @@ export type PipelineState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
 export interface UseVoiceSessionOptions {
   chatController: ChatInterface;
-  messages: Ref<ChatMessage[]>;
-  onError?: (message: string) => void;
+  messages:       Ref<ChatMessage[]>;
+  onError?:       (message: string) => void;
 }
 
 export interface UseVoiceSessionReturn {
   // Reactive state for template binding
-  isRecording: Readonly<Ref<boolean>>;
-  audioLevel: Readonly<Ref<number>>;
+  isRecording:       Readonly<Ref<boolean>>;
+  audioLevel:        Readonly<Ref<number>>;
   recordingDuration: Readonly<Ref<string>>;
-  isTTSPlaying: Readonly<Ref<boolean>>;
-  pipelineState: Readonly<Ref<PipelineState>>;
-  voiceMode: Ref<VoiceMode>;
+  isTTSPlaying:      Readonly<Ref<boolean>>;
+  pipelineState:     Readonly<Ref<PipelineState>>;
+  voiceMode:         Ref<VoiceMode>;
 
   // Actions
   toggleRecording(): Promise<void>;
@@ -59,7 +62,7 @@ export interface UseVoiceSessionReturn {
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  return `${ m }:${ s.toString().padStart(2, '0') }`;
 }
 
 // How long silence must persist before we finalize and send (ms)
@@ -83,7 +86,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     ipcInvoke: ipcRenderer.invoke.bind(ipcRenderer),
   });
 
-  const unsubs: Array<() => void> = [];
+  const unsubs: (() => void)[] = [];
 
   unsubs.push(
     ttsPlayer.on('playbackStart', () => {
@@ -102,7 +105,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   unsubs.push(
     chatController.onSpeakDispatch((text, _threadId, _pipelineSequence) => {
       if (text.trim()) {
-        ttsPlayer.enqueue(text.trim(), `speak_${Date.now()}`);
+        ttsPlayer.enqueue(text.trim(), `speak_${ Date.now() }`);
         if (pipelineState.value === 'THINKING') {
           pipelineState.value = 'SPEAKING';
         }
@@ -147,7 +150,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     if (existing) {
       existing.content = text;
     } else {
-      interimMessageId = `voice-interim-${Date.now()}`;
+      interimMessageId = `voice-interim-${ Date.now() }`;
       messages.push({
         id:        interimMessageId,
         channelId: '',

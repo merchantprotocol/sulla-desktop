@@ -355,17 +355,20 @@
 </template>
 
 <script setup lang="ts">
-import AgentHeader from './agent/AgentHeader.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 
-const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
-import { onMounted, ref, watch } from 'vue';
-import { ScheduleXCalendar } from '@schedule-x/vue';
 import { createCalendar, createViewMonthGrid, createViewMonthAgenda, createViewWeek, createViewDay } from '@schedule-x/calendar';
 import { createEventsServicePlugin } from '@schedule-x/events-service';
+import { ScheduleXCalendar } from '@schedule-x/vue';
+import { onMounted, ref, watch } from 'vue';
+
+import AgentHeader from './agent/AgentHeader.vue';
+
 import '@schedule-x/theme-default/dist/index.css';
 import 'temporal-polyfill/global';
-import { CalendarEvent } from '@pkg/agent/database/models/CalendarEvent'; // new model
+import { CalendarEvent } from '@pkg/agent/database/models/CalendarEvent';
+
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false }); // new model
 
 const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const showAddEventModal = ref(false);

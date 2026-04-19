@@ -4,13 +4,14 @@
 // and shows desktop notifications instead of WebSocket chat messages.
 
 import { BaseNode } from './BaseNode';
+import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
+import { throwIfAborted } from '../services/AbortService';
+import { GraphRegistry } from '../services/GraphRegistry';
+import { stripProtocolTags } from '../utils/stripProtocolTags';
+
 import type { NodeRunPolicy } from './BaseNode';
 import type { BaseThreadState, NodeResult } from './Graph';
-import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
-import { stripProtocolTags } from '../utils/stripProtocolTags';
-import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
-import { GraphRegistry } from '../services/GraphRegistry';
 
 // ============================================================================
 // PROMPT CONSTANTS — Now section-based via SystemPromptBuilder.
@@ -486,13 +487,13 @@ export class HeartbeatNode extends BaseNode {
       if (researchResult.status === 'fulfilled' && researchResult.value) {
         parts.push('## Research Agent Findings\n\n' + researchResult.value);
       } else if (researchResult.status === 'rejected') {
-        console.error('[HeartbeatNode:Unstuck] Research agent failed:', (researchResult as PromiseRejectedResult).reason?.message || (researchResult as PromiseRejectedResult).reason);
+        console.error('[HeartbeatNode:Unstuck] Research agent failed:', (researchResult).reason?.message || (researchResult).reason);
       }
 
       if (relaxationResult.status === 'fulfilled' && relaxationResult.value) {
         parts.push('## Creative Alternatives\n\n' + relaxationResult.value);
       } else if (relaxationResult.status === 'rejected') {
-        console.error('[HeartbeatNode:Unstuck] Relaxation agent failed:', (relaxationResult as PromiseRejectedResult).reason?.message || (relaxationResult as PromiseRejectedResult).reason);
+        console.error('[HeartbeatNode:Unstuck] Relaxation agent failed:', (relaxationResult).reason?.message || (relaxationResult).reason);
       }
 
       if (parts.length > 0) {

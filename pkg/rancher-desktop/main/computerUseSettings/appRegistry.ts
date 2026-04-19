@@ -9,12 +9,12 @@ export interface AppEntry {
 }
 
 export const APP_CATEGORIES: { id: AppCategory; label: string }[] = [
-  { id: 'productivity',  label: 'Productivity' },
+  { id: 'productivity', label: 'Productivity' },
   { id: 'communication', label: 'Communication' },
-  { id: 'browsers',      label: 'Browsers' },
-  { id: 'media',         label: 'Media' },
-  { id: 'system',        label: 'System' },
-  { id: 'third-party',   label: 'Third Party' },
+  { id: 'browsers', label: 'Browsers' },
+  { id: 'media', label: 'Media' },
+  { id: 'system', label: 'System' },
+  { id: 'third-party', label: 'Third Party' },
 ];
 
 export const APP_REGISTRY: AppEntry[] = [

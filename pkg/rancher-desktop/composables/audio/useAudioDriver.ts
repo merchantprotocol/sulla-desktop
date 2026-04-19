@@ -26,7 +26,9 @@
  */
 
 import { ref, computed, readonly, onUnmounted } from 'vue';
+
 import { AudioDriverClient } from './AudioDriverClient';
+
 import type { VadDetails, TranscriptEntry } from './types';
 
 export function useAudioDriver() {
@@ -55,7 +57,7 @@ export function useAudioDriver() {
 
   // ── Subscribe to client events, sync refs ───────────────────
 
-  const unsubs: Array<() => void> = [];
+  const unsubs: (() => void)[] = [];
 
   unsubs.push(client.on('vad', (data) => {
     micLevel.value = data.level;

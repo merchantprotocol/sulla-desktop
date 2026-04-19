@@ -170,10 +170,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
-import RdFieldset from '@pkg/components/form/RdFieldset.vue';
 import { ipcRenderer } from 'electron';
+import { ref, onMounted, computed } from 'vue';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import RdFieldset from '@pkg/components/form/RdFieldset.vue';
 
 const emit = defineEmits<{
   next: [];

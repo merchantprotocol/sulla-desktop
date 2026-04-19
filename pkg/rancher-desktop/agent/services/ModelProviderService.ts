@@ -12,8 +12,8 @@
  * Renderers are thin IPC clients — they never read/write provider settings directly.
  */
 
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from './IntegrationService';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { integrations } from '../integrations/catalog';
 
 // ── Public types ─────────────────────────────────────────────────
@@ -122,9 +122,18 @@ class ModelProviderService {
       if (EXCLUDED_PROVIDER_IDS.includes(integration.id)) continue;
 
       let connected = false;
-      try {
-        connected = await integrationService.isAnyAccountConnected(integration.id);
-      } catch { /* not ready */ }
+      if (integration.id === 'claude-code') {
+        // Claude Code is "connected" if the user has either credential type stored
+        try {
+          const oauth = await SullaSettingsModel.get('claudeOAuthToken', '');
+          const apiKey = await SullaSettingsModel.get('claudeApiKey', '');
+          connected = !!(oauth || apiKey);
+        } catch { /* DB not ready */ }
+      } else {
+        try {
+          connected = await integrationService.isAnyAccountConnected(integration.id);
+        } catch { /* not ready */ }
+      }
 
       providers.push({ id: integration.id, name: integration.name, connected });
     }
@@ -133,6 +142,11 @@ class ModelProviderService {
   }
 
   async getModelsForProvider(providerId: string): Promise<ProviderModelInfo[]> {
+    // Claude Code picks its own model internally; return a single synthetic entry.
+    if (providerId === 'claude-code') {
+      return [{ id: 'claude-code', name: 'Claude Code (auto)', description: 'Claude-selected model, runs in sandboxed VM' }];
+    }
+
     const integration = integrations[providerId];
     if (!integration) return [];
 

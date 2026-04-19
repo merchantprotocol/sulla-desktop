@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from '../base';
 import { getIntegrationService } from '../../services/IntegrationService';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * Vault List Tool — lists saved website credentials, respecting LLM access levels.

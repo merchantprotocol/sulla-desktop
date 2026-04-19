@@ -1,13 +1,14 @@
-import { readdir, readFile, mkdir, writeFile, rm } from 'node:fs/promises';
 import fs from 'node:fs';
+import { readdir, readFile, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { redisClient } from '../RedisClient';
+
+import { grepSearchFilesDetailed } from '../../../utils/grepSearch';
 import {
   ProjectService,
   type ProjectSummarySchema,
 } from '../../services/ProjectService';
-import { grepSearchFilesDetailed } from '../../../utils/grepSearch';
 import { resolveSullaProjectsDir } from '../../utils/sullaPaths';
+import { redisClient } from '../RedisClient';
 
 export interface ProjectRegistryInitOptions {
   filesystemProjectDirs?: string[];

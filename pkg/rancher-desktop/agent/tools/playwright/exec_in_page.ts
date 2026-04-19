@@ -134,9 +134,12 @@ export class ExecInPageWorker extends BaseTool {
       }
 
       const val = returnValue?.result;
-      const serialized = val === undefined ? 'undefined'
-        : val === null ? 'null'
-          : typeof val === 'string' ? val
+      const serialized = val === undefined
+        ? 'undefined'
+        : val === null
+          ? 'null'
+          : typeof val === 'string'
+            ? val
             : JSON.stringify(val, null, 2);
 
       parts.push(`Result: ${ serialized }`);

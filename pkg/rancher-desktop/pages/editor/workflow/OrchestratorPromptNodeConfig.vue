@@ -153,6 +153,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue';
+
 import type { UpstreamNodeInfo } from './AgentNodeConfig.vue';
 
 const MENU_WIDTH = 260;

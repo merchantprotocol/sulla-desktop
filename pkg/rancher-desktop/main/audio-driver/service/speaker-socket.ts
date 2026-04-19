@@ -12,17 +12,18 @@
  * main process → socket → renderer.
  */
 
-import net from 'net';
 import fs from 'fs';
-import path from 'path';
+import net from 'net';
 import os from 'os';
+import path from 'path';
+
 import { log } from '../model/logger';
 
 const TAG = 'SpeakerSocket';
 
 let server: net.Server | null = null;
 let socketPath: string | null = null;
-const clients: Set<net.Socket> = new Set();
+const clients = new Set<net.Socket>();
 let chunkCount = 0;
 
 /**
@@ -33,10 +34,10 @@ export function start(): string | null {
   if (server) return socketPath;
 
   chunkCount = 0;
-  socketPath = path.join(os.tmpdir(), `audio-driver-speaker-${process.pid}.sock`);
+  socketPath = path.join(os.tmpdir(), `audio-driver-speaker-${ process.pid }.sock`);
 
   // Clean up stale socket file
-  try { fs.unlinkSync(socketPath); } catch {}
+  try { fs.unlinkSync(socketPath) } catch {}
 
   server = net.createServer((conn: net.Socket) => {
     log.info(TAG, 'Client connected');
@@ -103,7 +104,7 @@ export function stop(): void {
   }
 
   if (socketPath) {
-    try { fs.unlinkSync(socketPath); } catch {}
+    try { fs.unlinkSync(socketPath) } catch {}
     log.info(TAG, 'Stopped', { path: socketPath });
     socketPath = null;
   }

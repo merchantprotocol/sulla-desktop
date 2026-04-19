@@ -12,15 +12,16 @@
  * BaseNode delegates to this via `processPendingToolCalls()` and `executeToolCalls()`.
  */
 
-import type { BaseThreadState } from '../nodes/Graph';
-import type { ToolResult } from '../types';
-import type { NodeRunContext } from '../nodes/BaseNode';
 import { throwIfAborted } from '../services/AbortService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
-import { toolRegistry } from '../tools/registry';
 import { BaseTool } from '../tools/base';
+import { toolRegistry } from '../tools/registry';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+
 import type { NormalizedResponse, ChatMessage } from '../languagemodels/BaseLanguageModel';
+import type { NodeRunContext } from '../nodes/BaseNode';
+import type { BaseThreadState } from '../nodes/Graph';
+import type { ToolResult } from '../types';
 
 // ============================================================================
 // Constants
@@ -294,9 +295,9 @@ export class ToolExecutor {
     allowedToolCategories?: string[];
     allowedToolNames?:      string[];
   }): {
-    allowedCategories: string[] | null;
-    allowedToolNames:  string[] | null;
-  } {
+      allowedCategories: string[] | null;
+      allowedToolNames:  string[] | null;
+    } {
     const allowedCategories = options.allowedToolCategories?.length
       ? [...new Set(options.allowedToolCategories)]
       : null;
@@ -453,7 +454,7 @@ export class ToolExecutor {
       if (typeof parsed === 'string') {
         const trimmed = parsed.trim();
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-          try { parsed = JSON.parse(trimmed); } catch { /* keep as string */ }
+          try { parsed = JSON.parse(trimmed) } catch { /* keep as string */ }
         }
       }
 
@@ -483,11 +484,11 @@ export class ToolExecutor {
 
     // Check if the tool result contains a screenshot (from visual tools)
     const toolResult = result.result as any;
-    const screenshotBase64 = toolResult?.screenshotBase64
-      || toolResult?.result?.screenshotBase64;
-    const screenshotMediaType = toolResult?.screenshotMediaType
-      || toolResult?.result?.screenshotMediaType
-      || 'image/jpeg';
+    const screenshotBase64 = toolResult?.screenshotBase64 ||
+      toolResult?.result?.screenshotBase64;
+    const screenshotMediaType = toolResult?.screenshotMediaType ||
+      toolResult?.result?.screenshotMediaType ||
+      'image/jpeg';
 
     // 1. Node run context (current LLM turn visibility) — text only
     if (this.ctx.currentNodeRunContext) {
@@ -555,7 +556,6 @@ export class ToolExecutor {
     }
 
     this.ctx.bumpStateVersion(state);
-
   }
 
   /**

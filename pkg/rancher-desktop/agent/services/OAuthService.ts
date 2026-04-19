@@ -3,12 +3,15 @@
 // automatic refresh, and revocation.
 
 import crypto from 'crypto';
+
 import { shell } from 'electron';
+
+import { getIntegrationService } from './IntegrationService';
+import { startOAuthCallbackServer } from './OAuthCallbackServer';
 import { postgresClient } from '../database/PostgresClient';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
+
 import type { OAuthProviderConfig } from '../integrations/oauth/OAuthProvider';
-import { startOAuthCallbackServer } from './OAuthCallbackServer';
-import { getIntegrationService } from './IntegrationService';
 
 const LOG_PREFIX = '[OAuthService]';
 

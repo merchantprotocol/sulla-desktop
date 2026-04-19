@@ -157,19 +157,19 @@ function getDefaultPaths(): Partial<Paths> {
 
     return {
       appHome,
-      altAppHome:                path.join(home, '.rd'),
-      config:                    path.join(home, 'Library', 'Preferences', 'rancher-desktop'),
-      logs:                      path.join(home, 'Library', 'Logs', 'rancher-desktop'),
-      cache:                     path.join(home, 'Library', 'Caches', 'rancher-desktop'),
+      altAppHome:                 path.join(home, '.rd'),
+      config:                     path.join(home, 'Library', 'Preferences', 'rancher-desktop'),
+      logs:                       path.join(home, 'Library', 'Logs', 'rancher-desktop'),
+      cache:                      path.join(home, 'Library', 'Caches', 'rancher-desktop'),
       resources,
-      lima:                      path.join(appHome, 'lima'),
-      integration:               path.join(home, '.rd', 'bin'),
-      deploymentProfileSystem:   '/Library/Managed Preferences',
+      lima:                       path.join(appHome, 'lima'),
+      integration:                path.join(home, '.rd', 'bin'),
+      deploymentProfileSystem:    '/Library/Managed Preferences',
       altDeploymentProfileSystem: '/Library/Preferences',
-      deploymentProfileUser:     path.join(home, 'Library', 'Preferences'),
-      extensionRoot:             path.join(appHome, 'extensions'),
-      snapshots:                 path.join(appHome, 'snapshots'),
-      containerdShims:           path.join(appHome, 'containerd-shims'),
+      deploymentProfileUser:      path.join(home, 'Library', 'Preferences'),
+      extensionRoot:              path.join(appHome, 'extensions'),
+      snapshots:                  path.join(appHome, 'snapshots'),
+      containerdShims:            path.join(appHome, 'containerd-shims'),
     };
   }
   case 'linux': {
@@ -183,19 +183,19 @@ function getDefaultPaths(): Partial<Paths> {
 
     return {
       appHome,
-      altAppHome:                path.join(home, '.rd'),
-      config:                    path.join(configHome, 'rancher-desktop'),
-      logs:                      path.join(dataHome, 'rancher-desktop', 'logs'),
-      cache:                     path.join(cacheHome, 'rancher-desktop'),
+      altAppHome:                 path.join(home, '.rd'),
+      config:                     path.join(configHome, 'rancher-desktop'),
+      logs:                       path.join(dataHome, 'rancher-desktop', 'logs'),
+      cache:                      path.join(cacheHome, 'rancher-desktop'),
       resources,
-      lima:                      path.join(dataHome, 'rancher-desktop', 'lima'),
-      integration:               path.join(home, '.rd', 'bin'),
-      deploymentProfileSystem:   '',
+      lima:                       path.join(dataHome, 'rancher-desktop', 'lima'),
+      integration:                path.join(home, '.rd', 'bin'),
+      deploymentProfileSystem:    '',
       altDeploymentProfileSystem: '',
-      deploymentProfileUser:     '',
-      extensionRoot:             path.join(appHome, 'extensions'),
-      snapshots:                 path.join(appHome, 'snapshots'),
-      containerdShims:           path.join(appHome, 'containerd-shims'),
+      deploymentProfileUser:      '',
+      extensionRoot:              path.join(appHome, 'extensions'),
+      snapshots:                  path.join(appHome, 'snapshots'),
+      containerdShims:            path.join(appHome, 'containerd-shims'),
     };
   }
   default:

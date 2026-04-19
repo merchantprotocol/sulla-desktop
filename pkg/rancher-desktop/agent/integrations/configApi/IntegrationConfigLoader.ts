@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
+
 import yaml from 'yaml';
 
-import { resolveSullaIntegrationsDir } from '../../utils/sullaPaths';
 import { ConfigApiClient } from './ConfigApiClient';
+import { resolveSullaIntegrationsDir } from '../../utils/sullaPaths';
+
 import type { EndpointConfig, IntegrationAuthConfig, LoadedIntegration } from './types';
 
 const LOG = '[IntegrationConfigLoader]';

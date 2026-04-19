@@ -7,7 +7,13 @@
       :class="{ active: currentLayout === layout.id }"
       @click="$emit('select-layout', layout.id)"
     >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="layout.icon"></svg>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        v-html="layout.icon"
+      />
       <span class="tip">{{ layout.tip }}</span>
     </button>
   </div>
@@ -15,17 +21,15 @@
 
 <script setup lang="ts">
 interface Layout {
-  id: string;
-  tip: string;
+  id:   string;
+  tip:  string;
   icon: string;
 }
 
 defineProps<{
   currentLayout: string;
-  layouts: Layout[];
+  layouts:       Layout[];
 }>();
 
-defineEmits<{
-  (e: 'select-layout', id: string): void;
-}>();
+defineEmits<(e: 'select-layout', id: string) => void>();
 </script>

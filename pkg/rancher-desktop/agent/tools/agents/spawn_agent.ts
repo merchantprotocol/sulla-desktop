@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { createJob, completeJob, failJob } from './jobRegistry';
+
 import type { AgentJobResult } from './jobRegistry';
 
 const MAX_DEPTH = 3;
@@ -47,7 +48,7 @@ export class SpawnAgentWorker extends BaseTool {
     const async_: boolean = input.async !== false;       // default true
 
     // ── Depth guard ─────────────────────────────────────────────
-    const parentDepth: number = (this.state as any)?.metadata?.subAgentDepth ?? 0;
+    const parentDepth: number = (this.state)?.metadata?.subAgentDepth ?? 0;
 
     if (parentDepth >= MAX_DEPTH) {
       return {
@@ -59,7 +60,7 @@ export class SpawnAgentWorker extends BaseTool {
     // ── Lazy imports (keep out of renderer bundle) ──────────────
     const { GraphRegistry } = await import('../../services/GraphRegistry');
 
-    const parentChannel = (this.state as any)?.metadata?.wsChannel || 'sulla-desktop';
+    const parentChannel = (this.state)?.metadata?.wsChannel || 'sulla-desktop';
 
     // ── Single task executor ────────────────────────────────────
     const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {

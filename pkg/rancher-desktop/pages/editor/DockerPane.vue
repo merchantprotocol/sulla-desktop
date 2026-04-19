@@ -277,8 +277,8 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { ipcRenderer } from 'electron';
+import { defineComponent, ref, computed, onMounted, onBeforeUnmount } from 'vue';
 
 interface DockerContainer {
   id:             string;

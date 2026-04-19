@@ -3,11 +3,12 @@
 
 import os from 'os';
 
+import { heartbeatPrompt } from '../agent/prompts/heartbeat';
+
 import { PathManagementStrategy } from '@pkg/integrations/pathManager';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 // Import heartbeat prompt from TypeScript file
-import { heartbeatPrompt } from '../agent/prompts/heartbeat';
 
 export const CURRENT_SETTINGS_VERSION = 17 as const;
 

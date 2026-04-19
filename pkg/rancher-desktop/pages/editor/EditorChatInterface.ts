@@ -2,10 +2,12 @@
 // Routes all messages through the 'workbench' channel so they hit
 // the agent assigned to the workbench trigger.
 import { ref, watch, computed } from 'vue';
-import { AgentPersonaRegistry, type ChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
-import { AgentPersonaService } from '@pkg/agent';
-import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
+
 import { ChatMessageQueue, createMessageQueue, type QueuedMessage } from '../agent/ChatMessageQueue';
+
+import { AgentPersonaService } from '@pkg/agent';
+import { AgentPersonaRegistry, type ChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
+import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 
 const WORKBENCH_CHANNEL = 'workbench';
 const MAX_PERSISTED_MESSAGES = 200;
@@ -41,11 +43,11 @@ export type WorkflowExecutionEventHandler = (event: {
 }) => void;
 
 export class EditorChatInterface {
-  private readonly registry: AgentPersonaRegistry;
-  private readonly persona:  AgentPersonaService;
-  private readonly messageQueue: ChatMessageQueue;
+  private readonly registry:           AgentPersonaRegistry;
+  private readonly persona:            AgentPersonaService;
+  private readonly messageQueue:       ChatMessageQueue;
   private readonly messagesStorageKey: string;
-  private readonly tabId: string;
+  private readonly tabId:              string;
 
   readonly query = ref('');
   readonly messages = ref<ChatMessage[]>([]);
@@ -82,7 +84,7 @@ export class EditorChatInterface {
   constructor(tabId?: string) {
     // Use provided tabId or default to workbench channel
     this.tabId = tabId || WORKBENCH_CHANNEL;
-    console.log(`[EditorChatInterface] Constructor called with tabId: ${this.tabId}`);
+    console.log(`[EditorChatInterface] Constructor called with tabId: ${ this.tabId }`);
 
     // Create a minimal registry just for the persona service's internal needs
     this.registry = new AgentPersonaRegistry();
@@ -93,7 +95,7 @@ export class EditorChatInterface {
 
     // Set up storage key for persistence - scoped by tabId
     this.messagesStorageKey = `chat_messages_${ this.tabId }`;
-    console.log(`[EditorChatInterface] Storage key: ${this.messagesStorageKey}`);
+    console.log(`[EditorChatInterface] Storage key: ${ this.messagesStorageKey }`);
     if (!this.persona.getThreadId()) {
       this.persona.setThreadId(`thread_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`);
     }
@@ -200,17 +202,17 @@ export class EditorChatInterface {
   private restoreMessages(): void {
     try {
       const raw = localStorage.getItem(this.messagesStorageKey);
-      console.log(`[EditorChatInterface] restoreMessages - raw data exists: ${!!raw}, key: ${this.messagesStorageKey}`);
+      console.log(`[EditorChatInterface] restoreMessages - raw data exists: ${ !!raw }, key: ${ this.messagesStorageKey }`);
       if (!raw) {
-        console.log(`[EditorChatInterface] No messages found in localStorage for key: ${this.messagesStorageKey}`);
+        console.log(`[EditorChatInterface] No messages found in localStorage for key: ${ this.messagesStorageKey }`);
         return;
       }
       const parsed = JSON.parse(raw) as ChatMessage[];
-      console.log(`[EditorChatInterface] Parsed ${parsed.length} messages, persona.messages.length: ${this.persona.messages.length}`);
+      console.log(`[EditorChatInterface] Parsed ${ parsed.length } messages, persona.messages.length: ${ this.persona.messages.length }`);
       if (Array.isArray(parsed) && parsed.length > 0 && this.persona.messages.length === 0) {
         // Mark any stale running tool cards as failed
         for (const m of parsed) {
-          if (m.toolCard && m.toolCard.status === 'running') {
+          if (m.toolCard?.status === 'running') {
             m.toolCard.status = 'failed';
             m.toolCard.error = 'Interrupted by page reload';
           }
@@ -218,7 +220,7 @@ export class EditorChatInterface {
         this.persona.messages.push(...parsed);
         console.log(`[EditorChatInterface] Restored ${ parsed.length } messages from localStorage`);
       } else {
-        console.log(`[EditorChatInterface] Skipped restore: isArray=${Array.isArray(parsed)}, parsed.length=${parsed?.length}, persona.messages.length=${this.persona.messages.length}`);
+        console.log(`[EditorChatInterface] Skipped restore: isArray=${ Array.isArray(parsed) }, parsed.length=${ parsed?.length }, persona.messages.length=${ this.persona.messages.length }`);
       }
     } catch (e) {
       console.error(`[EditorChatInterface] Error restoring messages:`, e);
@@ -246,12 +248,16 @@ export class EditorChatInterface {
       // Always keep messages with image data
       if (m.image) return true;
       // Drop assistant/system messages with empty content
-      if (m.role !== 'user' && (!m.content || !m.content.trim())) {
+      if (m.role !== 'user' && (!m.content?.trim())) {
         console.warn(`⚠️ [EditorChatInterface] EMPTY ${ m.role } message filtered at UI layer — should have been caught earlier`, {
-          id: m.id, role: m.role, kind: m.kind, channelId: m.channelId,
-          threadId: m.threadId, contentLength: m.content?.length ?? 0,
+          id:             m.id,
+          role:           m.role,
+          kind:           m.kind,
+          channelId:      m.channelId,
+          threadId:       m.threadId,
+          contentLength:  m.content?.length ?? 0,
           contentPreview: JSON.stringify(m.content)?.substring(0, 200),
-          fullMessage: JSON.stringify(m).substring(0, 1000),
+          fullMessage:    JSON.stringify(m).substring(0, 1000),
         });
 
         return false;
@@ -271,7 +277,7 @@ export class EditorChatInterface {
 
     // If graph is running OR model is still loading/initializing, queue the message
     if (this.persona.graphRunning.value || this.loading.value) {
-      console.log(`[EditorChatInterface:send] Busy (graphRunning=${this.persona.graphRunning.value}, loading=${this.loading.value}), queuing message: ${ text.slice(0, 50) }...`);
+      console.log(`[EditorChatInterface:send] Busy (graphRunning=${ this.persona.graphRunning.value }, loading=${ this.loading.value }), queuing message: ${ text.slice(0, 50) }...`);
       this.messageQueue.enqueue(text, [], {
         workflowId: this.activeWorkflowId.value || undefined,
         agentId:    this.activeAgentId.value || undefined,

@@ -8,11 +8,11 @@
 import * as platform from '../platform';
 
 interface WhisperStatus {
-  available: boolean;
-  version?: string;
+  available:   boolean;
+  version?:    string;
   binaryPath?: string;
   modelsPath?: string;
-  models?: string[];
+  models?:     string[];
 }
 
 let cachedStatus: WhisperStatus | null = null;

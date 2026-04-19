@@ -6,8 +6,9 @@
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 const LOG = '[MCPClient]';
@@ -30,9 +31,9 @@ export interface MCPToolCallResult {
 }
 
 export class MCPClient {
-  private client: Client | null = null;
+  private client:    Client | null = null;
   private transport: Transport | null = null;
-  private _tools: MCPToolDefinition[] = [];
+  private _tools:    MCPToolDefinition[] = [];
   private _connected = false;
 
   constructor(
@@ -128,7 +129,7 @@ export class MCPClient {
       success: !isError,
       content,
       isError,
-      raw: result,
+      raw:     result,
     };
   }
 
@@ -188,9 +189,9 @@ export class MCPClient {
   private isLocalUrl(): boolean {
     try {
       const hostname = new URL(this.serverUrl).hostname;
-      return MCPClient.LOCAL_HOSTS.includes(hostname)
-        || hostname.endsWith('.local')
-        || hostname.endsWith('.internal');
+      return MCPClient.LOCAL_HOSTS.includes(hostname) ||
+        hostname.endsWith('.local') ||
+        hostname.endsWith('.internal');
     } catch {
       return false;
     }
@@ -201,7 +202,6 @@ export class MCPClient {
    * Only used for local/internal MCP servers where self-signed certs are expected.
    */
   private createTlsPermissiveFetch(): (url: string | URL, init?: RequestInit) => Promise<Response> {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Agent } = require('undici');
     const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
     return (url: string | URL, init?: RequestInit): Promise<Response> => {
@@ -221,10 +221,10 @@ export class MCPClient {
         requestInit,
         ...(skipTls ? { fetch: this.createTlsPermissiveFetch() } : {}),
         reconnectionOptions: {
-          maxReconnectionDelay:      30000,
-          initialReconnectionDelay:  1000,
+          maxReconnectionDelay:        30000,
+          initialReconnectionDelay:    1000,
           reconnectionDelayGrowFactor: 1.5,
-          maxRetries:                3,
+          maxRetries:                  3,
         },
       },
     );

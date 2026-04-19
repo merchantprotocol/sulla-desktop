@@ -9,10 +9,11 @@
  */
 
 import { computed, ref } from 'vue';
-import type { ComputedRef, Ref } from 'vue';
 
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { integrations } from '@pkg/agent/integrations/catalog';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+import type { ComputedRef, Ref } from 'vue';
 
 export interface ModelOption {
   providerId:       string;

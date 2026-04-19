@@ -22,9 +22,9 @@ export interface TTSPlayerEvents {
   /** Audio playback started for a sentence */
   playbackStart: void;
   /** Audio playback ended for a sentence */
-  playbackEnd: void;
+  playbackEnd:   void;
   /** Queue is now empty and nothing is playing */
-  queueEmpty: void;
+  queueEmpty:    void;
 }
 
 export interface TTSPlayerConfig {
@@ -44,7 +44,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
   // ── Queue & playback ──
   private readonly queue: string[] = [];
   private playing = false; // internal re-entrancy lock
-  private currentAudio: HTMLAudioElement | null = null;
+  private currentAudio:   HTMLAudioElement | null = null;
   private sequence = 0; // monotonic counter — incremented on stop()
 
   // ── Deduplication ──
@@ -53,7 +53,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
 
   // ── Prefetch ──
   private prefetchedAudio: { text: string; result: any } | null = null;
-  private prefetchAbort: AbortController | null = null;
+  private prefetchAbort:   AbortController | null = null;
   private prefetchingText: string | null = null;
 
   constructor(config: TTSPlayerConfig) {
@@ -194,7 +194,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
         return;
       }
 
-      console.log(`[TTSPlayer] Audio ready (source=${source}), size=${result?.audio?.byteLength ?? 0}`);
+      console.log(`[TTSPlayer] Audio ready (source=${ source }), size=${ result?.audio?.byteLength ?? 0 }`);
 
       if (result?.audio) {
         const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });

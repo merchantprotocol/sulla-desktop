@@ -11,7 +11,6 @@ import './agent-tailwind.css';
 
 import usePlugins from './plugins';
 import store from './store';
-
 import LanguageModelSettings from '../pages/LanguageModelSettings.vue';
 await initiateWindowContext();
 

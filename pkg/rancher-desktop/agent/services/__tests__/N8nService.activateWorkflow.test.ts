@@ -1,4 +1,5 @@
 import { TextDecoder, TextEncoder } from 'node:util';
+
 import { beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 let N8nServiceClass: any;

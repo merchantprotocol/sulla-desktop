@@ -39,8 +39,8 @@ export function getGatewayConnectionController(): GatewayConnectionController {
 // ─── Controller ─────────────────────────────────────────────────
 
 export class GatewayConnectionController {
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private eventUnsub: (() => void) | null = null;
+  private reconnectTimer:      ReturnType<typeof setTimeout> | null = null;
+  private eventUnsub:          (() => void) | null = null;
   private transcriptForwarder: TranscriptForwarder | null = null;
   private audioIpcCount = 0;
 
@@ -57,7 +57,7 @@ export class GatewayConnectionController {
     const integrationService = getIntegrationService();
     integrationService.onValueChange((value, action) => {
       if (value.integration_id === 'enterprise_gateway' && (action === 'created' || action === 'updated')) {
-        console.log(`[GatewayConnection] Config ${action}: ${value.property}, scheduling reconnect...`);
+        console.log(`[GatewayConnection] Config ${ action }: ${ value.property }, scheduling reconnect...`);
         this.scheduleReconnect();
       }
     });
@@ -104,7 +104,7 @@ export class GatewayConnectionController {
   private audioChCountCh0 = 0;
   private audioChCountCh1 = 0;
 
-  async sendAudioChunk(data: Buffer | ArrayBuffer, channel: number = 0): Promise<void> {
+  async sendAudioChunk(data: Buffer | ArrayBuffer, channel = 0): Promise<void> {
     this.audioIpcCount++;
     if (channel === 0) this.audioChCountCh0++;
     else if (channel === 1) this.audioChCountCh1++;
@@ -113,7 +113,7 @@ export class GatewayConnectionController {
     const chCount = channel === 0 ? this.audioChCountCh0 : this.audioChCountCh1;
     if (chCount <= 5 || this.audioIpcCount % 100 === 0) {
       const size = data instanceof ArrayBuffer ? data.byteLength : data.length;
-      console.log(`[GatewayConnection] Audio IPC #${this.audioIpcCount} ch=${channel} chCount=${chCount} (${size} bytes)`);
+      console.log(`[GatewayConnection] Audio IPC #${ this.audioIpcCount } ch=${ channel } chCount=${ chCount } (${ size } bytes)`);
     }
     const { getGatewayListenerService } = await import('../services/GatewayListenerService');
     getGatewayListenerService().sendAudio(data, channel);
@@ -149,11 +149,11 @@ export class GatewayConnectionController {
 
     this.eventUnsub = service.onEvent((event) => {
       if (TRANSCRIPT_EVENT_TYPES.has(event.event_type)) {
-        console.log(`[GatewayConnection] Forwarding ${event.event_type} to renderer`);
+        console.log(`[GatewayConnection] Forwarding ${ event.event_type } to renderer`);
         try {
           this.transcriptForwarder?.(event);
         } catch (err) {
-          console.warn(`[GatewayConnection] Transcript forward failed: ${err}`);
+          console.warn(`[GatewayConnection] Transcript forward failed: ${ err }`);
         }
       }
     });
@@ -208,7 +208,7 @@ export class GatewayConnectionController {
 
     const url = urlValue?.value?.trim();
     const apiKey = keyValue?.value?.trim();
-    console.log(`[GatewayConnection] Config check: url=${url ? 'set' : 'missing'}, apiKey=${apiKey ? 'set' : 'missing'}`);
+    console.log(`[GatewayConnection] Config check: url=${ url ? 'set' : 'missing' }, apiKey=${ apiKey ? 'set' : 'missing' }`);
 
     if (url && apiKey) return { url, apiKey };
     return null;

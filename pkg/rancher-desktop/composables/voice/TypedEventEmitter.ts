@@ -38,7 +38,7 @@ export class TypedEventEmitter<EventMap extends Record<string, any>> {
       try {
         h(payload);
       } catch (err) {
-        console.error(`[TypedEventEmitter] Handler error on "${String(event)}":`, err);
+        console.error(`[TypedEventEmitter] Handler error on "${ String(event) }":`, err);
       }
     }
   }

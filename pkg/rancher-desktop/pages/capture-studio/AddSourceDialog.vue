@@ -1,39 +1,98 @@
 <template>
-  <div class="add-popup-overlay" :class="{ open: visible }">
+  <div
+    class="add-popup-overlay"
+    :class="{ open: visible }"
+  >
     <div class="add-popup">
       <div class="popup-header">
         <h3>{{ addStep === 'type' ? 'Add Source' : 'Choose ' + (selectedAddType ? selectedAddType.charAt(0).toUpperCase() + selectedAddType.slice(1) : '') }}</h3>
-        <button class="popup-close" @click="$emit('close')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <button
+          class="popup-close"
+          @click="$emit('close')"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          ><line
+            x1="18"
+            y1="6"
+            x2="6"
+            y2="18"
+          /><line
+            x1="6"
+            y1="6"
+            x2="18"
+            y2="18"
+          /></svg>
         </button>
       </div>
 
       <!-- Step 1: type -->
-      <div v-if="addStep === 'type'" class="type-grid">
+      <div
+        v-if="addStep === 'type'"
+        class="type-grid"
+      >
         <div
           v-for="t in sourceTypes"
           :key="t.id"
           class="type-card"
           @click="selectAddType(t.id)"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" v-html="t.icon"></svg>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            v-html="t.icon"
+          />
           <span>{{ t.label }}</span>
         </div>
       </div>
 
       <!-- Step 2: device -->
-      <div v-if="addStep === 'device'" class="device-step visible">
+      <div
+        v-if="addStep === 'device'"
+        class="device-step visible"
+      >
         <label>{{ addDeviceLabel }}</label>
-        <select class="device-select" v-model="selectedDevice">
-          <option v-for="d in deviceOptions[selectedAddType!] || []" :key="d" :value="d">{{ d }}</option>
+        <select
+          v-model="selectedDevice"
+          class="device-select"
+        >
+          <option
+            v-for="d in deviceOptions[selectedAddType!] || []"
+            :key="d"
+            :value="d"
+          >
+            {{ d }}
+          </option>
         </select>
         <label>Label (optional)</label>
-        <input class="device-label-input" v-model="sourceLabel" :placeholder="selectedAddType === 'system' ? 'e.g. System' : 'e.g. Guest ' + (selectedAddType || '')" />
+        <input
+          v-model="sourceLabel"
+          class="device-label-input"
+          :placeholder="selectedAddType === 'system' ? 'e.g. System' : 'e.g. Guest ' + (selectedAddType || '')"
+        >
       </div>
 
-      <div v-if="addStep === 'device'" class="popup-actions">
-        <button class="popup-btn secondary" @click="addStep = 'type'">Back</button>
-        <button class="popup-btn primary" @click="confirmAdd">Add Source</button>
+      <div
+        v-if="addStep === 'device'"
+        class="popup-actions"
+      >
+        <button
+          class="popup-btn secondary"
+          @click="addStep = 'type'"
+        >
+          Back
+        </button>
+        <button
+          class="popup-btn primary"
+          @click="confirmAdd"
+        >
+          Add Source
+        </button>
       </div>
     </div>
   </div>
@@ -43,7 +102,7 @@
 import { ref, computed } from 'vue';
 
 const props = defineProps<{
-  visible: boolean;
+  visible:       boolean;
   deviceOptions: Record<string, string[]>;
 }>();
 
@@ -84,7 +143,7 @@ function confirmAdd() {
   const label = sourceLabel.value || device.split(' — ')[0].split('(')[0].trim();
 
   emit('add-source', {
-    type: selectedAddType.value,
+    type:     selectedAddType.value,
     deviceId: device,
     label,
   });

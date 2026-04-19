@@ -16,8 +16,8 @@ import * as serverHelper from '@pkg/main/serverHelper';
 import { Snapshot } from '@pkg/main/snapshots/types';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
-import { sullaLog } from '@pkg/utils/sullaLog';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
+import { sullaLog } from '@pkg/utils/sullaLog';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 /**

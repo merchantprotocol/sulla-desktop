@@ -87,13 +87,14 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+
 import type { ChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 
 const EXEC_TOOL_NAMES = new Set(['exec', 'exec_command', 'shell', 'bash', 'run_command']);
 
 const props = defineProps<{
   toolCard: NonNullable<ChatMessage['toolCard']>;
-  isDark?: boolean;
+  isDark?:  boolean;
 }>();
 
 const isExpanded = ref(false);

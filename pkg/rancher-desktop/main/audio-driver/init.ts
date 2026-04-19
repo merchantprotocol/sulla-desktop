@@ -28,18 +28,19 @@
  */
 
 import { ipcMain, BrowserWindow, systemPreferences } from 'electron';
-import * as lifecycle from './controller/lifecycle';
+
 import { MicrophoneDriverController } from './controller/MicrophoneDriverController';
 import { SpeakerDriverController } from './controller/SpeakerDriverController';
+import * as lifecycle from './controller/lifecycle';
 import * as audio from './model/audio';
+import { log, createLogger } from './model/logger';
 import * as mirror from './model/mirror';
 import * as whisper from './model/whisper';
 import * as gateway from './service/gateway';
-import * as speakerSocket from './service/speaker-socket';
-import * as micSocket from './service/mic-socket';
 import * as micPcmSocket from './service/mic-pcm-socket';
+import * as micSocket from './service/mic-socket';
+import * as speakerSocket from './service/speaker-socket';
 import * as whisperTranscribe from './service/whisper-transcribe';
-import { log, createLogger } from './model/logger';
 
 const rendererLog = createLogger('renderer');
 
@@ -59,7 +60,7 @@ let initialized = false;
 
 // Mic PCM recording quality mode — controls which callback feeds mic-pcm-socket.
 // 'raw' = all audio (onPcmRawData), 'noise-reduction' = VAD-gated (onPcmData).
-let micPcmMode: string = 'raw';
+let micPcmMode = 'raw';
 
 // Test recording is now handled by MicrophoneDriverController
 // (PCM-based, supports raw + noise-reduction modes)
@@ -349,8 +350,8 @@ function registerIpcHandlers(): void {
       const result = await gateway.startSession({
         callerName: callData?.userName || 'Sulla Desktop',
         channels:   callData?.channels || {
-          '0': { label: callData?.userName || 'User', source: 'mic' },
-          '1': { label: 'Caller', source: 'system_audio', audioFormat: { inputFormat: 's16le', inputRate: 16000, inputChannels: 1 } },
+          0: { label: callData?.userName || 'User', source: 'mic' },
+          1: { label: 'Caller', source: 'system_audio', audioFormat: { inputFormat: 's16le', inputRate: 16000, inputChannels: 1 } },
         },
       });
       return { ok: true, ...result };
@@ -499,9 +500,9 @@ function registerIpcHandlers(): void {
   // ── Local transcription (whisper.cpp powered) ───────────────────
 
   ipcMain.handle('audio-driver:transcribe-start', async(_event: unknown, opts: {
-    mode: 'conversation' | 'secretary';
+    mode:      'conversation' | 'secretary';
     language?: string;
-    model?: string;
+    model?:    string;
   }) => {
     log.info('IPC', 'transcribe-start', opts);
 

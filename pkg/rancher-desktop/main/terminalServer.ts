@@ -1,6 +1,8 @@
 import http from 'http';
-import { WebSocketServer, WebSocket } from 'ws';
+
 import * as pty from 'node-pty';
+import { WebSocketServer, WebSocket } from 'ws';
+
 import { resolveLimactlPath, resolveLimaHome } from '@pkg/agent/tools/util/CommandRunner';
 
 const TERMINAL_PORT = 6108;

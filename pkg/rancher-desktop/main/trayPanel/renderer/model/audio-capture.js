@@ -88,14 +88,14 @@ async function listDevices() {
     /blackhole|loopback|audio driver mirror/i.test(label);
 
   const inputs = devices
-    .filter((d) => d.kind === "audioinput" && d.deviceId && !isInternal(d.label))
-    .map((d) => ({ deviceId: d.deviceId, label: d.label || `Input (${d.deviceId.slice(0, 8)})` }));
+    .filter((d) => d.kind === 'audioinput' && d.deviceId && !isInternal(d.label))
+    .map((d) => ({ deviceId: d.deviceId, label: d.label || `Input (${ d.deviceId.slice(0, 8) })` }));
 
   const outputs = devices
-    .filter((d) => d.kind === "audiooutput" && d.deviceId && !isInternal(d.label))
-    .map((d) => ({ deviceId: d.deviceId, label: d.label || `Output (${d.deviceId.slice(0, 8)})` }));
+    .filter((d) => d.kind === 'audiooutput' && d.deviceId && !isInternal(d.label))
+    .map((d) => ({ deviceId: d.deviceId, label: d.label || `Output (${ d.deviceId.slice(0, 8) })` }));
 
-  log.debug("AudioCapture", "Devices listed", { inputs: inputs.length, outputs: outputs.length });
+  log.debug('AudioCapture', 'Devices listed', { inputs: inputs.length, outputs: outputs.length });
 
   return { inputs, outputs };
 }
@@ -129,18 +129,18 @@ async function start(onLevel, micDeviceId) {
       : { autoGainControl: false, noiseSuppression: false, echoCancellation: false },
   };
 
-  log.info("AudioCapture", "Opening mic...", { deviceId: micDeviceId || "default" });
+  log.info('AudioCapture', 'Opening mic...', { deviceId: micDeviceId || 'default' });
   try {
     micStream = await navigator.mediaDevices.getUserMedia(constraints);
   } catch (err) {
     const name = err?.name || 'UnknownError';
     const msg = err?.message || String(err);
-    log.error("AudioCapture", "getUserMedia failed", { name, message: msg });
+    log.error('AudioCapture', 'getUserMedia failed', { name, message: msg });
 
     // Report the error back to the main process so the UI can show it
     if (window.audioDriver?.reportMicError) {
       window.audioDriver.reportMicError({
-        error: name === 'NotAllowedError' ? 'microphone-permission-denied' : 'microphone-unavailable',
+        error:   name === 'NotAllowedError' ? 'microphone-permission-denied' : 'microphone-unavailable',
         name,
         message: msg,
       });
@@ -157,9 +157,9 @@ async function start(onLevel, micDeviceId) {
   source.connect(micGainNode);
   micGainNode.connect(micAnalyser);
 
-  log.info("AudioCapture", "Mic stream active", {
+  log.info('AudioCapture', 'Mic stream active', {
     sampleRate: audioCtx.sampleRate,
-    gain: micGainNode.gain.value,
+    gain:       micGainNode.gain.value,
   });
 
   const deviceInfo = await detectDevices();
@@ -201,7 +201,7 @@ function poll() {
  * Cancels the animation-frame polling loop and closes the AudioContext.
  */
 function stop() {
-  log.info("AudioCapture", "Stopping mic capture");
+  log.info('AudioCapture', 'Stopping mic capture');
   if (animFrameId) cancelAnimationFrame(animFrameId);
   if (micStream) micStream.getTracks().forEach((t) => t.stop());
   if (audioCtx) audioCtx.close();
@@ -232,7 +232,7 @@ function setMicGain(value) {
 function setMicMuted(muted) {
   micMuted = muted;
   if (micGainNode) micGainNode.gain.value = muted ? 0 : micGain;
-  log.info("AudioCapture", muted ? "Mic muted" : "Mic unmuted");
+  log.info('AudioCapture', muted ? 'Mic muted' : 'Mic unmuted');
 }
 
 /** Return the deviceId of the currently active mic track, or null if stopped. */
@@ -251,13 +251,13 @@ async function detectDevices() {
   const track = micStream.getAudioTracks()[0];
   const settings = track.getSettings();
 
-  const inputDevice = devices.find((d) => d.kind === "audioinput" && d.deviceId === settings.deviceId);
-  const outputDevice = devices.find((d) => d.kind === "audiooutput" && d.deviceId === "default");
+  const inputDevice = devices.find((d) => d.kind === 'audioinput' && d.deviceId === settings.deviceId);
+  const outputDevice = devices.find((d) => d.kind === 'audiooutput' && d.deviceId === 'default');
 
-  const micName = inputDevice?.label || "Microphone";
-  const speakerName = outputDevice?.label || "Default Output";
+  const micName = inputDevice?.label || 'Microphone';
+  const speakerName = outputDevice?.label || 'Default Output';
 
-  log.info("AudioCapture", "Devices detected", { mic: micName, speaker: speakerName });
+  log.info('AudioCapture', 'Devices detected', { mic: micName, speaker: speakerName });
 
   return { micName, speakerName, micDeviceId: settings.deviceId };
 }
@@ -275,34 +275,34 @@ function getAnalyser() {
  */
 function startRecording(onChunk) {
   if (!micStream) {
-    log.warn("AudioCapture", "Cannot record — no mic stream active");
+    log.warn('AudioCapture', 'Cannot record — no mic stream active');
     return;
   }
   if (mediaRecorder) stopRecording();
 
   recordingCallback = onChunk;
 
-  const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-    ? "audio/webm;codecs=opus"
-    : "audio/webm";
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : 'audio/webm';
 
   mediaRecorder = new MediaRecorder(micStream, { mimeType });
 
-  mediaRecorder.ondataavailable = async (e) => {
-    log.debug("AudioCapture", "ondataavailable", { size: e.data.size, hasCallback: !!recordingCallback });
+  mediaRecorder.ondataavailable = async(e) => {
+    log.debug('AudioCapture', 'ondataavailable', { size: e.data.size, hasCallback: !!recordingCallback });
     if (e.data.size > 0 && recordingCallback) {
       try {
         const buffer = await e.data.arrayBuffer();
-        log.debug("AudioCapture", "Sending chunk", { bytes: buffer.byteLength });
+        log.debug('AudioCapture', 'Sending chunk', { bytes: buffer.byteLength });
         recordingCallback(buffer);
       } catch (err) {
-        log.error("AudioCapture", "Chunk send failed", { error: err.message });
+        log.error('AudioCapture', 'Chunk send failed', { error: err.message });
       }
     }
   };
 
   mediaRecorder.start(CHUNK_INTERVAL_MS);
-  log.info("AudioCapture", "Recording started", { mimeType, interval: CHUNK_INTERVAL_MS });
+  log.info('AudioCapture', 'Recording started', { mimeType, interval: CHUNK_INTERVAL_MS });
 }
 
 /**
@@ -310,16 +310,16 @@ function startRecording(onChunk) {
  */
 function stopRecording() {
   if (mediaRecorder) {
-    if (mediaRecorder.state !== "inactive") mediaRecorder.stop();
+    if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
     mediaRecorder = null;
     recordingCallback = null;
-    log.info("AudioCapture", "Recording stopped");
+    log.info('AudioCapture', 'Recording stopped');
   }
 }
 
 /** Whether the MediaRecorder is currently capturing chunks. */
 function isRecording() {
-  return mediaRecorder !== null && mediaRecorder.state === "recording";
+  return mediaRecorder !== null && mediaRecorder.state === 'recording';
 }
 
 // ─── Raw PCM capture (s16le, native sample rate, mono) ──────
@@ -339,7 +339,7 @@ let pcmCallback = null;
  */
 function startPcmCapture(onChunk) {
   if (!audioCtx || !micStream) {
-    log.warn("AudioCapture", "Cannot start PCM capture — no mic stream active");
+    log.warn('AudioCapture', 'Cannot start PCM capture — no mic stream active');
     return;
   }
   if (pcmProcessor) stopPcmCapture();
@@ -373,7 +373,7 @@ function startPcmCapture(onChunk) {
   pcmProcessor.connect(pcmProcessor._gainSilence);
   pcmProcessor._gainSilence.connect(audioCtx.destination);
 
-  log.info("AudioCapture", "PCM capture started", {
+  log.info('AudioCapture', 'PCM capture started', {
     sampleRate: audioCtx.sampleRate,
     bufferSize,
   });
@@ -391,13 +391,13 @@ function getPcmSampleRate() {
  */
 function stopPcmCapture() {
   if (pcmProcessor) {
-    try { pcmProcessor.disconnect(); } catch { /* ignore */ }
+    try { pcmProcessor.disconnect() } catch { /* ignore */ }
     if (pcmProcessor._gainSilence) {
-      try { pcmProcessor._gainSilence.disconnect(); } catch { /* ignore */ }
+      try { pcmProcessor._gainSilence.disconnect() } catch { /* ignore */ }
     }
     pcmProcessor = null;
     pcmCallback = null;
-    log.info("AudioCapture", "PCM capture stopped");
+    log.info('AudioCapture', 'PCM capture stopped');
   }
 }
 

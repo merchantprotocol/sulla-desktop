@@ -203,10 +203,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
 import { ipcRenderer } from 'electron';
-import type { IONodeSubtype } from './types';
+import { ref, reactive, computed, onMounted } from 'vue';
+
 import type { UpstreamNodeInfo } from './AgentNodeConfig.vue';
+import type { IONodeSubtype } from './types';
 
 const MENU_WIDTH = 260;
 

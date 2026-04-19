@@ -13,7 +13,7 @@ function getVaultDirect() {
   try {
     const { getVaultKeyService } = require('../../services/VaultKeyService');
     return getVaultKeyService();
-  } catch { return null; }
+  } catch { return null }
 }
 
 /**
@@ -26,7 +26,7 @@ function ipcDecrypt(value: string): string {
     const { ipcRenderer } = require('electron');
     const result = ipcRenderer.sendSync('vault:decrypt-sync', value);
     return result || value;
-  } catch { return value; }
+  } catch { return value }
 }
 
 function ipcEncrypt(value: string): string {
@@ -35,7 +35,7 @@ function ipcEncrypt(value: string): string {
     const { ipcRenderer } = require('electron');
     const result = ipcRenderer.sendSync('vault:encrypt-sync', value);
     return result || value;
-  } catch { return value; }
+  } catch { return value }
 }
 
 interface IntegrationValueAttributes {
@@ -82,11 +82,11 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     // Main process: direct
     const vault = getVaultDirect();
     if (vault?.isUnlocked()) {
-      try { return vault.encrypt(value); } catch { /* fall through */ }
+      try { return vault.encrypt(value) } catch { /* fall through */ }
     }
     // Renderer: IPC
     if (isRenderer) {
-      try { return ipcEncrypt(value); } catch { /* fall through */ }
+      try { return ipcEncrypt(value) } catch { /* fall through */ }
     }
     return value;
   }

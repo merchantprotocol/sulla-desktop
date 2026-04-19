@@ -4,8 +4,9 @@
  */
 
 import { InputHandlerNode } from '../InputHandlerNode';
-import type { BaseThreadState } from '../Graph';
+
 import type { ChatMessage } from '../../languagemodels/BaseLanguageModel';
+import type { BaseThreadState } from '../Graph';
 
 // Mock problematic dependencies that cause TypeScript compilation errors
 jest.mock('../../database/models/SullaSettingsModel', () => ({
@@ -427,7 +428,6 @@ describe('InputHandlerNode Simple Test', () => {
     // Should have token counts recorded
     expect(metadata.inputHandler.tokensBefore).toBeGreaterThan(0);
     expect(metadata.inputHandler.tokensAfter).toBeGreaterThan(0);
-
   });
 
   test('should enforce token budget when user pastes massive content', async() => {

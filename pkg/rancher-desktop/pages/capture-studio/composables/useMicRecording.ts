@@ -16,8 +16,9 @@
 
 import { ref, type Ref } from 'vue';
 
-const net = require('net');
 const fs = require('fs');
+const net = require('net');
+
 const { ipcRenderer } = require('electron');
 
 // Default to 48kHz — updated from controller state on start

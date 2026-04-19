@@ -1,6 +1,7 @@
 // src/database/BaseModel.ts
 
 import { postgresClient } from './PostgresClient';
+
 import type { QueryResultRow } from 'pg';
 
 type WhereClause = Record<string, any>;
@@ -109,7 +110,7 @@ export abstract class BaseModel<T extends ModelAttributes = ModelAttributes> {
       // should pass through untouched.
       if (typeof value === 'string') {
         const trimmed = value.trimStart();
-        if (trimmed[0] === '{' || trimmed[0] === '[' || trimmed[0] === '"') {
+        if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"')) {
           try {
             return JSON.parse(value);
           } catch {

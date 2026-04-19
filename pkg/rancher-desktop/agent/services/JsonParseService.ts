@@ -3,12 +3,12 @@
  * Handles malformed JSON, markdown fences, missing quotes, control characters, etc.
  */
 
-import { jsonrepair } from 'jsonrepair';
-import { loads as jsonRepairLoads } from 'json-repair-js';
 import { parse as bestEffortParse } from 'best-effort-json-parser';
-import JSON5 from 'json5';
-import { parse as relaxedJsonParse } from 'relaxed-json';
 import { parse as dirtyJsonParse } from 'dirty-json';
+import { loads as jsonRepairLoads } from 'json-repair-js';
+import JSON5 from 'json5';
+import { jsonrepair } from 'jsonrepair';
+import { parse as relaxedJsonParse } from 'relaxed-json';
 
 /**
  * Extract JSON from text that may contain markdown fences, prose, thinking tags, etc.

@@ -176,10 +176,11 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { ipcRenderer, clipboard } from 'electron';
-import FileTreeNode from './FileTreeNode.vue';
+import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
+
 import FileContextMenu from './FileContextMenu.vue';
+import FileTreeNode from './FileTreeNode.vue';
 import InlinePrompt from '../editor/InlinePrompt.vue';
 
 export interface FileEntry {

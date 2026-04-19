@@ -12,7 +12,6 @@ import './agent-tailwind.css';
 
 import usePlugins from './plugins';
 import store from './store';
-
 import AgentEditor from '../pages/AgentEditor.vue';
 await initiateWindowContext();
 

@@ -122,12 +122,15 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { useTheme } from '../composables/useTheme';
+
 import { SullaSettingsModel } from '../agent/database/models/SullaSettingsModel';
+import { useTheme } from '../composables/useTheme';
 import { APP_REGISTRY, APP_CATEGORIES } from '../main/computerUseSettings/appRegistry';
+
 import type { AppCategory, AppEntry } from '../main/computerUseSettings/appRegistry';
 
 const { execFile } = require('child_process');
+
 const { ipcRenderer } = require('electron');
 
 useTheme();

@@ -1,4 +1,5 @@
 import { reactive, readonly, ref, watch } from 'vue';
+
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document' | 'secretary' | 'vault' | 'account' | 'history';
@@ -26,7 +27,7 @@ export interface ClosedTab {
 
 const STORAGE_KEY = 'sulla:browser-tabs';
 const HISTORY_KEY = 'sulla:closed-tabs';
-const ORDER_KEY   = 'sulla:tab-order';
+const ORDER_KEY = 'sulla:tab-order';
 const MAX_HISTORY = 25;
 
 function loadPersistedTabs(): BrowserTab[] {
@@ -128,13 +129,13 @@ function recordTabToHistory(tab: BrowserTab): void {
     if (tab.mode === 'welcome' || (tab.url === 'about:blank' && tab.mode !== 'chat')) return;
 
     ipcRenderer.send('conversation-history:record', {
-      id:     tab.id,
-      type:   historyType,
-      title:  tab.title,
-      url:    tab.url,
+      id:      tab.id,
+      type:    historyType,
+      title:   tab.title,
+      url:     tab.url,
       favicon: tab.favicon,
-      tab_id: tab.id,
-      status: 'active',
+      tab_id:  tab.id,
+      status:  'active',
     });
   } catch {
     // IPC may not be available in non-Electron contexts
@@ -280,7 +281,7 @@ export function useBrowserTabs() {
   }
 
   return {
-    tabs:      readonly(tabs),
+    tabs:       readonly(tabs),
     closedTabs: readonly(closedTabs),
     tabOrder,
     createTab,

@@ -7,7 +7,14 @@
         class="pwgen-back"
         @click="$emit('back')"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          class="h-4 w-4"
+        >
           <path d="M15 18l-6-6 6-6" />
         </svg>
         Back
@@ -42,14 +49,28 @@
           >
             <svg
               v-if="!copied"
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              class="h-4 w-4"
             >
-              <rect x="9" y="9" width="13" height="13" rx="2" />
+              <rect
+                x="9"
+                y="9"
+                width="13"
+                height="13"
+                rx="2"
+              />
               <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
             </svg>
             <svg
               v-else
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4 text-green-400"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              class="h-4 w-4 text-green-400"
             >
               <path d="M20 6L9 17l-5-5" />
             </svg>
@@ -61,7 +82,13 @@
             title="Generate new password"
             @click="regenerate"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              class="h-4 w-4"
+            >
               <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
               <path d="M3 3v5h5" />
               <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
@@ -272,6 +299,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted } from 'vue';
+
 import { WORDLIST, secureRandomInt } from '@pkg/agent/utils/wordlist';
 
 defineProps<{
@@ -279,13 +307,13 @@ defineProps<{
 }>();
 
 defineEmits<{
-  back: [];
+  back:           [];
   'use-password': [password: string];
 }>();
 
-const UPPER   = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-const LOWER   = 'abcdefghijklmnopqrstuvwxyz';
-const DIGITS  = '0123456789';
+const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const LOWER = 'abcdefghijklmnopqrstuvwxyz';
+const DIGITS = '0123456789';
 const SYMBOLS = '!@#$%^&*()_+-=[]{}|;:,.<>?';
 const AMBIGUOUS = '0O1lI|';
 
@@ -318,8 +346,8 @@ function getCharPool(): string {
   let pool = '';
   if (opts.uppercase) pool += UPPER;
   if (opts.lowercase) pool += LOWER;
-  if (opts.numbers)   pool += DIGITS;
-  if (opts.symbols)   pool += SYMBOLS;
+  if (opts.numbers) pool += DIGITS;
+  if (opts.symbols) pool += SYMBOLS;
   if (!pool) pool = LOWER; // fallback
   if (opts.avoidAmbiguous) {
     pool = pool.split('').filter(c => !AMBIGUOUS.includes(c)).join('');
@@ -393,7 +421,7 @@ function regenerate() {
 const passwordChars = computed(() => {
   return password.value.split('').map(char => {
     let cls = 'ch-lower';
-    if (UPPER.includes(char))       cls = 'ch-upper';
+    if (UPPER.includes(char)) cls = 'ch-upper';
     else if (DIGITS.includes(char)) cls = 'ch-number';
     else if (SYMBOLS.includes(char) || (!UPPER.includes(char) && !LOWER.includes(char) && !DIGITS.includes(char))) cls = 'ch-symbol';
     return { char, cls };
@@ -442,7 +470,7 @@ async function copyPassword() {
   try {
     await navigator.clipboard.writeText(password.value);
     copied.value = true;
-    setTimeout(() => { copied.value = false; }, 2000);
+    setTimeout(() => { copied.value = false }, 2000);
   } catch {
     // Fallback
     const ta = document.createElement('textarea');
@@ -452,7 +480,7 @@ async function copyPassword() {
     document.execCommand('copy');
     document.body.removeChild(ta);
     copied.value = true;
-    setTimeout(() => { copied.value = false; }, 2000);
+    setTimeout(() => { copied.value = false }, 2000);
   }
 }
 

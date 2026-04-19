@@ -28,7 +28,6 @@ let _ipcRenderer: any = null;
 
 function getIpcRenderer(): any {
   if (!_ipcRenderer) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     _ipcRenderer = require('electron').ipcRenderer;
   }
   return _ipcRenderer;

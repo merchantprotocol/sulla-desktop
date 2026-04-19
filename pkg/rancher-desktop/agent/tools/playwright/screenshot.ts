@@ -73,7 +73,7 @@ export class ScreenshotWorker extends BaseTool {
       } as any;
     } catch (err) {
       // Clean up on error
-      try { await result.bridge.execInPage(`document.querySelectorAll('[data-sulla-grid],[data-sulla-annotation]').forEach(el => el.remove())`); } catch { /* */ }
+      try { await result.bridge.execInPage(`document.querySelectorAll('[data-sulla-grid],[data-sulla-annotation]').forEach(el => el.remove())`) } catch { /* */ }
       return {
         successBoolean: false,
         responseString: `[${ result.assetId }] Screenshot failed: ${ String(err) }`,

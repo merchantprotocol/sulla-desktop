@@ -14,7 +14,7 @@ export function buildAgentPromptSection(ctx: PromptBuildContext): PromptSection 
   // into section overrides vs generic prompt content. The generic prompt
   // content (non-override files) is passed via agentConfig.prompt.
   const agentPrompt = ctx.agentConfig?.prompt;
-  if (!agentPrompt || !agentPrompt.trim()) return null;
+  if (!agentPrompt?.trim()) return null;
 
   return {
     id:             'agent_prompt',

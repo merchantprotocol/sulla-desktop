@@ -1,6 +1,7 @@
-import { BaseTool, ToolResponse } from '../base';
 import { registry } from '../../integrations';
 import { slackClient } from '../../integrations/slack/SlackClient';
+import { BaseTool, ToolResponse } from '../base';
+
 import type { SlackClient } from '../../integrations/slack/SlackClient';
 
 function runtimeContext() {

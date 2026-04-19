@@ -6,7 +6,7 @@ export const integrationsToolManifests: ToolManifest[] = [
     description: 'Retrieve the credentials and connection status for a specific integration. Shows all accounts if multiple exist, with the active account highlighted. Returns each credential property name, title, type, whether it is required, and its stored value.',
     category:    'vault',
     schemaDef:   {
-      account_type: { type: 'string', description: "The slug identifier of the integration (e.g. 'slack', 'github', 'n8n')" },
+      account_type:    { type: 'string', description: "The slug identifier of the integration (e.g. 'slack', 'github', 'n8n')" },
       account_id:       { type: 'string', optional: true, description: 'Optional account ID to get credentials for a specific account. Defaults to the active account.' },
       include_secrets:  { type: 'boolean', optional: true, description: 'When true, returns the full decrypted values for password/secret fields. Defaults to false, which masks sensitive values.' },
     },
@@ -58,10 +58,10 @@ export const integrationsToolManifests: ToolManifest[] = [
     loader:         () => import('./integration_set_credential'),
   },
   {
-    name:        'vault_list',
-    description: 'List all saved website credentials in the vault. Shows website URLs and usernames for accounts where AI access is permitted. Passwords are never included in the response.',
-    category:    'vault',
-    schemaDef:   {},
+    name:           'vault_list',
+    description:    'List all saved website credentials in the vault. Shows website URLs and usernames for accounts where AI access is permitted. Passwords are never included in the response.',
+    category:       'vault',
+    schemaDef:      {},
     operationTypes: ['read'],
     loader:         () => import('./vault_list'),
   },

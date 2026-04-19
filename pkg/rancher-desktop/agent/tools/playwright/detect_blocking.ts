@@ -7,27 +7,27 @@
  */
 
 export interface BlockingDetection {
-  blocked:    boolean;
-  type:       'rate_limit' | 'captcha' | 'bot_block' | 'access_denied' | null;
-  source:     string | null;   // e.g. "Google", "Cloudflare"
-  message:    string | null;   // human-readable warning for the agent
+  blocked: boolean;
+  type:    'rate_limit' | 'captcha' | 'bot_block' | 'access_denied' | null;
+  source:  string | null;   // e.g. "Google", "Cloudflare"
+  message: string | null;   // human-readable warning for the agent
 }
 
 interface BlockingPattern {
-  type:    BlockingDetection['type'];
-  source:  string;
+  type:         BlockingDetection['type'];
+  source:       string;
   /** At least one pattern must match the page text (case-insensitive). */
   textPatterns: RegExp[];
   /** Optional: URL patterns that strengthen the match. */
   urlPatterns?: RegExp[];
-  message: string;
+  message:      string;
 }
 
 const BLOCKING_PATTERNS: BlockingPattern[] = [
   // ── Google ──
   {
-    type:    'captcha',
-    source:  'Google',
+    type:         'captcha',
+    source:       'Google',
     textPatterns: [
       /unusual traffic from your computer/i,
       /our systems have detected unusual traffic/i,
@@ -43,8 +43,8 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
     message: 'Google has detected automated traffic and is serving a CAPTCHA on THIS request. Stop scraping Google Search for now — try an alternative search engine (Bing, DuckDuckGo) or wait 60+ seconds before retrying Google. IMPORTANT: This block is specific to Google Search right now. Other websites and URLs are NOT affected — continue using browser tools normally for any non-Google URL.',
   },
   {
-    type:    'rate_limit',
-    source:  'Google',
+    type:         'rate_limit',
+    source:       'Google',
     textPatterns: [
       /429.*too many requests/i,
       /rate.?limit/i,
@@ -57,8 +57,8 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
 
   // ── Cloudflare ──
   {
-    type:    'bot_block',
-    source:  'Cloudflare',
+    type:         'bot_block',
+    source:       'Cloudflare',
     textPatterns: [
       /checking.*browser.*before/i,
       /ray id/i,
@@ -74,8 +74,8 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
 
   // ── Generic bot/access blocks ──
   {
-    type:    'access_denied',
-    source:  'Website',
+    type:         'access_denied',
+    source:       'Website',
     textPatterns: [
       /access denied/i,
       /403 forbidden/i,
@@ -88,8 +88,8 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
 
   // ── Generic rate limiting ──
   {
-    type:    'rate_limit',
-    source:  'Website',
+    type:         'rate_limit',
+    source:       'Website',
     textPatterns: [
       /too many requests/i,
       /rate limit exceeded/i,
@@ -102,8 +102,8 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
 
   // ── hCaptcha / reCAPTCHA ──
   {
-    type:    'captcha',
-    source:  'Website',
+    type:         'captcha',
+    source:       'Website',
     textPatterns: [
       /hcaptcha/i,
       /recaptcha/i,
@@ -125,7 +125,7 @@ const BLOCKING_PATTERNS: BlockingPattern[] = [
  */
 export function detectBlocking(pageText: string, pageUrl: string): BlockingDetection {
   const text = pageText || '';
-  const url  = pageUrl  || '';
+  const url = pageUrl || '';
 
   for (const pattern of BLOCKING_PATTERNS) {
     const textMatch = pattern.textPatterns.some(rx => rx.test(text));

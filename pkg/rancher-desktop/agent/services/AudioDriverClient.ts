@@ -19,15 +19,15 @@
  * 'not-installed' so the UI can inform the user.
  */
 
-import * as net from 'net';
-import * as fs from 'fs';
-import { EventEmitter } from 'events';
 import { execFile } from 'child_process';
+import { EventEmitter } from 'events';
+import * as fs from 'fs';
+import * as net from 'net';
 
 export interface AudioChunk {
-  source: 'mic' | 'speaker';
+  source:  'mic' | 'speaker';
   channel: number;
-  audio: Buffer;
+  audio:   Buffer;
 }
 
 const DEFAULT_SOCKET_PATH = process.platform === 'win32'
@@ -46,12 +46,12 @@ const RECONNECT_FAST = 2_000;    // 2s — daemon is running, transient disconne
 const RECONNECT_SLOW = 30_000;   // 30s — daemon not available, poll for it
 
 export class AudioDriverClient extends EventEmitter {
-  private socket: net.Socket | null = null;
-  private buffer: Buffer = Buffer.alloc(0);
+  private socket:         net.Socket | null = null;
+  private buffer:         Buffer = Buffer.alloc(0);
   private _connected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldReconnect = false;
-  private socketPath: string;
+  private socketPath:     string;
   private daemonAvailable = false;     // true once we've successfully connected at least once
   private consecutiveFailures = 0;
 
@@ -289,7 +289,7 @@ export class AudioDriverClient extends EventEmitter {
     return new Promise((resolve) => {
       try {
         const child = execFile(BINARY_PATH, ['--mode', 'local'], {
-          stdio: 'ignore' as any,
+          stdio:    'ignore' as any,
           detached: true,
         } as any);
 

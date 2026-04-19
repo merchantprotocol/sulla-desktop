@@ -1,8 +1,10 @@
 /** @jest-environment node */
 import { TextDecoder, TextEncoder } from 'node:util';
+
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
-import { getIntegrationService } from '../../../services/IntegrationService';
+
 import { SullaIntegrations, registry } from '../../../integrations';
+import { getIntegrationService } from '../../../services/IntegrationService';
 import { SlackConnectionHealthWorker, slackConnectionHealthRegistration } from '../slack_connection_health';
 
 const SLACK_ID = 'slack';

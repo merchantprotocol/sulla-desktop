@@ -36,9 +36,10 @@
  */
 
 import { BrowserWindow, ipcMain, type WebContents } from 'electron';
+
+import { AudioNoiseProcessor } from './AudioNoiseProcessor';
 import * as audio from '../model/audio';
 import { log } from '../model/logger';
-import { AudioNoiseProcessor } from './AudioNoiseProcessor';
 
 // ── Singleton ───────────────────────────────────────────────────
 
@@ -138,7 +139,7 @@ export class MicrophoneDriverController {
           log.error(MicrophoneDriverController.TAG, 'Auto-release stop() failed', { serviceId, error: e.message });
         });
       };
-      sender!.once('destroyed', onDestroyed);
+      sender.once('destroyed', onDestroyed);
       this._destroyListeners.set(serviceId, onDestroyed);
     }
 
@@ -209,22 +210,22 @@ export class MicrophoneDriverController {
   // ── Read-only state ───────────────────────────────────────────
 
   // Lifecycle
-  get running(): boolean { return this._running; }
-  get micName(): string { return this._micName; }
-  get pcmSampleRate(): number { return this._pcmSampleRate; }
-  get holders(): string[] { return [...this._holders.keys()]; }
+  get running(): boolean { return this._running }
+  get micName(): string { return this._micName }
+  get pcmSampleRate(): number { return this._pcmSampleRate }
+  get holders(): string[] { return [...this._holders.keys()] }
 
   // VAD (from audio driver pipeline)
-  get speaking(): boolean { return this._speaking; }
-  get fanNoise(): boolean { return this._fanNoise; }
-  get level(): number { return this._level; }
-  get noiseFloor(): number { return this._noiseFloor; }
+  get speaking(): boolean { return this._speaking }
+  get fanNoise(): boolean { return this._fanNoise }
+  get level(): number { return this._level }
+  get noiseFloor(): number { return this._noiseFloor }
 
   // Signal analysis (from audio driver pipeline)
-  get zcr(): number { return this._zcr; }
-  get variance(): number { return this._variance; }
-  get pitch(): number | null { return this._pitch; }
-  get centroid(): number { return this._centroid; }
+  get zcr(): number { return this._zcr }
+  get variance(): number { return this._variance }
+  get pitch(): number | null { return this._pitch }
+  get centroid(): number { return this._centroid }
 
   isHolder(serviceId: string): boolean {
     return this._holders.has(serviceId);
@@ -293,14 +294,14 @@ export class MicrophoneDriverController {
     }
 
     // Update internal state from the audio driver's VAD pipeline
-    this._speaking   = !!data.speaking;
-    this._fanNoise   = !!data.fanNoise;
-    this._level      = data.level ?? this._level;
+    this._speaking = !!data.speaking;
+    this._fanNoise = !!data.fanNoise;
+    this._level = data.level ?? this._level;
     this._noiseFloor = data.noiseFloor ?? this._noiseFloor;
-    this._zcr        = data.zcr ?? this._zcr;
-    this._variance   = data.variance ?? this._variance;
-    this._pitch      = data.pitch !== undefined ? data.pitch : this._pitch;
-    this._centroid   = data.centroid ?? this._centroid;
+    this._zcr = data.zcr ?? this._zcr;
+    this._variance = data.variance ?? this._variance;
+    this._pitch = data.pitch !== undefined ? data.pitch : this._pitch;
+    this._centroid = data.centroid ?? this._centroid;
 
     // Send VAD data only to windows that requested the mic
     this._sendToHolders('audio-driver:mic-vad', data);
@@ -319,8 +320,8 @@ export class MicrophoneDriverController {
     if (this._tpTrackingModule === undefined) {
       // First call — lazy-import
       import('@pkg/main/teleprompterTracking')
-        .then((mod) => { this._tpTrackingModule = mod; mod.onVadUpdate(data); })
-        .catch(() => { this._tpTrackingModule = null; });
+        .then((mod) => { this._tpTrackingModule = mod; mod.onVadUpdate(data) })
+        .catch(() => { this._tpTrackingModule = null });
       return;
     }
     this._tpTrackingModule?.onVadUpdate(data);
@@ -363,7 +364,7 @@ export class MicrophoneDriverController {
 
       log.info(MicrophoneDriverController.TAG, 'Broadcasting renderer-start-mic to all windows', { deviceId });
       const windowCount = this._countWindows();
-      log.info(MicrophoneDriverController.TAG, `Sending to ${windowCount} window(s), waiting for ACK...`);
+      log.info(MicrophoneDriverController.TAG, `Sending to ${ windowCount } window(s), waiting for ACK...`);
 
       const timeout = setTimeout(() => {
         if (this._startedResolve) {
@@ -501,9 +502,9 @@ export class MicrophoneDriverController {
   // ── PCM subscriber callbacks ──────────────────────────────────
 
   /** VAD-gated PCM — only fires when speaking is detected. */
-  private _pcmGatedCallbacks: Array<(chunk: Buffer) => void> = [];
+  private _pcmGatedCallbacks: ((chunk: Buffer) => void)[] = [];
   /** Raw PCM — fires for every chunk regardless of VAD. */
-  private _pcmRawCallbacks: Array<(chunk: Buffer) => void> = [];
+  private _pcmRawCallbacks:   ((chunk: Buffer) => void)[] = [];
 
   /** Register a callback for VAD-gated PCM (speech only). */
   onPcmData(cb: (chunk: Buffer) => void): () => void {
@@ -524,8 +525,8 @@ export class MicrophoneDriverController {
   // ── Test Recording (PCM → WAV) ─────────────────────────────────
 
   private _testRecordingMode: 'raw' | 'noise-reduction' | 'both' | null = null;
-  private _testRawChunks: Buffer[] = [];
-  private _testGatedChunks: Buffer[] = [];
+  private _testRawChunks:     Buffer[] = [];
+  private _testGatedChunks:   Buffer[] = [];
   private _testMaxBytes = 16000 * 2 * 30; // 30 seconds max
 
   /**
@@ -547,7 +548,7 @@ export class MicrophoneDriverController {
     this._testRecordingMode = null;
     log.info(MicrophoneDriverController.TAG, 'stopTestRecording', {
       mode,
-      rawChunks: this._testRawChunks.length,
+      rawChunks:   this._testRawChunks.length,
       gatedChunks: this._testGatedChunks.length,
     });
 
@@ -555,12 +556,12 @@ export class MicrophoneDriverController {
 
     if ((mode === 'raw' || mode === 'both') && this._testRawChunks.length > 0) {
       const wav = this._buildWav(Buffer.concat(this._testRawChunks));
-      result.raw = new Uint8Array(wav).buffer as ArrayBuffer;
+      result.raw = new Uint8Array(wav).buffer;
     }
 
     if ((mode === 'noise-reduction' || mode === 'both') && this._testGatedChunks.length > 0) {
       const wav = this._buildWav(Buffer.concat(this._testGatedChunks));
-      result.noiseReduced = new Uint8Array(wav).buffer as ArrayBuffer;
+      result.noiseReduced = new Uint8Array(wav).buffer;
     }
 
     this._testRawChunks = [];

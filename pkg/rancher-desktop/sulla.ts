@@ -1,4 +1,7 @@
 // registry.ts (or wherever you centralize registrations)
+// NOTE: import order matters here — `@pkg/window` must be imported FIRST to
+// avoid a circular-dependency runtime error ("Cannot access 'a' before
+// initialization") in the renderer bundle. Do not let linters reorder these.
 import * as window from '@pkg/window';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from './agent/services/IntegrationService';
@@ -28,7 +31,6 @@ const console = Logging.sulla;
 
 /** Track whether Sulla services were actually started during this session. */
 let sullaDockerServicesStarted = false;
-
 
 export function markSullaDockerServicesStarted(): void {
   sullaDockerServicesStarted = true;
@@ -185,22 +187,22 @@ export async function instantiateSullaStart(): Promise<void> {
   // ── Connection readiness gates ─────────────────────────────────────────
 
   lifecycle.register('postgres', [],
-    async() => { await postgresClient.waitForReady(); },
-    async() => { await postgresClient.end(); },
+    async() => { await postgresClient.waitForReady() },
+    async() => { await postgresClient.end() },
     { persistOnRestart: true },
   );
 
   lifecycle.register('redis', [],
-    async() => { await redisClient.waitForReady(); },
-    async() => { await redisClient.close(); },
+    async() => { await redisClient.waitForReady() },
+    async() => { await redisClient.close() },
     { persistOnRestart: true },
   );
 
   // ── Database layer (depends on postgres connection) ────────────────────
 
   lifecycle.register('database-manager', ['postgres'],
-    async() => { await afterBackgroundLoaded(); },
-    async() => { await getDatabaseManager().stop(); },
+    async() => { await afterBackgroundLoaded() },
+    async() => { await getDatabaseManager().stop() },
   );
 
   // ── Application services (depend on database-manager) ──────────────────
@@ -232,7 +234,7 @@ export async function instantiateSullaStart(): Promise<void> {
       await getWorkflowSchedulerService().initialize();
       console.log('[Background] WorkflowSchedulerService initialized');
     },
-    async() => { getWorkflowSchedulerService().shutdown(); },
+    async() => { getWorkflowSchedulerService().shutdown() },
   );
 
   lifecycle.register('chat-server', ['database-manager'],
@@ -242,7 +244,21 @@ export async function instantiateSullaStart(): Promise<void> {
       await chatServer.start();
       console.log('[Background] Chat completions API server started');
     },
-    async() => { await getChatCompletionsServer().stop(); },
+    async() => { await getChatCompletionsServer().stop() },
+  );
+
+  lifecycle.register('cloudflare-relay', ['chat-server'],
+    async() => {
+      const { getCloudflareRelayService } = await import('@pkg/agent/services/CloudflareRelayService');
+
+      await getCloudflareRelayService().start();
+      console.log('[Background] Cloudflare relay service started');
+    },
+    async() => {
+      const { getCloudflareRelayService } = await import('@pkg/agent/services/CloudflareRelayService');
+
+      await getCloudflareRelayService().stop();
+    },
   );
 
   lifecycle.register('vault', ['database-manager'],
@@ -426,20 +442,21 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       }
 
       const keyCodeMap: Record<string, { code: string; keyCode: number; text?: string }> = {
-        Enter:      { code: 'Enter',      keyCode: 13, text: '\r' },
-        Escape:     { code: 'Escape',     keyCode: 27 },
-        Tab:        { code: 'Tab',        keyCode: 9 },
-        Space:      { code: 'Space',      keyCode: 32, text: ' ' },
-        Backspace:  { code: 'Backspace',  keyCode: 8 },
-        ArrowUp:    { code: 'ArrowUp',    keyCode: 38 },
-        ArrowDown:  { code: 'ArrowDown',  keyCode: 40 },
-        ArrowLeft:  { code: 'ArrowLeft',  keyCode: 37 },
+        Enter:      { code: 'Enter', keyCode: 13, text: '\r' },
+        Escape:     { code: 'Escape', keyCode: 27 },
+        Tab:        { code: 'Tab', keyCode: 9 },
+        Space:      { code: 'Space', keyCode: 32, text: ' ' },
+        Backspace:  { code: 'Backspace', keyCode: 8 },
+        ArrowUp:    { code: 'ArrowUp', keyCode: 38 },
+        ArrowDown:  { code: 'ArrowDown', keyCode: 40 },
+        ArrowLeft:  { code: 'ArrowLeft', keyCode: 37 },
         ArrowRight: { code: 'ArrowRight', keyCode: 39 },
       };
 
       const mapped = keyCodeMap[inputEvent.key] || { code: inputEvent.key, keyCode: 0 };
 
-      const cdpType = inputEvent.type === 'char' ? 'char'
+      const cdpType = inputEvent.type === 'char'
+        ? 'char'
         : inputEvent.type === 'keyUp' ? 'keyUp' : 'rawKeyDown';
 
       const params: Record<string, unknown> = {
@@ -464,9 +481,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   // ── Screenshot capture via CDP ───────────────────────────────────────────
   ipcMainProxy.handle('browser-tab:capture-screenshot', async(event: Electron.IpcMainInvokeEvent, options?: {
-    format?: 'jpeg' | 'png';
+    format?:  'jpeg' | 'png';
     quality?: number;
-    clip?: { x: number; y: number; width: number; height: number; scale?: number };
+    clip?:    { x: number; y: number; width: number; height: number; scale?: number };
   }, tabId?: string) => {
     let wc: Electron.WebContents;
 
@@ -487,8 +504,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       }
 
       const cdpParams: Record<string, unknown> = {
-        format:               options?.format ?? 'jpeg',
-        quality:              options?.quality ?? 80,
+        format:                options?.format ?? 'jpeg',
+        quality:               options?.quality ?? 80,
         captureBeyondViewport: false,
       };
 
@@ -516,10 +533,10 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   // ── Mouse events via CDP ────────────────────────────────────────────────
   ipcMainProxy.handle('browser-tab:send-mouse-event', async(event: Electron.IpcMainInvokeEvent, mouseEvent: {
-    type: 'mousePressed' | 'mouseReleased' | 'mouseMoved';
-    x: number;
-    y: number;
-    button?: 'left' | 'right' | 'middle' | 'none';
+    type:        'mousePressed' | 'mouseReleased' | 'mouseMoved';
+    x:           number;
+    y:           number;
+    button?:     'left' | 'right' | 'middle' | 'none';
     clickCount?: number;
   }, tabId?: string) => {
     let wc: Electron.WebContents;
@@ -824,7 +841,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
       // ── Detect format and normalize to a common shape ──
       interface ImportEntry { label: string; url: string; username: string; password: string; notes: string; totp: string; folder: string }
-      let entries: ImportEntry[] = [];
+      const entries: ImportEntry[] = [];
       let format = 'unknown';
 
       // Try JSON first (Sulla native or Bitwarden JSON)
@@ -1069,7 +1086,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
       // Find the active tab to autofill — if tabId provided use it,
       // otherwise find the first visible browser tab with a matching origin
-      let targetTabId = data.tabId;
+      const targetTabId = data.tabId;
 
       if (!targetTabId) {
         // Try to find the tab from the main window's rendered browser tabs
@@ -1110,7 +1127,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       return { success: false, error: err.message };
     }
   });
-
 }
 
 /**
@@ -1173,11 +1189,11 @@ export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
   if (mode === 'full') {
     if (postgresClient.isConnected()) {
       console.log('[sullaEnd] Postgres still connected after lifecycle — force-closing');
-      try { await postgresClient.end(); } catch { /* ignore */ }
+      try { await postgresClient.end() } catch { /* ignore */ }
     }
     if (redisClient.getClient()?.status !== 'end') {
       console.log('[sullaEnd] Redis client still alive after lifecycle — force-closing');
-      try { await redisClient.close(); } catch { /* ignore */ }
+      try { await redisClient.close() } catch { /* ignore */ }
     }
   }
 }

@@ -381,7 +381,7 @@ export class AnthropicService extends BaseLanguageModel {
     let completionTokens = 0;
 
     // Track active content blocks by index
-    const activeBlocks: Map<number, { type: string; id?: string; name?: string; inputJson?: string }> = new Map();
+    const activeBlocks = new Map<number, { type: string; id?: string; name?: string; inputJson?: string }>();
     const toolCalls: { id?: string; name: string; args: any }[] = [];
 
     for await (const event of readSSEEvents(response.body, signal)) {
@@ -394,66 +394,66 @@ export class AnthropicService extends BaseLanguageModel {
       }
 
       switch (parsed.type) {
-        case 'message_start':
-          promptTokens = parsed.message?.usage?.input_tokens ?? 0;
-          break;
+      case 'message_start':
+        promptTokens = parsed.message?.usage?.input_tokens ?? 0;
+        break;
 
-        case 'content_block_start': {
-          const block = parsed.content_block;
-          const idx = parsed.index ?? 0;
+      case 'content_block_start': {
+        const block = parsed.content_block;
+        const idx = parsed.index ?? 0;
 
-          activeBlocks.set(idx, {
-            type:      block?.type ?? 'text',
-            id:        block?.id,
-            name:      block?.name,
-            inputJson: '',
-          });
-          break;
+        activeBlocks.set(idx, {
+          type:      block?.type ?? 'text',
+          id:        block?.id,
+          name:      block?.name,
+          inputJson: '',
+        });
+        break;
+      }
+
+      case 'content_block_delta': {
+        const idx = parsed.index ?? 0;
+        const delta = parsed.delta;
+        const block = activeBlocks.get(idx);
+
+        if (delta?.type === 'text_delta' && delta.text) {
+          content += delta.text;
+          callbacks.onToken(delta.text);
+        } else if (delta?.type === 'input_json_delta' && delta.partial_json && block) {
+          // Accumulate tool use input JSON silently (don't emit as tokens)
+          block.inputJson = (block.inputJson || '') + delta.partial_json;
+        } else if (delta?.type === 'thinking_delta' && delta.thinking) {
+          reasoning += delta.thinking;
         }
+        break;
+      }
 
-        case 'content_block_delta': {
-          const idx = parsed.index ?? 0;
-          const delta = parsed.delta;
-          const block = activeBlocks.get(idx);
+      case 'content_block_stop': {
+        const idx = parsed.index ?? 0;
+        const block = activeBlocks.get(idx);
 
-          if (delta?.type === 'text_delta' && delta.text) {
-            content += delta.text;
-            callbacks.onToken(delta.text);
-          } else if (delta?.type === 'input_json_delta' && delta.partial_json && block) {
-            // Accumulate tool use input JSON silently (don't emit as tokens)
-            block.inputJson = (block.inputJson || '') + delta.partial_json;
-          } else if (delta?.type === 'thinking_delta' && delta.thinking) {
-            reasoning += delta.thinking;
+        if (block?.type === 'tool_use' && block.name) {
+          let args: any = {};
+
+          try {
+            args = JSON.parse(block.inputJson || '{}');
+          } catch {
+            args = block.inputJson || {};
           }
-          break;
+          toolCalls.push({ id: block.id, name: block.name, args });
         }
+        activeBlocks.delete(idx);
+        break;
+      }
 
-        case 'content_block_stop': {
-          const idx = parsed.index ?? 0;
-          const block = activeBlocks.get(idx);
+      case 'message_delta':
+        finishReason = parsed.delta?.stop_reason;
+        completionTokens = parsed.usage?.output_tokens ?? completionTokens;
+        break;
 
-          if (block?.type === 'tool_use' && block.name) {
-            let args: any = {};
-
-            try {
-              args = JSON.parse(block.inputJson || '{}');
-            } catch {
-              args = block.inputJson || {};
-            }
-            toolCalls.push({ id: block.id, name: block.name, args });
-          }
-          activeBlocks.delete(idx);
-          break;
-        }
-
-        case 'message_delta':
-          finishReason = parsed.delta?.stop_reason;
-          completionTokens = parsed.usage?.output_tokens ?? completionTokens;
-          break;
-
-        case 'message_stop':
-          // Stream complete
-          break;
+      case 'message_stop':
+        // Stream complete
+        break;
       }
     }
 
@@ -476,7 +476,7 @@ export class AnthropicService extends BaseLanguageModel {
     }
 
     return {
-      content: content.trim(),
+      content:  content.trim(),
       metadata: {
         tokens_used:        promptTokens + completionTokens,
         time_spent:         0, // filled by chatStream()

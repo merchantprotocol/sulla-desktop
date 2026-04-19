@@ -11,8 +11,8 @@
         Hidden when a browser tab is the active route.
       -->
       <router-view
-        v-slot="{ Component }"
         v-show="!isBrowserRoute"
+        v-slot="{ Component }"
       >
         <keep-alive>
           <component
@@ -125,11 +125,12 @@ import { useRoute, useRouter } from 'vue-router';
 import BrowserTab from './BrowserTab.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
 import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
+import { useStartupProgress } from './agent/useStartupProgress';
+
+import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
-import { useStartupProgress } from './agent/useStartupProgress';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 
 const route = useRoute();
 const router = useRouter();

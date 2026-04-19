@@ -1349,7 +1349,7 @@ export function buildGuestBridgeScript(): string {
 })();
 
 // ── Inject __sulla runtime library ──
-${buildSullaRuntimeScript()}
+${ buildSullaRuntimeScript() }
 `;
 }
 

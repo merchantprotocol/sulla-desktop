@@ -58,22 +58,22 @@
 
 // ─── Analyzers ──────────────────────────────────────────────────
 
-const amplitude = require("./analyzers/amplitude");
-const zeroCrossing = require("./analyzers/zero-crossing");
-const temporalVariance = require("./analyzers/temporal-variance");
-const pitch = require("./analyzers/pitch");
-const spectral = require("./analyzers/spectral");
+const amplitude = require('./analyzers/amplitude');
+const pitch = require('./analyzers/pitch');
+const spectral = require('./analyzers/spectral');
+const temporalVariance = require('./analyzers/temporal-variance');
+const zeroCrossing = require('./analyzers/zero-crossing');
 
 // ─── Decision modules ───────────────────────────────────────────
 
-const hysteresis = require("./decision/hysteresis");
-const frameCounter = require("./decision/frame-counter");
-const silenceRatio = require("./decision/silence-ratio");
-const fanNoise = require("./decision/fan-noise");
+const fanNoise = require('./decision/fan-noise');
+const frameCounter = require('./decision/frame-counter');
+const hysteresis = require('./decision/hysteresis');
+const silenceRatio = require('./decision/silence-ratio');
 
 // ─── Buffer ─────────────────────────────────────────────────────
 
-const lookbackBuffer = require("./lookback-buffer");
+const lookbackBuffer = require('./lookback-buffer');
 
 // ─── State ──────────────────────────────────────────────────────
 
@@ -99,7 +99,6 @@ const VARIANCE_GATE = 0.0001;
 const SPEECH_ZCR_MAX = 0.15;
 /** Maximum spectral centroid for speech. Voice energy is concentrated low. */
 const SPEECH_CENTROID_MAX = 0.20;
-
 
 // ─── Orchestration ──────────────────────────────────────────────
 
@@ -140,7 +139,7 @@ function process(rms, analyser) {
   // Real speech has sustained energy (variance) and low ZCR/centroid.
 
   let gatedOn = amp.isAboveOnThreshold;
-  let gatedOff = amp.isAboveOffThreshold;
+  const gatedOff = amp.isAboveOffThreshold;
 
   if (gatedOn) {
     // Must pass minimum RMS gate
@@ -159,9 +158,9 @@ function process(rms, analyser) {
   const fc = frameCounter.process(hyst.active);
   const sr = silenceRatio.process(fc.speaking);
   const fan = fanNoise.process({
-    noiseLevel: amp.noiseLevel,
+    noiseLevel:  amp.noiseLevel,
     steadyPitch: pit.steadyPitch,
-    variance: tvar.variance,
+    variance:    tvar.variance,
     smoothedZcr: zcr.smoothedZcr,
   });
 
@@ -184,18 +183,17 @@ function process(rms, analyser) {
     noiseLevel: amp.noiseLevel,
 
     // Sub-states (for debug / analysis)
-    amplitude: amp,
-    zeroCrossing: zcr,
+    amplitude:        amp,
+    zeroCrossing:     zcr,
     temporalVariance: tvar,
-    pitch: pit,
-    spectral: spec,
-    hysteresis: hyst,
-    frameCounter: fc,
-    silenceRatio: sr,
-    fanNoiseDetail: fan,
-    lookback: lookbackBuffer.getState(),
+    pitch:            pit,
+    spectral:         spec,
+    hysteresis:       hyst,
+    frameCounter:     fc,
+    silenceRatio:     sr,
+    fanNoiseDetail:   fan,
+    lookback:         lookbackBuffer.getState(),
   };
-
 
   // ── Fire callback on state changes ─────────────────────────
 
@@ -218,21 +216,21 @@ function getState() {
   if (cachedState) return cachedState;
 
   return {
-    speaking: false,
-    fanNoise: false,
-    noiseFloor: 0,
-    isSpeaking: false,
-    noiseLevel: "low",
-    amplitude: amplitude.getState(),
-    zeroCrossing: zeroCrossing.getState(),
+    speaking:         false,
+    fanNoise:         false,
+    noiseFloor:       0,
+    isSpeaking:       false,
+    noiseLevel:       'low',
+    amplitude:        amplitude.getState(),
+    zeroCrossing:     zeroCrossing.getState(),
     temporalVariance: temporalVariance.getState(),
-    pitch: pitch.getState(),
-    spectral: spectral.getState(),
-    hysteresis: hysteresis.getState(),
-    frameCounter: frameCounter.getState(),
-    silenceRatio: silenceRatio.getState(),
-    fanNoiseDetail: { detected: false, confidence: 0 },
-    lookback: lookbackBuffer.getState(),
+    pitch:            pitch.getState(),
+    spectral:         spectral.getState(),
+    hysteresis:       hysteresis.getState(),
+    frameCounter:     frameCounter.getState(),
+    silenceRatio:     silenceRatio.getState(),
+    fanNoiseDetail:   { detected: false, confidence: 0 },
+    lookback:         lookbackBuffer.getState(),
   };
 }
 

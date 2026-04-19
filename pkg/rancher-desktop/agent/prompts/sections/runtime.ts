@@ -6,6 +6,7 @@
  * NEW section — provides compact runtime context in a single line.
  */
 import os from 'node:os';
+
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
 export function buildRuntimeSection(ctx: PromptBuildContext): PromptSection | null {

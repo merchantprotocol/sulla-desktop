@@ -22,7 +22,6 @@
 
       <!-- Content area -->
       <div class="audio-body">
-
         <!-- ═══════════════════════════════════════════════════════════
              Microphone Tab
              ═══════════════════════════════════════════════════════════ -->
@@ -95,201 +94,210 @@
             </div>
 
             <!-- Audio Input Device -->
-          <div class="setting-section">
-            <h3>Microphone</h3>
-            <div class="voice-select-row">
-              <select
-                v-model="audioInputDeviceId"
-                class="setting-select"
-                :disabled="loadingDevices"
-                @change="onMicDeviceChange"
-              >
-                <option value="">
-                  System Default
-                </option>
-                <option
-                  v-for="device in audioInputDevices"
-                  :key="device.value"
-                  :value="device.value"
+            <div class="setting-section">
+              <h3>Microphone</h3>
+              <div class="voice-select-row">
+                <select
+                  v-model="audioInputDeviceId"
+                  class="setting-select"
+                  :disabled="loadingDevices"
+                  @change="onMicDeviceChange"
                 >
-                  {{ device.label }}
-                </option>
-              </select>
-              <button
-                class="action-btn"
-                :disabled="loadingDevices"
-                @click="fetchAudioDevices"
-              >
-                {{ loadingDevices ? 'Loading...' : 'Refresh' }}
-              </button>
-            </div>
-          </div>
-
-          <!-- ── Microphone Enable ── -->
-          <div class="setting-section">
-            <h3>Microphone</h3>
-            <div class="mic-test-controls">
-              <button
-                class="action-btn"
-                :class="{ 'btn-active-green': micRunning }"
-                @click="toggleMicDriver"
-              >
-                {{ micRunning ? 'Stop Microphone' : 'Test Microphone' }}
-              </button>
-            </div>
-
-            <!-- Pipeline meters (visible when mic is running) -->
-            <div
-              v-if="micRunning"
-              class="pipeline-section"
-            >
-              <!-- VAD Speaking indicator -->
-              <div class="pipeline-row">
-                <span class="pipeline-label">VAD</span>
-                <div
-                  class="vad-indicator"
-                  :class="vadSpeaking ? 'vad-speaking' : 'vad-silent'"
-                >
-                  {{ vadSpeaking ? 'SPEAKING' : 'SILENT' }}
-                </div>
-                <div
-                  v-if="vadFanNoise"
-                  class="vad-indicator vad-fan"
-                >
-                  FAN NOISE
-                </div>
-              </div>
-
-              <!-- Mic level meter (from audio-driver VAD) -->
-              <div class="pipeline-row">
-                <span class="pipeline-label">Mic Level</span>
-                <div class="mic-meter-track">
-                  <div
-                    class="mic-meter-fill"
-                    :class="{
-                      'meter-green': driverMicLevel < 0.5,
-                      'meter-yellow': driverMicLevel >= 0.5 && driverMicLevel < 0.8,
-                      'meter-red': driverMicLevel >= 0.8,
-                    }"
-                    :style="{ width: (driverMicLevel * 100) + '%' }"
-                  />
-                </div>
-                <span class="pipeline-value">{{ driverMicDb }} dB</span>
-              </div>
-
-              <!-- Noise floor -->
-              <div class="pipeline-row">
-                <span class="pipeline-label">Noise Floor</span>
-                <div class="mic-meter-track">
-                  <div
-                    class="mic-meter-fill meter-blue"
-                    :style="{ width: Math.min(100, vadNoiseFloor * 1000) + '%' }"
-                  />
-                </div>
-                <span class="pipeline-value">{{ vadNoiseFloorDb }} dB</span>
-              </div>
-
-              <!-- Speaker level meter -->
-              <div class="pipeline-row">
-                <span class="pipeline-label">Speaker</span>
-                <div class="mic-meter-track">
-                  <div
-                    class="mic-meter-fill"
-                    :class="{
-                      'meter-green': driverSpeakerLevel < 0.5,
-                      'meter-yellow': driverSpeakerLevel >= 0.5 && driverSpeakerLevel < 0.8,
-                      'meter-red': driverSpeakerLevel >= 0.8,
-                    }"
-                    :style="{ width: (driverSpeakerLevel * 100) + '%' }"
-                  />
-                </div>
-                <span class="pipeline-value">{{ driverSpeakerDb }} dB</span>
-              </div>
-
-              <!-- Detail stats -->
-              <div class="pipeline-stats">
-                <div class="stat-item">
-                  <span class="stat-label">ZCR</span>
-                  <span class="stat-value">{{ vadZcr }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">Variance</span>
-                  <span class="stat-value">{{ vadVariance }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">Pitch</span>
-                  <span class="stat-value">{{ vadPitch }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">Centroid</span>
-                  <span class="stat-value">{{ vadCentroid }}</span>
-                </div>
-              </div>
-
-              <!-- Scrolling waveform -->
-              <canvas
-                ref="micWaveformCanvas"
-                class="waveform-canvas"
-                height="64"
-              />
-
-              <!-- Test recording controls -->
-              <div class="test-recording-section">
-                <div class="test-recording-header">
-                  <select
-                    v-model="micTestMode"
-                    class="setting-select"
-                    :disabled="micTestRecording"
+                  <option value="">
+                    System Default
+                  </option>
+                  <option
+                    v-for="device in audioInputDevices"
+                    :key="device.value"
+                    :value="device.value"
                   >
-                    <option value="raw">Studio Quality — Raw (ASMR)</option>
-                    <option value="noise-reduction">Studio Quality — Voice (Noise Reduction)</option>
-                    <option value="voice-compressed">Studio Quality — Voice + Compression</option>
-                    <option value="streaming">Compressed — Streaming</option>
-                    <option value="streaming-voice">Compressed — Voice (Streaming)</option>
-                  </select>
-                </div>
-
-                <div class="mic-test-controls">
-                  <button
-                    class="action-btn"
-                    :class="{ 'btn-active-red': micTestRecording }"
-                    @click="toggleMicTestRecording"
-                  >
-                    {{ micTestRecording ? 'Stop Recording' : 'Record Test' }}
-                  </button>
-                  <span
-                    v-if="micTestRecording"
-                    class="recording-timer"
-                  >
-                    {{ micTestDuration }}
-                  </span>
-                </div>
-
-                <!-- Playback -->
-                <div
-                  v-if="micTestAudioUrl"
-                  class="playback-row"
+                    {{ device.label }}
+                  </option>
+                </select>
+                <button
+                  class="action-btn"
+                  :disabled="loadingDevices"
+                  @click="fetchAudioDevices"
                 >
-                  <span class="playback-label">{{ micTestModeLabel }}</span>
-                  <audio
-                    :src="micTestAudioUrl"
-                    controls
-                    class="playback-audio"
-                  />
-                </div>
+                  {{ loadingDevices ? 'Loading...' : 'Refresh' }}
+                </button>
               </div>
             </div>
 
-            <p
-              v-if="!micRunning"
-              class="description"
-            >
-              Enable the microphone to see the full VAD pipeline: mic level,
-              noise floor, speech detection, and spectral analysis. This is
-              the same pipeline used by voice chat and dictation.
-            </p>
-          </div>
+            <!-- ── Microphone Enable ── -->
+            <div class="setting-section">
+              <h3>Microphone</h3>
+              <div class="mic-test-controls">
+                <button
+                  class="action-btn"
+                  :class="{ 'btn-active-green': micRunning }"
+                  @click="toggleMicDriver"
+                >
+                  {{ micRunning ? 'Stop Microphone' : 'Test Microphone' }}
+                </button>
+              </div>
 
+              <!-- Pipeline meters (visible when mic is running) -->
+              <div
+                v-if="micRunning"
+                class="pipeline-section"
+              >
+                <!-- VAD Speaking indicator -->
+                <div class="pipeline-row">
+                  <span class="pipeline-label">VAD</span>
+                  <div
+                    class="vad-indicator"
+                    :class="vadSpeaking ? 'vad-speaking' : 'vad-silent'"
+                  >
+                    {{ vadSpeaking ? 'SPEAKING' : 'SILENT' }}
+                  </div>
+                  <div
+                    v-if="vadFanNoise"
+                    class="vad-indicator vad-fan"
+                  >
+                    FAN NOISE
+                  </div>
+                </div>
+
+                <!-- Mic level meter (from audio-driver VAD) -->
+                <div class="pipeline-row">
+                  <span class="pipeline-label">Mic Level</span>
+                  <div class="mic-meter-track">
+                    <div
+                      class="mic-meter-fill"
+                      :class="{
+                        'meter-green': driverMicLevel < 0.5,
+                        'meter-yellow': driverMicLevel >= 0.5 && driverMicLevel < 0.8,
+                        'meter-red': driverMicLevel >= 0.8,
+                      }"
+                      :style="{ width: (driverMicLevel * 100) + '%' }"
+                    />
+                  </div>
+                  <span class="pipeline-value">{{ driverMicDb }} dB</span>
+                </div>
+
+                <!-- Noise floor -->
+                <div class="pipeline-row">
+                  <span class="pipeline-label">Noise Floor</span>
+                  <div class="mic-meter-track">
+                    <div
+                      class="mic-meter-fill meter-blue"
+                      :style="{ width: Math.min(100, vadNoiseFloor * 1000) + '%' }"
+                    />
+                  </div>
+                  <span class="pipeline-value">{{ vadNoiseFloorDb }} dB</span>
+                </div>
+
+                <!-- Speaker level meter -->
+                <div class="pipeline-row">
+                  <span class="pipeline-label">Speaker</span>
+                  <div class="mic-meter-track">
+                    <div
+                      class="mic-meter-fill"
+                      :class="{
+                        'meter-green': driverSpeakerLevel < 0.5,
+                        'meter-yellow': driverSpeakerLevel >= 0.5 && driverSpeakerLevel < 0.8,
+                        'meter-red': driverSpeakerLevel >= 0.8,
+                      }"
+                      :style="{ width: (driverSpeakerLevel * 100) + '%' }"
+                    />
+                  </div>
+                  <span class="pipeline-value">{{ driverSpeakerDb }} dB</span>
+                </div>
+
+                <!-- Detail stats -->
+                <div class="pipeline-stats">
+                  <div class="stat-item">
+                    <span class="stat-label">ZCR</span>
+                    <span class="stat-value">{{ vadZcr }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">Variance</span>
+                    <span class="stat-value">{{ vadVariance }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">Pitch</span>
+                    <span class="stat-value">{{ vadPitch }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">Centroid</span>
+                    <span class="stat-value">{{ vadCentroid }}</span>
+                  </div>
+                </div>
+
+                <!-- Scrolling waveform -->
+                <canvas
+                  ref="micWaveformCanvas"
+                  class="waveform-canvas"
+                  height="64"
+                />
+
+                <!-- Test recording controls -->
+                <div class="test-recording-section">
+                  <div class="test-recording-header">
+                    <select
+                      v-model="micTestMode"
+                      class="setting-select"
+                      :disabled="micTestRecording"
+                    >
+                      <option value="raw">
+                        Studio Quality — Raw (ASMR)
+                      </option>
+                      <option value="noise-reduction">
+                        Studio Quality — Voice (Noise Reduction)
+                      </option>
+                      <option value="voice-compressed">
+                        Studio Quality — Voice + Compression
+                      </option>
+                      <option value="streaming">
+                        Compressed — Streaming
+                      </option>
+                      <option value="streaming-voice">
+                        Compressed — Voice (Streaming)
+                      </option>
+                    </select>
+                  </div>
+
+                  <div class="mic-test-controls">
+                    <button
+                      class="action-btn"
+                      :class="{ 'btn-active-red': micTestRecording }"
+                      @click="toggleMicTestRecording"
+                    >
+                      {{ micTestRecording ? 'Stop Recording' : 'Record Test' }}
+                    </button>
+                    <span
+                      v-if="micTestRecording"
+                      class="recording-timer"
+                    >
+                      {{ micTestDuration }}
+                    </span>
+                  </div>
+
+                  <!-- Playback -->
+                  <div
+                    v-if="micTestAudioUrl"
+                    class="playback-row"
+                  >
+                    <span class="playback-label">{{ micTestModeLabel }}</span>
+                    <audio
+                      :src="micTestAudioUrl"
+                      controls
+                      class="playback-audio"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <p
+                v-if="!micRunning"
+                class="description"
+              >
+                Enable the microphone to see the full VAD pipeline: mic level,
+                noise floor, speech detection, and spectral analysis. This is
+                the same pipeline used by voice chat and dictation.
+              </p>
+            </div>
           </template>
         </div>
 
@@ -369,14 +377,18 @@
                 :disabled="loadingVoices"
                 @change="onVoiceChange"
               >
-                <option value="">Select a voice...</option>
+                <option value="">
+                  Select a voice...
+                </option>
                 <option
                   v-for="voice in voices"
                   :key="voice.value"
                   :value="voice.value"
                 >
                   {{ voice.label }}
-                  <template v-if="voice.description"> ({{ voice.description }})</template>
+                  <template v-if="voice.description">
+                    ({{ voice.description }})
+                  </template>
                 </option>
               </select>
               <button
@@ -474,165 +486,175 @@
             </p>
 
             <!-- Output Device Selector -->
-          <div class="setting-section">
-            <h3>Output Device</h3>
-            <div class="voice-select-row">
-              <select
-                v-model="speakerDeviceId"
-                class="setting-select"
-                :disabled="loadingSpeakerDevices"
-                @change="onSpeakerDeviceChange"
-              >
-                <option value="">
-                  System Default
-                </option>
-                <option
-                  v-for="device in speakerOutputDevices"
-                  :key="device.value"
-                  :value="device.value"
+            <div class="setting-section">
+              <h3>Output Device</h3>
+              <div class="voice-select-row">
+                <select
+                  v-model="speakerDeviceId"
+                  class="setting-select"
+                  :disabled="loadingSpeakerDevices"
+                  @change="onSpeakerDeviceChange"
                 >
-                  {{ device.label }}
-                </option>
-              </select>
-              <button
-                class="action-btn"
-                :disabled="loadingSpeakerDevices"
-                @click="fetchSpeakerDevices"
-              >
-                {{ loadingSpeakerDevices ? 'Loading...' : 'Refresh' }}
-              </button>
-            </div>
-          </div>
-
-          <!-- Volume Controls -->
-          <div class="setting-section">
-            <h3>Volume</h3>
-            <div class="speaker-volume-controls">
-              <button
-                class="icon-btn-lg"
-                :class="{ 'icon-btn-muted': speakerMuted }"
-                title="Toggle Mute"
-                @click="onSpeakerMuteToggle"
-              >
-                <svg
-                  v-if="speakerMuted"
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
+                  <option value="">
+                    System Default
+                  </option>
+                  <option
+                    v-for="device in speakerOutputDevices"
+                    :key="device.value"
+                    :value="device.value"
+                  >
+                    {{ device.label }}
+                  </option>
+                </select>
+                <button
+                  class="action-btn"
+                  :disabled="loadingSpeakerDevices"
+                  @click="fetchSpeakerDevices"
                 >
-                  <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
-                  <line x1="22" y1="9" x2="16" y2="15" />
-                  <line x1="16" y1="9" x2="22" y2="15" />
-                </svg>
-                <svg
-                  v-else
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
-                  <path d="M16 9a5 5 0 0 1 0 6" />
-                  <path d="M19.364 18.364a9 9 0 0 0 0-12.728" />
-                </svg>
-              </button>
-
-              <button
-                class="icon-btn-lg"
-                title="Volume Down"
-                @click="onSpeakerVolumeDown"
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
-                </svg>
-              </button>
-
-              <span class="speaker-volume-label">{{ speakerVolumeDisplay }}</span>
-
-              <button
-                class="icon-btn-lg"
-                title="Volume Up"
-                @click="onSpeakerVolumeUp"
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
-                  <path d="M16 9a5 5 0 0 1 0 6" />
-                  <path d="M19.364 18.364a9 9 0 0 0 0-12.728" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <!-- Test Speaker -->
-          <div class="setting-section">
-            <h3>Test</h3>
-            <div class="mic-test-controls">
-              <button
-                class="action-btn"
-                :class="{ 'btn-active-green': speakerRunning }"
-                :disabled="speakerTransitioning"
-                @click="toggleSpeakerDriver"
-              >
-                {{ speakerTransitioning ? (speakerRunning ? 'Disabling...' : 'Enabling...') : speakerRunning ? 'Stop Speaker' : 'Test Speaker' }}
-              </button>
-            </div>
-            <div
-              v-if="speakerRunning"
-              class="speaker-meter-container"
-              style="margin-top: 0.75rem;"
-            >
-              <div class="speaker-meter-track">
-                <div
-                  class="speaker-meter-fill"
-                  :class="{
-                    'meter-green': speakerMeterPct < 50,
-                    'meter-yellow': speakerMeterPct >= 50 && speakerMeterPct < 80,
-                    'meter-red': speakerMeterPct >= 80,
-                  }"
-                  :style="{ width: speakerMeterPct + '%' }"
-                />
-                <div
-                  class="speaker-meter-peak-indicator"
-                  :style="{ left: speakerPeakPct + '%', opacity: speakerPeakPct > 1 ? 0.8 : 0 }"
-                />
+                  {{ loadingSpeakerDevices ? 'Loading...' : 'Refresh' }}
+                </button>
               </div>
-              <span class="speaker-meter-db">{{ speakerMeterDbDisplay }} dB</span>
             </div>
-            <p
-              v-if="!speakerRunning"
-              class="description"
-            >
-              Starts the loopback capture driver to verify speaker audio is
-              being captured correctly. Play some audio to see the level meter.
-            </p>
-          </div>
+
+            <!-- Volume Controls -->
+            <div class="setting-section">
+              <h3>Volume</h3>
+              <div class="speaker-volume-controls">
+                <button
+                  class="icon-btn-lg"
+                  :class="{ 'icon-btn-muted': speakerMuted }"
+                  title="Toggle Mute"
+                  @click="onSpeakerMuteToggle"
+                >
+                  <svg
+                    v-if="speakerMuted"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
+                    <line
+                      x1="22"
+                      y1="9"
+                      x2="16"
+                      y2="15"
+                    />
+                    <line
+                      x1="16"
+                      y1="9"
+                      x2="22"
+                      y2="15"
+                    />
+                  </svg>
+                  <svg
+                    v-else
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
+                    <path d="M16 9a5 5 0 0 1 0 6" />
+                    <path d="M19.364 18.364a9 9 0 0 0 0-12.728" />
+                  </svg>
+                </button>
+
+                <button
+                  class="icon-btn-lg"
+                  title="Volume Down"
+                  @click="onSpeakerVolumeDown"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
+                  </svg>
+                </button>
+
+                <span class="speaker-volume-label">{{ speakerVolumeDisplay }}</span>
+
+                <button
+                  class="icon-btn-lg"
+                  title="Volume Up"
+                  @click="onSpeakerVolumeUp"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
+                    <path d="M16 9a5 5 0 0 1 0 6" />
+                    <path d="M19.364 18.364a9 9 0 0 0 0-12.728" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Test Speaker -->
+            <div class="setting-section">
+              <h3>Test</h3>
+              <div class="mic-test-controls">
+                <button
+                  class="action-btn"
+                  :class="{ 'btn-active-green': speakerRunning }"
+                  :disabled="speakerTransitioning"
+                  @click="toggleSpeakerDriver"
+                >
+                  {{ speakerTransitioning ? (speakerRunning ? 'Disabling...' : 'Enabling...') : speakerRunning ? 'Stop Speaker' : 'Test Speaker' }}
+                </button>
+              </div>
+              <div
+                v-if="speakerRunning"
+                class="speaker-meter-container"
+                style="margin-top: 0.75rem;"
+              >
+                <div class="speaker-meter-track">
+                  <div
+                    class="speaker-meter-fill"
+                    :class="{
+                      'meter-green': speakerMeterPct < 50,
+                      'meter-yellow': speakerMeterPct >= 50 && speakerMeterPct < 80,
+                      'meter-red': speakerMeterPct >= 80,
+                    }"
+                    :style="{ width: speakerMeterPct + '%' }"
+                  />
+                  <div
+                    class="speaker-meter-peak-indicator"
+                    :style="{ left: speakerPeakPct + '%', opacity: speakerPeakPct > 1 ? 0.8 : 0 }"
+                  />
+                </div>
+                <span class="speaker-meter-db">{{ speakerMeterDbDisplay }} dB</span>
+              </div>
+              <p
+                v-if="!speakerRunning"
+                class="description"
+              >
+                Starts the loopback capture driver to verify speaker audio is
+                being captured correctly. Play some audio to see the level meter.
+              </p>
+            </div>
           </template>
         </div>
 
@@ -939,11 +961,15 @@
               class="setting-select"
               @change="saveSettings"
             >
-              <option value="browser">Browser (real-time)</option>
+              <option value="browser">
+                Browser (real-time)
+              </option>
               <option
                 v-if="gatewayConnected"
                 value="gateway"
-              >Enterprise Gateway</option>
+              >
+                Enterprise Gateway
+              </option>
             </select>
             <p class="description">
               <strong>Browser</strong> uses built-in speech recognition for mic
@@ -974,7 +1000,6 @@
             </p>
           </div>
         </div>
-
       </div>
     </div>
   </div>
@@ -982,8 +1007,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import { useTheme } from '../composables/useTheme';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 // The audio-driver IPC channels are not yet in the typed IpcRendererEvents
 // interface. Use an untyped reference for audio-driver-specific calls.
@@ -1094,7 +1121,7 @@ function onSpeakerLevelForMeter(_event: any, data: { rms: number; peak?: number 
 }
 
 function onVolumeChanged(_event: any, state: { ok: boolean; volume: number; muted: boolean } | undefined) {
-  if (!state || !state.ok) return;
+  if (!state?.ok) return;
   speakerVolume.value = state.volume;
   speakerMuted.value = state.muted;
 }
@@ -1243,7 +1270,7 @@ function onMicError(_event: any, data: any) {
   console.error('[AudioSettings] mic-error:', data);
   micError.value = data?.error === 'microphone-permission-denied'
     ? 'Microphone permission denied. Open System Settings > Privacy & Security > Microphone to grant access.'
-    : `Microphone error: ${data?.message || data?.error || 'unknown'}`;
+    : `Microphone error: ${ data?.message || data?.error || 'unknown' }`;
   micRunning.value = false;
 }
 ipc.on('audio-driver:mic-error', onMicError);
@@ -1293,7 +1320,7 @@ function onMicVad(_event: any, data: { speaking: boolean; level: number; fanNois
   if (data.noiseFloor !== undefined) vadNoiseFloor.value = data.noiseFloor;
   if (data.zcr !== undefined) vadZcr.value = data.zcr.toFixed(3);
   if (data.variance !== undefined) vadVariance.value = data.variance.toFixed(6);
-  if (data.pitch !== undefined) vadPitch.value = data.pitch !== null ? `${data.pitch.toFixed(0)} Hz` : '--';
+  if (data.pitch !== undefined) vadPitch.value = data.pitch !== null ? `${ data.pitch.toFixed(0) } Hz` : '--';
   if (data.centroid !== undefined) vadCentroid.value = data.centroid.toFixed(4);
 
   // Feed scrolling waveform
@@ -1306,7 +1333,7 @@ const micWaveformCanvas = ref<HTMLCanvasElement | null>(null);
 const whisperWaveformCanvas = ref<HTMLCanvasElement | null>(null);
 
 const WAVEFORM_HISTORY = 300; // ~5 seconds at 60fps
-const waveformSamples: Array<{ level: number; speaking: boolean }> = [];
+const waveformSamples: { level: number; speaking: boolean }[] = [];
 
 function pushWaveformSample(level: number, speaking: boolean) {
   waveformSamples.push({ level, speaking });
@@ -1413,10 +1440,10 @@ async function toggleMicDriver() {
 // ─── Mic test recording ─────────────────────────────────────────
 
 const MIC_TEST_MODES = {
-  'raw':              'Studio Quality — Raw (ASMR)',
+  raw:                'Studio Quality — Raw (ASMR)',
   'noise-reduction':  'Studio Quality — Voice (Noise Reduction)',
   'voice-compressed': 'Studio Quality — Voice + Compression',
-  'streaming':        'Compressed — Streaming',
+  streaming:          'Compressed — Streaming',
   'streaming-voice':  'Compressed — Voice (Streaming)',
 } as const;
 
@@ -1433,18 +1460,18 @@ let micTestSeconds = 0;
 /** Map UI mode to the controller recording mode */
 function getRecordingMode(mode: MicTestModeKey): string {
   switch (mode) {
-  case 'raw':              return 'raw';
-  case 'noise-reduction':  return 'noise-reduction';
+  case 'raw': return 'raw';
+  case 'noise-reduction': return 'noise-reduction';
   case 'voice-compressed': return 'noise-reduction'; // same PCM path, compression applied later
-  case 'streaming':        return 'raw';             // TODO: WebM/Opus path
-  case 'streaming-voice':  return 'noise-reduction'; // TODO: WebM/Opus + noise reduction
-  default:                 return 'raw';
+  case 'streaming': return 'raw';             // TODO: WebM/Opus path
+  case 'streaming-voice': return 'noise-reduction'; // TODO: WebM/Opus + noise reduction
+  default: return 'raw';
   }
 }
 
 async function startMicTestRecording() {
   // Clear previous
-  if (micTestAudioUrl.value) { URL.revokeObjectURL(micTestAudioUrl.value); micTestAudioUrl.value = null; }
+  if (micTestAudioUrl.value) { URL.revokeObjectURL(micTestAudioUrl.value); micTestAudioUrl.value = null }
 
   const mode = getRecordingMode(micTestMode.value);
   micTestModeLabel.value = MIC_TEST_MODES[micTestMode.value];
@@ -1457,12 +1484,12 @@ async function startMicTestRecording() {
     micTestSeconds++;
     const m = Math.floor(micTestSeconds / 60);
     const s = micTestSeconds % 60;
-    micTestDuration.value = `${m}:${s.toString().padStart(2, '0')}`;
+    micTestDuration.value = `${ m }:${ s.toString().padStart(2, '0') }`;
   }, 1000);
 }
 
 async function stopMicTestRecording() {
-  if (micTestTimer) { clearInterval(micTestTimer); micTestTimer = null; }
+  if (micTestTimer) { clearInterval(micTestTimer); micTestTimer = null }
   micTestRecording.value = false;
 
   console.log('[AudioSettings] Stopping test recording');
@@ -1499,7 +1526,7 @@ async function toggleSpeakerDriver() {
         console.warn('[AudioSettings] stop-speaker error:', e);
       });
       // Give the IPC a moment to dispatch, then clear transitioning
-      setTimeout(() => { speakerTransitioning.value = false; }, 500);
+      setTimeout(() => { speakerTransitioning.value = false }, 500);
     } else {
       await ipc.invoke('audio-driver:start-speaker', 'audio-settings-test');
       speakerRunning.value = true;
@@ -1533,16 +1560,16 @@ const activeWhisperModel = ref('');
 
 // ── Model catalog ──
 
-const WHISPER_MODEL_CATALOG: Array<{ id: string; size: string; speed: string; lang: string }> = [
-  { id: 'tiny.en',   size: '75 MB',  speed: 'fastest',  lang: 'English only' },
-  { id: 'tiny',      size: '75 MB',  speed: 'fastest',  lang: 'multilingual' },
-  { id: 'base.en',   size: '141 MB', speed: 'fast',     lang: 'English only' },
-  { id: 'base',      size: '141 MB', speed: 'fast',     lang: 'multilingual' },
-  { id: 'small.en',  size: '466 MB', speed: 'balanced', lang: 'English only' },
-  { id: 'small',     size: '466 MB', speed: 'balanced', lang: 'multilingual' },
+const WHISPER_MODEL_CATALOG: { id: string; size: string; speed: string; lang: string }[] = [
+  { id: 'tiny.en', size: '75 MB', speed: 'fastest', lang: 'English only' },
+  { id: 'tiny', size: '75 MB', speed: 'fastest', lang: 'multilingual' },
+  { id: 'base.en', size: '141 MB', speed: 'fast', lang: 'English only' },
+  { id: 'base', size: '141 MB', speed: 'fast', lang: 'multilingual' },
+  { id: 'small.en', size: '466 MB', speed: 'balanced', lang: 'English only' },
+  { id: 'small', size: '466 MB', speed: 'balanced', lang: 'multilingual' },
   { id: 'medium.en', size: '1.5 GB', speed: 'accurate', lang: 'English only' },
-  { id: 'medium',    size: '1.5 GB', speed: 'accurate', lang: 'multilingual' },
-  { id: 'large',     size: '2.9 GB', speed: 'most accurate', lang: 'multilingual' },
+  { id: 'medium', size: '1.5 GB', speed: 'accurate', lang: 'multilingual' },
+  { id: 'large', size: '2.9 GB', speed: 'most accurate', lang: 'multilingual' },
 ];
 
 const availableWhisperModels = computed(() => {
@@ -1556,7 +1583,7 @@ const availableWhisperModels = computed(() => {
 
 function getModelMeta(modelId: string): string {
   const m = WHISPER_MODEL_CATALOG.find(c => c.id === modelId);
-  return m ? `${m.size} · ${m.speed} · ${m.lang}` : '';
+  return m ? `${ m.size } · ${ m.speed } · ${ m.lang }` : '';
 }
 
 function setActiveWhisperModel(model: string) {
@@ -1570,7 +1597,7 @@ let transcribeStatsPollTimer: ReturnType<typeof setInterval> | null = null;
 
 function startTranscribeStatsPoll() {
   transcribeStats.value = null;
-  transcribeStatsPollTimer = setInterval(async () => {
+  transcribeStatsPollTimer = setInterval(async() => {
     try {
       transcribeStats.value = await ipc.invoke('audio-driver:transcribe-status');
     } catch { /* ignore */ }
@@ -1670,7 +1697,7 @@ async function deleteWhisperModel(model: string) {
 
 interface WhisperTestEntry {
   speaker: string;
-  text: string;
+  text:    string;
   partial: boolean;
 }
 
@@ -1702,7 +1729,7 @@ async function toggleWhisperTest() {
     micRunning.value = true;
     console.log('[AudioSettings] Starting whisper transcription...', { mode: whisperTranscribeMode.value });
     const result = await ipc.invoke('audio-driver:transcribe-start', {
-      mode: whisperTranscribeMode.value,
+      mode:  whisperTranscribeMode.value,
       model: activeWhisperModel.value || undefined,
     });
     console.log('[AudioSettings] transcribe-start result:', result);
@@ -1717,7 +1744,7 @@ async function toggleWhisperTest() {
 
 // Capture whisper transcript events into the test area
 function onWhisperTestTranscript(_event: any, msg: any) {
-  if (!msg || !msg.text || !whisperTranscribing.value) return;
+  if (!msg?.text || !whisperTranscribing.value) return;
 
   const speaker = msg.channel_label || msg.speaker || 'You';
   const isPartial = msg.event_type === 'transcript_partial';
@@ -1760,9 +1787,12 @@ ipc.on('audio-driver:whisper-status', (_event: any, status: any) => {
 ipc.on('audio-driver:whisper-progress', (_event: any, data: any) => {
   if (!data) return;
   if (data.status) {
-    whisperProgressPhase.value = data.phase === 'install' ? 'Installing whisper.cpp'
-      : data.phase === 'uninstall' ? 'Uninstalling whisper.cpp'
-        : data.phase === 'download' ? `Downloading ${ data.model || 'model' }`
+    whisperProgressPhase.value = data.phase === 'install'
+      ? 'Installing whisper.cpp'
+      : data.phase === 'uninstall'
+        ? 'Uninstalling whisper.cpp'
+        : data.phase === 'download'
+          ? `Downloading ${ data.model || 'model' }`
           : data.status;
     addWhisperLog(data.status);
   }
@@ -1929,8 +1959,8 @@ async function previewVoice(): Promise<void> {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       await new Promise<void>((resolve) => {
-        audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.onended = () => { URL.revokeObjectURL(url); resolve() };
+        audio.onerror = () => { URL.revokeObjectURL(url); resolve() };
         audio.play().catch(() => resolve());
       });
     }

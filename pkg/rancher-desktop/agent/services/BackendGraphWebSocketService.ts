@@ -1,13 +1,15 @@
 // BackendGraphWebSocketService.ts
 // Main-process agent dispatcher: routes messages on the sulla-desktop, workbench,
 // and heartbeat channels to the default agent via GraphRegistry.
-import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
-import { getSchedulerService } from './SchedulerService';
-import type { CalendarEventData } from './CalendarClient';
 import { AbortService } from './AbortService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
-import type { AgentGraphState } from '../nodes/Graph';
+import { getSchedulerService } from './SchedulerService';
+import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
+
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
+
+import type { CalendarEventData } from './CalendarClient';
+import type { AgentGraphState } from '../nodes/Graph';
 
 const SULLA_DESKTOP_CHANNEL_ID = 'sulla-desktop';
 const WORKBENCH_CHANNEL_ID = 'workbench';

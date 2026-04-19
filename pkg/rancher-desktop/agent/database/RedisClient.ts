@@ -47,7 +47,7 @@ export class RedisClient {
       maxRetriesPerRequest: 3,
       lazyConnect:          true, // Don't auto-connect on construction
       // Enable built-in readiness checking so ioredis knows when it's safe
-      enableReadyCheck: true,
+      enableReadyCheck:     true,
     });
 
     client.on('connect', () => {

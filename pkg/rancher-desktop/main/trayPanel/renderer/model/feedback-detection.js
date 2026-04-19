@@ -67,8 +67,8 @@ function process(analyser) {
         db >= freqData[i - 1] &&
         db >= freqData[i + 1]) {
       currentPeaks.push({
-        bin: i,
-        db: db,
+        bin:       i,
+        db,
         frequency: binToFrequency(i, binCount),
       });
     }
@@ -83,21 +83,21 @@ function process(analyser) {
 
   for (const peak of topPeaks) {
     const match = trackedPeaks.find(
-      (t) => Math.abs(t.bin - peak.bin) <= FREQUENCY_TOLERANCE_BINS
+      (t) => Math.abs(t.bin - peak.bin) <= FREQUENCY_TOLERANCE_BINS,
     );
 
     if (match) {
       // Existing peak — increment sustain count
       newTracked.push({
-        bin: peak.bin,
-        count: match.count + 1,
+        bin:       peak.bin,
+        count:     match.count + 1,
         frequency: peak.frequency,
       });
     } else {
       // New peak — start tracking
       newTracked.push({
-        bin: peak.bin,
-        count: 1,
+        bin:       peak.bin,
+        count:     1,
         frequency: peak.frequency,
       });
     }

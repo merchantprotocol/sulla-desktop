@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from '../base';
 import { postgresClient } from '../../database/PostgresClient';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * Pg Count Tool - Worker class for execution

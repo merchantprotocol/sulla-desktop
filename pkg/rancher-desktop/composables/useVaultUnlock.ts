@@ -1,4 +1,5 @@
 import { ref } from 'vue';
+
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 // Shared reactive state — same instance across all components

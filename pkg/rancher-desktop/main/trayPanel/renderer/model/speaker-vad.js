@@ -94,10 +94,10 @@ function process(rms, data) {
   const aboveFloorDB = currentDB - floorDB;
 
   let isAboveOn = aboveFloorDB > SPEECH_ON_DB;
-  let isAboveOff = aboveFloorDB > SPEECH_OFF_DB;
+  const isAboveOff = aboveFloorDB > SPEECH_OFF_DB;
 
   // Cross-validate with signals from Swift helper
-  const hasData = data && typeof data === "object" && typeof data.zcr === "number";
+  const hasData = data && typeof data === 'object' && typeof data.zcr === 'number';
 
   if (hasData && isAboveOn) {
     const zcr = data.zcr;
@@ -106,7 +106,7 @@ function process(rms, data) {
     const crestFactor = rms > 0.001 ? peak / rms : 0;
     const centroid = data.centroid || 0;
     const rolloff = data.rolloff || 0;
-    const hasPitch = typeof data.pitch === "number" && data.pitch > 0;
+    const hasPitch = typeof data.pitch === 'number' && data.pitch > 0;
 
     // Score how many signals agree this is speech
     let speechScore = 0;
@@ -186,20 +186,20 @@ function process(rms, data) {
   // Debug logging (~1/second)
   frameCount++;
   if (frameCount % DEBUG_LOG_INTERVAL === 0) {
-    log.debug("SpeakerVAD", "State", {
+    log.debug('SpeakerVAD', 'State', {
       speaking,
-      rms: rms.toFixed(4),
-      noiseFloor: noiseFloor.toFixed(4),
+      rms:          rms.toFixed(4),
+      noiseFloor:   noiseFloor.toFixed(4),
       aboveFloorDB: aboveFloorDB.toFixed(1),
       hystActive,
       voiceFrames,
       silenceFrames,
-      hasData: hasData,
-      zcr: hasData ? (data.zcr || 0).toFixed(3) : "n/a",
-      variance: hasData ? (data.variance || 0).toFixed(6) : "n/a",
-      pitch: hasData ? (data.pitch || null) : "n/a",
-      centroid: hasData ? (data.centroid || 0).toFixed(4) : "n/a",
-      fanNoise: fanNoiseDetected,
+      hasData,
+      zcr:          hasData ? (data.zcr || 0).toFixed(3) : 'n/a',
+      variance:     hasData ? (data.variance || 0).toFixed(6) : 'n/a',
+      pitch:        hasData ? (data.pitch || null) : 'n/a',
+      centroid:     hasData ? (data.centroid || 0).toFixed(4) : 'n/a',
+      fanNoise:     fanNoiseDetected,
     });
   }
 

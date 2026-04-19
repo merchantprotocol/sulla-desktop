@@ -1,10 +1,11 @@
 // src/services/ThreadStateStore.ts
-import type { BaseThreadState } from '../nodes/Graph';
 import fs from 'node:fs';
 import readline from 'node:readline';
 
-import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
 import { redisClient } from '../database/RedisClient';
+import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
+
+import type { BaseThreadState } from '../nodes/Graph';
 
 const KEY_PREFIX = 'sulla:threadstate:';
 
@@ -89,7 +90,7 @@ export async function loadThreadState(threadId: string): Promise<BaseThreadState
 async function restoreFromDisk(threadId: string): Promise<BaseThreadState | null> {
   // 1. Look up conversation record by thread_id
   const record = await ConversationHistoryModel.getByThread(threadId);
-  if (!record || !record.log_file) {
+  if (!record?.log_file) {
     return null;
   }
 

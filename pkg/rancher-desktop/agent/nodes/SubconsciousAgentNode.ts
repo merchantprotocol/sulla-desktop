@@ -48,8 +48,8 @@ const AGENT_CONTINUE_XML_REGEX = /<AGENT_CONTINUE>([\s\S]*?)<\/AGENT_CONTINUE>/i
 const STATUS_REPORT_XML_REGEX = /<STATUS_REPORT>([\s\S]*?)<\/STATUS_REPORT>/i;
 
 interface SubconsciousOutcome {
-  status: 'done' | 'continue' | 'in_progress';
-  summary: string | null;
+  status:       'done' | 'continue' | 'in_progress';
+  summary:      string | null;
   statusReport: string | null;
 }
 

@@ -5,13 +5,17 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { initClaudeCodeTestEvents } from './claudeCodeTest';
+import { initClaudeOAuthEvents } from './claudeOAuth';
+import { initDesktopRelayEvents } from './desktopRelay';
+import { initSullaCloudAuthEvents } from './sullaCloudAuth';
+import { initConversationHistoryIpc } from './conversationHistoryIpc';
+import { initMessageBusIpc } from './messageBusIpc';
+import { initSullaDebugEvents } from './sullaDebugEvents';
+import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
+
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
-import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
-import { initSullaDebugEvents } from './sullaDebugEvents';
-import { initMessageBusIpc } from './messageBusIpc';
-import { initConversationHistoryIpc } from './conversationHistoryIpc';
-import { initClaudeOAuthEvents } from './claudeOAuth';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -42,6 +46,9 @@ export function initSullaEvents(): void {
   initMessageBusIpc();
   initConversationHistoryIpc();
   initClaudeOAuthEvents();
+  initClaudeCodeTestEvents();
+  initDesktopRelayEvents();
+  initSullaCloudAuthEvents();
 
   // ─────────────────────────────────────────────────────────────
   // Settings handlers
@@ -563,7 +570,6 @@ export function initSullaEvents(): void {
     return { totalMemoryGB, availableMemoryGB: freeMemoryGB, availableDiskGB };
   });
 
-
   /**
    * Lightweight stats for the editor footer:
    * - availableBytes: free disk space on the userData volume
@@ -607,7 +613,6 @@ export function initSullaEvents(): void {
 
     return { availableBytes, unprocessedTrainingBytes };
   });
-
 
   // ─────────────────────────────────────────────────────────────
   // QMD Search handlers
@@ -912,14 +917,14 @@ export function initSullaEvents(): void {
         method:  'POST',
         headers: {
           'Content-Type':  'application/json',
-          'Authorization': `Bearer ${ apiKey }`,
+          Authorization:  `Bearer ${ apiKey }`,
         },
         body: JSON.stringify({ callerName: payload?.callerName || 'Sulla Secretary' }),
       });
 
       if (!response.ok) {
         const body = await response.text().catch(() => '');
-        console.error(`[Desktop] Gateway session start failed (${response.status}): ${body}`);
+        console.error(`[Desktop] Gateway session start failed (${ response.status }): ${ body }`);
 
         return { sessionId: null, error: `Gateway returned ${ response.status }: ${ body }` };
       }
@@ -950,25 +955,25 @@ export function initSullaEvents(): void {
       const gatewayUrl = urlValue?.value?.trim();
       const apiKey = keyValue?.value?.trim();
       if (!gatewayUrl || !apiKey) {
-        console.warn(`[Desktop] Cannot end session ${sessionId} — gateway not configured`);
+        console.warn(`[Desktop] Cannot end session ${ sessionId } — gateway not configured`);
 
         return { ok: false, error: 'Gateway not configured' };
       }
 
       const resp = await fetch(`${ gatewayUrl.replace(/\/+$/, '') }/api/desktop/sessions/${ sessionId }`, {
         method:  'DELETE',
-        headers: { 'Authorization': `Bearer ${ apiKey }` },
+        headers: { Authorization: `Bearer ${ apiKey }` },
       });
 
       if (!resp.ok) {
-        console.warn(`[Desktop] Session DELETE returned ${resp.status} for ${sessionId}`);
+        console.warn(`[Desktop] Session DELETE returned ${ resp.status } for ${ sessionId }`);
       }
 
       console.log(`[Desktop] Gateway session ended: ${ sessionId }`);
 
       return { ok: true };
     } catch (err: any) {
-      console.error(`[Desktop] desktop-session-end failed for ${sessionId}:`, err.message);
+      console.error(`[Desktop] desktop-session-end failed for ${ sessionId }:`, err.message);
 
       return { ok: false, error: err.message };
     }
@@ -1062,7 +1067,7 @@ export function initSullaEvents(): void {
       // Rate-limit audio send error logging — don't spam on every chunk
       audioSendErrCount++;
       if (audioSendErrCount <= 3 || audioSendErrCount % 100 === 0) {
-        console.error(`[Sulla] gateway-audio-send failed (#${audioSendErrCount}): ${err.message}`);
+        console.error(`[Sulla] gateway-audio-send failed (#${ audioSendErrCount }): ${ err.message }`);
       }
 
       return { ok: false, error: err.message };
@@ -1159,10 +1164,10 @@ export function initSullaEvents(): void {
 
       await controller.subscribeTranscripts((event) => {
         try {
-          console.log(`[Sulla] Sending gateway-transcript IPC: ${(event as any).event_type}`);
+          console.log(`[Sulla] Sending gateway-transcript IPC: ${ (event as any).event_type }`);
           windowModule.send('gateway-transcript' as any, event);
         } catch (err: any) {
-          console.error(`[Sulla] gateway-transcript IPC send failed: ${err.message}`);
+          console.error(`[Sulla] gateway-transcript IPC send failed: ${ err.message }`);
         }
       });
 
@@ -1212,7 +1217,7 @@ export function initSullaEvents(): void {
       // Ensure the log file path is resolved with the correct channel prefix
       // so voice logs land in the same file as the graph conversation
       // (e.g., sulla-desktop_thread_123.log)
-      (logger as any).resolveFilePath(threadId, channel);
+      (logger).resolveFilePath(threadId, channel);
 
       logger.log(threadId, {
         ...eventData,

@@ -14,6 +14,7 @@
  */
 
 import path from 'path';
+
 import { BrowserWindow, ipcMain, app } from 'electron';
 
 import Logging from '@pkg/utils/logging';
@@ -73,18 +74,18 @@ function onShow(
   // ── Create the window ──
 
   win = new BrowserWindow({
-    width:       MENU_WIDTH,
-    height:      estimatedHeight,
-    x:           screenX,
-    y:           screenY,
-    show:        false,
-    frame:       false,
-    transparent: true,
-    resizable:   false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    hasShadow:   true,
-    focusable:   true,
+    width:          MENU_WIDTH,
+    height:         estimatedHeight,
+    x:              screenX,
+    y:              screenY,
+    show:           false,
+    frame:          false,
+    transparent:    true,
+    resizable:      false,
+    alwaysOnTop:    true,
+    skipTaskbar:    true,
+    hasShadow:      true,
+    focusable:      true,
     webPreferences: {
       contextIsolation: false,
       nodeIntegration:  true,

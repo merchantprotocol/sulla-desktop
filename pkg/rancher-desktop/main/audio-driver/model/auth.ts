@@ -7,18 +7,20 @@
 
 import fs from 'fs';
 import path from 'path';
+
 import { app } from 'electron';
+
 import { GHOST_AGENT_URL } from '../config';
 
 const PREFS_FILE = path.join(app.getPath('userData'), 'audio-driver-preferences.json');
 const API_BASE = GHOST_AGENT_URL;
 
 interface Session {
-  token: string | null;
-  user: { id: string; name: string; email: string } | null;
-  teams: Array<{ id: string; name: string }>;
+  token:        string | null;
+  user:         { id: string; name: string; email: string } | null;
+  teams:        { id: string; name: string }[];
   activeTeamId: string | null;
-  gateway: { url: string; apiKey: string } | null;
+  gateway:      { url: string; apiKey: string } | null;
 }
 
 let session: Session = {

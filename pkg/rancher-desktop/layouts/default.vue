@@ -49,6 +49,7 @@ import ActionMenu from '@pkg/components/ActionMenu.vue';
 import Nav from '@pkg/components/Nav.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 import { mapTypedState } from '@pkg/entry/store';
 import Containers from '@pkg/pages/Containers.vue';
 import Diagnostics from '@pkg/pages/Diagnostics.vue';
@@ -60,7 +61,6 @@ import Volumes from '@pkg/pages/Volumes.vue';
 import initExtensions from '@pkg/preload/extensions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { mainRoutes } from '@pkg/window/constants';
-import { useTheme } from '@pkg/composables/useTheme';
 
 export default {
   name:       'App',

@@ -14,14 +14,14 @@ export type ExtractMode = 'markdown' | 'text';
 
 let readabilityDepsPromise:
   | Promise<{
-      Readability: typeof import('@mozilla/readability').Readability;
-      parseHTML: typeof import('linkedom').parseHTML;
-    }>
+    Readability: typeof import('@mozilla/readability').Readability;
+    parseHTML:   typeof import('linkedom').parseHTML;
+  }>
   | undefined;
 
 async function loadReadabilityDeps(): Promise<{
   Readability: typeof import('@mozilla/readability').Readability;
-  parseHTML: typeof import('linkedom').parseHTML;
+  parseHTML:   typeof import('linkedom').parseHTML;
 }> {
   if (!readabilityDepsPromise) {
     readabilityDepsPromise = Promise.all([
@@ -74,7 +74,7 @@ function normalizeWhitespace(value: string): string {
 /* ------------------------------------------------------------------ */
 
 export function htmlToMarkdown(html: string): { text: string; title?: string } {
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
   const title = titleMatch ? normalizeWhitespace(stripTags(titleMatch[1])) : undefined;
 
   let text = html
@@ -130,8 +130,8 @@ export function markdownToText(markdown: string): string {
  * Falls back to regex HTML-to-Markdown when Readability deps are unavailable.
  */
 export async function extractReadableContent(params: {
-  html: string;
-  url: string;
+  html:        string;
+  url:         string;
   extractMode: ExtractMode;
 }): Promise<{ text: string; title?: string } | null> {
   const fallback = (): { text: string; title?: string } => {

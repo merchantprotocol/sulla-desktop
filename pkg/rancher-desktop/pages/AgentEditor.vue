@@ -1164,13 +1164,17 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, watch, nextTick, type Component } from 'vue';
 import { ipcRenderer } from 'electron';
+import { defineComponent, ref, computed, reactive, markRaw, onMounted, onBeforeUnmount, watch, nextTick, type Component } from 'vue';
 
-import { useTheme } from '@pkg/composables/useTheme';
-import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
+import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
+import AgentFormTab from './editor/AgentFormTab.vue';
+import AgentPane from './editor/AgentPane.vue';
+import ApiTestPanel from './editor/ApiTestPanel.vue';
+import DockerPane from './editor/DockerPane.vue';
+import EditorChat from './editor/EditorChat.vue';
+import { EditorChatTabsInterface, createEditorChatTabsInterface } from './editor/EditorChatTabsInterface';
 import EditorHeader from './editor/EditorHeader.vue';
-import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
 import CodeEditor from './filesystem/CodeEditor.vue';
 import DiffEditor from './filesystem/DiffEditor.vue';
 import XTermTerminal from './editor/XTermTerminal.vue';
@@ -1178,11 +1182,7 @@ import TabContextMenu from './editor/TabContextMenu.vue';
 import IconPanel from './editor/IconPanel.vue';
 import FileSearch from './editor/FileSearch.vue';
 import GitPane from './editor/GitPane.vue';
-import DockerPane from './editor/DockerPane.vue';
-import AgentPane from './editor/AgentPane.vue';
 import IntegrationsPane from './editor/IntegrationsPane.vue';
-import ApiTestPanel from './editor/ApiTestPanel.vue';
-import AgentFormTab from './editor/AgentFormTab.vue';
 import WorkflowPane from './editor/WorkflowPane.vue';
 import MonitorPane from './editor/MonitorPane.vue';
 import MonitorDashboard from './editor/MonitorDashboard.vue';
@@ -1191,11 +1191,12 @@ import WorkflowEditor from './editor/WorkflowEditor.vue';
 import WorkflowNodePanel from './editor/WorkflowNodePanel.vue';
 import WebViewTab from './editor/WebViewTab.vue';
 import TerminalTab from './editor/TerminalTab.vue';
-import EditorChat from './editor/EditorChat.vue';
-import { EditorChatTabsInterface, createEditorChatTabsInterface } from './editor/EditorChatTabsInterface';
-import { FrontendGraphWebSocketService } from '@pkg/agent/services/FrontendGraphWebSocketService';
-import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
+import FileTreeSidebar from './filesystem/FileTreeSidebar.vue';
+
 import { getAgentPersonaRegistry } from '@pkg/agent';
+import { FrontendGraphWebSocketService } from '@pkg/agent/services/FrontendGraphWebSocketService';
+import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
+import { useTheme } from '@pkg/composables/useTheme';
 
 import type { FileEntry } from './filesystem/FileTreeSidebar.vue';
 
@@ -1443,13 +1444,13 @@ export default defineComponent({
     const chatTabs = createEditorChatTabsInterface();
     const chatTabsList = chatTabs.allTabs;
     const activeChatTabId = chatTabs.activeTabIdComputed;
-    
+
     // Computed properties for active tab
     const activeChatInterface = computed(() => chatTabs.activeInterface.value);
     const chatMessages = computed(() => activeChatInterface.value?.messages.value ?? []);
     const chatQuery = computed({
       get: () => activeChatInterface.value?.query.value ?? '',
-      set: (val: string) => { if (activeChatInterface.value) activeChatInterface.value.query.value = val; }
+      set: (val: string) => { if (activeChatInterface.value) activeChatInterface.value.query.value = val; },
     });
     const chatLoading = computed(() => activeChatInterface.value?.loading.value ?? false);
     const chatGraphRunning = computed(() => activeChatInterface.value?.graphRunning.value ?? false);
@@ -1463,7 +1464,7 @@ export default defineComponent({
       activeChatInterface.value?.send();
     };
     const chatStop = () => activeChatInterface.value?.stop();
-    const chatUpdateQuery = (val: string) => { chatQuery.value = val; };
+    const chatUpdateQuery = (val: string) => { chatQuery.value = val };
 
     // Queue management
     const chatQueue = computed(() => activeChatInterface.value?.getQueue());
@@ -1490,7 +1491,7 @@ export default defineComponent({
     const onRenameChatTab = (tabId: string, newLabel: string) => {
       chatTabs.renameTab(tabId, newLabel);
     };
-    
+
     // Chat history
     const chatHistory = chatTabs.history;
     const onLoadHistory = (historyId: string) => {

@@ -11,6 +11,7 @@
  */
 
 import { hostBridgeProxy, ProxyBridge, AssetInfo } from '../../scripts/injected/HostBridgeProxy';
+
 import type { ToolResponse } from '../base';
 
 export interface BridgeResolution {
@@ -83,7 +84,7 @@ export async function resolveBridge(assetId?: string): Promise<BridgeResolution 
   }
 
   // No assetId provided — use the active asset or the only open one
-  if (!assetId || !assetId.trim()) {
+  if (!assetId?.trim()) {
     const activeId = await hostBridgeProxy.getActiveAssetId();
     const active = activeId ? allAssets.find(a => a.assetId === activeId) : null;
 

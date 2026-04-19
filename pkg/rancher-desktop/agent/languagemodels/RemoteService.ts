@@ -7,6 +7,7 @@
  * RemoteModelService is now an alias for OpenAICompatibleService.
  */
 import { OpenAICompatibleService } from './OpenAICompatibleService';
+
 import type { RemoteProviderConfig } from './BaseLanguageModel';
 
 /** @deprecated Use provider-specific services */

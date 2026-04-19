@@ -1,9 +1,9 @@
 <script lang="ts">
 import { defineComponent } from 'vue';
 
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { availableThemes, themeGroups } from '@pkg/composables/useTheme';
 import type { ThemeScheme } from '@pkg/composables/useTheme';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const THEME_STORAGE_KEY = 'agentTheme';

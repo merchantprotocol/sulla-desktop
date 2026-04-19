@@ -1,22 +1,26 @@
-import type { BaseThreadState, NodeResult } from './Graph';
-import type { ToolResult, ThreadState } from '../types';
+import fs from 'node:fs';
 import path from 'node:path'; // used by enrichPrompt for active_projects_file
-import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
-import { getPrimaryService, getSecondaryService } from '../languagemodels';
-import { parseJson } from '../services/JsonParseService';
-import { getWebSocketClientService } from '../services/WebSocketClientService';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
-import { throwIfAborted } from '../services/AbortService';
-import { toolRegistry } from '../tools/registry';
-import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir } from '../utils/sullaPaths';
-import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
-import { stripProtocolTags } from '../utils/stripProtocolTags';
+
 import { ChatController, type ChatMode } from '../controllers/ChatController';
 import { ToolExecutor } from '../controllers/ToolExecutor';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { getPrimaryService, getSecondaryService } from '../languagemodels';
+import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
+import { throwIfAborted } from '../services/AbortService';
+import { parseJson } from '../services/JsonParseService';
+import { getWebSocketClientService } from '../services/WebSocketClientService';
+import { toolRegistry } from '../tools/registry';
+import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir } from '../utils/sullaPaths';
+import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
+
+import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
-import fs from 'node:fs';
+
 import { SystemPromptBuilder, type PromptBuildContext, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
+
+import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
+import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
 
 // ============================================================================
@@ -32,7 +36,6 @@ export const TOOLS_RESPONSE_JSON = `  "tools": [
     ["tool_name", "arg1", "arg2"] - run any tool with exec form
     ["emit_chat_message", "Respond to the users inquiry"]
   ],`;
-
 
 // ============================================================================
 // INTERFACES AND TYPES
@@ -318,15 +321,15 @@ const AGENT_PROMPT_CACHE_TTL = 30_000; // 30s — reload agent files periodicall
  */
 export interface AgentPromptLoadResult {
   /** Agent name from config.yaml */
-  agentName: string;
+  agentName:        string;
   /** Generic prompt content (non-override .md files combined) */
-  genericPrompt: string;
+  genericPrompt:    string;
   /** Section overrides: section_id → file content */
   sectionOverrides: Map<string, string>;
   /** Sections to exclude (from config.yaml exclude_sections) */
-  excludeSections: string[];
+  excludeSections:  string[];
   /** Parsed config.yaml */
-  config: AgentConfig | null;
+  config:           AgentConfig | null;
 }
 
 /** Cache for loaded agent prompt load results */
@@ -517,7 +520,6 @@ async function loadAgentPromptFiles(agentId: string): Promise<string | null> {
   }
 }
 
-
 // ============================================================================
 // Primary Classes
 // ============================================================================
@@ -544,14 +546,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this._toolExecutor = new ToolExecutor({
         nodeId:                this.id,
         nodeName:              this.name,
-        get currentNodeRunContext() { return null; }, // overridden below
+        get currentNodeRunContext() { return null }, // overridden below
         wsChatMessage:         (state, content, role, kind) => this.wsChatMessage(state, content, role, kind),
         bumpStateVersion:      (state) => this.bumpStateVersion(state),
       });
       // Wire live currentNodeRunContext via property descriptor
       const self = this;
       Object.defineProperty(this._toolExecutor['ctx'], 'currentNodeRunContext', {
-        get() { return self.currentNodeRunContext; },
+        get() { return self.currentNodeRunContext },
         configurable: true,
       });
     }
@@ -653,8 +655,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Determine trust level
     const trust = (state.metadata as any).isTrustedUser;
-    const trustLevel = trust === 'untrusted' ? 'untrusted'
-      : trust === 'verify' ? 'verify'
+    const trustLevel = trust === 'untrusted'
+      ? 'untrusted'
+      : trust === 'verify'
+        ? 'verify'
         : 'trusted';
 
     // Detect provider
@@ -670,7 +674,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       agentConfig,
       provider:             providerName,
       chatMode:             options.chatMode || 'text',
-      trustLevel:           trustLevel as 'trusted' | 'verify' | 'untrusted',
+      trustLevel,
       isSubAgent:           !!(state.metadata as any).isSubAgent,
       isHeartbeat:          options.isHeartbeat || false,
       wsChannel:            String(state.metadata.wsChannel || 'sulla-desktop'),
@@ -787,9 +791,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return {
         content:  lastNonSystemMessage.content as string || '',
         metadata: {
-          tokens_used:       0,
-          time_spent:        0,
-          finish_reason:     FinishReason.Stop,
+          tokens_used:        0,
+          time_spent:         0,
+          finish_reason:      FinishReason.Stop,
           rawProviderContent: lastNonSystemMessage.content,
         },
       };
@@ -930,20 +934,20 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
         // Inject Anthropic-native computer use tools (only in dynamic mode)
         if ((state.metadata as any).userVisibleBrowser !== false) {
-        const providerName = (state.metadata as any).providerName
-          || (state.metadata as any).provider
-          || '';
-        const isAnthropic = typeof providerName === 'string' &&
+          const providerName = (state.metadata as any).providerName ||
+          (state.metadata as any).provider ||
+          '';
+          const isAnthropic = typeof providerName === 'string' &&
           providerName.toLowerCase().includes('anthropic');
 
-        if (isAnthropic) {
-          const nativeDefs = toolRegistry.getNativeToolDefinitions();
-          for (const [, def] of nativeDefs) {
+          if (isAnthropic) {
+            const nativeDefs = toolRegistry.getNativeToolDefinitions();
+            for (const [, def] of nativeDefs) {
             // Avoid duplicates — native tools use raw definitions, not function format
-            llmTools.push(def);
+              llmTools.push(def);
+            }
           }
         }
-      }
       }
     }
 
@@ -991,7 +995,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const reducedMessages = [...systemMsgs, ...recentMsgs];
 
         // Retry uses non-streaming fallback
-        reply = await this.llm!.chat(reducedMessages, {
+        reply = await this.llm.chat(reducedMessages, {
           maxTokens:   options.maxTokens,
           format:      options.format,
           temperature: options.temperature,
@@ -1003,7 +1007,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
 
       if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) {
-        throw new Error(`LLM returned empty response after retry (model=${ this.llm!.getModel() }, provider=${ this.llm!.getProviderName() })`);
+        throw new Error(`LLM returned empty response after retry (model=${ this.llm.getModel() }, provider=${ this.llm.getProviderName() })`);
       }
 
       // In text mode, the LLM may spontaneously include <speak> tags — extract and dispatch them.
@@ -1101,8 +1105,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     };
 
     const systemMessage: ChatMessage = {
-      role:    'system',
-      content: (input.systemPrompt ?? '').trim(),
+      role:     'system',
+      content:  (input.systemPrompt ?? '').trim(),
       metadata: (state.metadata as any).__anthropicSystemBlocks
         ? { __anthropicSystemBlocks: (state.metadata as any).__anthropicSystemBlocks }
         : undefined,
@@ -1222,7 +1226,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   // ─────────────────────────────────────────────────────────────
   // Streaming LLM call with progressive <speak> dispatch (voice mode)
   // ─────────────────────────────────────────────────────────────
-
 
   /**
    * Stream LLM tokens through the ChatController's extractor pipeline.
@@ -1447,7 +1450,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     });
 
     if (!sent) {
-      console.warn(`[Agent:${ this.name }] Failed to send chat message via WebSocket (kind=${kind})`);
+      console.warn(`[Agent:${ this.name }] Failed to send chat message via WebSocket (kind=${ kind })`);
     } else {
       state.metadata.hadUserMessages = true;
     }
@@ -1473,7 +1476,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           },
           timestamp: Date.now(),
         });
-      } catch (e) { console.warn(`[BaseNode:wsChatMessage] node_thinking emit failed:`, e); }
+      } catch (e) { console.warn(`[BaseNode:wsChatMessage] node_thinking emit failed:`, e) }
     } else if ((state.metadata as any).isSubAgent && !(state.metadata as any).parentWsChannel) {
       console.warn(`[BaseNode:wsChatMessage] Sub-agent "${ this.name }" missing workflow metadata — workflowNodeId=${ workflowNodeId }, workflowParentChannel=${ workflowParentChannel }`);
     }
@@ -1503,8 +1506,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     try {
       const { getConversationLogger } = require('../services/ConversationLogger');
       getConversationLogger().log(convId, {
-        ts: new Date().toISOString(),
-        type: `VOICE:${component}:${event}`,
+        ts:   new Date().toISOString(),
+        type: `VOICE:${ component }:${ event }`,
         ...data,
       });
     } catch { /* best-effort */ }
@@ -1523,7 +1526,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Trace: log a stack snippet so we can identify which code path dispatched this
     const callerStack = new Error().stack?.split('\n').slice(1, 4).map(l => l.trim()).join(' < ') || '';
-    console.log(`[BaseNode:wsSpeakDispatch] → text="${clean.slice(0, 80)}" | caller: ${callerStack}`);
+    console.log(`[BaseNode:wsSpeakDispatch] → text="${ clean.slice(0, 80) }" | caller: ${ callerStack }`);
 
     this.voiceLog(state, 'WS', 'SPEAK_DISPATCH', { text: clean.slice(0, 200), caller: callerStack });
 

@@ -777,10 +777,10 @@ function handleNativeToolCallNode(
   }
 
   return {
-    action:  'execute_tool_call',
+    action:          'execute_tool_call',
     nodeId,
     toolName,
-    params:  resolvedParams,
+    params:          resolvedParams,
     updatedPlaybook: playbook,
   };
 }
@@ -1568,18 +1568,18 @@ export function resolveDecision(
 
       return {
         action:          'workflow_failed',
-        error:           `Router node "${ decision.nodeId }" failed after retry. `
-                       + `Agent response "${ response }" did not match any route. `
-                       + `Reason: ${ failedResult.reason }. Scores: [${ scoreDetail }]`,
+        error:           `Router node "${ decision.nodeId }" failed after retry. ` +
+                       `Agent response "${ response }" did not match any route. ` +
+                       `Reason: ${ failedResult.reason }. Scores: [${ scoreDetail }]`,
         updatedPlaybook: { ...playbook, pendingDecision: undefined },
       };
     }
 
     // Build retry prompt with explicit route labels
     const routeLabels = routes.map(r => `"${ r.label }"`).join(', ');
-    const retryPrompt = `Your previous response "${ response }" did not clearly match any route. `
-                       + `You must respond with EXACTLY one of these route labels: ${ routeLabels }. `
-                       + `Respond with only the label text, nothing else.`;
+    const retryPrompt = `Your previous response "${ response }" did not clearly match any route. ` +
+                       `You must respond with EXACTLY one of these route labels: ${ routeLabels }. ` +
+                       `Respond with only the label text, nothing else.`;
 
     return {
       action:          'prompt_agent',

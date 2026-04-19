@@ -1,6 +1,7 @@
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import fs from 'fs';
 import path from 'path';
+
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 type JsonRecord = Record<string, unknown>;
 

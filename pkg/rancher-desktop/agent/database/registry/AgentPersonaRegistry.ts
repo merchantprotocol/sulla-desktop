@@ -1,5 +1,6 @@
 // AgentPersonaRegistry.ts
 import { computed, reactive } from 'vue';
+
 import type { PersonaEmotion, PersonaStatus, PersonaTemplateId } from '@pkg/agent';
 import { AgentPersonaService } from '@pkg/agent';
 
@@ -17,13 +18,13 @@ export interface ChatMessage {
     path?:        string;
   };
   toolCard?: {
-    toolRunId:    string;
-    toolName:     string;
-    description?: string;
-    status:       'running' | 'success' | 'failed';
-    args?:        Record<string, unknown>;
-    result?:      unknown;
-    error?:       string | null;
+    toolRunId:     string;
+    toolName:      string;
+    description?:  string;
+    status:        'running' | 'success' | 'failed';
+    args?:         Record<string, unknown>;
+    result?:       unknown;
+    error?:        string | null;
     /** Human-friendly display fields populated by toolCardFormatters */
     label?:        string;
     summary?:      string;

@@ -271,9 +271,10 @@
 </template>
 
 <script setup lang="ts">
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import AgentHeader from './agent/AgentHeader.vue';
+
 import { useTheme } from '@pkg/composables/useTheme';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 

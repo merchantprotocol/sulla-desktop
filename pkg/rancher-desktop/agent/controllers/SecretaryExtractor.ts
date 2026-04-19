@@ -11,15 +11,16 @@
  * Active only in secretary mode.
  */
 
-import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
-import type { Extractor, StreamContext } from './Extractor';
 import { SECRETARY_MODE_PROMPT } from '../prompts/voiceModes';
+
+import type { Extractor, StreamContext } from './Extractor';
+import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface SecretaryAnalysis {
-  actions: string[];
-  facts: string[];
+  actions:     string[];
+  facts:       string[];
   conclusions: string[];
 }
 

@@ -33,7 +33,7 @@ export function useStartupProgress() {
   };
 
   return {
-    ..._state!,
+    ..._state,
     start,
     dispose,
   };

@@ -6,7 +6,7 @@ const CURSOR_JS = (x: number, y: number) => `
   document.querySelectorAll('[data-sulla-cursor]').forEach(el => el.remove());
   const c = document.createElement('div');
   c.setAttribute('data-sulla-cursor', '1');
-  c.style.cssText = 'position:fixed;pointer-events:none;z-index:999999;top:${y}px;left:${x}px;';
+  c.style.cssText = 'position:fixed;pointer-events:none;z-index:999999;top:${ y }px;left:${ x }px;';
   c.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">'
     + '<path d="M3 2L3 20L8.5 14.5L13 21L16 19.5L11.5 13L18 13L3 2Z" fill="white" stroke="black" stroke-width="1.5" stroke-linejoin="round"/>'
     + '</svg>'
@@ -38,7 +38,7 @@ export class ClickCoordinatesWorker extends BaseTool {
     try {
       const clickCount = input.double_click ? 2 : 1;
       const clicked = await result.bridge.clickAtCoordinate(x, y, {
-        button:     input.button || 'left',
+        button: input.button || 'left',
         clickCount,
       });
 

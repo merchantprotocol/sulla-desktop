@@ -9,12 +9,12 @@ import PreferencesBody from '@pkg/components/Preferences/ModalBody.vue';
 import PreferencesFooter from '@pkg/components/Preferences/ModalFooter.vue';
 import PreferencesHeader from '@pkg/components/Preferences/ModalHeader.vue';
 import PreferencesNav from '@pkg/components/Preferences/ModalNav.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 import type { TransientSettings } from '@pkg/config/transientSettings';
 import type { ServerState } from '@pkg/main/commandServer/httpCommandServer';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 import { preferencesNavItems } from '@pkg/window/preferenceConstants';
-import { useTheme } from '@pkg/composables/useTheme';
 
 export default defineComponent({
   name:       'preferences-modal',

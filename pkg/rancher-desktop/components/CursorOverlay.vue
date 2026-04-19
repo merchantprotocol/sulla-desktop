@@ -1,12 +1,21 @@
 <template>
-  <div v-if="visible" class="cursor-overlay">
+  <div
+    v-if="visible"
+    class="cursor-overlay"
+  >
     <!-- Animated cursor -->
     <div
       class="cursor-pointer"
       :style="cursorStyle"
     >
       <!-- Cursor icon -->
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 20 20"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
         <path
           d="M3 2L3 17L7.5 12.5L11.5 18L14 16.5L10 11L16 11L3 2Z"
           fill="white"
@@ -16,13 +25,22 @@
         />
       </svg>
       <!-- Click ripple -->
-      <div v-if="showRipple" class="click-ripple" />
+      <div
+        v-if="showRipple"
+        class="click-ripple"
+      />
       <!-- Typing indicator -->
-      <div v-if="showTyping" class="typing-badge">
+      <div
+        v-if="showTyping"
+        class="typing-badge"
+      >
         {{ typingText }}
       </div>
       <!-- Scroll indicator -->
-      <div v-if="showScroll" class="scroll-badge">
+      <div
+        v-if="showScroll"
+        class="scroll-badge"
+      >
         {{ scrollDirection === 'down' ? '↓' : '↑' }}
       </div>
     </div>
@@ -31,6 +49,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 
 const props = defineProps<{
@@ -50,7 +69,7 @@ let hideTimer: ReturnType<typeof setTimeout> | null = null;
 let unsubscribe: (() => void) | null = null;
 
 const cursorStyle = computed(() => ({
-  transform: `translate(${ cursorX.value }px, ${ cursorY.value }px)`,
+  transform:  `translate(${ cursorX.value }px, ${ cursorY.value }px)`,
   transition: 'transform 0.3s ease-out',
 }));
 
@@ -68,22 +87,22 @@ function handleCursorEvent(data: any) {
   showScroll.value = false;
 
   switch (data.action) {
-    case 'click':
-    case 'drag':
-      // Show ripple animation
-      showRipple.value = true;
-      setTimeout(() => { showRipple.value = false }, 400);
-      break;
-    case 'type':
-      showTyping.value = true;
-      typingText.value = data.text ? data.text.slice(0, 20) : '...';
-      setTimeout(() => { showTyping.value = false }, 1500);
-      break;
-    case 'scroll':
-      showScroll.value = true;
-      scrollDirection.value = (data.deltaY || 0) > 0 ? 'down' : 'up';
-      setTimeout(() => { showScroll.value = false }, 800);
-      break;
+  case 'click':
+  case 'drag':
+    // Show ripple animation
+    showRipple.value = true;
+    setTimeout(() => { showRipple.value = false }, 400);
+    break;
+  case 'type':
+    showTyping.value = true;
+    typingText.value = data.text ? data.text.slice(0, 20) : '...';
+    setTimeout(() => { showTyping.value = false }, 1500);
+    break;
+  case 'scroll':
+    showScroll.value = true;
+    scrollDirection.value = (data.deltaY || 0) > 0 ? 'down' : 'up';
+    setTimeout(() => { showScroll.value = false }, 800);
+    break;
   }
 
   // Auto-hide cursor after inactivity

@@ -30,7 +30,7 @@ const MIN_SESSION_MS = 5000;         // Minimum session duration before we allow
 
 // ─── State ──────────────────────────────────────────────────────
 
-let state = "idle";  // idle | detected | active | ended
+let state = 'idle';  // idle | detected | active | ended
 let sessionId = 0;
 let startTime = null;
 let endTime = null;
@@ -46,30 +46,30 @@ let dismissed = false;
 let call = null;
 
 // User/org context — persists across sessions, set once on login
-let userContext = {
-  userId: null,
-  userName: null,
-  userEmail: null,
-  organizationId: null,
+const userContext = {
+  userId:           null,
+  userName:         null,
+  userEmail:        null,
+  organizationId:   null,
   organizationName: null,
 };
 
 function _newCall(trigger, now) {
   return {
-    callId: null,                       // Set by backend or generated locally
-    userId: userContext.userId,
-    userName: userContext.userName,
-    userEmail: userContext.userEmail,
-    organizationId: userContext.organizationId,
-    organizationName: userContext.organizationName,
+    callId:            null,                       // Set by backend or generated locally
+    userId:            userContext.userId,
+    userName:          userContext.userName,
+    userEmail:         userContext.userEmail,
+    organizationId:    userContext.organizationId,
+    organizationName:  userContext.organizationName,
     trigger,                            // "manual" | "auto" | "incoming" (future)
-    recording: true,
-    startTime: now,
-    endTime: null,
-    duration: 0,
-    durationFormatted: "0:00",
-    accepted: false,
-    dismissed: false,
+    recording:         true,
+    startTime:         now,
+    endTime:           null,
+    duration:          0,
+    durationFormatted: '0:00',
+    accepted:          false,
+    dismissed:         false,
   };
 }
 
@@ -118,17 +118,17 @@ function process(micSpeaking, speakerSpeaking) {
 
   // ── Auto-detection (only in idle state) ───────────────────
 
-  if (state === "idle") {
+  if (state === 'idle') {
     if (speakerActiveStart && (now - speakerActiveStart) >= SPEAKER_TRIGGER_MS) {
       // Speaker has been active long enough — trigger detection
-      _startSession("auto", now);
+      _startSession('auto', now);
     }
     return;
   }
 
   // ── Silence tracking (detected or active states) ──────────
 
-  if (state === "detected" || state === "active") {
+  if (state === 'detected' || state === 'active') {
     const bothSilent = !micSpeaking && !speakerSpeaking;
 
     if (bothSilent) {
@@ -173,8 +173,8 @@ function setCallId(callId) {
  * Manual start — user clicked "New Call".
  */
 function startManual() {
-  if (state !== "idle") return getState();
-  _startSession("manual", Date.now());
+  if (state !== 'idle') return getState();
+  _startSession('manual', Date.now());
   accepted = true;  // Manual start = implicitly accepted
   _fireChange();
   return getState();
@@ -184,9 +184,9 @@ function startManual() {
  * User accepted the call notification.
  */
 function accept() {
-  if (state !== "detected") return;
+  if (state !== 'detected') return;
   accepted = true;
-  state = "active";
+  state = 'active';
   if (call) call.accepted = true;
   _fireChange();
 }
@@ -196,7 +196,7 @@ function accept() {
  * Session continues tracking — just no active UI.
  */
 function dismiss() {
-  if (state !== "detected") return;
+  if (state !== 'detected') return;
   dismissed = true;
   if (call) call.dismissed = true;
   _fireChange();
@@ -206,7 +206,7 @@ function dismiss() {
  * Force end the current session (user clicked end call).
  */
 function endManual() {
-  if (state === "idle" || state === "ended") return;
+  if (state === 'idle' || state === 'ended') return;
   _endSession(Date.now());
 }
 
@@ -235,7 +235,7 @@ function getState() {
     accepted,
     dismissed,
     durationFormatted: formatted,
-    call: call ? { ...call } : null,
+    call:              call ? { ...call } : null,
   };
 }
 
@@ -249,15 +249,15 @@ function getHistory() {
 /**
  * Register callbacks.
  */
-function onCallDetected(cb) { onDetected = cb; }
-function onCallEnded(cb) { onEnded = cb; }
-function onStateChange(cb) { onChange = cb; }
+function onCallDetected(cb) { onDetected = cb }
+function onCallEnded(cb) { onEnded = cb }
+function onStateChange(cb) { onChange = cb }
 
 /**
  * Reset to idle (e.g., when capture stops).
  */
 function reset() {
-  state = "idle";
+  state = 'idle';
   startTime = null;
   endTime = null;
   detectedTime = null;
@@ -274,20 +274,20 @@ function reset() {
 
 function _startSession(trigger, now) {
   sessionId++;
-  state = trigger === "manual" ? "active" : "detected";
+  state = trigger === 'manual' ? 'active' : 'detected';
   startTime = now;
   endTime = null;
   detectedTime = now;
-  accepted = trigger === "manual";
+  accepted = trigger === 'manual';
   dismissed = false;
   silenceStart = null;
 
   // Create the call object for this session
   call = _newCall(trigger, now);
-  call.callId = "local_" + sessionId + "_" + now;
-  call.accepted = trigger === "manual";
+  call.callId = 'local_' + sessionId + '_' + now;
+  call.accepted = trigger === 'manual';
 
-  if (trigger === "auto" && onDetected) {
+  if (trigger === 'auto' && onDetected) {
     onDetected(getState());
   }
   _fireChange();
@@ -296,7 +296,7 @@ function _startSession(trigger, now) {
 function _endSession(now) {
   endTime = now;
   const session = getState();
-  state = "idle";
+  state = 'idle';
 
   // Finalize and save the call object to history
   if (call) {
@@ -330,7 +330,7 @@ function _formatDuration(ms) {
   const totalSec = Math.floor(ms / 1000);
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
-  return min + ":" + (sec < 10 ? "0" : "") + sec;
+  return min + ':' + (sec < 10 ? '0' : '') + sec;
 }
 
 module.exports = {

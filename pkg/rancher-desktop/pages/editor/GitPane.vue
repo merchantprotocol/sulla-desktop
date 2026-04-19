@@ -995,9 +995,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { ipcRenderer } from 'electron';
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+
 import GitTreeNodes from './GitTreeNodes.vue';
+
 import type { FileEntry } from '../filesystem/FileTreeSidebar.vue';
 
 interface GitStatusEntry {

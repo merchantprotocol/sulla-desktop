@@ -8,12 +8,14 @@
  * Pure business logic — no HTTP/Express dependencies.
  */
 
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+
 import yaml from 'yaml';
 
 import { MCPClient } from './MCPClient';
+
 import type { MCPToolDefinition } from './MCPClient';
 
 const LOG = '[MCPSourceResolver]';
@@ -162,7 +164,7 @@ export async function resolveFromMcpJson(
   const serverDef = servers[targetName];
   if (!serverDef) {
     return {
-      probes:  [{ url: filePath, transport: 'n/a', error: `Server "${targetName}" not found in .mcp.json`, suggestion: `Available servers: ${serverNames.join(', ')}` }],
+      probes:  [{ url: filePath, transport: 'n/a', error: `Server "${ targetName }" not found in .mcp.json`, suggestion: `Available servers: ${ serverNames.join(', ') }` }],
       partial: { source_type: 'mcp-json', available_servers: serverNames },
     };
   }
@@ -221,7 +223,7 @@ export async function resolveFromMcpJson(
       probes: [{
         url:        filePath,
         transport:  'stdio',
-        error:      `Server "${targetName}" uses stdio transport (command: ${command}) with no HTTP gateway found`,
+        error:      `Server "${ targetName }" uses stdio transport (command: ${ command }) with no HTTP gateway found`,
         suggestion: 'This server runs via stdio. Either wrap it with supergateway in a Docker container, or run it directly via npx. No running Docker container was found exposing an HTTP endpoint for this server.',
       }],
       partial: { source_type: 'mcp-json', available_servers: serverNames },
@@ -322,14 +324,14 @@ export async function resolveFromDockerCompose(
       probes: [{
         url:        filePath,
         transport:  'n/a',
-        error:      `Could not resolve host port for internal port ${internalPort} of service "${target.name}"`,
-        suggestion: `The service exposes port ${internalPort} internally but no host port mapping was found. Check the "ports:" section in docker-compose.yml or run "docker port ${containerName || target.name}".`,
+        error:      `Could not resolve host port for internal port ${ internalPort } of service "${ target.name }"`,
+        suggestion: `The service exposes port ${ internalPort } internally but no host port mapping was found. Check the "ports:" section in docker-compose.yml or run "docker port ${ containerName || target.name }".`,
       }],
       partial: { source_type: 'docker-compose' },
     };
   }
 
-  const resolvedUrl = `http://localhost:${hostPort}${mcpPath}`;
+  const resolvedUrl = `http://localhost:${ hostPort }${ mcpPath }`;
   const authToken = authTokenOverride || extractAuthFromEnv(resolvedEnv);
 
   // Probe the resolved URL
@@ -384,7 +386,7 @@ export async function resolve(
 
     if (!fs.existsSync(filePath)) {
       return {
-        probes:  [{ url: filePath, transport: 'n/a', error: `File not found: ${filePath}`, suggestion: 'Check the file path.' }],
+        probes:  [{ url: filePath, transport: 'n/a', error: `File not found: ${ filePath }`, suggestion: 'Check the file path.' }],
         partial: {},
       };
     }
@@ -472,12 +474,12 @@ export function resolveEnvVars(
  */
 export function resolveDockerPorts(containerName: string): Map<number, number> | null {
   try {
-    const output = execSync(`docker port ${containerName}`, { encoding: 'utf-8', timeout: 5000 });
+    const output = execSync(`docker port ${ containerName }`, { encoding: 'utf-8', timeout: 5000 });
     const portMap = new Map<number, number>();
 
     for (const line of output.split('\n')) {
       // Format: "7391/tcp -> 0.0.0.0:3001"
-      const match = line.match(/^(\d+)\/\w+\s+->\s+[\d.]+:(\d+)/);
+      const match = /^(\d+)\/\w+\s+->\s+[\d.]+:(\d+)/.exec(line);
       if (match) {
         portMap.set(parseInt(match[1], 10), parseInt(match[2], 10));
       }
@@ -499,7 +501,7 @@ function parseComposePorts(ports: (string | number | Record<string, any>)[]): Ma
   for (const entry of ports) {
     if (typeof entry === 'string') {
       // "3001:7391" or "3001:7391/tcp"
-      const match = entry.match(/^"?(\d+):(\d+)/);
+      const match = /^"?(\d+):(\d+)/.exec(entry);
       if (match) {
         portMap.set(parseInt(match[2], 10), parseInt(match[1], 10));
       }
@@ -575,11 +577,11 @@ function detectMCPEndpoint(svcDef: Record<string, any>): { internalPort: number;
     : Array.isArray(svcDef.command) ? svcDef.command.join(' ') : '';
 
   // Check for --port flag in supergateway command
-  const portMatch = command.match(/--port\s+(\d+)/);
+  const portMatch = /--port\s+(\d+)/.exec(command);
   const internalPort = portMatch ? parseInt(portMatch[1], 10) : 7391;
 
   // Check for --streamableHttpPath
-  const pathMatch = command.match(/--streamableHttpPath\s+(\S+)/);
+  const pathMatch = /--streamableHttpPath\s+(\S+)/.exec(command);
   const mcpPath = pathMatch ? pathMatch[1] : '/mcp';
 
   return { internalPort, mcpPath };
@@ -630,17 +632,17 @@ async function findDockerContainerForStdioServer(
 
       // Match by server name or MCP package name
       const nameLower = containerName.toLowerCase();
-      const nameMatches = nameLower.includes(serverName.toLowerCase())
-        || (packageName && nameLower.includes(sanitizeSlug(packageName)));
+      const nameMatches = nameLower.includes(serverName.toLowerCase()) ||
+        (packageName && nameLower.includes(sanitizeSlug(packageName)));
 
       if (!nameMatches) continue;
 
       // Extract host port from the ports column (e.g. "0.0.0.0:3001->7391/tcp")
-      const portMatch = (ports || '').match(/[\d.]+:(\d+)->(\d+)/);
+      const portMatch = /[\d.]+:(\d+)->(\d+)/.exec((ports || ''));
       if (portMatch) {
         const hostPort = parseInt(portMatch[1], 10);
         // Try to find the MCP path by inspecting the container command
-        const hostUrl = `http://localhost:${hostPort}/mcp`;
+        const hostUrl = `http://localhost:${ hostPort }/mcp`;
         return { containerName, hostUrl };
       }
     }
@@ -652,7 +654,8 @@ async function findDockerContainerForStdioServer(
       if (fs.existsSync(composePath)) {
         const compose = yaml.parse(fs.readFileSync(composePath, 'utf-8'));
         const services = compose.services || {};
-        for (const [svcName, svcDef] of Object.entries(services) as [string, any][]) {
+        for (const [svcName, svcDefRaw] of Object.entries(services)) {
+          const svcDef = svcDefRaw as Record<string, any>;
           const svcCommand = typeof svcDef.command === 'string' ? svcDef.command : '';
           if (svcCommand.includes(packageName) || svcName.includes('mcp')) {
             const containerNameFromCompose = svcDef.container_name || svcName;
@@ -663,7 +666,7 @@ async function findDockerContainerForStdioServer(
               if (hostPort) {
                 return {
                   containerName: containerNameFromCompose,
-                  hostUrl:       `http://localhost:${hostPort}${mcpPath}`,
+                  hostUrl:       `http://localhost:${ hostPort }${ mcpPath }`,
                 };
               }
             }
@@ -727,8 +730,8 @@ function buildUrlCandidates(originalUrl: string, sourceDir: string): string[] {
     const hostname = parsed.hostname;
 
     // If the hostname looks Docker-internal, add localhost variants
-    const dockerInternal = !['localhost', '127.0.0.1', '::1'].includes(hostname)
-      && !hostname.includes('.');
+    const dockerInternal = !['localhost', '127.0.0.1', '::1'].includes(hostname) &&
+      !hostname.includes('.');
 
     if (dockerInternal) {
       // Try localhost with the same port
@@ -738,8 +741,8 @@ function buildUrlCandidates(originalUrl: string, sourceDir: string): string[] {
 
       // Also try common MCP paths if not already present
       if (!parsed.pathname || parsed.pathname === '/') {
-        candidates.push(`${localhostUrl.origin}/mcp`);
-        candidates.push(`${localhostUrl.origin}/sse`);
+        candidates.push(`${ localhostUrl.origin }/mcp`);
+        candidates.push(`${ localhostUrl.origin }/sse`);
       }
     }
   } catch {
@@ -754,7 +757,7 @@ function slugFromUrl(url: string): string {
     const hostname = new URL(url).hostname;
     const port = new URL(url).port;
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return port ? `mcp-${port}` : 'mcp-local';
+      return port ? `mcp-${ port }` : 'mcp-local';
     }
     return sanitizeSlug(hostname.split('.')[0]);
   } catch {

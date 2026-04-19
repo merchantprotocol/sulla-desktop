@@ -3,8 +3,9 @@
 // through the main-process IpcMessageBus.
 
 import { BrowserWindow, ipcMain, webContents } from 'electron';
-import Logging from '@pkg/utils/logging';
+
 import { IpcMessageBus } from '@pkg/agent/services/IpcMessageBus';
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
@@ -23,7 +24,7 @@ function broadcastToRenderers(channelId: string, message: unknown, excludeWebCon
     const wcId = wc.id;
     if (wcId === excludeWebContentsId) continue;
     const channels = subscriptions.get(wcId);
-    if (channels && channels.has(channelId)) {
+    if (channels?.has(channelId)) {
       try {
         if (!wc.isDestroyed()) {
           wc.send('message-bus:message', channelId, message);

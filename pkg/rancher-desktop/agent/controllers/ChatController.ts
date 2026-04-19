@@ -18,13 +18,14 @@
  *   intake    → [ThinkingExtractor, IntakeExtractor]
  */
 
-import type { BaseThreadState } from '../nodes/Graph';
-import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
-import type { Extractor, StreamContext, DispatchFn, ChatMessageFn, VoiceLogFn } from './Extractor';
-import { ThinkingExtractor } from './ThinkingExtractor';
-import { SpeakExtractor } from './SpeakExtractor';
-import { SecretaryExtractor, type SecretaryResultFn } from './SecretaryExtractor';
 import { IntakeExtractor } from './IntakeExtractor';
+import { SecretaryExtractor, type SecretaryResultFn } from './SecretaryExtractor';
+import { SpeakExtractor } from './SpeakExtractor';
+import { ThinkingExtractor } from './ThinkingExtractor';
+
+import type { Extractor, StreamContext, DispatchFn, ChatMessageFn, VoiceLogFn } from './Extractor';
+import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
+import type { BaseThreadState } from '../nodes/Graph';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -48,18 +49,18 @@ export interface ChatControllerConfig {
 
 export class ChatController {
   private extractors: Extractor[] = [];
-  private mode: ChatMode = 'text';
+  private mode:       ChatMode = 'text';
 
-  private readonly dispatch: DispatchFn;
-  private readonly sendChatMessage: ChatMessageFn;
-  private readonly voiceLog: VoiceLogFn;
+  private readonly dispatch:           DispatchFn;
+  private readonly sendChatMessage:    ChatMessageFn;
+  private readonly voiceLog:           VoiceLogFn;
   private readonly onSecretaryResult?: SecretaryResultFn;
 
   // Keep references to mode-specific extractors for reuse
-  private thinkingExtractor: ThinkingExtractor;
-  private speakExtractor: SpeakExtractor;
+  private thinkingExtractor:  ThinkingExtractor;
+  private speakExtractor:     SpeakExtractor;
   private secretaryExtractor: SecretaryExtractor;
-  private intakeExtractor: IntakeExtractor;
+  private intakeExtractor:    IntakeExtractor;
 
   constructor(config: ChatControllerConfig) {
     this.dispatch = config.dispatch;

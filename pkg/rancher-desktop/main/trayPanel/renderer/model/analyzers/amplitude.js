@@ -63,11 +63,11 @@ function process(rms) {
   // Classify noise level
   let noiseLevel;
   if (noiseFloor > NOISE_HIGH_RMS) {
-    noiseLevel = "high";
+    noiseLevel = 'high';
   } else if (noiseFloor > NOISE_MODERATE_RMS) {
-    noiseLevel = "moderate";
+    noiseLevel = 'moderate';
   } else {
-    noiseLevel = "low";
+    noiseLevel = 'low';
   }
 
   return { rms, noiseFloor, aboveFloorDB, noiseLevel, isAboveOnThreshold, isAboveOffThreshold };
@@ -77,7 +77,7 @@ function process(rms) {
  * Get last computed state without processing.
  */
 function getState() {
-  return { rms: 0, noiseFloor, aboveFloorDB: 0, noiseLevel: "low", isAboveOnThreshold: false, isAboveOffThreshold: false };
+  return { rms: 0, noiseFloor, aboveFloorDB: 0, noiseLevel: 'low', isAboveOnThreshold: false, isAboveOffThreshold: false };
 }
 
 /**

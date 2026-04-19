@@ -5,10 +5,10 @@ const console = Logging.background;
 type StepCallback = () => void | Promise<void>;
 
 interface RegisteredStep {
-  name: string;
+  name:       string;
   conditions: string[];
-  callback: StepCallback;
-  fired: boolean;
+  callback:   StepCallback;
+  fired:      boolean;
 }
 
 /**
@@ -19,7 +19,7 @@ interface RegisteredStep {
  * fires exactly once, in registration order.
  */
 export class FirstRunCoordinator {
-  private conditions: Map<string, boolean> = new Map();
+  private conditions = new Map<string, boolean>();
   private steps: RegisteredStep[] = [];
 
   /**

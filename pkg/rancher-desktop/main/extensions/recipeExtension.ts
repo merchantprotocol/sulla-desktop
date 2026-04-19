@@ -3,14 +3,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { argon2id } from 'hash-wasm';
-
 import Electron from 'electron';
+import { argon2id } from 'hash-wasm';
 import yaml from 'yaml';
 
 import { ExtensionErrorImpl } from './extensions';
 import { fetchMarketplaceData, MarketplaceEntry } from './marketplaceData';
-import type { InstallationManifest } from './recipeTypes';
 import {
   Extension, ExtensionErrorCode, ExtensionMetadata,
 } from './types';
@@ -22,6 +20,8 @@ import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { sullaLog } from '@pkg/utils/sullaLog';
+
+import type { InstallationManifest } from './recipeTypes';
 
 const console = Logging.extensions;
 

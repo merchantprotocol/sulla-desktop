@@ -12,10 +12,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import yaml from 'yaml';
-import { getIpcMainProxy } from '@pkg/main/ipcMain';
-import Logging from '@pkg/utils/logging';
 
+import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import type { WorkflowDefinition, WorkflowStatus } from '@pkg/pages/editor/workflow/types';
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 

@@ -25,9 +25,11 @@ async function loadSetting(key: string, defaultValue: any): Promise<any> {
 
 async function saveSetting(key: string, value: any): Promise<void> {
   try {
-    const cast = typeof value === 'number' ? 'number'
-      : typeof value === 'boolean' ? 'boolean'
-      : 'string';
+    const cast = typeof value === 'number'
+      ? 'number'
+      : typeof value === 'boolean'
+        ? 'boolean'
+        : 'string';
     await ipcRenderer.invoke('sulla-settings:set', SETTINGS_PREFIX + key, value, cast);
   } catch (e: any) {
     console.warn('[useSettings] Failed to save', key, e.message);
@@ -48,7 +50,7 @@ export function useSettings() {
   const loaded = ref(false);
 
   // Load all settings on mount (parallelized)
-  onMounted(async () => {
+  onMounted(async() => {
     const [
       layoutVal, cameraShapeVal, cameraDeviceIdVal, micDeviceIdVal,
       tpFontSizeVal, tpSpeedVal, tpHighlightColorVal, savePathVal,

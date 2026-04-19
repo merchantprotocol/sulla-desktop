@@ -434,10 +434,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
 import { ipcRenderer } from 'electron';
-import type { FlowControlNodeSubtype } from './types';
+import { ref, onMounted } from 'vue';
+
 import type { UpstreamNodeInfo } from './AgentNodeConfig.vue';
+import type { FlowControlNodeSubtype } from './types';
 
 const props = defineProps<{
   isDark:         boolean;

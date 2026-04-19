@@ -7,11 +7,10 @@ import Electron from 'electron';
 import _ from 'lodash';
 import yaml from 'yaml';
 
+import { fetchMarketplaceData } from './marketplaceData';
 import {
   Extension, ExtensionError, ExtensionErrorCode, ExtensionErrorMarker, ExtensionMetadata, SpawnOptions,
 } from './types';
-
-import { fetchMarketplaceData } from './marketplaceData';
 
 import type { ContainerEngineClient } from '@pkg/backend/containerClient';
 import mainEvents from '@pkg/main/mainEvents';

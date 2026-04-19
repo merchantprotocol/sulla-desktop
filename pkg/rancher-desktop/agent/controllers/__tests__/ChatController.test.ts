@@ -1,13 +1,15 @@
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
+
 import { ChatController, type ChatControllerConfig } from '../ChatController';
-import type { StreamContext } from '../Extractor';
+
 import type { NormalizedResponse } from '../../languagemodels/BaseLanguageModel';
+import type { StreamContext } from '../Extractor';
 
 function makeConfig(): ChatControllerConfig {
   return {
-    dispatch:        jest.fn(async() => true) as any,
-    sendChatMessage: jest.fn(async() => true) as any,
-    voiceLog:        jest.fn() as any,
+    dispatch:          jest.fn(async() => true) as any,
+    sendChatMessage:   jest.fn(async() => true) as any,
+    voiceLog:          jest.fn() as any,
     onSecretaryResult: jest.fn(),
   };
 }

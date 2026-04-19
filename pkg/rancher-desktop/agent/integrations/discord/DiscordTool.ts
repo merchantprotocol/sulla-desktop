@@ -1,11 +1,12 @@
 // DiscordTool.ts
 // Bridge tool to call the LLM (your internal agent/LLM) from within agent reasoning
 
-import type { ThreadState, ToolResult } from '../../types';
-import { BaseTool } from '../../tools/BaseTool';
-import type { ToolContext } from '../../tools/BaseTool';
 import { registry } from '..';
+import { BaseTool } from '../../tools/BaseTool';
+
 import type { DiscordClient } from './DiscordClient';
+import type { ToolContext } from '../../tools/BaseTool';
+import type { ThreadState, ToolResult } from '../../types';
 
 export class DiscordTool extends BaseTool {
   override readonly name = 'discord';

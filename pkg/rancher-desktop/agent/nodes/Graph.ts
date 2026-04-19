@@ -1,18 +1,19 @@
 // Graph - Generic DAG executor for agent graphs.
 // Playbook/workflow orchestration is in controllers/PlaybookController.ts.
 
-import type { AbortService } from '../services/AbortService';
-import { throwIfAborted } from '../services/AbortService';
-import { getWebSocketClientService } from '../services/WebSocketClientService';
-import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { getConversationLogger } from '../services/ConversationLogger';
-import { InputHandlerNode } from './InputHandlerNode';
 import { AgentNode } from './AgentNode';
-import { SubconsciousAgentNode } from './SubconsciousAgentNode';
 import { HeartbeatNode } from './HeartbeatNode';
-import type { WorkflowPlaybookState } from '../workflow/types';
+import { InputHandlerNode } from './InputHandlerNode';
+import { SubconsciousAgentNode } from './SubconsciousAgentNode';
 import { PlaybookController } from '../controllers/PlaybookController';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { throwIfAborted } from '../services/AbortService';
+import { getConversationLogger } from '../services/ConversationLogger';
+import { getWebSocketClientService } from '../services/WebSocketClientService';
+
+import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import type { AbortService } from '../services/AbortService';
+import type { WorkflowPlaybookState } from '../workflow/types';
 
 // ============================================================================
 // CONFIGURATION CONSTANTS
@@ -155,7 +156,7 @@ export interface BaseThreadState {
 
     /** Stack of parent workflow playbooks when executing sub-workflows.
      *  Persisted so sub-workflow completion can pop back to the parent after restarts. */
-    workflowStack?: Array<{ playbook: WorkflowPlaybookState; nodeId: string }>;
+    workflowStack?: { playbook: WorkflowPlaybookState; nodeId: string }[];
   };
 }
 
@@ -360,7 +361,7 @@ export class Graph<TState = BaseThreadState> {
       const prevWaiting = (state as any).metadata.waitingForUser;
       (state as any).metadata.cycleComplete = false;
       (state as any).metadata.waitingForUser = false;
-      console.log(`[Graph] execute_reentry_reset: prevCycleComplete=${prevCycle}, prevWaitingForUser=${prevWaiting}, currentNodeId=${(state as any).metadata.currentNodeId}`);
+      console.log(`[Graph] execute_reentry_reset: prevCycleComplete=${ prevCycle }, prevWaitingForUser=${ prevWaiting }, currentNodeId=${ (state as any).metadata.currentNodeId }`);
     }
     const convId = (state as any).metadata.conversationId;
     if (convId && !isReentry) {
@@ -380,7 +381,6 @@ export class Graph<TState = BaseThreadState> {
           convLogger.logMessage(convId, 'user', String(lastMsg.content));
         }
       }
-
     }
 
     (state as any).metadata.iterations ??= 0;
@@ -422,8 +422,8 @@ export class Graph<TState = BaseThreadState> {
 
         if (nextId === currentNodeId) {
           (state as any).metadata.consecutiveSameNode++;
-          const hasActiveWorkflow = !!(state as any).metadata?.activeWorkflow?.status
-            && (state as any).metadata.activeWorkflow.status === 'running';
+          const hasActiveWorkflow = !!(state as any).metadata?.activeWorkflow?.status &&
+            (state as any).metadata.activeWorkflow.status === 'running';
           if (!hasActiveWorkflow && (state as any).metadata.consecutiveSameNode >= MAX_CONSECTUIVE_LOOP) {
             if (currentNodeId === 'action') {
               console.warn('Max consecutive loop on action — forcing critic review');
@@ -464,8 +464,8 @@ export class Graph<TState = BaseThreadState> {
       }
     }
 
-    const hasActiveWorkflowPostLoop = !!(state as any).metadata?.activeWorkflow?.status
-      && (state as any).metadata.activeWorkflow.status === 'running';
+    const hasActiveWorkflowPostLoop = !!(state as any).metadata?.activeWorkflow?.status &&
+      (state as any).metadata.activeWorkflow.status === 'running';
     if (!hasActiveWorkflowPostLoop && (state as any).metadata.iterations >= maxIterations) {
       console.warn('Max iterations hit');
       (state as any).metadata.maxIterationsReached = true;
@@ -514,7 +514,6 @@ export class Graph<TState = BaseThreadState> {
   }
 
   // ── Playbook methods have been extracted to PlaybookController ──
-
 
   /**
    * Resolve next node based on decision and edges.

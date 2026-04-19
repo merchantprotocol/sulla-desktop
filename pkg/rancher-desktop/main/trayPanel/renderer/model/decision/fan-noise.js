@@ -45,7 +45,7 @@ function process(signals) {
 
   // Noise level at least moderate
   checks++;
-  if (noiseLevel === "moderate" || noiseLevel === "high") score++;
+  if (noiseLevel === 'moderate' || noiseLevel === 'high') score++;
 
   // Pitch is steady (low stddev across frames)
   checks++;

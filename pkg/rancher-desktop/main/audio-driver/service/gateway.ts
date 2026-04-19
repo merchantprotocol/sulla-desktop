@@ -63,11 +63,13 @@
  * when a key is available.
  */
 
-import { net, app } from 'electron';
 import * as os from 'os';
+
+import { net, app } from 'electron';
+
+import { GATEWAY_URL as DEFAULT_GATEWAY_URL, IS_LOCAL } from '../config';
 import * as auth from '../model/auth';
 import { log } from '../model/logger';
-import { GATEWAY_URL as DEFAULT_GATEWAY_URL, IS_LOCAL } from '../config';
 
 // Use __non_webpack_require__ to bypass webpack bundling for the ws package.
 declare const __non_webpack_require__: typeof require;
@@ -156,7 +158,7 @@ export function connectLobby(): void {
 
   const version = app.getVersion();
   const hostname = os.hostname();
-  const url = _wsUrl(`/ws/listener?appName=AudioDriver&appVersion=${version}&hostname=${encodeURIComponent(hostname)}`);
+  const url = _wsUrl(`/ws/listener?appName=AudioDriver&appVersion=${ version }&hostname=${ encodeURIComponent(hostname) }`);
 
   log.info(TAG, 'Connecting lobby', { url });
 
@@ -289,7 +291,7 @@ function _clearHealthPing(): void {
  */
 export async function startSession(opts: {
   callerName?: string;
-  channels?: Record<string, any>;
+  channels?:   Record<string, any>;
 } = {}): Promise<{ sessionId: string; callId: string }> {
   const url = _gatewayUrl() + '/api/desktop/sessions';
   const user = auth.getSession().user;
@@ -298,8 +300,8 @@ export async function startSession(opts: {
     callerName: opts.callerName || 'Audio Driver',
     mode:       'listen-only-meeting',
     channels:   opts.channels || {
-      '0': { label: 'User', source: 'mic' },
-      '1': {
+      0: { label: 'User', source: 'mic' },
+      1: {
         label:       'Caller',
         source:      'system_audio',
         audioFormat: { inputFormat: 's16le', inputRate: 16000, inputChannels: 1 },
@@ -345,8 +347,8 @@ export async function stopSession(): Promise<void> {
 
   // Close WebSockets first (stops audio flow)
   _clearAudioReconnect();
-  if (audioWs) { audioWs.close(); audioWs = null; }
-  if (listenerWs) { listenerWs.close(); listenerWs = null; }
+  if (audioWs) { audioWs.close(); audioWs = null }
+  if (listenerWs) { listenerWs.close(); listenerWs = null }
 
   // REST delete while sessionId is still set (prevents race with sendAudio)
   if (sid) {
@@ -493,8 +495,8 @@ export function sendAudio(audioData: any, channel: number): void {
   if (audioChunkCount <= 3 || audioChunkCount % 100 === 0) {
     log.debug(TAG, 'Audio chunk sent', {
       channel,
-      bytes: (audioData as any).byteLength || (audioData as any).length,
-      total: audioChunkCount,
+      bytes:    (audioData).byteLength || (audioData).length,
+      total:    audioChunkCount,
       buffered: audioWs.bufferedAmount,
     });
   }
@@ -571,7 +573,7 @@ function _restPost(url: string, body: Record<string, any>): Promise<any> {
     let responseData = '';
 
     request.on('response', (response) => {
-      response.on('data', (chunk: Buffer) => { responseData += chunk.toString(); });
+      response.on('data', (chunk: Buffer) => { responseData += chunk.toString() });
       response.on('end', () => {
         try {
           const parsed = JSON.parse(responseData);
@@ -601,7 +603,7 @@ function _restDelete(url: string): Promise<string> {
 
     request.on('response', (response) => {
       let data = '';
-      response.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+      response.on('data', (chunk: Buffer) => { data += chunk.toString() });
       response.on('end', () => resolve(data));
     });
 
@@ -619,8 +621,8 @@ function _restDelete(url: string): Promise<string> {
 export function getStatus(): {
   lobbyConnected: boolean;
   audioConnected: boolean;
-  sessionId: string | null;
-  callId: string | null;
+  sessionId:      string | null;
+  callId:         string | null;
 } {
   return {
     lobbyConnected: lobbyWs !== null && lobbyWs.readyState === WebSocket.OPEN,
@@ -634,13 +636,13 @@ export function getStatus(): {
  * Register a callback for transcript events (`transcript_turn`, `transcript_partial`).
  * Only one callback is supported; calling again replaces the previous one.
  */
-export function onTranscriptEvent(cb: (msg: any) => void): void { onTranscript = cb; }
+export function onTranscriptEvent(cb: (msg: any) => void): void { onTranscript = cb }
 
 /**
  * Register a callback for connection status changes (lobby connect/disconnect,
  * audio WS open/close, session start/stop). Only one callback is supported.
  */
-export function onStatus(cb: (status: any) => void): void { onStatusChange = cb; }
+export function onStatus(cb: (status: any) => void): void { onStatusChange = cb }
 
 function _fireStatus(): void {
   if (onStatusChange) onStatusChange(getStatus());

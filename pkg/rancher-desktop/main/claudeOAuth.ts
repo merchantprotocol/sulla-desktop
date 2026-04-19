@@ -14,8 +14,10 @@ import * as childProcess from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import * as pty from 'node-pty';
+
 import { BrowserWindow } from 'electron';
+import * as pty from 'node-pty';
+
 import { resolveLimactlPath, resolveLimaHome } from '@pkg/agent/tools/util/CommandRunner';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -61,8 +63,8 @@ function redactUrl(url: string): string {
 
 function killActiveSession() {
   if (activeSession) {
-    try { activeSession.ptyProcess.kill(); } catch { /* already dead */ }
-    try { activeSession.authWindow?.close(); } catch { /* already closed */ }
+    try { activeSession.ptyProcess.kill() } catch { /* already dead */ }
+    try { activeSession.authWindow?.close() } catch { /* already closed */ }
     activeSession = null;
   }
 }
@@ -80,7 +82,7 @@ async function isVMRunning(): Promise<boolean> {
       env: { ...process.env, LIMA_HOME: limaHome },
     });
     let out = '';
-    proc.stdout.on('data', (d) => { out += d.toString(); });
+    proc.stdout.on('data', (d) => { out += d.toString() });
     proc.on('close', () => {
       try {
         // `limactl list --json` outputs one JSON object per line
@@ -117,7 +119,7 @@ async function injectTokenIntoVM(token: string): Promise<void> {
   const run = (args: string[]) => new Promise<void>((resolve, reject) => {
     const proc = childProcess.spawn(limactlPath, args, { env });
     let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString() });
     proc.on('close', (code) => {
       if (code === 0) resolve();
       else reject(new Error(`limactl ${ args.join(' ') } exited ${ code }: ${ stderr }`));
@@ -141,9 +143,9 @@ async function injectTokenIntoVM(token: string): Promise<void> {
  */
 function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Promise<string | null> } {
   const window = new BrowserWindow({
-    width:  720,
-    height: 800,
-    title:  'Sign in with Claude',
+    width:          720,
+    height:         800,
+    title:          'Sign in with Claude',
     webPreferences: {
       nodeIntegration:  false,
       contextIsolation: true,
@@ -226,8 +228,8 @@ export function initClaudeOAuthEvents(): void {
       const doResolve = (result: { token?: string; error?: string }) => {
         if (resolved) return;
         resolved = true;
-        try { ptyProcess.kill(); } catch { /* dead */ }
-        try { session.authWindow?.close(); } catch { /* closed */ }
+        try { ptyProcess.kill() } catch { /* dead */ }
+        try { session.authWindow?.close() } catch { /* closed */ }
         if (activeSession === session) activeSession = null;
 
         // Persist the token to /etc/claude-env so Claude Code picks it up now.
@@ -281,7 +283,7 @@ export function initClaudeOAuthEvents(): void {
                 return;
               }
               console.log(`[ClaudeOAuth] Writing ${ code.length } chars to PTY`);
-              try { session.authWindow?.close(); } catch { /* closed */ }
+              try { session.authWindow?.close() } catch { /* closed */ }
               session.authWindow = null;
               try {
                 ptyProcess.write(code);

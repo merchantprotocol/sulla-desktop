@@ -4,15 +4,16 @@
 // Handles connection lifecycle, graceful shutdown, reconnection
 
 import { Client, GatewayIntentBits, ReactionEmoji, ChannelType } from 'discord.js';
-import {
-  getWebSocketClientService,
-  type WebSocketMessage,
-} from '../../services/WebSocketClientService';
+
+import { incomingMessage } from './prompts/incoming_message';
 import {
   getIntegrationService,
   type IntegrationValue,
 } from '../../services/IntegrationService';
-import { incomingMessage } from './prompts/incoming_message';
+import {
+  getWebSocketClientService,
+  type WebSocketMessage,
+} from '../../services/WebSocketClientService';
 
 const INTEGRATION_ID = 'discord';
 const TOKEN_PROPERTY = 'bot_token';

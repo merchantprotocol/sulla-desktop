@@ -140,24 +140,41 @@ export class ProxyBridge {
   }
 
   async getReaderContent(maxChars?: number): Promise<{
-    title: string; url: string; content: string;
-    contentLength: number; truncated: boolean;
+    title:         string;
+    url:           string;
+    content:       string;
+    contentLength: number;
+    truncated:     boolean;
   } | null> {
     return (await callRenderer('resolve:getReaderContent', [this.assetId, maxChars])) as {
-      title: string; url: string; content: string;
-      contentLength: number; truncated: boolean;
+      title:         string;
+      url:           string;
+      content:       string;
+      contentLength: number;
+      truncated:     boolean;
     } | null;
   }
 
   async getScrollInfo(): Promise<{
-    scrollY: number; scrollHeight: number; viewportHeight: number;
-    percent: number; atTop: boolean; atBottom: boolean;
-    moreBelow: boolean; moreAbove: boolean;
+    scrollY:        number;
+    scrollHeight:   number;
+    viewportHeight: number;
+    percent:        number;
+    atTop:          boolean;
+    atBottom:       boolean;
+    moreBelow:      boolean;
+    moreAbove:      boolean;
   }> {
     const result = await callRenderer('resolve:getScrollInfo', [this.assetId]);
     return (result as any) || {
-      scrollY: 0, scrollHeight: 0, viewportHeight: 0, percent: 0,
-      atTop: true, atBottom: true, moreBelow: false, moreAbove: false,
+      scrollY:        0,
+      scrollHeight:   0,
+      viewportHeight: 0,
+      percent:        0,
+      atTop:          true,
+      atBottom:       true,
+      moreBelow:      false,
+      moreAbove:      false,
     };
   }
 
@@ -174,7 +191,7 @@ export class ProxyBridge {
   }
 
   async searchInPage(query: string): Promise<{
-    matches: Array<{ index: number; context: string }>; total: number; query: string;
+    matches: { index: number; context: string }[]; total: number; query: string;
   }> {
     const result = await callRenderer('resolve:searchInPage', [this.assetId, query]);
     return (result as any) || { matches: [], total: 0, query };
@@ -200,9 +217,9 @@ export class ProxyBridge {
 
   /** Capture a screenshot of the page via CDP. Returns base64 + mediaType. */
   async captureScreenshot(options?: {
-    format?: 'jpeg' | 'png';
+    format?:  'jpeg' | 'png';
     quality?: number;
-    clip?: { x: number; y: number; width: number; height: number };
+    clip?:    { x: number; y: number; width: number; height: number };
   }): Promise<{ base64: string; mediaType: string } | null> {
     return (await callRenderer('resolve:captureScreenshot', [this.assetId, options])) as {
       base64: string; mediaType: string;
@@ -216,7 +233,7 @@ export class ProxyBridge {
 
   /** Click at pixel coordinates via CDP (trusted mouse events). */
   async clickAtCoordinate(x: number, y: number, options?: {
-    button?: 'left' | 'right' | 'middle';
+    button?:     'left' | 'right' | 'middle';
     clickCount?: number;
   }): Promise<boolean> {
     return (await callRenderer('resolve:clickAtCoordinate', [this.assetId, x, y, options])) as boolean;
@@ -240,7 +257,7 @@ export class ProxyBridge {
   }
 
   /** Add/remove element annotation overlays for numbered bounding boxes. */
-  async annotateElements(): Promise<Array<{ index: number; label: string; x: number; y: number; width: number; height: number }>> {
+  async annotateElements(): Promise<{ index: number; label: string; x: number; y: number; width: number; height: number }[]> {
     return (await callRenderer('resolve:annotateElements', [this.assetId])) as any[] || [];
   }
 

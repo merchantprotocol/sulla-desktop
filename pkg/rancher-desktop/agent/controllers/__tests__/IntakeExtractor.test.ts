@@ -1,7 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
+
 import { IntakeExtractor } from '../IntakeExtractor';
-import type { StreamContext } from '../Extractor';
+
 import type { NormalizedResponse } from '../../languagemodels/BaseLanguageModel';
+import type { StreamContext } from '../Extractor';
 
 function makeCtx(): StreamContext {
   return {

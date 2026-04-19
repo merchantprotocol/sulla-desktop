@@ -1,4 +1,5 @@
 import { TextDecoder, TextEncoder } from 'node:util';
+
 import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 function configureWorker(worker: any, registration: any) {

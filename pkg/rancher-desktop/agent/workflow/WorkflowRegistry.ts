@@ -189,7 +189,7 @@ export class WorkflowRegistry {
           (parsed as any)._slug = (parsed as any).slug || fileBaseName;
 
           if (
-            ((parsed as any).slug && (parsed as any).slug.toLowerCase() === needle) ||
+            ((parsed as any).slug?.toLowerCase() === needle) ||
             fileBaseName.toLowerCase() === needle ||
             parsed.id === workflowId
           ) {

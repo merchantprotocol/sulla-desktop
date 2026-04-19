@@ -12,19 +12,19 @@
  */
 
 export interface ContextMenuParams {
-  tabId:                string;
-  x:                    number;
-  y:                    number;
-  selectionText:        string;
-  linkURL:              string;
-  srcURL:               string;
-  mediaType:            string;
-  isEditable:           boolean;
-  misspelledWord:       string;
+  tabId:                 string;
+  x:                     number;
+  y:                     number;
+  selectionText:         string;
+  linkURL:               string;
+  srcURL:                string;
+  mediaType:             string;
+  isEditable:            boolean;
+  misspelledWord:        string;
   dictionarySuggestions: string[];
-  canGoBack:            boolean;
-  canGoForward:         boolean;
-  pageURL:              string;
+  canGoBack:             boolean;
+  canGoForward:          boolean;
+  pageURL:               string;
 }
 
 /**

@@ -1,7 +1,8 @@
 <script lang="ts">
 
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { defineComponent } from 'vue';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export default defineComponent({
   name:  'help',

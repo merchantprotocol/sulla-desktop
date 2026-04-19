@@ -1,10 +1,13 @@
 // AgentPersonaService.ts
 import { computed, reactive, ref } from 'vue';
-import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
-import { AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
-import type { ChatMessage, AgentRegistryEntry } from '../registry/AgentPersonaRegistry';
+
 import { createMessageDispatcher, type DispatchContext } from './MessageDispatcher';
+import { AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
+
+import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { personaLogger as console } from '@pkg/agent/utils/agentLogger';
+
+import type { ChatMessage, AgentRegistryEntry } from '../registry/AgentPersonaRegistry';
 
 export type PersonaTemplateId =
   | 'terminal'
@@ -71,7 +74,7 @@ export interface PersonaSidebarAsset {
 }
 
 export class AgentPersonaService {
-  private readonly registry:            AgentPersonaRegistry;
+  private readonly registry: AgentPersonaRegistry;
   private wsService = getWebSocketClientService();
   private readonly wsUnsub = new Map<string, () => void>();
   private readonly dispatcher = createMessageDispatcher();
@@ -84,7 +87,7 @@ export class AgentPersonaService {
    * Direct speak event listeners — allows VoicePipeline to receive speak events
    * without watching the messages array (lower latency, no deep watcher overhead).
    */
-  private readonly speakListeners: Array<(text: string, threadId: string, pipelineSequence: number | null) => void> = [];
+  private readonly speakListeners: ((text: string, threadId: string, pipelineSequence: number | null) => void)[] = [];
 
   graphRunning = ref(false);
   waitingForUser = ref(false);
@@ -166,7 +169,7 @@ export class AgentPersonaService {
     }
 
     console.log('[AgentPersonaModel] registerIframeAsset', {
-      id:       input.id,
+      id:        input.id,
       url,
       skillSlug: input.skillSlug || '',
     });
@@ -333,7 +336,7 @@ export class AgentPersonaService {
 
   // Internal clean version
   private async _addUserMessage(content: string, extraMetadata?: Record<string, unknown>): Promise<boolean> {
-    const hasAttachments = Array.isArray(extraMetadata?.attachments) && (extraMetadata!.attachments as any[]).length > 0;
+    const hasAttachments = Array.isArray(extraMetadata?.attachments) && (extraMetadata.attachments).length > 0;
     if (!content.trim() && !hasAttachments) return false;
 
     const id = this.state.agentId;
@@ -580,8 +583,10 @@ export class AgentPersonaService {
   private extractThreadId(msg: WebSocketMessage): string | undefined {
     if (msg.data && typeof msg.data === 'object') {
       const d = msg.data as any;
-      return typeof d.thread_id === 'string' ? d.thread_id
-        : typeof d.threadId === 'string' ? d.threadId
+      return typeof d.thread_id === 'string'
+        ? d.thread_id
+        : typeof d.threadId === 'string'
+          ? d.threadId
           : undefined;
     }
     return undefined;
@@ -613,7 +618,6 @@ export class AgentPersonaService {
    * @param msg     The raw WebSocket message
    */
   private handleWebSocketMessage(agentId: string, msg: WebSocketMessage): void {
-
     // ── Thread-ID filtering ──────────────────────────────────────────
     const msgThreadId = this.extractThreadId(msg);
     const myThreadId = this.state.threadId;
@@ -622,8 +626,8 @@ export class AgentPersonaService {
     // This prevents stray workflow / backend messages from leaking into the chat.
     if (!msgThreadId && myThreadId) {
       // Allow protocol-level messages that never carry a threadId
-      const threadExempt = msg.type === 'thread_created' || msg.type === 'ack'
-        || msg.type === 'ping' || msg.type === 'pong' || msg.type === 'subscribe';
+      const threadExempt = msg.type === 'thread_created' || msg.type === 'ack' ||
+        msg.type === 'ping' || msg.type === 'pong' || msg.type === 'subscribe';
       if (!threadExempt) {
         return;
       }
@@ -641,22 +645,21 @@ export class AgentPersonaService {
    */
   private getDispatchContext(): DispatchContext {
     return {
-      messages:             this.messages,
-      graphRunning:         this.graphRunning,
-      waitingForUser:       this.waitingForUser,
-      stopReason:           this.stopReason,
-      currentActivity:      this.currentActivity,
-      registry:             this.registry,
-      toolRunIdToMessageId: this.toolRunIdToMessageId,
-      speakListeners:       this.speakListeners,
-      setThreadId:          (id: string) => this.setThreadId(id),
-      getThreadId:          () => this.getThreadId(),
-      handleTokenInfo:      (...args) => this.handleTokenInfo(...args),
+      messages:                  this.messages,
+      graphRunning:              this.graphRunning,
+      waitingForUser:            this.waitingForUser,
+      stopReason:                this.stopReason,
+      currentActivity:           this.currentActivity,
+      registry:                  this.registry,
+      toolRunIdToMessageId:      this.toolRunIdToMessageId,
+      speakListeners:            this.speakListeners,
+      setThreadId:               (id: string) => this.setThreadId(id),
+      getThreadId:               () => this.getThreadId(),
+      handleTokenInfo:           (...args) => this.handleTokenInfo(...args),
       applyAssetLifecycleUpdate: (data: any, type: string) => this.applyAssetLifecycleUpdate(data, type),
-      removeAsset:          (id: string) => this.removeAsset(id),
+      removeAsset:               (id: string) => this.removeAsset(id),
     };
   }
-
 
   /**
    * Handle token information from completed LLM response

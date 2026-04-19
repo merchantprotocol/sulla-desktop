@@ -9,8 +9,8 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 
 const props = withDefaults(defineProps<{
-  content: string;
-  isDark: boolean;
+  content:   string;
+  isDark:    boolean;
   /** When true, fills the parent container instead of capping at 80vh */
   fullPage?: boolean;
 }>(), { fullPage: false });

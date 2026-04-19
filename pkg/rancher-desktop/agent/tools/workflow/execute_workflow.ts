@@ -1,6 +1,8 @@
-import { BaseTool, ToolResponse } from '../base';
 import { createPlaybookState } from '../../workflow/WorkflowPlaybook';
+import { BaseTool, ToolResponse } from '../base';
+
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
+
 import type { WorkflowPlaybookState } from '../../workflow/types';
 
 export class ExecuteWorkflowWorker extends BaseTool {
@@ -76,7 +78,7 @@ export class ExecuteWorkflowWorker extends BaseTool {
     // Enforce trigger-type gating: if the caller has a wsChannel that maps to a
     // specific trigger type, only allow workflows that have a matching trigger node.
     // This prevents heartbeat agents from executing schedule-only workflows, etc.
-    const wsChannel = (this.state as any)?.metadata?.wsChannel as string | undefined;
+    const wsChannel = (this.state)?.metadata?.wsChannel as string | undefined;
     const gatedTriggers = ['heartbeat', 'calendar', 'schedule'];
     if (wsChannel && gatedTriggers.includes(wsChannel)) {
       const hasTrigger = (definition.nodes || []).some(
@@ -147,7 +149,7 @@ export class ExecuteWorkflowWorker extends BaseTool {
       }
 
       // Verify state propagation
-      const verify = (this.state as any)?.metadata?.activeWorkflow;
+      const verify = (this.state)?.metadata?.activeWorkflow;
       console.log(`[ExecuteWorkflow] Loaded workflow "${ definition.name }" (${ workflowId }) as playbook — executionId=${ playbook.executionId }, frontier=[${ playbook.currentNodeIds.join(', ') }], stateVerify=${ verify?.status }/${ verify?.currentNodeIds?.length ?? 0 }`);
 
       return {

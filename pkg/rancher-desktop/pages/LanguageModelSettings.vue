@@ -1,20 +1,22 @@
 <script lang="ts">
+
+import { IpcRendererEvent } from 'electron';
 import { defineComponent } from 'vue';
 
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { IpcRendererEvent } from 'electron';
-
 // Import soul prompt from TypeScript file
-import { soulPrompt } from '../agent/prompts/soul';
-import { heartbeatPrompt } from '../agent/prompts/heartbeat';
 import { SullaSettingsModel } from '../agent/database/models/SullaSettingsModel';
-import { REMOTE_PROVIDERS } from '../shared/remoteProviders';
 import { getSupportedProviders, fetchModelsForProvider, clearModelCache } from '../agent/languagemodels';
+import { heartbeatPrompt } from '../agent/prompts/heartbeat';
+import { soulPrompt } from '../agent/prompts/soul';
 import { useTheme } from '../composables/useTheme';
+import { REMOTE_PROVIDERS } from '../shared/remoteProviders';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 // Nav items for the Language Model Settings sidebar
 const navItems = [
   { id: 'overview', name: 'Overview' },
+  { id: 'profile', name: 'Profile' },
   { id: 'models', name: 'Models' },
   { id: 'claude-code', name: 'Claude Code' },
   { id: 'soul', name: 'Soul' },
@@ -33,7 +35,7 @@ export default defineComponent({
 
   data() {
     return {
-      currentNav:       'overview' as string,
+      currentNav:            'overview' as string,
       navItems,
       // Which tab is being viewed
       viewingTab:            'remote' as string,
@@ -75,23 +77,42 @@ export default defineComponent({
       availableProviders:   [] as { id: string; name: string }[],
 
       // Activation state
-      activating:           false,
-      activationError:      '' as string,
-      savingSettings:       false,
+      activating:             false,
+      activationError:        '' as string,
+      savingSettings:         false,
       // Guard flag to prevent feedback loop between primaryProvider watcher and IPC handler
       _suppressProviderWatch: false,
 
       // Claude Code auth
-      claudeAuthMode:    'none' as 'none' | 'api-key' | 'oauth',
-      claudeApiKey:      '',
-      claudeOAuthToken:  '',
+      claudeAuthMode:      'none' as 'none' | 'api-key' | 'oauth',
+      claudeApiKey:        '',
+      claudeOAuthToken:    '',
       claudeApiKeyVisible: false,
-      claudeSaving:      false,
-      claudeOAuthRunning: false,
-      claudeOAuthStatus: 'Starting...',
-      claudeOAuthError:  '',
-      claudeOAuthUrl:    '',
-      claudeOAuthCode:   '',
+      claudeSaving:        false,
+      claudeOAuthRunning:  false,
+      claudeOAuthStatus:   'Starting...',
+      claudeOAuthError:    '',
+      claudeOAuthUrl:      '',
+      claudeOAuthCode:     '',
+
+      // Mobile pairing (status mirror)
+      pairedMobileUserId:  '',
+      relayConnected:      false,
+      relayError:          '',
+      relaySaving:         false,
+
+      // Sulla Cloud auth
+      cloudStatus:    { signedIn: false, userId: '', phone: '' } as { signedIn: boolean; userId: string; phone: string; lastError?: string },
+      cloudMethod:    'email' as 'email' | 'phone' | 'apple',
+      cloudStep:      'phone' as 'phone' | 'verify',
+      cloudPhone:     '',
+      cloudCode:      '',
+      cloudEmail:     '',
+      cloudPassword:  '',
+      cloudName:      '',
+      emailMode:      'login' as 'login' | 'register',
+      cloudBusy:      false,
+      cloudError:     '',
     };
   },
 
@@ -143,6 +164,13 @@ export default defineComponent({
 
     // Load Claude Code credentials
     await this.loadClaudeCredentials();
+
+    // Load desktop relay status and subscribe to changes
+    await this.loadDesktopRelayStatus();
+    ipcRenderer.on('desktop-relay:status-changed', this.handleRelayStatusChanged);
+
+    // Load Sulla Cloud auth status
+    await this.loadCloudStatus();
 
     // Listen for state changes from ModelProviderService (source of truth)
     ipcRenderer.on('model-provider:state-changed', this.handleProviderStateChanged);
@@ -658,6 +686,128 @@ export default defineComponent({
       }
     },
 
+    async savePairedUserId() {
+      this.relaySaving = true;
+      try {
+        const status = await ipcRenderer.invoke('desktop-relay:set-paired-user-id', this.pairedMobileUserId.trim());
+        this.relayConnected = status.connected;
+        this.relayError = status.lastError || '';
+      } catch (err: any) {
+        this.relayError = err?.message || 'Failed to save';
+      } finally {
+        this.relaySaving = false;
+      }
+    },
+
+    async loadCloudStatus() {
+      try {
+        this.cloudStatus = await ipcRenderer.invoke('sulla-cloud:get-status');
+      } catch { /* IPC not ready */ }
+    },
+
+    async cloudSendOtp() {
+      this.cloudBusy = true;
+      this.cloudError = '';
+      try {
+        const res = await ipcRenderer.invoke('sulla-cloud:send-otp', this.cloudPhone.trim());
+        if (!res.ok) {
+          this.cloudError = res.error || 'Failed to send code';
+          return;
+        }
+        this.cloudStep = 'verify';
+      } catch (err: any) {
+        this.cloudError = err?.message || 'Network error';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    setCloudMethod(m: 'email' | 'phone' | 'apple') {
+      this.cloudMethod = m;
+      this.cloudError = '';
+    },
+
+    async cloudEmailLogin() {
+      this.cloudBusy = true;
+      this.cloudError = '';
+      try {
+        const res = await ipcRenderer.invoke('sulla-cloud:email-login', this.cloudEmail.trim(), this.cloudPassword);
+        this.cloudStatus = res.status;
+        if (!res.ok) this.cloudError = res.error || 'Sign in failed';
+        else this.cloudPassword = '';
+      } catch (err: any) {
+        this.cloudError = err?.message || 'Network error';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    async cloudEmailRegister() {
+      this.cloudBusy = true;
+      this.cloudError = '';
+      try {
+        const res = await ipcRenderer.invoke('sulla-cloud:email-register', this.cloudEmail.trim(), this.cloudPassword, this.cloudName.trim() || undefined);
+        this.cloudStatus = res.status;
+        if (!res.ok) this.cloudError = res.error || 'Registration failed';
+        else {
+          this.cloudPassword = '';
+          this.cloudName = '';
+        }
+      } catch (err: any) {
+        this.cloudError = err?.message || 'Network error';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    async cloudVerifyOtp() {
+      this.cloudBusy = true;
+      this.cloudError = '';
+      try {
+        const res = await ipcRenderer.invoke('sulla-cloud:verify-otp', this.cloudPhone.trim(), this.cloudCode.trim());
+        this.cloudStatus = res.status;
+        if (!res.ok) {
+          this.cloudError = res.error || 'Incorrect code';
+          return;
+        }
+        this.cloudCode = '';
+        this.cloudStep = 'phone';
+      } catch (err: any) {
+        this.cloudError = err?.message || 'Network error';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    async cloudLogout() {
+      this.cloudBusy = true;
+      try {
+        this.cloudStatus = await ipcRenderer.invoke('sulla-cloud:logout');
+        this.cloudStep = 'phone';
+        this.cloudPhone = '';
+        this.cloudCode = '';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    async loadDesktopRelayStatus() {
+      try {
+        const status = await ipcRenderer.invoke('desktop-relay:get-status');
+        this.pairedMobileUserId = status.pairedUserId || '';
+        this.relayConnected = status.connected;
+        this.relayError = status.lastError || '';
+      } catch {
+        // IPC not ready
+      }
+    },
+
+    handleRelayStatusChanged(_event: unknown, status: { pairedUserId: string; connected: boolean; lastError?: string }) {
+      this.pairedMobileUserId = status.pairedUserId || '';
+      this.relayConnected = status.connected;
+      this.relayError = status.lastError || '';
+    },
+
     async loadClaudeCredentials() {
       try {
         const apiKey = await ipcRenderer.invoke('sulla-settings-get', 'claudeApiKey', '');
@@ -822,7 +972,222 @@ export default defineComponent({
               <span class="config-value">{{ selectedProvider }} / {{ selectedRemoteModel }}</span>
             </div>
           </div>
+        </div>
 
+        <!-- Profile Tab -->
+        <div
+          v-if="currentNav === 'profile'"
+          class="tab-content"
+        >
+          <h2>Sulla Cloud Account</h2>
+          <p class="description">
+            Sign in to the same account you use on Sulla Mobile. Once signed in,
+            your desktop and phone are automatically paired — messages sent from
+            your phone route to this desktop when you select "Desktop" in the
+            mobile chat.
+          </p>
+
+          <!-- Signed in state -->
+          <div
+            v-if="cloudStatus.signedIn"
+            class="setting-group"
+          >
+            <div class="claude-status">
+              <span class="claude-status-dot" />
+              <div>
+                <div class="setting-label">Signed in</div>
+                <div class="setting-description">
+                  {{ cloudStatus.phone || 'phone hidden' }}<br>
+                  <span style="opacity: 0.6; font-family: var(--font-mono); font-size: 11px;">
+                    {{ cloudStatus.userId }}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <button
+              class="btn role-secondary"
+              style="margin-top: 1rem;"
+              :disabled="cloudBusy"
+              @click="cloudLogout"
+            >
+              Sign out
+            </button>
+          </div>
+
+          <!-- Not signed in: method picker + current method UI -->
+          <div
+            v-else
+            class="setting-group"
+          >
+            <div class="claude-auth-buttons" style="margin-bottom: 1rem;">
+              <button
+                class="btn"
+                :class="cloudMethod === 'email' ? 'role-primary' : 'role-secondary'"
+                @click="setCloudMethod('email')"
+              >
+                Email
+              </button>
+              <button
+                class="btn"
+                :class="cloudMethod === 'phone' ? 'role-primary' : 'role-secondary'"
+                @click="setCloudMethod('phone')"
+              >
+                Phone
+              </button>
+              <button
+                class="btn"
+                :class="cloudMethod === 'apple' ? 'role-primary' : 'role-secondary'"
+                @click="setCloudMethod('apple')"
+              >
+                Apple
+              </button>
+            </div>
+
+            <!-- EMAIL -->
+            <div v-if="cloudMethod === 'email'">
+              <h3 style="margin-bottom: 0.5rem;">
+                {{ emailMode === 'login' ? 'Sign in with email' : 'Create a new account' }}
+              </h3>
+              <p class="setting-description" style="margin-bottom: 1rem;">
+                {{ emailMode === 'login'
+                  ? 'Enter your Sulla Cloud email and password.'
+                  : 'Create a new Sulla Cloud account with an email and password.'
+                }}
+                <a
+                  href="#"
+                  style="margin-left: 0.25rem;"
+                  @click.prevent="emailMode = emailMode === 'login' ? 'register' : 'login'"
+                >{{ emailMode === 'login' ? 'Create an account instead' : 'Sign in instead' }}</a>
+              </p>
+
+              <label class="setting-label">Email</label>
+              <input
+                v-model="cloudEmail"
+                type="email"
+                class="input-field"
+                placeholder="you@example.com"
+                autocomplete="email"
+                style="margin-bottom: 0.75rem;"
+              >
+
+              <label class="setting-label">Password</label>
+              <input
+                v-model="cloudPassword"
+                type="password"
+                class="input-field"
+                :placeholder="emailMode === 'register' ? 'At least 8 characters' : '••••••••'"
+                :autocomplete="emailMode === 'register' ? 'new-password' : 'current-password'"
+                @keyup.enter="emailMode === 'login' ? cloudEmailLogin() : cloudEmailRegister()"
+              >
+
+              <div v-if="emailMode === 'register'" style="margin-top: 0.75rem;">
+                <label class="setting-label">Your name (optional)</label>
+                <input
+                  v-model="cloudName"
+                  type="text"
+                  class="input-field"
+                  placeholder="Jane Doe"
+                  autocomplete="name"
+                >
+              </div>
+
+              <button
+                class="btn role-primary"
+                style="margin-top: 1rem;"
+                :disabled="cloudBusy || !cloudEmail.trim() || !cloudPassword"
+                @click="emailMode === 'login' ? cloudEmailLogin() : cloudEmailRegister()"
+              >
+                {{ cloudBusy ? 'Working...' : (emailMode === 'login' ? 'Sign in' : 'Create account') }}
+              </button>
+            </div>
+
+            <!-- PHONE OTP -->
+            <div v-else-if="cloudMethod === 'phone'">
+              <div v-if="cloudStep === 'phone'">
+                <label class="setting-label">Phone number</label>
+                <div class="claude-input-row">
+                  <input
+                    v-model="cloudPhone"
+                    type="tel"
+                    class="input-field claude-input-field"
+                    placeholder="+15551234567"
+                    @keyup.enter="cloudSendOtp"
+                  >
+                  <button
+                    class="btn role-primary"
+                    :disabled="cloudBusy || !cloudPhone.trim()"
+                    @click="cloudSendOtp"
+                  >
+                    {{ cloudBusy ? 'Sending...' : 'Send code' }}
+                  </button>
+                </div>
+                <p class="setting-description">
+                  E.164 format (include country code, e.g. +1 for US).
+                </p>
+              </div>
+              <div v-else>
+                <label class="setting-label">Code sent to {{ cloudPhone }}</label>
+                <div class="claude-input-row">
+                  <input
+                    v-model="cloudCode"
+                    type="text"
+                    inputmode="numeric"
+                    class="input-field claude-input-field"
+                    placeholder="123456"
+                    maxlength="8"
+                    @keyup.enter="cloudVerifyOtp"
+                  >
+                  <button
+                    class="btn role-primary"
+                    :disabled="cloudBusy || !cloudCode.trim()"
+                    @click="cloudVerifyOtp"
+                  >
+                    {{ cloudBusy ? 'Verifying...' : 'Verify' }}
+                  </button>
+                </div>
+                <button
+                  class="btn role-secondary"
+                  style="margin-top: 0.5rem;"
+                  @click="cloudStep = 'phone'; cloudCode = ''"
+                >
+                  Use a different number
+                </button>
+              </div>
+            </div>
+
+            <!-- APPLE -->
+            <div v-else-if="cloudMethod === 'apple'">
+              <p class="setting-description">
+                Apple Sign-In requires a bit of Apple Developer Console setup for desktop
+                (a Services ID and a registered redirect URI). Coming soon —
+                for now, please sign in with email or phone. If you already have an
+                account created on iOS, use the same phone number.
+              </p>
+            </div>
+          </div>
+
+          <p
+            v-if="cloudError"
+            class="setting-description claude-oauth-error"
+          >
+            {{ cloudError }}
+          </p>
+
+          <!-- Relay status shown once signed in -->
+          <div
+            v-if="cloudStatus.signedIn"
+            class="setting-group"
+            style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-default, var(--header-border));"
+          >
+            <label class="setting-label">Mobile relay</label>
+            <p class="setting-description">
+              <span
+                class="claude-status-dot"
+                :style="{ background: relayConnected ? 'var(--status-success, #3fb950)' : 'var(--text-muted, #8b949e)' }"
+              />
+              {{ relayConnected ? 'Connected — ready for chats from mobile' : 'Not connected — will retry in the background' }}
+            </p>
+          </div>
         </div>
 
         <!-- Models Tab -->
@@ -889,7 +1254,6 @@ export default defineComponent({
           </div>
         </div>
 
-
         <!-- Soul Tab -->
         <div
           v-if="currentNav === 'soul'"
@@ -933,7 +1297,6 @@ export default defineComponent({
               Your name (optional) - helps personalize interactions
             </p>
           </div>
-
         </div>
 
         <!-- Heartbeat Tab -->
@@ -1004,7 +1367,6 @@ export default defineComponent({
               Select which provider to use for heartbeat processing. "Use Primary Provider" follows your primary provider setting from the Models tab.
             </p>
           </div>
-
         </div>
 
         <!-- Claude Code Tab -->
@@ -1149,6 +1511,12 @@ export default defineComponent({
               </span>
             </div>
           </div>
+
+          <!-- Mobile Pairing is now handled automatically via Profile sign-in -->
+          <p class="description claude-pairing-heading">
+            To chat with this desktop from Sulla Mobile, sign in to your Sulla Cloud
+            account under the <strong>Profile</strong> tab. Pairing happens automatically.
+          </p>
         </div>
       </div>
     </div>
@@ -1406,6 +1774,12 @@ export default defineComponent({
 .claude-oauth-error {
   color: var(--status-error, #f85149);
   margin-top: 0.5rem;
+}
+
+.claude-pairing-heading {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-default, var(--header-border));
 }
 
 .tab-content {

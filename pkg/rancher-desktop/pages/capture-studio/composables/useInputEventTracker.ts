@@ -14,6 +14,7 @@
  */
 
 import { ref, onUnmounted } from 'vue';
+
 import type { CaptureEvent } from './useRecorder';
 
 const { ipcRenderer } = require('electron');

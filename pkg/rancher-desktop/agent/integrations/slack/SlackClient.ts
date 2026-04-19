@@ -4,22 +4,23 @@
 // Handles connection lifecycle, graceful shutdown, reconnection
 
 import { App, LogLevel } from '@slack/bolt';
-import type { AllMiddlewareArgs, SlackEventMiddlewareArgs } from '@slack/bolt';
-import type { ChatPostMessageResponse, WebAPICallResult } from '@slack/web-api';
-import {
-  getWebSocketClientService,
-  type WebSocketMessage,
-} from '../../services/WebSocketClientService';
 
+import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
+import { GraphRegistry, nextMessageId } from '../../services/GraphRegistry';
 import {
   getIntegrationService,
   type IntegrationValue,
 } from '../../services/IntegrationService';
-import { GraphRegistry, nextMessageId } from '../../services/GraphRegistry';
-import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
-import type { AgentGraphState } from '../../nodes/Graph';
+import {
+  getWebSocketClientService,
+  type WebSocketMessage,
+} from '../../services/WebSocketClientService';
 import { withSuppressedConnectionStatus } from '../integrationFlags';
 import { incomingMessage } from './prompts/incoming_message';
+
+import type { AgentGraphState } from '../../nodes/Graph';
+import type { AllMiddlewareArgs, SlackEventMiddlewareArgs } from '@slack/bolt';
+import type { ChatPostMessageResponse, WebAPICallResult } from '@slack/web-api';
 
 const INTEGRATION_ID = 'slack';
 const TOKEN_PROPERTY = 'bot_token';

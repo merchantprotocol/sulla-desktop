@@ -5,9 +5,9 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import * as http from 'http';
 import * as net from 'net';
+import * as path from 'path';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';

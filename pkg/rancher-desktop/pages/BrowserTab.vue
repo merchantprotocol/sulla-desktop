@@ -18,7 +18,14 @@
           :disabled="!canGoBack"
           @click="goBack"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            class="h-4 w-4"
+          >
             <path d="M15 18l-6-6 6-6" />
           </svg>
         </button>
@@ -29,7 +36,14 @@
           :disabled="!canGoForward"
           @click="goForward"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            class="h-4 w-4"
+          >
             <path d="M9 18l6-6-6-6" />
           </svg>
         </button>
@@ -39,10 +53,26 @@
           :aria-label="loading ? 'Stop loading' : 'Reload'"
           @click="loading ? stop() : reload()"
         >
-          <svg v-if="loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4 loading-x">
+          <svg
+            v-if="loading"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            class="h-4 w-4 loading-x"
+          >
             <path d="M18 6L6 18M6 6l12 12" />
           </svg>
-          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+          <svg
+            v-else
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            class="h-4 w-4"
+          >
             <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
             <path d="M3 3v5h5" />
             <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
@@ -62,7 +92,7 @@
             placeholder="Search or enter URL"
             @focus="($event.target as HTMLInputElement).select()"
             @keydown.meta.l.prevent="focusAddressBar"
-          />
+          >
           <!-- Loading progress bar inside address bar -->
           <div
             v-if="loading"
@@ -84,7 +114,10 @@
 
     <!-- Browser mode: WebContentsView positioning container -->
     <template v-else-if="tabMode === 'browser'">
-      <div ref="viewContainerRef" class="view-container" />
+      <div
+        ref="viewContainerRef"
+        class="view-container"
+      />
     </template>
 
     <!-- Embedded page modes -->
@@ -181,7 +214,11 @@
     <!-- Chat mode: independent chat session per tab -->
     <template v-else-if="tabMode === 'chat'">
       <div class="flex-1 min-h-0 overflow-hidden">
-        <BrowserTabChat :tab-id="props.tabId" @set-mode="onSetMode" @navigate-url="onNavigateUrl" />
+        <BrowserTabChat
+          :tab-id="props.tabId"
+          @set-mode="onSetMode"
+          @navigate-url="onNavigateUrl"
+        />
       </div>
     </template>
 
@@ -195,7 +232,10 @@
     <!-- Secretary mode: continuous transcription with wake word -->
     <template v-else-if="tabMode === 'secretary'">
       <div class="flex-1 min-h-0 overflow-hidden">
-        <SecretaryMode :tab-id="props.tabId" @set-mode="onSetMode" />
+        <SecretaryMode
+          :tab-id="props.tabId"
+          @set-mode="onSetMode"
+        />
       </div>
     </template>
   </div>
@@ -204,30 +244,31 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
-import AgentHeader from './agent/AgentHeader.vue';
-import NewTabWelcome from './NewTabWelcome.vue';
-import AgentCalendar from './AgentCalendar.vue';
-import AgentIntegrations from './AgentIntegrations.vue';
-import AgentExtensions from './AgentExtensions.vue';
-import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
 import AccountEditor from './AccountEditor.vue';
+import AgentCalendar from './AgentCalendar.vue';
+import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
+import AgentExtensions from './AgentExtensions.vue';
 import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
-import PasswordGenerator from './PasswordGenerator.vue';
-import MyAccount from './MyAccount.vue';
+import AgentIntegrations from './AgentIntegrations.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
-import SecretaryMode from './SecretaryMode.vue';
 import HistoryTab from './HistoryTab.vue';
-import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
-import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
-import { useTheme } from '@pkg/composables/useTheme';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import MyAccount from './MyAccount.vue';
+import NewTabWelcome from './NewTabWelcome.vue';
+import PasswordGenerator from './PasswordGenerator.vue';
+import SecretaryMode from './SecretaryMode.vue';
+import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
-import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
+
 import {
   WebviewHostBridge,
   setActiveHostBridge,
   hostBridgeRegistry,
 } from '@pkg/agent/scripts/injected';
+import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { useTheme } from '@pkg/composables/useTheme';
+import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const MODE_TITLES: Record<BrowserTabMode, string> = {
   welcome:      'New Tab',
@@ -386,7 +427,7 @@ function getTabContext() {
 }
 
 /** Open the side panel for this tab and send a rich prompt payload to it. */
-async function openSidePanelChat(payload: { prompt: string; selectionText?: string; attachments?: Array<{ mediaType: string; base64: string }> }) {
+async function openSidePanelChat(payload: { prompt: string; selectionText?: string; attachments?: { mediaType: string; base64: string }[] }) {
   await ipcRenderer.invoke('chrome-api:sidePanel:open' as any, { tabId: props.tabId });
   await ipcRenderer.invoke('chrome-api:sidePanel:sendPrompt' as any, {
     prompt:        payload.prompt,
@@ -489,8 +530,8 @@ function createViewBridgeAdapter() {
   const ipcMessageListeners: ((event: unknown) => void)[] = [];
 
   return {
-    get src() { return addressBarUrl.value; },
-    getURL() { return addressBarUrl.value; },
+    get src() { return addressBarUrl.value },
+    getURL() { return addressBarUrl.value },
     async executeJavaScript(code: string): Promise<unknown> {
       try {
         return await ipcRenderer.invoke('browser-tab-view:exec-js', props.tabId, code);

@@ -15,7 +15,14 @@
         aria-label="Scroll tabs left"
         @click="scrollTabsLeft"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3 w-3">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          class="h-3 w-3"
+        >
           <path d="M15 18l-6-6 6-6" />
         </svg>
       </button>
@@ -58,7 +65,14 @@
             @click.prevent.stop="closeAnyTab(tab)"
             @pointerdown.stop
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-2.5 w-2.5 md:h-3 md:w-3">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              class="h-2.5 w-2.5 md:h-3 md:w-3"
+            >
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
           </button>
@@ -71,7 +85,14 @@
         aria-label="Scroll tabs right"
         @click="scrollTabsRight"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3 w-3">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          class="h-3 w-3"
+        >
           <path d="M9 18l6-6-6-6" />
         </svg>
       </button>
@@ -81,7 +102,14 @@
         aria-label="New tab"
         @click="openNewBrowserTab"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="h-3 w-3 md:h-3.5 md:w-3.5">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          class="h-3 w-3 md:h-3.5 md:w-3.5"
+        >
           <path d="M12 5v14M5 12h14" />
         </svg>
       </button>
@@ -233,9 +261,21 @@
             fill="currentColor"
             class="h-4 w-4 text-content"
           >
-            <circle cx="12" cy="5" r="2.5" />
-            <circle cx="12" cy="12" r="2.5" />
-            <circle cx="12" cy="19" r="2.5" />
+            <circle
+              cx="12"
+              cy="5"
+              r="2.5"
+            />
+            <circle
+              cx="12"
+              cy="12"
+              r="2.5"
+            />
+            <circle
+              cx="12"
+              cy="19"
+              r="2.5"
+            />
           </svg>
         </button>
       </div>
@@ -324,11 +364,21 @@
 </template>
 
 <script lang="ts">
-import { ref as vueRef } from 'vue';
-import { ipcRenderer as moduleIpcRenderer } from '@pkg/utils/ipcRenderer';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
+
+</script>
+
+<script setup lang="ts">
+import { useRoute, useRouter } from 'vue-router';
+
+import { getExtensionService } from '@pkg/agent';
+import { getAgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
+import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
+import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 // Module-level state: shared across all AgentHeader instances (one per keep-alive'd page)
-const knownAssetIds = vueRef(new Set<string>());
+const knownAssetIds = ref(new Set<string>());
 
 // Module-level IPC listeners — registered once regardless of how many
 // AgentHeader instances are mounted (each page has its own instance).
@@ -338,39 +388,29 @@ let _onTabCtxAction:  ((...args: any[]) => void) | null = null;
 let _onMoreAction:    ((...args: any[]) => void) | null = null;
 let _onMoreFetchHist: ((...args: any[]) => void) | null = null;
 
-function _tabCtxBridge(...args: any[]) { _onTabCtxAction?.(...args); }
-function _moreBridge(...args: any[])   { _onMoreAction?.(...args); }
-function _moreHistBridge(...args: any[]) { _onMoreFetchHist?.(...args); }
+function _tabCtxBridge(...args: any[]) { _onTabCtxAction?.(...args) }
+function _moreBridge(...args: any[]) { _onMoreAction?.(...args) }
+function _moreHistBridge(...args: any[]) { _onMoreFetchHist?.(...args) }
 
 function _mountIpcListeners() {
   if (_ipcMountCount++ === 0) {
-    moduleIpcRenderer.on('tab-context-menu:selected' as any, _tabCtxBridge as any);
-    moduleIpcRenderer.on('more-menu:selected' as any, _moreBridge as any);
-    moduleIpcRenderer.on('more-menu:fetch-history' as any, _moreHistBridge as any);
+    ipcRenderer.on('tab-context-menu:selected' as any, _tabCtxBridge as any);
+    ipcRenderer.on('more-menu:selected' as any, _moreBridge as any);
+    ipcRenderer.on('more-menu:fetch-history' as any, _moreHistBridge as any);
   }
 }
 
 function _unmountIpcListeners() {
   if (--_ipcMountCount <= 0) {
     _ipcMountCount = 0;
-    moduleIpcRenderer.removeListener('tab-context-menu:selected' as any, _tabCtxBridge as any);
-    moduleIpcRenderer.removeListener('more-menu:selected' as any, _moreBridge as any);
-    moduleIpcRenderer.removeListener('more-menu:fetch-history' as any, _moreHistBridge as any);
+    ipcRenderer.removeListener('tab-context-menu:selected' as any, _tabCtxBridge as any);
+    ipcRenderer.removeListener('more-menu:selected' as any, _moreBridge as any);
+    ipcRenderer.removeListener('more-menu:fetch-history' as any, _moreHistBridge as any);
     _onTabCtxAction = null;
     _onMoreAction = null;
     _onMoreFetchHist = null;
   }
 }
-</script>
-
-<script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
-import { getExtensionService } from '@pkg/agent';
-import { getAgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
-import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 interface HistoryRecord {
   id:             string;
@@ -523,8 +563,8 @@ onMounted(() => {
 
   // Point the module-level IPC bridges at THIS instance's handlers.
   // The last-mounted instance wins — which is the currently visible page.
-  _onTabCtxAction  = handleTabContextMenuAction;
-  _onMoreAction    = handleMoreMenuAction;
+  _onTabCtxAction = handleTabContextMenuAction;
+  _onMoreAction = handleMoreMenuAction;
   _onMoreFetchHist = handleMoreMenuFetchHistory;
   _mountIpcListeners();
 
@@ -570,11 +610,11 @@ function openMoreMenu(event: MouseEvent) {
   const themeId = themeClass.replace('theme-', '');
 
   ipcRenderer.send('more-menu:show' as any, {
-    screenX: rect.left + window.screenX,
-    screenY: rect.bottom + window.screenY,
-    buttonWidth: rect.width,
+    screenX:      rect.left + window.screenX,
+    screenY:      rect.bottom + window.screenY,
+    buttonWidth:  rect.width,
     buttonHeight: rect.height,
-    theme: themeId,
+    theme:        themeId,
   });
 }
 
@@ -585,37 +625,37 @@ function handleMoreMenuAction(
   extra: Record<string, unknown> | null,
 ): void {
   switch (action) {
-    case 'newTab':
-      openNewBrowserTab();
-      break;
-    case 'integrations':
-      openModeTab('integrations');
-      break;
-    case 'extensions':
-      openModeTab('extensions');
-      break;
-    case 'secretary':
-      openModeTab('secretary');
-      break;
-    case 'history-entry': {
-      if (!extra) break;
-      const entry = extra as unknown as HistoryRecord;
-      let tab;
+  case 'newTab':
+    openNewBrowserTab();
+    break;
+  case 'integrations':
+    openModeTab('integrations');
+    break;
+  case 'extensions':
+    openModeTab('extensions');
+    break;
+  case 'secretary':
+    openModeTab('secretary');
+    break;
+  case 'history-entry': {
+    if (!extra) break;
+    const entry = extra as unknown as HistoryRecord;
+    let tab;
 
-      if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
-        tab = createTab(entry.url);
-      } else {
-        tab = createTab('about:blank', { mode: 'chat' as BrowserTabMode });
-      }
-      router.push(`/Browser/${ tab.id }`);
-      break;
+    if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
+      tab = createTab(entry.url);
+    } else {
+      tab = createTab('about:blank', { mode: 'chat' as BrowserTabMode });
     }
-    case 'showAllHistory': {
-      const tab = createTab('about:blank', { mode: 'history' as BrowserTabMode });
+    router.push(`/Browser/${ tab.id }`);
+    break;
+  }
+  case 'showAllHistory': {
+    const tab = createTab('about:blank', { mode: 'history' as BrowserTabMode });
 
-      router.push(`/Browser/${ tab.id }`);
-      break;
-    }
+    router.push(`/Browser/${ tab.id }`);
+    break;
+  }
   }
 }
 
@@ -822,12 +862,12 @@ watch(
 // ── Phase 5: Pointer-event drag-and-drop ──
 
 interface DragState {
-  active: boolean;
-  originIndex: number;
+  active:       boolean;
+  originIndex:  number;
   currentIndex: number;
-  startX: number;
-  pointerId: number;
-  tabEl: HTMLElement;
+  startX:       number;
+  pointerId:    number;
+  tabEl:        HTMLElement;
 }
 
 const dragState = ref<DragState | null>(null);
@@ -839,7 +879,7 @@ function onPointerDown(e: PointerEvent, index: number) {
   // Don't start drag from close button
   if ((e.target as HTMLElement).closest('.tab-close')) return;
 
-  const tabEl = (e.currentTarget as HTMLElement);
+  const tabEl = e.currentTarget as HTMLElement;
   tabEl.setPointerCapture(e.pointerId);
 
   const state: DragState = {
@@ -963,95 +1003,95 @@ function handleTabContextMenuAction(
   action: string,
   tabData: Record<string, unknown>,
 ): void {
-  const tabId     = tabData.id as string;
+  const tabId = tabData.id as string;
   const browserId = tabData.browserId as string | null;
-  const tabRoute  = tabData.route as string;
+  const tabRoute = tabData.route as string;
   const closeable = tabData.closeable as boolean;
-  const index     = tabData.index as number;
+  const index = tabData.index as number;
 
   // Resolve the full HeaderTab from orderedTabs (it may have changed since the menu was opened)
   const headerTab = orderedTabs.value.find(t => t.id === tabId);
 
   switch (action) {
-    case 'close':
-      if (headerTab && closeable) closeAnyTab(headerTab);
-      break;
+  case 'close':
+    if (headerTab && closeable) closeAnyTab(headerTab);
+    break;
 
-    case 'closeOther':
-      for (const bt of [...browserTabs]) {
-        if (`browser-${ bt.id }` !== tabId) closeBrowserTab(bt.id);
-      }
-      break;
-
-    case 'closeRight': {
-      const tabs = orderedTabs.value;
-      for (let i = tabs.length - 1; i > index; i--) {
-        if (tabs[i].closeable) closeAnyTab(tabs[i]);
-      }
-      break;
+  case 'closeOther':
+    for (const bt of [...browserTabs]) {
+      if (`browser-${ bt.id }` !== tabId) closeBrowserTab(bt.id);
     }
+    break;
 
-    case 'duplicate':
-      if (browserId) {
-        // Look up the source tab's current URL so the duplicate loads the same page
-        const srcTab = browserTabs.find((t: { id: string }) => t.id === browserId);
-        const dupUrl = srcTab?.url && srcTab.url !== 'about:blank' ? srcTab.url : undefined;
-        const newTab = createTab(dupUrl);
-
-        router.push(`/Browser/${ newTab.id }`);
-      } else {
-        router.push(tabRoute);
-      }
-      break;
-
-    case 'moveStart': {
-      // Use tabId to find position in tabOrder (index from orderedTabs may differ)
-      const ids = [...tabOrder.value];
-      const orderIdx = ids.indexOf(tabId);
-
-      if (orderIdx <= 0) break;
-      const [moved] = ids.splice(orderIdx, 1);
-
-      ids.unshift(moved);
-      tabOrder.value = ids;
-      break;
+  case 'closeRight': {
+    const tabs = orderedTabs.value;
+    for (let i = tabs.length - 1; i > index; i--) {
+      if (tabs[i].closeable) closeAnyTab(tabs[i]);
     }
+    break;
+  }
 
-    case 'moveEnd': {
-      const ids = [...tabOrder.value];
-      const orderIdx = ids.indexOf(tabId);
+  case 'duplicate':
+    if (browserId) {
+      // Look up the source tab's current URL so the duplicate loads the same page
+      const srcTab = browserTabs.find((t: { id: string }) => t.id === browserId);
+      const dupUrl = srcTab?.url && srcTab.url !== 'about:blank' ? srcTab.url : undefined;
+      const newTab = createTab(dupUrl);
 
-      if (orderIdx < 0 || orderIdx >= ids.length - 1) break;
-      const [moved] = ids.splice(orderIdx, 1);
-
-      ids.push(moved);
-      tabOrder.value = ids;
-      break;
+      router.push(`/Browser/${ newTab.id }`);
+    } else {
+      router.push(tabRoute);
     }
+    break;
 
-    case 'reload':
-      if (browserId) {
-        router.push('/Chat').then(() => router.push(tabRoute));
-      }
-      break;
+  case 'moveStart': {
+    // Use tabId to find position in tabOrder (index from orderedTabs may differ)
+    const ids = [...tabOrder.value];
+    const orderIdx = ids.indexOf(tabId);
 
-    case 'copyUrl':
-      if (browserId) {
-        const bt = browserTabs.find((t: { id: string }) => t.id === browserId);
-        if (bt?.url) {
-          navigator.clipboard?.writeText(bt.url).catch(() => {
-            const ta = document.createElement('textarea');
-            ta.value = bt.url;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-          });
-        }
+    if (orderIdx <= 0) break;
+    const [moved] = ids.splice(orderIdx, 1);
+
+    ids.unshift(moved);
+    tabOrder.value = ids;
+    break;
+  }
+
+  case 'moveEnd': {
+    const ids = [...tabOrder.value];
+    const orderIdx = ids.indexOf(tabId);
+
+    if (orderIdx < 0 || orderIdx >= ids.length - 1) break;
+    const [moved] = ids.splice(orderIdx, 1);
+
+    ids.push(moved);
+    tabOrder.value = ids;
+    break;
+  }
+
+  case 'reload':
+    if (browserId) {
+      router.push('/Chat').then(() => router.push(tabRoute));
+    }
+    break;
+
+  case 'copyUrl':
+    if (browserId) {
+      const bt = browserTabs.find((t: { id: string }) => t.id === browserId);
+      if (bt?.url) {
+        navigator.clipboard?.writeText(bt.url).catch(() => {
+          const ta = document.createElement('textarea');
+          ta.value = bt.url;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        });
       }
-      break;
+    }
+    break;
   }
 }
 </script>

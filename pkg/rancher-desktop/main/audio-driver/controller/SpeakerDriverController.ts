@@ -22,6 +22,7 @@
  */
 
 import { type WebContents } from 'electron';
+
 import * as lifecycle from './lifecycle';
 import * as audio from '../model/audio';
 import { log } from '../model/logger';
@@ -48,7 +49,7 @@ export class SpeakerDriverController {
 
   // ── Level/rebuild callbacks (set by init.ts for broadcasting) ─
 
-  private _onLevel: ((data: any) => void) | null = null;
+  private _onLevel:   ((data: any) => void) | null = null;
   private _onRebuild: ((event: any) => void) | null = null;
 
   // ── Constructor ───────────────────────────────────────────────
@@ -71,7 +72,7 @@ export class SpeakerDriverController {
    * init.ts uses these to broadcast speaker data to all renderers.
    */
   setCallbacks(opts: {
-    onLevel: (data: any) => void;
+    onLevel:   (data: any) => void;
     onRebuild: (event: any) => void;
   }): void {
     this._onLevel = opts.onLevel;
@@ -160,9 +161,9 @@ export class SpeakerDriverController {
 
   // ── State ─────────────────────────────────────────────────────
 
-  get running(): boolean { return this._running; }
-  get speakerName(): string { return this._speakerName; }
-  get holders(): string[] { return [...this._holders.keys()]; }
+  get running(): boolean { return this._running }
+  get speakerName(): string { return this._speakerName }
+  get holders(): string[] { return [...this._holders.keys()] }
 
   isHolder(serviceId: string): boolean {
     return this._holders.has(serviceId);
@@ -170,10 +171,10 @@ export class SpeakerDriverController {
 
   // ── Volume control (delegates to lifecycle) ───────────────────
 
-  async volumeUp() { return lifecycle.speakerVolumeUp(); }
-  async volumeDown() { return lifecycle.speakerVolumeDown(); }
-  async muteToggle() { return lifecycle.speakerMuteToggle(); }
-  async volumeGet() { return lifecycle.speakerVolumeGet(); }
+  async volumeUp() { return lifecycle.speakerVolumeUp() }
+  async volumeDown() { return lifecycle.speakerVolumeDown() }
+  async muteToggle() { return lifecycle.speakerMuteToggle() }
+  async volumeGet() { return lifecycle.speakerVolumeGet() }
 
   setOnVolumeChanged(cb: (state: any) => void): void {
     lifecycle.setOnVolumeChanged(cb);
@@ -220,5 +221,4 @@ export class SpeakerDriverController {
       this._destroyListeners.delete(serviceId);
     }
   }
-
 }

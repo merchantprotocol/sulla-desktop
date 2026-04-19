@@ -61,7 +61,7 @@ export class Tray {
         openMain();
       },
     },
-{
+    {
       id:    'editor',
       label: 'Open Agent Workbench',
       icon:  path.join(paths.resources, 'icons', 'book-open-16.png'),

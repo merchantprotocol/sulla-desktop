@@ -1,6 +1,7 @@
 // PostgresClient.ts — upgraded to pg.Pool + proper shutdown
 
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
+
 import { SullaSettingsModel } from './models/SullaSettingsModel';
 
 export class PostgresClient {
@@ -137,8 +138,12 @@ export class PostgresClient {
 
       try {
         probe = new Pool({
-          host: '127.0.0.1', port: 30116, user: 'sulla',
-          password, database: 'sulla', max: 1,
+          host:                    '127.0.0.1',
+          port:                    30116,
+          user:                    'sulla',
+          password,
+          database:                'sulla',
+          max:                     1,
           connectionTimeoutMillis: 2000,
         });
         await probe.query('SELECT 1');
@@ -152,7 +157,7 @@ export class PostgresClient {
         console.log(`[PostgresClient] waitForReady attempt ${ i }/${ maxAttempts } failed, retrying...`);
         await new Promise(r => setTimeout(r, intervalMs));
       } finally {
-        try { await probe?.end(); } catch { /* ignore */ }
+        try { await probe?.end() } catch { /* ignore */ }
       }
     }
   }

@@ -2,7 +2,6 @@
  * This is the main entry point for Vue.
  */
 // hoping this is the absolute earliest we can run in the renderer context
-import { initiateWindowContext } from '@pkg/sulla';
 
 import Cookies from 'cookie-universal';
 import { createApp } from 'vue';
@@ -10,6 +9,8 @@ import { createApp } from 'vue';
 import usePlugins from './plugins';
 import router from './router';
 import store from './store';
+
+import { initiateWindowContext } from '@pkg/sulla';
 await initiateWindowContext();
 
 // This does just the Vuex part of cookie-universal-nuxt, which is all we need.

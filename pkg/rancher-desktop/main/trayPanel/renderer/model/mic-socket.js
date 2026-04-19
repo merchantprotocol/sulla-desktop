@@ -9,7 +9,7 @@
  *   N bytes            — WebM/Opus audio data
  */
 
-const net = require("net");
+const net = require('net');
 const log = window.audioDriver.log;
 
 let socket = null;
@@ -34,12 +34,12 @@ function _connect() {
 
   socket = net.createConnection(socketPath);
 
-  socket.on("connect", () => {
+  socket.on('connect', () => {
     connected = true;
-    log.info("MicSocket", "Connected", { path: socketPath });
+    log.info('MicSocket', 'Connected', { path: socketPath });
   });
 
-  socket.on("close", () => {
+  socket.on('close', () => {
     connected = false;
     socket = null;
     // Reconnect if we still have a path (intentional disconnect clears it)
@@ -48,8 +48,8 @@ function _connect() {
     }
   });
 
-  socket.on("error", (err) => {
-    log.warn("MicSocket", "Connection error", { error: err.message });
+  socket.on('error', (err) => {
+    log.warn('MicSocket', 'Connection error', { error: err.message });
   });
 }
 
@@ -62,7 +62,7 @@ let sendCount = 0;
 
 function send(buffer) {
   if (!socket || !connected) {
-    log.debug("MicSocket", "Send skipped — not connected", { hasSocket: !!socket, connected });
+    log.debug('MicSocket', 'Send skipped — not connected', { hasSocket: !!socket, connected });
     return;
   }
 
@@ -75,7 +75,7 @@ function send(buffer) {
 
   sendCount++;
   if (sendCount <= 3 || sendCount % 100 === 0) {
-    log.debug("MicSocket", "Chunk sent", { bytes: data.length, total: sendCount });
+    log.debug('MicSocket', 'Chunk sent', { bytes: data.length, total: sendCount });
   }
 }
 
@@ -97,7 +97,7 @@ function disconnect() {
     socket = null;
   }
 
-  log.info("MicSocket", "Disconnected");
+  log.info('MicSocket', 'Disconnected');
 }
 
 function isConnected() {

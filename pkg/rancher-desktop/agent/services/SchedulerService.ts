@@ -3,6 +3,7 @@
 // API unchanged for backward compatibility
 
 import schedule from 'node-schedule';
+
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { CalendarEvent } from '../database/models/CalendarEvent'; // new model
 import { eventPrompt } from '../prompts/event';

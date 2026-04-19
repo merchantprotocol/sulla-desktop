@@ -59,7 +59,6 @@ function getIpc(): any {
   if (!ipc) {
     // Dynamic import to avoid issues in non-Electron contexts (tests, SSR)
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { ipcRenderer } = require('electron');
       ipc = ipcRenderer;
     } catch {
@@ -79,7 +78,6 @@ function getIpc(): any {
 
 type Listener<T = any> = (data: T) => void;
 
-
 // ── Singleton ───────────────────────────────────────────────────
 
 let instance: AudioDriverClient | null = null;
@@ -98,8 +96,8 @@ export class AudioDriverClient {
 
   private _log(action: string, data?: Record<string, any>): void {
     const msg = data
-      ? `${AudioDriverClient.TAG} ${action} ${JSON.stringify(data)}`
-      : `${AudioDriverClient.TAG} ${action}`;
+      ? `${ AudioDriverClient.TAG } ${ action } ${ JSON.stringify(data) }`
+      : `${ AudioDriverClient.TAG } ${ action }`;
     console.log(msg);
     // Also send to main process logger for persistent log files
     try {
@@ -109,8 +107,8 @@ export class AudioDriverClient {
 
   private _warn(action: string, data?: Record<string, any>): void {
     const msg = data
-      ? `${AudioDriverClient.TAG} ⚠ ${action} ${JSON.stringify(data)}`
-      : `${AudioDriverClient.TAG} ⚠ ${action}`;
+      ? `${ AudioDriverClient.TAG } ⚠ ${ action } ${ JSON.stringify(data) }`
+      : `${ AudioDriverClient.TAG } ⚠ ${ action }`;
     console.warn(msg);
     try {
       getIpc().send('audio-driver:log', 'warn', 'AudioDriverClient', action, data);
@@ -134,8 +132,7 @@ export class AudioDriverClient {
 
   // ── IPC handler references (for cleanup) ────────────────────
 
-  private _ipcHandlers: Array<{ channel: string; handler: (...args: any[]) => void }> = [];
-
+  private _ipcHandlers: { channel: string; handler: (...args: any[]) => void }[] = [];
 
   // ── Constructor (private — use getInstance) ─────────────────
 
@@ -158,35 +155,34 @@ export class AudioDriverClient {
   // ── Read-only state properties ──────────────────────────────
 
   /** Whether the mic capture pipeline is active. */
-  get micRunning(): boolean { return this._micRunning; }
+  get micRunning(): boolean { return this._micRunning }
 
   /** Whether the speaker capture pipeline is active (BlackHole mirror). */
-  get speakerRunning(): boolean { return this._speakerRunning; }
+  get speakerRunning(): boolean { return this._speakerRunning }
 
   /** Mic RMS level (0–1). Updated at ~60 fps when mic is running. */
-  get micLevel(): number { return this._micLevel; }
+  get micLevel(): number { return this._micLevel }
 
   /** Mic level in dB. */
-  get micDb(): number { return AudioDriverClient.levelToDb(this._micLevel); }
+  get micDb(): number { return AudioDriverClient.levelToDb(this._micLevel) }
 
   /** Speaker RMS level (0–1). Updated at capture helper's native rate. */
-  get speakerLevel(): number { return this._speakerLevel; }
+  get speakerLevel(): number { return this._speakerLevel }
 
   /** Speaker level in dB. */
-  get speakerDb(): number { return AudioDriverClient.levelToDb(this._speakerLevel); }
+  get speakerDb(): number { return AudioDriverClient.levelToDb(this._speakerLevel) }
 
   /** Whether the VAD currently classifies the audio as speech. */
-  get speaking(): boolean { return this._speaking; }
+  get speaking(): boolean { return this._speaking }
 
   /** Whether fan/mechanical noise is detected. */
-  get fanNoise(): boolean { return this._fanNoise; }
+  get fanNoise(): boolean { return this._fanNoise }
 
   /** Adaptive noise floor RMS. */
-  get noiseFloor(): number { return this._noiseFloor; }
+  get noiseFloor(): number { return this._noiseFloor }
 
   /** Detailed VAD analysis metrics: ZCR, variance, pitch, centroid. */
-  get vadDetails(): VadDetails { return { ...this._vadDetails }; }
-
+  get vadDetails(): VadDetails { return { ...this._vadDetails } }
 
   // ── Microphone Lifecycle ────────────────────────────────────
 
@@ -384,7 +380,6 @@ export class AudioDriverClient {
     return result;
   }
 
-
   // ── Socket Paths ────────────────────────────────────────────
 
   /** Get the Unix domain socket path for mic audio (WebM/Opus chunks). */
@@ -522,7 +517,7 @@ export class AudioDriverClient {
     });
 
     this._addIpcListener(r, 'gateway-transcript', (_e: any, msg: any) => {
-      if (!msg || !msg.text) return;
+      if (!msg?.text) return;
       const entry: TranscriptEntry = {
         speaker:   msg.channel_label || msg.speaker || 'Unknown',
         text:      msg.text,
@@ -552,7 +547,7 @@ export class AudioDriverClient {
         try {
           handler(data);
         } catch (err) {
-          console.error(`[AudioDriverClient] Error in ${event} handler:`, err);
+          console.error(`[AudioDriverClient] Error in ${ event } handler:`, err);
         }
       }
     }

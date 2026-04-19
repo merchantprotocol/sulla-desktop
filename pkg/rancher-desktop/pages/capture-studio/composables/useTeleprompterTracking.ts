@@ -37,7 +37,7 @@ export function useTeleprompterTracking(
     }
   }
 
-  async function startTracking(words: string[], startIndex: number = 0) {
+  async function startTracking(words: string[], startIndex = 0) {
     if (isTracking.value) {
       await stopTracking();
     }
@@ -45,7 +45,7 @@ export function useTeleprompterTracking(
     // Send script to the main process (spread to plain array — Vue reactive
     // proxies can't be serialized through Electron structured clone)
     await ipcRenderer.invoke('teleprompter-tracking:set-script', {
-      words: Array.isArray(words) ? [...words] : words,
+      words:        Array.isArray(words) ? [...words] : words,
       currentIndex: startIndex,
     });
 

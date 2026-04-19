@@ -182,13 +182,15 @@
 
 <script setup lang="ts">
 import { ref, inject, onMounted, computed } from 'vue';
-import type { Ref } from 'vue';
-import type { RecursivePartial } from '@pkg/utils/typeUtils';
-import type { Settings } from '@pkg/config/settings';
-import RdFieldset from '@pkg/components/form/RdFieldset.vue';
-import { integrations, type Integration } from '@pkg/agent/integrations/catalog';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { integrations, type Integration } from '@pkg/agent/integrations/catalog';
 import { getSelectBoxProvider } from '@pkg/agent/integrations/select_box/registry';
+import RdFieldset from '@pkg/components/form/RdFieldset.vue';
+import type { Settings } from '@pkg/config/settings';
+import type { RecursivePartial } from '@pkg/utils/typeUtils';
+
+import type { Ref } from 'vue';
 
 const settings = inject<Ref<Settings>>('settings')!;
 const commitChanges = inject<(settings: RecursivePartial<Settings>) => Promise<void>>('commitChanges')!;

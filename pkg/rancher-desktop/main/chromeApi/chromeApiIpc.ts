@@ -13,8 +13,9 @@
 
 import Electron from 'electron';
 
-import Logging from '@pkg/utils/logging';
 import { getChromeApi } from './ChromeApiService';
+
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
 const { ipcMain } = Electron;

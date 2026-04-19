@@ -10,9 +10,10 @@
 
 import { ref, onUnmounted, type Ref } from 'vue';
 
-const net = require('net');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
+
 const { ipcRenderer } = require('electron');
 
 const SAMPLE_RATE = 16000;

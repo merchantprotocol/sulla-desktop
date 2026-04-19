@@ -432,9 +432,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
-import WorkflowNodePalette from './workflow/WorkflowNodePalette.vue';
 import { ipcRenderer } from 'electron';
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+
+import WorkflowNodePalette from './workflow/WorkflowNodePalette.vue';
+
 import type { WorkflowListItem, WorkflowStatus } from './workflow/types';
 
 const props = defineProps<{

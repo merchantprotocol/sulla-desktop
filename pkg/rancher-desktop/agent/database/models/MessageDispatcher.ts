@@ -13,12 +13,12 @@
  * not on the full AgentPersonaService.
  */
 
-import type { Ref } from 'vue';
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
-import type { ChatMessage } from '../registry/AgentPersonaRegistry';
-import type { AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import { formatToolCard, formatToolResult } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
+
+import type { ChatMessage, AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
+import type { Ref } from 'vue';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -147,12 +147,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   let finalContent = content;
 
   if (kind === 'speak') {
-    console.log(`[MessageDispatcher] SPEAK received → channel="${agentId}", thread="${msgThreadId}", content="${content.slice(0, 80)}"`);
+    console.log(`[MessageDispatcher] SPEAK received → channel="${ agentId }", thread="${ msgThreadId }", content="${ content.slice(0, 80) }"`);
   }
 
   // Auto-detect HTML
   if (!kind || kind === 'text' || kind === 'progress') {
-    const htmlMatch = finalContent.match(/^\s*<html>([\s\S]*)<\/html>\s*$/i);
+    const htmlMatch = /^\s*<html>([\s\S]*)<\/html>\s*$/i.exec(finalContent);
     if (htmlMatch) {
       kind = 'html';
       finalContent = htmlMatch[1].trim();
@@ -175,7 +175,11 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const isTooShort = trimmed.length > 0 && trimmed.length <= 3 && !/\w/.test(trimmed);
   if (looksLikeInternalData || isTooShort) {
     console.warn(`⚠️ [MessageDispatcher] SUSPICIOUS assistant message ALLOWED through`, {
-      msgType: msg.type, channel: agentId, role, kind, contentLength: trimmed.length,
+      msgType:        msg.type,
+      channel:        agentId,
+      role,
+      kind,
+      contentLength:  trimmed.length,
       contentPreview: trimmed.substring(0, 500),
     });
   }
@@ -201,8 +205,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         }
       }
       ctx.messages.push({
-        id: `${ Date.now() }_ws_streaming`, channelId: agentId,
-        threadId: msgThreadId, role, kind, content: finalContent,
+        id:        `${ Date.now() }_ws_streaming`,
+        channelId: agentId,
+        threadId:  msgThreadId,
+        role,
+        kind,
+        content:   finalContent,
       });
     }
     return;
@@ -235,8 +243,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       ctx.messages[existingIdx] = { ...existing, content: existing.content + '\n\n' + finalContent };
     } else {
       ctx.messages.push({
-        id: `${ Date.now() }_ws_thinking`, channelId: agentId,
-        threadId: msgThreadId, role, kind: 'thinking', content: finalContent,
+        id:        `${ Date.now() }_ws_thinking`,
+        channelId: agentId,
+        threadId:  msgThreadId,
+        role,
+        kind:      'thinking',
+        content:   finalContent,
       });
     }
     return;
@@ -266,8 +278,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   }
 
   const message: ChatMessage = {
-    id: `${ Date.now() }_ws_${ msg.type }`, channelId: agentId,
-    threadId: msgThreadId, role, kind, content: finalContent,
+    id:        `${ Date.now() }_ws_${ msg.type }`,
+    channelId: agentId,
+    threadId:  msgThreadId,
+    role,
+    kind,
+    content:   finalContent,
   };
 
   if (kind === 'channel_message') {
@@ -278,7 +294,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   }
 
   if (kind !== 'speak' && finalContent.includes('<speak>')) {
-    console.warn(`[MessageDispatcher] ⚠️ LEAKED <speak> tags in non-speak message! kind=${kind}`);
+    console.warn(`[MessageDispatcher] ⚠️ LEAKED <speak> tags in non-speak message! kind=${ kind }`);
   }
 
   console.log(`[MessageDispatcher] messages.push (structured ${ msg.type })`, {
@@ -300,10 +316,14 @@ function handleSpeakDispatch(ctx: DispatchContext, agentId: string, msgThreadId:
 
   const pipelineSequence = typeof data?.pipelineSequence === 'number' ? data.pipelineSequence : null;
 
-  console.log(`[MessageDispatcher] speak_dispatch → "${text.slice(0, 80)}" seq=${pipelineSequence}`);
+  console.log(`[MessageDispatcher] speak_dispatch → "${ text.slice(0, 80) }" seq=${ pipelineSequence }`);
   ctx.messages.push({
-    id: `${ Date.now() }_speak`, channelId: agentId,
-    threadId: msgThreadId, role: 'assistant', kind: 'speak', content: text,
+    id:        `${ Date.now() }_speak`,
+    channelId: agentId,
+    threadId:  msgThreadId,
+    role:      'assistant',
+    kind:      'speak',
+    content:   text,
   });
 
   for (const listener of ctx.speakListeners) {
@@ -441,8 +461,12 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
         ctx.messages[existingIdx] = { ...existing, content: existing.content + '\n\n' + thinkingText };
       } else {
         ctx.messages.push({
-          id: `${ Date.now() }_ws_thinking`, channelId: agentId,
-          threadId: msgThreadId, role: 'assistant', kind: 'thinking', content: thinkingText,
+          id:        `${ Date.now() }_ws_thinking`,
+          channelId: agentId,
+          threadId:  msgThreadId,
+          role:      'assistant',
+          kind:      'thinking',
+          content:   thinkingText,
         });
       }
       return;
@@ -453,12 +477,22 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       const description = typeof args?.description === 'string' ? args.description : undefined;
       const display = formatToolCard(toolName, args);
       const message: ChatMessage = {
-        id: messageId, channelId: agentId, threadId: msgThreadId,
-        role: 'assistant', kind: 'tool', content: '',
-        toolCard: {
-          toolRunId, toolName, description, status: 'running', args,
-          label: display.label, summary: display.summary,
-          input: display.input, outputFormat: display.outputFormat,
+        id:        messageId,
+        channelId: agentId,
+        threadId:  msgThreadId,
+        role:      'assistant',
+        kind:      'tool',
+        content:   '',
+        toolCard:  {
+          toolRunId,
+          toolName,
+          description,
+          status:       'running',
+          args,
+          label:        display.label,
+          summary:      display.summary,
+          input:        display.input,
+          outputFormat: display.outputFormat,
         },
       };
       ctx.messages.push(message);
@@ -510,12 +544,16 @@ function handleChatImage(ctx: DispatchContext, agentId: string, msgThreadId: str
 
   const roleRaw = data?.role !== undefined ? String(data.role) : 'assistant';
   const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error')
-    ? roleRaw : 'assistant';
+    ? roleRaw
+    : 'assistant';
 
   ctx.messages.push({
-    id: `${ Date.now() }_ws_chat_image`, channelId: agentId,
-    threadId: msgThreadId, role, content: '',
-    image: { dataUrl: src, alt, path },
+    id:        `${ Date.now() }_ws_chat_image`,
+    channelId: agentId,
+    threadId:  msgThreadId,
+    role,
+    content:   '',
+    image:     { dataUrl: src, alt, path },
   });
   console.log('[MessageDispatcher] Chat image stored. src:', src.substring(0, 80));
 
@@ -575,7 +613,7 @@ function handleThreadRestored(ctx: DispatchContext, agentId: string, msgThreadId
   if (restoredMessages.length > 0 && ctx.messages.length === 0) {
     console.log(`[MessageDispatcher] Restoring ${ restoredMessages.length } messages from thread ${ data.threadId }`);
     for (const m of restoredMessages) {
-      if ((m.metadata as any)?._conversationSummary) continue;
+      if ((m.metadata)?._conversationSummary) continue;
       const role = m.role === 'user' ? 'user' : 'assistant';
       const content = typeof m.content === 'string' ? m.content : '';
       if (!content.trim()) continue;
@@ -619,11 +657,19 @@ function handleWorkflowExecutionEvent(ctx: DispatchContext, agentId: string, msg
 
   if (eventType === 'workflow_started') {
     ctx.messages.push({
-      id: `${ Date.now() }_wf_started`, channelId: agentId,
-      threadId: msgThreadId, role: 'assistant', kind: 'workflow_node', content: '',
+      id:           `${ Date.now() }_wf_started`,
+      channelId:    agentId,
+      threadId:     msgThreadId,
+      role:         'assistant',
+      kind:         'workflow_node',
+      content:      '',
       workflowNode: {
-        workflowRunId, nodeId: '', nodeLabel: 'Workflow Started',
-        status: 'running', nodeIndex: 0, totalNodes,
+        workflowRunId,
+        nodeId:    '',
+        nodeLabel: 'Workflow Started',
+        status:    'running',
+        nodeIndex: 0,
+        totalNodes,
       },
     });
     return;
@@ -631,12 +677,20 @@ function handleWorkflowExecutionEvent(ctx: DispatchContext, agentId: string, msg
 
   if (eventType === 'node_started') {
     ctx.messages.push({
-      id: `${ Date.now() }_wf_node_${ nodeId }`, channelId: agentId,
-      threadId: msgThreadId, role: 'assistant', kind: 'workflow_node', content: '',
+      id:           `${ Date.now() }_wf_node_${ nodeId }`,
+      channelId:    agentId,
+      threadId:     msgThreadId,
+      role:         'assistant',
+      kind:         'workflow_node',
+      content:      '',
       workflowNode: {
-        workflowRunId, nodeId, nodeLabel, status: 'running',
+        workflowRunId,
+        nodeId,
+        nodeLabel,
+        status: 'running',
         prompt: typeof data.prompt === 'string' ? data.prompt : undefined,
-        nodeIndex, totalNodes,
+        nodeIndex,
+        totalNodes,
       },
     });
     return;
@@ -647,11 +701,13 @@ function handleWorkflowExecutionEvent(ctx: DispatchContext, agentId: string, msg
       m => m.workflowNode?.nodeId === nodeId && m.workflowNode?.status === 'running',
     );
     if (existing?.workflowNode) {
-      existing.workflowNode.status = eventType === 'node_completed' ? 'completed'
+      existing.workflowNode.status = eventType === 'node_completed'
+        ? 'completed'
         : eventType === 'node_failed' ? 'failed' : 'waiting';
       if (data.output !== undefined) {
         existing.workflowNode.output = typeof data.output === 'string'
-          ? data.output : JSON.stringify(data.output);
+          ? data.output
+          : JSON.stringify(data.output);
       }
       if (data.error) existing.workflowNode.error = String(data.error);
       if (totalNodes > 0) existing.workflowNode.totalNodes = totalNodes;
@@ -691,11 +747,18 @@ function handleWorkflowExecutionEvent(ctx: DispatchContext, agentId: string, msg
       existing.subAgentActivity.latestThinking = thinkingContent;
     } else {
       ctx.messages.push({
-        id: `${ Date.now() }_sub_agent_${ nodeId }`, channelId: agentId,
-        threadId: msgThreadId, role: 'assistant', kind: 'sub_agent_activity', content: '',
+        id:               `${ Date.now() }_sub_agent_${ nodeId }`,
+        channelId:        agentId,
+        threadId:         msgThreadId,
+        role:             'assistant',
+        kind:             'sub_agent_activity',
+        content:          '',
         subAgentActivity: {
-          nodeId, nodeLabel: nodeLabel || nodeId, status: 'running',
-          thinkingLines: [thinkingContent], latestThinking: thinkingContent,
+          nodeId,
+          nodeLabel:      nodeLabel || nodeId,
+          status:         'running',
+          thinkingLines:  [thinkingContent],
+          latestThinking: thinkingContent,
         },
       });
     }
@@ -726,11 +789,11 @@ function handleWorkflowExecutionEvent(ctx: DispatchContext, agentId: string, msg
       existing.subAgentActivity.status = eventType === 'sub_agent_completed' ? 'completed' : 'failed';
       if (data.output !== undefined) {
         existing.subAgentActivity.output = typeof data.output === 'string'
-          ? data.output : JSON.stringify(data.output);
+          ? data.output
+          : JSON.stringify(data.output);
       }
       if (data.error) existing.subAgentActivity.error = String(data.error);
     }
-    return;
   }
 
   // edge_activated and other sub-events are visual-only (canvas), skip chat
@@ -744,62 +807,102 @@ function handleNoop(): void { /* protocol-level — nothing to do */ }
 
 const TOOL_VERB_MAP: Record<string, string> = {
   // Execution
-  exec: 'Running', exec_command: 'Running', shell: 'Running', bash: 'Running', run_command: 'Running',
+  exec:                        'Running',
+  exec_command:                'Running',
+  shell:                       'Running',
+  bash:                        'Running',
+  run_command:                 'Running',
   // Search
-  file_search: 'Searching',
+  file_search:                 'Searching',
   // Git / GitHub
-  git_status: 'Checking status', git_log: 'Reviewing history', git_diff: 'Comparing changes',
-  git_add: 'Staging', git_commit: 'Committing', git_push: 'Pushing', git_pull: 'Pulling',
-  git_branch: 'Branching', git_checkout: 'Switching branch', git_stash: 'Stashing',
-  git_blame: 'Blaming', git_conflicts: 'Resolving conflicts',
-  github_create_pr: 'Creating PR', github_create_issue: 'Creating issue',
-  github_get_issue: 'Fetching issue', github_get_issues: 'Fetching issues',
-  github_read_file: 'Reading', github_create_file: 'Creating', github_update_file: 'Updating',
-  github_comment_on_issue: 'Commenting',
+  git_status:                  'Checking status',
+  git_log:                     'Reviewing history',
+  git_diff:                    'Comparing changes',
+  git_add:                     'Staging',
+  git_commit:                  'Committing',
+  git_push:                    'Pushing',
+  git_pull:                    'Pulling',
+  git_branch:                  'Branching',
+  git_checkout:                'Switching branch',
+  git_stash:                   'Stashing',
+  git_blame:                   'Blaming',
+  git_conflicts:               'Resolving conflicts',
+  github_create_pr:            'Creating PR',
+  github_create_issue:         'Creating issue',
+  github_get_issue:            'Fetching issue',
+  github_get_issues:           'Fetching issues',
+  github_read_file:            'Reading',
+  github_create_file:          'Creating',
+  github_update_file:          'Updating',
+  github_comment_on_issue:     'Commenting',
   // Docker
-  docker_build: 'Building image', docker_run: 'Running container', docker_exec: 'Executing',
-  docker_ps: 'Listing containers', docker_logs: 'Reading logs',
-  docker_pull: 'Pulling image', docker_stop: 'Stopping container', docker_rm: 'Removing container',
-  docker_images: 'Listing images',
+  docker_build:                'Building image',
+  docker_run:                  'Running container',
+  docker_exec:                 'Executing',
+  docker_ps:                   'Listing containers',
+  docker_logs:                 'Reading logs',
+  docker_pull:                 'Pulling image',
+  docker_stop:                 'Stopping container',
+  docker_rm:                   'Removing container',
+  docker_images:               'Listing images',
   // Kubernetes
-  kubectl_apply: 'Applying manifest', kubectl_delete: 'Deleting resource', kubectl_describe: 'Describing resource',
+  kubectl_apply:               'Applying manifest',
+  kubectl_delete:              'Deleting resource',
+  kubectl_describe:            'Describing resource',
   // Database
-  pg_query: 'Querying', pg_queryall: 'Querying', pg_queryone: 'Querying',
-  pg_execute: 'Executing SQL', pg_count: 'Counting', pg_transaction: 'Running transaction',
+  pg_query:                    'Querying',
+  pg_queryall:                 'Querying',
+  pg_queryone:                 'Querying',
+  pg_execute:                  'Executing SQL',
+  pg_count:                    'Counting',
+  pg_transaction:              'Running transaction',
   // Redis
-  redis_get: 'Reading cache', redis_set: 'Writing cache', redis_del: 'Clearing cache',
+  redis_get:                   'Reading cache',
+  redis_set:                   'Writing cache',
+  redis_del:                   'Clearing cache',
   // N8n / Workflows
-  execute_workflow: 'Running workflow', validate_workflow: 'Validating workflow',
-  patch_workflow: 'Patching workflow', diagnose_webhook: 'Diagnosing webhook',
-  restart_n8n_container: 'Restarting n8n',
+  execute_workflow:            'Running workflow',
+  validate_workflow:           'Validating workflow',
+  patch_workflow:              'Patching workflow',
+  diagnose_webhook:            'Diagnosing webhook',
+  restart_n8n_container:       'Restarting n8n',
   // Playwright / Browser
-  click_element: 'Clicking', get_page_snapshot: 'Capturing page', get_page_text: 'Reading page',
-  set_field: 'Filling form', scroll_to_element: 'Scrolling',
+  click_element:               'Clicking',
+  get_page_snapshot:           'Capturing page',
+  get_page_text:               'Reading page',
+  set_field:                   'Filling form',
+  scroll_to_element:           'Scrolling',
   // Slack
-  slack_send_message: 'Messaging', slack_search_users: 'Searching users',
+  slack_send_message:          'Messaging',
+  slack_search_users:          'Searching users',
   // Calendar
-  calendar_list: 'Checking calendar', calendar_create: 'Creating event', calendar_list_upcoming: 'Checking schedule',
+  calendar_list:               'Checking calendar',
+  calendar_create:             'Creating event',
+  calendar_list_upcoming:      'Checking schedule',
   // Memory
-  add_observational_memory: 'Remembering', remove_observational_memory: 'Forgetting',
+  add_observational_memory:    'Remembering',
+  remove_observational_memory: 'Forgetting',
   // Skills / Projects
-  create_skill: 'Creating skill',
+  create_skill:                'Creating skill',
   // Lima
-  lima_shell: 'Running shell', lima_start: 'Starting VM', lima_stop: 'Stopping VM',
+  lima_shell:                  'Running shell',
+  lima_start:                  'Starting VM',
+  lima_stop:                   'Stopping VM',
   // Channel
-  send_notification_to_human: 'Notifying',
+  send_notification_to_human:  'Notifying',
 };
 
 function toolNameToVerb(toolName: string): string {
   if (TOOL_VERB_MAP[toolName]) return TOOL_VERB_MAP[toolName];
 
   // Prefix-based fallbacks
-  if (toolName.startsWith('fs_'))      return 'Working with files';
-  if (toolName.startsWith('git'))      return 'Using git';
-  if (toolName.startsWith('docker_'))  return 'Using Docker';
+  if (toolName.startsWith('fs_')) return 'Working with files';
+  if (toolName.startsWith('git')) return 'Using git';
+  if (toolName.startsWith('docker_')) return 'Using Docker';
   if (toolName.startsWith('kubectl_')) return 'Using kubectl';
-  if (toolName.startsWith('pg_'))      return 'Querying database';
-  if (toolName.startsWith('redis_'))   return 'Using cache';
-  if (toolName.startsWith('slack_'))   return 'Using Slack';
+  if (toolName.startsWith('pg_')) return 'Querying database';
+  if (toolName.startsWith('redis_')) return 'Using cache';
+  if (toolName.startsWith('slack_')) return 'Using Slack';
   if (toolName.startsWith('n8n_') || toolName.includes('workflow')) return 'Working on workflow';
 
   return 'Working';
@@ -814,30 +917,30 @@ export function createMessageDispatcher(): MessageDispatcher {
   const dispatcher = new MessageDispatcher();
 
   // Chat messages (4 aliases)
-  dispatcher.register('chat_message',     handleChatMessage);
+  dispatcher.register('chat_message', handleChatMessage);
   dispatcher.register('assistant_message', handleChatMessage);
-  dispatcher.register('user_message',     handleChatMessage);
-  dispatcher.register('system_message',   handleChatMessage);
+  dispatcher.register('user_message', handleChatMessage);
+  dispatcher.register('system_message', handleChatMessage);
 
   // Speak
-  dispatcher.register('speak_dispatch',   handleSpeakDispatch);
+  dispatcher.register('speak_dispatch', handleSpeakDispatch);
 
   // Assets
   dispatcher.register('register_or_activate_asset', handleRegisterOrActivateAsset);
   dispatcher.register('deactivate_asset', handleDeactivateAsset);
 
   // Progress / tools
-  dispatcher.register('progress',         handleProgress);
-  dispatcher.register('plan_update',      handleProgress);
+  dispatcher.register('progress', handleProgress);
+  dispatcher.register('plan_update', handleProgress);
 
   // Media
-  dispatcher.register('chat_image',       handleChatImage);
+  dispatcher.register('chat_image', handleChatImage);
 
   // State
-  dispatcher.register('transfer_data',    handleTransferData);
-  dispatcher.register('thread_created',   handleThreadCreated);
-  dispatcher.register('thread_restored',  handleThreadRestored);
-  dispatcher.register('token_info',       handleTokenInfo);
+  dispatcher.register('transfer_data', handleTransferData);
+  dispatcher.register('thread_created', handleThreadCreated);
+  dispatcher.register('thread_restored', handleThreadRestored);
+  dispatcher.register('token_info', handleTokenInfo);
 
   // Workflow
   dispatcher.register('workflow_execution_event', handleWorkflowExecutionEvent);
@@ -846,11 +949,11 @@ export function createMessageDispatcher(): MessageDispatcher {
   dispatcher.register('inject_message', handleNoop);
 
   // Protocol no-ops
-  dispatcher.register('ack',       handleNoop);
-  dispatcher.register('ping',      handleNoop);
-  dispatcher.register('pong',      handleNoop);
+  dispatcher.register('ack', handleNoop);
+  dispatcher.register('ping', handleNoop);
+  dispatcher.register('pong', handleNoop);
   dispatcher.register('subscribe', handleNoop);
-  dispatcher.register('stop_run',  handleNoop);
+  dispatcher.register('stop_run', handleNoop);
 
   return dispatcher;
 }

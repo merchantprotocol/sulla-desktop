@@ -1,5 +1,6 @@
-import { BaseModel } from '../BaseModel';
 import * as crypto from 'crypto';
+
+import { BaseModel } from '../BaseModel';
 
 interface WebhookEntityAttributes {
   webhookPath: string;

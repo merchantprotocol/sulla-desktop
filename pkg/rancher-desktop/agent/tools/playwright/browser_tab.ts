@@ -1,8 +1,6 @@
-import { BaseTool, ToolResponse } from '../base';
-import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
-
-
+import { getWebSocketClientService } from '../../services/WebSocketClientService';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * Browser Tab Tool — open, navigate, or close browser tabs.
@@ -13,7 +11,6 @@ import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
  *   3. Returns the full page state: title, URL, interactive elements, and
  *      reader-mode content — so the agent doesn't need a second call
  */
-
 
 export class BrowserTabWorker extends BaseTool {
   name = '';

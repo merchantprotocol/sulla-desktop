@@ -33,10 +33,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { defineComponent } from 'vue';
 
 import LoadingIndicator from '@pkg/components/LoadingIndicator.vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export default defineComponent({
   name:       'ContainerLogs',

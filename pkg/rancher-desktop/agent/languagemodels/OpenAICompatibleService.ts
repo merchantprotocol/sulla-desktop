@@ -215,7 +215,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     let content = '';
     let finishReason: string | undefined;
     let reasoning = '';
-    const toolCallDeltas: Map<number, { id?: string; name: string; arguments: string }> = new Map();
+    const toolCallDeltas = new Map<number, { id?: string; name: string; arguments: string }>();
     let promptTokens = 0;
     let completionTokens = 0;
 
@@ -327,7 +327,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     }
 
     return {
-      content: content.trim(),
+      content:  content.trim(),
       metadata: {
         tokens_used:        promptTokens + completionTokens,
         time_spent:         0, // filled by chatStream()

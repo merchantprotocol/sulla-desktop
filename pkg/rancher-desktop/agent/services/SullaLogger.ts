@@ -25,9 +25,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import util from 'node:util';
 
-import { resolveSullaLogsDir } from '../utils/sullaPaths';
-import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
 import { autoTitleAfterMessages, type TitleMessage } from './ConversationTitleService';
+import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
+import { resolveSullaLogsDir } from '../utils/sullaPaths';
 
 // ── Types ──
 
@@ -319,8 +319,8 @@ export class TopicLog {
 // ══════════════════════════════════════════════════════════════════════════════
 
 class SullaLogger extends EventEmitter {
-  private readonly dir: string;
-  private readonly indexPath: string;
+  private readonly dir:            string;
+  private readonly indexPath:      string;
   private readonly indexJsonlPath: string;
   /** Maps conversationId → resolved log file path (set on start). */
   private filePaths = new Map<string, string>();

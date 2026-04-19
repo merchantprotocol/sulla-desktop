@@ -1,7 +1,7 @@
 import { BaseTool, ToolResponse } from '../base';
-import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 import { wrapWithBlockingWarning } from './detect_blocking';
 import { extractReadableContent } from './readability-extract';
+import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
  * Browse Page Tool — combines reading, scrolling, searching, and chunking.
@@ -82,7 +82,7 @@ function buildChunks(content: string): ContentChunk[] {
   }
 
   for (const line of lines) {
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)/);
+    const headingMatch = /^(#{1,6})\s+(.+)/.exec(line);
     if (headingMatch) {
       flushChunk();
       currentLevel = headingMatch[1].length;
@@ -153,25 +153,25 @@ export class BrowsePageWorker extends BaseTool {
 
     try {
       switch (action) {
-        case 'read':
-          return await this.handleRead(result.bridge, result.assetId);
-        case 'scroll_down':
-          return await this.handleScroll(result.bridge, result.assetId, 'down');
-        case 'scroll_up':
-          return await this.handleScroll(result.bridge, result.assetId, 'up');
-        case 'scroll_to_top':
-          return await this.handleScrollToTop(result.bridge, result.assetId);
-        case 'search':
-          return await this.handleSearch(result.bridge, result.assetId, input.query || '');
-        case 'chunks':
-          return await this.handleChunksList(result.bridge, result.assetId);
-        case 'chunk':
-          return await this.handleChunkRead(result.bridge, result.assetId, input.chunk_id);
-        default:
-          return {
-            successBoolean: false,
-            responseString: `Unknown action "${ action }". Valid: read, scroll_down, scroll_up, scroll_to_top, search, chunks, chunk`,
-          };
+      case 'read':
+        return await this.handleRead(result.bridge, result.assetId);
+      case 'scroll_down':
+        return await this.handleScroll(result.bridge, result.assetId, 'down');
+      case 'scroll_up':
+        return await this.handleScroll(result.bridge, result.assetId, 'up');
+      case 'scroll_to_top':
+        return await this.handleScrollToTop(result.bridge, result.assetId);
+      case 'search':
+        return await this.handleSearch(result.bridge, result.assetId, input.query || '');
+      case 'chunks':
+        return await this.handleChunksList(result.bridge, result.assetId);
+      case 'chunk':
+        return await this.handleChunkRead(result.bridge, result.assetId, input.chunk_id);
+      default:
+        return {
+          successBoolean: false,
+          responseString: `Unknown action "${ action }". Valid: read, scroll_down, scroll_up, scroll_to_top, search, chunks, chunk`,
+        };
       }
     } catch (error) {
       return {
@@ -308,7 +308,7 @@ export class BrowsePageWorker extends BaseTool {
       await bridge.scrollToTop();
     } catch {
       // Fallback
-      try { await bridge.execInPage('window.scrollTo(0, 0)'); } catch { /* */ }
+      try { await bridge.execInPage('window.scrollTo(0, 0)') } catch { /* */ }
     }
     return { successBoolean: true, responseString: `[${ assetId }] Scrolled to top of page.` };
   }

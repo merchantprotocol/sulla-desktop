@@ -36,6 +36,33 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
+  'claude-code': {
+    id:          'claude-code',
+    sort:        1,
+    paid:        true,
+    beta:        true,
+    comingSoon:  false,
+    connected:   true,
+    name:        'Claude Code',
+    description: 'Run Anthropic\'s Claude Code agent inside the Sulla Desktop VM with full file access, bash, and web tools.',
+    category:    'AI Infrastructure',
+    icon:        'anthropic.svg',
+    version:     '1.0.0',
+    lastUpdated: '2026-04-18',
+    developer:   'Anthropic',
+    formGuide:   'Authenticate via Language Model Settings → Claude Code.',
+    properties:  [
+      {
+        key:         'model',
+        title:       'Model',
+        hint:        'Claude Code chooses its own model; this field is informational.',
+        type:        'text',
+        required:    false,
+        placeholder: 'claude-code',
+      },
+    ],
+  },
+
   grok: {
     id:          'grok',
     sort:        2,

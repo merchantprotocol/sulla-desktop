@@ -9,23 +9,23 @@ import _ from 'lodash';
 import semver from 'semver';
 
 import { ExtensionErrorImpl, ExtensionImpl } from './extensions';
+import { fetchMarketplaceData, invalidateMarketplaceCache } from './marketplaceData';
 import { createRecipeExtension, RecipeExtensionImpl } from './recipeExtension';
 import {
   Extension, ExtensionErrorCode, ExtensionManager, SpawnOptions, SpawnResult,
 } from './types';
 
-import { fetchMarketplaceData, invalidateMarketplaceCache } from './marketplaceData';
 import type { ContainerEngineClient } from '@pkg/backend/containerClient';
 import { ContainerEngine, Settings } from '@pkg/config/settings';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import type { IpcMainEvents, IpcMainInvokeEvents, IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import { parseImageReference } from '@pkg/utils/dockerUtils';
-import { openUrlInApp } from '@pkg/window';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { executable } from '@pkg/utils/resources';
 import { RecursiveReadonly } from '@pkg/utils/typeUtils';
+import { openUrlInApp } from '@pkg/window';
 
 const console = Logging.extensions;
 const ipcMain = getIpcMainProxy(console);

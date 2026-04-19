@@ -280,8 +280,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { ipcRenderer } from 'electron';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
+
 import type { IntegrationCallNodeConfig } from './types';
 
 export interface UpstreamNodeInfo {

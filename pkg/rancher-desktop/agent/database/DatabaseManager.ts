@@ -2,12 +2,13 @@
 // Singleton – runs migrations + seeders once per process after backend is ready
 // Tracks execution in postgres tables
 
-import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { migrationsRegistry } from './migrations';
-import { seedersRegistry } from './seeders';
 import { SullaSettingsModel } from './models/SullaSettingsModel';
-import { skillsRegistry } from './registry/SkillsRegistry';
 import { projectRegistry } from './registry/ProjectRegistry';
+import { skillsRegistry } from './registry/SkillsRegistry';
+import { seedersRegistry } from './seeders';
+
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 
 const MIGRATIONS_TABLE = 'sulla_migrations';
 const SEEDERS_TABLE = 'sulla_seeders';

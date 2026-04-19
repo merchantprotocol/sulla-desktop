@@ -1,12 +1,14 @@
-import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
+
+import cors from 'cors';
+import express, { Request, Response, NextFunction } from 'express';
+
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs } from '@pkg/agent/utils/sullaPaths';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import crypto from 'node:crypto';
-import path from 'node:path';
 import paths from '@pkg/utils/paths';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
@@ -18,7 +20,7 @@ export class ChatCompletionsServer {
   private server:            any = null;
   private readonly wsService = getWebSocketClientService();
   private taskerUnsubscribe: (() => void) | null = null;
-  private apiToken: string | null = null;
+  private apiToken:          string | null = null;
 
   constructor() {
     this.initializeTaskerWebSocketListener();
@@ -183,7 +185,7 @@ export class ChatCompletionsServer {
       }
 
       const authHeader = req.headers.authorization ?? '';
-      const match = authHeader.match(/^Bearer\s+(.+)$/i);
+      const match = /^Bearer\s+(.+)$/i.exec(authHeader);
       const token = match?.[1];
 
       if (!token || token !== this.apiToken) {
@@ -402,6 +404,14 @@ export class ChatCompletionsServer {
         },
       });
     }
+  }
+
+  /**
+   * Public wrapper for external services (e.g. CloudflareRelayService) that
+   * want to invoke the same chat pipeline without going over HTTP.
+   */
+  public async processChat(messages: any[], agentId?: string, threadId?: string): Promise<string> {
+    return this.processUserInputDirect(messages, agentId ?? WS_CHANNEL, threadId);
   }
 
   /**
@@ -945,8 +955,8 @@ export class ChatCompletionsServer {
       // Filter by category
       if (categoryFilter) {
         filtered = filtered.filter((entry: any) =>
-          entry.category?.toLowerCase() === categoryFilter
-          || entry.slug?.toLowerCase() === categoryFilter);
+          entry.category?.toLowerCase() === categoryFilter ||
+          entry.slug?.toLowerCase() === categoryFilter);
       }
 
       // Filter by search query (fuzzy match on slug, name, label, accountId, endpoint name/description)
@@ -957,8 +967,8 @@ export class ChatCompletionsServer {
           if (entry.label?.toLowerCase().includes(searchQuery)) return true;
           if (entry.accountId?.toLowerCase().includes(searchQuery)) return true;
           return entry.endpoints?.some((ep: any) =>
-            ep.name?.toLowerCase().includes(searchQuery)
-            || ep.description?.toLowerCase().includes(searchQuery),
+            ep.name?.toLowerCase().includes(searchQuery) ||
+            ep.description?.toLowerCase().includes(searchQuery),
           );
         });
       }
@@ -966,7 +976,7 @@ export class ChatCompletionsServer {
       res.json({
         success: true,
         version: 4,
-        usage: {
+        usage:   {
           call_method: 'POST',
           call_url:    'http://host.docker.internal:3000/v1/tools/{accountId}/{slug}/{endpoint}/call',
           call_body:   '{"action": "upsert", "param_name": "value"}',
@@ -1025,8 +1035,8 @@ export class ChatCompletionsServer {
             text += '    Parameters:\n';
             for (const p of tool.parameters) {
               const req_flag = p.required ? ' (required)' : '';
-              const enumStr = p.enum ? ` [${p.enum.join('|')}]` : '';
-              const defaultStr = p.default !== undefined ? ` default: ${p.default}` : '';
+              const enumStr = p.enum ? ` [${ p.enum.join('|') }]` : '';
+              const defaultStr = p.default !== undefined ? ` default: ${ p.default }` : '';
               text += `      ${ p.name } : ${ p.type }${ enumStr }${ req_flag }${ defaultStr } — ${ p.description }\n`;
             }
           }
@@ -1351,7 +1361,7 @@ export class ChatCompletionsServer {
       await loader.loadAll();
 
       res.json({
-        success: true,
+        success:       true,
         accountId,
         dirName:       result.dirName,
         endpointCount: result.endpointCount,
@@ -1376,7 +1386,7 @@ export class ChatCompletionsServer {
       await loader.loadAll();
 
       res.json({
-        success: true,
+        success:       true,
         accountId,
         dirName:       result.dirName,
         endpointCount: result.endpointCount,
@@ -1429,7 +1439,7 @@ export class ChatCompletionsServer {
         await getIntegrationConfigLoader().loadAll();
 
         return res.json({
-          success: true,
+          success:    true,
           ...result,
           registered: true,
           finalized:  true,

@@ -18,6 +18,7 @@
  */
 
 import { BrowserWindow, ipcMain } from 'electron';
+
 import { MicrophoneDriverController } from './audio-driver/controller/MicrophoneDriverController';
 import * as whisper from './audio-driver/model/whisper';
 import * as whisperTranscribe from './audio-driver/service/whisper-transcribe';
@@ -398,7 +399,7 @@ function handleStop(): { ok: boolean } {
  */
 export function registerTeleprompterTrackingIpc(): void {
   ipcMain.handle('teleprompter-tracking:set-script', (_event: unknown, data: {
-    words: string[];
+    words:         string[];
     currentIndex?: number;
   }) => {
     scriptWords = data.words || [];
@@ -410,7 +411,7 @@ export function registerTeleprompterTrackingIpc(): void {
     return { ok: true };
   });
 
-  ipcMain.handle('teleprompter-tracking:start', async () => {
+  ipcMain.handle('teleprompter-tracking:start', async() => {
     return handleStart();
   });
 

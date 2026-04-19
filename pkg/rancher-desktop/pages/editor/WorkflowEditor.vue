@@ -188,20 +188,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, nextTick } from 'vue';
-import { VueFlow, useVueFlow } from '@vue-flow/core';
 import { Background, BackgroundVariant } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
+import { VueFlow, useVueFlow } from '@vue-flow/core';
 import { MiniMap } from '@vue-flow/minimap';
+import { ref, reactive, watch, nextTick } from 'vue';
 import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
 
-import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core';
-import type { WorkflowDefinition, WorkflowNodeData, WorkflowNodeSubtype, WorkflowNodeExecutionState, NodeThinkingMessage } from './workflow/types';
 import WorkflowCustomNode from './workflow/WorkflowCustomNode.vue';
 import { getNodeDefinition } from './workflow/nodeRegistry';
+
+import type { WorkflowDefinition, WorkflowNodeData, WorkflowNodeSubtype, WorkflowNodeExecutionState, NodeThinkingMessage } from './workflow/types';
+import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core';
 
 /**
  * Node subtypes that cannot be placed downstream of a parallel node.

@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from '../base';
 import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * List Tabs Tool — lists all open browser tabs with their assetId, URL, title, and status.

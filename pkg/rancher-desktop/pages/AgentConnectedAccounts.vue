@@ -48,7 +48,13 @@
                     class="h-11 px-4 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors flex items-center gap-2"
                     @click="$emit('new-account')"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      class="h-4 w-4"
+                    >
                       <path d="M12 5v14M5 12h14" />
                     </svg>
                     New Account
@@ -58,8 +64,20 @@
                     class="h-11 px-4 rounded-lg border border-slate-600 hover:border-slate-500 text-slate-300 hover:text-white text-sm font-medium transition-colors flex items-center gap-2"
                     @click="$emit('generate-password')"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
-                      <rect x="2" y="4" width="20" height="16" rx="2" />
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      class="h-4 w-4"
+                    >
+                      <rect
+                        x="2"
+                        y="4"
+                        width="20"
+                        height="16"
+                        rx="2"
+                      />
                       <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h8" />
                     </svg>
                     Generate Password
@@ -79,8 +97,20 @@
                 class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
                 style="background: rgba(56, 189, 248, 0.08); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.15);"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3">
-                  <rect x="3" y="11" width="18" height="11" rx="2" />
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  class="h-3 w-3"
+                >
+                  <rect
+                    x="3"
+                    y="11"
+                    width="18"
+                    height="11"
+                    rx="2"
+                  />
                   <path d="M7 11V7a5 5 0 0110 0v4" />
                 </svg>
                 AES-256 Encrypted
@@ -94,8 +124,20 @@
                 title="Lock the vault — zeroes encryption keys from memory. The AI will lose access to credentials until you unlock."
                 @click="lockVault"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3">
-                  <rect x="3" y="11" width="18" height="11" rx="2" />
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  class="h-3 w-3"
+                >
+                  <rect
+                    x="3"
+                    y="11"
+                    width="18"
+                    height="11"
+                    rx="2"
+                  />
                   <path d="M7 11V7a5 5 0 0110 0v4" />
                 </svg>
                 Lock Vault
@@ -203,8 +245,9 @@
                     @click="openAccount(account)"
                   >
                     <!-- Icon / Type badge -->
-                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold uppercase"
-                         :class="typeBadgeClass(account.integrationId)"
+                    <div
+                      class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold uppercase"
+                      :class="typeBadgeClass(account.integrationId)"
                     >
                       {{ typeBadgeLabel(account.integrationId) }}
                     </div>
@@ -215,10 +258,11 @@
                         <span class="font-medium text-slate-900 dark:text-slate-100 truncate">
                           {{ account.label }}
                         </span>
-                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                              :class="account.connected
-                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                                : 'bg-slate-500/10 text-slate-500 dark:text-slate-400'"
+                        <span
+                          class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                          :class="account.connected
+                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                            : 'bg-slate-500/10 text-slate-500 dark:text-slate-400'"
                         >
                           {{ account.connected ? 'Connected' : 'Disconnected' }}
                         </span>
@@ -234,8 +278,9 @@
                       v-if="account.llmAccess"
                       class="shrink-0"
                     >
-                      <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                            :class="llmAccessBadgeClass(account.llmAccess)"
+                      <span
+                        class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                        :class="llmAccessBadgeClass(account.llmAccess)"
                       >
                         AI: {{ account.llmAccess }}
                       </span>
@@ -269,10 +314,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+
 import AgentHeader from './agent/AgentHeader.vue';
-import { useTheme } from '@pkg/composables/useTheme';
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+
 import { integrations as integrationCatalog } from '@pkg/agent/integrations/catalog';
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { useTheme } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
@@ -280,8 +327,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'new-account': [];
-  'edit-account': [data: { integrationId: string; accountId: string }];
+  'new-account':       [];
+  'edit-account':      [data: { integrationId: string; accountId: string }];
   'generate-password': [];
 }>();
 
@@ -354,11 +401,11 @@ const typeBadgeClass = (id: string): string => {
 
 const llmAccessBadgeClass = (level: string): string => {
   switch (level) {
-  case 'none':     return 'bg-red-500/10 text-red-600 dark:text-red-400';
+  case 'none': return 'bg-red-500/10 text-red-600 dark:text-red-400';
   case 'metadata': return 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400';
   case 'autofill': return 'bg-blue-500/10 text-blue-600 dark:text-blue-400';
-  case 'full':     return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
-  default:         return 'bg-slate-500/10 text-slate-500';
+  case 'full': return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+  default: return 'bg-slate-500/10 text-slate-500';
   }
 };
 

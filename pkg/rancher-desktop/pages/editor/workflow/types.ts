@@ -27,34 +27,34 @@ export type ScheduleFrequency = 'every-minutes' | 'hourly' | 'daily' | 'weekly' 
 
 export interface ScheduleTriggerNodeConfig extends TriggerNodeConfig {
   /** How often the workflow runs */
-  frequency:     ScheduleFrequency;
+  frequency:       ScheduleFrequency;
   /** For 'every-minutes': interval in minutes (e.g. 5, 15, 30) */
   intervalMinutes: number;
   /** Hour of day (0-23) — used by daily/weekly/monthly */
-  hour:          number;
+  hour:            number;
   /** Minute of hour (0-59) — used by daily/weekly/monthly/hourly */
-  minute:        number;
+  minute:          number;
   /** Day of week (0=Sun .. 6=Sat) — used by weekly */
-  dayOfWeek:     number;
+  dayOfWeek:       number;
   /** Day of month (1-31) — used by monthly */
-  dayOfMonth:    number;
+  dayOfMonth:      number;
   /** IANA timezone (e.g. "America/New_York"). Empty = system default. */
-  timezone:      string;
+  timezone:        string;
 }
 
 export interface AgentNodeConfig {
-  agentId:            string | null;
-  agentName:          string;
+  agentId:                  string | null;
+  agentName:                string;
   /** Injected directly into the sub-agent's prompt as system-level context/instructions. */
-  additionalPrompt:   string;
+  additionalPrompt:         string;
   /** Instructions for the orchestrator on how to deploy this sub-agent. The orchestrator
    *  reads these and formulates the actual user message sent to the sub-agent. Supports {{variable}} syntax. */
   orchestratorInstructions: string;
   /** Criteria the orchestrator uses to evaluate the sub-agent's response after execution. */
-  successCriteria:    string;
+  successCriteria:          string;
   /** Describes the expected completion structure. The workflow wraps this in XML contract
    *  tags and the orchestrator tells the sub-agent to respond within them. */
-  completionContract: string;
+  completionContract:       string;
 }
 
 export interface OrchestratorPromptNodeConfig {
@@ -64,9 +64,9 @@ export interface OrchestratorPromptNodeConfig {
 
 export interface ToolCallNodeConfig {
   /** Native tool name (e.g. "docker_build", "redis_get") */
-  toolName:    string;
+  toolName: string;
   /** Default parameter values — keys are param names, values support {{variable}} syntax */
-  defaults:    Record<string, string>;
+  defaults: Record<string, string>;
 }
 
 export interface IntegrationCallNodeConfig {
@@ -99,11 +99,11 @@ export interface WaitNodeConfig {
 
 export interface LoopNodeConfig {
   /** 'iterations' = fixed count, 'for-each' = iterate over upstream merge, 'ask-orchestrator' = orchestrator decides count */
-  loopMode:      'iterations' | 'for-each' | 'ask-orchestrator';
-  maxIterations: number;
-  condition:     string;
+  loopMode:           'iterations' | 'for-each' | 'ask-orchestrator';
+  maxIterations:      number;
+  condition:          string;
   /** How to evaluate the stop condition: 'template' for {{variable}} matching, 'llm' for orchestrator evaluation */
-  conditionMode: 'template' | 'llm';
+  conditionMode:      'template' | 'llm';
   /** For 'ask-orchestrator' mode: prompt sent to the orchestrator to determine iteration count */
   orchestratorPrompt: string;
 }
@@ -117,10 +117,10 @@ export interface MergeNodeConfig {
 }
 
 export interface SubWorkflowNodeConfig {
-  workflowId:    string | null;
-  awaitResponse: boolean;
+  workflowId:         string | null;
+  awaitResponse:      boolean;
   /** Optional agent to orchestrate this sub-workflow instead of the parent orchestrator */
-  agentId:       string | null;
+  agentId:            string | null;
   /** Instructions passed to the orchestrating agent when agentId is set */
   orchestratorPrompt: string;
 }

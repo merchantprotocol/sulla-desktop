@@ -141,17 +141,19 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { WorkflowNodeData } from './workflow/types';
-import type { UpstreamNodeInfo } from './workflow/AgentNodeConfig.vue';
-import TriggerNodeConfig from './workflow/TriggerNodeConfig.vue';
+
 import AgentNodeConfig from './workflow/AgentNodeConfig.vue';
-import OrchestratorPromptNodeConfig from './workflow/OrchestratorPromptNodeConfig.vue';
-import ToolCallNodeConfig from './workflow/ToolCallNodeConfig.vue';
-import IntegrationCallNodeConfig from './workflow/IntegrationCallNodeConfig.vue';
-import RouterNodeConfig from './workflow/RouterNodeConfig.vue';
 import ConditionNodeConfig from './workflow/ConditionNodeConfig.vue';
 import FlowControlNodeConfig from './workflow/FlowControlNodeConfig.vue';
 import IONodeConfig from './workflow/IONodeConfig.vue';
+import IntegrationCallNodeConfig from './workflow/IntegrationCallNodeConfig.vue';
+import OrchestratorPromptNodeConfig from './workflow/OrchestratorPromptNodeConfig.vue';
+import RouterNodeConfig from './workflow/RouterNodeConfig.vue';
+import ToolCallNodeConfig from './workflow/ToolCallNodeConfig.vue';
+import TriggerNodeConfig from './workflow/TriggerNodeConfig.vue';
+
+import type { UpstreamNodeInfo } from './workflow/AgentNodeConfig.vue';
+import type { WorkflowNodeData } from './workflow/types';
 
 const props = defineProps<{
   isDark: boolean;

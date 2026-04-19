@@ -372,8 +372,8 @@ export default {
 
     for (const entry of fs.readdirSync(src)) {
       // Copy .swift scripts, .c/.cpp source, and compiled binaries (not .ts files)
-      if (entry.endsWith('.swift') || entry.endsWith('.c') || entry.endsWith('.cpp')
-          || entry === 'create-mirror' || entry === 'capture-loopback') {
+      if (entry.endsWith('.swift') || entry.endsWith('.c') || entry.endsWith('.cpp') ||
+          entry === 'create-mirror' || entry === 'capture-loopback') {
         fs.copyFileSync(path.join(src, entry), path.join(dest, entry));
       }
     }

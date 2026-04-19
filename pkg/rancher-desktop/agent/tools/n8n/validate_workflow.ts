@@ -1,6 +1,6 @@
-import { BaseTool, ToolResponse } from '../base';
-import { createN8nService } from '../../services/N8nService';
 import { postgresClient } from '../../database/PostgresClient';
+import { createN8nService } from '../../services/N8nService';
+import { BaseTool, ToolResponse } from '../base';
 
 type JsonRecord = Record<string, any>;
 

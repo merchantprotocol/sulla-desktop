@@ -35,6 +35,7 @@ import { ContainerEngineClient, MobyClient, NerdctlClient } from './containerCli
 import * as K8s from './k8s';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import DEPENDENCY_VERSIONS from '@pkg/assets/dependencies.yaml';
 import DEFAULT_CONFIG from '@pkg/assets/lima-config.yaml';
 import NETWORKS_CONFIG from '@pkg/assets/networks-config.yaml';
@@ -46,12 +47,14 @@ import LOGROTATE_LIMA_GUESTAGENT_SCRIPT from '@pkg/assets/scripts/logrotate-lima
 import LOGROTATE_OPENRESTY_SCRIPT from '@pkg/assets/scripts/logrotate-openresty';
 import NERDCTL from '@pkg/assets/scripts/nerdctl';
 import NGINX_CONF from '@pkg/assets/scripts/nginx.conf';
-import * as settingsImpl from '@pkg/config/settingsImpl';
+import SULLA_DOCKER_COMPOSE from '@pkg/assets/sulla-docker-compose.yaml';
 import { ContainerEngine, MountType, VMType } from '@pkg/config/settings';
-import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
+import * as settingsImpl from '@pkg/config/settingsImpl';
 import { getServerCredentialsPath, ServerState } from '@pkg/main/credentialServer/httpCredentialHelperServer';
+import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import mainEvents from '@pkg/main/mainEvents';
 import { exec as sudo } from '@pkg/sudo-prompt';
+import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
 import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
@@ -61,9 +64,6 @@ import { executable } from '@pkg/utils/resources';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { defined, RecursivePartial } from '@pkg/utils/typeUtils';
 import { openSudoPrompt } from '@pkg/window';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import SULLA_DOCKER_COMPOSE from '@pkg/assets/sulla-docker-compose.yaml';
-import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
 
 /* eslint @typescript-eslint/switch-exhaustiveness-check: "error" */
 

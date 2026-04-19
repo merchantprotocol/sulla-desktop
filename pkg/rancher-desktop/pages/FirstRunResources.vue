@@ -95,16 +95,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject, onMounted, Ref } from 'vue';
 import os from 'os';
-import RdFieldset from '@pkg/components/form/RdFieldset.vue';
-import SystemPreferences from '@pkg/components/SystemPreferences.vue';
-import { Settings } from '@pkg/config/settings';
+
 import { ipcRenderer } from 'electron';
+import { ref, computed, inject, onMounted, Ref } from 'vue';
+
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import SystemPreferences from '@pkg/components/SystemPreferences.vue';
+import RdFieldset from '@pkg/components/form/RdFieldset.vue';
+import { Settings } from '@pkg/config/settings';
 import { PathManagementStrategy } from '@pkg/integrations/pathManager';
 import { highestStableVersion, VersionEntry } from '@pkg/utils/kubeVersions';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
 const settings = inject<Ref<Settings>>('settings')!;
 const commitChanges = inject<(settings: RecursivePartial<Settings>) => Promise<void>>('commitChanges')!;

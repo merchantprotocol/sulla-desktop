@@ -31,7 +31,7 @@ interface ScheduledWorkflowJob {
 // ── Constants ──
 
 const FRONTEND_CHANNEL_ID = 'sulla-desktop';
-const ACK_TIMEOUT_MS      = 3_000;
+const ACK_TIMEOUT_MS = 3_000;
 
 // ── Cron builder ──
 
@@ -46,7 +46,7 @@ const ACK_TIMEOUT_MS      = 3_000;
 function buildCronExpression(config: Record<string, unknown>): string | null {
   const freq = (config.frequency as string) || 'daily';
   const minute = Number(config.minute ?? 0);
-  const hour   = Number(config.hour ?? 9);
+  const hour = Number(config.hour ?? 9);
 
   switch (freq) {
   case 'every-minutes': {
@@ -136,14 +136,14 @@ export class WorkflowSchedulerService {
   /**
    * Get info about currently scheduled workflow jobs.
    */
-  getScheduledJobs(): Array<{
+  getScheduledJobs(): {
     workflowId:     string;
     workflowName:   string;
     nodeId:         string;
     cronExpression: string;
     timezone:       string;
     nextInvocation: string | null;
-  }> {
+  }[] {
     return Array.from(this.scheduledJobs.values()).map(j => ({
       workflowId:     j.workflowId,
       workflowName:   j.workflowName,

@@ -13,27 +13,27 @@
  */
 
 import { BaseLanguageModel } from './BaseLanguageModel';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { modelDiscoveryService, type ModelInfo } from './ModelDiscoveryService';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
 
 // Provider factory map — lazy-loaded to avoid circular imports
 const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
-  grok:      async() => { const { getGrokService } = await import('./GrokService'); return getGrokService() },
-  openai:    async() => { const { getOpenAIService } = await import('./OpenAIService'); return getOpenAIService() },
-  anthropic: async() => { const { getAnthropicService } = await import('./AnthropicService'); return getAnthropicService() },
-  google:    async() => { const { getGoogleService } = await import('./GoogleService'); return getGoogleService() },
-  kimi:      async() => { const { getKimiService } = await import('./KimiService'); return getKimiService() },
-  nvidia:    async() => { const { getNvidiaService } = await import('./NvidiaService'); return getNvidiaService() },
-  alibaba:   async() => { const { getAlibabaService } = await import('./AlibabaService'); return getAlibabaService() },
-  custom:    async() => { const { getCustomService } = await import('./CustomService'); return getCustomService() },
+  'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
+  grok:          async() => { const { getGrokService } = await import('./GrokService'); return getGrokService() },
+  openai:        async() => { const { getOpenAIService } = await import('./OpenAIService'); return getOpenAIService() },
+  anthropic:     async() => { const { getAnthropicService } = await import('./AnthropicService'); return getAnthropicService() },
+  google:        async() => { const { getGoogleService } = await import('./GoogleService'); return getGoogleService() },
+  kimi:          async() => { const { getKimiService } = await import('./KimiService'); return getKimiService() },
+  nvidia:        async() => { const { getNvidiaService } = await import('./NvidiaService'); return getNvidiaService() },
+  alibaba:       async() => { const { getAlibabaService } = await import('./AlibabaService'); return getAlibabaService() },
+  custom:        async() => { const { getCustomService } = await import('./CustomService'); return getCustomService() },
 };
 
 // ── Helper: resolve provider from ModelProviderService or fallback ──
 
 function tryGetModelProviderService(): any | null {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getModelProviderService } = require('../services/ModelProviderService');
     return getModelProviderService();
   } catch {
@@ -203,7 +203,7 @@ class LLMRegistryImpl {
     }
 
     return {
-      mode: 'remote',
+      mode:           'remote',
       remoteModel,
       remoteProvider: remoteProviderId,
       remoteApiKey,

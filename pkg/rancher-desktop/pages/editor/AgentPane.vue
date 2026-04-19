@@ -434,10 +434,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import { ipcRenderer, clipboard } from 'electron';
-import FileContextMenu from '@pkg/pages/filesystem/FileContextMenu.vue';
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+
 import InlinePrompt from './InlinePrompt.vue';
+
+import FileContextMenu from '@pkg/pages/filesystem/FileContextMenu.vue';
 
 interface AgentInfo {
   id:          string;

@@ -35,7 +35,7 @@ function write(timeDomainData, rms, speaking) {
     timeDomainData: new Float32Array(timeDomainData),
     rms,
     speaking,
-    timestamp: Date.now(),
+    timestamp:      Date.now(),
   };
 
   if (frames.length < BUFFER_FRAMES) {
@@ -100,7 +100,7 @@ function getSpeechOnset() {
 function getState() {
   const ordered = count > 0 ? read() : [];
   return {
-    frameCount: count,
+    frameCount:      count,
     oldestTimestamp: ordered.length > 0 ? ordered[0].timestamp : null,
     newestTimestamp: ordered.length > 0 ? ordered[ordered.length - 1].timestamp : null,
   };

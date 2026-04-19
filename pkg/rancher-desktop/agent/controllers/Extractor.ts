@@ -12,15 +12,15 @@
  *   4. LLM completes → controller calls processComplete() on full text
  */
 
-import type { BaseThreadState } from '../nodes/Graph';
 import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
+import type { BaseThreadState } from '../nodes/Graph';
 
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface StreamContext {
-  state: BaseThreadState;
+  state:    BaseThreadState;
   threadId: string;
-  channel: string;
+  channel:  string;
 }
 
 /**

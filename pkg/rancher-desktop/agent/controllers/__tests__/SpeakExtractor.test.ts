@@ -1,7 +1,9 @@
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
+
 import { SpeakExtractor } from '../SpeakExtractor';
-import type { StreamContext } from '../Extractor';
+
 import type { NormalizedResponse } from '../../languagemodels/BaseLanguageModel';
+import type { StreamContext } from '../Extractor';
 
 function makeCtx(): StreamContext {
   return {

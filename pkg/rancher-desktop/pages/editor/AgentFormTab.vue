@@ -348,8 +348,8 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, computed, onMounted } from 'vue';
 import { ipcRenderer } from 'electron';
+import { reactive, ref, computed, onMounted } from 'vue';
 import yaml from 'yaml';
 
 const props = defineProps<{

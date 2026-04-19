@@ -10,7 +10,9 @@
  */
 
 import path from 'path';
+
 import { BrowserWindow, ipcMain, screen, app } from 'electron';
+
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;

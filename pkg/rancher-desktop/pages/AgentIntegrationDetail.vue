@@ -829,26 +829,27 @@
 </template>
 
 <script setup lang="ts">
-import AgentHeader from './agent/AgentHeader.vue';
-import { integrations, type Integration } from '@pkg/agent/integrations/catalog';
-import YouTubePlayer from '@pkg/components/YouTubePlayer.vue';
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { getExtensionService } from '@pkg/agent/services/ExtensionService';
-import { formatFuzzyTime } from '@pkg/utils/dateFormat';
-
-import type { IntegrationAccount } from '@pkg/agent/services/IntegrationService';
 import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+
+import AgentHeader from './agent/AgentHeader.vue';
+
+import { integrations, type Integration } from '@pkg/agent/integrations/catalog';
+import { getExtensionService } from '@pkg/agent/services/ExtensionService';
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import type { IntegrationAccount } from '@pkg/agent/services/IntegrationService';
+import YouTubePlayer from '@pkg/components/YouTubePlayer.vue';
 import { useTheme } from '@pkg/composables/useTheme';
+import { formatFuzzyTime } from '@pkg/utils/dateFormat';
 
 const pageProps = defineProps<{
   /** When provided, use this instead of route.params.id */
   integrationId?: string;
-  embedded?: boolean;
+  embedded?:      boolean;
 }>();
 
 const emit = defineEmits<{
-  back: [];
+  back:  [];
   saved: [accountId: string];
 }>();
 
@@ -1257,7 +1258,7 @@ onMounted(async() => {
   integration.value = mergedIntegrations.value[integrationId] || null;
 
   // Inject llm_access property into all integrations so users can control AI access per account
-  if (integration.value && integration.value.properties) {
+  if (integration.value?.properties) {
     const hasLlmAccess = integration.value.properties.some(p => p.key === 'llm_access');
     if (!hasLlmAccess) {
       integration.value = {

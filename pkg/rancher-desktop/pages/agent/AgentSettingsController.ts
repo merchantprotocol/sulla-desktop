@@ -1,6 +1,7 @@
-import type { Ref } from 'vue';
 import { getAgentPersonaRegistry } from '@pkg/agent';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+
+import type { Ref } from 'vue';
 
 export class AgentSettingsController {
   private readonly registry = getAgentPersonaRegistry();

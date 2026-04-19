@@ -1,9 +1,17 @@
 <template>
-  <div class="flex h-screen flex-col bg-page" :class="{ dark: isDark }">
+  <div
+    class="flex h-screen flex-col bg-page"
+    :class="{ dark: isDark }"
+  >
     <!-- Header -->
     <div class="flex items-center justify-between border-b border-edge px-3 py-2">
       <div class="flex items-center gap-2">
-        <div class="sulla-avatar text-xs" aria-hidden="true">S</div>
+        <div
+          class="sulla-avatar text-xs"
+          aria-hidden="true"
+        >
+          S
+        </div>
         <span class="text-sm font-medium text-content">Sulla</span>
       </div>
       <button
@@ -12,18 +20,45 @@
         title="Close side panel"
         @click="closePanel"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        >
           <path d="M18 6L6 18M6 6l12 12" />
         </svg>
       </button>
     </div>
 
     <!-- Tab context banner -->
-    <div v-if="tabContext" class="flex items-center gap-2 border-b border-edge px-3 py-1.5 bg-surface-alt/50">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="flex-shrink-0 text-content-muted">
-        <circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
+    <div
+      v-if="tabContext"
+      class="flex items-center gap-2 border-b border-edge px-3 py-1.5 bg-surface-alt/50"
+    >
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        class="flex-shrink-0 text-content-muted"
+      >
+        <circle
+          cx="12"
+          cy="12"
+          r="10"
+        /><path d="M12 16v-4" /><path d="M12 8h.01" />
       </svg>
-      <div class="min-w-0 flex-1 truncate text-xs text-content-muted" :title="tabContext.url">
+      <div
+        class="min-w-0 flex-1 truncate text-xs text-content-muted"
+        :title="tabContext.url"
+      >
         {{ tabContext.title || tabContext.url }}
       </div>
     </div>
@@ -35,13 +70,19 @@
       class="min-h-0 flex-1 overflow-y-auto"
     >
       <div class="px-3 py-4">
-        <div ref="transcriptEl" class="pb-4">
+        <div
+          ref="transcriptEl"
+          class="pb-4"
+        >
           <div
             v-for="m in displayMessages"
             :key="m.id"
             class="mb-4"
           >
-            <div v-if="m.role === 'user'" class="flex justify-end">
+            <div
+              v-if="m.role === 'user'"
+              class="flex justify-end"
+            >
               <div class="max-w-[92%] rounded-2xl p-3 bg-surface-alt ring-1 ring-edge-subtle">
                 <img
                   v-if="m.image?.dataUrl"
@@ -49,53 +90,110 @@
                   :alt="m.image.alt || 'Attached image'"
                   class="mb-2 max-h-48 rounded-lg object-contain"
                 >
-                <div class="whitespace-pre-wrap text-sm text-content">{{ m.content }}</div>
+                <div class="whitespace-pre-wrap text-sm text-content">
+                  {{ m.content }}
+                </div>
               </div>
             </div>
 
-            <div v-else-if="m.kind === 'tool' && m.toolCard" class="max-w-[92%]">
+            <div
+              v-else-if="m.kind === 'tool' && m.toolCard"
+              class="max-w-[92%]"
+            >
               <ChatToolCard :tool-card="m.toolCard" />
             </div>
 
-            <div v-else-if="m.kind === 'thinking'" class="thinking-bubble max-w-[92%]">
+            <div
+              v-else-if="m.kind === 'thinking'"
+              class="thinking-bubble max-w-[92%]"
+            >
               <div class="thinking-bubble-inner">
-                <div class="thinking-bubble-content text-xs text-content-muted italic" v-html="renderMarkdown(m.content)" />
+                <div
+                  class="thinking-bubble-content text-xs text-content-muted italic"
+                  v-html="renderMarkdown(m.content)"
+                />
               </div>
             </div>
 
-            <div v-else-if="m.kind === 'streaming'" class="max-w-[92%]">
+            <div
+              v-else-if="m.kind === 'streaming'"
+              class="max-w-[92%]"
+            >
               <div class="flex gap-2">
-                <div class="sulla-avatar text-xs flex-shrink-0" aria-hidden="true">S</div>
+                <div
+                  class="sulla-avatar text-xs flex-shrink-0"
+                  aria-hidden="true"
+                >
+                  S
+                </div>
                 <div class="min-w-0">
-                  <div class="prose prose-sm max-w-none prose-slate dark:text-slate-400 dark:prose-invert" v-html="renderMarkdown(m.content)" /><span class="streaming-cursor" />
+                  <div
+                    class="prose prose-sm max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
+                    v-html="renderMarkdown(m.content)"
+                  /><span class="streaming-cursor" />
                 </div>
               </div>
             </div>
 
-            <div v-else-if="m.kind === 'html'" class="max-w-[92%]">
+            <div
+              v-else-if="m.kind === 'html'"
+              class="max-w-[92%]"
+            >
               <div class="flex gap-2">
-                <div class="sulla-avatar text-xs flex-shrink-0" aria-hidden="true">S</div>
+                <div
+                  class="sulla-avatar text-xs flex-shrink-0"
+                  aria-hidden="true"
+                >
+                  S
+                </div>
                 <div class="flex-1 min-w-0">
-                  <HtmlMessageRenderer :content="m.content" :is-dark="isDark" />
+                  <HtmlMessageRenderer
+                    :content="m.content"
+                    :is-dark="isDark"
+                  />
                 </div>
               </div>
             </div>
 
-            <div v-else class="max-w-[92%]">
-              <div v-if="m.image" class="space-y-2">
-                <img :src="m.image.dataUrl" :alt="m.image.alt || ''" class="block h-auto max-w-full rounded-lg border border-black/10 dark:border-white/10">
+            <div
+              v-else
+              class="max-w-[92%]"
+            >
+              <div
+                v-if="m.image"
+                class="space-y-2"
+              >
+                <img
+                  :src="m.image.dataUrl"
+                  :alt="m.image.alt || ''"
+                  class="block h-auto max-w-full rounded-lg border border-black/10 dark:border-white/10"
+                >
               </div>
-              <div v-else class="flex gap-2">
-                <div class="sulla-avatar text-xs flex-shrink-0" aria-hidden="true">S</div>
+              <div
+                v-else
+                class="flex gap-2"
+              >
+                <div
+                  class="sulla-avatar text-xs flex-shrink-0"
+                  aria-hidden="true"
+                >
+                  S
+                </div>
                 <div class="min-w-0">
-                  <div class="prose prose-sm max-w-none prose-slate dark:text-slate-400 dark:prose-invert" v-html="renderMarkdown(m.content)" />
+                  <div
+                    class="prose prose-sm max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
+                    v-html="renderMarkdown(m.content)"
+                  />
                 </div>
               </div>
             </div>
           </div>
 
           <!-- Thinking indicator -->
-          <div v-if="loading || graphRunning" class="mb-3 flex items-center gap-2 px-1">
+          <div
+            v-if="loading || graphRunning"
+            class="mb-3 flex items-center gap-2 px-1"
+          >
             <div class="typing-dots">
               <span class="typing-dot" />
               <span class="typing-dot" />
@@ -107,9 +205,17 @@
     </div>
 
     <!-- Empty state -->
-    <div v-else class="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-4">
+    <div
+      v-else
+      class="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-4"
+    >
       <div class="text-center text-sm text-content-muted">
-        <div class="sulla-avatar mx-auto mb-3 text-lg" aria-hidden="true">S</div>
+        <div
+          class="sulla-avatar mx-auto mb-3 text-lg"
+          aria-hidden="true"
+        >
+          S
+        </div>
         <p>Ask Sulla anything</p>
       </div>
     </div>
@@ -138,15 +244,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+
 import AgentComposer from './agent/AgentComposer.vue';
-import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
-import ChatToolCard from '@pkg/components/ChatToolCard.vue';
-import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
-import { useTheme } from '@pkg/composables/useTheme';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
+import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
+
+import ChatToolCard from '@pkg/components/ChatToolCard.vue';
+import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import { useTheme } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const { isDark } = useTheme();
@@ -241,7 +349,7 @@ const tabContext = ref<{ url: string; title: string } | null>(null);
 // Register BEFORE any async work so the listener is ready when sendPrompt fires.
 console.log('[SidePanelChat] Registering side-panel:set-prompt listener');
 
-ipcRenderer.on('side-panel:set-prompt' as any, (_event: unknown, payload: string | { prompt: string; tab?: { url: string; title: string }; selectionText?: string; attachments?: Array<{ mediaType: string; base64: string }> }) => {
+ipcRenderer.on('side-panel:set-prompt' as any, (_event: unknown, payload: string | { prompt: string; tab?: { url: string; title: string }; selectionText?: string; attachments?: { mediaType: string; base64: string }[] }) => {
   console.log('[SidePanelChat] Received prompt payload:', typeof payload, typeof payload === 'string' ? payload.slice(0, 80) : JSON.stringify(payload).slice(0, 200));
   const data = typeof payload === 'string' ? { prompt: payload } : payload;
 
@@ -267,7 +375,7 @@ ipcRenderer.on('side-panel:set-prompt' as any, (_event: unknown, payload: string
   }
 });
 
-onMounted(async () => {
+onMounted(async() => {
   await modelSelector.start();
 });
 

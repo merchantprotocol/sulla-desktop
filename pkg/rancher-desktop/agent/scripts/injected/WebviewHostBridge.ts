@@ -94,9 +94,9 @@ export class WebviewHostBridge {
   private lastInjectedForUrl = '';
 
   // ── State machine ──────────────────────────────────────────────
-  private _state: BridgeState = 'DETACHED';
-  private readyResolvers: Array<() => void> = [];
-  private readyTimeout: ReturnType<typeof setTimeout> | null = null;
+  private _state:         BridgeState = 'DETACHED';
+  private readyResolvers: (() => void)[] = [];
+  private readyTimeout:   ReturnType<typeof setTimeout> | null = null;
 
   constructor(config: HostBridgeConfig = {}) {
     this.injectDelayMs = config.injectDelayMs ?? 500;
@@ -300,8 +300,11 @@ export class WebviewHostBridge {
   }
 
   async getReaderContent(maxChars?: number): Promise<{
-    title: string; url: string; content: string;
-    contentLength: number; truncated: boolean;
+    title:         string;
+    url:           string;
+    content:       string;
+    contentLength: number;
+    truncated:     boolean;
   } | null> {
     const arg = typeof maxChars === 'number' ? String(maxChars) : '';
     const result = await this.execWhenReady(`window.sullaBridge.getReaderContent(${ arg })`);
@@ -336,9 +339,14 @@ export class WebviewHostBridge {
   }
 
   async getScrollInfo(): Promise<{
-    scrollY: number; scrollHeight: number; viewportHeight: number;
-    percent: number; atTop: boolean; atBottom: boolean;
-    moreBelow: boolean; moreAbove: boolean;
+    scrollY:        number;
+    scrollHeight:   number;
+    viewportHeight: number;
+    percent:        number;
+    atTop:          boolean;
+    atBottom:       boolean;
+    moreBelow:      boolean;
+    moreAbove:      boolean;
   }> {
     const result = await this.execWhenReady('window.sullaBridge.getScrollInfo()');
     if (result && typeof result === 'object') {
@@ -380,14 +388,14 @@ export class WebviewHostBridge {
   }
 
   async searchInPage(query: string): Promise<{
-    matches: Array<{ index: number; context: string }>; total: number; query: string;
+    matches: { index: number; context: string }[]; total: number; query: string;
   }> {
     const safe = JSON.stringify(query);
     const result = await this.execWhenReady(`window.sullaBridge.searchInPage(${ safe })`);
     if (result && typeof result === 'object') {
       const r = result as Record<string, unknown>;
       return {
-        matches: Array.isArray(r.matches) ? r.matches as Array<{ index: number; context: string }> : [],
+        matches: Array.isArray(r.matches) ? r.matches as { index: number; context: string }[] : [],
         total:   Number(r.total) || 0,
         query:   String(r.query || query),
       };

@@ -1,13 +1,14 @@
 import { ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import type { IpcRendererEvent } from 'electron';
 
 /** Backend states that mean the system is already booted */
 const READY_STATES = new Set(['STARTED', 'DISABLED']);
 
 interface LifecycleStatus {
-  ready: boolean;
+  ready:        boolean;
   shuttingDown: boolean;
 }
 
