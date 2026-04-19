@@ -10,18 +10,24 @@ const log = Logging.background;
  * ClaudeCodeService — runs `claude -p` inside the Lima VM and streams the
  * stream-json NDJSON output back into Sulla's agent loop.
  *
- * Unlike other providers, Claude Code already has its own agent loop,
- * tool execution, and context management. We pass through the user's
- * latest message, let Claude do its thing with --dangerously-skip-permissions,
- * and capture the final text response.
+ * Unlike Anthropic/Grok/OpenAI peers, Claude Code already owns its own agent
+ * loop, tool execution, and context management inside the CLI process. From
+ * Sulla's perspective it behaves as a "one-shot completion" peer: we hand it
+ * the full serialized conversation (plus the Sulla system prompt via
+ * --append-system-prompt), and Claude returns a final text answer.
  *
- * Session continuity is maintained via --session-id — we keep a per-
- * conversationId session map so multi-turn chats preserve Claude's context.
+ * State of the world:
+ *   - Sulla's subconscious middleware already trims / curates state.messages
+ *     to fit the active model's context window before they reach us, so we
+ *     just serialize whatever we get and trust it.
+ *   - OAuth token refresh is handled by the Claude Code CLI itself; we only
+ *     pass CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) and stay out of it.
+ *   - We do NOT use --resume. Sulla is the source of truth for conversation
+ *     state; duplicating it into Claude-side session state causes drift when
+ *     the subconscious middleware mutates messages (compaction, tool-result
+ *     rewriting, etc.). Every spawn is a clean slate + full transcript.
  */
 export class ClaudeCodeService extends BaseLanguageModel {
-  // conversationId → Claude session_id
-  private sessions = new Map<string, string>();
-
   override getContextWindow(): number {
     return 200_000;
   }
@@ -35,7 +41,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   protected async healthCheck(): Promise<boolean> {
-    // Credentials stored in SullaSettingsModel; deferred check at spawn time.
+    // Claude Code CLI manages its own auth lifecycle; credentials presence is
+    // deferred until spawn time where we produce a user-facing error.
     return true;
   }
 
@@ -45,11 +52,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   /**
    * Non-streaming chat — buffers the whole response and returns it.
-   * Used by async callers that don't need token-by-token streaming.
    */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const { text, sessionId } = await this.runClaude(messages, {}, options);
-    return { text, sessionId };
+    const { text } = await this.runClaude(messages, {}, options);
+    return { text };
   }
 
   /**
@@ -107,74 +113,12 @@ export class ClaudeCodeService extends BaseLanguageModel {
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * Extract the latest user prompt for Claude Code.
-   *
-   * The agent orchestrator feeds us rich, multi-turn message arrays — including
-   * `tool_use` requests and `tool_result` responses wrapped inside `user` or
-   * `assistant` roles. Claude Code's `-p` mode takes ONE prompt string, so we
-   * need a robust extractor that:
-   *
-   *   1. Walks backward from the last message, collecting any plain text content.
-   *   2. Flattens string-typed content blocks (Anthropic canonical shape).
-   *   3. Falls back to extracting from `tool_result` / `tool_use` payloads so a
-   *      conversation dominated by tool blocks still surfaces usable context.
-   *   4. Never returns an empty string silently — callers must throw if that
-   *      happens, because an empty `-p` argument makes the CLI return nothing
-   *      in ~100ms and looks indistinguishable from a network/auth failure.
+   * Serialize Sulla's curated conversation into a single prompt string for
+   * `claude -p`. The array is already trimmed by the subconscious middleware,
+   * so we faithfully render every message — including tool_use / tool_result
+   * blocks — in chronological order.
    */
-  private extractPrompt(messages: ChatMessage[]): string {
-    const extractFromBlock = (b: any): string => {
-      if (typeof b === 'string') return b;
-      if (!b || typeof b !== 'object') return '';
-      if (b.type === 'text' && typeof b.text === 'string') return b.text;
-      if (b.type === 'tool_result') {
-        // tool_result content can be a string or an array of text/content blocks
-        if (typeof b.content === 'string') return b.content;
-        if (Array.isArray(b.content)) return b.content.map(extractFromBlock).filter(Boolean).join('\n');
-      }
-      return '';
-    };
-
-    const extractFromMessage = (m: ChatMessage): string => {
-      const c: any = m.content;
-      if (typeof c === 'string') return c;
-      if (Array.isArray(c)) {
-        return c.map(extractFromBlock).filter(Boolean).join('\n');
-      }
-      return '';
-    };
-
-    // Prefer the last user message — that's the "new" prompt in a turn.
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.role === 'user') {
-        const text = extractFromMessage(m).trim();
-        if (text) return text;
-      }
-    }
-
-    // Fallback: any recent message with extractable text (tool_result, etc.)
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const text = extractFromMessage(messages[i]).trim();
-      if (text) return text;
-    }
-
-    return '';
-  }
-
-  /**
-   * Serialize the prior conversation (everything before the current user
-   * prompt) as a plain-text transcript that can be prepended to `-p` when
-   * there's no Claude session to resume. The last user message is excluded
-   * because it's sent separately as the new prompt; earlier user messages,
-   * assistant replies, and tool transcripts are all included so Claude can
-   * see how the conversation got here.
-   */
-  private serializeHistory(messages: ChatMessage[]): string {
-    if (messages.length <= 1) return '';
-
-    // Reuse the same extraction logic as extractPrompt by inlining it — keeps
-    // tool_use / tool_result blocks visible as the text they carry.
+  private serializeMessages(messages: ChatMessage[]): string {
     const extractFromBlock = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
@@ -198,42 +142,37 @@ export class ClaudeCodeService extends BaseLanguageModel {
       return '';
     };
 
-    // Drop the final user message — that's the new prompt, sent separately.
-    // If the last message is not a user turn (e.g. assistant narration), keep
-    // everything before it and let extractPrompt pick the latest user above.
-    let cutoff = messages.length - 1;
-    while (cutoff >= 0 && messages[cutoff].role !== 'user') cutoff--;
-    if (cutoff < 0) cutoff = messages.length - 1;
+    const labelFor = (role: string) => {
+      switch (role) {
+      case 'assistant': return 'Assistant';
+      case 'user':      return 'User';
+      case 'system':    return 'System';
+      default:          return role;
+      }
+    };
 
-    const history = messages.slice(0, cutoff);
     const lines: string[] = [];
-    for (const m of history) {
+    for (const m of messages) {
       const text = extractFromMessage(m).trim();
       if (!text) continue;
-      const role = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : m.role === 'system' ? 'System' : m.role;
-      lines.push(`${ role }: ${ text }`);
+      lines.push(`${ labelFor(m.role) }: ${ text }`);
     }
-
-    if (lines.length === 0) return '';
-    return `Previous conversation:\n${ lines.join('\n\n') }`;
+    return lines.join('\n\n');
   }
 
   /**
    * Spawn claude -p in the VM, stream text_delta chunks to the callback,
-   * return the final text + session id.
+   * return the final text.
    */
   private async runClaude(
     messages: ChatMessage[],
     callbacks: Partial<StreamCallbacks>,
     options: { signal?: AbortSignal; conversationId?: string },
-    retryWithoutSession = false,
-  ): Promise<{ text: string; sessionId?: string }> {
-    const prompt = this.extractPrompt(messages);
-    if (!prompt.trim()) {
-      // Returning empty here used to trigger a silent Grok fallback in BaseNode.
-      // Throw instead so the user sees the real problem.
+  ): Promise<{ text: string }> {
+    const promptForClaude = this.serializeMessages(messages);
+    if (!promptForClaude.trim()) {
       const roles = messages.map(m => m.role).join(',');
-      throw new Error(`Claude Code got no extractable prompt from ${ messages.length } messages (roles=${ roles })`);
+      throw new Error(`Claude Code got no serializable messages (count=${ messages.length } roles=${ roles })`);
     }
 
     // Prefer the integration vault (new path). Fall back to SullaSettingsModel
@@ -263,34 +202,19 @@ export class ClaudeCodeService extends BaseLanguageModel {
     }
 
     const convId = options.conversationId ?? '__default__';
-    const existingSession = retryWithoutSession ? undefined : this.sessions.get(convId);
-
-    log.log(`[ClaudeCodeService] runClaude: promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
+    log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ promptForClaude.length } conversationId=${ convId } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
 
     const limactlPath = resolveLimactlPath({});
     const limaHome = resolveLimaHome({});
 
     // POSIX single-quote escape — wraps in single quotes and escapes any
-    // embedded single quotes as `'\''`. Unlike JSON.stringify (which uses
-    // double quotes), single-quoted strings are literal in sh — no backtick,
-    // $VAR, or ! expansion. JSON.stringify was letting prompts like
-    // "look at `sulla-desktop`" fire command substitution before claude ever
-    // saw the argument.
+    // embedded single quotes as `'\''`. Single-quoted strings are literal in
+    // sh, so no backtick/$VAR/! expansion can fire against untrusted text.
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const envAssignments: string[] = [];
     if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(oauthToken) }`);
     if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(apiKey) }`);
-
-    // When there's no existing Claude session for this conversation, Claude
-    // starts fresh and has no context from prior turns. Serialize Sulla's
-    // full message history so the first turn of a new session still carries
-    // the conversation. With --resume, Claude already has the session state;
-    // re-sending the history would be wasteful.
-    const historyBlock = existingSession ? '' : this.serializeHistory(messages);
-    const promptForClaude = historyBlock
-      ? `${ historyBlock }\n\n--- new message ---\n${ prompt }`
-      : prompt;
 
     // Build the full Sulla system prompt fresh each turn so Claude sees the
     // current identity, skills, extensions, integrations, and any durable
@@ -314,14 +238,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (appendSystemPrompt.trim()) {
       claudeArgs.push('--append-system-prompt', shq(appendSystemPrompt));
     }
-    if (existingSession) {
-      // --resume continues an existing conversation. We used --session-id
-      // before, but that flag *creates* a session with the given UUID and
-      // fails with "Session ID is already in use" on every subsequent call.
-      // --resume is the correct flag for multi-turn chat — Claude loads the
-      // prior conversation state and appends this prompt to it.
-      claudeArgs.push('--resume', shq(existingSession));
-    }
 
     const innerCmd = `${ envAssignments.join(' ') } ${ claudeArgs.join(' ') } < /dev/null`;
     const args = ['shell', '0', '--', 'sh', '-c', innerCmd];
@@ -334,10 +250,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
       let stdoutBuffer = '';
       let stderrBuffer = '';
       let textCollected = '';
-      let capturedSessionId: string | undefined = existingSession;
       let errored = false;
       let errorMessage = '';
-      let sessionInUse = false;
 
       const onAbort = () => {
         try { proc.kill('SIGTERM') } catch { /* already dead */ }
@@ -357,8 +271,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
           return;
         }
 
-        if (parsed.session_id) capturedSessionId = parsed.session_id;
-
         // Text chunks → stream to caller
         const delta = parsed?.event?.delta;
         if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
@@ -368,18 +280,21 @@ export class ClaudeCodeService extends BaseLanguageModel {
         }
 
         // Final result event — capture full text (handles cases where text_delta
-        // events were missed, e.g. non-streaming fallback or auth failure).
+        // events were missed, e.g. non-streaming fallback or auth failure) and
+        // record usage/cost for the settings UI.
         if (parsed.type === 'result') {
           if (parsed.is_error) {
             errored = true;
-            // Capture the error message so callers see the real reason
-            // instead of the generic "exited with code 0".
             if (typeof parsed.result === 'string' && parsed.result) {
               errorMessage = parsed.result;
             }
-          } else if (typeof parsed.result === 'string' && !textCollected) {
-            textCollected = parsed.result;
-            try { callbacks.onToken?.(parsed.result) } catch { /* ignore */ }
+          } else {
+            if (typeof parsed.result === 'string' && !textCollected) {
+              textCollected = parsed.result;
+              try { callbacks.onToken?.(parsed.result) } catch { /* ignore */ }
+            }
+            // Usage capture is best-effort — never block on failure.
+            recordUsage(parsed).catch(() => { /* ignore */ });
           }
         }
       };
@@ -395,11 +310,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
         const text = chunk.toString('utf-8');
         stderrBuffer += text;
         const trimmed = text.trim();
-        // Detect the session-collision signal so we can retry without it.
-        if (/Session ID .* is already in use/i.test(stderrBuffer)) {
-          sessionInUse = true;
-        }
-        // Ignore the expected stdin warning
         if (trimmed && !trimmed.includes('no stdin data received')) {
           console.log(`[ClaudeCodeService][stderr] ${ trimmed.slice(0, 200) }`);
         }
@@ -414,20 +324,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
         options.signal?.removeEventListener('abort', onAbort);
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
 
-        // Session lock collision — drop the cached session id and recover by
-        // retrying once with a fresh session. User loses turn context but
-        // avoids a dead-end error.
-        if (sessionInUse && !retryWithoutSession) {
-          log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying with a fresh session for conversationId=${ convId }`);
-          this.sessions.delete(convId);
-          this.runClaude(messages, callbacks, options, true).then(resolve, reject);
-          return;
-        }
-
-        if (capturedSessionId) {
-          this.sessions.set(convId, capturedSessionId);
-        }
-
         if (errored) {
           const msg = errorMessage || textCollected || `claude exited with code ${ code }`;
           log.warn(`[ClaudeCodeService] runClaude errored: ${ msg.slice(0, 200) }`);
@@ -435,8 +331,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
           return;
         }
 
-        // Guard against silent empty success — treat no output as a failure so
-        // the error surfaces instead of triggering a silent provider fallback.
         if (!textCollected.trim()) {
           const stderrTail = stderrBuffer.trim().slice(-200);
           log.warn(`[ClaudeCodeService] runClaude exited with no text (code=${ code }) stderr=${ stderrTail }`);
@@ -444,10 +338,78 @@ export class ClaudeCodeService extends BaseLanguageModel {
           return;
         }
 
-        log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
-        resolve({ text: textCollected, sessionId: capturedSessionId });
+        log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars`);
+        resolve({ text: textCollected });
       });
     });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Usage capture
+// ─────────────────────────────────────────────────────────────
+
+interface UsageRecord {
+  ts:             string;
+  duration_ms?:   number;
+  input_tokens?:  number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?:     number;
+  cost_usd?:      number;
+  model?:         string;
+}
+
+const USAGE_SETTING_KEY = 'claudeCodeUsage';
+const USAGE_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
+const USAGE_MAX_ENTRIES = 500;
+
+/**
+ * Append a single usage sample from Claude Code's result event to
+ * SullaSettingsModel.claudeCodeUsage. Trims to a rolling 24h window and
+ * caps the array length so the settings row can't grow unbounded.
+ */
+async function recordUsage(result: any): Promise<void> {
+  const u = result?.usage;
+  if (!u) return;
+
+  try {
+    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+    const raw = await SullaSettingsModel.get(USAGE_SETTING_KEY, '[]');
+    let records: UsageRecord[] = [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) records = parsed;
+    } catch { /* ignore unparseable prior value */ }
+
+    const entry: UsageRecord = {
+      ts:                          new Date().toISOString(),
+      duration_ms:                 typeof result.duration_ms === 'number' ? result.duration_ms : undefined,
+      input_tokens:                typeof u.input_tokens === 'number' ? u.input_tokens : undefined,
+      output_tokens:               typeof u.output_tokens === 'number' ? u.output_tokens : undefined,
+      cache_creation_input_tokens: typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : undefined,
+      cache_read_input_tokens:     typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : undefined,
+      cost_usd:                    typeof result.total_cost_usd === 'number' ? result.total_cost_usd : undefined,
+      model:                       typeof result.model === 'string' ? result.model : undefined,
+    };
+
+    records.push(entry);
+
+    // Trim: drop anything older than the retention window.
+    const cutoff = Date.now() - USAGE_RETENTION_MS;
+    records = records.filter(r => {
+      const t = Date.parse(r.ts);
+      return Number.isFinite(t) && t >= cutoff;
+    });
+
+    // Cap: keep the most recent N so a blocked cleanup can't balloon the row.
+    if (records.length > USAGE_MAX_ENTRIES) {
+      records = records.slice(-USAGE_MAX_ENTRIES);
+    }
+
+    await SullaSettingsModel.set(USAGE_SETTING_KEY, JSON.stringify(records));
+  } catch {
+    /* persistence failure — don't disturb the chat */
   }
 }
 
