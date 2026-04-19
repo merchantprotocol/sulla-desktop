@@ -226,6 +226,17 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(oauthToken) }`);
     if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(apiKey) }`);
 
+    // Build the full Sulla system prompt fresh each turn so Claude sees the
+    // current identity, skills, extensions, integrations, etc. Failures here
+    // must not block the chat — fall back to no-append.
+    let appendSystemPrompt = '';
+    try {
+      const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
+      appendSystemPrompt = await buildFullSystemPrompt({ provider: 'anthropic' });
+    } catch (err) {
+      log.log(`[ClaudeCodeService] buildFullSystemPrompt failed, continuing without it: ${ (err as Error)?.message ?? err }`);
+    }
+
     const claudeArgs = [
       'claude',
       '-p', shq(prompt),
@@ -234,6 +245,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--include-partial-messages',
       '--dangerously-skip-permissions',
     ];
+    if (appendSystemPrompt.trim()) {
+      claudeArgs.push('--append-system-prompt', shq(appendSystemPrompt));
+    }
     if (existingSession) {
       // --resume continues an existing conversation. We used --session-id
       // before, but that flag *creates* a session with the given UUID and

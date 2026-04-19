@@ -113,7 +113,7 @@ async function getSoulPrompt(): Promise<string> {
  * @param allowedIntegrations - slugs from config.yaml integrations field.
  *   Empty array = no integrations. ["*"] = all integrations.
  */
-async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<string> {
+export async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<string> {
   if (!allowedIntegrations || allowedIntegrations.length === 0) {
     return '';
   }
@@ -208,7 +208,7 @@ async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<s
  * Build the template variable map used to substitute {{...}} placeholders
  * in agent prompt files and the environment prompt.
  */
-async function getTemplateVariables(): Promise<Record<string, string>> {
+export async function getTemplateVariables(): Promise<Record<string, string>> {
   const botName = await SullaSettingsModel.get('botName', 'Sulla');
   const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
   const projectsDir = resolveSullaProjectsDir();
@@ -340,7 +340,7 @@ const agentPromptLoadCache = new Map<string, { result: AgentPromptLoadResult; lo
  * Files whose basename (minus .md) matches a registered section ID become overrides.
  * All other .md files are concatenated as generic prompt content.
  */
-async function loadAgentPromptData(agentId: string): Promise<AgentPromptLoadResult | null> {
+export async function loadAgentPromptData(agentId: string): Promise<AgentPromptLoadResult | null> {
   if (!agentId) return null;
 
   // Check cache
