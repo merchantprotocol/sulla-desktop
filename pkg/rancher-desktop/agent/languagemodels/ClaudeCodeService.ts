@@ -2,6 +2,9 @@ import * as childProcess from 'child_process';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
 import { resolveLimactlPath, resolveLimaHome } from '../tools/util/CommandRunner';
+import Logging from '@pkg/utils/logging';
+
+const log = Logging.background;
 
 /**
  * ClaudeCodeService — runs `claude -p` inside the Lima VM and streams the
@@ -104,22 +107,58 @@ export class ClaudeCodeService extends BaseLanguageModel {
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * Extract the last user message as the prompt for Claude Code.
-   * Earlier messages are part of the session history managed by Claude itself.
+   * Extract the latest user prompt for Claude Code.
+   *
+   * The agent orchestrator feeds us rich, multi-turn message arrays — including
+   * `tool_use` requests and `tool_result` responses wrapped inside `user` or
+   * `assistant` roles. Claude Code's `-p` mode takes ONE prompt string, so we
+   * need a robust extractor that:
+   *
+   *   1. Walks backward from the last message, collecting any plain text content.
+   *   2. Flattens string-typed content blocks (Anthropic canonical shape).
+   *   3. Falls back to extracting from `tool_result` / `tool_use` payloads so a
+   *      conversation dominated by tool blocks still surfaces usable context.
+   *   4. Never returns an empty string silently — callers must throw if that
+   *      happens, because an empty `-p` argument makes the CLI return nothing
+   *      in ~100ms and looks indistinguishable from a network/auth failure.
    */
   private extractPrompt(messages: ChatMessage[]): string {
+    const extractFromBlock = (b: any): string => {
+      if (typeof b === 'string') return b;
+      if (!b || typeof b !== 'object') return '';
+      if (b.type === 'text' && typeof b.text === 'string') return b.text;
+      if (b.type === 'tool_result') {
+        // tool_result content can be a string or an array of text/content blocks
+        if (typeof b.content === 'string') return b.content;
+        if (Array.isArray(b.content)) return b.content.map(extractFromBlock).filter(Boolean).join('\n');
+      }
+      return '';
+    };
+
+    const extractFromMessage = (m: ChatMessage): string => {
+      const c: any = m.content;
+      if (typeof c === 'string') return c;
+      if (Array.isArray(c)) {
+        return c.map(extractFromBlock).filter(Boolean).join('\n');
+      }
+      return '';
+    };
+
+    // Prefer the last user message — that's the "new" prompt in a turn.
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
       if (m.role === 'user') {
-        const c = m.content;
-        if (typeof c === 'string') return c;
-        if (Array.isArray(c)) {
-          return c.filter((b: any) => b?.type === 'text' || typeof b === 'string')
-            .map((b: any) => (typeof b === 'string' ? b : b.text))
-            .join('\n');
-        }
+        const text = extractFromMessage(m).trim();
+        if (text) return text;
       }
     }
+
+    // Fallback: any recent message with extractable text (tool_result, etc.)
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const text = extractFromMessage(messages[i]).trim();
+      if (text) return text;
+    }
+
     return '';
   }
 
@@ -131,40 +170,77 @@ export class ClaudeCodeService extends BaseLanguageModel {
     messages: ChatMessage[],
     callbacks: Partial<StreamCallbacks>,
     options: { signal?: AbortSignal; conversationId?: string },
+    retryWithoutSession = false,
   ): Promise<{ text: string; sessionId?: string }> {
     const prompt = this.extractPrompt(messages);
     if (!prompt.trim()) {
-      return { text: '' };
+      // Returning empty here used to trigger a silent Grok fallback in BaseNode.
+      // Throw instead so the user sees the real problem.
+      const roles = messages.map(m => m.role).join(',');
+      throw new Error(`Claude Code got no extractable prompt from ${ messages.length } messages (roles=${ roles })`);
     }
 
-    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-    const oauthToken: string = (await SullaSettingsModel.get('claudeOAuthToken', '')) ?? '';
-    const apiKey: string = (await SullaSettingsModel.get('claudeApiKey', '')) ?? '';
+    // Prefer the integration vault (new path). Fall back to SullaSettingsModel
+    // so users configured via Language Model Settings keep working during the
+    // transition.
+    let oauthToken = '';
+    let apiKey = '';
+    try {
+      const { getIntegrationService } = await import('../services/IntegrationService');
+      const values = await getIntegrationService().getFormValues('claude-code');
+      for (const v of values) {
+        if (v.property === 'oauth_token' && v.value) oauthToken = v.value;
+        if (v.property === 'api_key' && v.value) apiKey = v.value;
+      }
+    } catch (err) {
+      console.warn('[ClaudeCodeService] Vault lookup failed, falling back to SullaSettingsModel:', err);
+    }
 
     if (!oauthToken && !apiKey) {
-      throw new Error('No Claude credentials configured. Sign in via Language Model Settings → Claude Code.');
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      oauthToken = (await SullaSettingsModel.get('claudeOAuthToken', '')) ?? '';
+      apiKey = (await SullaSettingsModel.get('claudeApiKey', '')) ?? '';
+    }
+
+    if (!oauthToken && !apiKey) {
+      throw new Error('No Claude credentials configured. Sign in via Integrations → Claude Code.');
     }
 
     const convId = options.conversationId ?? '__default__';
-    const existingSession = this.sessions.get(convId);
+    const existingSession = retryWithoutSession ? undefined : this.sessions.get(convId);
+
+    log.log(`[ClaudeCodeService] runClaude: promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
 
     const limactlPath = resolveLimactlPath({});
     const limaHome = resolveLimaHome({});
 
+    // POSIX single-quote escape — wraps in single quotes and escapes any
+    // embedded single quotes as `'\''`. Unlike JSON.stringify (which uses
+    // double quotes), single-quoted strings are literal in sh — no backtick,
+    // $VAR, or ! expansion. JSON.stringify was letting prompts like
+    // "look at `sulla-desktop`" fire command substitution before claude ever
+    // saw the argument.
+    const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
+
     const envAssignments: string[] = [];
-    if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ JSON.stringify(oauthToken) }`);
-    if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ JSON.stringify(apiKey) }`);
+    if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(oauthToken) }`);
+    if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(apiKey) }`);
 
     const claudeArgs = [
       'claude',
-      '-p', JSON.stringify(prompt),
+      '-p', shq(prompt),
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
       '--dangerously-skip-permissions',
     ];
     if (existingSession) {
-      claudeArgs.push('--session-id', JSON.stringify(existingSession));
+      // --resume continues an existing conversation. We used --session-id
+      // before, but that flag *creates* a session with the given UUID and
+      // fails with "Session ID is already in use" on every subsequent call.
+      // --resume is the correct flag for multi-turn chat — Claude loads the
+      // prior conversation state and appends this prompt to it.
+      claudeArgs.push('--resume', shq(existingSession));
     }
 
     const innerCmd = `${ envAssignments.join(' ') } ${ claudeArgs.join(' ') } < /dev/null`;
@@ -176,9 +252,12 @@ export class ClaudeCodeService extends BaseLanguageModel {
       });
 
       let stdoutBuffer = '';
+      let stderrBuffer = '';
       let textCollected = '';
       let capturedSessionId: string | undefined = existingSession;
       let errored = false;
+      let errorMessage = '';
+      let sessionInUse = false;
 
       const onAbort = () => {
         try { proc.kill('SIGTERM') } catch { /* already dead */ }
@@ -213,6 +292,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
         if (parsed.type === 'result') {
           if (parsed.is_error) {
             errored = true;
+            // Capture the error message so callers see the real reason
+            // instead of the generic "exited with code 0".
+            if (typeof parsed.result === 'string' && parsed.result) {
+              errorMessage = parsed.result;
+            }
           } else if (typeof parsed.result === 'string' && !textCollected) {
             textCollected = parsed.result;
             try { callbacks.onToken?.(parsed.result) } catch { /* ignore */ }
@@ -228,10 +312,16 @@ export class ClaudeCodeService extends BaseLanguageModel {
       });
 
       proc.stderr.on('data', (chunk) => {
-        const text = chunk.toString('utf-8').trim();
+        const text = chunk.toString('utf-8');
+        stderrBuffer += text;
+        const trimmed = text.trim();
+        // Detect the session-collision signal so we can retry without it.
+        if (/Session ID .* is already in use/i.test(stderrBuffer)) {
+          sessionInUse = true;
+        }
         // Ignore the expected stdin warning
-        if (text && !text.includes('no stdin data received')) {
-          console.log(`[ClaudeCodeService][stderr] ${ text.slice(0, 200) }`);
+        if (trimmed && !trimmed.includes('no stdin data received')) {
+          console.log(`[ClaudeCodeService][stderr] ${ trimmed.slice(0, 200) }`);
         }
       });
 
@@ -244,15 +334,37 @@ export class ClaudeCodeService extends BaseLanguageModel {
         options.signal?.removeEventListener('abort', onAbort);
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
 
+        // Session lock collision — drop the cached session id and recover by
+        // retrying once with a fresh session. User loses turn context but
+        // avoids a dead-end error.
+        if (sessionInUse && !retryWithoutSession) {
+          log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying with a fresh session for conversationId=${ convId }`);
+          this.sessions.delete(convId);
+          this.runClaude(messages, callbacks, options, true).then(resolve, reject);
+          return;
+        }
+
         if (capturedSessionId) {
           this.sessions.set(convId, capturedSessionId);
         }
 
         if (errored) {
-          reject(new Error(textCollected || `claude exited with code ${ code }`));
+          const msg = errorMessage || textCollected || `claude exited with code ${ code }`;
+          log.warn(`[ClaudeCodeService] runClaude errored: ${ msg.slice(0, 200) }`);
+          reject(new Error(`Claude Code: ${ msg }`));
           return;
         }
 
+        // Guard against silent empty success — treat no output as a failure so
+        // the error surfaces instead of triggering a silent provider fallback.
+        if (!textCollected.trim()) {
+          const stderrTail = stderrBuffer.trim().slice(-200);
+          log.warn(`[ClaudeCodeService] runClaude exited with no text (code=${ code }) stderr=${ stderrTail }`);
+          reject(new Error(`Claude Code returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials and VM status.' }`));
+          return;
+        }
+
+        log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
         resolve({ text: textCollected, sessionId: capturedSessionId });
       });
     });
