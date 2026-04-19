@@ -18,6 +18,14 @@ export interface Integration {
   oauth?:             boolean;
   /** The registered OAuthProvider id that defines endpoints and scopes (used by authType 'oauth' or oauth: true) */
   oauthProviderId?:   string;
+  /**
+   * When true, the OAuth flow is run through sulla-workers using Sulla's
+   * shared app credentials. The user doesn't supply client_id/client_secret —
+   * the detail view calls a dedicated IPC handler instead of the generic
+   * OAuthService. Used for Sign-in-with-Apple and any future consumer-style
+   * identity integrations that share Sulla's registered OAuth app.
+   */
+  sullaManagedOAuth?: boolean;
   formGuide?:         string;
   installationGuide?: {
     title:       string;

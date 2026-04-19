@@ -1030,14 +1030,27 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     } catch (err) {
       if ((err as any)?.name === 'AbortError') throw err;
 
-      console.warn(`[${ this.name }:BaseNode] Primary LLM failed:`, err instanceof Error ? err.message : String(err));
+      const primaryName = this.llm.getProviderName?.() || 'primary';
+      const primaryId = this.llm.getModel?.() || '';
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[${ this.name }:BaseNode] Primary LLM failed (${ primaryName }):`, errMsg);
+
+      // Never silently swap models out from under the user — when they pick a
+      // specific provider they want to know it failed, not get an answer from
+      // a different model pretending to be the same assistant. Fallback only
+      // runs when the primary is a generic/unselected provider.
+      const explicitPrimary = primaryId === 'claude-code' || primaryName === 'Claude Code';
+      if (explicitPrimary) {
+        throw new Error(`${ primaryName } failed: ${ errMsg }`);
+      }
 
       // Fallback to secondary provider — only if it's healthy
       try {
         const secondary = await getSecondaryService();
         await secondary.initialize();
         if (secondary.isAvailable()) {
-          console.log(`[${ this.name }:BaseNode] Falling back to secondary provider (${ secondary.getModel() })`);
+          const secondaryName = secondary.getProviderName?.() || secondary.getModel();
+          console.warn(`[${ this.name }:BaseNode] Falling back to secondary provider (${ secondaryName }) — primary ${ primaryName } failed`);
           const chatMessages = messages.filter(msg =>
             ['system', 'user', 'assistant'].includes(msg.role),
           );
@@ -1050,6 +1063,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             nodeName,
           });
           if (reply) {
+            // Annotate the reply so downstream UI can badge it as a fallback.
+            (reply.metadata as any).fallback_used = true;
+            (reply.metadata as any).fallback_from = primaryName;
+            (reply.metadata as any).fallback_to = secondaryName;
             this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
             return reply;
           }
@@ -1062,8 +1079,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
 
       // Propagate the error so the chat UI can display it to the user
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`[${ this.name }] LLM provider failed: ${ message }`);
+      throw new Error(`[${ this.name }] LLM provider failed: ${ errMsg }`);
     } finally {
       this.currentNodeRunContext = previousRunContext;
       (state.metadata as any).__toolAccessPolicy = previousToolAccessPolicy;

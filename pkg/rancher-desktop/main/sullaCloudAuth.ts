@@ -26,6 +26,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
 import { getDesktopRelayClient } from './desktopRelay';
+import { runOAuthFlow } from './sullaOAuthService';
 
 const console = Logging.background;
 
@@ -440,8 +441,75 @@ export function initSullaCloudAuthEvents(): void {
     return completeSignIn(result.data);
   });
 
+  /**
+   * Runs the full web-OAuth Sign-in-with-Apple flow in a BrowserWindow. On
+   * success, persists:
+   *   - The Sulla Cloud session to integration_id="sulla-cloud" (via completeSignIn)
+   *   - The Apple identity to integration_id="apple_signin" so the Apple
+   *     integration shows as "connected" in the vault UI.
+   */
+  ipcMainProxy.handle('sulla-cloud:apple-sign-in-browser', async(): Promise<AuthResult> => {
+    try {
+      const flow = await runOAuthFlow('apple', 'sulla-cloud');
+
+      // Save Apple identity to the apple_signin integration vault record so
+      // it appears as "connected" when the user opens the vault.
+      try {
+        const svc = getIntegrationService();
+        const appleAccountId = flow.claims.sub;
+        await svc.setMultipleValues([
+          { integration_id: 'apple_signin', account_id: appleAccountId, property: 'apple_user_id', value: flow.claims.sub },
+          { integration_id: 'apple_signin', account_id: appleAccountId, property: 'email',         value: flow.claims.email ?? '' },
+          { integration_id: 'apple_signin', account_id: appleAccountId, property: 'full_name',     value: flow.claims.fullName ?? '' },
+          { integration_id: 'apple_signin', account_id: appleAccountId, property: 'id_token',      value: flow.tokens.idToken ?? '' },
+        ]);
+        await svc.setConnectionStatus('apple_signin', true, appleAccountId);
+        await svc.setActiveAccount('apple_signin', appleAccountId);
+      } catch (err) {
+        console.warn('[SullaCloudAuth] Failed to save apple_signin record:', err);
+      }
+
+      const sulla = flow.sullaSession;
+      if (!sulla) {
+        return {
+          ok:     false,
+          error:  'Apple sign-in did not return a Sulla Cloud session.',
+          status: await buildStatus(),
+        };
+      }
+      // Wrap the worker's sullaSession into the VerifyResponse shape that
+      // completeSignIn expects.
+      const verifyLike: VerifyResponse = {
+        accessToken:  sulla.accessToken,
+        refreshToken: sulla.refreshToken,
+        contractor:   sulla.contractor as CloudContractor,
+      };
+      return completeSignIn(verifyLike);
+    } catch (err: any) {
+      const msg = err?.message === 'user_cancelled'
+        ? 'Sign-in cancelled.'
+        : err?.message === 'oauth_flow_timeout'
+          ? 'Sign-in timed out. Try again.'
+          : err?.message === 'oauth_flow_expired'
+            ? 'Sign-in session expired. Try again.'
+            : (err?.message || 'Apple sign-in failed.');
+      return { ok: false, error: msg, status: await buildStatus(msg) };
+    }
+  });
+
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
     await clearSession();
+    try {
+      // Also disconnect the apple_signin vault record so it no longer shows
+      // as connected. Deletes all Apple accounts for this user.
+      const svc = getIntegrationService();
+      const appleAccounts = await svc.getAccounts('apple_signin');
+      for (const acc of appleAccounts) {
+        await svc.deleteAccount('apple_signin', acc.account_id);
+      }
+    } catch (err) {
+      console.warn('[SullaCloudAuth] Failed to clear apple_signin accounts:', err);
+    }
     try {
       await getDesktopRelayClient().setPairedUserId('');
     } catch { /* ignore */ }

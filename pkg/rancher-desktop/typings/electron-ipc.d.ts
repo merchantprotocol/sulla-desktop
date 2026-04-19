@@ -249,6 +249,7 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:email-login':     (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:email-register':  (email: string, password: string, name?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:apple-sign-in':   (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:apple-sign-in-browser': () => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:logout':          () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
 
   /** Desktop relay — pairing + status */

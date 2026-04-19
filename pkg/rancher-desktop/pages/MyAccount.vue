@@ -209,20 +209,10 @@
             <!-- Apple flow -->
             <template v-else-if="cloudTab === 'apple'">
               <p class="account-hint">
-                Sign in with Apple uses the same Apple ID as the Sulla Mobile app.
-                The desktop Apple Sign-In flow requires a native macOS binding; until
-                it ships, paste an Apple identity token below if you have one (from a
-                paired mobile device or manual test).
+                Sign in with Apple is managed as a vault integration. Clicking
+                below opens the Apple Sign In integration in your vault, where
+                you start the OAuth flow.
               </p>
-              <div class="account-field">
-                <label class="account-label">Apple identity_token (JWT)</label>
-                <textarea
-                  v-model="appleToken"
-                  rows="3"
-                  placeholder="eyJ..."
-                  class="account-input account-textarea"
-                />
-              </div>
               <p
                 v-if="cloudError"
                 class="account-error"
@@ -231,11 +221,19 @@
               </p>
               <button
                 type="button"
-                class="account-save-btn"
-                :disabled="busy || !appleToken.trim()"
-                @click="appleSubmit"
+                class="account-apple-btn"
+                :disabled="busy"
+                @click="openAppleInVault"
               >
-                {{ busy ? 'Verifying...' : 'Continue with Apple' }}
+                <svg
+                  viewBox="0 0 170 170"
+                  fill="currentColor"
+                  aria-hidden="true"
+                  class="account-apple-icon"
+                >
+                  <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.197-2.12-9.973-3.17-14.34-3.17-4.58 0-9.492 1.05-14.746 3.17-5.262 2.13-9.501 3.24-12.742 3.35-4.929.21-9.842-1.96-14.746-6.52-3.131-2.73-7.047-7.41-11.729-14.04-5.039-7.08-9.18-15.29-12.423-24.64-3.492-10.1-5.224-19.88-5.224-29.35 0-10.85 2.345-20.21 7.043-28.05 3.693-6.3 8.609-11.27 14.76-14.92 6.149-3.66 12.794-5.52 19.94-5.64 3.915 0 9.051 1.21 15.434 3.59 6.36 2.39 10.44 3.6 12.229 3.6 1.338 0 5.871-1.42 13.566-4.24 7.278-2.62 13.421-3.71 18.445-3.28 13.607 1.1 23.828 6.46 30.635 16.08-12.171 7.37-18.192 17.7-18.073 30.96.11 10.33 3.86 18.93 11.24 25.75 3.34 3.17 7.07 5.62 11.22 7.36-.9 2.61-1.85 5.11-2.86 7.51zM119.11 7.24c0 8.1-2.96 15.66-8.86 22.67-7.12 8.33-15.73 13.14-25.07 12.38-.12-.97-.19-1.99-.19-3.06 0-7.77 3.39-16.1 9.41-22.91 3.01-3.45 6.84-6.32 11.49-8.61 4.64-2.25 9.03-3.5 13.16-3.71.12 1.08.17 2.16.17 3.23z" />
+                </svg>
+                <span>Sign in with Apple</span>
               </button>
             </template>
           </template>
@@ -444,10 +442,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+const router = useRouter();
 
 const loading = ref(true);
 const saving = ref(false);
@@ -503,7 +504,7 @@ const emailPassword = ref('');
 const emailName = ref('');
 const emailMode = ref<'login' | 'register'>('login');
 
-const appleToken = ref('');
+const appleToken = ref(''); // kept for compat with existing paste-token IPC
 
 const initials = computed(() => {
   const name = userName.value.trim();
@@ -658,6 +659,13 @@ async function appleSubmit() {
   } finally {
     busy.value = false;
   }
+}
+
+function openAppleInVault() {
+  router.push('/Integrations/apple_signin').catch((err) => {
+    console.error('[MyAccount] Failed to navigate to Apple integration:', err);
+    cloudError.value = 'Could not open the Apple integration in the vault.';
+  });
 }
 
 async function signOut() {
@@ -989,6 +997,38 @@ onBeforeUnmount(() => {
   font-size: 11px;
   resize: vertical;
   min-height: 72px;
+}
+
+.account-apple-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  background: #000;
+  color: #fff;
+  border: 1px solid #000;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.account-apple-btn:hover:not(:disabled) {
+  background: #1a1a1a;
+}
+
+.account-apple-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.account-apple-icon {
+  width: 16px;
+  height: 16px;
+  margin-top: -2px;
 }
 
 /* ── Stats ── */
