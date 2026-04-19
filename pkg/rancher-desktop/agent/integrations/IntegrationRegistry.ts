@@ -3,6 +3,15 @@ export class IntegrationRegistry {
   private instances = new Map<string, any>();
   private factories = new Map<string, () => Promise<any>>();
 
+  /**
+   * Returns true if this id has a factory registered. Useful for ids that
+   * may be credential-only (e.g. sulla-cloud) where we don't want to spam
+   * "No factory registered" on every connect-event reload.
+   */
+  hasFactory(id: string): boolean {
+    return this.factories.has(id);
+  }
+
   register<T>(id: string, factory: () => Promise<T>): void {
     console.log('[IntegrationRegistry] register()', {
       id,
