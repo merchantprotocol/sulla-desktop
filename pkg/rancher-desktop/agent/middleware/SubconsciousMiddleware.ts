@@ -192,7 +192,10 @@ async function runObservationAgent(state: BaseThreadState): Promise<void> {
     const { graph, state: subState, threadId } = await GraphRegistry.createObservationAgent(state, observationsText);
     console.log(`[SubconsciousMiddleware:Observation] Started (fire-and-forget) | threadId: ${ threadId } | existing observations: ${ memoryObj.length }`);
 
-    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
+    // Keep the observation agent tight — it's side-effects only and shouldn't
+    // be burning 20 rounds of Claude Code for every chat turn. 5 is plenty
+    // for its tool set (add/remove observational memory, update identity).
+    await graph.execute(subState, 'subconscious', { maxIterations: 5 });
 
     const agentMeta = (subState.metadata as any).agent || {};
     const iterations = (subState.metadata as any).iterations || 0;

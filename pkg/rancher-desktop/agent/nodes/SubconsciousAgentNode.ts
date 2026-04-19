@@ -262,7 +262,21 @@ export class SubconsciousAgentNode extends BaseNode {
     } as BaseThreadState;
   }
 
+  /**
+   * Some subconscious agents (e.g. observation) are pure side-effects — they
+   * modify storage via tool calls but have no narration worth showing the
+   * user. Returning true here suppresses `emitThinking` / `emitThinkingComplete`
+   * for those agents so the main chat doesn't fill with "Reading files..."
+   * "Memory updated..." bubbles after every reply.
+   */
+  private isSilentAgent(state: BaseThreadState): boolean {
+    const label = (state.metadata as any).agentLabel as string | undefined;
+    // Observation is explicitly fire-and-forget; its thoughts are not for the user.
+    return label === 'observation';
+  }
+
   private async emitThinking(state: BaseThreadState, content: string): Promise<void> {
+    if (this.isSilentAgent(state)) return;
     const parentState = this.buildParentState(state);
     if (!parentState) return;
 
@@ -274,6 +288,7 @@ export class SubconsciousAgentNode extends BaseNode {
    * The next thinking text will start a fresh bubble.
    */
   private async emitThinkingComplete(state: BaseThreadState): Promise<void> {
+    if (this.isSilentAgent(state)) return;
     const parentState = this.buildParentState(state);
     if (!parentState) return;
 
