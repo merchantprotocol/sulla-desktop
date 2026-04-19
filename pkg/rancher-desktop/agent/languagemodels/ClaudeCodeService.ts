@@ -163,6 +163,62 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   /**
+   * Serialize the prior conversation (everything before the current user
+   * prompt) as a plain-text transcript that can be prepended to `-p` when
+   * there's no Claude session to resume. The last user message is excluded
+   * because it's sent separately as the new prompt; earlier user messages,
+   * assistant replies, and tool transcripts are all included so Claude can
+   * see how the conversation got here.
+   */
+  private serializeHistory(messages: ChatMessage[]): string {
+    if (messages.length <= 1) return '';
+
+    // Reuse the same extraction logic as extractPrompt by inlining it — keeps
+    // tool_use / tool_result blocks visible as the text they carry.
+    const extractFromBlock = (b: any): string => {
+      if (typeof b === 'string') return b;
+      if (!b || typeof b !== 'object') return '';
+      if (b.type === 'text' && typeof b.text === 'string') return b.text;
+      if (b.type === 'tool_use') {
+        const name = b.name ?? 'tool';
+        const input = b.input ? JSON.stringify(b.input) : '';
+        return `[tool_use ${ name }${ input ? ` ${ input }` : '' }]`;
+      }
+      if (b.type === 'tool_result') {
+        if (typeof b.content === 'string') return `[tool_result] ${ b.content }`;
+        if (Array.isArray(b.content)) return `[tool_result] ${ b.content.map(extractFromBlock).filter(Boolean).join('\n') }`;
+      }
+      return '';
+    };
+
+    const extractFromMessage = (m: ChatMessage): string => {
+      const c: any = m.content;
+      if (typeof c === 'string') return c;
+      if (Array.isArray(c)) return c.map(extractFromBlock).filter(Boolean).join('\n');
+      return '';
+    };
+
+    // Drop the final user message — that's the new prompt, sent separately.
+    // If the last message is not a user turn (e.g. assistant narration), keep
+    // everything before it and let extractPrompt pick the latest user above.
+    let cutoff = messages.length - 1;
+    while (cutoff >= 0 && messages[cutoff].role !== 'user') cutoff--;
+    if (cutoff < 0) cutoff = messages.length - 1;
+
+    const history = messages.slice(0, cutoff);
+    const lines: string[] = [];
+    for (const m of history) {
+      const text = extractFromMessage(m).trim();
+      if (!text) continue;
+      const role = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : m.role === 'system' ? 'System' : m.role;
+      lines.push(`${ role }: ${ text }`);
+    }
+
+    if (lines.length === 0) return '';
+    return `Previous conversation:\n${ lines.join('\n\n') }`;
+  }
+
+  /**
    * Spawn claude -p in the VM, stream text_delta chunks to the callback,
    * return the final text + session id.
    */
@@ -226,9 +282,19 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(oauthToken) }`);
     if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(apiKey) }`);
 
+    // When there's no existing Claude session for this conversation, Claude
+    // starts fresh and has no context from prior turns. Serialize Sulla's
+    // full message history so the first turn of a new session still carries
+    // the conversation. With --resume, Claude already has the session state;
+    // re-sending the history would be wasteful.
+    const historyBlock = existingSession ? '' : this.serializeHistory(messages);
+    const promptForClaude = historyBlock
+      ? `${ historyBlock }\n\n--- new message ---\n${ prompt }`
+      : prompt;
+
     // Build the full Sulla system prompt fresh each turn so Claude sees the
-    // current identity, skills, extensions, integrations, etc. Failures here
-    // must not block the chat — fall back to no-append.
+    // current identity, skills, extensions, integrations, and any durable
+    // observational memory. Failures here must not block the chat.
     let appendSystemPrompt = '';
     try {
       const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
@@ -239,7 +305,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
     const claudeArgs = [
       'claude',
-      '-p', shq(prompt),
+      '-p', shq(promptForClaude),
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
