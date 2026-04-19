@@ -61,14 +61,13 @@ export async function runSubconsciousMiddleware(
   const recallPromise = runMemoryRecall(state, options.recallVariant);
   awaitedTasks.push(recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx }));
 
-  // 3. Observation Agent — fire-and-forget: it only does side-effect tool
-  //    calls (add/remove observational memory, update identity files) and
-  //    never touches state.messages directly. No need to wait for it.
+  // 3. Observation Agent — awaited. It runs its side-effect tool calls
+  //    (add/remove observational memory, update identity files) BEFORE the
+  //    main LLM call so the user sees its narration pre-reply instead of
+  //    bleeding into the chat after the assistant has already answered.
   if (options.includeObservations) {
-    launched.push('observation (fire-and-forget)');
-    runObservationAgent(state).catch((error) => {
-      console.error('[SubconsciousMiddleware] Observation Agent failed (fire-and-forget):', error instanceof Error ? error.message : error);
-    });
+    launched.push('observation');
+    awaitedTasks.push(runObservationAgent(state));
   }
 
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
@@ -190,12 +189,9 @@ async function runObservationAgent(state: BaseThreadState): Promise<void> {
       .join('\n');
 
     const { graph, state: subState, threadId } = await GraphRegistry.createObservationAgent(state, observationsText);
-    console.log(`[SubconsciousMiddleware:Observation] Started (fire-and-forget) | threadId: ${ threadId } | existing observations: ${ memoryObj.length }`);
+    console.log(`[SubconsciousMiddleware:Observation] Started | threadId: ${ threadId } | existing observations: ${ memoryObj.length }`);
 
-    // Keep the observation agent tight — it's side-effects only and shouldn't
-    // be burning 20 rounds of Claude Code for every chat turn. 5 is plenty
-    // for its tool set (add/remove observational memory, update identity).
-    await graph.execute(subState, 'subconscious', { maxIterations: 5 });
+    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
 
     const agentMeta = (subState.metadata as any).agent || {};
     const iterations = (subState.metadata as any).iterations || 0;
